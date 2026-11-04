@@ -1,0 +1,13 @@
+# The number of parameters plays no part in how a generic entrypoint takes its arguments
+# FORM: Prepared
+# RUN: derived-functions GenericEntrypoint:f0
+# STATISTIC: GenericEntrypoints = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="tenParameters" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Return
+}
+# CHECK: role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]{{*}}creator=Entrypoint{target=f0 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything):
+# CHECK-NOT: GetArgument
+# CHECK: = CallDirect v2, v3, v4, v5, v6, v7, v8, v9, v10, v11 function=f0

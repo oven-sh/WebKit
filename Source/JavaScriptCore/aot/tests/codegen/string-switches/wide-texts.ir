@@ -1,0 +1,50 @@
+# A case text with a unit above 0xFF equals no 8-bit string, so an 8-bit subject is never compared with it, and a 16-bit subject is compared in place with every text. Without such a text a 16-bit subject is compared by calls, and so is every subject where the code is rarely run
+# FORM: Selected
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="charactersToEscape" parameters=[{type=string}] results=[{type=i32}] {
+    SwitchString v0 strings=["\"", "\\", "<", "\u{2028}", "\u{2029}", ""] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..7
+  b%(i)():
+    v%(i) = Integer integer=%(i)
+    Return v%(i)
+# END REPEAT
+}
+# CHECK: f0: size=
+# CHECK-NEXT: stub RopeCharacters x1
+# CHECK-NEXT: f1: size=
+
+function f1 name="longTextsOfOneLength" parameters=[{type=string}] results=[{type=i32}] {
+    SwitchString v0 strings=["constructor", "description", "application"] -> case b1(), case b2(), case b3(), otherwise b4()
+# REPEAT: i = 1..4
+  b%(i)():
+    v%(i) = Integer integer=%(i)
+    Return v%(i)
+# END REPEAT
+}
+# CHECK-NEXT: stub RopeCharacters x1
+# CHECK-NEXT: stub StringEqualsLiteral x3
+# CHECK-NEXT: f2: size=
+
+function f2 name="onRarePath" parameters=[{type=string}, {type=boolean}] results=[{type=i32}] {
+    Branch v1 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    SwitchString v0 strings=["\"", "ab", "\u{2028}"] -> case b2(), case b3(), case b4(), otherwise b5()
+  b2() frequency=Rare:
+    v2 = Integer integer=1
+    Return v2
+  b3() frequency=Rare:
+    v3 = Integer integer=2
+    Return v3
+  b4() frequency=Rare:
+    v4 = Integer integer=3
+    Return v4
+  b5():
+    v5 = Integer integer=4
+    Return v5
+}
+# CHECK-NOT: stub RopeCharacters
+# CHECK: stub StringEqualsLiteral x1
+# CHECK-NEXT: stub StringEqualsLiteralOfLength.n1 x1
+# CHECK-NEXT: stub StringEqualsLiteralOfLength.n2 x1

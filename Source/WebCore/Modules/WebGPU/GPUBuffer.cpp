@@ -39,8 +39,9 @@ GPUBuffer::~GPUBuffer()
         device->willDestroyBuffer(*this);
 }
 
-GPUBuffer::GPUBuffer(Ref<WebGPU::Buffer>&& backing, size_t bufferSize, GPUBufferUsageFlags usage, bool mappedAtCreation, GPUDevice& device)
+GPUBuffer::GPUBuffer(Ref<WebGPU::Buffer>&& backing, size_t bufferSize, GPUBufferUsageFlags usage, bool mappedAtCreation, String&& label, GPUDevice& device)
     : m_backing(WTF::move(backing))
+    , m_label(WTF::move(label))
     , m_bufferSize(bufferSize)
     , m_usage(usage)
     , m_mapState(mappedAtCreation ? GPUBufferMapState::Mapped : GPUBufferMapState::Unmapped)
@@ -64,11 +65,12 @@ GPUDevice* GPUBuffer::device() const
 
 String GPUBuffer::label() const
 {
-    return m_backing->label();
+    return m_label;
 }
 
 void GPUBuffer::setLabel(String&& label)
 {
+    m_label = label;
     m_backing->setLabel(WTF::move(label));
 }
 
@@ -118,10 +120,10 @@ static auto makeArrayBuffer(Variant<std::span<const uint8_t>, size_t> source, si
         arrayBuffer = ArrayBuffer::create(numberOfElements, 1);
     }), source);
 
-    cachedArrayBuffers.append({ arrayBuffer.get(), offset });
+    cachedArrayBuffers.append({ arrayBuffer, offset });
     arrayBuffer->pin();
-    if (device)
-        device->addBufferToUnmap(buffer);
+    if (RefPtr protectedDevice = device.get())
+        protectedDevice->addBufferToUnmap(buffer);
     return arrayBuffer;
 }
 
@@ -250,6 +252,7 @@ void GPUBuffer::destroy(ScriptExecutionContext& scriptExecutionContext)
     m_destroyed = true;
     internalUnmap(scriptExecutionContext);
     m_bufferSize = 0;
+    m_memoryCost.store(0, std::memory_order_relaxed);
     m_backing->destroy();
     if (RefPtr device = m_device)
         device->didChangeBufferMemoryCost(*this);

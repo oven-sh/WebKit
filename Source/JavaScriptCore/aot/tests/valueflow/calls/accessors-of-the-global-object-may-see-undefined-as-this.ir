@@ -1,0 +1,45 @@
+# Object.defineProperty(globalThis, "name", { get: function () { return this }, set: function (value) { this }, configurable: true });   name = 1; name
+# A free name enters an accessor with undefined, and `globalThis.name` enters it with the global object.
+# RUN: valueflow-apply
+# CHECK: function f1 name="get" {{*}}thisType={type=undefined|builtin(GlobalThis)}
+# CHECK: ToThis v0
+# CHECK: function f2 name="set" {{*}}thisType={type=undefined|builtin(GlobalThis)}
+# CHECK: function f4 name="getOfObject" {{*}}thisType={type=L1}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="set" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Plain" fields=[]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = String string="name"
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Boolean boolean=true
+    v5 = NewObject -, v2, v3, v4 layout=L0 fields=[0, 1, 2]
+    v6 = Builtin builtin=ObjectDefineProperty
+    v7 = Call v6, -, v0, v1, v5
+    v8 = Integer integer=1
+    PropSet v0, v8 key="name" mode=Sloppy [isFreeName]
+    v10 = PropGet v0 key="name" [isFreeName]
+    v11 = NewObject layout=L1
+    v12 = NewClosure function=f4
+    v13 = NewClosure function=f3
+    v14 = NewObject -, v12, v13, v4 layout=L0 fields=[0, 1, 2]
+    v15 = Call v6, -, v11, v1, v14
+    v16 = PropGet v11 key="name"
+    Return v10
+}
+function f1 name="get" module=m0 flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = ToThis v0
+    Return v1
+}
+function f2 name="set" module=m0 flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="setOfObject" module=m0 flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f4 name="getOfObject" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return v0
+}

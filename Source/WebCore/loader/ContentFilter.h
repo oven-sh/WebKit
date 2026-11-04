@@ -82,7 +82,7 @@ public:
     WEBCORE_EXPORT static const URL& blockedPageURL();
 
 #if HAVE(AUDIT_TOKEN)
-    WEBCORE_EXPORT void NODELETE setHostProcessAuditToken(const std::optional<audit_token_t>&);
+    WEBCORE_EXPORT void LEGACY_NODELETE setHostProcessAuditToken(const std::optional<audit_token_t>&);
 #endif
 
 #if HAVE(WEBCONTENTRESTRICTIONS)
@@ -119,7 +119,7 @@ private:
     using Container = Vector<Ref<PlatformContentFilter>>;
     ContentFilter(Container&&, ContentFilterClient&);
 
-    template <typename Function> void forEachContentFilterUntilBlocked(Function&&);
+    template <typename Function> void forEachContentFilterUntilBlocked(NOESCAPE const Function&);
     void didDecide(State);
     void deliverResourceData(const SharedBuffer&);
     void deliverStoredResourceData();

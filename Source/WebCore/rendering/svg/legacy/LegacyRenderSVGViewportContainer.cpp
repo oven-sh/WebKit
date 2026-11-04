@@ -100,8 +100,7 @@ bool LegacyRenderSVGViewportContainer::pointIsInsideViewportClip(const FloatPoin
 
 void LegacyRenderSVGViewportContainer::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    // An empty viewBox disables rendering.
-    if (svgSVGElement().hasEmptyViewBox())
+    if (svgSVGElement().viewBoxDisablesPainting())
         return;
 
     LegacyRenderSVGContainer::paint(paintInfo, paintOffset);

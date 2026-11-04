@@ -139,7 +139,7 @@ private:
     void releaseIncomingPushTransaction();
     void incomingPushTransactionTimerFired();
 
-    Seconds NODELETE silentPushTimeout() const;
+    Seconds LEGACY_NODELETE silentPushTimeout() const;
     void rescheduleSilentPushTimer();
     void silentPushTimerFired();
     void didShowNotification(const WebCore::PushSubscriptionSetIdentifier&, const String& scope);
@@ -180,8 +180,8 @@ private:
 #endif // HAVE(FULL_FEATURED_USER_NOTIFICATIONS)
 
 #if PLATFORM(IOS)
-    RetainPtr<FBSOpenApplicationService> m_openService;
-    std::unique_ptr<WebClipCache> m_webClipCache;
+    const RetainPtr<FBSOpenApplicationService> m_openService;
+    const std::unique_ptr<WebClipCache> m_webClipCache;
     String m_webClipCachePath;
 #endif
 

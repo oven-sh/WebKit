@@ -1,0 +1,17 @@
+# interface O { a?: number; b?: number }   const given: O = { b: 1 }   read(given)
+# RUN: valueflow-apply
+# CHECK: layout L0 name="O" fields=[{key="a" declared={type=undefined}{{*}}{key="b" declared={type=int
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="O" fields=[{key="a" declared={type=undefined|number}}, {key="b" declared={type=undefined|number}}]
+data d0 root=Object{layout=L0 members=[{key="b" value=Number{value=1}}]}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v0 key="b"
+    Return
+}

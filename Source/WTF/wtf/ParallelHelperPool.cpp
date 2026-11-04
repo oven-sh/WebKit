@@ -160,6 +160,15 @@ void ParallelHelperPool::ensureThreads(unsigned numThreads)
         didMakeWorkAvailable(locker);
 }
 
+#if ENABLE(AOT)
+void ParallelHelperPool::waitUntilThreadsAreUp()
+{
+    Locker locker { *m_lock };
+    for (RefPtr<AutomaticThread>& thread : m_threads)
+        thread->waitUntilIsUp(locker);
+}
+#endif
+
 void ParallelHelperPool::doSomeHelping()
 {
     ParallelHelperClient* client;
@@ -186,10 +195,15 @@ public:
     {
     }
     
-    ASCIILiteral NODELETE name() const final
+    ASCIILiteral LEGACY_NODELETE name() const final
     {
         return m_pool->m_threadName;
     }
+
+#if ENABLE(AOT)
+    // A client runs its task itself as well, and waits only for the helpers that have claimed it.
+    bool isOptional() const final { return !m_pool->m_isDying; }
+#endif
 
 private:
     PollResult poll(const AbstractLocker&) final

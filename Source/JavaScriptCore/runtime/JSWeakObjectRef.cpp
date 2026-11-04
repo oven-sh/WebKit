@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSWeakObjectRef.h"
 
+#include "AOTRemovableFeature.h"
 #include "JSCInlines.h"
 
 namespace JSC {
@@ -40,13 +41,14 @@ void JSWeakObjectRef::finishCreation(VM& vm, JSCell* value)
 }
 
 template<typename Visitor>
-void JSWeakObjectRef::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+ALWAYS_INLINE void JSWeakObjectRef::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
+    JSC_REMOVABLE_DEFINITION(WeakReferences, static_cast<void (*)(JSCell*, Visitor&)>(&JSWeakObjectRef::visitChildren));
     auto* thisObject = uncheckedDowncast<JSWeakObjectRef>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     // This doesn't need to be atomic because if we are out of date we will get write barriered and revisit ourselves.
-    if (visitor.vm().currentWeakRefVersion() == thisObject->m_lastAccessVersion) {
+    if (thisObject->vm().currentWeakRefVersion() == thisObject->m_lastAccessVersion) {
         ASSERT(thisObject->m_value);
         visitor.append(thisObject->m_value);
     }

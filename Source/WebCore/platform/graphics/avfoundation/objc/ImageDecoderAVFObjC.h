@@ -101,17 +101,17 @@ private:
     void readSamples();
     void readTrackMetadata();
     bool storeSampleBuffer(CMSampleBufferRef) WTF_REQUIRES_LOCK(m_sampleGeneratorLock);
-    void NODELETE advanceCursor() WTF_REQUIRES_LOCK(m_sampleGeneratorLock);
+    void LEGACY_NODELETE advanceCursor() WTF_REQUIRES_LOCK(m_sampleGeneratorLock);
     void setTrack(AVAssetTrack *);
 
-    const ImageDecoderAVFObjCSample* NODELETE sampleAtIndex(size_t) const WTF_REQUIRES_SHARED_LOCK(m_sampleGeneratorLock);
+    const ImageDecoderAVFObjCSample* LEGACY_NODELETE sampleAtIndex(size_t) const WTF_REQUIRES_SHARED_LOCK(m_sampleGeneratorLock);
     bool sampleIsComplete(const ImageDecoderAVFObjCSample&) const;
 
     String m_mimeType;
     String m_uti;
-    RetainPtr<AVURLAsset> m_asset;
+    const RetainPtr<AVURLAsset> m_asset;
     RetainPtr<AVAssetTrack> m_track;
-    RetainPtr<WebCoreSharedBufferResourceLoaderDelegate> m_loader;
+    const RetainPtr<WebCoreSharedBufferResourceLoaderDelegate> m_loader;
     std::unique_ptr<ImageRotationSessionVT> m_imageRotationSession WTF_GUARDED_BY_LOCK(m_sampleGeneratorLock);
     const Ref<WebCoreDecompressionSession> m_decompressionSession;
     Function<void(EncodedDataStatus)> m_encodedDataStatusChangedCallback;

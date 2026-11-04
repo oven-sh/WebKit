@@ -1,0 +1,65 @@
+# A value in the middle of a covered block expands to a diamond whose arms and continuation keep the handler
+# FORM: Prepared
+# RUN: expand function=f0 value=v3
+# RUN(ONE): expand function=f0 value=v3 arms=1
+# RUN(NONE): expand function=f1 value=v2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+function f0 name="underHandler" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number) handler=b1(v1):
+    v2 = Add v1, v1
+    v3 = Call v0, -, v2 @12
+    v4 = TypeTest v3 testedType=object
+    Return v3
+  b1(v5) role=CatchHandler:
+    v6 = CatchValue
+    Return v6
+}
+function f1 name="noHandler" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return v1
+}
+# CHECK: function f0
+# CHECK-NEXT: b0(v0: anything, v1: number) handler=b1(v1):
+# CHECK-NEXT: v2: number = Add v1, v1
+# CHECK-NEXT: [[T]]: true = Boolean boolean=true
+# CHECK-NEXT: Branch [[T]] -> taken [[A]](), notTaken [[B]]()
+# CHECK-NEXT: b1(v5: number) role=CatchHandler:
+# CHECK-NEXT: v6: anything = CatchValue
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: [[C]](v3: anything) handler=b1(v1):
+# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=object
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: [[A]]() handler=b1(v1):
+# CHECK-NEXT: [[CA]]: anything = Call v0, -, v2 @12
+# CHECK-NEXT: Jump -> next [[C]]([[CA]])
+# CHECK-NEXT: [[B]]() frequency=Unlikely handler=b1(v1):
+# CHECK-NEXT: [[CB]]: anything = Call v0, -, v2 @12
+# CHECK-NEXT: Jump -> next [[C]]([[CB]])
+# CHECK-NEXT: }
+# ONE: function f0
+# ONE-NEXT: b0(v0: anything, v1: number) handler=b1(v1):
+# ONE-NEXT: v2: number = Add v1, v1
+# ONE-NEXT: [[CA]]: anything = Call v0, -, v2 @12
+# ONE-NEXT: Jump -> next [[C]]([[CA]])
+# ONE-NEXT: b1(v5: number) role=CatchHandler:
+# ONE: [[C]](v3: anything) handler=b1(v1):
+# ONE-NEXT: v4: boolean = TypeTest v3 testedType=object
+# ONE-NEXT: Return v3
+# ONE-NEXT: }
+# NONE: function f1
+# NONE-NOT: handler=
+# NONE: b0(v0: env L0, v1: anything):
+# NONE-NEXT: [[T]]: true = Boolean boolean=true
+# NONE-NEXT: Branch [[T]] -> taken [[A]](), notTaken [[B]]()
+# NONE-NEXT: [[C]]():
+# NONE-NEXT: Return v1
+# NONE-NEXT: [[A]]():
+# NONE-NEXT: PutEnvironmentField v0, v1 layout=L0
+# NONE-NEXT: Jump -> next [[C]]()
+# NONE-NEXT: [[B]]() frequency=Unlikely:
+# NONE-NEXT: PutEnvironmentField v0, v1 layout=L0
+# NONE-NEXT: Jump -> next [[C]]()
+# NONE-NEXT: }

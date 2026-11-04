@@ -74,7 +74,7 @@ static const float minimumScrollEventRatioForSwipe = 0.5;
 static const float swipeSnapshotRemovalRenderTreeSizeTargetFraction = 0.5;
 #endif
 
-static HashMap<WebPageProxyIdentifier, WeakRef<ViewGestureController>>& NODELETE viewGestureControllersForAllPages()
+static HashMap<WebPageProxyIdentifier, WeakRef<ViewGestureController>>& LEGACY_NODELETE viewGestureControllersForAllPages()
 {
     // The key in this map is the associated page ID.
     static NeverDestroyed<HashMap<WebPageProxyIdentifier, WeakRef<ViewGestureController>>> viewGestureControllers;
@@ -485,7 +485,7 @@ void ViewGestureController::SnapshotRemovalTracker::startWatchdog(Seconds durati
 }
 
 #if !PLATFORM(IOS_FAMILY)
-static bool NODELETE deltaShouldCancelSwipe(FloatSize delta)
+static bool LEGACY_NODELETE deltaShouldCancelSwipe(FloatSize delta)
 {
     return std::abs(delta.height()) >= std::abs(delta.width()) * minimumScrollEventRatioForSwipe;
 }
@@ -865,8 +865,10 @@ void ViewGestureController::endMagnificationGesture()
     if (m_frameHandlesMagnificationGesture)
         page->scalePage(newMagnification, roundedIntPoint(m_magnificationOrigin), [] { });
     else {
+        // No target scroll position: this zoom tracked a gesture, so it is anchored about the origin the drawing
+        // area followed through adjustTransientZoom() rather than landing somewhere chosen up front.
         if (RefPtr drawingArea = page->drawingArea())
-            drawingArea->commitTransientZoom(newMagnification, scaledMagnificationOrigin(m_magnificationOrigin, newMagnification));
+            drawingArea->commitTransientZoom(newMagnification, scaledMagnificationOrigin(m_magnificationOrigin, newMagnification), std::nullopt);
     }
 
 #if PLATFORM(MAC)

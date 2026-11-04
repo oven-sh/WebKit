@@ -1,0 +1,64 @@
+# `error.message` where the error is of one of several built-in classes: the constructor of each leaves the message at the same place, so one read serves them all.
+# It is the read of the lowest class that is above them all. A class that keeps the message elsewhere, or anything that is no error, leaves the read by name.
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# CHECK: outcome: Changed
+# STATISTIC: BuiltinReadsResolved = 6
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="errorOrTypeError" parameters=[{type=Error|TypeError}] results=[{type=anything}] {
+    v1 = PropGet v0 key="message"
+    Return v1
+# CHECK: = CallBuiltin v0 overload=ErrorPrototypeMessage/0
+}
+
+function f1 name="neitherIsError" parameters=[{type=TypeError|RangeError}] results=[{type=anything}] {
+    v1 = PropGet v0 key="message"
+    Return v1
+# CHECK: = CallBuiltin v0 overload=ErrorPrototypeMessage/0
+}
+
+function f2 name="everyClass" parameters=[{type=Error|EvalError|RangeError|ReferenceError|SyntaxError|TypeError|URIError}] results=[{type=anything}] {
+    v1 = PropGet v0 key="message"
+    Return v1
+# CHECK: = CallBuiltin v0 overload=ErrorPrototypeMessage/0
+}
+
+function f3 name="cause" parameters=[{type=Error|SyntaxError}] results=[{type=anything}] {
+    v1 = PropGet v0 key="cause"
+    Return v1
+# CHECK: = CallBuiltin v0 overload=ErrorPrototypeCause/0
+}
+
+function f4 name="oneClassBelow" parameters=[{type=TypeError}] results=[{type=anything}] {
+    v1 = PropGet v0 key="message"
+    Return v1
+# CHECK: = CallBuiltin v0 overload=TypeErrorPrototypeMessage/0
+}
+
+function f5 name="causeOfOneClassBelow" parameters=[{type=RangeError}] results=[{type=anything}] {
+    v1 = PropGet v0 key="cause"
+    Return v1
+# CHECK: = CallBuiltin v0 overload=RangeErrorPrototypeCause/0
+}
+
+function f6 name="besideAnErrorThatHoldsMore" parameters=[{type=Error|AggregateError}] results=[{type=anything}] {
+    v1 = PropGet v0 key="message"
+    Return v1
+# CHECK-NOT: CallBuiltin
+# CHECK: = PropGet v0 key="message"
+}
+
+function f7 name="besideAMap" parameters=[{type=Error|TypeError|Map}] results=[{type=anything}] {
+    v1 = PropGet v0 key="message"
+    Return v1
+# CHECK-NOT: CallBuiltin
+# CHECK: = PropGet v0 key="message"
+}
+
+function f8 name="nameIsNoSlot" parameters=[{type=Error|TypeError}] results=[{type=anything}] {
+    v1 = PropGet v0 key="stack"
+    Return v1
+# CHECK-NOT: CallBuiltin
+# CHECK: = PropGet v0 key="stack"
+}

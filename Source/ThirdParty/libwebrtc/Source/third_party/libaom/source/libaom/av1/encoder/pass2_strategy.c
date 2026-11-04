@@ -4541,8 +4541,7 @@ void av1_twopass_postencode_update(AV1_COMP *cpi) {
       p_rc->active_best_quality[i] = cpi->common.quant_params.base_qindex;
 #if CONFIG_TUNE_VMAF
       if (cpi->vmaf_info.original_qindex != -1 &&
-          (cpi->oxcf.tune_cfg.tuning >= AOM_TUNE_VMAF_WITH_PREPROCESSING &&
-           cpi->oxcf.tune_cfg.tuning <= AOM_TUNE_VMAF_NEG_MAX_GAIN)) {
+          is_vmaf_tuning_mode(cpi->oxcf.tune_cfg.tuning)) {
         p_rc->active_best_quality[i] = cpi->vmaf_info.original_qindex;
       }
 #endif
@@ -4601,13 +4600,12 @@ void av1_twopass_postencode_update(AV1_COMP *cpi) {
       }
       twopass->extend_maxq -= 1;
       // Overshoot
-    } else if ((rc_cfg->over_shoot_pct < 100) &&
+    } else if ((rc_cfg->over_shoot_pct <= 100) &&
                (p_rc->rolling_actual_bits > p_rc->rolling_target_bits)) {
       int pct_error =
           ((p_rc->rolling_actual_bits - p_rc->rolling_target_bits) * 100) /
           p_rc->rolling_target_bits;
 
-      pct_error = clamp(pct_error, 0, 100);
       if ((pct_error >= rc_cfg->over_shoot_pct) &&
           (p_rc->rate_error_estimate < 0)) {
         twopass->extend_maxq += 1;
@@ -4633,13 +4631,21 @@ void av1_twopass_postencode_update(AV1_COMP *cpi) {
     // frame is unexpectedly almost perfectly predicted by the ARF or GF
     // but not very well predcited by the previous frame.
     if (!frame_is_kf_gf_arf(cpi) && !cpi->rc.is_src_frame_alt_ref) {
-      int fast_extra_thresh = rc->base_frame_target / HIGH_UNDERSHOOT_RATIO;
-      if (rc->projected_frame_size < fast_extra_thresh) {
-        p_rc->vbr_bits_off_target_fast +=
-            fast_extra_thresh - rc->projected_frame_size;
-        p_rc->vbr_bits_off_target_fast =
-            AOMMIN(p_rc->vbr_bits_off_target_fast,
-                   (4 * (int64_t)rc->avg_frame_bandwidth));
+#if CONFIG_AV1_HIGHBITDEPTH
+      if (cpi->common.seq_params->bit_depth > 8 &&
+          cpi->oxcf.algo_cfg.sharpness == 3 && p_rc->vbr_bits_off_target < 0) {
+        p_rc->vbr_bits_off_target_fast = 0;
+      } else
+#endif
+      {
+        int fast_extra_thresh = rc->base_frame_target / HIGH_UNDERSHOOT_RATIO;
+        if (rc->projected_frame_size < fast_extra_thresh) {
+          p_rc->vbr_bits_off_target_fast +=
+              fast_extra_thresh - rc->projected_frame_size;
+          p_rc->vbr_bits_off_target_fast =
+              AOMMIN(p_rc->vbr_bits_off_target_fast,
+                     (4 * (int64_t)rc->avg_frame_bandwidth));
+        }
       }
     }
 

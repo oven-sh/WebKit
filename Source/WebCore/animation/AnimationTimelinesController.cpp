@@ -130,6 +130,9 @@ void AnimationTimelinesController::updateAnimationsAndSendEvents(ReducedResoluti
 
     m_frameRateAligner.beginUpdate(timestamp, previousTimelineFrameRate);
 
+    Ref document = this->document();
+    auto shouldDispatchProgressEvents = protect(document->settings())->webAnimationsCustomEffectsEnabled() ? WebAnimation::ShouldDispatchProgressEvent::Yes : WebAnimation::ShouldDispatchProgressEvent::No;
+
     // 1. Update the current time of all timelines associated with document passing now as the timestamp.
     ASSERT(m_updatedScrollTimelines.isEmpty());
     Vector<Ref<AnimationTimeline>> timelinesToUpdate;
@@ -174,7 +177,7 @@ void AnimationTimelinesController::updateAnimationsAndSendEvents(ReducedResoluti
 
             // This will notify the animation that timing has changed and will call automatically
             // schedule invalidation if required for this animation.
-            animation->tick();
+            animation->tick(shouldDispatchProgressEvents);
 
             if (!animation->isRelevant() && !animation->needsTick() && !isPendingTimelineAttachment(animation))
                 animationsToRemove.append(animation);
@@ -213,7 +216,6 @@ void AnimationTimelinesController::updateAnimationsAndSendEvents(ReducedResoluti
     }
 
     // 3. Perform a microtask checkpoint.
-    Ref document = this->document();
     protect(document->eventLoop())->performMicrotaskCheckpoint(document->vm());
 
     if (RefPtr documentTimeline = m_document->existingTimeline()) {
@@ -411,7 +413,7 @@ bool AnimationTimelinesController::isPendingTimelineAttachment(const WebAnimatio
 void AnimationTimelinesController::scheduleAcceleratedEffectStackUpdateForTarget(const Styleable& target)
 {
     if (!m_acceleratedEffectStackUpdater)
-        m_acceleratedEffectStackUpdater = makeUnique<AcceleratedEffectStackUpdater>();
+        lazyInitialize(m_acceleratedEffectStackUpdater, makeUnique<AcceleratedEffectStackUpdater>());
     m_acceleratedEffectStackUpdater->scheduleUpdateForTarget(target);
 
     if (RefPtr documentTimeline = m_document->existingTimeline())
@@ -423,7 +425,7 @@ Vector<GraphicsLayer::AcceleratedAnimationForTesting> AnimationTimelinesControll
 {
     CheckedPtr renderer = element.renderer();
     if (renderer && renderer->isComposited()) {
-        CheckedPtr compositedRenderer = downcast<RenderBoxModelObject>(renderer.get());
+        CheckedPtr compositedRenderer = downcast<RenderBoxModelObject>(renderer);
         if (RefPtr graphicsLayer = compositedRenderer->layer()->backing()->graphicsLayer())
             return graphicsLayer->acceleratedAnimationsForTesting();
     }

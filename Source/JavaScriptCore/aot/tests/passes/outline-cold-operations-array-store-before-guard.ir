@@ -1,0 +1,47 @@
+# A rare run of stores of one new list into another stands ahead of the test that guards the first list, and is moved into a body of its own. The call hands both lists over.
+# What is left is judged with the summary of the new body: it stores its second operand into its first and does nothing else, so the guard still lasts over the call of a value nobody knows
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="readListUnderGuardAcrossCallBehindAColdStoreIntoAnotherList" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    v3 = NewArray contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    AppendElement v3, v2
+    AppendElement v3, v2
+    AppendElement v3, v2
+    AppendElement v3, v2
+    Jump -> next b2()
+  b2():
+    v8 = IsPristine v2 builtinClass=Array aspects=[Storage]
+    TestAndBranch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    v10 = Integer integer=1
+    v11 = Call v0, -
+    v12 = GetArrayElement v2, v10, v9 level=Expected [keyIsIntegral]
+    Return v12
+  b4():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: CallDirect v3, v2 function=f9
+# CHECK: GetArrayElement v2,
+# REPEAT: i = 1..8
+
+function f%(i) name="plain%(i)" parameters=[{type=boolean}, {type=Array}, {type=Array}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    AppendElement v1, v2
+    AppendElement v1, v2
+    AppendElement v1, v2
+    AppendElement v1, v2
+    Return
+  b2():
+    Return
+}
+# END REPEAT

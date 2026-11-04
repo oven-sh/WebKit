@@ -1,0 +1,39 @@
+# x86-64: a conditional jump that reaches 127 bytes takes 2 bytes, any other 6. Guards that leave for the same rare block far away go, short, to one jump to it: to a new one behind a block that does not fall through (here the first arm of the branch on v5), shared by the guards near it, or to a jump that the code has anyway. What runs while no guard fails is the same instructions, in fewer bytes
+# FORM: Selected
+# OPTIONS: check=validate-back-end heat=everything-is-hot
+# RUN: generate-code
+# CHECK: f0: size=
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+# X64: f0: size=459 frame
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="guards" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=boolean}] results=[{type=int}] {
+    v6 = TypeTest v0 testedType=number
+    Branch v6 -> taken b1(), notTaken b12()
+  b1():
+    v7 = TypeTest v1 testedType=number
+    Branch v7 -> taken b2(), notTaken b12()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    v8 = TypeTest v2 testedType=number
+    Branch v8 -> taken b5(), notTaken b12()
+  b4():
+    v9 = TypeTest v3 testedType=number
+    Branch v9 -> taken b5(), notTaken b12()
+  b5():
+    v10 = TypeTest v4 testedType=number
+# REPEAT: i = 6..10
+    Branch v%(i+4) -> taken b%(i)(), notTaken b12()
+  b%(i)():
+    v%(i+5) = TypeTest v%(i-6) testedType=int
+# END REPEAT
+    Branch v15 -> taken b11(), notTaken b12()
+  b11():
+    v16 = Integer integer=1
+    Return v16
+  b12() frequency=Rare:
+    v17 = Integer integer=0
+    Return v17
+}

@@ -31,7 +31,7 @@
 #import <wtf/CheckedArithmetic.h>
 #import <wtf/StdLibExtras.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 XRView::XRView(bool, Device& device)
     : m_device(device)
@@ -57,16 +57,6 @@ void XRView::setLabel(String&&)
 {
 }
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
-
-void NODELETE wgpuXRViewAddRef(WGPUXRView binding)
-{
-    WebGPU::fromAPI(binding).ref();
-}
-
-void wgpuXRViewRelease(WGPUXRView binding)
-{
-    WebGPU::fromAPI(binding).deref();
-}

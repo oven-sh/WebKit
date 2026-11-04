@@ -1,0 +1,23 @@
+# The code of a literal is called only for an object that is known to have the pattern of that one literal still
+# FORM: Prepared
+# STATISTIC: RegExpLiteralMatchGroups = 0
+# RUN: pass Select
+# CHECK-NOT: RegExpMatchLiteral
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="mayHaveBeenCompiledAgain" parameters=[{type=RegExp<"a+b"[], pristine[Storage, Names]>}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeTest/0
+    Return v2
+}
+function f1 name="twoLiterals" parameters=[{type=RegExp<"a+b"[], "c+d"[], pristine[Storage, Names, AsCreated]>}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeTest/0
+    Return v2
+}
+function f2 name="anyRegExp" parameters=[{type=RegExp<pristine[Storage, Names, AsCreated]>}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeTest/0
+    Return v2
+}
+function f3 name="plainText" parameters=[{type=RegExp<"abc"[Global], pristine[Storage, Names, AsCreated]>}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeTest/0
+    Return v2
+}

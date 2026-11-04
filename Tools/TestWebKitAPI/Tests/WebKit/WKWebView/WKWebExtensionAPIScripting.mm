@@ -291,6 +291,49 @@ TEST(WKWebExtensionAPIScripting, ExecuteScriptJSONTypes)
     [manager run];
 }
 
+TEST(WKWebExtensionAPIScripting, ExecuteScriptResultDoesNotAliasEmptyContainers)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } }
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.webNavigation.onCompleted.addListener(async (details) => {",
+        @"  function returnEmptyContainers() {",
+        @"    return { firstArray: [], secondArray: [], firstObject: {}, secondObject: {}, nested: { array: [], object: {} }, list: [[], []] }",
+        @"  }",
+
+        @"  const results = await browser.scripting.executeScript({ target: { tabId: details.tabId }, func: returnEmptyContainers })",
+        @"  const result = results?.[0]?.result",
+
+        @"  const containers = [result.firstArray, result.secondArray, result.firstObject, result.secondObject, result.nested.array, result.nested.object, result.list[0], result.list[1]]",
+        @"  for (let i = 0; i < containers.length; ++i) {",
+        @"    for (let j = i + 1; j < containers.length; ++j)",
+        @"      browser.test.assertFalse(containers[i] === containers[j], `Result containers ${i} and ${j} should be distinct`)",
+        @"  }",
+
+        @"  result.firstArray.push(1)",
+        @"  browser.test.assertEq(result.secondArray.length, 0, 'Mutating one empty array should not change the other')",
+
+        @"  browser.test.notifyPass()",
+        @"})",
+
+        @"browser.test.sendMessage('Load Tab')",
+    ]);
+
+    auto manager = Util::loadExtension(scriptingManifest, @{ @"background.js": backgroundScript });
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forPermission:WKWebExtensionPermissionWebNavigation];
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
 TEST(WKWebExtensionAPIScripting, ExecuteScriptWithFrameIds)
 {
     TestWebKitAPI::HTTPServer server({
@@ -2032,6 +2075,47 @@ TEST(WKWebExtensionAPIScripting, InjectScriptWithTrustedTypesCSP)
     ]);
 
     auto manager = Util::loadExtension(manifest, @{ @"content.js": contentScript });
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIScripting, InjectExtensionScriptElementWithStrictDynamicReportOnlyCSP)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s }, { "Content-Security-Policy"_s, "script-src 'self'"_s }, { "Content-Security-Policy-Report-Only"_s, "script-src 'nonce-r4nd0m' 'strict-dynamic'"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *manifest = @{
+        @"manifest_version": @3,
+
+        @"name": @"Scripting Test",
+        @"description": @"Scripting Test",
+        @"version": @"1.0",
+
+        @"web_accessible_resources": @[ @{
+            @"resources": @[ @"page.js" ],
+            @"matches": @[ @"*://localhost/*" ]
+        } ],
+
+        @"content_scripts": @[ @{
+            @"matches": @[ @"*://localhost/*" ],
+            @"js": @[ @"content.js" ]
+        } ]
+    };
+
+    auto *contentScript = Util::constructScript(@[
+        @"const script = document.createElement('script')",
+        @"script.src = browser.runtime.getURL('page.js')",
+        @"script.onload = () => browser.test.notifyPass()",
+        @"script.onerror = () => browser.test.notifyFail('Extension script was blocked by CSP')",
+        @"document.head.appendChild(script)"
+    ]);
+
+    auto manager = Util::loadExtension(manifest, @{ @"content.js": contentScript, @"page.js": @"" });
 
     auto *urlRequest = server.requestWithLocalhost();
     [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];

@@ -1,0 +1,44 @@
+# class Slot { #states = new WeakMap } whose objects reach code that nobody knows: flow says nothing about the layout, not even that its fields are created at construction only.
+# The constructor of a class without a parent allocates the object and its definitions run on it once, so none finds its name there: each is a store that fills the slot.
+# That holds for the objects of a class below it too. A class below a parent defines its own names on what the parent returns, which may have them already: by name
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Slot" constructor=f0 fields=[{key=#"brand"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"states"@L0 declared={type=undefined|null|object} flags=[IsRequired, IsPrivate]}] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Below" base=L0 constructor=f1 fields=[{key=#"own"@L1 declared={type=undefined|null|object} flags=[IsRequired, IsPrivate]}] flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce}
+
+function f0 name="Slot" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="Below" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+
+function f2 kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=object}] results=[{type=anything}] {
+    v2 = NewClassToken layout=L0
+    PrivateDefine v0, v2, v2 layout=L0 field=0
+    PrivateDefine v0, v2, v1 layout=L0 field=1
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: PutSlotOrAdd v0, -, v2 key=#"brand"@L0 receivers=[L0] level=Proven
+# CHECK-NEXT: PutSlotOrAdd v0, -, v1 key=#"states"@L0 receivers=[L0] level=Proven
+function f3 kind=Initializer flags=[HasThis] thisType={type=L0|L1} parameters=[{type=object}] results=[{type=anything}] {
+    v2 = NewClassToken layout=L0
+    PrivateDefine v0, v2, v1 layout=L0 field=1
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK: PutSlotOrAdd v0, -, v1 key=#"states"@L0 receivers=[L0, L1] level=Proven
+function f4 kind=Initializer flags=[HasThis] thisType={type=L1} parameters=[{type=object}] results=[{type=anything}] {
+    v2 = NewClassToken layout=L1
+    PrivateDefine v0, v2, v1 layout=L1 field=0
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK: PrivateDefine v0, v2, v1 layout=L1
+function f5 kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = NewClassToken layout=L0
+    PrivateDefine v0, v2, v1 layout=L0 field=1
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK: PrivateDefine v0, v2, v1 layout=L0 field=1

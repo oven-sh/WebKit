@@ -1,0 +1,92 @@
+# The analysis commands report an argument they cannot use as an error and print nothing else
+# FORM: Prepared
+# RUN(UNKNOWN): analyses control-flow everything
+# RUN(RANGE): analyses control-flow function=f9
+# RUN(WRONGFORM): analyses control-flow flow
+# RUN(MISSING): split-block
+# RUN(GUARDS): guards everything
+# RUN(FAILEDTESTS): failed-tests test=v9
+# RUN(INDUCTION): induction function=f9
+# RUN(DATAFLOW): forward-dataflow backward
+# RUN(HEATGRAPH): heat-graph function=f0
+# RUN(HEATFLOW): heat-graph flow
+# RUN(PARAMETER): add-parameter function=f0 block=b0 type=number arguments=b0.0:v0
+# RUN(TYPE): add-parameter function=f0 block=b1 type=numbers arguments=b0.0:v0
+# RUN(EDGE): split-edge function=f0 edge=b0.1
+# RUN(HANDLER): split-edge function=f0 edge=b0.handler
+# RUN(REDIRECT): duplicate function=f0 region=b1 redirect=b0.handler
+# RUN(ENTRY): remove-parameters function=f0 block=b0 indexes=0
+# RUN(UNFILLED): add-parameter function=f1 block=b2 type=number arguments=b0.1:v1
+# RUN(CAUGHT): expand function=f1 value=v4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="only" parameters=[{type=number}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    Return
+}
+function f1 name="covered" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2(v1)
+  b1() handler=b3():
+    v2 = Add v1, v1
+    Jump -> next b2(v2)
+  b2(v3):
+    Return v3
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+# UNKNOWN-NOT: function f0
+# UNKNOWN: error: bad argument everything
+# UNKNOWN-NOT: function f0
+# RANGE-NOT: function f0
+# RANGE: error: bad argument function=f9
+# RANGE-NOT: function f0
+# WRONGFORM-NOT: function f0
+# WRONGFORM: error: bad argument flow
+# WRONGFORM-NOT: function f0
+# MISSING-NOT: function f0
+# MISSING: error: missing argument
+# MISSING-NOT: function f0
+# GUARDS-NOT: function f0
+# GUARDS: error: bad argument everything
+# GUARDS-NOT: function f0
+# FAILEDTESTS-NOT: function f0
+# FAILEDTESTS: error: bad argument test=v9
+# FAILEDTESTS-NOT: function f0
+# INDUCTION-NOT: function f0
+# INDUCTION: error: bad argument function=f9
+# INDUCTION-NOT: function f0
+# DATAFLOW-NOT: function f0
+# DATAFLOW: error: bad argument backward
+# DATAFLOW-NOT: function f0
+# HEATGRAPH-NOT: activations:
+# HEATGRAPH: error: bad argument function=f0
+# HEATGRAPH-NOT: activations:
+# HEATFLOW-NOT: activations:
+# HEATFLOW: error: bad argument flow
+# HEATFLOW-NOT: activations:
+# PARAMETER-NOT: function f0
+# PARAMETER: error: bad argument block=b0
+# PARAMETER-NOT: function f0
+# TYPE-NOT: function f0
+# TYPE: error: bad argument type=numbers
+# TYPE-NOT: function f0
+# EDGE-NOT: function f0
+# EDGE: error: bad argument edge=b0.1
+# EDGE-NOT: function f0
+# HANDLER-NOT: function f0
+# HANDLER: error: bad argument edge=b0.handler
+# HANDLER-NOT: function f0
+# REDIRECT-NOT: check:
+# REDIRECT: error: bad argument redirect=b0.handler
+# REDIRECT-NOT: check:
+# ENTRY-NOT: function f0
+# ENTRY: error: bad argument block=b0
+# ENTRY-NOT: function f0
+# UNFILLED-NOT: function f1
+# UNFILLED: error: bad argument arguments=b0.1:v1
+# UNFILLED-NOT: function f1
+# CAUGHT-NOT: function f1
+# CAUGHT: error: bad argument value=v4
+# CAUGHT-NOT: function f1

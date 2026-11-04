@@ -1,0 +1,57 @@
+# held = new A();    function base(): number { return held; }    class D extends base { value = "1"; }    new D()
+# The result of `base` is tested for a number, and that type holds only where the test passes: the generic version returns whatever arrives.
+# So `base` is no constructor that answers only what it constructs, and what super() answers lists the instance of A beside the instance of D.
+# RUN: valueflow-why values=f3:v4
+# CHECK: SuperConstructList
+# CHECK: result {{*}} 2 members
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=anything|absent} flags=[IsImmutable]}]
+layout L1 kind=Instance name="A" module=m0 constructor=f2 fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="D" module=m0 constructor=f3 fields=[{key="value" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure v0 function=f1
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L1
+    v4 = FinishClass v3 layout=L1
+    v5 = Construct v4
+    PutEnvironmentField v0, v5 layout=L0
+    v7 = ResolveHeritage v1
+    v8 = NewClosure function=f3
+    v9 = NewClass v8, v1, v7 layout=L2
+    v10 = FinishClass v9 layout=L2
+    v11 = Construct v10
+    Return
+}
+function f1 name="base" flags=[IsChecked] captures=[{type=env L0 flags=[IsFromCompiler]}] results=[{type=number}] {
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = CheckInitialized v1 name="held"
+    v3 = Convert v2 declared={type=number} illTypedCause=FromLooseType
+    Return v3
+}
+function f2 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f4
+    Return v3
+}
+function f3 name="D" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L2
+    v5 = Convert v4 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = CallDirect v5 function=f5
+    Return v5
+}
+function f4 kind=Initializer flags=[HasThis] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Integer integer=2
+    PropDefine v0, v1 key="a"
+    Return
+}
+function f5 kind=Initializer flags=[HasThis] thisType={type=L2 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = String string="1"
+    PropDefine v0, v1 key="value"
+    Return
+}

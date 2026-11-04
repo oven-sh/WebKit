@@ -49,6 +49,7 @@
 #import <WebCore/WebTransportSendStreamStats.h>
 #import <pal/spi/cocoa/NetworkSPI.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/StdLibExtras.h>
@@ -161,7 +162,7 @@ static void didReceiveServerTrustChallenge(NetworkConnectionToWebProcess& connec
         RELEASE_ASSERT_NOT_REACHED();
     };
 
-    CheckedPtr sessionCocoa = downcast<NetworkSessionCocoa>(connectionToWebProcess.networkProcess().networkSession(connectionToWebProcess.sessionID()));
+    CheckedPtr sessionCocoa = downcast<NetworkSessionCocoa>(NetworkProcess::singleton().networkSession(connectionToWebProcess.sessionID()));
 
     if (sessionCocoa && sessionCocoa->fastServerTrustEvaluationEnabled()) {
         auto decisionHandler = makeBlockPtr([
@@ -175,7 +176,7 @@ static void didReceiveServerTrustChallenge(NetworkConnectionToWebProcess& connec
                 return;
             }
 
-            protect(connectionToWebProcess->networkProcess().authenticationManager())->didReceiveAuthenticationChallenge(connectionToWebProcess->sessionID(), pageID, &clientOrigin.topOrigin, challenge, NegotiatedLegacyTLS::No, WTF::move(challengeCompletionHandler));
+            protect(NetworkProcess::singleton().authenticationManager())->didReceiveAuthenticationChallenge(connectionToWebProcess->sessionID(), pageID, &clientOrigin.topOrigin, challenge, NegotiatedLegacyTLS::No, WTF::move(challengeCompletionHandler));
         });
 
 
@@ -183,7 +184,7 @@ static void didReceiveServerTrustChallenge(NetworkConnectionToWebProcess& connec
         return;
     }
 
-    protect(connectionToWebProcess.networkProcess().authenticationManager())->didReceiveAuthenticationChallenge(connectionToWebProcess.sessionID(), pageID, &clientOrigin.topOrigin, challenge.get(), NegotiatedLegacyTLS::No, WTF::move(challengeCompletionHandler));
+    protect(NetworkProcess::singleton().authenticationManager())->didReceiveAuthenticationChallenge(connectionToWebProcess.sessionID(), pageID, &clientOrigin.topOrigin, challenge.get(), NegotiatedLegacyTLS::No, WTF::move(challengeCompletionHandler));
 }
 
 static String joinProtocolStrings(const Vector<String>& protocols)
@@ -192,7 +193,7 @@ static String joinProtocolStrings(const Vector<String>& protocols)
     for (size_t i = 0; i < protocols.size(); ++i) {
         if (i)
             builder.append(", "_s);
-        builder.append('\"', protocols[i], '\"');
+        builder.append('\"', borrow(protocols)[i], '\"');
     }
     return builder.toString();
 }
@@ -213,7 +214,7 @@ static RetainPtr<nw_parameters_t> createParameters(NetworkConnectionToWebProcess
         MAYBE_SOFT_LINK(nw_webtransport_options_set_allow_joining_before_ready)(options, true);
         MAYBE_SOFT_LINK(nw_webtransport_options_set_initial_max_streams_uni)(options, maxStreamsUni);
         MAYBE_SOFT_LINK(nw_webtransport_options_set_initial_max_streams_bidi)(options, maxStreamsBidi);
-        for (auto& header : additionalHeaders)
+        for (auto& header : borrow(additionalHeaders))
             MAYBE_SOFT_LINK(nw_webtransport_options_add_connect_request_header)(options, header.key.utf8().legacyCStringPointer(), header.value.utf8().legacyCStringPointer());
         MAYBE_SOFT_LINK(nw_webtransport_options_add_connect_request_header)(options, "wt-available-protocols", protocols.utf8().legacyCStringPointer());
     };
@@ -398,7 +399,7 @@ void NetworkTransportSession::setupDatagramConnection(CompletionHandler<void(std
     MAYBE_SOFT_LINK(nw_webtransport_options_set_is_datagram)(webtransportOptions.get(), true);
     MAYBE_SOFT_LINK(nw_webtransport_options_set_allow_joining_before_ready)(webtransportOptions.get(), true);
 
-    m_datagramConnection = adoptNS(nw_connection_group_extract_connection(m_connectionGroup.get(), nil, webtransportOptions.get()));
+    lazyInitialize(m_datagramConnection, adoptNS(nw_connection_group_extract_connection(m_connectionGroup.get(), nil, webtransportOptions.get())));
     if (!m_datagramConnection) {
         ASSERT_NOT_REACHED();
         return completionHandler(std::nullopt);

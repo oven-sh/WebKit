@@ -19,7 +19,6 @@
 #include <string>
 #include <vector>
 
-#include "absl/base/macros.h"
 #include "absl/strings/string_view.h"
 #include "api/frame_transformer_interface.h"
 #include "api/rtp_header_extension_id.h"
@@ -29,7 +28,6 @@
 #include "api/transport/network_types.h"
 #include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
-#include "api/video/video_bitrate_allocation.h"
 #include "modules/include/module_fec_types.h"
 #include "modules/rtp_rtcp/include/receive_statistics.h"
 #include "modules/rtp_rtcp/include/report_block_data.h"
@@ -47,7 +45,6 @@ class FrameEncryptorInterface;
 class RateLimiter;
 class RTPSender;
 class Transport;
-class VideoBitrateAllocationObserver;
 
 class RtpRtcpInterface : public RtcpFeedbackSenderInterface {
  public:
@@ -75,7 +72,6 @@ class RtpRtcpInterface : public RtcpFeedbackSenderInterface {
 
     NetworkStateEstimateObserver* network_state_estimate_observer = nullptr;
 
-    VideoBitrateAllocationObserver* bitrate_allocation_observer = nullptr;
     RtcpRttStats* rtt_stats = nullptr;
     RtcpPacketTypeCounterObserver* rtcp_packet_type_counter_observer = nullptr;
     // Called on receipt of RTCP report block from remote side.
@@ -216,13 +212,6 @@ class RtpRtcpInterface : public RtcpFeedbackSenderInterface {
   // Register extension by uri, triggers CHECK on falure.
   virtual void RegisterRtpHeaderExtension(absl::string_view uri,
                                           RtpHeaderExtensionId id) = 0;
-  // Backwards compatibility overload.
-  // TODO: bugs.webrtc.org/514817938 - Remove when downstream is updated.
-  [[deprecated]] ABSL_REFACTOR_INLINE void RegisterRtpHeaderExtension(
-      absl::string_view uri,
-      int id) {
-    RegisterRtpHeaderExtension(uri, RtpHeaderExtensionId(id));
-  }
 
   virtual void DeregisterSendRtpHeaderExtension(absl::string_view uri) = 0;
 
@@ -443,9 +432,6 @@ class RtpRtcpInterface : public RtcpFeedbackSenderInterface {
   // Store the sent packets, needed to answer to a Negative acknowledgment
   // requests.
   virtual void SetStorePacketsStatus(bool enable, uint16_t numberToStore) = 0;
-
-  virtual void SetVideoBitrateAllocation(
-      const VideoBitrateAllocation& bitrate) = 0;
 
   // **************************************************************************
   // Video

@@ -1,0 +1,150 @@
+# The field definitions of instances that reach unknown JavaScript are stores like any other: the caller allocates, the initializer and the constructor are inlined, and the definitions become the field list
+# of the allocation. Not where `this` has leaked before a definition, and not where the object is not the caller's own allocation. Only unknown JavaScript calls the three functions, so their bodies stand in their entrypoints.
+# A loop hands them over: what is handed over once is expected to run once
+# FORM: AsRead
+# RUN: pipeline Select
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Context" constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"raw"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key="env" declared={type=anything} flags=[IsRequired]}, {key=#"path"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key="text" declared={type=anything} flags=[IsRequired]}, {key="last" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Leaks" constructor=f5 fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}, {key="third" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="BelowUnknown" constructor=f8 fields=[{key=#"mark"@L2 declared={type=anything} flags=[IsRequired, IsPrivate]}] flags=[HasHeritage]
+variable g0 name="token" module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g1 name="Context" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="Leaks" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="BelowUnknown" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="tokenBelowUnknown" module=m0 declared={type=classtoken} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClassToken layout=L0
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    PutModuleVariable v4 variable=g1
+    v6 = NewClosure function=f5
+    v7 = NewClass v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    PutModuleVariable v8 variable=g2
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="sink" [isFreeName]
+    v12 = NewClassToken layout=L2
+    PutModuleVariable v12 variable=g4
+    v14 = NewClosure function=f8
+    v15 = ResolveHeritage v11
+    v16 = NewClass v14, v11, v15 layout=L2
+    v17 = FinishClass v16 layout=L2
+    PutModuleVariable v17 variable=g3
+    v19 = NewClosure function=f4
+    v20 = NewClosure function=f7
+    v21 = NewClosure function=f10
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v23 = Call v11, -, v19
+    v24 = Call v11, -, v20
+    v25 = Call v11, -, v21
+    v26 = ToBoolean v25
+    Branch v26 -> taken b1(), notTaken b2()
+  b2():
+    v27 = PropGet v10 key="eval" [isFreeName]
+    v28 = Call v27, -, v25
+    Return
+}
+function f1 name="Context" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f2
+    v6 = GetModuleVariable variable=g0
+    PrivateSet v4, v6, v1 layout=L0 field=1
+    Return v4
+}
+function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    PrivateDefine v0, v1, v1 layout=L0
+    v3 = Undefined
+    PrivateDefine v0, v1, v3 layout=L0 field=1
+    v5 = Integer integer=1
+    PropDefine v0, v5 key="env"
+    PrivateDefine v0, v1, v3 layout=L0 field=3
+    v8 = NewClosure v0 function=f3
+    PropDefine v0, v8 key="text"
+    v10 = Integer integer=2
+    PropDefine v0, v10 key="last"
+    v12 = Undefined
+    Return v12
+}
+function f3 name="text" kind=Arrow captures=[{type=L0 flags=[IsFromCompiler]}] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetModuleVariable variable=g0
+    v3 = PrivateGet v0, v2 layout=L0 field=3
+    Return v3
+}
+function f4 name="handle" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g1
+    v2 = Construct v1, -, v0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v2
+    Return v5
+}
+# CHECK-LABEL: name="handle" module=m0 role=GenericEntrypoint
+# CHECK-NOT: GetConstructPrototype
+# CHECK-NOT: CallDirect
+# CHECK-NOT: Define
+# CHECK-NOT: Test
+# CHECK: [[context]]: L0 = NewObject -, {{*}}, v2, {{*}} layout=L0 fields=[0, 1, 2, 3, 4, 5]
+# CHECK-NEXT: [[text]]: f3 = NewClosure [[context]] function=f3
+# CHECK-NEXT: PutSlotOrAdd [[context]], [[context]], [[text]] key="text" receivers=[L0]
+# CHECK-NEXT: = Call {{*}}, -, [[context]]
+function f5 name="Leaks" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f6
+    Return v3
+}
+function f6 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="first"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v0
+    PropDefine v0, v5 key="second"
+    v7 = Integer integer=3
+    PropDefine v0, v7 key="third"
+    v9 = Undefined
+    Return v9
+}
+function f7 name="leaks" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g2
+    v1 = Construct v0
+    Return v1
+}
+# CHECK-LABEL: name="leaks" module=m0 role=GenericEntrypoint
+# CHECK: [[leaked]]: L1 = NewObject -, {{*}} layout=L1 fields=[0]
+# CHECK: = Call {{*}}, -, [[leaked]]
+# CHECK: PropDefine [[leaked]], {{*}} key="second"
+# CHECK: PropDefine [[leaked]], {{*}} key="third"
+function f8 name="BelowUnknown" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L2 {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    v4 = Convert v3 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f9
+    Return v4
+}
+function f9 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L2 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g4
+    v2 = Integer integer=1
+    PrivateDefine v0, v1, v2 layout=L2
+    v4 = Undefined
+    Return v4
+}
+function f10 name="belowUnknown" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g3
+    v1 = Construct v0
+    Return v1
+}
+# CHECK-LABEL: name="belowUnknown" module=m0 role=GenericEntrypoint
+# CHECK-NOT: NewObject
+# CHECK-NOT: PutSlot
+# CHECK: Return

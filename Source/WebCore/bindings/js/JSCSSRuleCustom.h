@@ -35,10 +35,11 @@ WebCoreOpaqueRoot root(StyleSheet*);
 
 inline WebCoreOpaqueRoot root(CSSRule* rule)
 {
+    // Cannot ref on the GC thread.
     if (rule->parentRule())
-        return root(rule->parentRule());
+        SUPPRESS_UNCOUNTED_ARG return root(rule->parentRule());
     if (rule->parentStyleSheet())
-        return root(rule->parentStyleSheet());
+        SUPPRESS_UNCOUNTED_ARG return root(rule->parentStyleSheet());
     return WebCoreOpaqueRoot { rule };
 }
 

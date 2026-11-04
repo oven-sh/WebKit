@@ -1,0 +1,56 @@
+# function f(kind, x) { if (kind === "error") { .. } .. }: where the site passes a text, the comparison and its branch go with the side that folds. They are taken off the cost only where a loop of the caller
+# repeats the call. How often a function is entered is a product along paths of calls: in a program of any size the code that it calls hottest answers errors and timeouts, and a copy there is never run
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 1
+# STATISTIC: InlineDecisionCostExceedsBenefit = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="byText" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    v2 = String string="error"
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Mul v1, v1
+    v5 = Mul v4, v1
+    v6 = Mul v5, v1
+    v7 = Mul v6, v1
+    v8 = Mul v7, v1
+    v9 = Mul v8, v1
+    v10 = Mul v9, v1
+    v11 = Mul v10, v1
+    Return v11
+  b2():
+# REPEAT: i = 12..51; a = 1 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50
+    v%(i) = Mul v%(a), v1
+# END REPEAT
+    Return v51
+}
+
+function f1 name="inALoop" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v1 key="more"
+    v4 = ToBoolean v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = String string="data"
+    v6 = CallDirect v5, v0 function=f0
+    PropSet v1, v6 key="last" mode=Strict
+    Jump -> next b1()
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f1 name="inALoop"
+# CHECK-NOT: CallDirect
+
+function f2 name="outsideALoop" parameters=[{type=number}] results=[{type=number}] {
+    v1 = String string="data"
+    v2 = CallDirect v1, v0 function=f0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="outsideALoop"
+# CHECK: = CallDirect v1, v0 function=f0

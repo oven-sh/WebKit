@@ -1,0 +1,80 @@
+# class Task { run() {} stop() {} get size() {} }; Task.prototype.stop = f; Task.prototype.extra = 1
+# class Keyed { run() {} }; Keyed.prototype[key] = f            class Deleted { run() {} }; delete Deleted.prototype.other
+# A store under a name that the program spells out changes what lies under that name and nothing else: the other members of the class stay what the class defines, every name of the prototype object is still listed,
+# and what is stored is listed beside the definition. A store under a key nobody knows, and a deletion, may hit any member.
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true {{*}}namedMembers=[{key="run" function=f2 mutability=Fixed {{*}}isWritableData=true}, {key="stop" function=f3 {{*}}isWritableData=true}, {key="stop" function=f5 isWritableData=true}, {key="size" kind=Getter function=f4 mutability=Fixed{{*}}}, {key="extra"}]}
+# CHECK: layout L1 {{*}}classFlow={evaluations=AtMostOnce staticLink=Fixed prototypeProperty=Fixed staticNamesAreComplete=true members=[{key="run" function=f7 closureUse=CalledOnly}] namedMembers=[{key="run" function=f7 closureUse=CalledOnly}]}
+# CHECK: layout L2 {{*}}classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed staticNamesAreComplete=true members=[{key="run" function=f9 closureUse=CalledOnly}] namedMembers=[{key="run" function=f9 closureUse=CalledOnly}]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Task" constructor=f1
+layout L1 kind=Instance name="Keyed" constructor=f6
+layout L2 kind=Instance name="Deleted" constructor=f8
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="run"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 index=1 key="stop"
+    v6 = NewClosure function=f4
+    DefineMethod v1, v6 layout=L0 methodKind=Getter index=2 key="size"
+    v8 = FinishClass v1 layout=L0
+    v9 = PropGet v8 key="prototype"
+    v10 = NewClosure function=f5
+    PropSet v9, v10 key="stop" mode=Strict
+    v12 = Integer integer=1
+    PropSet v9, v12 key="extra" mode=Strict
+    v14 = NewClosure function=f6
+    v15 = NewClass v14 layout=L1
+    v16 = NewClosure function=f7
+    DefineMethod v15, v16 layout=L1 key="run"
+    v18 = FinishClass v15 layout=L1
+    v19 = PropGet v18 key="prototype"
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="name" [isFreeName]
+    ElemSet v19, v21, v10 mode=Strict
+    v23 = NewClosure function=f8
+    v24 = NewClass v23 layout=L2
+    v25 = NewClosure function=f9
+    DefineMethod v24, v25 layout=L2 key="run"
+    v27 = FinishClass v24 layout=L2
+    v28 = PropGet v27 key="prototype"
+    v29 = PropDelete v28 key="other" mode=Strict
+    Return
+}
+function f1 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f3 name="stop" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f4 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f5 name="replacement" results=[{type=anything}] {
+    Return
+}
+function f6 name="Keyed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f7 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f8 name="Deleted" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f9 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}

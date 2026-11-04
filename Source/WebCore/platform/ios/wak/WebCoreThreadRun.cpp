@@ -30,6 +30,7 @@
 
 #include "WebCoreThreadInternal.h"
 #include <mutex>
+#include <pthread.h>
 #include <wtf/Condition.h>
 #include <wtf/Lock.h>
 #include <wtf/Vector.h>
@@ -140,8 +141,20 @@ static void HandleRunSource(void *info)
 
 static void _WebThreadRun(void (^block)(void), bool synchronous)
 {
-    if (WebThreadIsCurrent() || !WebThreadIsEnabled()) {
+    if (WebThreadIsCurrent()) {
         block();
+        return;
+    }
+
+    if (!WebThreadIsEnabled()) {
+        if (pthread_main_np()) {
+            block();
+            return;
+        }
+        // Without a WebThread, WebCore runs on the main thread.
+        RetainPtr mainRunLoop = CFRunLoopGetMain();
+        CFRunLoopPerformBlock(mainRunLoop.get(), kCFRunLoopCommonModes, block);
+        CFRunLoopWakeUp(mainRunLoop.get());
         return;
     }
 
@@ -158,7 +171,7 @@ static void _WebThreadRun(void (^block)(void), bool synchronous)
     }
 
     CFRunLoopSourceSignal(runSource().get());
-    CFRunLoopWakeUp(WebThreadRunLoop());
+    CFRunLoopWakeUp(protect(WebThreadRunLoop()));
 
     if (synchronous) {
         state->waitForCompletion();
@@ -182,7 +195,7 @@ void WebThreadInitRunQueue()
 
         CFRunLoopSourceContext runSourceContext = { 0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, HandleRunSource };
         runSource() = adoptCF(CFRunLoopSourceCreate(nullptr, -1, &runSourceContext));
-        CFRunLoopAddSource(WebThreadRunLoop(), runSource().get(), kCFRunLoopDefaultMode);
+        CFRunLoopAddSource(protect(WebThreadRunLoop()), runSource().get(), kCFRunLoopDefaultMode);
     });
 }
 

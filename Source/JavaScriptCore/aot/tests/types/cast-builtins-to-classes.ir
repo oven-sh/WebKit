@@ -1,0 +1,29 @@
+# A built-in object that the cast type does not name is listed under what the cast type may hold it as: a class that it may be an instance of, or `function`. It is never kept under its own name outside the cast type, and never dropped where `subset` says the two overlap. A function is an instance of no class but those of functions, a prototype object of its own class and those above it, and any other object of the classes whose prototypes it inherits from, or of any class where the table does not say what it inherits from
+# FORM: Prepared
+# RUN(INTERSECT): intersect
+# RUN(CAST): cast
+# RUN(SUBSET): subset
+# INTERSECT: t0 & t1 = undefined|Array
+# INTERSECT: t3 & t6 = never
+# INTERSECT: t6 & t3 = never
+# INTERSECT: t6 & t5 = builtin(ArrayPrototype)
+# INTERSECT: t6 & t7 = builtin(Console)
+# INTERSECT: t6 & t8 = never
+# INTERSECT: laws hold
+# CAST: t0 as t1 = undefined|Array
+# CAST: t3 as t6 = never
+# CAST: t4 as t6 = never
+# CAST: t4 as t9 = function
+# CAST: t5 as t6 = Array
+# CAST: t7 as t6 = Array
+# CAST: t8 as t6 = never
+# CAST: laws hold
+# SUBSET: t3 <= t6: no overlaps: no
+# SUBSET: t4 <= t6: no overlaps: no
+# SUBSET: t5 <= t6: no overlaps: yes
+# SUBSET: t7 <= t6: no overlaps: yes
+# SUBSET: t8 <= t6: no overlaps: no
+# SUBSET: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=undefined|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototypeHasOwnProperty)|Array}, {type=undefined|Array}, {type=undefined|null|Array}, {type=builtin(ObjectPrototypeHasOwnProperty)}, {type=builtin(ObjectPrototype)}, {type=builtin(ArrayPrototype)}, {type=Array}, {type=builtin(Console)}, {type=builtin(Math)}, {type=function}] results=[{type=anything}]

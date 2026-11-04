@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRemovableFeature.h"
 #include "Error.h"
 #include "JSGlobalObjectInlines.h"
 #include "JSModuleEnvironment.h"
@@ -107,8 +108,9 @@ void WebAssemblyModuleRecord::prepareLink(VM& vm, JSWebAssemblyInstance* instanc
     m_instance.set(vm, this, instance);
 }
 
-Synchronousness WebAssemblyModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher>)
+NEVER_INLINE Synchronousness WebAssemblyModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher>)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &WebAssemblyModuleRecord::link);
     VM& vm = globalObject->vm();
 
     RELEASE_ASSERT(m_instance);
@@ -154,8 +156,9 @@ static void initializeBuiltinImport(VM& vm, WriteBarrier<JSWebAssemblyInstance>&
  * Original spec: https://webassembly.github.io/spec/js-api/#read-the-imports
  * JS-string proposal version: https://webassembly.github.io/js-string-builtins/js-api/#read-the-imports
  */
-void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JSObject* importObject, Wasm::CreationMode creationMode)
+NEVER_INLINE void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JSObject* importObject, Wasm::CreationMode creationMode)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &WebAssemblyModuleRecord::initializeImports);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -231,11 +234,19 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
 
             AbstractModuleRecord* importedRecord = resolution.moduleRecord;
 #if USE(BUN_JSC_ADDITIONS)
-            // The snapshot below reads the binding's slot directly, so a lazy export has to be filled in first.
-            SyntheticModuleRecord::materializeLazyExport(globalObject, importedRecord, resolution.localName);
+            bool isLiveExport = resolution.isLiveExport(vm);
+            if (isLiveExport) [[unlikely]] {
+                // As in JSModuleEnvironment::getOwnPropertySlot().
+                value = importedModule == importedRecord ? importedRecord->getLiveExport(globalObject, resolution.localName) : importedRecord->getReexportedLiveExport(globalObject, resolution.localName);
+            } else {
+                // The snapshot below reads the binding's slot directly, so a lazy export has to be filled in first.
+                SyntheticModuleRecord::materializeLazyExport(globalObject, importedRecord, resolution.localName);
+            }
             RETURN_IF_EXCEPTION(scope, void());
-#endif
+            JSModuleEnvironment* importedEnvironment = isLiveExport ? nullptr : importedRecord->moduleEnvironmentMayBeNull();
+#else
             JSModuleEnvironment* importedEnvironment = importedRecord->moduleEnvironmentMayBeNull();
+#endif
             // It means that target module is not linked yet. In wasm loading, we allow this since we do not solve cyclic resolution as if JS's bindings.
             // At that time, error occurs since |value| is an empty, and later |value| becomes an undefined.
             // https://github.com/WebAssembly/esm-integration/tree/master/proposals/esm-integration#js---wasm-cycle-where-js-is-higher-in-the-module-graph
@@ -536,8 +547,9 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
 }
 
 // https://webassembly.github.io/spec/js-api/#create-an-exports-object
-void WebAssemblyModuleRecord::initializeExports(JSGlobalObject* globalObject)
+NEVER_INLINE void WebAssemblyModuleRecord::initializeExports(JSGlobalObject* globalObject)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &WebAssemblyModuleRecord::initializeExports);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -568,6 +580,7 @@ void WebAssemblyModuleRecord::initializeExports(JSGlobalObject* globalObject)
 
     // This needs to be looked up after the memory is initialized, as the codeBlock depends on the memory mode.
     Wasm::CalleeGroup* calleeGroup = m_instance->calleeGroup();
+    m_instance->adoptCalleeGroup(*calleeGroup);
 
     for (unsigned index = 0; index < moduleInformation.internalExceptionTypeSignatureIndices.size(); ++index) {
         Wasm::TypeSignatureIndex typeSignatureIndex = moduleInformation.internalExceptionTypeSignatureIndices[index];
@@ -862,8 +875,9 @@ NEVER_INLINE static JSValue dataSegmentFail(JSGlobalObject* globalObject, VM& vm
     return throwException(globalObject, scope, createJSWebAssemblyRuntimeError(globalObject, vm, makeString("Invalid data segment initialization: segment of "_s, String::number(segmentSize), " bytes memory of "_s, String::number(memorySize), " bytes, at offset "_s, String::number(offset), args...)));
 }
 
-JSValue WebAssemblyModuleRecord::evaluate(JSGlobalObject* globalObject)
+NEVER_INLINE JSValue WebAssemblyModuleRecord::evaluate(JSGlobalObject* globalObject)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &WebAssemblyModuleRecord::evaluate);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 

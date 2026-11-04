@@ -214,6 +214,15 @@ WI.ShaderProgram = class ShaderProgram extends WI.Object
 
         this._target.CanvasAgent.setShaderProgramHighlighted(this._identifier, false);
     }
+
+    nameChanged(name)
+    {
+        // Called from WI.CanvasManager.
+
+        this._displayName = name || "";
+
+        this.dispatchEventToListeners(WI.ShaderProgram.Event.NameChanged);
+    }
 };
 
 WI.ShaderProgram.ProgramType = {
@@ -230,4 +239,5 @@ WI.ShaderProgram.ShaderType = {
 
 WI.ShaderProgram.Event = {
     DisabledChanged: "shader-program-disabled-changed",
+    NameChanged: "shader-program-name-changed",
 };

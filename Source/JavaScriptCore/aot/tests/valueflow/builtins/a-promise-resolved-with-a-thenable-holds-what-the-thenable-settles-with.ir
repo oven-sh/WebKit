@@ -1,0 +1,39 @@
+# thenable = { then: settle, method: methodOfThenable }; Promise.resolve(thenable).then(reaction); function reaction(value) { value.method() }
+# A promise adopts a thenable and never holds one: the reaction gets what the resolving function of native code was handed, which nobody follows, and not only the thenable.
+# collections-and-promises.ir has the other side: what has no `then` is what the promise holds, and nothing else.
+# RUN: valueflow-solve calls
+# CHECK: f0 v5 -> PromiseResolve
+# CHECK-NEXT: f0 v8 -> PromisePrototypeThen
+# CHECK: f2 v2 -> unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Thenable" fields=[{key="then" declared={type=anything} flags=[IsRequired]}, {key="method" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f3
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Builtin builtin=Promise
+    v4 = Builtin builtin=PromiseResolve
+    v5 = Call v4, v3, v2
+    v6 = Builtin builtin=PromisePrototypeThen
+    v7 = NewClosure function=f2
+    v8 = Call v6, v5, v7
+    Return
+}
+function f1 name="settle" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=7
+    v2 = Call v0, -, v1
+    Return
+}
+function f2 name="reaction" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="method"
+    v2 = Call v1, v0
+    Return
+}
+function f3 name="methodOfThenable" results=[{type=anything}] {
+    Return
+}

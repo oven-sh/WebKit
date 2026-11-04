@@ -28,30 +28,39 @@ import os
 
 import WebKit_Internal
 
-#if canImport(_USDKit_RealityKit)
+#if canImport(USDKit)
 
-// FIXME: radar://141774327
-@_weakLinked @_spi(Eryx) import _USDKit_RealityKit
+@_weakLinked import USDKit
+import UniformTypeIdentifiers
 
-extension Logger {
+extension os.Logger {
     fileprivate static let usdStageConverter = Logger(subsystem: "com.apple.WebKit", category: "USDStageConverter")
+}
+
+private func usdStageType(forMIMEType mimeType: String) -> UTType {
+    // model/usd and model/vnd.pixar.usd are unofficial types that nothing declares,
+    // so UTType(mimeType:) yields only a dyn.* placeholder for them.
+    switch mimeType {
+    case "model/usd", "model/vnd.pixar.usd": .usd
+    default: UTType(mimeType: mimeType) ?? .usdz
+    }
 }
 
 @objc
 @implementation
 extension WKUSDStageConverter {
-    @objc(convert:)
-    class func convert(_ data: Data) -> Data? {
-        let stage: UsdStage
+    @objc(convert:mimeType:)
+    class func convert(_ data: Data, mimeType: String) -> Data? {
+        let stage: USDStage
         do {
-            stage = try UsdStage.open(buffer: data)
+            stage = try USDStage(data, type: usdStageType(forMIMEType: mimeType))
         } catch {
             Logger.usdStageConverter.error("WKUSDStageConverter: Failed to open stage: \(error)")
             return nil
         }
         do {
             // FIXME: radar://141774327
-            return try stage.export(options: .preferSmallMeshFiles)
+            return try stage.exportPackage(options: .preferSmallMeshFiles)
         } catch {
             Logger.usdStageConverter.error("WKUSDStageConverter: Failed to export to USDZ: \(error)")
             return nil
@@ -64,12 +73,12 @@ extension WKUSDStageConverter {
 @objc
 @implementation
 extension WKUSDStageConverter {
-    @objc(convert:)
-    class func convert(_ data: Data) -> Data? {
+    @objc(convert:mimeType:)
+    class func convert(_ data: Data, mimeType: String) -> Data? {
         nil
     }
 }
 
-#endif // canImport(_USDKit_RealityKit)
+#endif // canImport(USDKit)
 
 #endif // ENABLE_MODEL_PROCESS

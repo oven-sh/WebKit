@@ -1,0 +1,125 @@
+# A name that no slot holds is looked up once at build time: nothing on the chain gives a constant, a locked member of Object.prototype gives the built-in
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# STATISTIC: ResolveAccessesChanges = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[AddProperty, ChangePrototype]}
+layout L1 name="GainsListedKeys" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype] addedKeys=["extra"] addedKeysAreComplete=true}
+layout L2 name="GainsUnknownKeys" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype]}
+layout L3 name="PrototypeMayChange" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[AddProperty]}
+layout L4 kind=Instance name="Scanner" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true namedMembers=[{key="level" kind=Setter function=f3 mutability=Fixed}]}
+layout L5 kind=Instance name="NamesIncomplete" constructor=f1 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed}
+layout L6 kind=Instance name="UnknownBase" constructor=f2 flags=[HasHeritage] flow={impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true}
+
+function f0 name="Scanner" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f1 name="NamesIncomplete" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f2 name="UnknownBase" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f3 name="level" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}]
+
+function f4 name="absent-from-record" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="missing"
+    v2 = PropHas v0 key="missing"
+    v3 = PropHasOwn v0 key="missing"
+    v4 = Upcast v1 castType=anything
+    Return v4
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: false = Boolean
+# CHECK-NEXT: v3: false = Boolean
+# CHECK-NEXT: v4: undefined = Upcast v1
+}
+function f5 name="member-of-object-prototype" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="hasOwnProperty"
+    v2 = PropHas v0 key="hasOwnProperty"
+    v3 = PropHasOwn v0 key="hasOwnProperty"
+    Return v1
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: builtin(ObjectPrototypeHasOwnProperty) = Builtin builtin=ObjectPrototypeHasOwnProperty
+# CHECK-NEXT: v2: true = Boolean boolean=true
+# CHECK-NEXT: v3: false = Boolean
+}
+function f6 name="absent-from-class-instance" parameters=[{type=L4}] results=[{type=anything}] {
+    v1 = PropGet v0 key="missing"
+    v2 = PropHas v0 key="missing"
+    v3 = PropGet v0 key="hasOwnProperty"
+    Return v1
+# CHECK-NEXT: b0(v0: L4):
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: false = Boolean
+# CHECK-NEXT: v3: builtin(ObjectPrototypeHasOwnProperty) = Builtin builtin=ObjectPrototypeHasOwnProperty
+}
+function f7 name="accessor-without-getter" parameters=[{type=L4}] results=[{type=anything}] {
+    v1 = PropGet v0 key="level"
+    v2 = PropHas v0 key="level"
+    Return v1
+# CHECK-NEXT: b0(v0: L4):
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: true = Boolean boolean=true
+}
+function f8 name="absent-from-every-member" parameters=[{type=L0|L4}] results=[{type=anything}] {
+    v1 = PropGet v0 key="missing"
+    Return v1
+# CHECK: v1: undefined = Undefined
+}
+function f9 name="keys-the-object-may-gain-are-listed" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="missing"
+    v2 = PropGet v0 key="extra"
+    v3 = PropHas v0 key="extra"
+    Return v1
+# CHECK-NEXT: b0(v0: L1):
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: = PropGet v0 key="extra"
+# CHECK-NEXT: = PropHas v0 key="extra"
+}
+
+function f10 name="object-may-gain-any-key" parameters=[{type=L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="missing"
+    v2 = PropHas v0 key="missing"
+    v3 = PropHasOwn v0 key="missing"
+    v4 = PropGet v0 key="hasOwnProperty"
+    Return v1
+# CHECK-NEXT: b0(v0: L2):
+# CHECK-NEXT: = PropGet v0 key="missing"
+# CHECK-NEXT: = PropHas v0 key="missing"
+# CHECK-NEXT: = PropHasOwn v0 key="missing"
+# CHECK-NEXT: = PropGet v0 key="hasOwnProperty"
+}
+function f11 name="prototype-may-change" parameters=[{type=L3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="missing"
+    v2 = PropHas v0 key="missing"
+    v3 = PropGet v0 key="hasOwnProperty"
+    Return v1
+# CHECK-NEXT: b0(v0: L3):
+# CHECK-NEXT: = PropGet v0 key="missing"
+# CHECK-NEXT: = PropHas v0 key="missing"
+# CHECK-NEXT: = PropGet v0 key="hasOwnProperty"
+}
+function f12 name="class-prototype-may-gain-names" parameters=[{type=L5}] results=[{type=anything}] {
+    v1 = PropGet v0 key="missing"
+    Return v1
+# CHECK-NEXT: b0(v0: L5):
+# CHECK-NEXT: = PropGet v0 key="missing"
+}
+function f13 name="base-class-is-unknown" parameters=[{type=L6}] results=[{type=anything}] {
+    v1 = PropGet v0 key="missing"
+    Return v1
+# CHECK-NEXT: b0(v0: L6):
+# CHECK-NEXT: = PropGet v0 key="missing"
+}
+function f14 name="store-adds-the-property" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="missing"
+    PropSet v0, v1 key="hasOwnProperty"
+    Return
+# CHECK-NEXT: b0(v0: L0, v1: number):
+# CHECK-NEXT: PropSet v0, v1 key="missing"
+# CHECK-NEXT: PropSet v0, v1 key="hasOwnProperty"
+}
+function f15 name="expected-receiver" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="missing"
+    Return v1
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = PropGet v0 key="missing"
+}

@@ -28,8 +28,9 @@
 
 #include "CallFrame.h"
 
-#if ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#if ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)
 
+#include "AOTWasmInterface.h"
 #include "CCallHelpers.h"
 #include "DisallowMacroScratchRegisterUsage.h"
 #include "JSWebAssemblyInstance.h"
@@ -40,12 +41,46 @@ namespace JSC { namespace Wasm {
 
 using JIT = CCallHelpers;
 
-std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm(const Wasm::ModuleInformation& info, unsigned importIndex)
+void emitPrepareToCageMemoryBase(CCallHelpers& jit, GPRReg instance, GPRReg scratch)
 {
-    // FIXME: Consider uniquify the stubs based on signature + index to see if this saves memory.
-    // https://bugs.webkit.org/show_bug.cgi?id=184157
-    JIT jit;
+#if GIGACAGE_ENABLED
+    if (!jit.policy().recordsProcessAddresses)
+        return;
+    auto loadPointer = [&](uint32_t slot) {
+        jit.loadPtr(CCallHelpers::Address(instance, JSWebAssemblyInstance::offsetOfImageCodePointers()), scratch);
+        jit.loadPtr(CCallHelpers::Address(scratch, safeCast<int32_t>(slot * sizeof(void*))), scratch);
+    };
+    loadPointer(ImagePointerTable::primitiveGigacageDisableRequest);
+    auto isDisabled = jit.branchTest8(CCallHelpers::NonZero, CCallHelpers::Address(scratch));
+    loadPointer(ImagePointerTable::primitiveGigacageBase);
+    jit.loadPtr(CCallHelpers::Address(scratch), scratch);
+    auto hasBase = jit.jump();
+    isDisabled.link(&jit);
+    jit.move(CCallHelpers::TrustedImm32(0), scratch);
+    hasBase.link(&jit);
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(instance);
+    UNUSED_PARAM(scratch);
+#endif
+}
 
+void emitCageMemoryBase(CCallHelpers& jit, GPRReg scratch)
+{
+#if GIGACAGE_ENABLED
+    if (jit.policy().recordsProcessAddresses) {
+        auto isNotCaged = jit.branchTestPtr(CCallHelpers::Zero, scratch);
+        jit.and64(CCallHelpers::TrustedImm64(Gigacage::mask(Gigacage::Primitive)), GPRInfo::wasmBaseMemoryPointer);
+        jit.addPtr(scratch, GPRInfo::wasmBaseMemoryPointer);
+        isNotCaged.link(&jit);
+        return;
+    }
+#endif
+    jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, scratch);
+}
+
+void emitWasmToWasm(CCallHelpers& jit, const Wasm::ModuleInformation& info, unsigned importIndex)
+{
     GPRReg scratch = wasmCallingConvention().prologueScratchGPRs[0];
     ASSERT(scratch != GPRReg::InvalidGPRReg);
     ASSERT(noOverlap(scratch, GPRInfo::wasmContextInstancePointer));
@@ -57,6 +92,7 @@ std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm
     // On ARM64 this doesn't really matter, but on intel we need to worry about the pushed pc.
     jit.storeWasmCalleeToCalleeCallFrame(scratch, safeCast<int>(sizeof(CallerFrameAndPC)) - safeCast<int>(prologueStackPointerDelta()));
 
+    emitPrepareToCageMemoryBase(jit, GPRInfo::wasmContextInstancePointer, wasmCallingConvention().prologueScratchGPRs[1]);
     jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfTargetInstance(info, importIndex)), GPRInfo::wasmContextInstancePointer, scratch);
 
     // FIXME the following code assumes that all JSWebAssemblyInstance have the same pinned registers. https://bugs.webkit.org/show_bug.cgi?id=162952
@@ -64,12 +100,20 @@ std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm
     {
         // pinned registers always store base and size of memory 0
         jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
-        jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, wasmCallingConvention().prologueScratchGPRs[1]);
+        emitCageMemoryBase(jit, wasmCallingConvention().prologueScratchGPRs[1]);
     }
 
     // Tail call into the callee WebAssembly function.
     jit.loadPtr(JIT::Address(scratch), scratch);
     jit.farJump(scratch, WasmEntryPtrTag);
+}
+
+std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm(const Wasm::ModuleInformation& info, unsigned importIndex)
+{
+    // FIXME: Consider uniquify the stubs based on signature + index to see if this saves memory.
+    // https://bugs.webkit.org/show_bug.cgi?id=184157
+    JIT jit;
+    emitWasmToWasm(jit, info, importIndex);
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::WasmThunk, JITCompilationMustSucceed);
     if (patchBuffer.didFailToAllocate()) [[unlikely]]
@@ -80,4 +124,4 @@ std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm
 
 } } // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#endif // ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)

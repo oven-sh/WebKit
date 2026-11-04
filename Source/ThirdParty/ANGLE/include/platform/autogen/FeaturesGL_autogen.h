@@ -254,8 +254,8 @@ struct FeaturesGL : FeatureSetBase
         &members,
     };
 
-    FeatureInfo resetBaseLevelForASTCSubImage = {
-        "resetBaseLevelForASTCSubImage",
+    FeatureInfo resetBaseLevelForASTCImage = {
+        "resetBaseLevelForASTCImage",
         FeatureCategory::OpenGLWorkarounds,
         &members,
     };
@@ -286,6 +286,12 @@ struct FeaturesGL : FeatureSetBase
 
     FeatureInfo limitMax3dArrayTextureSizeTo1024 = {
         "limitMax3dArrayTextureSizeTo1024",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo roundUp3dTextureSizeToPOTForLimit = {
+        "roundUp3dTextureSizeToPOTForLimit",
         FeatureCategory::OpenGLWorkarounds,
         &members,
     };
@@ -710,12 +716,6 @@ struct FeaturesGL : FeatureSetBase
         &members,
     };
 
-    FeatureInfo expandFragmentOutputsToVec4 = {
-        "expandFragmentOutputsToVec4",
-        FeatureCategory::OpenGLWorkarounds,
-        &members,
-    };
-
     FeatureInfo recreateMipmapLevelsBeforeGenerate = {
         "recreateMipmapLevelsBeforeGenerate",
         FeatureCategory::OpenGLWorkarounds,
@@ -796,6 +796,18 @@ struct FeaturesGL : FeatureSetBase
 
     FeatureInfo useTexSubImageForClientDataNpotUploads = {
         "useTexSubImageForClientDataNpotUploads",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo doubleClearForRobustInit = {
+        "doubleClearForRobustInit",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo deferGlDeleteBuffers = {
+        "deferGlDeleteBuffers",
         FeatureCategory::OpenGLWorkarounds,
         &members,
     };

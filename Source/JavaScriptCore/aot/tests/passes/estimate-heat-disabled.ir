@@ -1,0 +1,50 @@
+# With the estimate switched off no function has a class, no function is hottest and there are no thresholds
+# FORM: Prepared
+# OPTIONS: disable=pass:EstimateHeat
+# RUN: pass EstimateHeat
+# STATISTIC: EstimateHeatChanges = 0
+# CHECK-NOT: f0
+# CHECK-NOT: f1
+# CHECK: hottest:
+# CHECK-NOT: f
+# CHECK-NOT: thresholds
+# CHECK: outcome: Unchanged
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v1 function=f1
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v1
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(GlobalThis) = Builtin builtin=GlobalThis
+# CHECK-NEXT: v1: anything = PropGet v0 key="input" [isFreeName]
+# CHECK-NEXT: v2: boolean = ToBoolean v1
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v4: anything = CallDirect v1 function=f1
+# CHECK-NEXT: Branch v2 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+
+function f1 name="inLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+}

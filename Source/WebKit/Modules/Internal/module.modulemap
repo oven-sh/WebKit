@@ -321,6 +321,12 @@ module WebKit_Internal [system] {
         requires objc
     }
 
+    module StreamServerConnection {
+        requires cplusplus20
+        header "../../Platform/IPC/StreamServerConnection.h"
+        export *
+    }
+
     module TransferString {
         requires cplusplus23
         header "../../Platform/IPC/TransferString.h"
@@ -331,6 +337,12 @@ module WebKit_Internal [system] {
         header "../../UIProcess/Cocoa/WKDeferringGestureRecognizer.h"
         export *
         requires objc
+    }
+
+    module PhoneNumberPossessionTypes {
+        requires cplusplus20
+        header "../../UIProcess/PhoneNumberPossession/Cocoa/PhoneNumberPossessionTypes.h"
+        export *
     }
 
     module UIWindowScene_Extras {
@@ -347,6 +359,12 @@ module WebKit_Internal [system] {
 
     module WKMouseDeviceObserver {
         header "../../UIProcess/ios/WKMouseDeviceObserver.h"
+        export *
+        requires objc
+    }
+
+    module WKPortalVolumetricGestureController {
+        header "../../UIProcess/Cocoa/WKPortalVolumetricGestureController.h"
         export *
         requires objc
     }
@@ -426,6 +444,12 @@ module WebKit_Internal [system] {
     module WKMouseTrackingGestureRecognizer {
         requires objc
         header "../../UIProcess/mac/AppKitGestures/WKMouseTrackingGestureRecognizer.h"
+        export *
+    }
+
+    module WKPointerTrackingGestureRecognizer {
+        requires objc
+        header "../../UIProcess/mac/AppKitGestures/WKPointerTrackingGestureRecognizer.h"
         export *
     }
 

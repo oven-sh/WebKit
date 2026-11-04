@@ -1,0 +1,96 @@
+# The statements of a finally block stand once, in front of a choice of how to go on: return what the try block returned, or throw what it threw. Every way in says which by a constant.
+# No edge can skip the statements, and a copy of a few of them for each way in costs less than the kind, the merge and the choice. The value that is returned keeps its type in its copy.
+# FORM: Prepared optimizing
+# RUN: pass ThreadJumps
+# RUN(FOLDED): pass ThreadJumps SimplifyControlFlow RemoveTrivialParameters RetypeValues FoldConstants SimplifyControlFlow EliminateDeadCode
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="depth" module=m0 declared={type=number} initialization=Undefined
+
+function f0 name="work" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+
+function f1 name="everyWayInSaysHowToGoOn" parameters=[{type=number}] results=[{type=undefined|number}] {
+  b0(v0: number) handler=b1():
+    v1 = CallDirect v0 function=f0
+    v2 = Integer
+    v3 = Undefined
+    Jump -> next b2(v2, v1, v3)
+  b1() role=CleanupHandler:
+    v4 = CatchValue
+    v5 = Integer integer=1
+    v6 = Undefined
+    Jump -> next b2(v5, v6, v4)
+  b2(v7, v8, v9):
+    v10 = GetModuleVariable variable=g0
+    v11 = Decrement v10
+    PutModuleVariable v11 variable=g0
+    Switch v7 cases=[0] -> case b3(), otherwise b4()
+  b3():
+    Return v8
+  b4():
+    Throw v9
+# CHECK: Jump -> next [[copy]](v2, v1, v3)
+# CHECK: Jump -> next b2(v5, v6, v4)
+# CHECK: [[copy]](
+# CHECK-NEXT: = GetModuleVariable variable=g0
+# CHECK-NEXT: = Decrement
+# CHECK-NEXT: PutModuleVariable
+# CHECK-NEXT: Switch
+# FOLDED-NOT: Switch
+# FOLDED: PutModuleVariable
+# FOLDED: Return v1
+# FOLDED-NOT: Switch
+# FOLDED: PutModuleVariable
+# FOLDED-NEXT: Throw
+}
+
+# A way in that does not say how to go on keeps the block as it is.
+function f2 name="oneWayInLeavesItOpen" parameters=[{type=number}, {type=i32}, {type=boolean}] results=[{type=undefined|number}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v1)
+  b3(v4):
+    v5 = GetModuleVariable variable=g0
+    v6 = Decrement v5
+    PutModuleVariable v6 variable=g0
+    Switch v4 cases=[0] -> case b4(), otherwise b5()
+  b4():
+    Return v0
+  b5():
+    v8 = Undefined
+    Return v8
+# CHECK: Jump -> next b3(v3)
+# CHECK: Jump -> next b3(v1)
+# FOLDED: Switch
+}
+
+# A condition that every way in passes as true or false is such a choice too.
+function f3 name="everyWayInPassesTheCondition" parameters=[{type=number}, {type=boolean}] results=[{type=undefined|number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Boolean boolean=true
+    Jump -> next b3(v2)
+  b2():
+    v3 = Boolean
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = GetModuleVariable variable=g0
+    v6 = Decrement v5
+    PutModuleVariable v6 variable=g0
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    v8 = Undefined
+    Return v8
+# CHECK: Jump -> next [[other]](v2)
+# CHECK: Jump -> next b3(v3)
+# FOLDED: Branch v1
+# FOLDED-NOT: Branch
+}

@@ -37,6 +37,7 @@
 #import <WebCore/DocumentLoader.h>
 #import <WebCore/ElementTargetingTypes.h>
 #import <WebCore/WebCoreObjCExtras.h>
+#import <wtf/Borrow.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
@@ -80,7 +81,7 @@ WebKit::WebContentMode webContentMode(WKContentMode contentMode)
 
 #endif // PLATFORM(IOS_FAMILY)
 
-WKWebpagePreferencesUpgradeToHTTPSPolicy NODELETE upgradeToHTTPSPolicy(WebCore::HTTPSByDefaultMode httpsByDefault)
+WKWebpagePreferencesUpgradeToHTTPSPolicy LEGACY_NODELETE upgradeToHTTPSPolicy(WebCore::HTTPSByDefaultMode httpsByDefault)
 {
     switch (httpsByDefault) {
     case WebCore::HTTPSByDefaultMode::Disabled:
@@ -96,7 +97,7 @@ WKWebpagePreferencesUpgradeToHTTPSPolicy NODELETE upgradeToHTTPSPolicy(WebCore::
     return WKWebpagePreferencesUpgradeToHTTPSPolicyKeepAsRequested;
 }
 
-WebCore::HTTPSByDefaultMode NODELETE httpsByDefaultMode(WKWebpagePreferencesUpgradeToHTTPSPolicy upgradeToHTTPSPolicy)
+WebCore::HTTPSByDefaultMode LEGACY_NODELETE httpsByDefaultMode(WKWebpagePreferencesUpgradeToHTTPSPolicy upgradeToHTTPSPolicy)
 {
     switch (upgradeToHTTPSPolicy) {
     case WKWebpagePreferencesUpgradeToHTTPSPolicyKeepAsRequested:
@@ -113,7 +114,7 @@ WebCore::HTTPSByDefaultMode NODELETE httpsByDefaultMode(WKWebpagePreferencesUpgr
     return WebCore::HTTPSByDefaultMode::Disabled;
 }
 
-static _WKWebsiteMouseEventPolicy NODELETE mouseEventPolicy(WebCore::MouseEventPolicy policy)
+static _WKWebsiteMouseEventPolicy LEGACY_NODELETE mouseEventPolicy(WebCore::MouseEventPolicy policy)
 {
     switch (policy) {
     case WebCore::MouseEventPolicy::Default:
@@ -127,7 +128,7 @@ static _WKWebsiteMouseEventPolicy NODELETE mouseEventPolicy(WebCore::MouseEventP
     return _WKWebsiteMouseEventPolicyDefault;
 }
 
-static WebCore::MouseEventPolicy NODELETE coreMouseEventPolicy(_WKWebsiteMouseEventPolicy policy)
+static WebCore::MouseEventPolicy LEGACY_NODELETE coreMouseEventPolicy(_WKWebsiteMouseEventPolicy policy)
 {
     switch (policy) {
     case _WKWebsiteMouseEventPolicyDefault:
@@ -141,7 +142,7 @@ static WebCore::MouseEventPolicy NODELETE coreMouseEventPolicy(_WKWebsiteMouseEv
     return WebCore::MouseEventPolicy::Default;
 }
 
-static _WKWebsiteModalContainerObservationPolicy NODELETE modalContainerObservationPolicy(WebCore::ModalContainerObservationPolicy policy)
+static _WKWebsiteModalContainerObservationPolicy LEGACY_NODELETE modalContainerObservationPolicy(WebCore::ModalContainerObservationPolicy policy)
 {
     switch (policy) {
     case WebCore::ModalContainerObservationPolicy::Disabled:
@@ -153,7 +154,7 @@ static _WKWebsiteModalContainerObservationPolicy NODELETE modalContainerObservat
     return _WKWebsiteModalContainerObservationPolicyDisabled;
 }
 
-static WebCore::ModalContainerObservationPolicy NODELETE coreModalContainerObservationPolicy(_WKWebsiteModalContainerObservationPolicy policy)
+static WebCore::ModalContainerObservationPolicy LEGACY_NODELETE coreModalContainerObservationPolicy(_WKWebsiteModalContainerObservationPolicy policy)
 {
     switch (policy) {
     case _WKWebsiteModalContainerObservationPolicyDisabled:
@@ -213,7 +214,8 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
 {
     HashSet<String> exceptions;
     exceptions.reserveInitialCapacity(identifiers.count);
-    for (NSString *identifier in identifiers)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *identifier in identifiers)
         exceptions.add(identifier);
 
     auto defaultEnablement = enabled ? WebCore::ContentExtensionDefaultEnablement::Enabled : WebCore::ContentExtensionDefaultEnablement::Disabled;
@@ -226,7 +228,8 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     [patterns enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSSet<NSString *> *value, BOOL *) {
         Vector<String> vector;
         vector.reserveInitialCapacity(value.count);
-        for (NSString *pattern in value)
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *pattern in value)
             vector.append(pattern);
         map.add(key, WTF::move(vector));
     }];
@@ -238,7 +241,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
     NSMutableDictionary<NSString *, NSSet<NSString *> *> *dictionary = [NSMutableDictionary dictionary];
     for (const auto& pair : _websitePolicies->activeContentRuleListActionPatterns()) {
         NSMutableSet<NSString *> *set = [NSMutableSet set];
-        for (const auto& pattern : pair.value)
+        for (const auto& pattern : borrow(pair.value))
             [set addObject:pattern.createNSString().get()];
         [dictionary setObject:set forKey:pair.key.createNSString().get()];
     }
@@ -317,7 +320,7 @@ WK_OBJECT_DISABLE_DISABLE_KVC_IVAR_ACCESS;
 }
 
 #if ENABLE(DEVICE_ORIENTATION)
-static WebCore::DeviceOrientationOrMotionPermissionState NODELETE toDeviceOrientationOrMotionPermissionState(_WKWebsiteDeviceOrientationAndMotionAccessPolicy policy)
+static WebCore::DeviceOrientationOrMotionPermissionState LEGACY_NODELETE toDeviceOrientationOrMotionPermissionState(_WKWebsiteDeviceOrientationAndMotionAccessPolicy policy)
 {
     switch (policy) {
     case _WKWebsiteDeviceOrientationAndMotionAccessPolicyAsk:
@@ -339,7 +342,7 @@ static WebCore::DeviceOrientationOrMotionPermissionState NODELETE toDeviceOrient
 }
 
 #if ENABLE(DEVICE_ORIENTATION)
-static _WKWebsiteDeviceOrientationAndMotionAccessPolicy NODELETE toWKWebsiteDeviceOrientationAndMotionAccessPolicy(WebCore::DeviceOrientationOrMotionPermissionState state)
+static _WKWebsiteDeviceOrientationAndMotionAccessPolicy LEGACY_NODELETE toWKWebsiteDeviceOrientationAndMotionAccessPolicy(WebCore::DeviceOrientationOrMotionPermissionState state)
 {
     switch (state) {
     case WebCore::DeviceOrientationOrMotionPermissionState::Prompt:
@@ -763,13 +766,16 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 {
     Vector<WebCore::TargetedElementSelectors> result;
     result.reserveInitialCapacity(elements.count);
-    for (NSArray<NSSet<NSString *> *> *nsSelectorsForElement in elements) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSArray<NSSet<NSString *> *> *nsSelectorsForElement in elements) {
         WebCore::TargetedElementSelectors selectorsForElement;
         selectorsForElement.reserveInitialCapacity(nsSelectorsForElement.count);
-        for (NSSet<NSString *> *nsSelectors in nsSelectorsForElement) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSSet<NSString *> *nsSelectors in nsSelectorsForElement) {
             HashSet<String> selectors;
             selectors.reserveInitialCapacity(nsSelectors.count);
-            for (NSString *selector in nsSelectors)
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSString *selector in nsSelectors)
                 selectors.add(selector);
             selectorsForElement.append(WTF::move(selectors));
         }
@@ -783,7 +789,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     RetainPtr result = adoptNS([[NSMutableArray alloc] initWithCapacity:_websitePolicies->visibilityAdjustmentSelectors().size()]);
     for (auto& selectorsForElement : _websitePolicies->visibilityAdjustmentSelectors()) {
         RetainPtr nsSelectorsForElement = adoptNS([[NSMutableArray alloc] initWithCapacity:selectorsForElement.size()]);
-        for (auto& selectors : selectorsForElement) {
+        for (auto& selectors : borrow(selectorsForElement)) {
             RetainPtr nsSelectors = adoptNS([[NSMutableSet alloc] initWithCapacity:selectors.size()]);
             for (auto& selector : selectors)
                 [nsSelectors addObject:selector.createNSString().get()];
@@ -797,7 +803,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 - (void)_setVisibilityAdjustmentSelectors:(NSSet<NSString *> *)nsSelectors
 {
     RetainPtr elements = adoptNS([[NSMutableArray alloc] initWithCapacity:nsSelectors.count]);
-    for (NSString *selector : nsSelectors)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *selector : nsSelectors)
         [elements addObject:@[ [NSSet setWithObject:selector] ]];
     self._visibilityAdjustmentSelectorsIncludingShadowHosts = elements.get();
 }

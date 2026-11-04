@@ -30,6 +30,7 @@
 #include "GeolocationPermissionRequestManagerProxy.h"
 #include "GeolocationPermissionRequestProxy.h"
 #include "Logging.h"
+#include "ValidationProcedures.h"
 #include "WebGeolocationManagerMessages.h"
 #include "WebGeolocationManagerProxyMessages.h"
 #include "WebGeolocationPosition.h"
@@ -43,11 +44,7 @@
     EXTRACT_WITH_MESSAGE_CHECK(connection, name, untrusted, ValidationProcedure { name##Process })
 
 #define EXTRACT_WITH_MESSAGE_CHECK(connection, name, untrusted, ...) \
-    auto name##Validated = WTF::move(untrusted).validate(__VA_ARGS__); \
-    MESSAGE_CHECK(connection, IPC::valueMayBeLegitimate(name##Validated)); \
-    if (!name##Validated) \
-        return; \
-    auto name = WTF::move(*name##Validated)
+    EXTRACT_WITH_MESSAGE_CHECK_BASE((connection), name, untrusted, (void)0, __VA_ARGS__)
 
 namespace WebKit {
 
@@ -88,11 +85,14 @@ void WebGeolocationManagerProxy::processPoolDestroyed()
 
 void WebGeolocationManagerProxy::webProcessIsGoingAway(WebProcessProxy& proxy)
 {
-    Vector<WebCore::RegistrableDomain> affectedDomains;
-    for (auto& [registrableDomain, perDomainData] : m_perDomainData) {
-        if (perDomainData->watchers.contains(proxy))
-            affectedDomains.append(registrableDomain);
-    }
+    const Vector affectedDomains = [&] {
+        Vector<WebCore::RegistrableDomain> affectedDomains;
+        for (auto& [registrableDomain, perDomainData] : m_perDomainData) {
+            if (perDomainData->watchers.contains(proxy))
+                affectedDomains.append(registrableDomain);
+        }
+        return affectedDomains;
+    }();
     for (auto& registrableDomain : affectedDomains)
         stopUpdatingWithProxy(proxy, registrableDomain);
 }
@@ -132,8 +132,8 @@ void WebGeolocationManagerProxy::resetPermissions()
 
 void WebGeolocationManagerProxy::startUpdating(IPC::Connection& connection, IPC::Untrusted<WebCore::RegistrableDomain>&& untrustedRegistrableDomain, WebPageProxyIdentifier pageProxyID, const String& authorizationToken, bool enableHighAccuracy)
 {
-    auto registrableDomain = WTF::move(untrustedRegistrableDomain).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
-
+    // Checked against the domain bound to the authorization token the permission manager issued.
+    auto registrableDomain = WTF::move(untrustedRegistrableDomain).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::ValidatedElsewhere);
     startUpdatingWithProxy(WebProcessProxy::fromConnection(connection), registrableDomain, pageProxyID, authorizationToken, enableHighAccuracy);
 }
 
@@ -168,10 +168,9 @@ void WebGeolocationManagerProxy::startUpdatingWithProxy(WebProcessProxy& proxy, 
         proxy.send(Messages::WebGeolocationManager::DidChangePosition(registrableDomain, perDomainData.lastPosition.value()), 0);
 }
 
-void WebGeolocationManagerProxy::stopUpdating(IPC::Connection& connection, IPC::Untrusted<WebCore::RegistrableDomain>&& untrustedRegistrableDomain)
+void WebGeolocationManagerProxy::stopUpdating(IPC::Connection& connection, IPC::Untrusted<WebCore::RegistrableDomain>&& untrustedDomain)
 {
-    auto registrableDomain = WTF::move(untrustedRegistrableDomain).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
-
+    EXTRACT_FROM_CONNECTION_WITH_MESSAGE_CHECK(registrableDomain, untrustedDomain, ProcessSpeaksForDomain);
     stopUpdatingWithProxy(WebProcessProxy::fromConnection(connection), registrableDomain);
 }
 
@@ -200,10 +199,9 @@ void WebGeolocationManagerProxy::stopUpdatingWithProxy(WebProcessProxy& proxy, c
         m_perDomainData.remove(it);
 }
 
-void WebGeolocationManagerProxy::setEnableHighAccuracy(IPC::Connection& connection, IPC::Untrusted<WebCore::RegistrableDomain>&& untrustedRegistrableDomain, bool enabled)
+void WebGeolocationManagerProxy::setEnableHighAccuracy(IPC::Connection& connection, IPC::Untrusted<WebCore::RegistrableDomain>&& untrustedDomain, bool enabled)
 {
-    auto registrableDomain = WTF::move(untrustedRegistrableDomain).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
-
+    EXTRACT_FROM_CONNECTION_WITH_MESSAGE_CHECK(registrableDomain, untrustedDomain, ProcessSpeaksForDomain);
     setEnableHighAccuracyWithProxy(WebProcessProxy::fromConnection(connection), registrableDomain, enabled);
 }
 
@@ -313,5 +311,5 @@ void WebGeolocationManagerProxy::providerSetEnabledHighAccuracy(PerDomainData& p
 } // namespace WebKit
 
 #undef MESSAGE_CHECK
-#undef EXTRACT_FROM_CONNECTION_WITH_MESSAGE_CHECK
 #undef EXTRACT_WITH_MESSAGE_CHECK
+#undef EXTRACT_FROM_CONNECTION_WITH_MESSAGE_CHECK

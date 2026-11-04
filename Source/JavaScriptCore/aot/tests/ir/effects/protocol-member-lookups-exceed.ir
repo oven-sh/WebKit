@@ -1,0 +1,14 @@
+# The resolution of a promise with a number looks no member up, so a test that reads the members of an object does more than the resolution it replaces
+# FORM: Prepared optimizing
+# RUN: check-replacement f0 v5 v4
+# DIAGNOSTIC: EffectsExceedReplacedGroup 1
+# CHECK-NOT: valid
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="resolutionWithNumber" parameters=[{type=object}, {type=number}] results=[{type=undefined}] {
+    v2 = NewPromise
+    v3 = Undefined
+    ResolvePromise v2, v1
+    v5 = IsNotThenable v0
+    Return v3
+}

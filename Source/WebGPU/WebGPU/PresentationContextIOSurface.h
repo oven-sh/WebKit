@@ -32,7 +32,7 @@
 #import <wtf/Vector.h>
 #import <wtf/spi/cocoa/IOSurfaceSPI.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class Device;
 class Instance;
@@ -40,24 +40,25 @@ class Instance;
 class PresentationContextIOSurface : public PresentationContext {
     WTF_MAKE_TZONE_ALLOCATED(PresentationContextIOSurface);
 public:
-    static Ref<PresentationContextIOSurface> create(const WGPUSurfaceDescriptor&, const Instance&);
+    static Ref<PresentationContextIOSurface> create(const WebGPU::PresentationContextDescriptor&, const Instance&);
 
     virtual ~PresentationContextIOSurface();
 
-    void configure(Device&, const WGPUSwapChainDescriptor&) override;
+    void configure(const WebGPU::CanvasConfiguration&) override;
     void unconfigure() override;
 
     void present(uint32_t) override;
-    Texture* getCurrentTexture(uint32_t) override;
+    Texture* currentTexture(uint32_t) override;
     TextureView* getCurrentTextureView() override;
 
     Seconds lastFrameGPUCost() const override { return m_lastDrainedFrameGPUCost; }
+    Seconds lastFramePresentStall() const override { return m_lastFramePresentStall; }
 
     bool isPresentationContextIOSurface() const override { return true; }
 
-    bool isValid() override { return true; }
+    bool isValid() const final { return true; }
 private:
-    PresentationContextIOSurface(const WGPUSurfaceDescriptor&, const Instance&);
+    explicit PresentationContextIOSurface(const Instance&);
 
     void renderBuffersWereRecreated(NSArray<IOSurface *> *renderBuffers);
     void onSubmittedWorkScheduled(Function<void()>&&);
@@ -82,14 +83,15 @@ private:
     Deque<Ref<Texture>> m_inFlightFrames;
     size_t m_maximumInFlightFrames { 0 };
     Seconds m_lastDrainedFrameGPUCost { 0_s };
+    Seconds m_lastFramePresentStall { 0_s };
 #if HAVE(IOSURFACE_SET_OWNERSHIP_IDENTITY) && HAVE(TASK_IDENTITY_TOKEN)
     std::optional<const MachSendRight> m_webProcessID;
 #endif
-    WGPUColorSpace m_colorSpace { WGPUColorSpace::SRGB };
-    WGPUToneMappingMode m_toneMappingMode { WGPUToneMappingMode_Standard };
-    WGPUCompositeAlphaMode m_alphaMode { WGPUCompositeAlphaMode_Premultiplied };
+    WebGPU::PredefinedColorSpace m_colorSpace { WebGPU::PredefinedColorSpace::SRGB };
+    WebGPU::CanvasToneMappingMode m_toneMappingMode { WebGPU::CanvasToneMappingMode::Standard };
+    WebGPU::CanvasAlphaMode m_alphaMode { WebGPU::CanvasAlphaMode::Premultiplied };
 };
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 SPECIALIZE_TYPE_TRAITS_WEBGPU_PRESENTATION_CONTEXT(PresentationContextIOSurface, isPresentationContextIOSurface());

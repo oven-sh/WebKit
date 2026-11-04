@@ -1,0 +1,19 @@
+# handedIn(Error.prototype); delete handedIn.toString; Error.prototype.toString; Error.prototype.constructor
+# `handedIn` may be whatever the program has handed out, and no listing names a prototype object of the language. The statement names the member that it removes, so
+# Error.prototype.toString counts as written by the program and start-up does not lock it. Error.prototype.constructor, which no statement names, stays constant.
+# RUN: valueflow-results
+# CHECK: builtin-location ErrorPrototype."toString" Unknown
+# CHECK: builtin-location ErrorPrototype."constructor" Constant
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = Builtin builtin=ErrorPrototype
+    v3 = Call v1, -, v2
+    v4 = PropDelete v1 key="toString"
+    v5 = PropGet v2 key="toString"
+    v6 = PropGet v2 key="constructor"
+    Return v5
+}

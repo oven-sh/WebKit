@@ -1,0 +1,9 @@
+# A definition of a private name that became a slot store tests nothing, so in an object whose keys nobody enumerates the field it always fills needs no absent state
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: plan-slots layouts
+
+# CHECK: L0 CompiledObject size=32 {{*}} unordered
+# CHECK-NEXT: .0 #"count"@L0 Double @16
+# CHECK-NEXT: .1 "step" Double @24
+# PROGRAM-OF: check-placement-private-definition.ir

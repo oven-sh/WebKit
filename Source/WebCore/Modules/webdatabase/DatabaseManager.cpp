@@ -53,8 +53,8 @@ public:
     ProposedDatabase(DatabaseManager&, SecurityOrigin&, const String& name, const String& displayName, unsigned long estimatedSize);
     ~ProposedDatabase();
 
-    SecurityOrigin& NODELETE origin() { return m_origin; }
-    DatabaseDetails& NODELETE details() { return m_details; }
+    SecurityOrigin& LEGACY_NODELETE origin() { return m_origin; }
+    DatabaseDetails& LEGACY_NODELETE details() { return m_details; }
 
 private:
     DatabaseManager& m_manager;
@@ -114,7 +114,7 @@ Ref<DatabaseContext> DatabaseManager::databaseContext(Document& document)
 
 #if LOG_DISABLED
 
-static inline void NODELETE logOpenDatabaseError(Document&, const String&)
+static inline void LEGACY_NODELETE logOpenDatabaseError(Document&, const String&)
 {
 }
 
@@ -137,7 +137,7 @@ ExceptionOr<Ref<Database>> DatabaseManager::openDatabaseBackend(Document& docume
             // The client may want to increase the quota, and we'll give it
             // one more try after if that is the case.
             {
-                ProposedDatabase proposedDatabase { *this, document.securityOrigin(), name, displayName, estimatedSize };
+                ProposedDatabase proposedDatabase { *this, protect(document.securityOrigin()), name, displayName, estimatedSize };
                 this->databaseContext(document)->databaseExceededQuota(name, proposedDatabase.details());
             }
             backend = tryToOpenDatabaseBackend(document, name, expectedVersion, displayName, estimatedSize, setVersionInNewDatabase, RetryOpenDatabase);

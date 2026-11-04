@@ -1,0 +1,82 @@
+# function set(list: number[], at: number, value: number) { list[at] = value }  function pushOne(list: number[], a: number) { return list.push(a) }  function pushTwo(list: number[], a: number, b: number) { return list.push(a, b) }
+# function pop(list: number[]) { return list.pop() }  function shift(list: number[]) { return list.shift() }  function setLength(list: number[], length: number) { list.length = length }
+# function removeSecond(list: number[]) { return list.splice(1, 1).length }  function tryPut(list: number[], value: number) { return $tryPutIndex(list, 0, value) }
+# An operation that writes the storage of an array compares the whole byte that names the kind of storage. The lock of the cell lies in the same byte, so while a thread holds the lock the comparison says no.
+# Every such operation then goes the way that is right for any array: the program prints what it prints with the lock free, for storage of integers, of doubles and of any values.
+# The same holds while another thread takes and releases the lock in the middle of the operations.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (...operations) => { for (const first of [1, 1.5, "a"]) { const list = []; list.push(first, first, first, first); lockCell(list); const answers = runAll(list, first, operations); unlockCell(list); print(answers + " | " + list.join()); } }; globalThis.runAll = (list, first, [set, pushOne, pushTwo, pop, shift, setLength, removeSecond, tryPut]) => { const answers = []; set(list, 1, first + first); set(list, 4, first); answers.push(pushOne(list, first), pushTwo(list, first, first + first), pop(list), shift(list)); setLength(list, 5); answers.push(removeSecond(list), tryPut(list, first + first + first)); return answers.join(); };
+# RUN(FREE): run-in-shell globalThis.register = (...operations) => { for (const first of [1, 1.5, "a"]) { const list = []; list.push(first, first, first, first); const answers = runAll(list, first, operations); print(answers + " | " + list.join()); } }; globalThis.runAll = (list, first, [set, pushOne, pushTwo, pop, shift, setLength, removeSecond, tryPut]) => { const answers = []; set(list, 1, first + first); set(list, 4, first); answers.push(pushOne(list, first), pushTwo(list, first, first + first), pop(list), shift(list)); setLength(list, 5); answers.push(removeSecond(list), tryPut(list, first + first + first)); return answers.join(); };
+# RUN(MOVING): run-in-shell globalThis.register = (set, pushOne, pushTwo, pop) => { for (const first of [1, 1.5, "a"]) { const list = []; list.push(first, first, first, first); print(callWhileAnotherThreadLocksCell(list, () => { for (let round = 0; round < 200000; round++) { set(list, round & 3, first); pushOne(list, first); pushTwo(list, first, first); pop(list); pop(list); pop(list); } return list.join(); })); } };
+# CHECK-NOT: AOT validation
+# CHECK: 6,8,2,1,1,false | 2,1,1,1
+# CHECK-NEXT: 6,8,3,1.5,1,false | 3,1.5,1.5,1.5
+# CHECK-NEXT: 6,8,aa,a,1,false | aa,a,a,a
+# CHECK-NEXT: exited with 0
+# MOVING-NOT: AOT validation
+# MOVING: 1,1,1,1
+# MOVING-NEXT: 1.5,1.5,1.5,1.5
+# MOVING-NEXT: a,a,a,a
+# MOVING-NEXT: exited with 0
+# FREE-NOT: AOT validation
+# FREE: 6,8,2,1,1,true | 3,1,1,1
+# FREE-NEXT: 6,8,3,1.5,1,true | 4.5,1.5,1.5,1.5
+# FREE-NEXT: 6,8,aa,a,1,true | aaa,a,a,a
+# FREE-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = NewClosure function=f7
+    v7 = NewClosure function=f8
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="register" [isFreeName]
+    v10 = Call v9, -, v0, v1, v2, v3, v4, v5, v6, v7
+    Return
+}
+function f1 name="set" parameters=[{type=Array flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+}
+function f2 name="pushOne" parameters=[{type=Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1
+    Return v3
+}
+function f3 name="pushTwo" parameters=[{type=Array flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = PropGet v0 key="push"
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}
+function f4 name="pop" parameters=[{type=Array flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pop"
+    v2 = Call v1, v0
+    Return v2
+}
+function f5 name="shift" parameters=[{type=Array flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = PropGet v0 key="shift"
+    v2 = Call v1, v0
+    Return v2
+}
+function f6 name="setLength" parameters=[{type=Array flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] {
+    PropSet v0, v1 key="length" mode=Strict
+    Return
+}
+function f7 name="removeSecond" parameters=[{type=Array flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = PropGet v0 key="splice"
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2, v2
+    v4 = PropGet v3 key="length"
+    Return v4
+}
+function f8 name="tryPut" role=Library parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    v3 = TryPutIndex v0, v2, v1
+    Return v3
+}

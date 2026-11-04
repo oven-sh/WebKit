@@ -1,0 +1,139 @@
+# A closure that is an argument of one call by value, and nothing else, lies in the frame also where nobody knows the callee: the stub of the call moves it to the heap unless the closure word of the callee says that the argument is borrowed.
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass only-passes=BuildCallGraph,EstimateHeat,ComputeEffectSummaries,AllocateInFrames heat=EverythingIsHot
+# STATISTIC: ClosuresLent = 7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+# REPEAT: i = 1..9
+    v%(i+3) = CallDirect v1 function=f%(i)
+# END REPEAT
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+
+function f1 name="handedToUnknownCallee" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = Call v0, -, v1
+    v3 = ToBoolean v2
+    Return v3
+}
+# CHECK-LABEL: function f1 name="handedToUnknownCallee"
+# CHECK: = NewClosure function=f10 {{*}}storage=Frame [isLent]
+
+function f2 name="secondArgumentAndBoth" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = Call v0, -, v0, v1
+    v3 = NewClosure function=f10
+    v4 = NewClosure function=f11
+    v5 = Call v0, v2, v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f2 name="secondArgumentAndBoth"
+# CHECK: v1: f10 = NewClosure function=f10 {{*}}storage=Frame [isLent]
+# CHECK: v3: f10 = NewClosure function=f10 {{*}}storage=Frame [isLent]
+# CHECK: v4: f11 = NewClosure function=f11 {{*}}storage=Frame [isLent]
+
+function f3 name="thirdArgument" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = Call v0, -, v0, v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f3 name="thirdArgument"
+# CHECK-NOT: storage=
+
+function f4 name="usedTwice" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = Call v0, -, v1
+    v3 = Call v0, -, v1
+    v4 = NewClosure function=f11
+    v5 = Call v0, -, v4, v4
+    v6 = NewClosure function=f11
+    v7 = Call v0, v6, v6
+    Return v3
+}
+# CHECK-LABEL: function f4 name="usedTwice"
+# CHECK-NOT: storage=
+
+function f5 name="madeOutsideTheLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Call v0, -, v1
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f5 name="madeOutsideTheLoop"
+# CHECK-NOT: storage=
+
+function f6 name="madeInTheLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = NewClosure function=f10
+    v3 = Call v0, -, v2
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f6 name="madeInTheLoop"
+# CHECK: = NewClosure function=f10 {{*}}storage=Frame [isLent]
+
+function f7 name="inTailPosition" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = Call v0, -, v1
+    ReturnCall v2
+}
+# CHECK-LABEL: function f7 name="inTailPosition"
+# CHECK: = NewClosure function=f10 {{*}}storage=Frame [isLent]
+# CHECK: ReturnCall v2
+
+function f8 name="overAnEnvironment" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1 function=f12
+    v3 = Call v0, -, v2
+    v4 = GetEnvironmentField v1 layout=L0 field=0
+    Return v4
+}
+# The copy takes what the closure captures with it.
+# CHECK-LABEL: function f8 name="overAnEnvironment"
+# CHECK: v1: env L0 = NewObject
+# CHECK-NOT: storage=
+# CHECK: = NewClosure v1 function=f12 {{*}}storage=Frame [isLent]
+
+function f9 name="constructed" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = Construct v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f9 name="constructed"
+# CHECK-NOT: storage=
+
+function f10 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}
+
+function f11 name="otherCallback" kind=Arrow results=[{type=anything}] {
+    Return
+}
+
+function f12 name="readsCapture" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}

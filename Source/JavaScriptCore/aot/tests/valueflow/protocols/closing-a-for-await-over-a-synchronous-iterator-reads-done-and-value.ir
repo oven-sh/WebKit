@@ -1,0 +1,54 @@
+# iterable = { [Symbol.iterator]() { return { next() { return { value: 1, done: false } }, return() { return { get done() {}, get value() {}, get unused() {} } } } } }; state = open(iterable) for await; close(state)
+# A synchronous iterator under `for await` is wrapped, and %AsyncFromSyncIteratorPrototype%.return reads `done` and `value` of what its `return` answers. No other getter is entered.
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+# UNREACHED-NOT: unreached f5
+# UNREACHED: unreached f6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Iterable" fields=[{key=@@iterator declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Iterator" fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="return" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Result" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="done" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Answer" fields=[{key="done" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}, {key="unused" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = IteratorOpen v2 iteratorKind=Async
+    IteratorClose v3 iteratorKind=Async
+    Return
+}
+function f1 name="iterator" kind=Method flags=[HasThis] results=[{type=anything}] {
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v1, v2 layout=L1 fields=[0, 1]
+    Return v3
+}
+function f2 name="next" kind=Method flags=[HasThis] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = Boolean boolean=false
+    v3 = NewObject -, v1, v2 layout=L2 fields=[0, 1]
+    Return v3
+}
+function f3 name="return" kind=Method flags=[HasThis] results=[{type=anything}] {
+    v1 = NewObject layout=L3
+    v2 = NewClosure function=f4
+    DefineGetter v1, v2 key="done"
+    v4 = NewClosure function=f5
+    DefineGetter v1, v4 key="value"
+    v6 = NewClosure function=f6
+    DefineGetter v1, v6 key="unused"
+    v8 = FinishObject v1
+    Return v8
+}
+function f4 name="done" kind=Getter results=[{type=anything}] {
+    Return
+}
+function f5 name="value" kind=Getter results=[{type=anything}] {
+    Return
+}
+function f6 name="unused" kind=Getter results=[{type=anything}] {
+    Return
+}

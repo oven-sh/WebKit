@@ -65,8 +65,9 @@ inline ExtensionStyleSheets& Document::extensionStyleSheets()
 
 inline VisitedLinkState& Document::visitedLinkState() const
 {
-    if (!m_visitedLinkState)
+    if (!m_visitedLinkState) {
         return const_cast<Document&>(*this).ensureVisitedLinkState();
+    }
     return *m_visitedLinkState;
 }
 
@@ -86,8 +87,9 @@ inline ScriptModuleLoader& Document::moduleLoader()
 
 inline CSSFontSelector& Document::fontSelector() const
 {
-    if (!m_fontSelector)
+    if (!m_fontSelector) {
         return const_cast<Document&>(*this).ensureFontSelector();
+    }
     return *m_fontSelector;
 }
 
@@ -121,15 +123,17 @@ inline bool Document::wasLastFocusByClick() const { return m_latestFocusTrigger 
 
 inline UndoManager& Document::undoManager() const
 {
-    if (!m_undoManager)
+    if (!m_undoManager) {
         return const_cast<Document&>(*this).ensureUndoManager();
+    }
     return *m_undoManager;
 }
 
 inline ReportingScope& Document::reportingScope() const
 {
-    if (!m_reportingScope)
+    if (!m_reportingScope) {
         return const_cast<Document&>(*this).ensureReportingScope();
+    }
     return *m_reportingScope;
 }
 

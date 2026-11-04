@@ -1,0 +1,5 @@
+# A private name is followed by the layout that owns it
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+layout L0 kind=Instance fields=[{key=#"p" declared={type=anything} flags=[IsPrivate]}]

@@ -94,7 +94,7 @@ public:
 
     virtual Class* getClass() const = 0;
     WEBCORE_EXPORT JSObject* createRuntimeObject(JSGlobalObject*);
-    void NODELETE willInvalidateRuntimeObject();
+    void LEGACY_NODELETE willInvalidateRuntimeObject();
 
     // Returns false if the value was not set successfully.
     virtual bool setValueOfUndefinedField(JSGlobalObject*, PropertyName, JSValue) { return false; }
@@ -114,7 +114,7 @@ public:
 
     virtual JSValue valueOf(JSGlobalObject* exec) const = 0;
 
-    RootObject* NODELETE rootObject() const;
+    RootObject* LEGACY_NODELETE rootObject() const;
 
     WEBCORE_EXPORT virtual ~Instance();
 
@@ -128,7 +128,7 @@ protected:
     virtual void virtualEnd() { }
     WEBCORE_EXPORT virtual RuntimeObject* newRuntimeObject(JSGlobalObject*);
 
-    RefPtr<RootObject> m_rootObject;
+    const RefPtr<RootObject> m_rootObject;
 
 private:
     Weak<RuntimeObject> m_runtimeObject;
@@ -145,7 +145,7 @@ public:
     virtual unsigned int getLength() const = 0;
 
 protected:
-    RefPtr<RootObject> m_rootObject;
+    const RefPtr<RootObject> m_rootObject;
 };
 
 const char* signatureForParameters(const ArgList&);

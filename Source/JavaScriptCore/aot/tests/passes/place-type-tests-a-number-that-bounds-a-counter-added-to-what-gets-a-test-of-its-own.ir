@@ -1,0 +1,44 @@
+# A number that bounds a counter is tested for int32 in front of the loop where the counter is added to a value that gets a test of its own: behind both tests the sum is one of integers
+# RUN: pipeline Select
+# OPTIONS: check=VerifyEachPass
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="count" [isFreeName]
+    v2 = ToNumber v1
+    v3 = PropGet v0 key="first" [isFreeName]
+    v4 = BitOr v3, v2
+    v5 = Undefined
+    v6 = ToBoolean v3
+    Branch v6 -> taken b1(v4), notTaken b1(v5)
+  b1(v7):
+    v8 = CallDirect v2, v7 function=f1
+    v9 = PropGet v0 key="sink" [isFreeName]
+    v10 = Call v9, -, v8
+    Return
+}
+function f1 name="sumOfLowBits" parameters=[{type=number}, {type=undefined|i32}] results=[{type=number}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=255
+    Jump -> next b1(v2, v2)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v1, v4
+    v9 = BitAnd v8, v3
+    v10 = Add v5, v9
+    v11 = BitOr v10, v2
+    v12 = Increment v4
+    Jump -> next b1(v12, v11)
+  b3():
+    Return v5
+# CHECK: = TypeTest v0 testedType=i32
+# CHECK: ({{*}}: int[0, 2147483647], {{*}}: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Less {{*}}form=Integers
+# CHECK: = Add {{*}}form=Integers
+}

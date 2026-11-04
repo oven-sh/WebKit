@@ -49,7 +49,7 @@ struct GridMinMaxFunctionParameters {
 
     bool operator==(const GridMinMaxFunctionParameters&) const = default;
 };
-using GridMinMaxFunction = FunctionNotation<CSSValueMinmax, GridMinMaxFunctionParameters>;
+using GridMinMaxFunction = FunctionNotation<CSSValueID::Minmax, GridMinMaxFunctionParameters>;
 
 template<size_t I> const auto& get(const GridMinMaxFunctionParameters& value)
 {
@@ -66,7 +66,7 @@ struct GridFitContentFunctionParameters {
 
     bool operator==(const GridFitContentFunctionParameters&) const = default;
 };
-using GridFitContentFunction = FunctionNotation<CSSValueFitContent, GridFitContentFunctionParameters>;
+using GridFitContentFunction = FunctionNotation<CSSValueID::FitContent, GridFitContentFunctionParameters>;
 DEFINE_TYPE_WRAPPER_GET(GridFitContentFunctionParameters, value);
 
 // This class represents a <track-size> from the spec. Although there are 3 different types of
@@ -177,7 +177,7 @@ struct GridTrackSize {
 
     bool isContentSized() const { return m_minTrackBreadth.isContentSized() || m_maxTrackBreadth.isContentSized(); }
 
-    template<typename... F> decltype(auto) switchOn(F&&...) const;
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&...) const;
 
     bool operator==(const GridTrackSize& other) const
     {
@@ -245,7 +245,7 @@ private:
     bool m_maxTrackBreadthIsFixed : 1;
 };
 
-template<typename... F> decltype(auto) GridTrackSize::switchOn(F&&... f) const
+template<typename... F> decltype(auto) GridTrackSize::switchOn(NOESCAPE F&&... f) const
 {
     auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 

@@ -1,0 +1,114 @@
+# type Entry = { follower: Entry | null; weight: number };
+# let newest: Entry | null = null;
+# function leaf(weight: number): Entry {
+#   const entry: Entry = { follower: null, weight };
+#   newest = entry;
+#   return entry;
+# }
+# function chain(weight: number): Entry {
+#   const entry = leaf(weight);
+#   entry.follower = leaf(weight + 1);
+#   return entry;
+# }
+# declare const input: any;
+# (globalThis as any).answer = chain(+input).follower!.weight + chain(1.5).weight + newest!.weight;
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f2
+# REQUIRES: unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=104 kind=Parameter function=f1
+typesite w1 module=m0 position=90 kind=Result
+typesite w2 module=m0 position=61 kind=Variable
+typesite w3 module=m0 position=231 kind=Parameter function=f2
+typesite w4 module=m0 position=216 kind=Result
+typesite w5 module=m0 position=396 kind=CallResult
+typesite w6 module=m0 position=429 kind=CallResult
+typesite w7 module=m0 position=137 kind=Variable
+typesite w8 module=m0 position=272 kind=CallResult
+typesite w9 module=m0 position=305 kind=CallResult
+layout L0 name="Entry" module=m0 position=5 fields=[{key="follower" declared={type=undefined|null|L0 flags=[OmitsUndefined]} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="leaf" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="newest" module=m0 declared={type=undefined|null|absent|L0 site=w2 flags=[OmitsUndefined]}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Null
+    v3 = Convert v2 declared={type=undefined|null|L0 site=w2 flags=[OmitsUndefined]}
+    PutModuleVariable v3 variable=g1
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="globalThis" [isFreeName]
+    v7 = Convert v6 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v8 = Convert v7 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="input" [isFreeName]
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    v12 = ToNumber v11
+    v13 = Call v1, -, v12 calleeName="chain"
+    v14 = Convert v13 declared={type=undefined|null|L0 site=w5 flags=[OmitsNull, OmitsUndefined]}
+    v15 = PropGet v14 key="follower"
+    v16 = PropGet v15 key="weight"
+    v17 = Double number=1.5
+    v18 = Call v1, -, v17 calleeName="chain"
+    v19 = Convert v18 declared={type=undefined|null|L0 site=w6 flags=[OmitsNull, OmitsUndefined]}
+    v20 = PropGet v19 key="weight"
+    v21 = Add v16, v20
+    v22 = GetModuleVariable variable=g1
+    v23 = CheckInitialized v22 name="newest"
+    v24 = PropGet v23 key="weight"
+    v25 = Add v21, v24
+    PropSet v8, v25 key="answer"
+    v27 = Undefined
+    Return v27
+}
+function f1 name="leaf" module=m0 position=90 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Null
+    v2 = Convert v1 declared={type=undefined|null|L0 flags=[OmitsUndefined]}
+    v3 = Convert v0 declared={type=number}
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Convert v5 declared={type=undefined|null|L0 site=w7 flags=[OmitsNull, OmitsUndefined]}
+    v7 = GetModuleVariable variable=g1
+    v8 = CheckInitialized v7 name="newest"
+    PutModuleVariable v6 variable=g1
+    Return v6
+}
+function f2 name="chain" module=m0 position=216 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}] results=[{type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="leaf"
+    v3 = Convert v2 declared={type=undefined|null|L0 site=w8 flags=[OmitsNull, OmitsUndefined]}
+    v4 = GetModuleVariable variable=g0
+    v5 = Integer integer=1
+    v6 = Add v0, v5
+    v7 = Call v4, -, v6 calleeName="leaf"
+    v8 = Convert v7 declared={type=undefined|null|L0 site=w9 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v3, v8 key="follower"
+    Return v3
+}
+
+# The second call allocates, so it may collect and mark the object that the first call made. The store behind it keeps its barrier.
+# CHECK-LABEL: name="chain" role=Source
+# CHECK: Int64 b@[[entry]] = Patchpoint({{*}}Writes:{collectorState, {{*}}:CallDirect)
+# CHECK: Int64 b@[[follower]] = Patchpoint({{*}}Writes:{collectorState, {{*}}:CallDirect)
+# CHECK-NEXT: Store(b@[[follower]], b@[[entry]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
+# CHECK: Int32 b@[[threshold]] = Load(b@{{*}}, offset = {{*}}, ControlDependent|Reads:collectorState, {{*}}:PutSlot)
+# CHECK-NEXT: Int32 b@[[state]] = Load8Z(b@[[entry]], offset = 7, ControlDependent|Reads:collectorState, {{*}}:PutSlot)
+# CHECK-NEXT: Int32 b@[[isUnmarked]] = Below(b@[[threshold]], b@[[state]], {{*}}:PutSlot)
+# CHECK-NEXT: Branch(b@[[isUnmarked]], Terminal, {{*}}:PutSlot)
+# CHECK-NEXT: Successors: Then:#[[done]], Else:Rare:#[[remember]]
+# CHECK-NEXT: BB#[[done]]:
+# CHECK: Return(b@[[entry]], Terminal)
+# CHECK: BB#[[remember]]:
+# CHECK: Patchpoint(b@[[entry]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:collectorState|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
+# CHECK-LABEL: end of function

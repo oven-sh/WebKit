@@ -40,9 +40,8 @@ void x509_algor_cleanup(X509_ALGOR *alg);
 // A ScopedX509Algor is a stack-allocatable `X509_ALGOR` with managed lifetime.
 // This cannot use `DECLARE_OPAQUE_STRUCT` because `X509_ALGOR` is a public
 // struct.
-using ScopedX509Algor =
-    internal::StackAllocated<X509_ALGOR, void, x509_algor_init,
-                             x509_algor_cleanup>;
+BORINGSSL_MAKE_STACK_TRAITS(X509_ALGOR, x509_algor_init, x509_algor_cleanup)
+using ScopedX509Algor = internal::StackAllocated<X509_ALGOR>;
 
 // x509_parse_algorithm parses a DER-encoded, AlgorithmIdentifier from `cbs` and
 // writes the result to `*out`. It returns one on success and zero on error.
@@ -189,7 +188,19 @@ class X509Impl : public x509_st, public RefCounted<X509Impl> {
   ~X509Impl();
 } /* X509 */;
 
+// x509_marshal_tbs_cert sets `cbb` to the serialized TBSCertificate of `x509`.
+// It either replays the saved TBSCertificate encoding from the `CRYPTO_BUFFER`,
+// or marshals the TBSCertificate from fields set on `x509`. It returns one on
+// success or zero on error.
 int x509_marshal_tbs_cert(CBB *cbb, const X509 *x509);
+
+// x509_get_or_marshal_tbs_cert sets `out` to the serialized TBSCertificate of
+// `x509`. If possible, it gets the saved TBSCertificate encoding from the
+// `CRYPTO_BUFFER` of `x509`, otherwise it marshals the TBSCertificate from
+// fields set on `x509` into `scratch`. It returns one on success or zero on
+// error.
+int x509_get_or_marshal_tbs_cert(CBS *out, Array<uint8_t> *scratch,
+                                 const X509 *x509);
 
 // X509 is an `ASN1_ITEM` whose ASN.1 type is X.509 Certificate (RFC 5280) and C
 // type is `X509*`.
@@ -469,6 +480,13 @@ int x509_verify_signature(const X509_ALGOR *sigalg,
                           const ASN1_BIT_STRING *signature,
                           Span<const uint8_t> in, EVP_PKEY *pkey);
 
+// x509_verify_signature_bytes behaves like `x509_verify_signature` but takes in
+// a span containing the signature bytes (without ASN.1 headers). It returns one
+// if the signature is valid and zero on error.
+int x509_verify_signature_bytes(const X509_ALGOR *sigalg,
+                                Span<const uint8_t> signature,
+                                Span<const uint8_t> in, EVP_PKEY *pkey);
+
 // x509_sign_to_bit_string signs `in` using `ctx` and saves the result in `out`.
 // It returns the length of the signature on success and zero on error.
 int x509_sign_to_bit_string(EVP_MD_CTX *ctx, ASN1_BIT_STRING *out,
@@ -647,6 +665,36 @@ const X509NameCache *x509_name_get_cache(const X509_NAME *name);
 void x509_name_invalidate_cache(X509_NAME *name);
 
 int x509_name_copy(X509_NAME *dst, const X509_NAME *src);
+
+
+// Merkle Tree Certificate (MTC) verification functions.
+
+// x509_is_merkle_tree_ca returns whether `x509` contains an extension of type
+// id-pe-mtcCertificationAuthority.
+bool x509_is_merkle_tree_ca(const X509 *x509);
+
+// x509_evaluate_mtc_subtree_inclusion_proof carries out the procedure in
+// section 4.3.2 of draft-ietf-plants-merkle-tree-certs to evaluate a subtree
+// inclusion proof for an entry at index `index` with hash `entry_hash` of a
+// subtree defined by [`subtree_start`, `subtree_end`). The `inclusion_proof` to
+// be evaluated is passed as a byte array consisting of concatenated hashes
+// produced from the `log_hash` algorithm. This function returns true if
+// inclusion proof evaluation succeeded, and if so, writes the expected subtree
+// hash for the specified subtree containing the entry to `out`, which must be
+// the right size for `log_hash`. It returns false on error, including if the
+// inclusion proof fails to evaluate.
+bool x509_evaluate_mtc_subtree_inclusion_proof(
+    Span<uint8_t> out, const EVP_MD *log_hash,
+    Span<const uint8_t> inclusion_proof, uint64_t index,
+    Span<const uint8_t> entry_hash, uint64_t subtree_start,
+    uint64_t subtree_end);
+
+// x509_verify_mtc verifies `x509` as a Merkle Tree Certificate issued by
+// `issuer`, which must be an MTC CA represented in X.509 format. `pkey` is the
+// `issuer`'s public key. It returns one if the MTC is valid, or zero on error.
+// This function only checks the MTC proof itself and does not perform a full
+// certificate validation.
+int x509_verify_mtc(const X509 *x509, const EVP_PKEY *pkey, const X509 *issuer);
 
 
 // Standard extensions.

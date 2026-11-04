@@ -1,0 +1,37 @@
+# interface Sized { byteLength: number }   const queue: Sized[] = [{ byteLength: 2 }, new Uint8Array(4)];   function size(chunk: Sized) { return chunk.byteLength }   size(queue[0])
+# The interface has a layout of the program, and a Uint8Array satisfies it without having one. Flow knows all that is stored in the list and all that arrives at the parameter.
+# What the declared type leaves out of that are instances of built-in classes alone, so it is no prediction of which of them comes: the list is expected to hold what it is proven to hold,
+# and the parameter is expected to be what arrives.
+# RUN: valueflow-apply
+# CHECK: variable g0 name="queue" {{*}}Array<L0|Uint8Array<anything, pristine[Storage, Names]>, proven, Contiguous
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v9: undefined|L0|Uint8Array<anything, pristine[Storage, Names]> = ElemGet
+# CHECK-LABEL: function f1 name="size"
+# CHECK: b0(v0: anything ~ undefined|L0|Uint8Array
+# CHECK-NOT: Check
+# CHECK: = PropGet {{*}} key="byteLength"
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+layout L0 name="Sized" fields=[{key="byteLength" declared={type=number} flags=[IsRequired]}]
+variable g0 name="queue" module=m0 declared={type=undefined|Array<L0>} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=Uint8Array
+    v3 = Integer integer=4
+    v4 = Construct v2, -, v3
+    v5 = NewArray v1, v4 contents=anything
+    PutModuleVariable v5 variable=g0
+    v7 = GetModuleVariable variable=g0
+    v8 = Integer
+    v9 = ElemGet v7, v8
+    v10 = CallDirect v9 function=f1
+    Return
+}
+function f1 name="size" module=m0 parameters=[{type=undefined|null|L0 site=w0 flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=undefined|null|L0 site=w0
+    v2 = PropGet v1 key="byteLength"
+    Return v2
+}

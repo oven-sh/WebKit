@@ -38,6 +38,7 @@
 #import "ModelProcessProxy.h"
 #import "PDFDisplayMode.h"
 #import "PageClientImplIOS.h"
+#import "PendingSnapshotDrawing.h"
 #import "PickerDismissalReason.h"
 #import "PrintInfo.h"
 #import "RemoteLayerTreeCommitBundle.h"
@@ -70,6 +71,7 @@
 #import <WebCore/AccessibilityObject.h>
 #import <WebCore/FloatConversion.h>
 #import <WebCore/FloatQuad.h>
+#import <WebCore/FloatRect.h>
 #import <WebCore/InspectorOverlay.h>
 #import <WebCore/LocalFrameView.h>
 #import <WebCore/NotImplemented.h>
@@ -77,6 +79,7 @@
 #import <WebCore/ProcessIdentifier.h>
 #import <WebCore/Quirks.h>
 #import <WebCore/Site.h>
+#import <WebCore/ViewportSegments.h>
 #import <pal/spi/cocoa/NSAccessibilitySPI.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <wtf/Condition.h>
@@ -269,7 +272,7 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     page->setUseFixedLayout(true);
     page->setScreenIsBeingCaptured([self screenIsBeingCaptured]);
 
-    page->windowScreenDidChange(page->generateDisplayIDFromPageID());
+    page->windowScreenDidChange(WebCore::displayID(self.window.screen));
 
 #if ENABLE(FULLSCREEN_API)
     page->setFullscreenClient(makeUnique<WebKit::FullscreenClient>(self.webView));
@@ -333,6 +336,94 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
 
     return self;
 }
+
+#if HAVE(UIVIEW_RESERVED_REGION)
+
+- (void)layoutSubviews
+{
+    [super layoutSubviews];
+    [self _updateViewportSegments];
+}
+
+- (void)_updateViewportSegments
+{
+    RefPtr page = _page.get();
+    if (!page || !protect(page->preferences())->viewportSegmentsAPIEnabled())
+        return;
+
+    RetainPtr regions = [self reservedRegionsOfKind:[UIViewReservedRegionKind divisionRegionKind]];
+
+    if (![regions count]) {
+        page->setViewportSegments(WebCore::ViewportSegments { });
+        return;
+    }
+
+    RetainPtr<NSMutableArray<NSValue *>> verticalFolds = [NSMutableArray array];
+    RetainPtr<NSMutableArray<NSValue *>> horizontalFolds = [NSMutableArray array];
+
+    for (UIViewReservedRegion *region in regions.get()) {
+        CGRect foldRect = UIEdgeInsetsInsetRect(region.frame, region.margins);
+
+        if (foldRect.size.width < 1.0f)
+            [verticalFolds addObject:[NSValue valueWithCGRect:foldRect]];
+        else if (foldRect.size.height < 1.0f)
+            [horizontalFolds addObject:[NSValue valueWithCGRect:foldRect]];
+    }
+
+    [verticalFolds sortUsingComparator:^(NSValue *a, NSValue *b) {
+        return a.CGRectValue.origin.x < b.CGRectValue.origin.x ? NSOrderedAscending : NSOrderedDescending;
+    }];
+    [horizontalFolds sortUsingComparator:^(NSValue *a, NSValue *b) {
+        return a.CGRectValue.origin.y < b.CGRectValue.origin.y ? NSOrderedAscending : NSOrderedDescending;
+    }];
+
+    unsigned columns = static_cast<unsigned>([verticalFolds count]) + 1;
+    unsigned rows = static_cast<unsigned>([horizontalFolds count]) + 1;
+
+    if (columns == 1 && rows == 1) {
+        page->setViewportSegments(WebCore::ViewportSegments { });
+        return;
+    }
+
+    CGFloat viewWidth = self.bounds.size.width;
+    CGFloat viewHeight = self.bounds.size.height;
+
+    Vector<std::pair<CGFloat, CGFloat>> columnRanges;
+    columnRanges.reserveInitialCapacity(columns);
+    CGFloat xStart = 0;
+    for (NSValue *value in verticalFolds.get()) {
+        CGRect fold = value.CGRectValue;
+        columnRanges.append({ xStart, CGRectGetMinX(fold) });
+        xStart = CGRectGetMaxX(fold);
+    }
+    columnRanges.append({ xStart, viewWidth });
+
+    Vector<std::pair<CGFloat, CGFloat>> rowRanges;
+    rowRanges.reserveInitialCapacity(rows);
+    CGFloat yStart = 0;
+    for (NSValue *value in horizontalFolds.get()) {
+        CGRect fold = value.CGRectValue;
+        rowRanges.append({ yStart, CGRectGetMinY(fold) });
+        yStart = CGRectGetMaxY(fold);
+    }
+    rowRanges.append({ yStart, viewHeight });
+
+    WebCore::ViewportSegments segments;
+    segments.columns = columns;
+    segments.rows = rows;
+    segments.segmentRects.reserveInitialCapacity(columns * rows);
+    for (unsigned y = 0; y < rows; ++y) {
+        for (unsigned x = 0; x < columns; ++x) {
+            auto [x0, x1] = columnRanges[x];
+            auto [y0, y1] = rowRanges[y];
+            segments.segmentRects.append(WebCore::FloatRect(x0, y0, x1 - x0, y1 - y0));
+        }
+    }
+
+    page->setViewportSegments(segments);
+}
+
+#endif // HAVE(UIVIEW_RESERVED_REGION)
 
 #if HAVE(VISIBILITY_PROPAGATION_VIEW)
 
@@ -680,10 +771,7 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
 
     bool wasStableState = page->inStableState();
 
-    page->updateVisibleContentRects(visibleContentRectUpdateInfo, sendEvenIfUnchanged);
-
-    auto layoutViewport = page->unconstrainedLayoutViewportRect();
-    page->adjustLayersForLayoutViewport(page->unobscuredContentRect().location(), layoutViewport, page->displayedContentScale());
+    auto layoutViewport = page->updateVisibleContentRectsAndAdjustLayers(visibleContentRectUpdateInfo, sendEvenIfUnchanged);
 
     _sizeChangedSinceLastVisibleContentRectUpdate = NO;
     self.webView->_needsScrollend = NO;
@@ -787,7 +875,7 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     _screen = screen;
 
     if (RefPtr page = _page)
-        page->windowScreenDidChange(page->generateDisplayIDFromPageID());
+        page->windowScreenDidChange(WebCore::displayID(screen));
 
     [self _accessibilityRegisterUIProcessTokens];
 }
@@ -1371,7 +1459,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
         if (!callbackID)
             return;
 
-        protect(protect(_page)->legacyMainFrameProcess().connection())->waitForAsyncReplyAndDispatchImmediately<Messages::WebPage::DrawToPDFiOS>(*callbackID, Seconds::infinity());
+        WebKit::PendingSnapshotDrawing::wait(*callbackID);
         return;
     }
 
@@ -1415,7 +1503,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
         if (!callbackID)
             return;
 
-        protect(protect(_page)->legacyMainFrameProcess().connection())->waitForAsyncReplyAndDispatchImmediately<Messages::WebPage::DrawRectToImage>(*callbackID, Seconds::infinity());
+        WebKit::PendingSnapshotDrawing::wait(*callbackID);
         return;
     }
 

@@ -1,0 +1,58 @@
+# Every member of a cycle with two entries runs ten times what enters the cycle at both entries together
+# FORM: Prepared
+# RUN: frequencies
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoEntries" parameters=[{type=boolean}, {type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b2(), notTaken b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    Branch v1 -> taken b1(), notTaken b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 10.000000
+# CHECK-NEXT: b2 frequency: Normal count: 10.000000
+# CHECK-NEXT: b3 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f1 name="halfOfTheActivationsEnter" parameters=[{type=boolean}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b5()
+  b1():
+    Branch v1 -> taken b3(), notTaken b2()
+  b2():
+    LoopHint
+    Jump -> next b3()
+  b3():
+    Branch v2 -> taken b2(), notTaken b4()
+  b4():
+    Jump -> next b5()
+  b5():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 5.000000
+# CHECK-NEXT: b3 frequency: Normal count: 5.000000
+# CHECK-NEXT: b4 frequency: Normal count: 0.500000
+# CHECK-NEXT: b5 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f2 name="noEdgeBack" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b2(), notTaken b1()
+  b1():
+    Jump -> next b2()
+  b2():
+    Jump -> next b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 1.000000
+# CHECK-NEXT: b3 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency

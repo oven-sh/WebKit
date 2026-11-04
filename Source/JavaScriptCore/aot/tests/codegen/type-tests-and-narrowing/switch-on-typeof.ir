@@ -1,0 +1,139 @@
+# function rank(value: string | number | boolean): number {
+#   switch (typeof value) {
+#     case "string": return value.length;
+#     case "number": return value;
+#     default: return value ? 1 : 0;
+#   }
+# }
+# declare const input: any;
+# (globalThis as any).answer = rank(input > 1 ? String(input) : input ? +input : !input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=14 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=270 kind=CallResult
+typesite w3 module=m0 position=253 kind=CallResult
+typesite w4 module=m0 position=110 kind=PropertyRead
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = Integer integer=1
+    v10 = Greater v8, v9
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = Builtin builtin=String
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="input" [isFreeName]
+    v14 = Call v11, -, v13 calleeName="String"
+    v15 = Convert v14 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    Jump -> next b8(v15)
+  b3():
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="input" [isFreeName]
+    v18 = ToBoolean v17
+    Branch v18 -> taken b4(| 0), notTaken b6(| 0)
+  b4(v19):
+    Jump -> next b5()
+  b5():
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="input" [isFreeName]
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    v23 = ToNumber v22
+    Jump -> next b8(v23)
+  b6(v24):
+    Jump -> next b7()
+  b7():
+    v25 = Builtin builtin=GlobalThis
+    v26 = PropGet v25 key="input" [isFreeName]
+    v27 = ToBoolean v26
+    v28 = LogicalNot v27
+    Jump -> next b8(v28)
+  b8(v29):
+    v30 = Call v1, -, v29 calleeName="rank"
+    v31 = Convert v30 declared={type=number site=w3}
+    PropSet v5, v31 key="answer"
+    v33 = Undefined
+    Return v33
+}
+function f1 name="rank" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|boolean|number|string):
+    Jump -> next b1()
+  b1():
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v2):
+    Jump -> next b3()
+  b3():
+    v3 = Convert v2 declared={type=undefined|null|string} illTypedCause=Assertion
+    v4 = PropGet v3 key="length"
+    v5 = Convert v4 declared={type=number site=w4} illTypedCause=Assertion
+    Return v5
+  b4(v6):
+    v7 = TypeTest v6 testedType=number
+    Branch v7 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v8):
+    Jump -> next b6()
+  b6():
+    v9 = Convert v8 declared={type=number} illTypedCause=Assertion
+    Return v9
+  b7(v10):
+    Jump -> next b8()
+  b8():
+    v11 = Convert v10 declared={type=boolean} illTypedCause=Assertion
+    v12 = ToBoolean v11
+    Branch v12 -> taken b9(| 0), notTaken b11(| 0)
+  b9(v13):
+    Jump -> next b10()
+  b10():
+    v14 = Integer integer=1
+    Jump -> next b13(v14)
+  b11(v15):
+    Jump -> next b12()
+  b12():
+    v16 = Integer
+    Jump -> next b13(v16)
+  b13(v17):
+    v18 = Convert v17 declared={type=number site=w1}
+    Return v18
+}
+
+# `switch (typeof value)` makes no string and compares none. Of a string, a number and a boolean the string is the cell and the number has the number bits: two masks tell the three apart.
+# CHECK-LABEL: name="rank" role=Source
+# CHECK-NOT: Branch(
+# CHECK: Int64 b@[[notCell]] = BitAnd(b@[[value]], {{*}}:TypeTest)
+# CHECK-NEXT: Branch(b@[[notCell]], Terminal
+# CHECK-NEXT: Successors: Then:#[[notString]], Else:#[[string]]
+# CHECK-NEXT: BB#[[notString]]:
+# CHECK-NEXT: Predecessors: #0
+# CHECK: Int64 b@[[isNumber]] = BitAnd(b@[[value]], {{*}}:TypeTest)
+# CHECK-NEXT: Branch(b@[[isNumber]], Terminal
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="rank" role=Source
+# NONE-NOT: Switch(
+# NONE-NOT: StringStorage
+# NONE-NOT: JSCell_typeInfoType
+# NONE-NOT: ExitsSideways
+# NONE-LABEL: end of function
+# X64: instructions: 23, patchpoints: 1
+# ARM64: instructions: 23, patchpoints: 1

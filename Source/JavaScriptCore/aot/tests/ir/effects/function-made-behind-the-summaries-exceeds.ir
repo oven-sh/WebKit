@@ -1,0 +1,7 @@
+# Of a function that was made behind the summaries, and whose role says nothing, nothing is known: a built-in that is handed one may write the variable that only compiled code writes,
+# which the call of unknown code that it replaces leaves out
+# FORM: Prepared optimizing
+# RUN: check-replacement summaries-before=f2 f0 v7 v6
+# DIAGNOSTIC: EffectsExceedReplacedGroup 1
+# CHECK-NOT: valid
+# PROGRAM-OF: bound-function-made-behind-the-summaries.ir

@@ -1,0 +1,65 @@
+# A stack trace shows some operations at two places: their own errors at their position, and at a second place the frames of what they call. The call of an outlined body stands for every operation
+# of its site, so the operations of a site that throw or run other code all have a second place or none has, and the call has it with them
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bothHaveASecondPlace" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*2+1) = Call v1, -, v2, v2, v2, v2 @9 constructs
+    v%(i*2+2) = Add v%(i*2+1), v2 form=Generic @9 constructs
+    Return v%(i*2+2)
+# END REPEAT
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f0 name="bothHaveASecondPlace"
+# CHECK-NOT: = Call v1
+# CHECK-NOT: = Add
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[whole0]]:{{*}}= CallDirect v1, v2 function=[[wholeRun]] @9 constructs
+# CHECK-NEXT: Return [[whole0]]
+# CHECK-NOT: = Call v1
+# CHECK-NOT: = Add
+
+function f1 name="onlyTheFirstHasASecondPlace" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*2+1) = Call v1, -, v2, v2, v2, v2 @9 constructs
+    v%(i*2+2) = Add v%(i*2+1), v2 form=Generic @9
+    Return v%(i*2+2)
+# END REPEAT
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="onlyTheFirstHasASecondPlace"
+# CHECK-NOT: function=[[wholeRun]]
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[called1]]: anything = {{*}} @9 constructs
+# CHECK-NEXT: [[sum1]]:{{*}}[[called1]]{{*}} @9
+# CHECK-NEXT: Return [[sum1]]
+# CHECK-NOT: function=[[wholeRun]]
+
+function f2 name="onlyTheLastHasASecondPlace" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*2+1) = Call v1, -, v2, v2, v2, v2 @9
+    v%(i*2+2) = Add v%(i*2+1), v2 form=Generic @9 constructs
+    Return v%(i*2+2)
+# END REPEAT
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f2 name="onlyTheLastHasASecondPlace"
+# CHECK-NOT: function=[[wholeRun]]
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[called2]]: anything = {{*}} @9
+# CHECK-NEXT: [[sum2]]:{{*}}[[called2]]{{*}} @9 constructs
+# CHECK-NEXT: Return [[sum2]]
+# CHECK-NOT: function=[[wholeRun]]

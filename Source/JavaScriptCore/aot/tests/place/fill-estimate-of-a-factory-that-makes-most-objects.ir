@@ -1,0 +1,48 @@
+# function Type(flags) { this.flags = flags }   function createTypes(flags) { let type; do { type = new Type(flags); type.id = next++ } while (flags); return type }   function createOriginType(flags) { return new Type(flags) }
+# The place in createTypes stands in a loop, the place in createOriginType in none. Two places construct, and one of them goes on to store `id`. Each place counts with how often its own function runs it: nearly every
+# object gets the field right behind its construction, so the field is the constructor's like `flags` and gets room in the cell. Counted as one place of two it fell into the Extension, which every object from the loop then had to allocate.
+# `rare` is stored by the place outside every loop: it stays what it was
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveCalls,ResolveAccesses,EstimateHeat
+# RUN: plan-slots fill
+# CHECK-LABEL: L0 allocated=
+# CHECK-NEXT: .0 "flags" filled={{*}} byConstructor likely
+# CHECK-NEXT: .1 "id" filled={{*}} byConstructor likely
+# CHECK-NEXT: .2 "rare" filled=
+# CHECK-NOT: byConstructor
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Type" constructor=f3 fields=[{key="flags" declared={type=anything}}, {key="id" declared={type=anything}}, {key="rare" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    PutModuleVariable v2 variable=g0
+    v4 = CallDirect v1 function=f2
+    PutModuleVariable v4 variable=g0
+    Return
+}
+function f1 name="createTypes" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Construct v1, -, v0
+    PropSet v3, v0 key="id"
+    v5 = ToBoolean v0
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+function f2 name="createOriginType" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f3
+    v2 = Construct v1, -, v0
+    PropSet v2, v0 key="rare"
+    Return v2
+}
+function f3 name="Type" flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    PropSet v0, v1 key="flags"
+    Return
+}

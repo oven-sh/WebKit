@@ -264,6 +264,10 @@ bool VerifySerialNumber(der::Input value, bool warnings_only,
                         CertErrors *errors) {
   // If `warnings_only` was set to true, the exact same errors will be logged,
   // only they will be logged with a lower severity (warning rather than error).
+  //
+  // TODO(crbug.com/533048005): Remove this option. It now only controls serials
+  // that aren't even valid integers. Historically, people needed to set it to
+  // tolerate length over 20, but this is now always enabled.
   CertError::Severity error_severity =
       warnings_only ? CertError::SEVERITY_WARNING : CertError::SEVERITY_HIGH;
 
@@ -290,10 +294,13 @@ bool VerifySerialNumber(der::Input value, bool warnings_only,
   //    Certificate users MUST be able to handle serialNumber values up to 20
   //    octets. Conforming CAs MUST NOT use serialNumber values longer than 20
   //    octets.
+  //
+  // We do not attempt to enforce this as an error. In practice, it is common
+  // for serials to be off, e.g. with 21 octets due to the extra byte needed to
+  // keep values positive.
   if (value.size() > 20) {
-    errors->Add(error_severity, kSerialNumberLengthOver20,
-                CreateCertErrorParams1SizeT("length", value.size()));
-    return false;
+    errors->AddWarning(kSerialNumberLengthOver20,
+                       CreateCertErrorParams1SizeT("length", value.size()));
   }
 
   return true;

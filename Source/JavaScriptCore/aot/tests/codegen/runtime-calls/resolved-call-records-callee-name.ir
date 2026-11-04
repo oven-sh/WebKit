@@ -1,0 +1,18 @@
+# A CallResolved with a callee name records it in the fault table and costs no code.
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# RUN: generate-code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="underName" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ResolveCallTarget v0 argumentCount=1
+    v3 = CallResolved v0, v2, -, v1 calleeName="input" @30
+    Return v3
+}
+# CHECK: f0: size=[[size]] {{*}} faults=1
+function f1 name="withoutName" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ResolveCallTarget v0 argumentCount=1
+    v3 = CallResolved v0, v2, -, v1 @30
+    Return v3
+}
+# CHECK: f1: size=[[size]] {{*}} faults=0

@@ -34,22 +34,14 @@
 
 namespace WebKit::WebGPU {
 
-std::optional<DeviceDescriptor> ConvertToBackingContext::convertToBacking(const WebCore::WebGPU::DeviceDescriptor& deviceDescriptor)
+std::optional<DeviceDescriptor> ConvertToBackingContext::convertToBacking(const ::WebGPU::DeviceDescriptor& deviceDescriptor)
 {
-    auto base = convertToBacking(static_cast<const WebCore::WebGPU::ObjectDescriptorBase&>(deviceDescriptor));
-    if (!base)
-        return std::nullopt;
-
-    return { { WTF::move(*base), deviceDescriptor.requiredFeatures, deviceDescriptor.requiredLimits } };
+    return { { { deviceDescriptor.label }, Vector<::WebGPU::FeatureName> { deviceDescriptor.requiredFeatures }, deviceDescriptor.requiredLimits } };
 }
 
-std::optional<WebCore::WebGPU::DeviceDescriptor> ConvertFromBackingContext::convertFromBacking(const DeviceDescriptor& deviceDescriptor)
+std::optional<::WebGPU::DeviceDescriptor> ConvertFromBackingContext::convertFromBacking(const DeviceDescriptor& deviceDescriptor)
 {
-    auto base = convertFromBacking(static_cast<const ObjectDescriptorBase&>(deviceDescriptor));
-    if (!base)
-        return std::nullopt;
-
-    return { { WTF::move(*base), deviceDescriptor.requiredFeatures, deviceDescriptor.requiredLimits } };
+    return { { deviceDescriptor.label, deviceDescriptor.requiredFeatures.span(), deviceDescriptor.requiredLimits } };
 }
 
 } // namespace WebKit

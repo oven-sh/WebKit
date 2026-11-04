@@ -1,0 +1,16 @@
+# A caller that holds a copy of the body does without both objects, so a literal in a literal is as fresh as any other, also where the two would become one cell
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SummarizeForInlining
+# LOSS: MaxInlineHeadBytes x1 f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Segment" fields=[{key="p" declared={type=L1} flags=[IsRequired] flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyAccessed} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="c" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, ChangeIntegrity] keys=NeverEnumerated}
+layout L1 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None}
+
+function f0 name="makeSegment" role=Library parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    Return v2
+}
+# CHECK: f0: barrier=None{{*}} returnsFreshAggregate

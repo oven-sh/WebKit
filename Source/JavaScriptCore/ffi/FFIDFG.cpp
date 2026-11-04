@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFIDFG.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #if ENABLE(DFG_JIT)
 
@@ -190,4 +190,4 @@ SpeculatedType speculatedResultTypeForCallFFI(DFG::Node* node)
 
 #endif // ENABLE(DFG_JIT)
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

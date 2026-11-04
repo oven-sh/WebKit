@@ -37,18 +37,6 @@ function apply(target, thisArgument, argumentsList)
     return target.@apply(thisArgument, argumentsList);
 }
 
-// https://tc39.github.io/ecma262/#sec-reflect.deleteproperty
-function deleteProperty(target, propertyKey)
-{
-    // Intentionally keep the code the sloppy mode to suppress the TypeError
-    // raised by the delete operator under the strict mode.
-
-    if (!@isObject(target))
-        @throwTypeError("Reflect.deleteProperty requires the first argument be an object");
-
-    return delete target[propertyKey];
-}
-
 // https://tc39.es/ecma262/#sec-reflect.get
 function get(target, propertyKey /*, receiver */)
 {

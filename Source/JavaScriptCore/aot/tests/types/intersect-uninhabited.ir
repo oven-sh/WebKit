@@ -1,0 +1,52 @@
+# never holds nothing: it is inside every type and overlaps none, not even itself. Layout sets without a common member meet in never.
+# FORM: Prepared
+# RUN: intersect
+# RUN(SUBSET): subset
+# CHECK: t0 & t1 = never
+# CHECK-NEXT: t0 - t1 = never
+# CHECK-NEXT: t0 & t2 = never
+# CHECK-NEXT: t0 - t2 = never
+# CHECK-NEXT: t0 & t3 = never
+# CHECK-NEXT: t0 - t3 = never
+# CHECK-NEXT: t0 & t4 = never
+# CHECK-NEXT: t0 - t4 = never
+# CHECK-NEXT: t1 & t0 = never
+# CHECK-NEXT: t1 - t0 = L0
+# CHECK-NEXT: t1 & t2 = never
+# CHECK-NEXT: t1 - t2 = L0
+# CHECK-NEXT: t1 & t3 = L0
+# CHECK-NEXT: t1 - t3 = never
+# CHECK-NEXT: t1 & t4 = never
+# CHECK-NEXT: t1 - t4 = L0
+# CHECK-NEXT: t2 & t0 = never
+# CHECK-NEXT: t2 - t0 = L1
+# CHECK-NEXT: t2 & t1 = never
+# CHECK-NEXT: t2 - t1 = L1
+# CHECK-NEXT: t2 & t3 = never
+# CHECK-NEXT: t2 - t3 = L1
+# CHECK-NEXT: t2 & t4 = L1
+# CHECK-NEXT: t2 - t4 = never
+# CHECK-NEXT: t3 & t0 = never
+# CHECK-NEXT: t3 - t0 = undefined|L0
+# CHECK-NEXT: t3 & t1 = L0
+# CHECK-NEXT: t3 - t1 = undefined
+# CHECK-NEXT: t3 & t2 = never
+# CHECK-NEXT: t3 - t2 = undefined|L0
+# CHECK-NEXT: t3 & t4 = undefined
+# CHECK-NEXT: t3 - t4 = L0
+# CHECK: laws hold
+# SUBSET: t0 <= t0: yes overlaps: no
+# SUBSET-NEXT: t0 <= t1: yes overlaps: no
+# SUBSET-NEXT: t0 <= t2: yes overlaps: no
+# SUBSET-NEXT: t0 <= t3: yes overlaps: no
+# SUBSET-NEXT: t0 <= t4: yes overlaps: no
+# SUBSET-NEXT: t1 <= t0: no overlaps: no
+# SUBSET-NEXT: t1 <= t1: yes overlaps: yes
+# SUBSET-NEXT: t1 <= t2: no overlaps: no
+# SUBSET: t3 <= t4: no overlaps: yes
+# SUBSET: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Shape"
+layout L1 name="Label"
+function f0 name="types" parameters=[{type=never}, {type=L0}, {type=L1}, {type=undefined|L0}, {type=undefined|L1}] results=[{type=undefined}]

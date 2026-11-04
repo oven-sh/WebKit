@@ -1,0 +1,40 @@
+# Functions joined by required tail calls return in one representation: boxed, unless all agree already
+# FORM: Prepared
+# RUN: pass ChooseCallingConventions
+# STATISTIC: ResultsBoxedForTailCalls = 2
+# STATISTIC: ReturnCallsDemoted = 0
+# CHECK: f0 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK-NEXT: f1 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK-NEXT: f2 Direct ({{*}}:Double) -> ({{*}}:Double)
+# CHECK-NEXT: f3 Direct ({{*}}:Double) -> ({{*}}:Double)
+# CHECK-NEXT: f4 Direct ({{*}}:Double) -> ({{*}}:Double)
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="returnsNumber"
+function f0 name="returnsNumber" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f1
+    ReturnCall v1 casts=[{declared={type=number} resolution=Assume}]
+}
+# CHECK: ReturnCall v1
+# CHECK-LABEL: function f1 name="returnsNumberOrString"
+# CHECK: ReturnCall v1
+function f1 name="returnsNumberOrString" parameters=[{type=number}] results=[{type=number|string}] {
+    v1 = CallDirect v0 function=f0
+    ReturnCall v1
+}
+# CHECK-LABEL: function f2 name="usesResult"
+# CHECK: v1: number = CallDirect v0 function=f0
+function f2 name="usesResult" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0
+    v2 = Add v1, v1
+    Return v2
+}
+function f3 name="evenStep" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f4
+    ReturnCall v1
+}
+function f4 name="oddStep" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f3
+    ReturnCall v1
+}

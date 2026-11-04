@@ -1,0 +1,61 @@
+# A wrapper that reads the parts of an object parameter is copied in where the caller has just made the object, also in a block that is not expected to run: the allocation that goes takes more code than the copy.
+# A call in such a block that hands on an object from elsewhere stays a call.
+# FORM: Prepared
+# RUN: pass InlineCalls SinkAllocations EliminateDeadCode
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="width" declared={type=anything} flags=[IsRequired]}, {key="height" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="area" role=ParameterWrapper parameters=[{type=L0}] results=[{type=anything}] creator=ParameterWrapper{body=f1 parameter=0} {
+    v1 = PropGet v0 key="width" receivers=[L0]
+    v2 = PropGet v0 key="height" receivers=[L0]
+    v3 = CallDirect v1, v2 function=f1
+    Return v3
+}
+
+function f1 name="area" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+# REPEAT: i = 0..39
+    v%(i+2) = Mul v%(i+1), v%(i)
+# END REPEAT
+    Return v41
+}
+
+function f2 name="makesTheObjectWhereItSeldomRuns" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Rare:
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = CallDirect v2 function=f0
+    Return v3
+}
+# CHECK-LABEL: function f2 name="makesTheObjectWhereItSeldomRuns"
+# CHECK-NOT: NewObject
+# CHECK-NOT: function=f0
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK-NOT: NewObject
+# CHECK-NOT: function=f0
+
+function f3 name="handsOnAnObjectWhereItSeldomRuns" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer
+    Return v2
+  b2() frequency=Rare:
+    v3 = CallDirect v0 function=f0
+    Return v3
+}
+# CHECK-LABEL: function f3 name="handsOnAnObjectWhereItSeldomRuns"
+# CHECK-NOT: function=f1
+# CHECK: = CallDirect v0 function=f0
+# CHECK-NOT: function=f1
+
+function f4 name="makesTheObjectWhereItRuns" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = CallDirect v1 function=f0
+    Return v2
+}
+# CHECK-LABEL: function f4 name="makesTheObjectWhereItRuns"
+# CHECK-NOT: NewObject
+# CHECK-NOT: function=f0
+# CHECK: = CallDirect {{*}} function=f1

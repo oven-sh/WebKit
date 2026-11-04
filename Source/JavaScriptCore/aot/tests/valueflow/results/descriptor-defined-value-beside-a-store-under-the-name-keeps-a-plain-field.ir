@@ -1,0 +1,32 @@
+# const make = () => ({ pattern: 1 });    make().regex = 3;    Object.defineProperty(make(), "regex", { value: 2, enumerable: false })
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Rule" fields=[{key="pattern" {{*}}{key="regex" {{*}}flags=[IsAddedLate
+# CHECK-NOT: form=[
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Rule" fields=[{key="pattern" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="PropertyDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    v2 = Integer integer=3
+    PropSet v1, v2 key="regex" mode=Strict
+    v4 = Call v0, -
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectDefineProperty
+    v7 = String string="regex"
+    v8 = Integer integer=2
+    v9 = Boolean
+    v10 = NewObject -, v8, v9 layout=L1 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = Call v6, v5, v4, v7, v11
+    v13 = PropGet v4 key="regex"
+    Return
+}
+function f1 name="make" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}

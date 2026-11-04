@@ -52,7 +52,7 @@ public:
     void checkNumberOfChannelsForInput(AudioNodeInput*) override;
 
     // Returns the number of channels for both the input and the output.
-    unsigned NODELETE numberOfChannels();
+    unsigned LEGACY_NODELETE numberOfChannels();
 
 protected:
     double tailTime() const override;
@@ -64,7 +64,7 @@ protected:
 
     float noiseInjectionMultiplier() const override { return 0.01; }
 
-    std::unique_ptr<AudioProcessor> m_processor;
+    const std::unique_ptr<AudioProcessor> m_processor;
 };
 
 } // namespace WebCore

@@ -1,0 +1,110 @@
+# Every way round a loop leads through its header. Where the header polls, another poll in the same turn goes. A poll of a loop inside, of a block under another handler, or one that stands for tail calls stays
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveDeadCountedLoops
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="secondPollInTheTurn" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Call v1
+    LoopHint
+    v9 = Integer integer=1
+    v10 = Add v6, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v3
+# CHECK: b1(v3:
+# CHECK-NEXT: LoopHint
+# CHECK-NOT: LoopHint
+}
+
+function f1 name="pollOfTheLoopInside" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b5()
+  b2(v6):
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v8 = Call v1
+    v9 = ToBoolean v8
+    Branch v9 -> taken b3(), notTaken b4()
+  b4():
+    v10 = Integer integer=1
+    v11 = Add v6, v10
+    Jump -> next b1(v11)
+  b5():
+    Return v3
+# CHECK: b1(v3:
+# CHECK-NEXT: LoopHint
+# CHECK: b3():
+# CHECK-NEXT: LoopHint
+}
+
+function f2 name="headerDoesNotPoll" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    v4 = Less v3, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Call v1
+    LoopHint
+    v8 = Integer integer=1
+    v9 = Add v5, v8
+    Jump -> next b1(v9)
+  b3():
+    Return v3
+# CHECK: = Call v1
+# CHECK-NEXT: LoopHint
+}
+
+function f3 name="secondPollUnderAHandler" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6) handler=b4():
+    v7 = Call v1
+    LoopHint
+    v9 = Integer integer=1
+    v10 = Add v6, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v3
+  b4() role=CatchHandler:
+    v11 = CatchValue
+    Return v11
+# CHECK: = Call v1
+# CHECK-NEXT: LoopHint
+}
+
+function f4 name="secondPollStandsForTailCalls" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Call v1
+    LoopHint [replacesTailCalls]
+    v9 = Integer integer=1
+    v10 = Add v6, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v3
+# CHECK: = Call v1
+# CHECK-NEXT: LoopHint [replacesTailCalls]
+}

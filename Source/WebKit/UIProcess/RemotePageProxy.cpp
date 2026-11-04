@@ -33,7 +33,10 @@
 #include "HandleMessage.h"
 #include "NativeWebMouseEvent.h"
 #include "NavigationActionData.h"
+#include "NotificationManagerMessageHandlerMessages.h"
 #include "PageLoadState.h"
+#include "PlatformXRSystem.h"
+#include "PlatformXRSystemMessages.h"
 #include "ProvisionalFrameProxy.h"
 #include "RemoteMediaSessionManagerProxy.h"
 #include "RemotePageDrawingAreaProxy.h"
@@ -47,6 +50,8 @@
 #include "WebBackForwardList.h"
 #include "WebBackForwardListMessages.h"
 #include "WebFrameProxy.h"
+#include "WebNotificationManagerMessageHandler.h"
+#include "WebPageInspectorController.h"
 #include "WebPageMessages.h"
 #include "WebPageProxy.h"
 #include "WebPageProxyMessages.h"
@@ -108,6 +113,7 @@ RemotePageProxy::RemotePageProxy(WebPageProxy& page, WebProcessProxy& process, c
         m_messageReceiverRegistration.transferMessageReceivingFrom(*registrationToTransfer, *this, backForwardListReceiver);
     else
         m_messageReceiverRegistration.startReceivingMessages(m_process, m_webPageID, *this, backForwardListReceiver);
+    m_process->addMessageReceiver(Messages::NotificationManagerMessageHandler::messageReceiverName(), m_webPageID, protect(page.notificationManagerMessageHandler()));
 }
 
 void RemotePageProxy::initializeAfterAdoption()
@@ -133,7 +139,7 @@ void RemotePageProxy::initializeAfterAdoption()
     protectedPage->didCreateRemotePage(*this);
 }
 
-void RemotePageProxy::disconnect()
+void RemotePageProxy::disconnect(ShouldSendCloseMessage shouldSendCloseMessage)
 {
     RefPtr page = m_page;
     if (page)
@@ -142,7 +148,8 @@ void RemotePageProxy::disconnect()
         // The process's own stop messages would arrive after stopReceivingMessages() below, so stop its tasks here.
         if (page)
             page->stopAllURLSchemeTasks(m_process.ptr());
-        m_process->sendPageCloseMessage(page ? std::optional { page->identifier() } : std::nullopt, m_webPageID);
+        if (shouldSendCloseMessage == ShouldSendCloseMessage::Yes)
+            m_process->sendPageCloseMessage(page ? std::optional { page->identifier() } : std::nullopt, m_webPageID);
     }
     m_process->removeRemotePageProxy(*this);
 
@@ -161,9 +168,16 @@ void RemotePageProxy::disconnect()
 #endif
     m_visitedLinkStoreRegistration = nullptr;
     m_messageReceiverRegistration.stopReceivingMessages();
+    m_process->removeMessageReceiver(Messages::NotificationManagerMessageHandler::messageReceiverName(), m_webPageID);
     m_screenOrientationManager = nullptr;
 #if ENABLE(WEB_AUTHN)
     m_webAuthenticatorCoordinator = nullptr;
+#endif
+#if ENABLE(WEBXR)
+    if (m_isReceivingXRMessages) {
+        m_process->removeMessageReceiver(Messages::PlatformXRSystem::messageReceiverName(), m_webPageID);
+        m_isReceivingXRMessages = false;
+    }
 #endif
 #if ASSERT_ENABLED
     m_disconnected = true;
@@ -183,7 +197,7 @@ void RemotePageProxy::injectPageIntoNewProcess()
     }
 
     Ref drawingArea = *page->drawingArea();
-    m_drawingArea = RemotePageDrawingAreaProxy::create(drawingArea.get(), m_process);
+    m_drawingArea = RemotePageDrawingAreaProxy::create(drawingArea.get(), m_process, m_webPageID);
 #if ENABLE(FULLSCREEN_API)
     m_fullscreenManager = RemotePageFullscreenManagerProxy::create(pageID(), protect(page->fullScreenManager()), m_process);
 #endif
@@ -205,6 +219,13 @@ void RemotePageProxy::injectPageIntoNewProcess()
         m_webAuthenticatorCoordinator = RemotePageWebAuthenticatorCoordinatorProxy::create(m_webPageID, authenticatorCoordinator.get(), m_process);
 #endif
 
+#if ENABLE(WEBXR)
+    if (page->xrSystem()) {
+        m_process->addMessageReceiver(Messages::PlatformXRSystem::messageReceiverName(), m_webPageID, *this);
+        m_isReceivingXRMessages = true;
+    }
+#endif
+
     m_visitedLinkStoreRegistration = makeUnique<RemotePageVisitedLinkStoreRegistration>(*page, m_process);
 
     RefPtr websitePolicies = page->mainFrameWebsitePolicies();
@@ -219,6 +240,11 @@ void RemotePageProxy::injectPageIntoNewProcess()
             })
         ), 0
     );
+
+    // frameTreeCreationParameters above contains the main frame's current frameViewportInfo.
+    m_lastSentMainFrameViewportInfo = protect(page->mainFrame())->frameViewportInfo();
+
+    WebPageInspectorController::pageWasAddedToProcess(protect(page->browsingContextGroup()), m_process, m_webPageID);
 }
 
 void RemotePageProxy::processDidTerminate(WebProcessProxy& process, ProcessTerminationReason reason)
@@ -281,6 +307,13 @@ void RemotePageProxy::didReceiveMessage(IPC::Connection& connection, IPC::Decode
         backForwardListReceiver->didReceiveMessage(connection, decoder);
         return;
     }
+#if ENABLE(WEBXR)
+    if (decoder.messageReceiverName() == Messages::PlatformXRSystem::messageReceiverName()) {
+        if (RefPtr xrSystem = page->xrSystem())
+            xrSystem->didReceiveMessage(connection, decoder);
+        return;
+    }
+#endif
     page->didReceiveMessage(connection, decoder);
 }
 
@@ -290,7 +323,14 @@ void RemotePageProxy::didReceiveSyncMessage(IPC::Connection& connection, IPC::De
         if (decoder.messageReceiverName() == Messages::WebBackForwardList::messageReceiverName()) {
             Ref backForwardListReceiver = page->backForwardListMessageReceiver();
             backForwardListReceiver->didReceiveSyncMessage(connection, decoder, encoder);
-        } else
+        }
+#if ENABLE(WEBXR)
+        else if (decoder.messageReceiverName() == Messages::PlatformXRSystem::messageReceiverName()) {
+            if (RefPtr xrSystem = page->xrSystem())
+                xrSystem->didReceiveSyncMessage(connection, decoder, encoder);
+        }
+#endif
+        else
             page->didReceiveSyncMessage(connection, decoder, encoder);
     }
 }
@@ -369,7 +409,7 @@ void RemotePageProxy::setDrawingArea(DrawingAreaProxy* drawingArea)
     if (m_drawingArea && m_drawingArea->identifier() == drawingArea->identifier())
         return;
 
-    m_drawingArea = RemotePageDrawingAreaProxy::create(*drawingArea, m_process);
+    m_drawingArea = RemotePageDrawingAreaProxy::create(*drawingArea, m_process, m_webPageID);
     RefPtr websitePolicies = page->mainFrameWebsitePolicies();
     m_process->send(
         Messages::WebProcess::CreateWebPage(
@@ -382,6 +422,11 @@ void RemotePageProxy::setDrawingArea(DrawingAreaProxy* drawingArea)
             })
         ), 0
     );
+
+    // frameTreeCreationParameters above contains the main frame's current frameViewportInfo.
+    m_lastSentMainFrameViewportInfo = mainFrame->frameViewportInfo();
+
+    WebPageInspectorController::pageWasAddedToProcess(protect(page->browsingContextGroup()), m_process, m_webPageID);
 }
 
 void RemotePageProxy::setCurrentOrientation(WebCore::ScreenOrientationType orientation)

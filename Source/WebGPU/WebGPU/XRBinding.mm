@@ -31,7 +31,7 @@
 #import <wtf/CheckedArithmetic.h>
 #import <wtf/StdLibExtras.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 XRBinding::XRBinding(bool, Device& device)
     : m_device(device)
@@ -45,7 +45,7 @@ XRBinding::XRBinding(Device& device)
 
 XRBinding::~XRBinding() = default;
 
-Ref<XRBinding> Device::createXRBinding()
+RefPtr<WebGPU::XRBinding> Device::createXRBinding()
 {
     if (!isValid())
         return XRBinding::createInvalid(*this);
@@ -62,27 +62,7 @@ bool XRBinding::isValid() const
     return true;
 }
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
-
-void NODELETE wgpuXRBindingAddRef(WGPUXRBinding binding)
-{
-    WebGPU::fromAPI(binding).ref();
-}
-
-void wgpuXRBindingRelease(WGPUXRBinding binding)
-{
-    WebGPU::fromAPI(binding).deref();
-}
-
-WGPUXRProjectionLayer wgpuBindingCreateXRProjectionLayer(WGPUXRBinding binding, WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsage flags, double scale)
-{
-    return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(binding))->createXRProjectionLayer(colorFormat, optionalDepthStencilFormat, flags, scale));
-}
-
-WGPUXRSubImage wgpuBindingGetViewSubImage(WGPUXRBinding binding, WGPUXRProjectionLayer layer)
-{
-    return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(binding))->getViewSubImage(protect(WebGPU::fromAPI(layer))));
-}
 

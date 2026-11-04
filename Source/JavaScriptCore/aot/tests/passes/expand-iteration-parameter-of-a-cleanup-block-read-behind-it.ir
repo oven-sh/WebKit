@@ -1,0 +1,34 @@
+# The cleanup block of an iteration takes the text built so far as a parameter, and the catch block around the loop, which nothing else leads to, reads that parameter by its name.
+# The arm for arrays has nothing to close: its blocks go past the cleanup block to the catch block, and bring the text along.
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caughtAroundTheLoop" parameters=[{type=anything}, {type=function}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = IteratorOpen v0
+    Jump -> next b1(v2)
+  b1(v4: string):
+    LoopHint
+    v6 = IteratorResume v3
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b5(v4), notTaken b2()
+  b2() handler=b3(v4):
+    v9 = Call v1, -, v8
+    v10 = String string="."
+    v11 = Add v4, v10
+    Jump -> next b1(v11)
+  b3(v12: string) role=IterationCleanup subject=v3 handler=b4():
+    v13 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v13
+  b4() role=CatchHandler:
+    v15 = CatchValue
+    Return v12
+  b5(v16: string):
+    Return v16
+# CHECK: b4([[text]]: string) role=CatchHandler:
+# CHECK: Return [[text]]
+}

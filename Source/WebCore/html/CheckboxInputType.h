@@ -57,9 +57,9 @@ public:
 
     bool valueMissing(StringView) const final;
     float switchAnimationVisuallyOnProgress() const;
-    bool NODELETE isSwitchVisuallyOn() const;
+    bool LEGACY_NODELETE isSwitchVisuallyOn() const;
     float switchAnimationHeldProgress() const;
-    bool NODELETE isSwitchHeld() const;
+    bool LEGACY_NODELETE isSwitchHeld() const;
 
 private:
     explicit CheckboxInputType(HTMLInputElement& element)
@@ -81,19 +81,19 @@ private:
 #endif
     void startSwitchPointerTracking(LayoutPoint);
     void stopSwitchPointerTracking();
-    bool NODELETE isSwitchPointerTracking() const;
+    bool LEGACY_NODELETE isSwitchPointerTracking() const;
     void willDispatchClick(InputElementClickState&) final;
     void didDispatchClick(Event&, const InputElementClickState&) final;
     bool matchesIndeterminatePseudoClass() const final;
     void willUpdateCheckedness(bool /* nowChecked */, WasSetByJavaScript);
     void disabledStateChanged() final;
-    Seconds NODELETE switchAnimationStartTime(SwitchAnimationType) const;
-    void NODELETE setSwitchAnimationStartTime(SwitchAnimationType, Seconds);
-    bool NODELETE isSwitchAnimating(SwitchAnimationType) const;
+    Seconds LEGACY_NODELETE switchAnimationStartTime(SwitchAnimationType) const;
+    void LEGACY_NODELETE setSwitchAnimationStartTime(SwitchAnimationType, Seconds);
+    bool LEGACY_NODELETE isSwitchAnimating(SwitchAnimationType) const;
     void performSwitchAnimation(SwitchAnimationType);
     void performSwitchVisuallyOnAnimation(SwitchTrigger);
     void setIsSwitchHeld(bool /* isHeld */);
-    void NODELETE stopSwitchAnimation(SwitchAnimationType);
+    void LEGACY_NODELETE stopSwitchAnimation(SwitchAnimationType);
     float switchAnimationProgress(SwitchAnimationType) const;
     void updateIsSwitchVisuallyOnFromAbsoluteLocation(LayoutPoint);
     void switchAnimationTimerFired();
@@ -106,9 +106,9 @@ private:
     bool m_isSwitchHeld { false };
     Seconds m_switchAnimationVisuallyOnStartTime { 0_s };
     Seconds m_switchAnimationHeldStartTime { 0_s };
-    std::unique_ptr<Timer> m_switchAnimationTimer;
+    const std::unique_ptr<Timer> m_switchAnimationTimer;
 #if ENABLE(IOS_TOUCH_EVENTS)
-    std::unique_ptr<Timer> m_switchHeldTimer;
+    const std::unique_ptr<Timer> m_switchHeldTimer;
     std::optional<unsigned> m_switchPointerTrackingTouchIdentifier { std::nullopt };
 #endif
 };

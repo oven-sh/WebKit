@@ -1,0 +1,79 @@
+# A read of a name on a closure whose function is read without code walks the chain and does no more: it finds the same in every turn while nothing in the loop writes under that name, so it leaves the loop from whichever block it stands in
+# FORM: Prepared
+# RUN: pass HoistLoopInvariantReads
+# STATISTIC: HoistLoopInvariantReadsChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="readInBody" parameters=[{type=f4}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v3 = PropGet v0 key="member"
+    v4 = ToBoolean v3
+    Jump -> next b1()
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: PropGet v0 key="member"
+# CHECK: b1():
+# CHECK-NOT: PropGet
+}
+
+function f1 name="theNameIsStoredInTheLoop" parameters=[{type=f4}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v3 = PropGet v0 key="member"
+    PropSet v0, v1 key="member" mode=Strict
+    Jump -> next b1()
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b2():
+# CHECK-NEXT: PropGet v0 key="member"
+}
+
+function f2 name="anyFunctionMayAnswerWithCode" parameters=[{type=f5}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v3 = PropGet v0 key="member"
+    Jump -> next b1()
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b2():
+# CHECK-NEXT: PropGet v0 key="member"
+}
+
+function f3 name="whatMayBeUndefinedThrowsWhereItIsRead" parameters=[{type=undefined|f4}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v3 = PropGet v0 key="member"
+    Jump -> next b1()
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b2():
+# CHECK-NEXT: PropGet v0 key="member"
+}
+
+function f4 name="plain" results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+    Return
+}
+function f5 name="other" results=[{type=anything}] {
+    Return
+}

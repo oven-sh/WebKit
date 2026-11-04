@@ -1,0 +1,60 @@
+# `request.headers`, asked of a value that is expected to be the request of the host's library, which makes its headers in a getter, or a stand-in that keeps them in a field.
+# A test for one of the two fails for the other every time, and what runs behind a failed test is the copy of the rest of the function, in which `context.limit` goes by name too.
+# So one test is made for both. Behind it the read is a read of a union: it is split where it stands, the two arms meet again, and the rest of the function keeps its types.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+# RUN(SPLIT): pass PlaceTypeTests SplitUnions
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Incoming" constructor=f0 fields=[{key="url" declared={type=anything} flags=[IsRequired]}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="headers" kind=Getter function=f1 mutability=Fixed}, {key="sealed" kind=Setter function=f2 mutability=Fixed}]}
+layout L1 name="StandIn" fields=[{key="url" declared={type=anything} flags=[IsRequired]}, {key="headers" declared={type=anything} flags=[IsRequired]}, {key="sealed" declared={type=anything} flags=[IsRequired]}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Context" fields=[{key="limit" declared={type=anything} flags=[IsRequired]}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L3 name="Bare" fields=[{key="url" declared={type=anything} flags=[IsRequired]}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="Incoming" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="headers" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=number}] {
+    v1 = Integer integer=1
+    Return v1
+}
+function f2 name="sealed" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined}] {
+    v2 = Undefined
+    Return v2
+}
+
+function f3 name="oneTestForBoth" parameters=[{type=L0|L1 flags=[IsExpected]}, {type=L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1, v1: anything ~ L2):
+    v2 = PropGet v0 key="headers"
+    v3 = PropGet v1 key="limit"
+    v4 = PropGet v0 key="url"
+    v5 = NewArray v2, v3, v4
+    Return v5
+# CHECK: = TypeTest v0 testedType=L0|L1
+# CHECK-NOT: TypeTest v0
+# SPLIT: = TypeTest v0 testedType=L0|L1
+# SPLIT: = TypeTest {{*}} testedType=L1
+# SPLIT: = PropGet {{*}} key="headers" receivers=[L1]
+# SPLIT: = PropGet {{*}} key="headers" receivers=[L0]
+}
+
+function f4 name="aNameThatOneOfThemLacks" parameters=[{type=L0|L1|L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1|L3):
+    v1 = PropGet v0 key="headers"
+    Return v1
+# Whoever lacks the name is not waited for: the heaviest arm alone, as before.
+# CHECK-NOT: testedType=L0|L1
+}
+
+function f5 name="anAccessorWithoutGetter" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1):
+    v1 = PropGet v0 key="sealed"
+    Return v1
+# CHECK-NOT: testedType=L0|L1
+}
+
+function f6 name="aStore" parameters=[{type=L0|L1 flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything ~ L0|L1, v1: anything):
+    PropSet v0, v1 key="sealed"
+    v3 = Undefined
+    Return v3
+# CHECK-NOT: testedType=L0|L1
+}

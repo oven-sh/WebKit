@@ -41,6 +41,7 @@
 #include <WebCore/StyleInterpolationClient.h>
 #include <WebCore/Styleable.h>
 #include <WebCore/WebAnimationTypes.h>
+#include <wtf/Markable.h>
 #include <wtf/Ref.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/AtomStringHash.h>
@@ -66,7 +67,7 @@ class KeyframeEffect final : public AnimationEffect, public Style::Interpolation
 public:
     static ExceptionOr<Ref<KeyframeEffect>> create(JSC::JSGlobalObject&, Document&, Element*, JSC::Strong<JSC::JSObject>&&, Variant<double, KeyframeEffectOptions>&&);
     static Ref<KeyframeEffect> create(Ref<KeyframeEffect>&&);
-    static Ref<KeyframeEffect> create(const Element&, const std::optional<Style::PseudoElementIdentifier>&);
+    static Ref<KeyframeEffect> LEGACY_NODELETE create(const Element&, const std::optional<Style::PseudoElementIdentifier>&);
 
     using KeyframeOffset = Variant<std::nullptr_t, double, TimelineRangeOffset, String>;
 
@@ -115,11 +116,11 @@ public:
     Element* target() const { return m_target.get(); }
     void setTarget(RefPtr<Element>&&);
 
-    bool NODELETE targetsPseudoElement() const;
+    bool LEGACY_NODELETE targetsPseudoElement() const;
     const String pseudoElement() const;
     ExceptionOr<void> setPseudoElement(const String&);
 
-    const std::optional<const Styleable> NODELETE targetStyleable() const;
+    const std::optional<const Styleable> LEGACY_NODELETE targetStyleable() const;
 
     Vector<ComputedKeyframe> getKeyframes();
     ExceptionOr<void> setBindingsKeyframes(JSC::JSGlobalObject&, Document&, JSC::Strong<JSC::JSObject>&&);
@@ -171,8 +172,9 @@ public:
     bool isCurrentlyAffectingProperty(CSSPropertyID, Accelerated = Accelerated::No) const;
     bool isRunningAcceleratedAnimationForProperty(CSSPropertyID) const;
     bool isRunningAcceleratedTransformRelatedAnimation() const;
+    bool isRunningOrAboutToRunAcceleratedTransformRelatedAnimation() const;
 
-    bool NODELETE requiresPseudoElement() const;
+    bool LEGACY_NODELETE requiresPseudoElement() const;
 
     void customPropertyRegistrationDidChange(const AtomString&);
 
@@ -214,7 +216,7 @@ private:
         ~CanBeAcceleratedMutationScope();
 
     private:
-        RefPtr<KeyframeEffect> m_effect;
+        const RefPtr<KeyframeEffect> m_effect;
         bool m_couldOriginallyPreventAcceleration;
 #if ENABLE(THREADED_ANIMATIONS)
         bool m_couldOriginallyBeAccelerated;
@@ -265,8 +267,8 @@ private:
         ~StackMembershipMutationScope();
 
     private:
-        RefPtr<KeyframeEffect> m_effect;
-        RefPtr<Element> m_originalTarget;
+        const RefPtr<KeyframeEffect> m_effect;
+        const RefPtr<Element> m_originalTarget;
         std::optional<Style::PseudoElementIdentifier> m_originalPseudoElementIdentifier;
     };
 
@@ -323,6 +325,9 @@ private:
     CompositeOperation m_compositeOperation { CompositeOperation::Replace };
     AcceleratedProperties m_acceleratedPropertiesState { AcceleratedProperties::None };
     AnimationEffectPhase m_phaseAtLastApplication { AnimationEffectPhase::Idle };
+    Markable<double> m_progressAtLastApplication;
+    Markable<double> m_currentIterationAtLastApplication;
+    EndpointInclusiveActiveInterval m_endpointInclusiveActiveIntervalAtLastApplication { EndpointInclusiveActiveInterval::No };
     RunningAccelerated m_runningAccelerated { RunningAccelerated::NotStarted };
     bool m_needsForcedLayout : 1 { false };
     bool m_triggersStackingContext : 1 { false };

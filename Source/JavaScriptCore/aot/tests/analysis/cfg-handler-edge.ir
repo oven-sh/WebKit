@@ -1,0 +1,111 @@
+# A covered block has an edge to its landing block, listed after the targets of its terminator, whether or not something in it throws
+# FORM: Prepared
+# RUN: analyses control-flow handler-edges
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sharedLandingBlock" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b4(v1):
+    v2 = Call v0
+    Jump -> next b2()
+  b2() handler=b4(v1):
+    v3 = Add v1, v1
+    Jump -> next b3()
+  b3():
+    Return v3
+  b4(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: control-flow:
+# CHECK-NEXT: reverse postorder: [b0 b1 b2 b3 b4]
+# CHECK-NEXT: unreachable: []
+# CHECK-NEXT: b0 successors: [b1]
+# CHECK-NEXT: b0 predecessors: []
+# CHECK-NEXT: b0 incoming edges: []
+# CHECK-NEXT: b0 single incoming edge: none
+# CHECK-NEXT: b0 handler: none
+# CHECK-NEXT: b1 successors: [b2 b4]
+# CHECK-NEXT: b1 predecessors: [b0]
+# CHECK-NEXT: b1 incoming edges: [b0.0]
+# CHECK-NEXT: b1 single incoming edge: b0.0
+# CHECK-NEXT: b1 handler: b4
+# CHECK-NEXT: b2 successors: [b3 b4]
+# CHECK-NEXT: b2 predecessors: [b1]
+# CHECK-NEXT: b2 incoming edges: [b1.0]
+# CHECK-NEXT: b2 single incoming edge: b1.0
+# CHECK-NEXT: b2 handler: b4
+# CHECK-NEXT: b3 successors: []
+# CHECK-NEXT: b3 predecessors: [b2]
+# CHECK-NEXT: b3 incoming edges: [b2.0]
+# CHECK-NEXT: b3 single incoming edge: b2.0
+# CHECK-NEXT: b3 handler: none
+# CHECK-NEXT: b4 successors: []
+# CHECK-NEXT: b4 predecessors: [b1 b2]
+# CHECK-NEXT: b4 incoming edges: [b1.handler b2.handler]
+# CHECK-NEXT: b4 single incoming edge: none
+# CHECK-NEXT: b4 handler: none
+# CHECK-NEXT: handler-edges:
+# CHECK-NEXT: b0 handler: none
+# CHECK-NEXT: b0 terminator dominates: [b1 b2 b3 b4]
+# CHECK-NEXT: b1 handler: b4(v1)
+# CHECK-NEXT: b1 terminator dominates: [b2 b3]
+# CHECK-NEXT: b2 handler: b4(v1)
+# CHECK-NEXT: b2 terminator dominates: [b3]
+# CHECK-NEXT: b3 handler: none
+# CHECK-NEXT: b3 terminator dominates: []
+# CHECK-NEXT: b4 handler: none
+# CHECK-NEXT: b4 terminator dominates: []
+function f1 name="branchAndHandler" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean) handler=b3():
+    v2 = Call v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    Return v0
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: control-flow:
+# CHECK-NEXT: reverse postorder: [b0 b1 b2 b3]
+# CHECK-NEXT: unreachable: []
+# CHECK-NEXT: b0 successors: [b1 b2 b3]
+# CHECK: b0 handler: b3
+# CHECK: b3 predecessors: [b0]
+# CHECK-NEXT: b3 incoming edges: [b0.handler]
+# CHECK-NEXT: b3 single incoming edge: b0.handler
+# CHECK-NEXT: b3 handler: none
+# CHECK-NEXT: handler-edges:
+# CHECK-NEXT: b0 handler: b3()
+# CHECK-NEXT: b0 terminator dominates: [b1 b2]
+function f2 name="uncovered" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    v2 = Call v0
+    Jump -> next b2()
+  b2():
+    v3 = Add v1, v1
+    Jump -> next b3()
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: control-flow:
+# CHECK-NEXT: reverse postorder: [b0 b1 b2 b3]
+# CHECK: b1 successors: [b2]
+# CHECK: b1 handler: none
+# CHECK-NEXT: b2 successors: [b3]
+# CHECK: b2 handler: none
+# CHECK: handler-edges:
+# CHECK-NEXT: b0 handler: none
+# CHECK-NEXT: b0 terminator dominates: [b1 b2 b3]
+# CHECK-NEXT: b1 handler: none
+# CHECK-NEXT: b1 terminator dominates: [b2 b3]
+# CHECK-NEXT: b2 handler: none
+# CHECK-NEXT: b2 terminator dominates: [b3]
+# CHECK-NEXT: b3 handler: none
+# CHECK-NEXT: b3 terminator dominates: []

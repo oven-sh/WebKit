@@ -56,7 +56,7 @@ UTF8CString XDGDBusProxy::makeProxy(const char* baseDirectory, const char* proxy
         return { };
     }
 
-    return UTF8CString { byteCast<char8_t>(proxySocketTemplate.get()) };
+    return UTF8CString::unsafeFromUTF8(proxySocketTemplate.get());
 }
 
 std::optional<UTF8CString> XDGDBusProxy::dbusSessionProxy(const char* baseDirectory, AllowPortals allowPortals)
@@ -73,13 +73,13 @@ std::optional<UTF8CString> XDGDBusProxy::dbusSessionProxy(const char* baseDirect
         return std::nullopt;
 
     m_args.appendList<UTF8CString>({
-        UTF8CString { byteCast<char8_t>(dbusAddress) }, m_dbusSessionProxyPath,
+        UTF8CString::unsafeFromUTF8(dbusAddress), m_dbusSessionProxyPath,
         "--filter"_s
     });
 
 #if ENABLE(MEDIA_SESSION)
     auto mprisSessionID = makeString("--own=org.mpris.MediaPlayer2."_s, WTF::applicationID().span(), ".Sandboxed.*"_s);
-    m_args.append(UTF8CString { byteCast<char8_t>(mprisSessionID.ascii().span()) });
+    m_args.append(UTF8CString::fromUTF8(mprisSessionID.ascii().span()));
 #endif
 
     if (allowPortals == AllowPortals::Yes)
@@ -193,7 +193,7 @@ void XDGDBusProxy::launch(const ProcessLaunchOptions& webProcessLaunchOptions)
     // sandboxed process's application ID, and will break if it's missing.
     int proxyFd = argumentsToFileDescriptor(proxyArgs, "dbus-proxy");
     Vector<UTF8CString> args = {
-        ASCIILiteral::fromLiteralUnsafe(DBUS_PROXY_EXECUTABLE),
+        ASCIILiteral { DBUS_PROXY_EXECUTABLE },
         makeString("--args="_s, proxyFd).utf8(),
     };
     auto argv = args.map([](auto& arg) {

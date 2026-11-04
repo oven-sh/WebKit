@@ -64,7 +64,7 @@ static inline IDBClient::IDBConnectionProxy* idbConnectionProxy(Document& docume
     return document.idbConnectionProxy();
 }
 
-static ThreadSafeWeakHashSet<ServiceWorkerThreadProxy>& NODELETE allServiceWorkerThreadProxies()
+static ThreadSafeWeakHashSet<ServiceWorkerThreadProxy>& LEGACY_NODELETE allServiceWorkerThreadProxies()
 {
     static MainThreadNeverDestroyed<ThreadSafeWeakHashSet<ServiceWorkerThreadProxy>> set;
     return set;
@@ -157,7 +157,7 @@ RefPtr<CacheStorageConnection> ServiceWorkerThreadProxy::createCacheStorageConne
 {
     ASSERT(isMainThread());
     if (!m_cacheStorageConnection)
-        m_cacheStorageConnection = Ref { m_cacheStorageProvider.get() }->createCacheStorageConnection();
+        lazyInitialize(m_cacheStorageConnection, Ref { m_cacheStorageProvider.get() }->createCacheStorageConnection());
     return m_cacheStorageConnection;
 }
 

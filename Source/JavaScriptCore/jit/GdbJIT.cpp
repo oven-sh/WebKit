@@ -41,6 +41,7 @@
 #include <wtf/ProcessID.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/StringPrintStream.h>
+#include <wtf/posix/POSIXExtras.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -121,12 +122,12 @@ static inline void writeUnalignedValue(uint8_t* p, V value)
 
 class Writer : public RefCountedAndCanMakeWeakPtr<Writer> {
 public:
-    static Ref<Writer> NODELETE create(DebugObject* obj)
+    static Ref<Writer> LEGACY_NODELETE create(DebugObject* obj)
     {
         return adoptRef(*new Writer(obj));
     }
 
-    uintptr_t NODELETE position() const { return m_position; }
+    uintptr_t LEGACY_NODELETE position() const { return m_position; }
 
     template<typename T>
     class Slot {
@@ -188,9 +189,9 @@ public:
             m_buffer.grow(pos);
     }
 
-    DebugObject* NODELETE debugObject() { return m_debugObject; }
+    DebugObject* LEGACY_NODELETE debugObject() { return m_debugObject; }
 
-    uint8_t* NODELETE buffer() LIFETIME_BOUND { return &m_buffer[0]; }
+    uint8_t* LEGACY_NODELETE buffer() LIFETIME_BOUND { return &m_buffer[0]; }
 
     void align(uintptr_t align)
     {
@@ -235,14 +236,14 @@ private:
     friend class Slot;
 
     template<typename T>
-    uint8_t* NODELETE addressAt(uintptr_t offset) LIFETIME_BOUND
+    uint8_t* LEGACY_NODELETE addressAt(uintptr_t offset) LIFETIME_BOUND
     {
         ASSERT(offset < m_buffer.size() && offset + sizeof(T) <= m_buffer.size());
         return &m_buffer[offset];
     }
 
     template<typename T>
-    T* NODELETE rawSlotAt(uintptr_t offset) LIFETIME_BOUND
+    T* LEGACY_NODELETE rawSlotAt(uintptr_t offset) LIFETIME_BOUND
     {
         ASSERT(offset < m_buffer.size() && offset + sizeof(T) <= m_buffer.size());
         return reinterpret_cast<T*>(&m_buffer[offset]);
@@ -261,17 +262,17 @@ private:
 
 class CodeDescription : public RefCounted<CodeDescription> {
 public:
-    const UTF8CString& NODELETE name() const LIFETIME_BOUND { return m_name; }
+    const UTF8CString& LEGACY_NODELETE name() const LIFETIME_BOUND { return m_name; }
 
-    const void* NODELETE codeStart() const { return reinterpret_cast<const void*>(m_codeRegion.data()); }
+    const void* LEGACY_NODELETE codeStart() const { return reinterpret_cast<const void*>(m_codeRegion.data()); }
 
-    const void* NODELETE codeEnd() const { return reinterpret_cast<const void*>(std::to_address(m_codeRegion.end())); }
+    const void* LEGACY_NODELETE codeEnd() const { return reinterpret_cast<const void*>(std::to_address(m_codeRegion.end())); }
 
-    uintptr_t NODELETE codeSize() const { return m_codeRegion.size(); }
+    uintptr_t LEGACY_NODELETE codeSize() const { return m_codeRegion.size(); }
 
-    std::span<const uint8_t> NODELETE region() { return m_codeRegion; }
+    std::span<const uint8_t> LEGACY_NODELETE region() { return m_codeRegion; }
 
-    static Ref<CodeDescription> NODELETE create(const UTF8CString& name, std::span<const uint8_t> region)
+    static Ref<CodeDescription> LEGACY_NODELETE create(const UTF8CString& name, std::span<const uint8_t> region)
     {
         return adoptRef(*new CodeDescription(name, region));
     }
@@ -410,8 +411,8 @@ public:
         strncpy(header->segname, m_segment.data(), sizeof(header->segname));
     }
 
-    const void* NODELETE addr() const { return m_addr; }
-    size_t NODELETE size() const { return m_size; }
+    const void* LEGACY_NODELETE addr() const { return m_addr; }
+    size_t LEGACY_NODELETE size() const { return m_size; }
 
 private:
     ASCIICString m_name;
@@ -577,7 +578,7 @@ public:
     {
     }
 
-    template<typename CharacterType> uintptr_t add(const CStringWithEncoding<CharacterType>& str)
+    template<typename CharacterType> uintptr_t add(const CString<CharacterType>& str)
     {
         if (str.isEmpty())
             return 0;
@@ -609,7 +610,7 @@ public:
     }
 
 private:
-    template<typename CharacterType> void writeString(const CStringWithEncoding<CharacterType>& str)
+    template<typename CharacterType> void writeString(const CString<CharacterType>& str)
     {
         for (auto c : str.span())
             m_writer->write(c);
@@ -1392,7 +1393,7 @@ static void addJITCodeEntry(GdbJITCodeMap& map, std::span<const uint8_t> region,
             filename.print("/tmp");
         filename.print("/jit-", getCurrentProcessID(), fileNum++, nameHint, ".o");
         auto path = filename.toUTF8CString();
-        auto fd = open(path.legacyCStringPointer(), O_CREAT | O_TRUNC | O_RDWR, 0666);
+        auto fd = posixOpen(path, O_CREAT | O_TRUNC | O_RDWR, 0666);
         RELEASE_ASSERT(fd != -1);
         auto file = fdopen(fd, "wb");
         RELEASE_ASSERT(file);

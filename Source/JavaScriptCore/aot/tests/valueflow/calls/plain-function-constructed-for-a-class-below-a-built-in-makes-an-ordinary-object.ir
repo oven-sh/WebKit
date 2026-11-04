@@ -1,0 +1,41 @@
+# var Make = function () { this.x = 1 }  class List extends Array {}  Reflect.construct(Make, [], List).length  new List().length
+# A function that is no class allocates an ordinary object under the prototype that new.target hands over. Above List stands Array and nothing of the program,
+# so Make is not on the chain of List: what stands for the instances of List may be another object, and nothing is proven of it.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: Type=L1
+# CHECK: = PropGet {{*}} key="length"
+# CHECK-NOT: Type=L1
+# CHECK-LABEL: function f1 name="Make"
+# CHECK-NOT: provenType=L1
+# CHECK: PropSet {{*}} key="x"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Make" constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="List" constructor=f2 flags=[HasHeritage]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Array
+    v2 = ResolveHeritage v1
+    v3 = NewClosure function=f2
+    v4 = NewClass v3, v1, v2 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = Construct v0, v5
+    v7 = PropGet v6 key="length"
+    v8 = Construct v5
+    v9 = PropGet v8 key="length"
+    v10 = Add v7, v9
+    Return v10
+}
+function f1 name="Make" module=m0 flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="List" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    Return v4
+}

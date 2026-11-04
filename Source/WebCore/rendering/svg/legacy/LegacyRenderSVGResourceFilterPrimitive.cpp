@@ -46,13 +46,18 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGResourceFilterPrimitive);
 
 LegacyRenderSVGResourceFilterPrimitive::LegacyRenderSVGResourceFilterPrimitive(SVGFilterPrimitiveStandardAttributes& filterPrimitiveElement, Style::ComputedStyle&& style)
-    : LegacyRenderSVGHiddenContainer(Type::LegacySVGResourceFilterPrimitive, filterPrimitiveElement, WTF::move(style))
+    : LegacyRenderSVGResourceFilterPrimitive(Type::LegacySVGResourceFilterPrimitive, filterPrimitiveElement, WTF::move(style))
+{
+}
+
+LegacyRenderSVGResourceFilterPrimitive::LegacyRenderSVGResourceFilterPrimitive(Type type, SVGFilterPrimitiveStandardAttributes& filterPrimitiveElement, Style::ComputedStyle&& style)
+    : LegacyRenderSVGHiddenContainer(type, filterPrimitiveElement, WTF::move(style))
 {
 }
 
 SVGFilterPrimitiveStandardAttributes& LegacyRenderSVGResourceFilterPrimitive::filterPrimitiveElement() const
 {
-    return static_cast<SVGFilterPrimitiveStandardAttributes&>(LegacyRenderSVGHiddenContainer::element());
+    return downcast<SVGFilterPrimitiveStandardAttributes>(LegacyRenderSVGHiddenContainer::element());
 }
 
 void LegacyRenderSVGResourceFilterPrimitive::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)

@@ -1,0 +1,5 @@
+# A well-known symbol as the key of `in` passes the back-end checks in compact code: as a value, as a key whose symbol the program also reads as a value, and as a key alone
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end
+# CHECK: image not empty
+# PROGRAM-OF: symbol-key-fast.ir

@@ -1,0 +1,41 @@
+# With the two rules switched off the chains stay chains of branches
+# FORM: Prepared
+# OPTIONS: disable=rule:SwitchString,rule:SwitchNumber
+# RUN: pass Select
+# STATISTIC: SwitchStringGroups = 0
+# STATISTIC: SwitchNumberGroups = 0
+# CHECK-NOT: Switch
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="three-strings" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="a"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = String string="b"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    v5 = String string="c"
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    Return v0
+}
+function f1 name="three-numbers" parameters=[{type=number}] results=[{type=number}] {
+# REPEAT: i = 1..3
+    v%(i*2-1) = Integer integer=%(i)
+    v%(i*2) = StrictEq v0, v%(i*2-1)
+    Branch v%(i*2) -> taken b%(i*2-1)(), notTaken b%(i*2)()
+  b%(i*2-1)():
+    Return v0
+  b%(i*2)():
+# END REPEAT
+    Return v0
+}

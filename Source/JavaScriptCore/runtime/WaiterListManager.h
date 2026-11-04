@@ -181,7 +181,7 @@ public:
     }
 
     template<typename Functor>
-    void removeIf(const AbstractLocker&, const Functor& functor)
+    void removeIf(const AbstractLocker&, NOESCAPE const Functor& functor)
     {
         removeIf(functor);
     }
@@ -195,7 +195,7 @@ public:
 
 private:
     template<typename Functor>
-    void removeIf(const Functor& functor)
+    void removeIf(NOESCAPE const Functor& functor)
     {
         m_waiters.forEach([&](Waiter* waiter) {
             if (functor(waiter))

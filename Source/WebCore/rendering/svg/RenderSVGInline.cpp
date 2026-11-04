@@ -23,16 +23,14 @@
 #include "config.h"
 #include "RenderSVGInline.h"
 
-#include "FrameSelection.h"
+#include "InlineIteratorInlineBox.h"
 #include "LegacyRenderSVGResource.h"
-#include "LocalFrame.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGInlineInlines.h"
 #include "RenderSVGInlineText.h"
 #include "RenderSVGText.h"
 #include "SVGGraphicsElement.h"
-#include "SVGInlineFlowBox.h"
 #include "SVGRenderSupport.h"
 #include "SVGResourcesCache.h"
 #include "Settings.h"
@@ -43,38 +41,18 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGInline);
     
 RenderSVGInline::RenderSVGInline(Type type, SVGGraphicsElement& element, Style::ComputedStyle&& style)
-    : RenderInline(type, element, WTF::move(style))
+    : RenderBoxModelObject(type, element, WTF::move(style))
 {
     ASSERT(isRenderSVGInline());
 }
 
 RenderSVGInline::RenderSVGInline(Type type, Document& document, Style::ComputedStyle&& style)
-    : RenderInline(type, document, WTF::move(style))
+    : RenderBoxModelObject(type, document, WTF::move(style))
 {
     ASSERT(isRenderSVGInline());
 }
 
 RenderSVGInline::~RenderSVGInline() = default;
-
-std::unique_ptr<LegacyInlineFlowBox> RenderSVGInline::createInlineFlowBox()
-{
-    auto box = makeUnique<SVGInlineFlowBox>(*this);
-    box->setHasVirtualLogicalHeight();
-    return box;
-}
-
-LegacyInlineFlowBox* RenderSVGInline::createAndAppendInlineFlowBox()
-{
-    auto newFlowBox = createInlineFlowBox();
-    auto flowBox = newFlowBox.get();
-    m_legacyLineBoxes.appendLineBox(WTF::move(newFlowBox));
-    return flowBox;
-}
-
-void RenderSVGInline::deleteLegacyLineBoxes()
-{
-    m_legacyLineBoxes.deleteLineBoxes();
-}
 
 bool RenderSVGInline::isChildAllowed(const RenderObject& child, const Style::ComputedStyle& style) const
 {
@@ -124,14 +102,14 @@ FloatRect RenderSVGInline::decoratedBoundingBox() const
 LayoutRect RenderSVGInline::clippedOverflowRect(const RenderLayerModelObject* repaintContainer, const VisibleRectContext& context) const
 {
     if (document().settings().layerBasedSVGEngineEnabled())
-        return RenderInline::clippedOverflowRect(repaintContainer, context);
+        return RenderBoxModelObject::clippedOverflowRect(repaintContainer, context);
     return SVGRenderSupport::clippedOverflowRectForRepaint(*this, repaintContainer, context);
 }
 
 auto RenderSVGInline::rectsForRepaintingAfterLayout(const RenderLayerModelObject* repaintContainer, RepaintOutlineBounds repaintOutlineBounds) const -> RepaintRects
 {
     if (document().settings().layerBasedSVGEngineEnabled())
-        return RenderInline::rectsForRepaintingAfterLayout(repaintContainer, repaintOutlineBounds);
+        return RenderBoxModelObject::rectsForRepaintingAfterLayout(repaintContainer, repaintOutlineBounds);
 
     auto rects = RepaintRects { SVGRenderSupport::clippedOverflowRectForRepaint(*this, repaintContainer, visibleRectContextForRepaint()) };
     if (repaintOutlineBounds == RepaintOutlineBounds::Yes)
@@ -152,7 +130,7 @@ std::optional<FloatRect> RenderSVGInline::computeFloatVisibleRectInContainer(con
 void RenderSVGInline::mapLocalToContainer(const RenderLayerModelObject* ancestorContainer, TransformState& transformState, OptionSet<MapCoordinatesMode> mode, bool* wasFixed) const
 {
     if (document().settings().layerBasedSVGEngineEnabled()) {
-        RenderInline::mapLocalToContainer(ancestorContainer, transformState, mode, wasFixed);
+        RenderBoxModelObject::mapLocalToContainer(ancestorContainer, transformState, mode, wasFixed);
         return;
     }
     SVGRenderSupport::mapLocalToContainer(*this, ancestorContainer, transformState, wasFixed);
@@ -161,7 +139,7 @@ void RenderSVGInline::mapLocalToContainer(const RenderLayerModelObject* ancestor
 const RenderElement* RenderSVGInline::pushMappingToContainer(const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap& geometryMap) const
 {
     if (document().settings().layerBasedSVGEngineEnabled())
-        return RenderInline::pushMappingToContainer(ancestorToStopAt, geometryMap);
+        return RenderBoxModelObject::pushMappingToContainer(ancestorToStopAt, geometryMap);
     return SVGRenderSupport::pushMappingToContainer(*this, ancestorToStopAt, geometryMap);
 }
 
@@ -177,8 +155,11 @@ void RenderSVGInline::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed) co
         return;
 
     FloatRect textBoundingBox = textAncestor->strokeBoundingBox();
-    for (auto* box = firstLegacyInlineBox(); box; box = box->nextLineBox())
-        quads.append(localToAbsoluteQuad(FloatRect(textBoundingBox.x() + box->x(), textBoundingBox.y() + box->y(), box->logicalWidth(), box->logicalHeight()), MapCoordinatesMode::UseTransforms, wasFixed));
+    for (auto& box : InlineIterator::inlineBoxesFor(*this)) {
+        auto boxRect = box.visualRectIgnoringBlockDirection();
+        boxRect.moveBy(textBoundingBox.location());
+        quads.append(localToAbsoluteQuad(boxRect, MapCoordinatesMode::UseTransforms, wasFixed));
+    }
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -194,41 +175,19 @@ void RenderSVGInline::willBeDestroyed()
     if (!document().settings().layerBasedSVGEngineEnabled())
         SVGResourcesCache::clientDestroyed(*this);
 
-    if (!renderTreeBeingDestroyed()) {
-        if (auto* inlineBox = firstLegacyInlineBox()) {
-            // We can't wait for RenderBoxModelObject::destroy to clear the selection,
-            // because by then we will have nuked the line boxes.
-            if (isSelectionBorder())
-                frame().selection().setNeedsSelectionUpdate();
-
-            // If line boxes are contained inside a root, that means we're an inline.
-            // In that case, we need to remove all the line boxes so that the parent
-            // lines aren't pointing to deleted children. If the first line box does
-            // not have a parent that means they are either already disconnected or
-            // root lines that can just be destroyed without disconnecting.
-            if (inlineBox->parent()) {
-                for (auto* box = inlineBox; box; box = box->nextLineBox())
-                    box->removeFromParent();
-            }
-        } else if (auto* parent = this->parent(); parent && parent->isSVGRenderer())
-            parent->dirtyLineFromChangedChild();
-    }
-
-    m_legacyLineBoxes.deleteLineBoxes();
-
-    RenderInline::willBeDestroyed();
+    RenderBoxModelObject::willBeDestroyed();
 }
 
 void RenderSVGInline::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     if (document().settings().layerBasedSVGEngineEnabled()) {
-        RenderInline::styleDidChange(diff, oldStyle);
+        RenderBoxModelObject::styleDidChange(diff, oldStyle);
         return;
     }
 
     if (diff == Style::DifferenceResult::Layout)
         invalidateCachedBoundaries();
-    RenderInline::styleDidChange(diff, oldStyle);
+    RenderBoxModelObject::styleDidChange(diff, oldStyle);
     if (!isAnonymous())
         SVGResourcesCache::clientStyleChanged(*this, diff, oldStyle, style());
 }
@@ -242,25 +201,17 @@ bool RenderSVGInline::needsHasSVGTransformFlags() const
 
 void RenderSVGInline::updateFromStyle()
 {
-    RenderInline::updateFromStyle();
+    RenderBoxModelObject::updateFromStyle();
 
-    if (document().settings().layerBasedSVGEngineEnabled())
+    if (document().settings().layerBasedSVGEngineEnabled()) {
         updateHasSVGTransformFlags();
+
+        if (style().vectorEffect() == VectorEffect::NonScalingStroke)
+            setMayHaveNonScalingStrokeInSubtreeIncludingAncestors();
+    }
 
     // SVG text layout code expects us to be an inline-level element.
     setInline(true);
-}
-
-LegacyInlineFlowBox* firstLegacyInlineBoxFor(const RenderBoxModelObject& renderer)
-{
-    auto* svgInline = dynamicDowncast<RenderSVGInline>(renderer);
-    return svgInline ? svgInline->firstLegacyInlineBox() : nullptr;
-}
-
-LegacyInlineFlowBox* lastLegacyInlineBoxFor(const RenderBoxModelObject& renderer)
-{
-    auto* svgInline = dynamicDowncast<RenderSVGInline>(renderer);
-    return svgInline ? svgInline->lastLegacyInlineBox() : nullptr;
 }
 
 }

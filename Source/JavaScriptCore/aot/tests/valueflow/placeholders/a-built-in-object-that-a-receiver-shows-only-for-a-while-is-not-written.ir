@@ -1,0 +1,91 @@
+# Object.defineProperty(Array.prototype, "zero", { get: one })
+# somethingThatNoTableLists(Object.prototype); Object.defineProperty(box.held, "first", { get: one })   box.held is Object.prototype, and much later also a value nobody knows
+# A definition or a deletion on a receiver nobody knows reaches a built-in object listed beside it only if some statement writes that object. The receiver of the second definition shows Object.prototype
+# only until the unknown object arrives and covers it: in the end no statement is seen to write it, whether or not the rule ran in between. Array.prototype is shown to the end.
+# RUN: valueflow-solve written-objects
+# CHECK: written-object ArrayPrototype
+# CHECK-NOT: written-object ObjectPrototype
+
+layout L0 name="Box" fields=[{key="held" declared={type=anything}}]
+layout L1 name="Descriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = Builtin builtin=ObjectPrototype
+    v3 = Undefined
+    v4 = Call v1, v3, v2
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectDefineProperty
+    v7 = NewObject layout=L0
+    PropSet v7, v2 key="held" mode=Strict
+    v9 = NewClosure function=f2
+    v10 = Call v9, v3, v1
+    PropSet v7, v10 key="held" mode=Strict
+    v12 = PropGet v7 key="held"
+    v13 = NewClosure function=f1
+    v14 = NewObject -, v13 layout=L1 fields=[0]
+    v15 = String string="first"
+    v16 = Call v6, v5, v12, v15, v14
+    v17 = Builtin builtin=ArrayPrototype
+    v18 = String string="zero"
+    v19 = Call v6, v5, v17, v18, v14
+    Return
+}
+function f1 name="one" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="pass0" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f3
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f3 name="pass1" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f4 name="pass2" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f5
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f5 name="pass3" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f6
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f6 name="pass4" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f7
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f7 name="pass5" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f8
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f8 name="pass6" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f9
+    v2 = Undefined
+    v3 = Call v1, v2, v0
+    Return v3
+}
+function f9 name="pass7" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

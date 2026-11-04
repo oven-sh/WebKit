@@ -38,7 +38,8 @@ static const auto clientsMayIgnoreEventsKey = CFSTR("ClientMayIgnoreEvents");
 
 static bool clientsMayIgnoreEvents()
 {
-    CFTypeRef valuePtr;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CFTypeRef valuePtr;
     if (CGSCopyConnectionProperty(CGSMainConnectionID(), CGSMainConnectionID(), clientsMayIgnoreEventsKey, &valuePtr) != kCGErrorSuccess)
         return false;
 

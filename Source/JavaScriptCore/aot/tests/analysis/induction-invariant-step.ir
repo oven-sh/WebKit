@@ -1,0 +1,78 @@
+# A step by a value that does not change in the loop names the value, and its type gives the direction
+# FORM: Prepared
+# RUN: induction
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="amount" module=m0 declared={type=int[1, 8]} initialization=Undefined
+
+function f0 name="addsPositiveAmount" parameters=[{type=int[0, 1000]}, {type=int[1, 8]}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Add v6, v1
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v3 start v2 step +v1 Increasing stepped [v7] tests [b1 v3 Less v0 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: none
+
+function f1 name="addsAnyNumber" parameters=[{type=int[0, 1000]}, {type=number}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Add v6, v1
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v3 start v2 step +v1 Unknown stepped [v7] tests [b1 v3 Less v0 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: none
+
+function f2 name="subtractsPositiveAmount" parameters=[{type=int[0, 1000]}, {type=int[1, 8]}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v3):
+    LoopHint
+    v5 = Greater v3, v2
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Sub v6, v1
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v3 start v0 step -v1 Decreasing stepped [v7] tests [b1 v3 Greater v2 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: none
+
+function f3 name="amountIsReadInLoop" parameters=[{type=int[0, 1000]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = GetModuleVariable variable=g0
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: loop b1 counter: none

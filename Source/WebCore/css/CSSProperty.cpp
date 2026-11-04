@@ -37,7 +37,7 @@ static_assert(sizeof(CSSProperty) == sizeof(SameSizeAsCSSProperty), "CSSProperty
 CSSPropertyID StylePropertyMetadata::shorthandID() const
 {
     if (!m_isSetFromShorthand)
-        return CSSPropertyInvalid;
+        return CSSPropertyID::Invalid;
 
     auto shorthands = matchingShorthandsForLonghand(static_cast<CSSPropertyID>(m_propertyID));
     ASSERT(shorthands.size() && m_indexInShorthandsVector >= 0 && m_indexInShorthandsVector < shorthands.size());

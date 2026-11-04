@@ -1,0 +1,30 @@
+# With branch hints ignored an unlikely block counts as normal, and a rare block stays rare
+# FORM: Prepared
+# OPTIONS: testing=ignore-branch-hints
+# RUN: frequencies
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="recordedFrequencies" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b3()
+  b1() frequency=Unlikely:
+    Jump -> next b2()
+  b2():
+    Jump -> next b6()
+  b3():
+    Branch v0 -> taken b4(), notTaken b5()
+  b4() frequency=Rare:
+    Jump -> next b5()
+  b5():
+    Jump -> next b6()
+  b6():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 0.500000
+# CHECK-NEXT: b3 frequency: Normal count: 0.500000
+# CHECK-NEXT: b4 frequency: Rare count: 0.000488
+# CHECK-NEXT: b5 frequency: Normal count: 0.500000
+# CHECK-NEXT: b6 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency

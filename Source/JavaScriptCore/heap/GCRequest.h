@@ -33,6 +33,10 @@
 namespace JSC {
 
 struct GCRequest {
+    // Identifies a request to the thread that asked for it, so it can wait for that request in
+    // particular rather than for whatever collection happens to be running.
+    using Ticket = uint64_t;
+
     GCRequest() { }
     
     GCRequest(CollectionScope scope)
@@ -45,11 +49,12 @@ struct GCRequest {
     {
     }
     
-    bool NODELETE subsumedBy(const GCRequest& other) const;
+    bool LEGACY_NODELETE subsumedBy(const GCRequest& other) const;
     
     void dump(PrintStream&) const;
     
     std::optional<CollectionScope> scope;
+    // Upstream removed this as unused (322293@main). Bun sets it (JSC__VM__collectAsyncIdle).
     RefPtr<SharedTask<void()>> didFinishEndPhase;
 #if USE(BUN_JSC_ADDITIONS)
     // Set by an embedder on a collection it requests because the application has gone idle (as opposed to one paced by

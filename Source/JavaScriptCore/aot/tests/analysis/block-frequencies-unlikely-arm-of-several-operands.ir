@@ -1,0 +1,73 @@
+# Each operand of a condition reaches the arm through a block of its own that narrows or names values and jumps on. Such a block is a part of the edge: an arm recorded as unlikely stays unlikely behind it. A block that does work of its own on the way is no part of the edge
+# FORM: Prepared
+# RUN: frequencies
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="everyOperandNarrows" parameters=[{type=boolean}, {type=boolean}, {type=undefined|string}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b4()
+  b1():
+    Branch v1 -> taken b2(), notTaken b5()
+  b2():
+    v3 = TypeTest v2 testedType=string
+    Branch v3 -> taken b3(), notTaken b6()
+  b3():
+    Return
+  b4():
+    Jump -> next b7()
+  b5():
+    v4 = Boolean boolean=false
+    Jump -> next b7()
+  b6():
+    v5 = AssumeType v2 provenType=undefined
+    v6 = Upcast v5 castType=anything
+    Jump -> next b7()
+  b7() frequency=Unlikely:
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.941176
+# CHECK-NEXT: b2 frequency: Normal count: 0.885813
+# CHECK-NEXT: b3 frequency: Normal count: 0.833706
+# CHECK-NEXT: b4 frequency: Unlikely count: 0.058824
+# CHECK-NEXT: b5 frequency: Unlikely count: 0.055363
+# CHECK-NEXT: b6 frequency: Unlikely count: 0.052107
+# CHECK-NEXT: b7 frequency: Unlikely count: 0.166294
+# CHECK-NOT: frequency
+
+function f1 name="oneOperandCalls" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b3()
+  b1():
+    Branch v1 -> taken b2(), notTaken b4()
+  b2():
+    Return
+  b3():
+    Jump -> next b5()
+  b4():
+    v3 = Call v2
+    Jump -> next b5()
+  b5() frequency=Unlikely:
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 0.250000
+# CHECK-NEXT: b3 frequency: Normal count: 0.500000
+# CHECK-NEXT: b4 frequency: Normal count: 0.250000
+# CHECK-NEXT: b5 frequency: Normal count: 0.750000
+# CHECK-NOT: frequency
+
+function f2 name="alwaysReached" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Call v0
+    Jump -> next b1()
+  b1():
+    Jump -> next b2()
+  b2() frequency=Unlikely:
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 1.000000
+# CHECK-NEXT: b2 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency

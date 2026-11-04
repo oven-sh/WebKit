@@ -1,0 +1,23 @@
+# A test of a virtual array is decided against what was expected of it: the arm that was to run seldom is all that runs, and so is what only that arm leads to
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="theRareArmIsAllThatRuns" parameters=[{type=anything}, {type=anything}, {type=i32}, {type=boolean}] results=[{type=anything}] {
+    v4 = NewArray v0, v1 contents=anything
+    v5 = HasArrayStorage v4 arrayStorage=Int32
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = Call v0, -, v4
+    Return v7
+  b2() frequency=Rare:
+    Branch v3 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v8 = ElemGet v4, v2
+    Return v8
+  b4() frequency=Rare:
+    Return v1
+# CHECK-NOT: HasArrayStorage
+# CHECK-NOT: frequency=Rare
+}

@@ -1,0 +1,90 @@
+# function sumUpTo(limit: number, sum: number): number {
+#   return limit <= 0 ? sum : sumUpTo(limit - 1, sum + limit);
+# }
+# declare const input: any;
+# (globalThis as any).answer = sumUpTo(+input, 0);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(LOOP): lower-to-b3 optimized loops f1
+# REQUIRES(LOOP): unsanitized-code
+# RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): unsanitized-code
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=17 kind=Parameter function=f1
+typesite w1 module=m0 position=32 kind=Parameter function=f1
+typesite w2 module=m0 kind=Result
+typesite w3 module=m0 position=173 kind=CallResult
+typesite w4 module=m0 position=83 kind=CallResult
+variable g0 name="sumUpTo" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="globalThis" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v3 = Convert v2 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v4 = GetModuleVariable variable=g0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="input" [isFreeName]
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    v8 = ToNumber v7
+    v9 = Integer
+    v10 = Call v4, -, v8, v9 calleeName="sumUpTo"
+    v11 = Convert v10 declared={type=number site=w3}
+    PropSet v3, v11 key="answer"
+    v13 = Undefined
+    Return v13
+}
+function f1 name="sumUpTo" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = LessEq v0, v2
+    Branch v3 -> taken b2(| 0), notTaken b5(| 0)
+  b2(v4):
+    Jump -> next b3()
+  b3():
+    Jump -> next b4()
+  b4():
+    v5 = Convert v1 declared={type=number site=w2}
+    Return v5
+  b5(v6):
+    Jump -> next b6()
+  b6():
+    v7 = GetModuleVariable variable=g0
+    v8 = Integer integer=1
+    v9 = Sub v6, v8
+    v10 = Add v1, v6
+    v11 = Call v7, -, v9, v10 calleeName="sumUpTo"
+    ReturnCall v11 casts=[{declared={type=number site=w4}}, {declared={type=number site=w2}}]
+}
+
+# A function whose last act is to call itself is a loop: the arguments of the call are the next values of the parameters.
+# CHECK-LABEL: name="sumUpTo" role=Source
+# CHECK-NOT: :CallDirect)
+# CHECK-LABEL: end of function
+# LOOP-LABEL: loop #
+# LOOP: Double b@[[limit]] = Phi(
+# LOOP-NEXT: Double b@[[sum]] = Phi(
+# LOOP: Double b@[[nextSum]] = Add(b@[[limit]], b@[[sum]],
+# LOOP: Double b@[[nextLimit]] = Sub(b@[[limit]],
+# LOOP: Int32 b@[[isDone]] = LessEqual(b@[[nextLimit]],
+# LOOP-NEXT: Branch(b@[[isDone]], Terminal,
+# LOOP: Upsilon(b@[[nextLimit]], ^[[limit]],
+# LOOP-NEXT: Upsilon(b@[[nextSum]], ^[[sum]],
+# LOOP-LABEL: end of loop
+# CALLS-LABEL: f1: size=
+# CALLS-NOT: function f
+# CALLS: f{{*}}: size=
+# X64: loop #{{*}}, instructions: 3, patchpoints: 1
+# ARM64: loop #{{*}}, instructions: 3, patchpoints: 1

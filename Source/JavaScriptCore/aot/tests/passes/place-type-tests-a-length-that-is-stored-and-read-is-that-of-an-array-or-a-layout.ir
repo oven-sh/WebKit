@@ -1,0 +1,54 @@
+# `queue.length = n; while (n < queue.length)`, and nothing else is asked of the queue. Arrays, strings, functions and views have a `length` too, so the name alone does not say that the object has a layout.
+# The store does: a string, a function or a view turns it away. So the queue is expected to be an array or an object of the program that keeps its length in a field, and both answer in place.
+# A queue that is only read may be any of them: nothing is expected of it. Nor is anything where no layout keeps a length, which place-type-tests-a-length-where-no-layout-keeps-one.ir has.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Queue" constructor=f3 fields=[{key="length" declared={type=number} flags=[IsRequired]}, {key="head" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="storedAndRead" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    PropSet v0, v1 key="length"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = PropGet v0 key="length"
+    v5 = Less v1, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="storedAndRead"
+# CHECK: b0(v0: anything ~ L0|Array, v1: number):
+# CHECK: = TypeTest v0 testedType=L0|Array
+
+function f1 name="onlyRead" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v0 key="length"
+    v4 = Less v1, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f1 name="onlyRead"
+# CHECK-NEXT: b0(v0: anything, v1: number):
+# CHECK-NOT: TypeTest v0
+# CHECK: = PropGet v0 key="length"
+
+function f2 name="askedForAnotherNameToo" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="head"
+    v2 = PropGet v0 key="length"
+    v3 = Add v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f2 name="askedForAnotherNameToo"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = GetSlot {{*}} key="length" receivers=[L0] level=Expected
+
+function f3 name="Queue" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0

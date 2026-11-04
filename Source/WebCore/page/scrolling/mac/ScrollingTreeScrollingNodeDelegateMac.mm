@@ -38,6 +38,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <pal/spi/mac/NSScrollerImpSPI.h>
 #import <wtf/BlockObjCExceptions.h>
+#import <wtf/SystemTracing.h>
 #import <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -67,8 +68,8 @@ void ScrollingTreeScrollingNodeDelegateMac::updateFromStateNode(const ScrollingS
     Ref verticalScroller = m_scrollerPair->verticalScroller();
 
     if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::PainterForScrollbar)) {
-        auto horizontalScrollbar = scrollingStateNode.horizontalScrollerImp();
-        auto verticalScrollbar = scrollingStateNode.verticalScrollerImp();
+        RetainPtr horizontalScrollbar = scrollingStateNode.horizontalScrollerImp();
+        RetainPtr verticalScrollbar = scrollingStateNode.verticalScrollerImp();
         if (horizontalScrollbar || verticalScrollbar) {
             m_scrollerPair->releaseReferencesToScrollerImpsOnTheMainThread();
             horizontalScroller->setScrollerImp(horizontalScrollbar);
@@ -80,10 +81,10 @@ void ScrollingTreeScrollingNodeDelegateMac::updateFromStateNode(const ScrollingS
         m_scrollerPair->mouseIsInScrollbar(scrollingStateNode.scrollbarHoverState());
 
     if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::HorizontalScrollbarLayer))
-        horizontalScroller->setHostLayer(static_cast<CALayer*>(scrollingStateNode.horizontalScrollbarLayer()));
+        horizontalScroller->setHostLayer(protect(static_cast<CALayer*>(scrollingStateNode.horizontalScrollbarLayer())));
 
     if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::VerticalScrollbarLayer))
-        verticalScroller->setHostLayer(static_cast<CALayer*>(scrollingStateNode.verticalScrollbarLayer()));
+        verticalScroller->setHostLayer(protect(static_cast<CALayer*>(scrollingStateNode.verticalScrollbarLayer())));
 
     if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollableAreaParams)) {
         horizontalScroller->setHiddenByStyle(scrollingStateNode.scrollableAreaParameters().horizontalNativeScrollbarVisibility);
@@ -349,6 +350,15 @@ void ScrollingTreeScrollingNodeDelegateMac::didStopRubberBandAnimation()
 
 void ScrollingTreeScrollingNodeDelegateMac::rubberBandingStateChanged(bool inRubberBand)
 {
+    if (scrollingTree()->scrollingPerformanceTestingEnabled()) {
+        auto stretch = stretchAmount();
+        WTFEmitSignpostAlways(this, ScrollingPerformanceTestRubberBand, "%{public}s; top=%d right=%d bottom=%d left=%d; stretch=%d,%d; isMainFrame=%d",
+            inRubberBand ? "started" : "ended",
+            stretch.height() < 0, stretch.width() > 0, stretch.height() > 0, stretch.width() < 0,
+            stretch.width(), stretch.height(),
+            scrollingNode()->nodeType() == ScrollingNodeType::MainFrame);
+    }
+
     scrollingTree()->setRubberBandingInProgressForNode(scrollingNode()->scrollingNodeID(), inRubberBand);
 #if HAVE(RUBBER_BANDING)
     if (!inRubberBand)

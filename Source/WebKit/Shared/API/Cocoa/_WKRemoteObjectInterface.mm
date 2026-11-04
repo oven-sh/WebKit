@@ -28,6 +28,7 @@
 
 #import <objc/runtime.h>
 #import <ranges>
+#import <wtf/Borrow.h>
 #import <wtf/HashMap.h>
 #import <wtf/NeverDestroyed.h>
 #import <wtf/ObjCRuntimeExtras.h>
@@ -192,10 +193,13 @@ static void initializeMethods(_WKRemoteObjectInterface *interface, Protocol *pro
         auto descriptionForArgument = [](auto& allowedArgumentClasses) {
             auto result = adoptNS([[NSMutableString alloc] initWithString:@"{"]);
 
-            auto orderedArgumentClasses = copyToVector(allowedArgumentClasses);
-            std::ranges::sort(orderedArgumentClasses, [](CFTypeRef a, CFTypeRef b) {
-                return is_lt(compareSpans(unsafeSpan(class_getName((__bridge Class)a)), unsafeSpan(class_getName((__bridge Class)b))));
-            });
+            const auto orderedArgumentClasses = [&] {
+                auto orderedArgumentClasses = copyToVector(allowedArgumentClasses);
+                std::ranges::sort(orderedArgumentClasses, [](CFTypeRef a, CFTypeRef b) {
+                    return is_lt(compareSpans(unsafeSpan(class_getName((__bridge Class)a)), unsafeSpan(class_getName((__bridge Class)b))));
+                });
+                return orderedArgumentClasses;
+            }();
 
             bool needsComma = false;
             for (auto& argumentClass : orderedArgumentClasses) {
@@ -210,7 +214,7 @@ static void initializeMethods(_WKRemoteObjectInterface *interface, Protocol *pro
             return result;
         };
 
-        for (auto& argumentClasses : allowedClasses) {
+        for (auto& argumentClasses : borrow(allowedClasses)) {
             if (needsComma)
                 [result appendString:@", "];
 
@@ -269,7 +273,8 @@ static HashSet<CFTypeRef>& classesForSelectorArgument(_WKRemoteObjectInterface *
 - (void)setClasses:(NSSet *)classes forSelector:(SEL)selector argumentIndex:(NSUInteger)argumentIndex ofReply:(BOOL)ofReply
 {
     HashSet<CFTypeRef> allowedClasses;
-    for (Class allowedClass in classes)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL Class allowedClass in classes)
         allowedClasses.add((__bridge CFTypeRef)allowedClass);
 
     classesForSelectorArgument(self, selector, argumentIndex, ofReply) = WTF::move(allowedClasses);

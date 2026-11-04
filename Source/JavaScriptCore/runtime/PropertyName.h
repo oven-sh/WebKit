@@ -80,6 +80,11 @@ public:
         return isSymbol() && static_cast<const SymbolImpl*>(m_impl)->isPrivate();
     }
 
+    bool passesThroughProxies() const
+    {
+        return isSymbol() && static_cast<const SymbolImpl*>(m_impl)->passesThroughProxies();
+    }
+
     UniquedStringImpl* uid() const
     {
         return m_impl;

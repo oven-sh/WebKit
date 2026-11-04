@@ -1,0 +1,9 @@
+# No module variable holds a value of a kind that lives only inside one activation
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidVariable 2
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="badGuard" module=m0 declared={type=guard}
+variable g1 name="badBuilderCursor" module=m0 declared={type=buildercursor}
+variable g2 name="good" module=m0 declared={type=classtoken}

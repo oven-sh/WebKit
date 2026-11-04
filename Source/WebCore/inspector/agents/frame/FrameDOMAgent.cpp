@@ -43,6 +43,7 @@
 #include "Event.h"
 #include "EventListener.h"
 #include "EventNames.h"
+#include "FrameCSSAgent.h"
 #include "FrameDestructionObserverInlines.h"
 #include "FrameInlines.h"
 #include "HTMLFrameOwnerElement.h"
@@ -51,9 +52,12 @@
 #include "HTMLSlotElement.h"
 #include "HTMLStyleElement.h"
 #include "HTMLTemplateElement.h"
+#include "HitTestResult.h"
 #include "InspectorDOMAgent.h"
 #include "InspectorHistory.h"
+#include "InspectorIdentifierRegistry.h"
 #include "InspectorNodeFinder.h"
+#include "InspectorOverlayConfigParser.h"
 #include "InstrumentingAgents.h"
 #include "JSDOMBindingSecurity.h"
 #include "JSDOMWindowCustom.h"
@@ -65,8 +69,10 @@
 #include "NodeList.h"
 #include "PseudoElement.h"
 #include "RegisteredEventListener.h"
+#include "RenderObject.h"
 #include "ScriptController.h"
 #include "ShadowRoot.h"
+#include "StaticNodeList.h"
 #include "Text.h"
 #include "TextNodeTraversal.h"
 #include "WebInjectedScriptManager.h"
@@ -92,17 +98,21 @@ using namespace Inspector;
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FrameDOMAgent);
 
 // FIXME: <https://webkit.org/b/298980> Extract shared tree-building and node-binding logic into a base class shared with InspectorDOMAgent.
+// The highlight and layout-overlay commands below (innerHighlightNode, innerHighlightNodeList,
+// innerHighlightQuad, highlightRect, highlightQuad, showGridOverlay, hideGridOverlay, showFlexOverlay,
+// hideFlexOverlay) are also near-verbatim clones of the page agent's, and belong in that same base
+// class. The config parsing they share already moved to InspectorOverlayConfigParser.
 
 static const size_t frameMaxTextSize = 10000;
 static const char16_t frameHorizontalEllipsisUTF16[] = { horizontalEllipsis, 0 };
 
-static bool frameContainsOnlyASCIIWhitespace(Node* node)
+static bool LEGACY_NODELETE frameContainsOnlyASCIIWhitespace(Node* node)
 {
     auto* text = dynamicDowncast<Text>(node);
     return text && text->containsOnlyASCIIWhitespace();
 }
 
-static Inspector::Protocol::DOM::ShadowRootType frameShadowRootType(ShadowRootMode mode)
+static Inspector::Protocol::DOM::ShadowRootType LEGACY_NODELETE frameShadowRootType(ShadowRootMode mode)
 {
     switch (mode) {
     case ShadowRootMode::UserAgent:
@@ -116,7 +126,7 @@ static Inspector::Protocol::DOM::ShadowRootType frameShadowRootType(ShadowRootMo
     return Inspector::Protocol::DOM::ShadowRootType::UserAgent;
 }
 
-static Inspector::Protocol::DOM::CustomElementState frameCustomElementState(const Element& element)
+static Inspector::Protocol::DOM::CustomElementState LEGACY_NODELETE frameCustomElementState(const Element& element)
 {
     if (element.isDefinedCustomElement())
         return Inspector::Protocol::DOM::CustomElementState::Custom;
@@ -127,7 +137,7 @@ static Inspector::Protocol::DOM::CustomElementState frameCustomElementState(cons
     return Inspector::Protocol::DOM::CustomElementState::Builtin;
 }
 
-static bool framePseudoElementType(PseudoElementType pseudoElementType, Inspector::Protocol::DOM::PseudoType* type)
+static bool LEGACY_NODELETE framePseudoElementType(PseudoElementType pseudoElementType, Inspector::Protocol::DOM::PseudoType* type)
 {
     switch (pseudoElementType) {
     case PseudoElementType::Before:
@@ -155,14 +165,16 @@ static String frameComputeContentSecurityPolicySHA256Hash(const Element& element
 
 // MARK: - FrameDOMAgent
 
-FrameDOMAgent::FrameDOMAgent(FrameAgentContext& context)
+FrameDOMAgent::FrameDOMAgent(FrameAgentContext& context, InspectorOverlay& overlay)
     : InspectorAgentBase("DOM"_s, context)
     , m_frontendDispatcher(makeUniqueRef<Inspector::DOMFrontendDispatcher>(context.frontendRouter))
     , m_backendDispatcher(Inspector::DOMBackendDispatcher::create(Ref { context.backendDispatcher }, this))
     , m_instrumentingAgents(context.instrumentingAgents)
     , m_inspectedFrame(context.inspectedFrame)
+    , m_overlay(overlay)
     , m_injectedScriptManager(context.injectedScriptManager)
     , m_destroyedNodesTimer(*this, &FrameDOMAgent::destroyedNodesTimerFired)
+    , m_focusNodeTimer(*this, &FrameDOMAgent::focusNode)
 {
 }
 
@@ -175,17 +187,44 @@ void FrameDOMAgent::didCreateFrontendAndBackend()
 
     Ref { m_instrumentingAgents.get() }->setPersistentFrameDOMAgent(this);
 
-    RefPtr frame = m_inspectedFrame.get();
-    if (frame)
-        m_document = frame->document();
+    m_document = protect(m_inspectedFrame)->document();
+
+    // Force a layout so that we can collect additional information from the layout process, as
+    // InspectorDOMAgent does. The flex line-start cache is only populated by layouts that run while a
+    // frontend is attached (FAST_RETURN_IF_NO_FRONTENDS), so without this a frame laid out before
+    // inspection reports no line starts and showFlexOverlay draws no line separators on first show.
+    relayoutDocument();
 }
 
+void FrameDOMAgent::relayoutDocument()
+{
+    RefPtr document = m_document;
+    if (!document)
+        return;
+
+    m_flexibleBoxRendererCachedItemsAtStartOfLine.clear();
+
+    document->updateLayout();
+}
+
+// Deliberately does not touch the overlay. InspectorDOMAgent does `Ref overlay = m_overlay.get()` here,
+// which on the frame path would ref a LocalFrame whose refcount has already reached zero -- the frame
+// destructor is what calls into this controller.
 void FrameDOMAgent::willDestroyFrontendAndBackend(Inspector::DisconnectReason)
 {
     m_domEditor.reset();
     m_history.reset();
 
     m_inspectedNode = nullptr;
+    m_nodeToFocus = nullptr;
+    m_focusNodeTimer.stop();
+    m_mousedOverNode = nullptr;
+
+    m_searchingForNode = false;
+    m_inspectModeHighlightConfig = nullptr;
+    m_inspectModeGridOverlayConfig = std::nullopt;
+    m_inspectModeFlexOverlayConfig = std::nullopt;
+    m_inspectModeShowRulers = false;
 
     Ref { m_instrumentingAgents.get() }->setPersistentFrameDOMAgent(nullptr);
     m_documentRequested = false;
@@ -237,6 +276,13 @@ Inspector::Protocol::DOM::NodeId FrameDOMAgent::boundNodeId(const Node* node)
     if (!node)
         return 0;
     return m_nodeToId.get(*node);
+}
+
+Vector<Ref<Node>> FrameDOMAgent::boundNodes() const
+{
+    return WTF::compactMap(m_idToNode.values(), [](auto& node) {
+        return RefPtr { node.get() };
+    });
 }
 
 Node* FrameDOMAgent::nodeForId(Inspector::Protocol::DOM::NodeId id)
@@ -348,11 +394,18 @@ Ref<Inspector::Protocol::DOM::Node> FrameDOMAgent::buildObjectForNode(Node* node
             value->setChildren(WTF::move(children));
     }
 
+    if (CheckedPtr cssAgent = Ref { m_instrumentingAgents.get() }->enabledFrameCSSAgent()) {
+        if (auto layoutFlags = cssAgent->protocolLayoutFlagsForNode(*node))
+            value->setLayoutFlags(layoutFlags.releaseNonNull());
+    }
+
     if (RefPtr element = dynamicDowncast<Element>(*node)) {
         value->setAttributes(buildArrayForElementAttributes(element.get()));
 
         // FIXME: <https://webkit.org/b/298980> Skip if child frame has its own FrameDOMAgent.
         if (RefPtr frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(*element)) {
+            if (RefPtr contentFrame = frameOwner->contentFrame())
+                value->setContentFrameId(IdentifierRegistry::protocolFrameId(*contentFrame));
             if (RefPtr document = frameOwner->contentDocument())
                 value->setContentDocument(buildObjectForNode(document.get(), 0));
         }
@@ -383,7 +436,10 @@ Ref<Inspector::Protocol::DOM::Node> FrameDOMAgent::buildObjectForNode(Node* node
         }
     } else if (RefPtr document = dynamicDowncast<Document>(*node)) {
         value->setDocumentURL(InspectorDOMAgent::documentURLString(document.get()));
-        // FIXME: <https://webkit.org/b/298980> Set frameId for frame targets to enable frontend frame-to-target association.
+        value->setBaseURL(InspectorDOMAgent::documentBaseURLString(document.get()));
+        value->setXmlVersion(document->xmlVersion());
+        if (RefPtr frame = document->frame())
+            value->setFrameId(IdentifierRegistry::protocolFrameId(*frame));
     } else if (RefPtr doctype = dynamicDowncast<DocumentType>(*node)) {
         value->setPublicId(doctype->publicId());
         value->setSystemId(doctype->systemId());
@@ -530,13 +586,25 @@ void FrameDOMAgent::setDocument(Document* document)
     if (m_inspectedNode && &m_inspectedNode->document() == m_document.get())
         m_inspectedNode = nullptr;
 
+    // Likewise for the element-selection state, which holds strong references to nodes in the
+    // outgoing document.
+    if (m_nodeToFocus && &m_nodeToFocus->document() == m_document.get())
+        m_nodeToFocus = nullptr;
+
+    if (m_mousedOverNode && &m_mousedOverNode->document() == m_document.get())
+        m_mousedOverNode = nullptr;
+
     reset();
     m_document = document;
 
-    if (!m_documentRequested)
+    // Clears the flex line-start cache and re-seeds it for the new document, as the page agent does.
+    relayoutDocument();
+
+    // FrameLoader::clear() sets a null document just before the new one. Only report the new one.
+    if (!document || !m_documentRequested)
         return;
 
-    if (!document || !document->parsing())
+    if (!document->parsing())
         m_frontendDispatcher->documentUpdated();
 }
 
@@ -569,7 +637,18 @@ Inspector::CommandResult<Ref<Inspector::Protocol::DOM::Node>> FrameDOMAgent::get
     reset();
     m_document = document;
 
-    return buildObjectForNode(m_document.get(), 2);
+    auto root = buildObjectForNode(m_document.get(), 2);
+
+    if (CheckedPtr cssAgent = Ref { m_instrumentingAgents.get() }->enabledFrameCSSAgent())
+        cssAgent->didBindDocument();
+
+    // The frontend builds this frame's document tree from this reply, so a node chosen before the document
+    // was requested can only be pushed once the reply has been sent. A timer runs after the reply; pushing
+    // from inside this command would send setChildNodes and DOM.inspect before the frontend has a tree.
+    if (m_nodeToFocus)
+        m_focusNodeTimer.startOneShot(0_s);
+
+    return root;
 }
 
 Inspector::CommandResult<void> FrameDOMAgent::requestChildNodes(int nodeId, std::optional<int>&& depth)
@@ -666,6 +745,22 @@ void FrameDOMAgent::didInsertDOMNode(Node& node)
         auto value = buildObjectForNode(&node, 0);
         m_frontendDispatcher->childNodeInserted(parentId, prevId, WTF::move(value));
     }
+}
+
+void FrameDOMAgent::frameOwnerContentFrameChanged(HTMLFrameOwnerElement& frameOwner)
+{
+    auto frameOwnerId = boundNodeId(&frameOwner);
+    if (!frameOwnerId)
+        return;
+
+    auto parentId = boundNodeId(protect(InspectorDOMAgent::innerParentNode(&frameOwner)));
+    m_frontendDispatcher->childNodeRemoved(parentId, frameOwnerId);
+    unbind(frameOwner);
+
+    auto value = buildObjectForNode(&frameOwner, 0);
+    RefPtr previousSibling = InspectorDOMAgent::innerPreviousSibling(&frameOwner);
+    auto prevId = boundNodeId(previousSibling.get());
+    m_frontendDispatcher->childNodeInserted(parentId, prevId, WTF::move(value));
 }
 
 void FrameDOMAgent::didRemoveDOMNode(Node& node)
@@ -827,8 +922,7 @@ void FrameDOMAgent::pseudoElementDestroyed(PseudoElement& pseudoElement)
 
 void FrameDOMAgent::frameDocumentUpdated(LocalFrame& frame)
 {
-    RefPtr inspectedFrame = m_inspectedFrame.get();
-    if (!inspectedFrame || &frame != inspectedFrame.get())
+    if (&frame != m_inspectedFrame.ptr())
         return;
 
     RefPtr document = frame.document();
@@ -1126,6 +1220,24 @@ bool FrameDOMAgent::isEventListenerDisabled(EventTarget& target, const AtomStrin
     return false;
 }
 
+// Cleared per-renderer at the start of every flex layout, so no explicit invalidation is needed.
+void FrameDOMAgent::flexibleBoxRendererBeganLayout(const RenderObject& renderer)
+{
+    m_flexibleBoxRendererCachedItemsAtStartOfLine.remove(renderer);
+}
+
+void FrameDOMAgent::flexibleBoxRendererWrappedToNextLine(const RenderObject& renderer, size_t lineStartItemIndex)
+{
+    m_flexibleBoxRendererCachedItemsAtStartOfLine.ensure(renderer, [] {
+        return Vector<size_t>();
+    }).iterator->value.append(lineStartItemIndex);
+}
+
+Vector<size_t> FrameDOMAgent::flexibleBoxRendererCachedItemsAtStartOfLine(const RenderObject& renderer) const
+{
+    return m_flexibleBoxRendererCachedItemsAtStartOfLine.get(renderer);
+}
+
 Ref<Inspector::Protocol::DOM::EventListener> FrameDOMAgent::buildObjectForEventListener(const Ref<RegisteredEventListener>& registeredEventListener, Inspector::Protocol::DOM::EventListenerId identifier, EventTarget& eventTarget, const AtomString& eventType, bool disabled)
 {
     Ref<EventListener> eventListener = registeredEventListener->callback();
@@ -1351,7 +1463,7 @@ Inspector::CommandResult<void> FrameDOMAgent::setOuterHTML(int nodeId, const Str
     if (!nodeId) {
         if (!m_document)
             return makeUnexpected("Internal error: missing document"_s);
-        DOMPatchSupport { *m_domEditor, *m_document }.patchDocument(outerHTML);
+        DOMPatchSupport { *m_domEditor, protect(*m_document) }.patchDocument(outerHTML);
         return { };
     }
 
@@ -1483,7 +1595,7 @@ public:
     }
 
 private:
-    RefPtr<Node> m_node;
+    const RefPtr<Node> m_node;
 };
 
 } // namespace
@@ -1546,6 +1658,35 @@ Inspector::CommandResult<int> FrameDOMAgent::requestNode(const String& objectId)
     return nodeId;
 }
 
+Inspector::CommandResult<int> FrameDOMAgent::requestFrameOwner(const String& frameId)
+{
+    auto parsedFrameId = IdentifierRegistry::parseProtocolFrameId(frameId);
+    if (!parsedFrameId)
+        return makeUnexpected("Invalid frameId format"_s);
+
+    // Only direct children: every frame has its own FrameDOMAgent, and the frontend asks the target of the
+    // child's parent. Compare the FrameIdentifier only: the hosting process in a frame ID can be stale in a
+    // process that holds a RemoteFrame.
+    Ref frame = m_inspectedFrame;
+    for (RefPtr child = frame->tree().firstChild(); child; child = child->tree().nextSibling()) {
+        if (child->frameID() != parsedFrameId->second)
+            continue;
+
+        RefPtr ownerElement = child->ownerElement();
+        if (!ownerElement)
+            return makeUnexpected("Missing owner element for given frameId"_s);
+
+        Inspector::Protocol::ErrorString errorString;
+        auto nodeId = pushNodePathToFrontend(errorString, ownerElement.get());
+        if (!nodeId)
+            return makeUnexpected(errorString);
+
+        return nodeId;
+    }
+
+    return makeUnexpected("Missing child frame for given frameId"_s);
+}
+
 Inspector::CommandResult<void> FrameDOMAgent::setInspectedNode(int nodeId)
 {
     Inspector::Protocol::ErrorString errorString;
@@ -1561,6 +1702,398 @@ Inspector::CommandResult<void> FrameDOMAgent::setInspectedNode(int nodeId)
 
     if (RefPtr commandLineAPIHost = downcast<WebInjectedScriptManager>(m_injectedScriptManager.get()).commandLineAPIHost())
         commandLineAPIHost->addInspectedObject(makeUnique<InspectableFrameNode>(node.get()));
+
+    return { };
+}
+
+// MARK: - Highlighting
+
+void FrameDOMAgent::innerHighlightQuad(std::unique_ptr<FloatQuad> quad, RefPtr<JSON::Object>&& color, RefPtr<JSON::Object>&& outlineColor, std::optional<bool>&& usePageCoordinates)
+{
+    auto highlightConfig = makeUnique<InspectorOverlay::Highlight::Config>();
+    highlightConfig->content = parseInspectorColor(WTF::move(color)).value_or(Color::transparentBlack);
+    highlightConfig->contentOutline = parseInspectorColor(WTF::move(outlineColor)).value_or(Color::transparentBlack);
+    highlightConfig->usePageCoordinates = usePageCoordinates ? *usePageCoordinates : false;
+    protect(overlay())->highlightQuad(WTF::move(quad), *highlightConfig);
+}
+
+Inspector::CommandResult<void> FrameDOMAgent::highlightRect(int x, int y, int width, int height, RefPtr<JSON::Object>&& color, RefPtr<JSON::Object>&& outlineColor, std::optional<bool>&& usePageCoordinates)
+{
+    auto quad = makeUnique<FloatQuad>(FloatRect(x, y, width, height));
+    innerHighlightQuad(WTF::move(quad), WTF::move(color), WTF::move(outlineColor), WTF::move(usePageCoordinates));
+
+    return { };
+}
+
+Inspector::CommandResult<void> FrameDOMAgent::highlightQuad(Ref<JSON::Array>&& quadObject, RefPtr<JSON::Object>&& color, RefPtr<JSON::Object>&& outlineColor, std::optional<bool>&& usePageCoordinates)
+{
+    auto quad = makeUnique<FloatQuad>();
+    if (!parseInspectorQuad(WTF::move(quadObject), quad.get()))
+        return makeUnexpected("Unexpected invalid quad"_s);
+
+    innerHighlightQuad(WTF::move(quad), WTF::move(color), WTF::move(outlineColor), WTF::move(usePageCoordinates));
+
+    return { };
+}
+
+#if PLATFORM(IOS_FAMILY)
+
+Inspector::CommandResult<void> FrameDOMAgent::highlightNode(std::optional<int>&& nodeId, const String& objectId, Ref<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject)
+{
+    return innerHighlightNode(WTF::move(nodeId), objectId, WTF::move(highlightInspectorObject), WTF::move(gridOverlayInspectorObject), WTF::move(flexOverlayInspectorObject), std::nullopt);
+}
+
+#else
+
+Inspector::CommandResult<void> FrameDOMAgent::highlightNode(std::optional<int>&& nodeId, const String& objectId, Ref<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject, std::optional<bool>&& showRulers)
+{
+    return innerHighlightNode(WTF::move(nodeId), objectId, WTF::move(highlightInspectorObject), WTF::move(gridOverlayInspectorObject), WTF::move(flexOverlayInspectorObject), WTF::move(showRulers));
+}
+
+#endif // PLATFORM(IOS_FAMILY)
+
+Inspector::CommandResult<void> FrameDOMAgent::innerHighlightNode(std::optional<int>&& nodeId, const String& objectId, Ref<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject, std::optional<bool>&& showRulers)
+{
+    Inspector::Protocol::ErrorString errorString;
+
+    RefPtr<Node> node;
+    if (nodeId)
+        node = assertNode(errorString, *nodeId);
+    else if (!objectId.isEmpty()) {
+        node = nodeForObjectId(objectId);
+        if (!node)
+            errorString = "Missing node for given objectId"_s;
+    } else
+        errorString = "Either nodeId or objectId must be specified"_s;
+
+    if (!node)
+        return makeUnexpected(errorString);
+
+    auto highlightConfig = highlightConfigFromInspectorObject(errorString, WTF::move(highlightInspectorObject));
+    if (!highlightConfig)
+        return makeUnexpected(errorString);
+
+    bool providedGridOverlayConfig = gridOverlayInspectorObject;
+    auto gridOverlayConfig = gridOverlayConfigFromInspectorObject(errorString, WTF::move(gridOverlayInspectorObject));
+    if (providedGridOverlayConfig && !gridOverlayConfig)
+        return makeUnexpected(errorString);
+
+    bool providedFlexOverlayConfig = flexOverlayInspectorObject;
+    auto flexOverlayConfig = flexOverlayConfigFromInspectorObject(errorString, WTF::move(flexOverlayInspectorObject));
+    if (providedFlexOverlayConfig && !flexOverlayConfig)
+        return makeUnexpected(errorString);
+
+    protect(overlay())->highlightNode(node.get(), *highlightConfig, WTF::move(gridOverlayConfig), WTF::move(flexOverlayConfig), showRulers && *showRulers);
+
+    return { };
+}
+
+#if PLATFORM(IOS_FAMILY)
+
+Inspector::CommandResult<void> FrameDOMAgent::highlightNodeList(Ref<JSON::Array>&& nodeIds, Ref<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject)
+{
+    return innerHighlightNodeList(WTF::move(nodeIds), WTF::move(highlightInspectorObject), WTF::move(gridOverlayInspectorObject), WTF::move(flexOverlayInspectorObject), std::nullopt);
+}
+
+#else
+
+Inspector::CommandResult<void> FrameDOMAgent::highlightNodeList(Ref<JSON::Array>&& nodeIds, Ref<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject, std::optional<bool>&& showRulers)
+{
+    return innerHighlightNodeList(WTF::move(nodeIds), WTF::move(highlightInspectorObject), WTF::move(gridOverlayInspectorObject), WTF::move(flexOverlayInspectorObject), WTF::move(showRulers));
+}
+
+#endif // PLATFORM(IOS_FAMILY)
+
+Inspector::CommandResult<void> FrameDOMAgent::innerHighlightNodeList(Ref<JSON::Array>&& nodeIds, Ref<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject, std::optional<bool>&& showRulers)
+{
+    Inspector::Protocol::ErrorString errorString;
+
+    Vector<Ref<Node>> nodes;
+    for (auto& nodeIdValue : nodeIds.get()) {
+        auto nodeId = nodeIdValue->asInteger();
+        if (!nodeId)
+            return makeUnexpected("Unexpected non-integer item in given nodeIds"_s);
+
+        // A node may have been removed between the frontend sending this and the backend running it.
+        // Highlight as many as still resolve rather than failing the whole command.
+        Inspector::Protocol::ErrorString ignored;
+        RefPtr node = assertNode(ignored, *nodeId);
+        if (!node)
+            continue;
+
+        nodes.append(*node);
+    }
+
+    auto highlightConfig = highlightConfigFromInspectorObject(errorString, WTF::move(highlightInspectorObject));
+    if (!highlightConfig)
+        return makeUnexpected(errorString);
+
+    bool providedGridOverlayConfig = gridOverlayInspectorObject;
+    auto gridOverlayConfig = gridOverlayConfigFromInspectorObject(errorString, WTF::move(gridOverlayInspectorObject));
+    if (providedGridOverlayConfig && !gridOverlayConfig)
+        return makeUnexpected(errorString);
+
+    bool providedFlexOverlayConfig = flexOverlayInspectorObject;
+    auto flexOverlayConfig = flexOverlayConfigFromInspectorObject(errorString, WTF::move(flexOverlayInspectorObject));
+    if (providedFlexOverlayConfig && !flexOverlayConfig)
+        return makeUnexpected(errorString);
+
+    protect(overlay())->highlightNodeList(StaticNodeList::create(WTF::move(nodes)), *highlightConfig, WTF::move(gridOverlayConfig), WTF::move(flexOverlayConfig), showRulers && *showRulers);
+
+    return { };
+}
+
+Inspector::CommandResult<void> FrameDOMAgent::hideHighlight()
+{
+    protect(overlay())->hideHighlight();
+
+    return { };
+}
+
+// MARK: - Element Selection
+
+#if PLATFORM(IOS_FAMILY)
+
+Inspector::CommandResult<void> FrameDOMAgent::setInspectModeEnabled(bool enabled, RefPtr<JSON::Object>&& highlightConfig, RefPtr<JSON::Object>&& gridOverlayConfig, RefPtr<JSON::Object>&& flexOverlayConfig)
+{
+    Inspector::Protocol::ErrorString errorString;
+
+    setSearchingForNode(errorString, enabled, WTF::move(highlightConfig), WTF::move(gridOverlayConfig), WTF::move(flexOverlayConfig), false);
+
+    if (!!errorString)
+        return makeUnexpected(errorString);
+
+    return { };
+}
+
+#else
+
+Inspector::CommandResult<void> FrameDOMAgent::setInspectModeEnabled(bool enabled, RefPtr<JSON::Object>&& highlightConfig, RefPtr<JSON::Object>&& gridOverlayConfig, RefPtr<JSON::Object>&& flexOverlayConfig, std::optional<bool>&& showRulers)
+{
+    Inspector::Protocol::ErrorString errorString;
+
+    setSearchingForNode(errorString, enabled, WTF::move(highlightConfig), WTF::move(gridOverlayConfig), WTF::move(flexOverlayConfig), showRulers.value_or(false));
+
+    if (!!errorString)
+        return makeUnexpected(errorString);
+
+    return { };
+}
+
+#endif // PLATFORM(IOS_FAMILY)
+
+void FrameDOMAgent::setSearchingForNode(Inspector::Protocol::ErrorString& errorString, bool enabled, RefPtr<JSON::Object>&& highlightInspectorObject, RefPtr<JSON::Object>&& gridOverlayInspectorObject, RefPtr<JSON::Object>&& flexOverlayInspectorObject, bool showRulers)
+{
+    if (m_searchingForNode == enabled)
+        return;
+
+    if (enabled) {
+        auto highlightConfig = highlightConfigFromInspectorObject(errorString, WTF::move(highlightInspectorObject));
+        if (!highlightConfig)
+            return;
+
+        bool providedGridOverlayConfig = gridOverlayInspectorObject;
+        auto gridOverlayConfig = gridOverlayConfigFromInspectorObject(errorString, WTF::move(gridOverlayInspectorObject));
+        if (providedGridOverlayConfig && !gridOverlayConfig)
+            return;
+
+        bool providedFlexOverlayConfig = flexOverlayInspectorObject;
+        auto flexOverlayConfig = flexOverlayConfigFromInspectorObject(errorString, WTF::move(flexOverlayInspectorObject));
+        if (providedFlexOverlayConfig && !flexOverlayConfig)
+            return;
+
+        m_inspectModeHighlightConfig = WTF::move(highlightConfig);
+        m_inspectModeGridOverlayConfig = WTF::move(gridOverlayConfig);
+        m_inspectModeFlexOverlayConfig = WTF::move(flexOverlayConfig);
+        m_inspectModeShowRulers = showRulers;
+    }
+
+    m_searchingForNode = enabled;
+
+    if (m_searchingForNode)
+        highlightMousedOverNode();
+    else
+        std::ignore = hideHighlight();
+
+    protect(overlay())->didSetSearchingForNode(m_searchingForNode);
+
+    // Unlike the page agent, the backend client is not notified here. elementSelectionChanged() is a
+    // page-wide UI state, and every frame target sharing this page would otherwise fight over it as
+    // the frontend enables the picker on each target in turn.
+}
+
+bool FrameDOMAgent::ownsElementSelection() const
+{
+    // The main frame belongs to the page target.
+    // FIXME: A nested local subframe's overlay is not hosted by any compositor, so the page agent
+    // keeps it too.
+    Ref frame = m_inspectedFrame;
+    return m_searchingForNode && frame->isRootFrame() && !frame->isMainFrame();
+}
+
+void FrameDOMAgent::highlightMousedOverNode()
+{
+    RefPtr node = m_mousedOverNode;
+    if (node && node->isTextNode())
+        node = node->parentNode();
+    if (!node)
+        return;
+
+    if (!m_inspectModeHighlightConfig)
+        return;
+
+    if (!ownsElementSelection())
+        return;
+
+    protect(overlay())->highlightNode(node.get(), *m_inspectModeHighlightConfig, m_inspectModeGridOverlayConfig, m_inspectModeFlexOverlayConfig, m_inspectModeShowRulers);
+}
+
+void FrameDOMAgent::mouseDidMoveOverElement(const HitTestResult& result, OptionSet<PlatformEventModifier>)
+{
+    m_mousedOverNode = result.innerNode();
+
+    if (!m_searchingForNode)
+        return;
+
+    highlightMousedOverNode();
+}
+
+void FrameDOMAgent::mouseDidLeaveFrame()
+{
+    if (!std::exchange(m_mousedOverNode, nullptr))
+        return;
+
+    if (!m_searchingForNode)
+        return;
+
+    std::ignore = hideHighlight();
+}
+
+bool FrameDOMAgent::handleTouchEvent(Node& node)
+{
+    if (!ownsElementSelection())
+        return false;
+
+    if (m_inspectModeHighlightConfig) {
+        protect(overlay())->highlightNode(&node, *m_inspectModeHighlightConfig, m_inspectModeGridOverlayConfig, m_inspectModeFlexOverlayConfig, m_inspectModeShowRulers);
+        inspect(node);
+        return true;
+    }
+
+    return false;
+}
+
+bool FrameDOMAgent::handleMousePress()
+{
+    if (!ownsElementSelection())
+        return false;
+
+    if (RefPtr node = protect(overlay())->highlightedNode()) {
+        inspect(*node);
+        return true;
+    }
+
+    return false;
+}
+
+void FrameDOMAgent::inspect(Node& inspectedNode)
+{
+    Inspector::Protocol::ErrorString ignored;
+    RefPtr node = &inspectedNode;
+    setSearchingForNode(ignored, false, nullptr, nullptr, nullptr, false);
+
+    if (!node->isElementNode() && !node->isDocumentNode())
+        node = node->parentNode();
+    m_nodeToFocus = node;
+
+    if (!m_nodeToFocus)
+        return;
+
+    focusNode();
+}
+
+void FrameDOMAgent::focusNode()
+{
+    // FIXME: <https://webkit.org/b/213499> Web Inspector: allow DOM nodes to be instrumented at any point, regardless of whether the main document has also been instrumented
+    if (!m_documentRequested)
+        return;
+
+    if (!m_document || !m_nodeToId.contains(*m_document))
+        return;
+
+    auto node = std::exchange(m_nodeToFocus, nullptr);
+    if (!node)
+        return;
+
+    // Frame targets have no Inspector domain, so Inspector.inspect cannot reach the frontend from here.
+    // DOM.inspect is routed by the frontend to this frame target's tree.
+    Inspector::Protocol::ErrorString ignored;
+    if (auto nodeId = pushNodePathToFrontend(ignored, node.get()))
+        m_frontendDispatcher->inspect(nodeId);
+}
+
+// MARK: - Layout Overlays
+
+Inspector::CommandResult<void> FrameDOMAgent::showGridOverlay(int nodeId, Ref<JSON::Object>&& gridOverlayInspectorObject)
+{
+    Inspector::Protocol::ErrorString errorString;
+    RefPtr node = assertNode(errorString, nodeId);
+    if (!node)
+        return makeUnexpected(errorString);
+
+    auto config = gridOverlayConfigFromInspectorObject(errorString, WTF::move(gridOverlayInspectorObject));
+    if (!config)
+        return makeUnexpected(errorString);
+
+    std::ignore = protect(overlay())->setGridOverlayForNode(*node, *config);
+
+    return { };
+}
+
+Inspector::CommandResult<void> FrameDOMAgent::hideGridOverlay(std::optional<int>&& nodeId)
+{
+    if (nodeId) {
+        Inspector::Protocol::ErrorString errorString;
+        RefPtr node = assertNode(errorString, *nodeId);
+        if (!node)
+            return makeUnexpected(errorString);
+
+        return protect(overlay())->clearGridOverlayForNode(*node);
+    }
+
+    protect(overlay())->clearAllGridOverlays();
+
+    return { };
+}
+
+Inspector::CommandResult<void> FrameDOMAgent::showFlexOverlay(int nodeId, Ref<JSON::Object>&& flexOverlayInspectorObject)
+{
+    Inspector::Protocol::ErrorString errorString;
+    RefPtr node = assertNode(errorString, nodeId);
+    if (!node)
+        return makeUnexpected(errorString);
+
+    auto config = flexOverlayConfigFromInspectorObject(errorString, WTF::move(flexOverlayInspectorObject));
+    if (!config)
+        return makeUnexpected(errorString);
+
+    std::ignore = protect(overlay())->setFlexOverlayForNode(*node, *config);
+
+    return { };
+}
+
+Inspector::CommandResult<void> FrameDOMAgent::hideFlexOverlay(std::optional<int>&& nodeId)
+{
+    if (nodeId) {
+        Inspector::Protocol::ErrorString errorString;
+        RefPtr node = assertNode(errorString, *nodeId);
+        if (!node)
+            return makeUnexpected(errorString);
+
+        return protect(overlay())->clearFlexOverlayForNode(*node);
+    }
+
+    protect(overlay())->clearAllFlexOverlays();
 
     return { };
 }
@@ -1720,7 +2253,7 @@ Ref<Inspector::Protocol::DOM::AccessibilityProperties> FrameDOMAgent::buildObjec
             ignored = axObject->isIgnored();
             ignoredByDefault = axObject->isIgnoredByDefault();
 
-            String invalidValue = axObject->invalidStatus();
+            String invalidValue = axObject->invalidStatusIncludingInferred();
             if (invalidValue == "false"_s)
                 invalid = Inspector::Protocol::DOM::AccessibilityProperties::Invalid::False;
             else if (invalidValue == "grammar"_s)

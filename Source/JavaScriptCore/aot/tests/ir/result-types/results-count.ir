@@ -1,0 +1,44 @@
+# An operation with several results has one type per result, and ResultAt has the type of the result it names
+# FORM: Prepared optimizing
+# RUN: result-types
+# CHECK-LABEL: function f0
+# CHECK: v1: 1
+# CHECK-NEXT: v2: "a"
+# CHECK-NEXT: v3.0: 1
+# CHECK-NEXT: v3.1: "a"
+# CHECK-NOT: v3
+# CHECK-LABEL: function f1
+# CHECK: v1.0: anything
+# CHECK-NEXT: v1.1: anything
+# CHECK-NEXT: v2: iteratorstate
+# CHECK-NEXT: v3.0: boolean
+# CHECK-NEXT: v3.1: anything
+# CHECK-NEXT: v4: boolean
+# CHECK-NEXT: v5: anything
+# CHECK-NEXT: v6: enumerator
+# CHECK-NEXT: v7.0: boolean
+# CHECK-NEXT: v7.1: string
+# CHECK-NEXT: v7.2: int[0, 8589934590]
+# CHECK-NEXT: v8: string
+# CHECK-NEXT: v9: undefined
+# CHECK-NOT: v9.
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="r" parameters=[{type=anything}] results=[{type=number}, {type=string}] {
+    v1 = Integer integer=1
+    v2 = String string="a"
+    v3 = Results v1, v2
+    Return v3
+}
+function f1 name="d" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = DestructureIterable v0 count=2
+    v2 = IteratorOpen v0
+    v3 = IteratorResume v2
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = ForInOpen v0
+    v7 = ForInStep v6, v0
+    v8 = ResultAt v7 index=1
+    v9 = Undefined
+    Return
+}

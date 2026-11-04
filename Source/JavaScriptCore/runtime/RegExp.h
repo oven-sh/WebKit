@@ -25,6 +25,7 @@
 #include "MatchResult.h"
 #include "RegExpKey.h"
 #include "Structure.h"
+#include "Weak.h"
 #include "Yarr.h"
 #include <JavaScriptCore/YarrErrorCode.h>
 #include <wtf/Atomics.h>
@@ -40,7 +41,13 @@
 
 namespace JSC {
 
+namespace AOT {
+struct ImageRegExp;
+}
+
 namespace Yarr {
+class CharacterSetView;
+struct CharacterSetWithRanges;
 struct YarrPattern;
 }
 
@@ -67,6 +74,10 @@ public:
     static GCClient::IsoSubspace* subspaceFor(VM&); // Defined in RegExpInlines.h
 
     JS_EXPORT_PRIVATE static RegExp* create(VM&, const String& pattern, OptionSet<Yarr::Flags>);
+#if ENABLE(AOT)
+    JS_EXPORT_PRIVATE static RegExp* createFromImage(VM&, const String& pattern, OptionSet<Yarr::Flags>, const AOT::ImageRegExp&);
+    JS_EXPORT_PRIVATE const AOT::ImageRegExp* imageRecord() const;
+#endif
     // A pattern already known to be valid, with what finishCreation would have computed by parsing it (bytecode cache).
     static RegExp* createFromCache(VM&, const String& pattern, OptionSet<Yarr::Flags>, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
     static void destroy(JSCell*);
@@ -77,6 +88,19 @@ public:
 
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(RegExp, m_flags); }
     static constexpr ptrdiff_t offsetOfMinimumSize() { return OBJECT_OFFSETOF(RegExp, m_minimumSize); }
+    static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(RegExp, m_state); }
+#if ENABLE(AOT)
+    static constexpr uint8_t stateWithImageCode() { return ImageCode; }
+    static constexpr uint8_t stateWithBytecode() { return ByteCode; }
+    static constexpr ptrdiff_t offsetOfRegExpBytecode() { return OBJECT_OFFSETOF(RegExp, m_regExpBytecode); }
+#endif
+    static constexpr ptrdiff_t offsetOfOvector() { return OBJECT_OFFSETOF(RegExp, m_ovector); }
+    static constexpr ptrdiff_t offsetOfNumSubpatterns() { return OBJECT_OFFSETOF(RegExp, m_numSubpatterns); }
+    static constexpr ptrdiff_t offsetOfAtom() { return OBJECT_OFFSETOF(RegExp, m_atom); }
+    static constexpr ptrdiff_t offsetOfRareData() { return OBJECT_OFFSETOF(RegExp, m_rareData); }
+#if ENABLE(YARR_JIT)
+    static constexpr ptrdiff_t offsetOfRegExpJITCode() { return OBJECT_OFFSETOF(RegExp, m_regExpJITCode); }
+#endif
     static constexpr uint16_t globalOrStickyFlagsMask = OptionSet<Yarr::Flags> { Yarr::Flags::Global, Yarr::Flags::Sticky }.toRaw();
 
     OptionSet<Yarr::Flags> flags() const { return m_flags; }
@@ -169,8 +193,17 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // Whether this has matched since the last full collection began.
     bool wasUsedInCurrentFullCollectionCycle(VM&) const;
 
+#if ENABLE(AOT)
+    // A global search of a pattern that is one set or a run of one set, in one pass. False: search match by match.
+    bool collectMatchesOfOneSetOrRun(VM&, StringView, Vector<unsigned, 128>& matches);
+#endif
+
     bool hasCode()
     {
+#if ENABLE(AOT)
+        if (m_state == ImageCode || m_state == ImageAtom)
+            return true;
+#endif
         return m_state == JITCode || m_state == ByteCode;
     }
 
@@ -192,6 +225,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     RegExpKey key() { return RegExpKey(m_flags, m_patternString); }
 
     String escapedPattern() const;
+    JS_EXPORT_PRIVATE static String escapedPattern(const String& pattern);
 
     String toSourceString() const;
 
@@ -213,6 +247,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     bool hasValidAtom() const { return !m_atom.isNull(); }
     const String& atom() const LIFETIME_BOUND { return m_atom; }
     Yarr::SpecificPattern specificPattern() const { return m_specificPattern; }
+    std::optional<Yarr::CharacterSetView> specificCharacterClass() const;
 
     const WTF::BitSet<256>* firstCharacterBitmap(FirstCharacterFilterPosition);
 
@@ -234,15 +269,28 @@ private:
 
     static RegExp* createWithoutCaching(VM&, const String&, OptionSet<Yarr::Flags>);
     void finishCreationFromCache(VM&, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
+    enum class BytecodeIsFor : bool { Interpreter, LongSearch };
+#if ENABLE(AOT)
+    void finishCreationFromImage(VM&, const AOT::ImageRegExp&);
+    bool takeCodeFromImage(VM&);
+    int matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, int* offsetVector);
+    static void countInterpretedMatch(VM&);
+    void countBytecodeCompilation(VM&, BytecodeIsFor) const;
+    void crashIfLiteralIsInterpreted() const;
+#endif
 
     enum RegExpState : uint8_t {
         ParseError,
         JITCode,
         ByteCode,
+#if ENABLE(AOT)
+        ImageCode,
+        ImageAtom,
+#endif
         NotCompiled
     };
 
-    void byteCodeCompileIfNecessary(VM*);
+    void byteCodeCompileIfNecessary(VM*, BytecodeIsFor = BytecodeIsFor::Interpreter);
 
     void compile(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessary(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
@@ -259,6 +307,7 @@ private:
 
 #if ENABLE(YARR_JIT)
     Yarr::YarrCodeBlock& ensureRegExpJITCode();
+    bool compileWithJIT(VM*, Yarr::YarrPattern&, Yarr::CharSize, std::optional<StringView> sampleString, Yarr::ExecutionMode);
 #endif
 
     struct RareData {
@@ -270,7 +319,13 @@ private:
         // For the duplicate case, the first element is the namedCaptureGroupId.
         // The remaining elements are the subpatternIds for each of the duplicate groups.
         UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
+#if USE(BUN_JSC_ADDITIONS)
+        // Weak: the VM's cache hands one RegExp to every realm that writes the same pattern, and a Structure keeps its whole realm alive.
+        Weak<Structure> m_cachedGroupsStructure;
+#else
         WriteBarrierStructureID m_cachedGroupsStructureID;
+#endif
+        std::unique_ptr<const Yarr::CharacterSetWithRanges> m_specificCharacterClass;
     };
 
     String m_patternString;
@@ -280,6 +335,9 @@ private:
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
     uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
+#if ENABLE(AOT)
+    uint16_t m_imageRecordNumber { 0 };
+#endif
     unsigned m_numSubpatterns { 0 };
     unsigned m_minimumSize { 0 };
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;

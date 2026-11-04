@@ -36,7 +36,11 @@ require "settings"
 require "shellwords"
 require "transform"
 
+DEFAULT_SECTION = "trampolines"
+
 class Assembler
+    attr_reader :section
+
     def initialize(outp)
         @outp = outp
         @state = :cpp
@@ -58,6 +62,7 @@ class Assembler
 
         @newlineSpacerState = :none
         @lastlabel = ""
+        @section = DEFAULT_SECTION
     end
 
     def enterAsm
@@ -250,6 +255,17 @@ class Assembler
         @newlineSpacerState = :none # After a global label, we can use another spacer.
     end
     
+    def putsSection(name)
+        raise unless @state == :asm
+        @deferredNextLabelActions.each {
+            | action |
+            action.call()
+        }
+        @deferredNextLabelActions = []
+        @section = name
+        putStr("OFFLINE_ASM_SECTION(#{name})")
+    end
+
     def putsLocalLabel(labelName)
         raise unless @state == :asm
         @numLocalLabels += 1

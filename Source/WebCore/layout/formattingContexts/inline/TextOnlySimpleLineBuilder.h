@@ -25,8 +25,8 @@
 
 #pragma once
 
+#include "AbstractLineBuilder.h"
 #include "InlineContentCache.h"
-#include <WebCore/AbstractLineBuilder.h>
 
 namespace WebCore {
 namespace Layout {
@@ -41,11 +41,11 @@ public:
     TextOnlySimpleLineBuilder(InlineFormattingContext&, const ElementBox& rootBox, HorizontalConstraints rootHorizontalConstraints, const InlineItemList&);
     LineLayoutResult layoutInlineContent(const LineInput&, const std::optional<PreviousLine>&, bool isFirstFormattedLine) final;
 
-    static bool NODELETE isEligibleForSimplifiedTextOnlyInlineLayoutByContent(const InlineContentCache::InlineItems&, const PlacedFloats&);
+    static bool LEGACY_NODELETE isEligibleForSimplifiedTextOnlyInlineLayoutByContent(const InlineContentCache::InlineItems&, const InlineLayoutState&);
     static bool isEligibleForSimplifiedInlineLayoutByStyle(const Box&);
     static bool isEligibleForSimplifiedDisplayBuild(const ElementBox& rootBlockContainer);
 
-    static bool isAtContentEnd(std::span<const InlineItem>, size_t nextItemIndex, const InlineItemRange&);
+    static bool LEGACY_NODELETE isAtContentEnd(std::span<const InlineItem>, size_t nextItemIndex, const InlineItemRange&);
     static bool isAtSoftWrapOpportunityOrContentEnd(const InlineTextItem&, std::span<const InlineItem>, size_t nextItemIndex, const InlineItemRange&, const Style::ComputedStyle& rootStyle);
     static InlineLayoutUnit measuredInlineTextItem(const InlineTextItem&, const Style::ComputedStyle&, InlineLayoutUnit contentLogicalLeft);
 
@@ -59,7 +59,7 @@ private:
     void handleLineEnding(const Style::ComputedStyle&, InlineItemPosition, size_t layoutRangeEndIndex);
     size_t revertToTrailingItem(const Style::ComputedStyle&, const InlineItemRange&, const InlineTextItem&);
     size_t revertToLastNonOverflowingItem(const Style::ComputedStyle&, const InlineItemRange&);
-    InlineLayoutUnit NODELETE availableWidth() const;
+    InlineLayoutUnit LEGACY_NODELETE availableWidth() const;
 
 private:
     InlineLayoutUnit m_trimmedTrailingWhitespaceWidth { 0.f };

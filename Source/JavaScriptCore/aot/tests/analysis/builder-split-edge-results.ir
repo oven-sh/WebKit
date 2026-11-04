@@ -1,0 +1,78 @@
+# The block that splits an edge takes what the edge proves as its parameters and passes it on as arguments
+# FORM: Prepared
+# RUN: split-edge function=f0 edge=b0.0
+# RUN(GUARD): split-edge function=f1 edge=b0.0
+# RUN(PLAIN): split-edge function=f0 edge=b0.1
+# RUN(HANDLER): split-edge function=f0 edge=b1.handler
+# RUN(JOIN): split-edge function=f2 edge=b1.0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}] flow={members=[L0]}
+function f0 name="argumentAndProof" parameters=[{type=number|string}, {type=number}, {type=anything}] results=[{type=anything}] {
+    v3 = TypeTest v0 testedType=string
+    Branch v3 -> taken b1(v1 | 0), notTaken b3(v1)
+  b1(v4, v5) handler=b2():
+    v6 = Call v2, -, v4
+    Return v5
+  b2() role=CatchHandler:
+    v7 = CatchValue
+    Return v7
+  b3(v8):
+    Return v8
+}
+# CHECK: function f0
+# CHECK-NEXT: b0(v0: number|string, v1: number, v2: anything):
+# CHECK-NEXT: v3: boolean = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch v3 -> taken b4(| 0), notTaken b3(v1)
+# CHECK-NEXT: b1(v4: number, v5: string) handler=b2():
+# CHECK: b3(v8: number):
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b4([[result]]: string):
+# CHECK-NEXT: Jump -> next b1(v1, [[result]])
+# CHECK-NEXT: }
+# PLAIN: function f0
+# PLAIN: Branch v3 -> taken b1(v1 | 0), notTaken b4()
+# PLAIN-NEXT: b1(v4: number, v5: string) handler=b2():
+# PLAIN: b4():
+# PLAIN-NEXT: Jump -> next b3(v1)
+# PLAIN-NEXT: }
+# HANDLER-NOT: function f0
+# HANDLER: error: bad argument edge=b1.handler
+# HANDLER-NOT: function f0
+function f1 name="guard" parameters=[{type=object}] results=[{type=number}] {
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v0, v2 key="x" receivers=[L0] level=Expected
+    Return v3
+  b2():
+    v4 = Integer integer=0
+    Return v4
+}
+# GUARD: function f1
+# GUARD: Branch v1 -> taken b3(| 0), notTaken b2()
+# GUARD-NEXT: b1(v2: guard):
+# GUARD-NEXT: = GetSlot v0, v2 key="x"
+# GUARD: b3([[guard]]: guard):
+# GUARD-NEXT: Jump -> next b1([[guard]])
+# GUARD-NEXT: }
+function f2 name="twoEdgesIntoOneBlock" parameters=[{type=number|string}, {type=boolean|string}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = TypeTest v0 testedType=number
+    Branch v3 -> taken b3(| 0), notTaken b4()
+  b2():
+    v4 = TypeTest v1 testedType=boolean
+    Branch v4 -> taken b3(| 0), notTaken b4()
+  b3(v5):
+    Return v5
+  b4():
+    Return
+}
+# JOIN: function f2
+# JOIN: Branch v3 -> taken b5(| 0), notTaken b4()
+# JOIN: Branch v4 -> taken b3(| 0), notTaken b4()
+# JOIN-NEXT: b3(v5: boolean|number):
+# JOIN: b5([[narrowed]]: number):
+# JOIN-NEXT: Jump -> next b3([[narrowed]])
+# JOIN-NEXT: }

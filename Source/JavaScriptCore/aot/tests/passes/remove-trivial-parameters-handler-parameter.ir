@@ -1,0 +1,147 @@
+# A parameter of a handler block that every covered block hands the same value is that value. A parameter that would become a cast stays in a block that has a handler: the handler sees the parameter, not a value of the block. The subject of a cleanup block is named at the head of the block, so it names the value and not the cast.
+# FORM: Prepared optimizing
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveTrivialParameters
+# STATISTIC: RemoveTrivialParametersChanges = 6
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoCoveredBlocks" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything) handler=b3(v1):
+    v2 = Call v0
+    Jump -> next b1()
+  b1() handler=b3(v1):
+    v3 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v3
+  b3(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return v4
+# CHECK: b0(v0: anything, v1: anything) handler=b3():
+# CHECK: b1() handler=b3():
+# CHECK: b3() role=CatchHandler:
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: Return v1
+}
+
+function f1 name="oneCoveredBlock" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything) handler=b2(v1):
+    v2 = Call v0
+    Jump -> next b1()
+  b1():
+    Return v2
+  b2(v3) role=CatchHandler:
+    Return v3
+# CHECK: b0(v0: anything, v1: anything) handler=b2():
+# CHECK: b2() role=CatchHandler:
+# CHECK-NEXT: Return v1
+}
+
+function f2 name="oneOfTwoParameters" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything) handler=b3(v1, v0):
+    v2 = Call v0
+    Jump -> next b1()
+  b1() handler=b3(v1, v2):
+    v3 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v3
+  b3(v4, v5) role=CatchHandler:
+    v6 = Call v4, -, v5
+    Return v6
+# CHECK: b0(v0: anything, v1: anything) handler=b3(v0):
+# CHECK: b1() handler=b3(v2):
+# CHECK: b3(v5: anything) role=CatchHandler:
+# CHECK-NEXT: = Call v1, -, v5
+}
+
+function f3 name="castGoesBelowCaughtValue" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number) handler=b2(v1):
+    v2 = Call v0
+    Jump -> next b1()
+  b1():
+    Return v2
+  b2(v3: number ~ i32) role=CatchHandler:
+    v4 = CatchValue
+    v5 = Call v0, -, v4
+    Return v3
+# CHECK: b0(v0: anything, v1: number) handler=b2():
+# CHECK: b2() role=CatchHandler:
+# CHECK-NEXT: v4: anything = CatchValue
+# CHECK-NEXT: v3: number ~ i32 = Upcast v1
+# CHECK-NEXT: = Call v0, -, v4
+# CHECK-NEXT: Return v3
+}
+
+function f4 name="coveredBlockHandsOnItsOwnParameter" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1(v1)
+  b1(v2) handler=b3(v2):
+    v3 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v3
+  b3(v4) role=CatchHandler:
+    Return v4
+# CHECK: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b3():
+# CHECK: b3() role=CatchHandler:
+# CHECK-NEXT: Return v1
+}
+
+function f5 name="parameterOfCoveredBlockThatNeedsCastStays" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: number) handler=b3(v2):
+    v3 = Call v0
+    Jump -> next b1(v1)
+  b1(v4: number ~ i32) handler=b3(v4):
+    v5 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v4
+  b3(v6) role=CatchHandler:
+    Return v6
+# CHECK: Jump -> next b1(v1)
+# CHECK-NEXT: b1(v4: number ~ i32) handler=b3(v4):
+# CHECK-NOT: Upcast
+# CHECK: Return v4
+# CHECK-NEXT: b3(v6: number) role=CatchHandler:
+# CHECK-NEXT: Return v6
+}
+
+function f6 name="coveredBlocksDisagree" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything) handler=b3(v1):
+    v2 = Call v0
+    Jump -> next b1()
+  b1() handler=b3(v2):
+    v3 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v3
+  b3(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return v4
+# CHECK: b0(v0: anything, v1: anything) handler=b3(v1):
+# CHECK: b1() handler=b3(v2):
+# CHECK: b3(v4: anything) role=CatchHandler:
+# CHECK: Return v4
+}
+
+function f7 name="subjectOfCleanupBlockIsNamedAtTheHead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything) handler=b3(v1):
+    v2 = Call v0
+    Jump -> next b1()
+  b1() handler=b3(v1):
+    v3 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v3
+  b3(v4: anything ~ number) role=DisposalCleanup subject=v4:
+    v5 = CatchValue
+    v6 = Call v0, -, v4
+    Throw v5
+# CHECK: b0(v0: anything, v1: anything) handler=b3():
+# CHECK: b1() handler=b3():
+# CHECK: b3() role=DisposalCleanup subject=v1:
+# CHECK-NEXT: v5: anything = CatchValue
+# CHECK-NEXT: v4: anything ~ number = Upcast v1
+# CHECK-NEXT: = Call v0, -, v4
+}

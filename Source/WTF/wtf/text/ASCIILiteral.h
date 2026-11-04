@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <array>
 #include <span>
 #include <string>
 #include <type_traits>
@@ -67,6 +68,15 @@ public:
     template<size_t length>
     consteval ASCIILiteral(const char (&literal)[length])
         : m_charactersWithNullTerminator(unsafeMakeSpan(literal, length))
+    {
+        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(m_charactersWithNullTerminator[length - 1] == '\0');
+    }
+
+    // Only usable on constexpr arrays with static storage duration, since the result of a consteval
+    // call cannot point to a temporary, a local, or a non-constexpr object.
+    template<size_t length> requires (length > 0)
+    consteval explicit ASCIILiteral(const std::array<char, length>& characters)
+        : m_charactersWithNullTerminator(characters)
     {
         RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(m_charactersWithNullTerminator[length - 1] == '\0');
     }

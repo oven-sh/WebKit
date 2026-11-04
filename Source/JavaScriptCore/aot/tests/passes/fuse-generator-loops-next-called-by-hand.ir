@@ -1,0 +1,140 @@
+# g.next() written in the source, after the library function is inlined: its step needs no test of a generator created here, so the generator is merged like one that a loop iterates
+# FORM: Prepared optimizing
+# RUN: pass SimplifyBuiltinCalls FuseGeneratorLoops
+# RUN(SIMPLE): pass SimplifyBuiltinCalls FuseGeneratorLoops FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues SinkAllocations FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues CompactBlocks
+# STATISTIC: GeneratorLoopsFused = 1
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="countsUp" position=10 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f1 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f0 @10
+    v3 = CallDirect v0, v1, v2 function=f1 @10
+    Return v2 @10
+}
+function f1 name="countsUp" position=10 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=number}, {type=Generator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{ramp=f0 body=f1 promiseParameter=2} {
+    v3 = Undefined @10
+    v4 = YieldBySavingFrame v2, v3 @10
+    v5 = ResultAt v4 index=0 @10
+    v6 = ResultAt v4 index=1 @10
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @10
+  b1() frequency=Rare:
+    Throw v5 @10
+  b2() frequency=Rare:
+    Return v5 @10
+  b3():
+    v7 = Integer integer=0
+    Jump -> next b4(v7)
+  b4(v8):
+    LoopHint
+    v10 = Less v8, v1 @11
+    Branch v10 -> taken b5(), notTaken b9()
+  b5():
+    v11 = YieldBySavingFrame v2, v8 @12
+    v12 = ResultAt v11 index=0
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b6(), case b7(), otherwise b8()
+  b6() frequency=Rare:
+    Throw v12
+  b7() frequency=Rare:
+    Return v12
+  b8():
+    v14 = Integer integer=1
+    v15 = Add v8, v14
+    Jump -> next b4(v15)
+  b9():
+    v16 = Undefined
+    Return v16
+}
+function f2 name="createdHere" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f0
+    v3 = NewGenerator v2 function=f0 @40
+    v4 = CallDirect v2, v0, v3 function=f1 @40
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Undefined
+    v7 = StepGenerator v3, v6 check=IsGenerator @50
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = Integer integer=2
+    v11 = StrictEq v9, v10
+    Branch v11 -> taken b2(), notTaken b3()
+  b2():
+    v12 = ResumeGenerator v3, v6
+    Jump -> next b4(v12)
+  b3():
+    v13 = Integer integer=1
+    v14 = StrictEq v9, v13
+    v15 = NewObject -, v8, v14 layout=L(IteratorResult) fields=[0, 1]
+    Jump -> next b4(v15)
+  b4(v16):
+    v17 = PropGet v16 key="done"
+    v18 = ToBoolean v17
+    Branch v18 -> taken b6(), notTaken b5()
+  b5():
+    v19 = PropGet v16 key="value"
+    v20 = Call v1, -, v19 @51
+    Jump -> next b1()
+  b6():
+    v21 = Undefined
+    Return v21
+}
+# CHECK-LABEL: function f2 name="createdHere"
+# In a stack trace the caller of the body stands at the step that runs it (50), not where the generator was made (40).
+# CHECK: inlineFrames=[{}, {callee=f1 callPosition=50 module=m0}]
+# CHECK-NOT: StepGenerator
+# CHECK-NOT: YieldBySavingFrame
+# SIMPLE-LABEL: function f2 name="createdHere"
+# SIMPLE-NOT: NewGenerator
+# SIMPLE-NOT: StepGenerator
+# SIMPLE-NOT: ResumeGenerator
+# SIMPLE-NOT: NewObject
+# SIMPLE-NOT: PropGet
+# SIMPLE: = Less {{*}}, v0 @11:1
+# SIMPLE-NOT: NewObject
+# SIMPLE: = Call v1, -, {{*}} @51
+# SIMPLE-NOT: NewObject
+
+function f3 name="createdElsewhere" parameters=[{type=Generator}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Undefined
+    v4 = StepGenerator v0, v3 check=IsGenerator @50
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    v7 = Integer integer=2
+    v8 = StrictEq v6, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = ResumeGenerator v0, v3
+    Return v9
+  b3():
+    v10 = Integer integer=1
+    v11 = StrictEq v6, v10
+    Branch v11 -> taken b5(), notTaken b4()
+  b4():
+    v12 = Call v1, -, v5 @51
+    Jump -> next b1()
+  b5():
+    v13 = Undefined
+    Return v13
+}
+# CHECK-LABEL: function f3 name="createdElsewhere"
+# CHECK: = StepGenerator v0, v3 check=None @50
+# CHECK: = ResumeGenerator v0, v3
+
+function f4 name="handedOnBeforeTheStep" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f0
+    v3 = NewGenerator v2 function=f0 @40
+    v4 = CallDirect v2, v0, v3 function=f1 @40
+    v5 = Call v1, -, v3 @41
+    v6 = Undefined
+    v7 = StepGenerator v3, v6 check=IsGenerator @50
+    v8 = ResultAt v7 index=0
+    Return v8
+}
+# CHECK-LABEL: function f4 name="handedOnBeforeTheStep"
+# CHECK: = NewGenerator v2 function=f0 @40
+# CHECK: = StepGenerator v3, v6 check=None @50

@@ -87,6 +87,7 @@ struct NetworkSessionCreationParameters {
     String networkCacheDirectory;
     SandboxExtension::Handle networkCacheDirectoryExtensionHandle;
     String dataConnectionServiceType;
+    String ipAddressSpaceOverridesForTesting;
     bool fastServerTrustEvaluationEnabled { false };
     bool networkCacheSpeculativeValidationEnabled { false };
     bool shouldUseTestingNetworkSession { false };
@@ -104,6 +105,7 @@ struct NetworkSessionCreationParameters {
     String webPushMachServiceName;
     String webPushPartitionString;
     bool enablePrivateClickMeasurementDebugMode { false };
+    bool enablePrivateClickMeasurementPrivateRelayEnforcement { false };
     bool isOptInCookiePartitioningEnabled { false };
     bool shouldSendPrivateTokenIPCForTesting { false };
     uint64_t cookiesVersion { 0 };
@@ -135,7 +137,7 @@ struct NetworkSessionCreationParameters {
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     bool isDeclarativeWebPushEnabled { false };
 #endif
-#if HAVE(NW_PROXY_CONFIG)
+#if PLATFORM(COCOA)
     std::optional<Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>>> proxyConfigData;
 #endif
     ResourceLoadStatisticsParameters resourceLoadStatisticsParameters;

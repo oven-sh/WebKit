@@ -35,7 +35,7 @@ namespace WebKit {
 
 typedef HashMap<String, bool> BoolOverridesMap;
 
-static BoolOverridesMap& NODELETE boolTestRunnerOverridesMap()
+static BoolOverridesMap& LEGACY_NODELETE boolTestRunnerOverridesMap()
 {
     static NeverDestroyed<BoolOverridesMap> map;
     return map;
@@ -52,7 +52,7 @@ void WebPreferencesStore::removeTestRunnerOverrides()
 }
 
 template<typename MappedType>
-static MappedType valueForKey(const WebPreferencesStore::ValueMap& values, const WebPreferencesStore::ValueMap& overriddenDefaults, const String& key)
+SUPPRESS_NODELETE static MappedType LEGACY_NODELETE valueForKey(const WebPreferencesStore::ValueMap& values, const WebPreferencesStore::ValueMap& overriddenDefaults, const String& key)
 {
     auto valuesIt = values.find(key);
     if (valuesIt != values.end() && std::holds_alternative<MappedType>(valuesIt->value))
@@ -96,7 +96,7 @@ bool WebPreferencesStore::setBoolValueForKey(const String& key, bool value)
     return setValueForKey<bool>(m_values, m_overriddenDefaults, key, value);
 }
 
-bool WebPreferencesStore::getBoolValueForKey(const String& key) const
+SUPPRESS_NODELETE bool WebPreferencesStore::getBoolValueForKey(const String& key) const
 {
     // FIXME: Extend overriding to other key types used from TestRunner.
     auto it = boolTestRunnerOverridesMap().find(key);

@@ -1,0 +1,15 @@
+# A piece of the text of a body that ends past the text of its module fails the build with one diagnostic
+# RUN: tables
+# DIAGNOSTIC: ProgramTableCheckFailed 1
+# CHECK-NOT: magic
+# CHECK: rule TableOutOfBounds
+
+module m0 path="/a.js" displayPath="a.js" body=f0 positions={lineStarts=[0] textOfBody="\x00\x04\x01\x06"} functionText="0123456789"
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Call v1, -
+    Return
+}

@@ -1,0 +1,73 @@
+# The loose comparison of a value with a text is one call of a stub that gets the number of the text: no cell is made or fetched for the text
+# FORM: Selected
+# RUN: generate-code calls
+# RUN(R): pass NumberAndEncode ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="asValue" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = ValueLooselyEqualsLiteral v0 literal="constructor"
+    Return v1
+}
+# CHECK: f0: size={{*}} constants=0
+# CHECK-NEXT: stub LooseEqualsLiteral x1
+
+function f1 name="asCondition" parameters=[{type=anything}] results=[{type=i32}] {
+    v1 = ValueLooselyEqualsLiteral v0 literal="constructor"
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+# CHECK-NEXT: f1: size={{*}} constants=0
+# CHECK-NEXT: stub LooseEqualsLiteral x1
+
+function f2 name="underHandler" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = ValueLooselyEqualsLiteral v0 literal="\u{100}"
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# CHECK-NEXT: f2: size={{*}} handlers=1
+# CHECK: stub LooseEqualsLiteral x1
+
+function f3 name="genericComparison" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = String string="1"
+    v2 = Eq v0, v1 form=Generic
+    Return v2
+}
+# CHECK-NEXT: f3: size=
+# CHECK-NEXT: stub Equal.Loose x1
+# CHECK-NOT: LooseEqualsLiteral
+
+# The stub takes a boxed value, so a number is boxed for it
+function f4 name="numberOrObject" parameters=[{type=number}, {type=object}, {type=boolean}] results=[{type=boolean}] {
+    Branch v2 -> taken b1(v0), notTaken b1(v1)
+  b1(v3):
+    v4 = ValueLooselyEqualsLiteral v3 literal="constructor"
+    v5 = ValueLooselyEqualsLiteral v0 literal="constructor"
+    v6 = ValueLooselyEqualsLiteral v1 literal="constructor"
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Return v4
+  b3():
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v5
+  b5():
+    Return v6
+}
+# CHECK: f4: size=
+# CHECK-NEXT: stub LooseEqualsLiteral x3
+# R-LABEL: function f0 name="asValue"
+# R: v1: boolean @Boolean = ValueLooselyEqualsLiteral v0 literal="constructor"
+# R-LABEL: function f4 name="numberOrObject"
+# R: b1(v3: number|object @JSValue):
+# R: boolean @Boolean = ValueLooselyEqualsLiteral v3 literal="constructor"
+# R: boolean @Boolean = ValueLooselyEqualsLiteral {{*}} literal="constructor"
+# R: boolean @Boolean = ValueLooselyEqualsLiteral {{*}} literal="constructor"

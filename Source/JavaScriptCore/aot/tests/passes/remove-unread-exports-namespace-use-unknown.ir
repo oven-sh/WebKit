@@ -1,0 +1,75 @@
+# A store to an export that no code names stays when flow does not know every use of a namespace object that has the export.
+# Awaiting a namespace object reads the name `then` and no other
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadExports
+# OPTIONS: only-passes=RemoveUnreadExports
+# STATISTIC: UnreadVariableStoresRemoved = 2
+# CHECK: variable g0 name="readByKey"{{*}}stores=AtMostOnce
+# CHECK: variable g1 name="exportedAgain"{{*}}stores=AtMostOnce
+# CHECK: variable g2 name="besideAwait"{{*}}writers=AllKnown stores=Never{{*}}reads=NeverRead
+# CHECK: variable g3 name="besideNamedRead"{{*}}writers=AllKnown stores=Never{{*}}reads=NeverRead
+# CHECK: variable g4 name="shown"{{*}}stores=AtMostOnce
+
+module m0 path="/main.ts" displayPath="main.ts" flags=[HasTopLevelAwait] body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}]
+module m1 path="/by-key.ts" displayPath="by-key.ts" body=f1 exports=[{name="readByKey" variable=g0}]
+module m2 path="/again.ts" displayPath="again.ts" body=f2 requests=[{target=m5 completes=true}] exports=[{name="exportedAgain" variable=g1 isFromStarExport=true}]
+module m3 path="/awaited.ts" displayPath="awaited.ts" body=f3 exports=[{name="besideAwait" variable=g2}]
+module m4 path="/by-name.ts" displayPath="by-name.ts" body=f4 exports=[{name="besideNamedRead" variable=g3}, {name="shown" variable=g4}]
+module m5 path="/declares.ts" displayPath="declares.ts" body=f5 exports=[{name="exportedAgain" variable=g1}]
+entry module=m0
+variable g0 name="readByKey" module=m1 declared={type=anything}
+variable g1 name="exportedAgain" module=m5 declared={type=anything}
+variable g2 name="besideAwait" module=m3 declared={type=anything}
+variable g3 name="besideNamedRead" module=m4 declared={type=anything}
+variable g4 name="shown" module=m4 declared={type=anything}
+
+function f0 name="main" kind=Module flags=[IsAsync] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = ModuleNamespace module=m1
+    v3 = ElemGet v2, v1
+    v4 = ModuleNamespace module=m2
+    v5 = ElemGet v4, v1
+    v6 = ModuleNamespace module=m3
+    v7 = Await v6
+    v8 = ModuleNamespace module=m4
+    v9 = PropGet v8 key="shown"
+    v10 = PropGet v0 key="print" [isFreeName]
+    v11 = Call v10, -, v3, v5, v9
+    Return
+}
+
+function f1 name="readByUnknownKey" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Return
+# CHECK: PutModuleVariable v0 variable=g0
+}
+
+function f2 name="exportsAgain" module=m2 kind=Module results=[{type=anything}] {
+    Return
+}
+
+function f3 name="awaited" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g2
+    Return
+# CHECK-NOT: variable=g2
+}
+
+function f4 name="readByNameOnly" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g3
+    PutModuleVariable v0 variable=g4
+    Return
+# CHECK-NOT: variable=g3
+# CHECK: PutModuleVariable v0 variable=g4
+# CHECK-NOT: variable=g3
+}
+
+function f5 name="declares" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g1
+    Return
+# CHECK: PutModuleVariable v0 variable=g1
+}

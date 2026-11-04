@@ -30,6 +30,7 @@
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if ENABLE(JOURNALD_LOG)
 #define SD_JOURNAL_SUPPRESS_LOCATION
@@ -377,23 +378,18 @@ private:
         auto logMessage = makeString(LogArgument<Argument>::toString(arguments)...);
 
 #if RELEASE_LOG_DISABLED
-        WTFLog(&channel, "%s", logMessage.utf8().legacyCStringPointer());
+        SAFE_WTFLOG(&channel, "%s", logMessage.utf8());
 #elif USE(OS_LOG)
         osLog(channel, logMessage.utf8());
 #elif OS(ANDROID)
-        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s", channel.name, logMessage.utf8().legacyCStringPointer());
+        SAFE_ANDROID_LOG_PRINT(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s", UTF8CStringView::unsafeFromUTF8(channel.name), logMessage.utf8());
 #elif ENABLE(JOURNALD_LOG)
         if (WTFShouldLogToJournal())
-            sd_journal_send("WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().legacyCStringPointer(), nullptr);
-        else {
-            IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
-            fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s\n", channel.name, logMessage.utf8().legacyCStringPointer());
-            IGNORE_WARNINGS_END
-        }
+            SAFE_SD_JOURNAL_SEND("WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8());
+        else
+            SAFE_FPRINTF(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s\n", UTF8CStringView::unsafeFromUTF8(channel.name), logMessage.utf8());
 #else
-        IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
-        fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s\n", channel.name, logMessage.utf8().legacyCStringPointer());
-        IGNORE_WARNINGS_END
+        SAFE_FPRINTF(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s\n", UTF8CStringView::unsafeFromUTF8(channel.name), logMessage.utf8());
 #endif
 
         sendMessageToObservers(channel, level, { }, arguments...);
@@ -419,39 +415,37 @@ private:
         auto logMessage = makeString(LogArgument<Argument>::toString(arguments)...);
 
 #if RELEASE_LOG_DISABLED
-        WTFLogVerbose(file, line, function, &channel, "%s", logMessage.utf8().legacyCStringPointer());
+        SAFE_WTFLOG_VERBOSE(file, line, function, &channel, "%s", logMessage.utf8());
 #elif USE(OS_LOG)
         osLog(channel, logMessage.utf8());
         UNUSED_PARAM(file);
         UNUSED_PARAM(line);
         UNUSED_PARAM(function);
 #elif OS(ANDROID)
-        __android_log_print(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s FILE=%s:%d: %s", channel.name, logMessage.utf8().legacyCStringPointer(), file, line, function);
+        SAFE_ANDROID_LOG_PRINT(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, "[%s] %s FILE=%s:%d: %s", UTF8CStringView::unsafeFromUTF8(channel.name), logMessage.utf8(), UTF8CStringView::unsafeFromUTF8(file), line, UTF8CStringView::unsafeFromUTF8(function));
 #elif ENABLE(JOURNALD_LOG)
         if (WTFShouldLogToJournal()) {
             auto fileString = makeString("CODE_FILE="_s, unsafeSpan(file));
             auto lineString = makeString("CODE_LINE="_s, line);
-            sd_journal_send_with_location(fileString.utf8().legacyCStringPointer(), lineString.utf8().legacyCStringPointer(), function, "WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8().legacyCStringPointer(), nullptr);
+            SAFE_SD_JOURNAL_SEND_WITH_LOCATION(fileString.utf8(), lineString.utf8(), function, "WEBKIT_SUBSYSTEM=" LOG_CHANNEL_WEBKIT_SUBSYSTEM, "WEBKIT_CHANNEL=%s", channel.name, "MESSAGE=%s", logMessage.utf8());
         } else {
-            IGNORE_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
-            fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s [%s:%d %s]\n", channel.name, logMessage.utf8().legacyCStringPointer(), file, line, function);
-            IGNORE_WARNINGS_END
+            SAFE_FPRINTF(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s [%s:%d %s]\n", UTF8CStringView::unsafeFromUTF8(channel.name), logMessage.utf8(), UTF8CStringView::unsafeFromUTF8(file), line, UTF8CStringView::unsafeFromUTF8(function));
         }
 #else
-        fprintf(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s FILE=%s:%d %s\n", channel.name, logMessage.utf8().legacyCStringPointer(), file, line, function);
+        SAFE_FPRINTF(stderr, "[" LOG_CHANNEL_WEBKIT_SUBSYSTEM ":%s:-] %s FILE=%s:%d %s\n", UTF8CStringView::unsafeFromUTF8(channel.name), logMessage.utf8(), UTF8CStringView::unsafeFromUTF8(file), line, UTF8CStringView::unsafeFromUTF8(function));
 #endif
 
         sendMessageToObservers(channel, level, { { file, function, line } }, arguments...);
     }
 
-    WTF_EXPORT_PRIVATE static Vector<std::reference_wrapper<Observer>>& NODELETE observers() WTF_REQUIRES_LOCK(observerLock());
+    WTF_EXPORT_PRIVATE static Vector<std::reference_wrapper<Observer>>& LEGACY_NODELETE observers() WTF_REQUIRES_LOCK(observerLock());
 
     static Lock& observerLock() WTF_RETURNS_LOCK(loggerObserverLock)
     {
         return loggerObserverLock;
     }
 
-    WTF_EXPORT_PRIVATE static Vector<std::reference_wrapper<MessageHandlerObserver>>& NODELETE messageHandlerObservers() WTF_REQUIRES_LOCK(messageHandlerObserverLock());
+    WTF_EXPORT_PRIVATE static Vector<std::reference_wrapper<MessageHandlerObserver>>& LEGACY_NODELETE messageHandlerObservers() WTF_REQUIRES_LOCK(messageHandlerObserverLock());
 
     static Lock& messageHandlerObserverLock() WTF_RETURNS_LOCK(messageHandlerLoggerObserverLock)
     {

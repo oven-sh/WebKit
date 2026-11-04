@@ -26,17 +26,20 @@
 #include "config.h"
 #include "AudioDecoderCocoa.h"
 
-#if ENABLE(WEB_CODECS) && USE(AVFOUNDATION)
+#if USE(AVFOUNDATION)
 
 #include "AudioSampleBufferConverter.h"
 #include "AudioSampleFormat.h"
+#include "AudioUtilities.h"
 #include "AudioUtilitiesCocoa.h"
 #include "CAAudioStreamDescription.h"
+#include "CMUtilities.h"
 #include "Logging.h"
 #include "MediaSampleAVFObjC.h"
 #include "MediaUtilities.h"
 #include "PlatformRawAudioData.h"
 #include "SharedBuffer.h"
+#include "TrackInfo.h"
 #include "WebMAudioUtilitiesCocoa.h"
 #include <CoreAudio/CoreAudioTypes.h>
 #include <wtf/NeverDestroyed.h>
@@ -66,17 +69,18 @@ class InternalAudioDecoderCocoa : public ThreadSafeRefCountedAndCanMakeThreadSaf
     WTF_MAKE_TZONE_ALLOCATED(InternalAudioDecoderCocoa);
 
 public:
-    static Ref<InternalAudioDecoderCocoa> create(AudioDecoder::OutputCallback&& outputCallback)
+    static Ref<InternalAudioDecoderCocoa> LEGACY_NODELETE create(AudioDecoder::OutputCallback&& outputCallback)
     {
         return adoptRef(*new InternalAudioDecoderCocoa(WTF::move(outputCallback)));
     }
     virtual ~InternalAudioDecoderCocoa() = default;
 
     String initialize(const String& codecName, const AudioDecoder::Config&);
+    String initialize(const AudioInfo&);
 
     using DecodePromise = AudioDecoder::DecodePromise;
 
-    Ref<DecodePromise> decode(Ref<SharedBuffer>&&, bool isKeyFrame, int64_t timestamp, std::optional<uint64_t> duration);
+    Ref<DecodePromise> decode(AudioEncodedData&&);
     Ref<GenericPromise> flush();
     void close();
 
@@ -91,6 +95,7 @@ private:
         return *m_converter;
     }
     void processedDecodedOutputs();
+    String createConverter(uint64_t sampleRate, uint64_t numberOfChannels, unsigned preSkip);
 
     AudioDecoder::OutputCallback m_outputCallback WTF_GUARDED_BY_CAPABILITY(queueSingleton());
     RefPtr<AudioSampleBufferConverter> m_converter WTF_GUARDED_BY_CAPABILITY(queueSingleton());
@@ -117,6 +122,66 @@ Ref<AudioDecoder::CreatePromise> AudioDecoderCocoa::create(const String& codecNa
             return CreatePromise::createAndReject(makeString("Internal audio decoder failed to configure for codec "_s, codecName, " with error "_s, error));
         return CreatePromise::createAndResolve(WTF::move(decoder));
     });
+}
+
+Ref<AudioDecoder::CreatePromise> AudioDecoderCocoa::create(const AudioInfo& info, OutputCallback&& outputCallback)
+{
+    Ref decoder = adoptRef(*new AudioDecoderCocoa(WTF::move(outputCallback)));
+    return invokeAsync(queueSingleton(), [decoder = WTF::move(decoder), info = Ref { info }] mutable {
+        assertIsCurrent(queueSingleton());
+        Ref internalDecoder = decoder->m_internalDecoder;
+        if (auto error = internalDecoder->initialize(info); !error.isEmpty())
+            return CreatePromise::createAndReject(makeString("Internal audio decoder failed to configure with error "_s, error));
+        return CreatePromise::createAndResolve(WTF::move(decoder));
+    });
+}
+
+static bool isAAC(FourCharCode codec)
+{
+    return codec == kAudioFormatMPEG4AAC || codec == kAudioFormatMPEG4AAC_HE || codec == kAudioFormatMPEG4AAC_LD || codec == kAudioFormatMPEG4AAC_HE_V2 || codec == kAudioFormatMPEG4AAC_ELD;
+}
+
+// The AudioInfo's cookie is CoreMedia's magic cookie, an ES_Descriptor for MPEG-4 audio, and is used as is.
+// The Opus pre-skip is left to the caller.
+static RetainPtr<CMFormatDescriptionRef> createInputFormatDescription(const AudioInfo& info)
+{
+    if (info.codecName().value != kAudioFormatOpus)
+        return createFormatDescriptionFromTrackInfo(info);
+#if !HAVE(OPUS_DECODE_MULTICHANNEL)
+    if (info.channels() > 2)
+        return nullptr;
+#endif
+
+    RefPtr cookieData = info.cookieData();
+    auto data = info.toAudioInfoData();
+    data.second.cookieData = SharedBuffer::create(AudioUtilities::opusHeadWithoutPreSkip(cookieData ? cookieData->span() : std::span<const uint8_t> { }));
+    return createFormatDescriptionFromTrackInfo(AudioInfo::create(WTF::move(data)));
+}
+
+static CAAudioStreamDescription outputDescription(uint64_t sampleRate, uint64_t numberOfChannels)
+{
+    // FIXME: we choose to create interleaved AudioData as tests incorrectly requires it (planar is more compatible with WebAudio)
+    // https://github.com/w3c/webcodecs/issues/859
+    return { double(sampleRate), uint32_t(numberOfChannels), AudioStreamDescription::Float32, CAAudioStreamDescription::IsInterleaved::Yes };
+}
+
+static AudioSampleBufferConverter::Options converterOptions(const CAAudioStreamDescription& outputDescription, unsigned preSkip)
+{
+    return {
+        .format = kAudioFormatLinearPCM,
+        .description = outputDescription.streamDescription(),
+        .generateTimestamp = false,
+        .preSkip = preSkip
+    };
+}
+
+bool AudioDecoderCocoa::canDecode(const AudioInfo& info)
+{
+    RetainPtr formatDescription = createInputFormatDescription(info);
+    if (!formatDescription)
+        return false;
+
+    return AudioSampleBufferConverter::canConvert(formatDescription, converterOptions(outputDescription(info.rate(), info.channels()), 0));
 }
 
 AudioDecoderCocoa::AudioDecoderCocoa(OutputCallback&& outputCallback)
@@ -189,10 +254,10 @@ std::expected<std::pair<FourCharCode, std::optional<AudioStreamDescription::PCMF
     return std::make_pair(codec, format);
 }
 
-Ref<AudioDecoder::DecodePromise> AudioDecoderCocoa::decode(EncodedData&& data)
+Ref<AudioDecoder::DecodePromise> AudioDecoderCocoa::decode(AudioEncodedData&& data)
 {
-    return invokeAsync(queueSingleton(), [data = WTF::move(data.data), isKeyFrame = data.isKeyFrame, timestamp = data.timestamp, duration = data.duration, decoder = m_internalDecoder]() mutable {
-        return decoder->decode(WTF::move(data), isKeyFrame, timestamp, duration);
+    return invokeAsync(queueSingleton(), [data = WTF::move(data).isolatedCopy(), decoder = m_internalDecoder] mutable {
+        return decoder->decode(WTF::move(data));
     });
 }
 
@@ -246,8 +311,13 @@ String InternalAudioDecoderCocoa::initialize(const String& codecName, const Audi
     unsigned preSkip = 0;
     auto [codec, format] = *result;
     if (!format) {
+#if HAVE(OPUS_DECODE_MULTICHANNEL)
+        if (codec == kAudioFormatOpus && config.numberOfChannels > 2 && config.description.isEmpty())
+            return "Opus with more than 2 channels requires config description"_s;
+#else
         if (codec == kAudioFormatOpus && config.numberOfChannels > 2)
             return "Opus with more than 2 channels isn't supported"_s;
+#endif
 
         if (codec == kAudioFormatFLAC && config.description.isEmpty())
             return "Decoder config description for flac codec is mandatory"_s;
@@ -255,7 +325,7 @@ String InternalAudioDecoderCocoa::initialize(const String& codecName, const Audi
         if (codec == 'vorb' && config.description.isEmpty())
             return "Decoder config description for vorbis codec is mandatory"_s;
 
-        mIsAAC = codec == kAudioFormatMPEG4AAC || codec == kAudioFormatMPEG4AAC_HE || codec == kAudioFormatMPEG4AAC_LD || codec == kAudioFormatMPEG4AAC_HE_V2 || codec == kAudioFormatMPEG4AAC_ELD;
+        mIsAAC = isAAC(codec);
 
         AudioStreamBasicDescription asbd { };
         asbd.mFormatID = codec;
@@ -267,6 +337,11 @@ String InternalAudioDecoderCocoa::initialize(const String& codecName, const Audi
             // for CoreMedia tools to properly handle it
             if (mIsAAC) {
                 codecDescription = createESDescriptor(description);
+                description = codecDescription.span();
+            } else if (codec == kAudioFormatFLAC) {
+                codecDescription = AudioUtilities::createFLACMagicCookie(description);
+                if (codecDescription.isEmpty())
+                    return "Invalid flac description"_s;
                 description = codecDescription.span();
             }
 
@@ -291,16 +366,27 @@ String InternalAudioDecoderCocoa::initialize(const String& codecName, const Audi
     if (!m_inputFormatDescription)
         return description.empty() ? "Invalid configuration"_s : "Invalid AudioDecoderConfig's description (extradata)"_s;
 
-    // FIXME: we choose to create interleaved AudioData as tests incorrectly requires it (planar is more compatible with WebAudio)
-    // https://github.com/w3c/webcodecs/issues/859
-    m_outputDescription = CAAudioStreamDescription { double(config.sampleRate), uint32_t(config.numberOfChannels), AudioStreamDescription::Float32, CAAudioStreamDescription::IsInterleaved::Yes };
+    return createConverter(config.sampleRate, config.numberOfChannels, preSkip);
+}
 
-    AudioSampleBufferConverter::Options options = {
-        .format = kAudioFormatLinearPCM,
-        .description = m_outputDescription->streamDescription(),
-        .generateTimestamp = false,
-        .preSkip = preSkip
-    };
+String InternalAudioDecoderCocoa::initialize(const AudioInfo& info)
+{
+    assertIsCurrent(queueSingleton());
+
+    lazyInitialize(m_inputFormatDescription, createInputFormatDescription(info));
+    if (!m_inputFormatDescription)
+        return "Invalid AudioInfo"_s;
+
+    return createConverter(info.rate(), info.channels(), 0);
+}
+
+String InternalAudioDecoderCocoa::createConverter(uint64_t sampleRate, uint64_t numberOfChannels, unsigned preSkip)
+{
+    assertIsCurrent(queueSingleton());
+
+    m_outputDescription = outputDescription(sampleRate, numberOfChannels);
+
+    auto options = converterOptions(*m_outputDescription, preSkip);
 
     m_converter = AudioSampleBufferConverter::create([weakThis = ThreadSafeWeakPtr { *this }] {
         queueSingleton().dispatch([weakThis] {
@@ -330,15 +416,16 @@ Ref<SharedBuffer> InternalAudioDecoderCocoa::stripADTSHeader(SharedBuffer& buffe
     return buffer.getContiguousData(kADTSHeaderSize, buffer.size() - kADTSHeaderSize);
 }
 
-Ref<AudioDecoder::DecodePromise> InternalAudioDecoderCocoa::decode(Ref<SharedBuffer>&& frameData, [[maybe_unused]] bool isKeyFrame, int64_t timestamp, std::optional<uint64_t> duration)
+Ref<AudioDecoder::DecodePromise> InternalAudioDecoderCocoa::decode(AudioEncodedData&& data)
 {
     assertIsCurrent(queueSingleton());
 
-    LOG(Media, "Decoding%s frame", isKeyFrame ? " key" : "");
+    LOG(Media, "Decoding%s frame", data.isKeyFrame ? " key" : "");
 
     if (m_isClosed)
         return DecodePromise::createAndReject("Decoder is closed"_s);
 
+    Ref frameData = WTF::move(data.data);
     if (mIsAAC)
         frameData = stripADTSHeader(frameData);
 
@@ -347,9 +434,9 @@ Ref<AudioDecoder::DecodePromise> InternalAudioDecoderCocoa::decode(Ref<SharedBuf
         return DecodePromise::createAndReject("Couldn't create CMBlockBuffer"_s);
 
     CMSampleTimingInfo packetTiming = {
-        .duration = PAL::CMTimeMake(duration.value_or(0), 1000000), // CoreMedia does not deal with a CMSampleBuffer with a duration set to either invalid or indefinite. So use 0 instead if no duration has been provided.
-        .presentationTimeStamp = PAL::CMTimeMake(timestamp, 1000000),
-        .decodeTimeStamp = PAL::CMTimeMake(timestamp, 1000000)
+        .duration = PAL::CMTimeMake(data.duration.value_or(0), 1000000), // CoreMedia does not deal with a CMSampleBuffer with a duration set to either invalid or indefinite. So use 0 instead if no duration has been provided.
+        .presentationTimeStamp = PAL::CMTimeMake(data.timestamp, 1000000),
+        .decodeTimeStamp = PAL::CMTimeMake(data.timestamp, 1000000)
     };
     size_t packetSize = frameData->size();
 
@@ -396,4 +483,4 @@ void InternalAudioDecoderCocoa::close()
 
 } // namespace WebCore
 
-#endif // ENABLE(WEB_CODECS) && USE(AVFOUNDATION)
+#endif // USE(AVFOUNDATION)

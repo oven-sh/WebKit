@@ -1,0 +1,22 @@
+# A tail call by value passes the arguments past the registers in the incoming words of its caller
+# FORM: Prepared
+# RUN(X64): pass ChooseCallingConventions
+# REQUIRES(X64): x86_64
+# RUN(ARM64): pass ChooseCallingConventions
+# REQUIRES(ARM64): arm64
+# X64: f0 Direct ({{*}}:JSValue) -> ({{*}}:JSValue) boxed-result reserved=6
+# X64-NEXT: f1 Direct ({{*}}:JSValue) -> ({{*}}:JSValue) boxed-result
+# X64-NEXT: outcome
+# ARM64: f0 Direct ({{*}}:JSValue) -> ({{*}}:JSValue) boxed-result reserved=2
+# ARM64-NEXT: f1 Direct ({{*}}:JSValue) -> ({{*}}:JSValue) boxed-result
+# ARM64-NEXT: outcome
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="passesTen" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    ReturnCall v1
+}
+function f1 name="passesFour" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0, -, v0, v0, v0, v0
+    ReturnCall v1
+}

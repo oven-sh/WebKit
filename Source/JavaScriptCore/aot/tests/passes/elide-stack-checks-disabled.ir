@@ -1,0 +1,27 @@
+# A pass that is switched off gives the safe answer
+# FORM: Selected
+# OPTIONS: disable=pass:ElideStackChecks
+# RUN: pass ElideStackChecks
+# STATISTIC: StackChecksCoveredByCallers = 0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    Return v0
+}
+
+function f1 name="outer" role=OutlinedBody results=[{type=undefined}] {
+    v0 = CallDirect function=f2
+    Return v0
+}
+
+function f2 name="inner" role=OutlinedBody results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+# CHECK: f0 stack check: Required
+# CHECK-NEXT: f1 stack check: Required
+# CHECK-NEXT: f2 stack check: Required
+# CHECK-NEXT: outcome: Unchanged

@@ -26,15 +26,14 @@
 
 #pragma once
 
-#if ENABLE(WEB_CODECS)
-
+#include <WebCore/AudioEncodedData.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/NativePromise.h>
 
 namespace WebCore {
 
+class AudioInfo;
 class PlatformRawAudioData;
-class SharedBuffer;
 
 class AudioDecoder : public ThreadSafeRefCounted<AudioDecoder> {
 public:
@@ -49,14 +48,6 @@ public:
         uint64_t numberOfChannels { 0 };
     };
 
-    struct EncodedData {
-        Ref<SharedBuffer> data;
-        bool isKeyFrame { false };
-        int64_t timestamp { 0 };
-        std::optional<uint64_t> duration;
-
-        WEBCORE_EXPORT ~EncodedData();
-    };
     struct DecodedData {
         Ref<PlatformRawAudioData> data;
     };
@@ -69,10 +60,15 @@ public:
     using CreatorFunction = void(*)(const String&, const Config&, CreateCallback&&, OutputCallback&&);
     WEBCORE_EXPORT static void setCreatorCallback(CreatorFunction&&);
 
+    // FIXME: combine with the AudioInfo variant into a single create()
     static Ref<CreatePromise> create(const String&, const Config&, OutputCallback&&);
 
+    // The codec's pre-skip isn't applied, trimming is left to the caller.
+    static bool canDecode(const AudioInfo&);
+    static Ref<CreatePromise> create(const AudioInfo&, OutputCallback&&);
+
     using DecodePromise = NativePromise<void, String>;
-    virtual Ref<DecodePromise> decode(EncodedData&&) = 0;
+    virtual Ref<DecodePromise> decode(AudioEncodedData&&) = 0;
 
     virtual Ref<GenericPromise> flush() = 0;
     virtual void reset() = 0;
@@ -80,5 +76,3 @@ public:
 };
 
 }
-
-#endif // ENABLE(WEB_CODECS)

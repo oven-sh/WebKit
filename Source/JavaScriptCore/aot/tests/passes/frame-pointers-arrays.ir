@@ -1,0 +1,89 @@
+# What the verifier says of an array that lies in a frame: it may be read where it lies and handed to a function that does no more than that. It holds no pointer to a cell of a frame
+# FORM: AsRead
+# RUN: frame-pointers flow
+# DIAGNOSTIC: CalleeRetainsFramePointer 2
+# DIAGNOSTIC: FramePointerRetained 4
+# DIAGNOSTIC: FramePointerReturned 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    v4 = CallDirect v1 function=f3
+    v5 = CallDirect v1 function=f4
+    v6 = CallDirect v1 function=f5
+    v7 = CallDirect v1 function=f6
+    v8 = CallDirect v1 function=f7
+    v9 = CallDirect v1 function=f8
+    Return
+}
+
+function f1 name="readAndHandedToReader" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=anything storage=Frame
+    v2 = Integer integer=0
+    v3 = ElemGet v1, v2
+    v4 = StrictEq v1, v0
+    v5 = CallList v0, -, v1
+    v6 = CallDirect v1 function=f9
+    Return v6
+}
+
+function f2 name="handedToKeeper" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=anything storage=Frame
+    v2 = CallDirect v1 function=f10
+    Return v2
+}
+
+function f3 name="handedToUnknownCode" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=anything storage=Frame
+    v2 = Call v0, -, v1
+    Return v2
+}
+
+function f4 name="kept" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=anything storage=Frame
+    PutModuleVariable v1 variable=g0
+    Return
+}
+
+function f5 name="appendedTo" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=anything storage=Frame
+    AppendElement v1, v0
+    Return
+}
+
+function f6 name="returned" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=anything storage=Frame
+    Return v1
+}
+
+function f7 name="readByAnyKey" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=anything storage=Frame
+    v2 = ElemGet v1, v0
+    Return v2
+}
+
+function f8 name="holdsClosureOfTheFrame" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f11 storage=Frame
+    v2 = NewArray v1 contents=anything storage=Frame
+    v3 = CallDirect v2 function=f9
+    Return v3
+}
+
+function f9 name="reader" parameters=[{type=Array}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f10 name="keeper" parameters=[{type=Array}] results=[{type=anything}] {
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f11 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}

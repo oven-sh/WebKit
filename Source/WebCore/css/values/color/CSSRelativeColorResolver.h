@@ -50,7 +50,7 @@ template<typename Descriptor>
 WebCore::Color resolve(const RelativeColorResolver<Descriptor>& relative, const CSSToLengthConversionData& conversionData)
 {
     auto originColor = relative.origin;
-    auto originColorAsColorType = originColor.template toColorTypeLossy<GetColorType<Descriptor>>();
+    auto originColorAsColorType = originColor.template toColorTypeLossyCarryingForwardMissing<GetColorType<Descriptor>>();
 
     auto originComponentsUnresolved = asColorComponents(originColorAsColorType.unresolved());
 
@@ -61,7 +61,7 @@ WebCore::Color resolve(const RelativeColorResolver<Descriptor>& relative, const 
         { std::get<3>(Descriptor::components).symbol, CSSUnitType::Number, originComponentsUnresolved[3] * std::get<3>(Descriptor::components).symbolMultiplier }
     };
 
-    // Replace any symbol value (e.g. CSSValueR) with their corresponding channel value.
+    // Replace any symbol value (e.g. CSSValueID::R) with their corresponding channel value.
     auto componentsWithUnevaluatedCalc = CSSColorParseTypeWithCalc<Descriptor> {
         replaceSymbol(std::get<0>(relative.components), constantSymbolTable),
         replaceSymbol(std::get<1>(relative.components), constantSymbolTable),
@@ -100,7 +100,7 @@ WebCore::Color resolveNoConversionDataRequired(const RelativeColorResolver<Descr
     ASSERT(!componentsRequireConversionData<Descriptor>(relative.components));
 
     auto originColor = relative.origin;
-    auto originColorAsColorType = originColor.template toColorTypeLossy<GetColorType<Descriptor>>();
+    auto originColorAsColorType = originColor.template toColorTypeLossyCarryingForwardMissing<GetColorType<Descriptor>>();
 
     auto originComponentsUnresolved = asColorComponents(originColorAsColorType.unresolved());
 
@@ -111,7 +111,7 @@ WebCore::Color resolveNoConversionDataRequired(const RelativeColorResolver<Descr
         { std::get<3>(Descriptor::components).symbol, CSSUnitType::Number, originComponentsUnresolved[3] * std::get<3>(Descriptor::components).symbolMultiplier }
     };
 
-    // Replace any symbol value (e.g. CSSValueR) with their corresponding channel value.
+    // Replace any symbol value (e.g. CSSValueID::R) with their corresponding channel value.
     auto componentsWithUnevaluatedCalc = CSSColorParseTypeWithCalc<Descriptor> {
         replaceSymbol(std::get<0>(relative.components), constantSymbolTable),
         replaceSymbol(std::get<1>(relative.components), constantSymbolTable),

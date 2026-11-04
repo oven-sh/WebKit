@@ -1,0 +1,53 @@
+# class Filled { #count: number; #label: string; #seen: number; constructor(n) { this.#count = n | 0; this.#label = String(n); show(this.#seen); this.#seen = 1 } }
+# The definition of a private field that nobody observes stores a value that the field holds anyway, as that of a public field does: a slot for numbers does not hold undefined,
+# and the field would leave it at birth. #seen is read before it is stored, so its definition stays as it is
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Filled" {{*}}{key=#"count"@L0 declared={type=int}{{*}}occupancy=AlwaysFilled{{*}}{key=#"label"@L0 declared={type=string}{{*}}occupancy=AlwaysFilled{{*}}{key=#"seen"@L0 declared={type=int}{{*}}stability=[IsNeverDeleted, IsNeverRedefined]}
+# CHECK-LABEL: function f2
+# CHECK: [[count]]: 0 = Integer
+# CHECK-NEXT: PrivateDefine v0, [[token]], [[count]] layout=L0
+# CHECK-NEXT: [[label]]: "" = String string=""
+# CHECK-NEXT: PrivateDefine v0, [[token]], [[label]] layout=L0 field=1
+# CHECK-NEXT: PrivateDefine v0, [[token]], v1 layout=L0 field=2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Filled" constructor=f1 fields=[{key=#"count"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}, {key=#"label"@L0 declared={type=undefined|null|string} flags=[IsRequired, IsPrivate]}, {key=#"seen"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}]
+variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="token" module=m0 declared={type=classtoken flags=[IsFromCompiler]} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=7
+    v1 = NewClassToken layout=L0
+    PutModuleVariable v1 variable=g1
+    v3 = NewClosure function=f1
+    v4 = NewClass v3 layout=L0
+    v5 = FinishClass v4 layout=L0
+    v6 = Construct v5, -, v0
+    Return
+}
+function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f2
+    v6 = GetModuleVariable variable=g1
+    v7 = Integer integer=0
+    v8 = BitOr v1, v7
+    PrivateSet v4, v6, v8 layout=L0 field=0
+    v10 = ToString v1
+    PrivateSet v4, v6, v10 layout=L0 field=1
+    v12 = PrivateGet v4, v6 layout=L0 field=2
+    PutModuleVariable v12 variable=g0
+    v14 = Integer integer=1
+    PrivateSet v4, v6, v14 layout=L0 field=2
+    Return v4
+}
+function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    v2 = GetModuleVariable variable=g1
+    PrivateDefine v0, v2, v1 layout=L0 field=0
+    PrivateDefine v0, v2, v1 layout=L0 field=1
+    PrivateDefine v0, v2, v1 layout=L0 field=2
+    Return v1
+}

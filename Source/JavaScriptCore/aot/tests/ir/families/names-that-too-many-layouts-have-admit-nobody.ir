@@ -1,0 +1,28 @@
+# interface Few { a: number }  interface Many { b: number }  interface Narrow { b: number; c: number }
+# Names that very many layouts have say little about an object, and a type that lists them all costs the compiler time and memory. So a type takes layouts by name only if at most 128 other layouts have all the names it requires.
+# 128 other layouts have the `a` of Few, and all of them are in its family. 129 have the `b` of Many, B1 to B128 and Narrow, and none of them is there for its names.
+# What the program converts still counts: B1 has a supertype, so it is a Many.
+# What is counted is the layouts that have all the names. Narrow requires the same `b` and a `c`, which only B2 has beside it, so B2 is a Narrow
+# FORM: AsRead
+# RUN: members
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+layout L0 name="Few" fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+# REPEAT: i = 1..128
+layout L%(i) name="A%(i)" fields=[{key="a" declared={type=number}}]
+# END REPEAT
+layout L129 name="Many" fields=[{key="b" declared={type=number} flags=[IsRequired]}]
+layout L130 name="B1" fields=[{key="b" declared={type=number}}] supertypes=[L129]
+layout L131 name="B2" fields=[{key="b" declared={type=number}}, {key="c" declared={type=number}}]
+# REPEAT: i = 3..128
+layout L%(i+129) name="B%(i)" fields=[{key="b" declared={type=number}}]
+# END REPEAT
+layout L258 name="Narrow" fields=[{key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}]
+# CHECK: L0: members [L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20, L21, L22, L23, L24, L25, L26, L27, L28, L29, L30, L31, L32, L33, L34, L35, L36, L37, L38, L39, L40, L41, L42, L43, L44, L45, L46, L47, L48, L49, L50, L51, L52, L53, L54, L55, L56, L57, L58, L59, L60, L61, L62, L63, L64, L65, L66, L67, L68, L69, L70, L71, L72, L73, L74, L75, L76, L77, L78, L79, L80, L81, L82, L83, L84, L85, L86, L87, L88, L89, L90, L91, L92, L93, L94, L95, L96, L97, L98, L99, L100, L101, L102, L103, L104, L105, L106, L107, L108, L109, L110, L111, L112, L113, L114, L115, L116, L117, L118, L119, L120, L121, L122, L123, L124, L125, L126, L127, L128]
+# CHECK-NEXT: L1: members [L1]
+# CHECK: L129: members [L129, L130]
+# CHECK-NEXT: L130: members [L130]
+# CHECK: L258: members [L131, L258]
+
+function f0 name="take" parameters=[{type=L129}, {type=L258}] results=[{type=anything}]

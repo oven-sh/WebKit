@@ -61,7 +61,7 @@ using namespace HTMLNames;
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HTMLDocumentParser);
 
-static bool isMainDocumentLoadingFromHTTP(const Document& document)
+static bool LEGACY_NODELETE isMainDocumentLoadingFromHTTP(const Document& document)
 {
     return !document.ownerElement() && document.url().protocolIsInHTTPFamily();
 }
@@ -84,8 +84,8 @@ Ref<HTMLDocumentParser> HTMLDocumentParser::create(HTMLDocument& document, Optio
 }
 
 inline HTMLDocumentParser::HTMLDocumentParser(DocumentFragment& fragment, Element& contextElement, OptionSet<ParserContentPolicy> rawPolicy, CustomElementRegistry* registry)
-    : ScriptableDocumentParser(fragment.document(), rawPolicy)
-    , m_options(fragment.document())
+    : ScriptableDocumentParser(protect(fragment.document()), rawPolicy)
+    , m_options(protect(fragment.document()))
     , m_tokenizer(m_options)
     , m_treeBuilder(makeUniqueRef<HTMLTreeBuilder>(*this, fragment, contextElement, parserContentPolicy(), m_options, registry))
     , m_shouldEmitTracePoints(false) // Avoid emitting trace points when parsing fragments like outerHTML.
@@ -243,7 +243,7 @@ void HTMLDocumentParser::runScriptsForPausedTreeBuilder()
             RefPtr document = this->document();
             ThrowOnDynamicMarkupInsertionCountIncrementer incrementer(*document);
 
-            document->eventLoop().performMicrotaskCheckpoint(document->vm());
+            protect(document->eventLoop())->performMicrotaskCheckpoint(document->vm());
 
             CustomElementReactionStack reactionStack(document->globalObject());
             Ref elementInterface = constructionData->elementInterface.get();
@@ -315,7 +315,7 @@ void HTMLDocumentParser::pumpTokenizer(SynchronousMode mode)
     // This is an attempt to check that this object is both attached to the Document and protected by something.
     ASSERT(refCount() >= 2);
 
-    PumpSession session(m_pumpSessionNestingLevel, contextForParsingSession());
+    PumpSession session(m_pumpSessionNestingLevel, protect(contextForParsingSession()));
 
     auto emitTracePoint = [this](TracePointCode code) {
         if (!m_shouldEmitTracePoints)
@@ -616,8 +616,9 @@ void HTMLDocumentParser::notifyFinished(PendingScript& pendingScript)
             // If we're currently in a microtask checkpoint, schedule end() as a regular task.
             // This ensures it runs after ALL microtasks (including any created during execution) complete.
             RefPtr document = this->document();
-            if (document->eventLoop().microtaskQueue().isPerformingCheckpoint()) {
-                protect(document->eventLoop())->queueTask(TaskSource::InternalAsyncTask, [protectedThis = Ref { *this }] {
+            CheckedRef eventLoop = document->eventLoop();
+            if (eventLoop->microtaskQueue().isPerformingCheckpoint()) {
+                eventLoop->queueTask(TaskSource::InternalAsyncTask, [protectedThis = Ref { *this }] {
                     if (protectedThis->isStopped())
                         return;
                     protectedThis->attemptToRunDeferredScriptsAndEnd();

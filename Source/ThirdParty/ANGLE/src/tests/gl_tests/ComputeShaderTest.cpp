@@ -670,11 +670,11 @@ void main()
     ANGLE_GL_COMPUTE_PROGRAM(program1, kCS1);
 
     constexpr unsigned int kBufferSize              = 2;
-    constexpr unsigned int kBufferData[kBufferSize] = {10, 20};
+    constexpr std::array<unsigned int, kBufferSize> kBufferData = {10, 20};
 
     GLBuffer blockIn;
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, blockIn);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(kBufferData), kBufferData, GL_STATIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(kBufferData), kBufferData.data(), GL_STATIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, blockIn);
 
     GLBuffer blockOut;
@@ -740,7 +740,7 @@ void main()
 
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
 
-    GLuint outputValues[kWidth][kHeight];
+    std::array<std::array<GLuint, kHeight>, kWidth> outputValues;
 
     GLFramebuffer framebuffer;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
@@ -748,7 +748,7 @@ void main()
     EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_READ_FRAMEBUFFER);
     EXPECT_GL_NO_ERROR();
 
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     constexpr GLuint kExpectedValue = 100u;
@@ -832,7 +832,7 @@ void main()
 
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 
-    GLuint outputValues[kWidth][kHeight];
+    std::array<std::array<GLuint, kHeight>, kWidth> outputValues;
 
     GLFramebuffer framebuffer;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
@@ -840,7 +840,7 @@ void main()
     EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_READ_FRAMEBUFFER);
     EXPECT_GL_NO_ERROR();
 
-    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues);
+    glReadPixels(0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT, outputValues.data());
     EXPECT_GL_NO_ERROR();
 
     constexpr GLuint kExpectedValue = 100u;
@@ -1191,7 +1191,7 @@ void main()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, kWidth, kHeight);
-    GLuint texels[kHeight][kWidth] = {{0}};
+    std::array<std::array<GLuint, kWidth>, kHeight> texels = {};
     for (unsigned int y = 0; y < kHeight; ++y)
     {
         for (unsigned int x = 0; x < kWidth; ++x)
@@ -1201,7 +1201,7 @@ void main()
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT,
-                    texels);
+                    texels.data());
     glBindTexture(GL_TEXTURE_2D, 0);
 
     // The array stride are rounded up to the base alignment of a vec4 for std140 layout.
@@ -1263,7 +1263,7 @@ void main()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, kWidth, kHeight);
-    GLuint texels[kHeight][kWidth] = {{0}};
+    std::array<std::array<GLuint, kWidth>, kHeight> texels = {};
     for (unsigned int y = 0; y < kHeight; ++y)
     {
         for (unsigned int x = 0; x < kWidth; ++x)
@@ -1273,7 +1273,7 @@ void main()
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT,
-                    texels);
+                    texels.data());
     glBindTexture(GL_TEXTURE_2D, 0);
 
     // The array stride are rounded up to the base alignment of a vec4 for std140 layout.
@@ -3369,7 +3369,7 @@ void main()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, kWidth, kHeight);
-    GLuint texels[kHeight][kWidth] = {{0}};
+    std::array<std::array<GLuint, kWidth>, kHeight> texels = {};
     for (unsigned int y = 0; y < kHeight; ++y)
     {
         for (unsigned int x = 0; x < kWidth; ++x)
@@ -3379,7 +3379,7 @@ void main()
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kWidth, kHeight, GL_RED_INTEGER, GL_UNSIGNED_INT,
-                    texels);
+                    texels.data());
     glBindTexture(GL_TEXTURE_2D, 0);
 
     // The array stride are rounded up to the base alignment of a vec4 for std140 layout.
@@ -3643,8 +3643,7 @@ void main(void) {
     ANGLE_GL_PROGRAM(program, kVSSource, kFSSource);
     ANGLE_GL_COMPUTE_PROGRAM(csProgram, kCSSource);
     glBindAttribLocation(program, aPosLoc, "pos");
-    GLuint buffer;
-    glGenBuffers(1, &buffer);
+    GLBuffer buffer;
     glBindBuffer(GL_ARRAY_BUFFER, buffer);
     GLfloat vertices[] = {-1, -1, 1, -1, -1, 1, 1, 1};
     glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 8, vertices, GL_STATIC_DRAW);
@@ -3745,8 +3744,7 @@ void main(void) {
     GLuint aPosLoc = 0;
     ANGLE_GL_PROGRAM(program, kVSSource, kFSSource);
     glBindAttribLocation(program, aPosLoc, "pos");
-    GLuint buffer;
-    glGenBuffers(1, &buffer);
+    GLBuffer buffer;
     glBindBuffer(GL_ARRAY_BUFFER, buffer);
     GLfloat vertices[] = {-1, -1, 1, -1, -1, 1, 1, 1};
     glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 8, vertices, GL_STATIC_DRAW);
@@ -3816,8 +3814,7 @@ void main(void) {
     GLuint aPosLoc = 0;
     ANGLE_GL_PROGRAM(program, kVSSource, kFSSource);
     glBindAttribLocation(program, aPosLoc, "pos");
-    GLuint buffer;
-    glGenBuffers(1, &buffer);
+    GLBuffer buffer;
     glBindBuffer(GL_ARRAY_BUFFER, buffer);
     GLfloat vertices[] = {-1, -1, 1, -1, -1, 1, 1, 1};
     glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 8, vertices, GL_STATIC_DRAW);
@@ -3896,8 +3893,7 @@ void main(void) {
     GLuint aPosLoc = 0;
     ANGLE_GL_PROGRAM(program, kVSSource, kFSSource);
     glBindAttribLocation(program, aPosLoc, "pos");
-    GLuint buffer;
-    glGenBuffers(1, &buffer);
+    GLBuffer buffer;
     glBindBuffer(GL_ARRAY_BUFFER, buffer);
     GLfloat vertices[] = {-1, -1, 1, -1, -1, 1, 1, 1};
     glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 8, vertices, GL_STATIC_DRAW);
@@ -4185,7 +4181,7 @@ void main(void) {
     ANGLE_GL_PROGRAM(program, kVSSource, kFSSource);
     glBindAttribLocation(program, aPosLoc, "pos");
 
-    unsigned char *data = new unsigned char[4 * getWindowWidth() * getWindowHeight()];
+    std::vector<uint8_t> data(4 * getWindowWidth() * getWindowHeight(), 0);
     for (int i = 0; i < getWindowWidth() * getWindowHeight(); i++)
     {
         data[i * 4]     = 0xff;
@@ -4198,7 +4194,7 @@ void main(void) {
     glTexStorage2D(GL_TEXTURE_2D, 2, GL_RGBA8, getWindowWidth(), getWindowHeight());
     // Clear the texture level 0 to Red.
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, getWindowWidth(), getWindowHeight(), GL_RGBA,
-                    GL_UNSIGNED_BYTE, data);
+                    GL_UNSIGNED_BYTE, data.data());
     for (int i = 0; i < getWindowWidth() * getWindowHeight(); i++)
     {
         data[i * 4]     = 0;
@@ -4208,8 +4204,7 @@ void main(void) {
     }
     // Clear the texture level 1 to Green.
     glTexSubImage2D(GL_TEXTURE_2D, 1, 0, 0, getWindowWidth() / 2, getWindowHeight() / 2, GL_RGBA,
-                    GL_UNSIGNED_BYTE, data);
-    delete[] data;
+                    GL_UNSIGNED_BYTE, data.data());
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glUseProgram(program);
@@ -4258,6 +4253,68 @@ void main(void) {
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
     EXPECT_PIXEL_COLOR_EQ(1, 1, GLColor::green);
     EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2 - 1, getWindowHeight() / 2 - 1, GLColor::green);
+}
+
+// Test that writes via compute are visible to draw call
+TEST_P(ComputeShaderTest, DispatchDrawBlend)
+{
+    const char kCS[] = R"(#version 310 es
+layout(local_size_x=1, local_size_y=1) in;
+layout(rgba8, binding = 0) writeonly uniform highp image2D image;
+uniform vec4 color;
+void main()
+{
+    imageStore(image, ivec2(0, 0), color);
+})";
+
+    ANGLE_GL_COMPUTE_PROGRAM(imageWrite, kCS);
+    ANGLE_GL_PROGRAM(drawRed, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+    glUseProgram(imageWrite);
+    const GLint uniLoc = glGetUniformLocation(imageWrite, "color");
+
+    for (const GLboolean layered : {GL_FALSE, GL_TRUE})
+    {
+        GLTexture texture;
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 1, 1);
+
+        GLFramebuffer fbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+
+        // Leave the texture intentionally uninitialized, it's initialized by the compute shader.
+        glBindImageTexture(0, texture, 0, layered, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+        // Use with compute shader once; in the Vulkan backend, this may recreate the image's
+        // backing storage (which at the time of writing this comment, copies the undefined values
+        // from the existing image into a new image, marking it as having defined values).
+        // glInvalidateFramebuffer is used to mark the contents undefined again.
+        glUseProgram(imageWrite);
+        glUniform4f(uniLoc, 0, 1, 0, 1);
+        glDispatchCompute(1, 1, 1);
+        EXPECT_GL_NO_ERROR();
+
+        constexpr std::array<GLenum, 1> kDiscard = {GL_COLOR_ATTACHMENT0};
+        glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
+        glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, kDiscard.data());
+
+        // Dispatch again, which is supposed to make the contents defined.
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        glUniform4f(uniLoc, 0, 0, 1, 1);
+        glDispatchCompute(1, 1, 1);
+        EXPECT_GL_NO_ERROR();
+
+        // Blend into it after the CS write
+        glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT);
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE);
+        drawQuad(drawRed, essl1_shaders::PositionAttrib(), 0.0f);
+
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::magenta) << "Layered? " << layered;
+        ASSERT_GL_NO_ERROR();
+    }
 }
 
 // Test that maxComputeWorkGroupCount is valid number.
@@ -5538,9 +5595,9 @@ TEST_P(ComputeShaderTest, SSBOAliasOverWrite)
     ASSERT_GL_NO_ERROR();
 
     bool error = false;
-    for (int index = 0; index < static_cast<int>(results.size()); ++index)
+    for (int result : results)
     {
-        if (results[index] != 1)
+        if (result != 1)
         {
             error = true;
         }
@@ -5597,9 +5654,9 @@ TEST_P(ComputeShaderTest, AtomicOpPreviousValueAssignedToSSBO)
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
     ASSERT_GL_NO_ERROR();
 
-    for (int index = 0; index < static_cast<int>(results.size()); ++index)
+    for (int result : results)
     {
-        EXPECT_EQ(results[index], 0);
+        EXPECT_EQ(result, 0);
     }
 }
 

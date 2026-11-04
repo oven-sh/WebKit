@@ -117,12 +117,12 @@ public:
     virtual bool isFile() const { return false; }
 
     // The checks described in the File API spec.
-    static bool NODELETE isValidContentType(const String&);
+    static bool LEGACY_NODELETE isValidContentType(const String&);
     // The normalization procedure described in the File API spec.
     static String normalizedContentType(const String&);
 #if ASSERT_ENABLED
     static bool isNormalizedContentType(const String&);
-    static bool isNormalizedContentType(const CString&);
+    static bool isNormalizedContentType(const ASCIICString&);
 #endif
 
     // URLRegistrable
@@ -175,7 +175,7 @@ private:
     HashSet<Ref<BlobLoader>> m_blobLoaders;
 };
 
-WebCoreOpaqueRoot NODELETE root(Blob*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(Blob*);
 
 } // namespace WebCore
 

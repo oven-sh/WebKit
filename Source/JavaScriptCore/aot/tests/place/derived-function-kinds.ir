@@ -1,0 +1,56 @@
+# A function that a pass derived is described as its source function, a bound function as itself, and a generic entrypoint takes new.target only if its own record says so or names a construct entrypoint
+# FORM: Selected
+# RUN: pass NumberAndEncode
+# RUN(MODULE): pass NumberAndEncode
+# RUN(GENERATOR): pass NumberAndEncode
+# RUN(ASYNC): pass NumberAndEncode
+# RUN(TARGET): pass NumberAndEncode
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="library" kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+function f2 name="generator" role=CoroutineRamp flags=[IsGenerator, TakesCallee] results=[{type=anything}] creator=Coroutine{ramp=f2 body=f8}
+function f3 name="asyncTarget" flags=[IsAsync] results=[{type=anything}]
+function f4 name="readsNewTarget" flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="methodReadsNewTarget" kind=Method flags=[HasThis, HasNewTarget] thisType={type=anything} results=[{type=anything}]
+function f6 name="main" role=OutlinedBody results=[{type=anything}] derivation={source=f0}
+function f7 name="library" role=OutlinedBody results=[{type=anything}] derivation={source=f1}
+function f8 name="generator" role=CoroutineBody results=[{type=anything}] derivation={source=f2} creator=Coroutine{ramp=f2 body=f8}
+function f9 name="generator" role=OutlinedBody results=[{type=anything}] derivation={source=f2}
+function f10 name="asyncTarget" role=BoundFunction results=[{type=anything}] derivation={source=f3} creator=BoundFunction{target=f3 numberOfBoundArguments=1 capturesTargetClosure=true}
+function f11 name="asyncTarget" role=GenericEntrypoint flags=[HasThis] captures=[{type=f10}] thisType={type=anything} results=[{type=anything}] derivation={source=f3} creator=Entrypoint{target=f10}
+function f12 name="readsNewTarget" role=GenericEntrypoint flags=[HasThis] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] derivation={source=f4} creator=Entrypoint{target=f4 takesNewTarget=true}
+function f13 name="readsNewTarget" role=GenericEntrypoint flags=[HasThis] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] derivation={source=f4} creator=Entrypoint{target=f4 constructEntrypoint=f12}
+function f14 name="methodReadsNewTarget" kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] derivation={source=f5} creator=Entrypoint{target=f5}
+
+# An outlined body has neither the kind nor the flags of its source, and the body of a coroutine has not the kind.
+# CHECK: f1 {{*}}isCommonJSModule
+# CHECK-NEXT: f2 {{*}}isGenerator
+# CHECK-NEXT: f3 {{*}}isAsync
+# CHECK-NEXT: f4 {{*}}takesNewTarget
+# CHECK-NEXT: f5 {{*}}takesNewTarget
+# CHECK-NEXT: f6
+# CHECK-NEXT: f7 {{*}}isCommonJSModule
+# CHECK-NEXT: f8 {{*}}isGenerator
+# CHECK-NEXT: f9 {{*}}isGenerator
+# CHECK-NEXT: f10 {{*}}callableKind=Bound
+# CHECK-NEXT: f11 {{*}}callableKind=Bound
+# CHECK-NEXT: f12 {{*}}takesNewTarget
+# CHECK-NEXT: f13 {{*}}takesNewTarget
+# CHECK-NEXT: f14 {{*}}callableKind=Method
+
+# MODULE-COUNT-2: isCommonJSModule
+# MODULE-NOT: isCommonJSModule
+# MODULE: closureFunctions first=
+# GENERATOR-COUNT-3: isGenerator
+# GENERATOR-NOT: isGenerator
+# GENERATOR: closureFunctions first=
+# ASYNC-COUNT-1: isAsync
+# ASYNC-NOT: isAsync
+# ASYNC: closureFunctions first=
+# TARGET-COUNT-4: takesNewTarget
+# TARGET-NOT: takesNewTarget
+# TARGET: closureFunctions first=

@@ -257,7 +257,7 @@ static MTCoreMaterialVisualStyleCategory materialVisualStyleCategoryForAppleVisu
 
 #if HAVE(MATERIAL_HOSTING)
 
-static WKHostedMaterialEffectType NODELETE hostedMaterialEffectTypeForAppleVisualEffect(AppleVisualEffect effect)
+static WKHostedMaterialEffectType LEGACY_NODELETE hostedMaterialEffectTypeForAppleVisualEffect(AppleVisualEffect effect)
 {
     switch (effect) {
     case AppleVisualEffect::GlassMaterial:
@@ -289,7 +289,7 @@ static WKHostedMaterialEffectType NODELETE hostedMaterialEffectTypeForAppleVisua
     }
 }
 
-static WKHostedMaterialColorScheme NODELETE hostedMaterialColorSchemeForAppleVisualEffectData(const AppleVisualEffectData& data)
+static WKHostedMaterialColorScheme LEGACY_NODELETE hostedMaterialColorSchemeForAppleVisualEffectData(const AppleVisualEffectData& data)
 {
     switch (data.colorScheme) {
     case AppleVisualEffectData::ColorScheme::Light:
@@ -316,12 +316,12 @@ static void applyVisualStylingToLayer(CALayer *layer, const AppleVisualEffectDat
     // Despite the name, MTVisualStylingCreateDictionaryRepresentation returns an autoreleased object.
     SUPPRESS_RETAINPTR_CTOR_ADOPT RetainPtr visualStylingDescription = PAL::softLink_CoreMaterial_MTVisualStylingCreateDictionaryRepresentation(recipe.get(), materialVisualStyleCategoryForAppleVisualEffect(effectData.effect), materialVisualStyleForAppleVisualEffect(effectData.effect), nil);
 
-    RetainPtr<NSArray<NSDictionary<NSString *, id> *>> filterDescriptionsArray = [visualStylingDescription objectForKey:@"filters"];
+    RetainPtr<NSArray<NSDictionary<NSString *, id> *>> filterDescriptionsArray = dynamic_objc_cast<NSArray>([visualStylingDescription objectForKey:@"filters"]);
     RetainPtr filterDescription = [filterDescriptionsArray firstObject];
 
     NSArray *filters = nil;
     if (filterDescription) {
-        RetainPtr<NSValue> colorMatrix = [filterDescription objectForKey:kCAFilterInputColorMatrix];
+        RetainPtr colorMatrix = dynamic_objc_cast<NSValue>([filterDescription objectForKey:kCAFilterInputColorMatrix]);
         RetainPtr filter = [CAFilter filterWithType:kCAFilterVibrantColorMatrix];
         [filter setValue:colorMatrix.get() forKey:kCAFilterInputColorMatrix];
         filters = @[ filter.get() ];
@@ -389,7 +389,12 @@ static void updateCustomAppearance(CALayer *layer, GraphicsLayerCustomAppearance
 void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, RemoteLayerTreeNode* layerTreeNode, RemoteLayerTreeHost* layerTreeHost, const LayerProperties& properties)
 {
     if (properties.changedProperties & LayerChange::PositionChanged) {
-        layer.position = CGPointMake(properties.position.x(), properties.position.y());
+        // The UI process may own this position: under unified zoom it's the scroll offset scaled by the page
+        // scale, and the committed value is unscaled. zPosition is unaffected.
+        RefPtr drawingArea = layerTreeNode && layerTreeHost ? &layerTreeHost->drawingArea() : nullptr;
+        bool uiProcessOwnsPosition = drawingArea && drawingArea->ownsPositionOfLayer(layerTreeNode->layerID());
+        if (!uiProcessOwnsPosition)
+            layer.position = CGPointMake(properties.position.x(), properties.position.y());
         layer.zPosition = properties.position.z();
     }
 
@@ -401,8 +406,14 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
     if (properties.changedProperties & LayerChange::BoundsChanged)
         layer.bounds = properties.bounds;
 
-    if (properties.changedProperties & LayerChange::TransformChanged)
-        layer.transform = properties.transform ? (CATransform3D)*properties.transform.get() : CATransform3DIdentity;
+    if (properties.changedProperties & LayerChange::TransformChanged) {
+        // The UI process may own this transform: under unified zoom it's the page scale, so applying the
+        // committed value would present an unscaled frame. A null layerTreeHost means we're the web process.
+        RefPtr drawingArea = layerTreeNode && layerTreeHost ? &layerTreeHost->drawingArea() : nullptr;
+        bool uiProcessOwnsTransform = drawingArea && drawingArea->ownsTransformOfLayer(layerTreeNode->layerID());
+        if (!uiProcessOwnsTransform)
+            layer.transform = properties.transform ? (CATransform3D)*properties.transform.get() : CATransform3DIdentity;
+    }
 
     if (properties.changedProperties & LayerChange::SublayerTransformChanged)
         layer.sublayerTransform = properties.sublayerTransform ? (CATransform3D)*properties.sublayerTransform.get() : CATransform3DIdentity;
@@ -503,8 +514,11 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
         if (backingStore && properties.backingStoreAttached) {
             RELEASE_ASSERT(layerTreeNode);
             layerTreeNode->applyBackingStore(layerTreeHost, *backingStore);
-        } else
+        } else {
             [layer _web_clearContents];
+            if (layerTreeNode)
+                layerTreeNode->setAsyncContentsIdentifier(std::nullopt);
+        }
     }
 
     if (properties.changedProperties & LayerChange::BackdropRootIsOpaqueChanged && layerTreeNode)
@@ -678,7 +692,8 @@ void RemoteLayerTreePropertyApplier::applyHierarchyUpdates(RemoteLayerTreeNode& 
 #endif
 
     [layer setSublayers:createNSArray(properties.children, [&] (auto& child) -> CALayer * {
-        auto* childNode = relatedLayers.get(child);
+        // FIXME: Static analysis false positive. This context is LEGACY_NODELETE.
+        SUPPRESS_UNRETAINED_LOCAL auto* childNode = relatedLayers.get(child);
         ASSERT(childNode);
         if (!childNode)
             return nil;

@@ -82,7 +82,7 @@ public:
     static constexpr size_t count = sizeof...(values);
 
     template <typename Callable>
-    static void forEach(Callable&& c)
+    static void forEach(NOESCAPE const Callable& c)
     {
         for (auto value : { values... })
             c(value);
@@ -182,7 +182,7 @@ constexpr ASCIILiteral nullTerminatedName()
     if constexpr (nameFunction().empty())
         return { };
     else
-        return ASCIILiteral::fromLiteralUnsafe(nullTerminatedNameStorage<nameFunction>.data());
+        return ASCIILiteral { nullTerminatedNameStorage<nameFunction> };
 }
 
 template<typename E>
@@ -313,6 +313,16 @@ constexpr auto enumNames()
 }
 
 template<typename E>
+constexpr size_t enumNamesSizeUpToLastName()
+{
+    constexpr auto names = enumNames<E>();
+    size_t size = names.size();
+    while (size && names[size - 1].isNull())
+        --size;
+    return size;
+}
+
+template<typename E>
 constexpr ASCIILiteral enumName(E v)
 {
     static_assert(std::is_enum_v<E>, "enumName can only be used with enum types.");
@@ -320,7 +330,7 @@ constexpr ASCIILiteral enumName(E v)
     using Underlying = std::underlying_type_t<E>;
     using Unsigned = std::make_unsigned_t<Underlying>;
 
-    constexpr auto names = enumNames<E>();
+    constexpr auto names = makeEnumNames<E>(std::make_index_sequence<enumNamesSizeUpToLastName<E>()> { });
     constexpr Underlying min = enumNamesMin<E>();
     constexpr Underlying max = enumNamesMax<E>();
 
@@ -330,6 +340,8 @@ constexpr ASCIILiteral enumName(E v)
 
     // Compute index safely using unsigned extension.
     size_t index = static_cast<size_t>(static_cast<Unsigned>(value - min));
+    if (index >= names.size())
+        return { };
     return names[index];
 }
 

@@ -1,0 +1,33 @@
+# const count: number = given;  sink = new Promise(resolve => resolve(count))
+# What flow proves of the new promise is marked as holding behind checks, because the closure that the constructor takes has a checked value as a capture.
+# A closure only keeps its captures: its type says nothing of them, and its function reads them from a position with a type of its own. So the proof never rested on that check.
+# The captured value goes through a variable from now on, and no check is left in front of the promise: the proof is one that holds in every version
+# FORM: AsRead
+# RUN: pipeline PromoteEnvironmentsToVariables
+# OPTIONS: check=VerifyEachPass
+# CHECK: variable g1 module=m0 declared={type=number flags=[IsExpected]}
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="sink" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = Convert v1 declared={type=number}
+    v3 = Builtin builtin=Promise
+    v4 = NewClosure v2 function=f1
+    v5 = Construct v3, -, v4
+    PutModuleVariable v5 variable=g0
+    Return
+# CHECK: v2: number = Check v1 expectedType=number
+# CHECK-NEXT: PutModuleVariable v2 variable=g1
+# CHECK: [[closure]]: f1 = NewClosure function=f1
+# CHECK-NEXT: [[made]]: {{*}} = Construct {{*}}, -, [[closure]]
+# CHECK-NEXT: = AssumeType [[made]] provenType=Promise<{{*}}>
+# CHECK-NOT: isBehindChecks
+# CHECK: Return
+}
+function f1 name="resolvesWithCapture" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -, v0
+    Return
+}

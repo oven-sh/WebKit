@@ -61,6 +61,7 @@ void appendPlatformProperties(AXPropertyVector& properties, OptionSet<AXProperty
 
     setProperty(AXProperty::HasApplePDFAnnotationAttribute, object->hasApplePDFAnnotationAttribute());
     setProperty(AXProperty::SpeakAs, object->speakAs());
+    setProperty(AXProperty::SelectedOptionCheckmark, object->selectedOptionCheckmark().isolatedCopy());
     if (object->isStaticText()) {
         auto style = object->stylesForAttributedString();
         // Font and TextColor are handled in initializeBasePlatformProperties, since ignored objects could be "containers" where those styles are set.
@@ -486,7 +487,7 @@ String AXIsolatedObject::computedRoleString() const
 {
     AX_ASSERT(_AXGetClientForCurrentRequestUntrusted() != kAXClientTypeVoiceOver);
 
-    return Accessibility::retrieveValueFromMainThreadWithTimeoutAndDefault([context = mainThreadContext()] () -> String {
+    return Accessibility::retrieveValueFromMainThreadWithTimeoutAndDefault([context = mainThreadContext()] -> String {
         if (RefPtr object = context.axObjectOnMainThread())
             return object->computedRoleString().isolatedCopy();
         return { };

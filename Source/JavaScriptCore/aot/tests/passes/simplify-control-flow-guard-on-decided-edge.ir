@@ -1,0 +1,68 @@
+# A decided branch stays when the edge it takes passes a guard: a guard exists only because the terminator ran
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# STATISTIC: SimplifyControlFlowChanges = 2
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass SimplifyControlFlow SimplifyControlFlow
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}] flow={members=[L0]}
+
+function f0 name="takenEdgePassesGuard" parameters=[{type=object}, {type=number}] results=[{type=number}] {
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Expected
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    Return v4
+  b3():
+    Return v1
+  b4():
+    Return v1
+# CHECK: = GetSlot v0, v3 key="x"
+# CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v5: guard):
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return v1
+}
+
+function f1 name="takenEdgePassesNothing" parameters=[{type=object}, {type=number}] results=[{type=number}] {
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Expected
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Return v4
+  b3():
+    Return v1
+  b4():
+    Return v1
+# CHECK: Branch v2 -> taken b1(| 0), notTaken b4()
+# CHECK: = GetSlot v0, v3 key="x"
+# CHECK-NEXT: Return v4
+# CHECK-NOT: Branch
+}
+
+function f2 name="guardOnEdgeNotFollowed" parameters=[{type=object}, {type=number}] results=[{type=number}] {
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    v3 = Negate v1
+    Branch v2 -> taken b3(| 0), notTaken b4()
+  b3(v4):
+    Return v1
+  b4():
+    Return v3
+# CHECK: Branch v2 -> taken b1(), notTaken b2()
+# CHECK: = Negate v1
+# CHECK-NEXT: Return v3
+# CHECK-NOT: Branch
+# CHECK-NOT: guard
+}

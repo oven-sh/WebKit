@@ -1,0 +1,36 @@
+# function inner(given: Mode = 1) { keep(() => given) }      inner(2 ** 31)
+# As capture-that-rests-on-a-check.ir, with a parameter's default between the check and the capture: the checked value comes to the capture through the proof of a test and through the parameter
+# of the block where the two arms meet. Flow knows what is given, 2147483648, so the capture itself is wide enough and nobody has marked it. The value is typed by the check as well: int[1, 2147483647].
+# The generic version stores what the check has turned away, so the variable is only expected: declared with the type of the value alone it would get 32 bits, which the stranger does not fit
+# FORM: AsRead
+# RUN: pipeline PromoteEnvironmentsToVariables
+# CHECK: variable g0 module=m0 declared={type=int[1, 2147483647] flags=[IsExpected]}
+
+typesite w0 module=m0 position=1 kind=Parameter function=f1
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Integer integer=2147483648
+    v2 = Call v0, -, v1
+    Return
+}
+function f1 name="inner" flags=[IsChecked] parameters=[{type=undefined|i32 site=w0}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Integer integer=1
+    Jump -> next b3(v3)
+  b2(v4):
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = NewClosure v5 function=f2
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="keep" [isFreeName]
+    v9 = Call v8, -, v6
+    Return
+}
+function f2 name="readsCapture" kind=Arrow captures=[{type=i32}] results=[{type=anything}] {
+    Return v0
+# CHECK: [[read]]: anything ~ int[1, 2147483647] = GetModuleVariable variable=g0
+}

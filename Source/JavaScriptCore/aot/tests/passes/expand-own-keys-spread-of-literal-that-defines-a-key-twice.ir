@@ -1,0 +1,30 @@
+# The source of the spread is a literal that nothing else sees, so its definitions are made on the target. The literal defines "a95" twice: the allocation lists a number that
+# only holds the key's place, because the string does not fit the field of the source. The target's field is typed for the string alone, so it gets one definition, in the key's first place.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ExpandOwnKeys
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="a95" declared={type=undefined|int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown initialization=SetAtCreation} stability=[IsNeverDeleted]}}, {key="c95" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown initialization=SetAtCreation} stability=[IsNeverDeleted, IsNeverStoredWithOtherType]}}, {key="d95" declared={type=fractional|""} flags=[IsAddedLate, IsEnforced] flow={location={writers=AllKnown} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverStoredWithOtherType]}}] declaredOrder=[1, 0] ownFieldCount=2 flow={baseState=None allocationClasses=[1] constructorOrders=[{fields=[0, 1]}, {fields=[1, 0]}, {}, {fields=[2, 0, 1]}, {fields=[2, 1]}] cause=PropertyRedefined impossibleMutations=[ReachUnknownJavaScript, DeleteField, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+layout L1 fields=[{key="b95" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="c95" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="a95" declared={type="made"} flags=[IsAddedLate, IsEnforced] flow={location={writers=AllKnown} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="d95" declared={type=fractional|""} flags=[IsAddedLate, IsEnforced] flow={location={writers=AllKnown} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] declaredOrder=[1, 0] ownFieldCount=2 flow={baseState=None allocationClasses=[2] constructorOrders=[{fields=[1, 0]}, {}, {fields=[0, 2, 1]}, {fields=[0, 1, 2]}, {fields=[0, 3, 1]}, {fields=[0]}] cause=PropertyAdded impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype] addedKeysAreComplete=true}
+function f0 name="copies" results=[{type=L1}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = String string="made"
+    v2 = Integer integer=7
+    v3 = Integer
+    v4 = NewObject -, v0, v3, v2 layout=L0 fields=[2, 0, 1]
+    PropDefine v4, v1 key="a95"
+    v6 = FinishObject v4
+    v7 = Double number=1.5
+    v8 = NewObject -, v7 layout=L1 fields=[0]
+    CopyDataProperties v8, v6
+    v10 = FinishObject v8
+    Return v10
+}
+# CHECK: [[made]]: "made" = String string="made"
+# CHECK: [[target]]: L1 = NewObject
+# CHECK-NEXT: PropDefine [[target]], {{*}} key="d95"
+# CHECK-NEXT: PropDefine [[target]], [[made]] key="a95"
+# CHECK-NEXT: PropDefine [[target]], {{*}} key="c95"
+# CHECK-NOT: key="a95"

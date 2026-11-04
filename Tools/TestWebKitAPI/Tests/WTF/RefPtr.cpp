@@ -734,4 +734,63 @@ TEST(WTF_RefPtr, ReleaseInNonMainThreadDestroyInMainThread)
 
 #endif
 
+class RefPtrCastBase : public RefCounted<RefPtrCastBase> {
+public:
+    static Ref<RefPtrCastBase> create() { return adoptRef(*new RefPtrCastBase); }
+
+    virtual ~RefPtrCastBase() = default;
+    virtual bool isRefPtrCastDerived() const { return false; }
+
+protected:
+    RefPtrCastBase() = default;
+};
+
+class RefPtrCastDerived final : public RefPtrCastBase {
+public:
+    static Ref<RefPtrCastDerived> create() { return adoptRef(*new RefPtrCastDerived); }
+
+private:
+    RefPtrCastDerived() = default;
+    bool isRefPtrCastDerived() const final { return true; }
+};
+
+} // namespace TestWebKitAPI
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(TestWebKitAPI::RefPtrCastDerived)
+    static bool isType(const TestWebKitAPI::RefPtrCastBase& object) { return object.isRefPtrCastDerived(); }
+SPECIALIZE_TYPE_TRAITS_END()
+
+namespace TestWebKitAPI {
+
+TEST(WTF_RefPtr, DowncastAndDynamicDowncast)
+{
+    Ref<RefPtrCastBase> derived = RefPtrCastDerived::create();
+    Ref<RefPtrCastBase> base = RefPtrCastBase::create();
+
+    Ref<RefPtrCastBase> ref = derived.copyRef();
+    RefPtr<RefPtrCastBase> ptr = derived.ptr();
+    EXPECT_EQ(downcast<RefPtrCastDerived>(ref).refCount(), 3U);
+    EXPECT_EQ(&downcast<RefPtrCastDerived>(std::as_const(ref)), derived.ptr());
+    EXPECT_EQ(dynamicDowncast<RefPtrCastDerived>(ref)->refCount(), 3U);
+    EXPECT_FALSE(dynamicDowncast<RefPtrCastDerived>(std::as_const(base)));
+    EXPECT_EQ(uncheckedDowncast<RefPtrCastDerived>(ref).refCount(), 3U);
+    EXPECT_EQ(downcast<RefPtrCastDerived>(ptr)->refCount(), 3U);
+    EXPECT_EQ(downcast<RefPtrCastDerived>(std::as_const(ptr)), derived.ptr());
+    EXPECT_EQ(dynamicDowncast<RefPtrCastDerived>(ptr)->refCount(), 3U);
+    EXPECT_EQ(uncheckedDowncast<RefPtrCastDerived>(ptr)->refCount(), 3U);
+
+    Ref<RefPtrCastDerived> movedRef = downcast<RefPtrCastDerived>(WTF::move(ref));
+    RefPtr<RefPtrCastDerived> movedPtr = dynamicDowncast<RefPtrCastDerived>(WTF::move(ptr));
+    EXPECT_EQ(movedRef.ptr(), derived.ptr());
+    EXPECT_EQ(movedPtr.get(), derived.ptr());
+    EXPECT_EQ(derived->refCount(), 3U);
+
+    Ref<RefPtrCastBase> unmatchedRef = base.copyRef();
+    RefPtr<RefPtrCastBase> unmatchedPtr = base.ptr();
+    EXPECT_FALSE(dynamicDowncast<RefPtrCastDerived>(WTF::move(unmatchedRef)));
+    EXPECT_FALSE(dynamicDowncast<RefPtrCastDerived>(WTF::move(unmatchedPtr)));
+    EXPECT_EQ(unmatchedRef.ptr(), base.ptr());
+    EXPECT_EQ(unmatchedPtr.get(), base.ptr());
+}
+
 } // namespace TestWebKitAPI

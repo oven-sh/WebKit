@@ -76,12 +76,12 @@ std::optional<ChangeListTypeCommand::Type> ChangeListTypeCommand::listConversion
 static void removeSourceListAttributes(const HTMLElement& listToReplace, HTMLElement& list, ChangeListTypeCommand::Type type)
 {
     bool convertToUnorderedList = type == ChangeListTypeCommand::Type::ConvertToUnorderedList;
+    list.removeAttribute(HTMLNames::typeAttr);
     if (convertToUnorderedList) {
         list.removeAttribute(HTMLNames::startAttr);
-        list.removeAttribute(HTMLNames::typeAttr);
         list.removeAttribute(HTMLNames::reversedAttr);
     }
-    list.removeInlineStyleProperty(CSSPropertyListStyleType);
+    list.removeInlineStyleProperty(CSSPropertyID::ListStyleType);
 
     Ref classList = list.classList();
     bool sourceHasClassNameForSmartList = classList->contains(AppleDecimalListClass) || classList->contains(AppleDiscListClass) || classList->contains(AppleDashListClass);
@@ -93,8 +93,8 @@ static void removeSourceListAttributes(const HTMLElement& listToReplace, HTMLEle
     }
 
     RefPtr existingInlineStyle = listToReplace.inlineStyle();
-    if (existingInlineStyle && !existingInlineStyle->getPropertyValue(CSSPropertyListStyleType).isEmpty())
-        list.setInlineStyleProperty(CSSPropertyListStyleType, (convertToUnorderedList ? CSSValueDisc : CSSValueDecimal));
+    if (existingInlineStyle && !existingInlineStyle->getPropertyValue(CSSPropertyID::ListStyleType).isEmpty())
+        list.setInlineStyleProperty(CSSPropertyID::ListStyleType, (convertToUnorderedList ? CSSValueID::Disc : CSSValueID::Decimal));
 }
 
 Ref<HTMLElement> ChangeListTypeCommand::createNewList(const HTMLElement& listToReplace)

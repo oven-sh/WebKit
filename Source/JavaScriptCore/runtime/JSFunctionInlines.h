@@ -34,6 +34,9 @@
 #include "WebAssemblyFunction.h"
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <wtf/text/MakeString.h>
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTCompiledCallee.h>
+#endif
 
 namespace JSC {
 
@@ -164,6 +167,10 @@ inline double JSFunction::originalLength(VM& vm)
     if (inherits<JSRemoteFunction>())
         return uncheckedDowncast<JSRemoteFunction>(this)->length(vm);
     if (isHostFunction()) {
+#if ENABLE(AOT)
+        if (isCompiledClosure())
+            return AOT::CompiledCallee::length(this);
+#endif
         // The original length is captured in NativeExecutable at creation time.
         return uncheckedDowncast<NativeExecutable>(executable())->length();
     }
@@ -201,6 +208,10 @@ inline JSString* JSFunction::originalName(JSGlobalObject* globalObject)
     }
 
     if (isHostFunction()) {
+#if ENABLE(AOT)
+        if (isCompiledClosure())
+            return jsString(vm, AOT::CompiledCallee::name(this));
+#endif
         // Mirror the JS path below: build a fresh JSString from the original name stored on
         // NativeExecutable. NativeExecutable is shared and uniquely keyed by name, so this
         // always returns the original (creation-time) value even after the JSFunction's "name"
@@ -254,6 +265,30 @@ inline bool JSFunction::mayHaveNonReifiedPrototype()
     return !isHostOrBuiltinFunction() && jsExecutable()->hasPrototypeProperty();
 }
 
+inline bool JSFunction::canPerformFastEnumerablePropertyEnumeration(VM& vm)
+{
+#if ENABLE(AOT)
+    // Bun: the fast path of WebKit e04a6f9faecf is off for every function. A copy that looks every own key up makes `name` a property of
+    // the function, and Bun's stack frames show that property in front of a displayName. Compiled code copies from a closure that way,
+    // and plain code has to print the same frames.
+    // A compiled closure stays out of the fast path in any case: listing its own properties makes its class object and its static
+    // fields first (AOT::Closure::getOwnSpecialPropertyNames), and a walk of its Structure would not see them.
+    UNUSED_PARAM(vm);
+    return false;
+#else
+    if (!canAssumeNameAndLengthAreOriginal(vm))
+        return false;
+    Structure* structure = this->structure();
+    if (structure->hasAnyKindOfGetterSetterProperties())
+        return false;
+    if (structure->isUncacheableDictionary())
+        return false;
+    if (structure->hasUnderscoreProtoPropertyExcludingOriginalProto())
+        return false;
+    return true;
+#endif
+}
+
 inline bool JSFunction::canUseAllocationProfiles()
 {
     if (isHostOrBuiltinFunction()) {
@@ -300,6 +335,7 @@ inline CallData JSFunction::getCallDataInline(JSCell* cell)
     CallData callData;
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
+    ASSERT(!thisObject->isCompiledClosure());
     if (thisObject->isHostFunction()) {
         callData.type = CallData::Type::Native;
         callData.native.function = thisObject->nativeFunction();
@@ -323,6 +359,7 @@ inline CallData JSFunction::getConstructDataInline(JSCell* cell)
     CallData constructData;
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
+    ASSERT(!thisObject->isCompiledClosure());
     if (thisObject->isHostFunction()) {
         if (thisObject->inherits<JSBoundFunction>()) {
             if (uncheckedDowncast<JSBoundFunction>(thisObject)->canConstruct()) {

@@ -1,0 +1,43 @@
+# The parts of a union a TypeTest can tell apart: their order, what each part keeps of the type, and which unions are closed
+# FORM: Prepared
+# RUN: union-parts
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="late" module=m0 declared={type=number|absent} initialization=Uninitialized
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+layout L1 name="Named" fields=[{key="x" declared={type=number}}]
+
+function f0 name="parts" parameters=[{type=undefined|number|"a"|L0|Array<number>|Uint8Array|f1|builtin(Math)}, {type=object|L0}, {type=int[0, 9]|string}, {type=boolean|symbol|bigint}, {type=undefined|null}, {type=@@iterator|"a"|"b"}, {type=L0|L1}, {type=f1|f2}, {type=RegExp<"a"[]>|Map<string, number>}, {type=string|function}, {type=string|function}, {type=anything}, {type=never}] results=[{type=anything}] {
+# REPEAT: i = 0..11
+    v%(i+13) = Upcast v%(i) castType=anything
+# END REPEAT
+    v25 = GetModuleVariable variable=g0
+    v26 = Upcast v25 castType=number|absent
+    v27 = Upcast v12 castType=anything
+    Unreachable
+}
+# CHECK: v13: Nullish(undefined), Number(number), String("a"), Layouts(L0), BuiltinClass(Array<number>), BuiltinClass(Uint8Array), Functions(f1), Builtins(builtin(Math)) closed
+# CHECK-NEXT: v14: OtherObjects(object)
+# CHECK-NOT: closed
+# CHECK: v15: Number(int[0, 9]), String(string) closed
+# CHECK-NEXT: v16: Boolean(boolean), Symbol(symbol), BigInt(bigint) closed
+# CHECK-NEXT: v17: Nullish(undefined|null) closed
+# CHECK-NEXT: v18: String("a"|"b"), Symbol(@@iterator) closed
+# CHECK-NEXT: v19: Layouts(L0|L1) closed
+# CHECK-NEXT: v20: Functions(f1|f2) closed
+# CHECK-NEXT: v21: BuiltinClass(Map<string, number>), BuiltinClass(RegExp<"a"[]>) closed
+# CHECK-NEXT: v22: String(string), OtherObjects(function)
+# CHECK-NOT: closed
+# CHECK: v23: String(string), OtherObjects(function)
+# CHECK-NOT: closed
+# CHECK: v24: Nullish(undefined|null), Boolean(boolean), Number(number), String(string), Symbol(symbol), BigInt(bigint), OtherObjects(object)
+# CHECK-NOT: closed
+# CHECK: v26: Number(number), Absent(absent) closed
+# CHECK-NEXT: v27: closed
+# CHECK-NOT: v1:
+function f1 name="one" results=[{type=anything}]
+function f2 name="two" results=[{type=anything}]
+function f3 name="other" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = Upcast v0 castType=anything
+    Return v1
+}

@@ -196,8 +196,8 @@ private:
     bool shouldAllowSingleClickToChangeSelection(WebCore::Node& targetNode, const WebCore::VisibleSelection& newSelection, WebCore::MouseEventInputSource) const;
 #endif
 
-    WebView *m_webView;
-    RetainPtr<WebEditorUndoTarget> m_undoTarget;
+    __weak WebView *m_webView;
+    const RetainPtr<WebEditorUndoTarget> m_undoTarget;
     bool m_haveUndoRedoOperations { false };
     
     HashMap<WebCore::TextCheckingRequestIdentifier, Ref<WebCore::TextCheckingRequest>> m_requestsInFlight;
@@ -223,7 +223,7 @@ private:
     EditorStateIsContentEditable m_lastEditorStateWasContentEditable { EditorStateIsContentEditable::Unset };
 };
 
-inline NSSelectionAffinity NODELETE kit(WebCore::Affinity affinity)
+inline NSSelectionAffinity LEGACY_NODELETE kit(WebCore::Affinity affinity)
 {
     switch (affinity) {
     case WebCore::Affinity::Upstream:

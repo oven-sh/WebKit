@@ -1,0 +1,21 @@
+# Object.values(Reflect).map(each => each): a built-in that takes the own values of a built-in object takes what that object holds itself, and nothing of the objects above it.
+# FORM: AsRead
+# RUN: flow
+# CHECK: function f1 parameter 0 type=undefined|string|builtin(ReflectApply)|builtin(ReflectConstruct)|builtin(ReflectDefineProperty)|builtin(ReflectDeleteProperty)|builtin(ReflectGet)|builtin(ReflectGetOwnPropertyDescriptor)|builtin(ReflectGetPrototypeOf)|builtin(ReflectHas)|builtin(ReflectIsExtensible)|builtin(ReflectOwnKeys)|builtin(ReflectPreventExtensions)|builtin(ReflectSet)|builtin(ReflectSetPrototypeOf) proven
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Reflect
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectValues
+    v3 = Call v2, v1, v0
+    v4 = PropGet v3 key="map"
+    v5 = NewClosure function=f1
+    v6 = Call v4, v3, v5 calleeKey="map"
+    Return v6
+}
+function f1 name="each" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

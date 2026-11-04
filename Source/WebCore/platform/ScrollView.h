@@ -32,6 +32,7 @@
 #include <WebCore/ScrollTypes.h>
 #include <WebCore/ScrollableArea.h>
 #include <WebCore/Scrollbar.h>
+#include <WebCore/ViewCoordinateSpaceRect.h>
 #include <WebCore/Widget.h>
 #include <wtf/HashSet.h>
 #include <wtf/Platform.h>
@@ -147,7 +148,7 @@ public:
     // By default you only receive paint events for the area that is visible. In the case of using a
     // tiled backing store, this function can be set, so that the view paints the entire contents.
     bool paintsEntireContents() const { return m_paintsEntireContents; }
-    WEBCORE_EXPORT void NODELETE setPaintsEntireContents(bool);
+    WEBCORE_EXPORT void LEGACY_NODELETE setPaintsEntireContents(bool);
 
     // By default scrolling is handled by WebCore, but some WebKit implementations take over scrolling,
     // delegating it to a native scrolling widget or the UI process.
@@ -192,7 +193,7 @@ public:
     // FIXME: Note that WebCoreOrPlatformInset may return either WebCore obscured insets or platform content insets.
     enum class InsetType : bool { WebCoreInset, WebCoreOrPlatformInset };
     virtual FloatBoxExtent obscuredContentInsets(InsetType = InsetType::WebCoreInset) const { return 0; }
-    IntRect frameRectShrunkByInset() const;
+    WEBCORE_EXPORT IntRect frameRectShrunkByInset() const;
 
     virtual CornerRadii scrollbarAvoidanceCornerRadii() const;
 
@@ -213,14 +214,16 @@ public:
 #endif
 
     // This is the area that is partially or fully exposed, and may extend under overlapping UI elements.
-    WEBCORE_EXPORT FloatRect exposedContentRect() const;
+    WEBCORE_EXPORT ViewFloatRect exposedViewRect() const;
+    WEBCORE_EXPORT ContentsFloatRect exposedContentRect() const;
 
-    // The given rects are only used if there is no platform widget.
-    WEBCORE_EXPORT void NODELETE setExposedContentRect(const FloatRect&);
+    // The given rect is only used if there is no platform widget, and is in view space. View space is the same as contents
+    // space only when scrolling is delegated to the native view.
+    WEBCORE_EXPORT void LEGACY_NODELETE setExposedViewRect(const ViewFloatRect&);
 
     void adjustExposedContentRectForProgrammaticScroll(ScrollPosition);
 
-    WEBCORE_EXPORT FloatSize NODELETE unobscuredContentSize() const;
+    WEBCORE_EXPORT FloatSize LEGACY_NODELETE unobscuredContentSize() const;
     WEBCORE_EXPORT void setUnobscuredContentSize(const FloatSize&);
 
 #if PLATFORM(IOS_FAMILY)
@@ -239,9 +242,9 @@ public:
     int layoutWidth() const { return layoutSize().width(); }
     int layoutHeight() const { return layoutSize().height(); }
 
-    WEBCORE_EXPORT IntSize NODELETE fixedLayoutSize() const;
+    WEBCORE_EXPORT IntSize LEGACY_NODELETE fixedLayoutSize() const;
     WEBCORE_EXPORT void setFixedLayoutSize(const IntSize&);
-    WEBCORE_EXPORT bool NODELETE useFixedLayout() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE useFixedLayout() const;
     WEBCORE_EXPORT void setUseFixedLayout(bool enable);
 
     // Functions for getting/setting the size of the document contained inside the ScrollView (as an IntSize or as individual width and height
@@ -340,7 +343,10 @@ public:
     IntRect contentsToView(IntRect) const;
 
     FloatRect viewToContents(FloatRect) const;
-    FloatRect contentsToView(FloatRect) const;
+    WEBCORE_EXPORT FloatRect contentsToView(FloatRect) const;
+
+    // The part of the view-to-contents translation that is not scaled by visibleContentScaleFactor().
+    IntSize viewToContentsInsetOffset() const;
 
     IntPoint contentsToContainingViewContents(const IntPoint&) const;
     IntRect contentsToContainingViewContents(IntRect) const;
@@ -364,6 +370,11 @@ public:
     // Functions for converting to and from screen coordinates.
     WEBCORE_EXPORT IntRect contentsToScreen(const IntRect&) const;
     WEBCORE_EXPORT IntPoint screenToContents(const IntPoint&) const;
+
+    template<typename RectType> ViewCoordinateSpaceRect<ViewCoordinateSpace::RootView, RectType> contentsToRootView(const ViewCoordinateSpaceRect<ViewCoordinateSpace::Contents, RectType>& rect) const { return inRootViewSpace(contentsToRootView(rect.raw())); }
+    template<typename RectType> ViewCoordinateSpaceRect<ViewCoordinateSpace::Contents, RectType> rootViewToContents(const ViewCoordinateSpaceRect<ViewCoordinateSpace::RootView, RectType>& rect) const { return inContentsSpace(rootViewToContents(rect.raw())); }
+    template<typename RectType> ViewCoordinateSpaceRect<ViewCoordinateSpace::View, RectType> contentsToView(const ViewCoordinateSpaceRect<ViewCoordinateSpace::Contents, RectType>& rect) const { return inViewSpace(contentsToView(rect.raw())); }
+    template<typename RectType> ViewCoordinateSpaceRect<ViewCoordinateSpace::Contents, RectType> viewToContents(const ViewCoordinateSpaceRect<ViewCoordinateSpace::View, RectType>& rect) const { return inContentsSpace(viewToContents(rect.raw())); }
 
     // The purpose of this function is to answer whether or not the scroll view is currently visible. Animations and painting updates can be suspended if
     // we know that we are either not in a window right now or if that window is not visible.
@@ -422,7 +433,7 @@ public:
     void setAllowsUnclampedScrollPositionForTesting(bool allowsUnclampedScrollPosition) { m_allowsUnclampedScrollPosition = allowsUnclampedScrollPosition; }
     bool allowsUnclampedScrollPosition() const { return m_allowsUnclampedScrollPosition; }
 
-    bool NODELETE managesScrollbars() const;
+    bool LEGACY_NODELETE managesScrollbars() const;
     virtual void updateScrollbarSteps();
 
     // Called to update the scrollbars to accurately reflect the state of the view.
@@ -439,6 +450,7 @@ protected:
     void availableContentSizeChanged(AvailableSizeChangeReason) override;
     virtual void addedOrRemovedScrollbar() = 0;
     virtual void delegatedScrollingModeDidChange() = 0;
+    virtual void scrollbarModesDidChange() { }
 
     // These functions are used to create/destroy scrollbars.
     // They return true if the scrollbar was added or removed.
@@ -477,13 +489,15 @@ public:
     WEBCORE_EXPORT NSView* documentView() const;
 
 private:
-    PlatformScrollView* NODELETE scrollView() const;
+    PlatformScrollView* LEGACY_NODELETE scrollView() const;
 #endif
 
-private:
+protected:
     // Size available for view contents, excluding content insets. Not affected by zooming.
+    // unobscuredContentRect() is this size divided by visibleContentScaleFactor().
     IntSize sizeForUnobscuredContent(VisibleContentRectIncludesScrollbars = VisibleContentRectIncludesScrollbars::No) const;
 
+private:
     IntRect visibleContentRectInternal(VisibleContentRectIncludesScrollbars, VisibleContentRectBehavior) const final;
     WEBCORE_EXPORT IntRect unobscuredContentRectInternal(VisibleContentRectIncludesScrollbars = VisibleContentRectIncludesScrollbars::No) const;
 
@@ -523,7 +537,7 @@ private:
     IntPoint platformScreenToContents(const IntPoint&) const;
 
     void platformSetScrollPosition(const IntPoint&);
-    bool NODELETE platformScroll(ScrollDirection, ScrollGranularity);
+    bool LEGACY_NODELETE platformScroll(ScrollDirection, ScrollGranularity);
     void platformSetScrollbarsSuppressed(bool repaintOnUnsuppress);
     void platformRepaintContentRectangle(const IntRect&);
     bool platformIsOffscreen() const;
@@ -556,7 +570,8 @@ private:
     // FIXME: More things will move into here.
     struct DelegatedScrollingGeometry {
         FloatSize unobscuredContentSize;
-        FloatRect exposedContentRect;
+        // In view space, since the embedder of a root frame with a remote parent doesn't know its scroll position.
+        ViewFloatRect exposedViewRect;
     };
     std::optional<DelegatedScrollingGeometry> m_delegatedScrollingGeometry;
 

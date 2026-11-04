@@ -59,7 +59,7 @@ class TextTrackLoader final : public CachedResourceClient, private WebVTTParserC
     WTF_MAKE_NONCOPYABLE(TextTrackLoader); 
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(TextTrackLoader, Loader);
 public:
-    static Ref<TextTrackLoader> create(TextTrackLoaderClient&, Document&);
+    static Ref<TextTrackLoader> LEGACY_NODELETE create(TextTrackLoaderClient&, Document&);
     virtual ~TextTrackLoader();
 
     bool load(const URL&, HTMLTrackElement&);
@@ -93,7 +93,7 @@ private:
     enum State { Idle, Loading, Finished, Failed };
 
     WeakPtr<TextTrackLoaderClient> m_client;
-    std::unique_ptr<WebVTTParser> m_cueParser;
+    const std::unique_ptr<WebVTTParser> m_cueParser;
     CachedResourceHandle<CachedTextTrack> m_resource;
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
     Timer m_cueLoadTimer;

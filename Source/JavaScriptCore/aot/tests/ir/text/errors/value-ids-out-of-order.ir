@@ -1,0 +1,11 @@
+# Value ids are dense and ascend: the parameters of a block, then its values
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" parameters=[{type=number}] results=[{type=number}] {
+  b0(v7: number):
+    v9 = Add v7, v7
+    v2 = Add v9, v9
+    Return v2
+}

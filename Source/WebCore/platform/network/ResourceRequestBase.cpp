@@ -52,7 +52,7 @@ double ResourceRequestBase::s_defaultTimeoutInterval = 0;
 
 inline const ResourceRequest& ResourceRequestBase::asResourceRequest() const
 {
-    return *static_cast<const ResourceRequest*>(this);
+    return downcast<ResourceRequest>(*this);
 }
 
 ResourceRequest ResourceRequestBase::isolatedCopy() const
@@ -105,6 +105,7 @@ void ResourceRequestBase::setAsIsolatedCopy(const ResourceRequest& other)
     setUseAdvancedPrivacyProtections(other.useAdvancedPrivacyProtections());
     setDidFilterLinkDecoration(other.didFilterLinkDecoration());
     setIsPrivateTokenUsageByThirdPartyAllowed(other.isPrivateTokenUsageByThirdPartyAllowed());
+    setLatchedThirdPartyCookieBlockingDecision(other.latchedThirdPartyCookieBlockingDecision());
 }
 
 bool ResourceRequestBase::isEmpty() const
@@ -738,6 +739,11 @@ void ResourceRequestBase::setIsPrivateTokenUsageByThirdPartyAllowed(bool isPriva
 void ResourceRequestBase::setWasSchemeOptimisticallyUpgraded(bool wasSchemeOptimisticallyUpgraded)
 {
     m_requestData.m_wasSchemeOptimisticallyUpgraded = wasSchemeOptimisticallyUpgraded;
+}
+
+void ResourceRequestBase::setLatchedThirdPartyCookieBlockingDecision(ThirdPartyCookieBlockingDecision decision)
+{
+    m_requestData.m_latchedThirdPartyCookieBlockingDecision = decision;
 }
 
 bool equalIgnoringHeaderFields(const ResourceRequestBase& a, const ResourceRequestBase& b)

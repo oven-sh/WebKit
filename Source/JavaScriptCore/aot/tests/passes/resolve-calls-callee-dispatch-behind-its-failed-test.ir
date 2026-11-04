@@ -1,0 +1,34 @@
+# A callee that may be a listed function or any other gets a test for the listed one once. Behind the failed test the type still lists the function, because no type says "any function but this one": the call stays as it is
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="listed" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+
+function f1 name="behindNoTest" parameters=[{type=function|f0}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 callees=[f0, ..]
+    Return v2
+# CHECK: [[isListed]]: boolean = TypeTest v0 testedType=f0
+# CHECK-NEXT: Branch [[isListed]] -> taken
+# CHECK: = CallDirect v1 function=f0
+# CHECK: = Call {{*}}, -, v1 callees=[f0, ..]
+}
+
+function f2 name="behindFailedTest" parameters=[{type=function|f0}, {type=anything}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=f0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2() frequency=Unlikely:
+    v3 = Upcast v0 castType=function
+    v4 = Call v3, -, v1 callees=[f0, ..]
+    Return v4
+# CHECK: v2: boolean = TypeTest v0 testedType=f0
+# CHECK-NOT: TypeTest
+# CHECK-NOT: CallDirect
+# CHECK: v4: anything = Call v3, -, v1 callees=[f0, ..]
+# CHECK-NEXT: Return v4
+}

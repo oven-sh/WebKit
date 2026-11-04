@@ -371,6 +371,7 @@ struct LiveResizeSnapshotState {
     BOOL _usePlatformFindUI;
     BOOL _usesAutomaticContentInsetBackgroundFill;
     BOOL _shouldSuppressTopColorExtensionView;
+    _WKRectEdge _enabledSystemBackgroundColorExtensionEdges;
     BOOL _shouldSuppressFormValidationBubble;
 #if PLATFORM(MAC)
     OptionSet<WebKit::PreferSolidColorHardPocketReason> _preferSolidColorHardPocketReasons;
@@ -482,6 +483,8 @@ struct LiveResizeSnapshotState {
     std::optional<std::pair<WebKit::TransactionID, LiveResizeSnapshotState>> _liveResizeSnapshotState;
 #endif
     CGFloat _lastAdjustmentForScroller;
+    BOOL _didAdjustScrollViewForKeyboardInCurrentRunLoopIteration;
+    RetainPtr<NSDictionary> _pendingKeyboardInfoForScrollViewAdjustment;
 
     std::pair<CGSize, UIInterfaceOrientation> _lastKnownWindowSizeAndOrientation;
     RetainPtr<NSTimer> _endLiveResizeTimer;
@@ -541,6 +544,10 @@ struct LiveResizeSnapshotState {
     std::unique_ptr<WebKit::PointerTouchCompatibilitySimulator> _pointerTouchCompatibilitySimulator;
 
     WebCore::HistoricalVelocityData _historicalKinematicData;
+
+#if ENABLE(UNIFIED_PDF) && HAVE(UIVIEW_RESERVED_REGION)
+    BOOL _shouldUseTwoUpPDFDisplayModeWithDivisionRegion;
+#endif
 #endif // PLATFORM(IOS_FAMILY)
 
 #if PLATFORM(VISION)
@@ -588,9 +595,6 @@ struct LiveResizeSnapshotState {
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
     WebCore::RectEdges<RetainPtr<WKColorExtensionView>> _systemBackgroundColorExtensionViews;
     WebKit::AdjustedColorExtensionsForBannerViewOverlaysEnablement _adjustedColorExtensionsForBannerViewOverlaysEnablement;
-#if PLATFORM(IOS_FAMILY)
-    CGFloat _restingTopSystemBackgroundColorExtensionInset;
-#endif
 #endif
 
 #if ENABLE(TEXT_EXTRACTION_FILTER)
@@ -705,6 +709,10 @@ struct LiveResizeSnapshotState {
 - (void)_removeReasonToPreferSolidColorHardPocket:(WebKit::PreferSolidColorHardPocketReason)reason;
 #endif
 
+#if PLATFORM(MAC) && HAVE(LIQUID_GLASS_ADJUSTMENTS)
+- (void)_updateAllowsSeparatorForScrollPocket;
+#endif
+
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
 - (void)_updateAppearanceForSystemBackgroundColorExtensionViews;
 - (CGFloat)_webContentDistanceFromLeftEdge;
@@ -805,7 +813,8 @@ struct LiveResizeSnapshotState {
 - (void)_ensureTextExtractionFilterRulesWithCompletionHandler:(CompletionHandler<void()>&&)completionHandler;
 - (void)_extractDebugTextWithConfigurationWithoutUpdatingFilterRules:(_WKTextExtractionConfiguration *)configuration assertionScope:(UniqueRef<WebKit::TextExtractionAssertionScope>&&)assertionScope completionHandler:(void(^)(_WKTextExtractionResult *))completionHandler;
 - (void)_filterExtractedStringWithoutUpdatingFilterRules:(NSString *)string options:(_WKTextExtractionFilterOptions)options completionHandler:(void(^)(NSString *))completionHandler;
-- (std::expected<std::pair<RefPtr<WebKit::WebFrameProxy>, WebCore::TextExtraction::Interaction>, RetainPtr<NSString>>)_convertToWebCoreInteraction:(_WKTextExtractionInteraction *)wkInteraction nodeIdentifier:(const String&)nodeIdentifierString;
+// FIXME(rdar://189512757): NS_DIRECT avoids emitting an ObjC type encoding for std::expected, which crashes clang. Remove when resolved.
+- (std::expected<std::pair<RefPtr<WebKit::WebFrameProxy>, WebCore::TextExtraction::Interaction>, RetainPtr<NSString>>)_convertToWebCoreInteraction:(_WKTextExtractionInteraction *)wkInteraction nodeIdentifier:(const String&)nodeIdentifierString NS_DIRECT;
 - (void)_performInteraction:(WebCore::TextExtraction::Interaction)interaction inFrame:(RefPtr<WebKit::WebFrameProxy>)targetFrame actionType:(_WKTextExtractionAction)actionType staleNodeResolution:(const WebKit::StaleNodeResolutionState&)staleNodeResolution completionHandler:(void(^)(_WKTextExtractionInteractionResult *))completionHandler;
 
 #if ENABLE(TEXT_EXTRACTION_FILTER)
@@ -848,7 +857,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
 - (void)_didHandleTapAsHover;
 - (void)_didCompleteSyntheticClick;
 - (void)_commitPotentialTapFailed;
-- (void)_didGetTapHighlightGeometries:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads topLeftRadius:(const WebCore::IntSize&)topLeftRadius topRightRadius:(const WebCore::IntSize&)topRightRadius bottomLeftRadius:(const WebCore::IntSize&)bottomLeftRadius bottomRightRadius:(const WebCore::IntSize&)bottomRightRadius nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling;
+- (void)_didGetTapHighlightGeometries:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling;
 - (BOOL)_isPotentialTapInProgress;
 - (void)_disableDoubleTapGesturesDuringTapIfNecessary:(WebKit::TapIdentifier)requestID;
 - (void)_handleSmartMagnificationInformationForPotentialTap:(WebKit::TapIdentifier)requestID renderRect:(const WebCore::FloatRect&)renderRect fitEntireRect:(BOOL)fitEntireRect viewportMinimumScale:(double)viewportMinimumScale viewportMaximumScale:(double)viewportMaximumScale nodeIsRootLevel:(BOOL)nodeIsRootLevel nodeIsPluginElement:(BOOL)nodeIsPluginElement;

@@ -188,10 +188,6 @@ const ValueUndefined  = constexpr JSValue::ValueUndefined
 const ValueNull       = constexpr JSValue::ValueNull
 const TagNumber       = constexpr JSValue::NumberTag
 const NotCellMask     = constexpr JSValue::NotCellMask
-if BIGINT32
-    const TagBigInt32 = constexpr JSValue::BigInt32Tag
-    const MaskBigInt32 = constexpr JSValue::BigInt32Mask
-end
 const LowestOfHighBits = constexpr JSValue::LowestOfHighBits
 
 if LARGE_TYPED_ARRAYS
@@ -618,6 +614,8 @@ const ArrayStorageShape        = constexpr ArrayStorageShape
 const SlowPutArrayStorageShape = constexpr SlowPutArrayStorageShape
 const CopyOnWrite              = constexpr CopyOnWrite
 const ArrayWithUndecided       = constexpr ArrayWithUndecided
+const ArrayWithInt32           = constexpr ArrayWithInt32
+const ArrayWithContiguous      = constexpr ArrayWithContiguous
 
 # Type constants.
 const StructureType = constexpr StructureType
@@ -712,6 +710,13 @@ macro crash()
         cloopCrash
     else
         call _llint_crash
+    end
+end
+
+# offlineasm puts the ARM64 veneers of a part of a section in front of the next section directive, so a part ends in a jump.
+macro endSectionPart()
+    if not C_LOOP
+        jmp _llint_crash
     end
 end
 
@@ -1235,7 +1240,7 @@ macro prepareForTailCall(temp1, temp2, temp3, temp4, storeCodeBlock)
         storep temp3, [sp]
     end
 
-    if ARM64E
+    if ARM64E or RETURN_ADDRESS_SIGNING
         addp 16, cfr, temp4
     end
 
@@ -1267,6 +1272,9 @@ macro invokeForTailCall(opcodeName, size, opcodeStruct, valueProfileName, dstVir
         leap _g_config, a5
         jmp JSCConfigGateMapOffset + (constexpr Gate::tailCall%callPtrTag%) * PtrSize[a5], NativeToJITGatePtrTag # %callPtrTag%
     else
+        if RETURN_ADDRESS_SIGNING
+            untagReturnAddress maybeOldCFR
+        end
         jmp callee, callPtrTag
     end
 end
@@ -1306,33 +1314,29 @@ macro arrayProfile(offset, cell, metadata, scratch)
     storei scratch, offset + ArrayProfile::m_lastSeenStructureID[metadata]
 end
 
-# Note that index is already sign-extended to be a register width.
-macro getByValTypedArray(base, index, finishIntGetByVal, finishDoubleGetByVal, setLargeTypedArray, slowPath)
-    # First lets check if we even have a typed array. This lets us do some boilerplate up front.
+# Index must already be sign-extended to register width. On success, t2 holds the array type minus
+# FirstTypedArrayType, vector holds the caged data pointer, and base is clobbered.
+macro loadTypedArrayVector(base, index, typeLimit, setLargeTypedArray, vector, slowPath)
     loadb JSCell::m_type[base], t2
     subi FirstTypedArrayType, t2
-    biaeq t2, NumberOfTypedArrayTypesExcludingBigIntArraysAndDataView, slowPath
-    
-    # Sweet, now we know that we have a typed array. Do some basic things now.
+    biaeq t2, typeLimit, slowPath
 
     btbnz JSArrayBufferView::m_mode[base], (constexpr isResizableOrGrowableSharedMode), slowPath
     if LARGE_TYPED_ARRAYS
         bqaeq index, JSArrayBufferView::m_length[base], slowPath
         bqbeq index, SmallTypedArrayMaxLength, .smallTypedArray
-        setLargeTypedArray(t3)
+        setLargeTypedArray(vector)
 .smallTypedArray:
     else
         biaeq index, JSArrayBufferView::m_length[base], slowPath
     end
 
-    loadp JSArrayBufferView::m_vector[base], t3
-    # length and scratch are intentionally undefined on this branch because they are not used on other platforms.
-    if ARM64E
-        const length = t6
-        const scratch = t7
-        loadq JSArrayBufferView::m_length[base], length
-    end
-    cagedPrimitive(t3, length, base, scratch)
+    loadp JSArrayBufferView::m_vector[base], vector
+    cagedPrimitive(vector, base)
+end
+
+macro getByValTypedArray(base, index, finishIntGetByVal, finishDoubleGetByVal, setLargeTypedArray, slowPath)
+    loadTypedArrayVector(base, index, NumberOfTypedArrayTypesExcludingBigIntArraysAndDataView, setLargeTypedArray, t3, slowPath)
 
     # Now bisect through the various types:
     #    Int8ArrayType,
@@ -1421,7 +1425,6 @@ macro skipIfIsRememberedOrInEden(cell, slowPath)
 .done:
 end
 
-# setData is the address of an InlineWatchpointSet's m_data.
 macro branchIfInlineWatchpointSetIsStillValid(setData, scratch, stillValid)
     loadp setData, scratch
     bpeq scratch, InlineWatchpointSetThinInvalidated, .invalidated
@@ -1474,7 +1477,7 @@ macro convertJSCalleeToVM(callee)
 end
 
 macro getVMFromCallFrame(vm, scratch)
-if WEBASSEMBLY
+if WEBASSEMBLY or AOT
         loadq Callee[cfr], vm
         move vm, scratch
         andq (constexpr JSValue::NativeCalleeMask), scratch
@@ -1483,7 +1486,11 @@ if WEBASSEMBLY
         jmp .loaded
     .isWasmCallee:
         loadp CodeBlock + LowWordOffset[cfr], vm
+    if WEBASSEMBLY
         loadp JSWebAssemblyInstance::m_vm[vm], vm
+    else
+        loadp (constexpr (AOT_INSTANCE_OFFSET(vm)))[vm], vm
+    end
     .loaded:
 else
     loadp Callee + LowWordOffset[cfr], vm
@@ -1514,6 +1521,9 @@ macro prologue(osrSlowPath, traceSlowPath)
         # pop the callerFrame since we will jump to a function that wants to save it
         if ARM64 or RISCV64
             pop lr, cfr
+            if RETURN_ADDRESS_SIGNING
+                untagReturnAddress sp
+            end
         elsif ARM64E
             # untagReturnAddress will be performed in Gate::entryOSREntry.
             pop lr, cfr
@@ -1598,10 +1608,16 @@ end
             bpa t2, t0, .zeroStackLoop
         else
             move 0, t3
-        .zeroStackLoop:
+            fq2d t3, ft0
+            subp t2, t0, t3
+            btpz t3, 2 * PtrSize, .zeroStackLoop
             subp 2 * PtrSize, t2
-            storeq t3, [t2]
-            storeq t3, PtrSize[t2]
+            storev v0, [t2]
+            bpeq t2, t0, .zeroStackDone
+        .zeroStackLoop:
+            subp 4 * PtrSize, t2
+            storev v0, [t2]
+            storev v0, 2 * PtrSize[t2]
             bpa t2, t0, .zeroStackLoop
         end
 .zeroStackDone:
@@ -2083,7 +2099,9 @@ if ARM64E
     global _returnFromLLIntTrampoline
     _returnFromLLIntTrampoline:
         ret
+end
 
+if ARM64E or RETURN_ADDRESS_SIGNING
     global _jsTrampolineProgramPrologue
     _jsTrampolineProgramPrologue:
         tagReturnAddress sp
@@ -2187,10 +2205,29 @@ end
 
 # Entry point for the llint to initialize.
 entry(llint, macro()
+    macro trampolineEntries(setEntries) setEntries() end
+    macro bytecodeEntries(setEntries) end
+    macro webAssemblyEntries(setEntries) end
     include InitBytecodes
 end)
 
 end // not C_LOOP
+
+endSectionPart()
+section "bytecode"
+
+global _llintBytecodePCRangeStart
+_llintBytecodePCRangeStart:
+    break
+
+if not C_LOOP
+entry(llint_bytecode, macro()
+    macro trampolineEntries(setEntries) end
+    macro bytecodeEntries(setEntries) setEntries() end
+    macro webAssemblyEntries(setEntries) end
+    include InitBytecodes
+end)
+end
 
 _llint_op_wide16:
     nextInstructionWide16()
@@ -2279,6 +2316,10 @@ macro getArgumentIncludingThisCountForAsyncIteratorNext(size, dst)
 end
 
 include LowLevelInterpreter64
+
+if AOT
+    include LowLevelInterpreterAOT
+end
 
 
 
@@ -2687,6 +2728,9 @@ llintOp(op_super_sampler_end, OpSuperSamplerEnd, macro (unused, unused, dispatch
     dispatch()
 end)
 
+endSectionPart()
+section "trampolines"
+
 op(llint_native_call_trampoline, macro ()
     nativeCallTrampoline(NativeExecutable::m_function)
 end)
@@ -2863,6 +2907,9 @@ op(llint_polymorphic_closure_call_trampoline, macro ()
     linkFor(_llint_polymorphic_call)
 end)
 
+endSectionPart()
+section "bytecode"
+
 if JIT
     macro loadBaselineJITConstantPool()
         # Baseline uses LLInt's PB register for its JIT constant pool.
@@ -2978,6 +3025,10 @@ op(array_sort_comparator_return_trampoline, macro ()
     end
 end)
 
+global _llintBytecodePCRangeEnd
+_llintBytecodePCRangeEnd:
+    break
+
 # Lastly, make sure that we can link even though we don't support all opcodes.
 # These opcodes should never arise when using LLInt or either JIT. We assert
 # as much.
@@ -3012,6 +3063,9 @@ macro updateBinaryArithProfile(size, opcodeStruct, type, scratch1, scratch2)
     loadp UnlinkedCodeBlock::m_binaryArithProfiles + BinaryArithProfileFixedVector::m_storage[scratch2], scratch2
     orh type, (constexpr (BinaryArithProfileFixedVector::Storage::offsetOfData())) + BinaryArithProfile::m_bits[scratch2, scratch1, 2]
 end
+
+endSectionPart()
+section "webassembly"
 
 if WEBASSEMBLY
 
@@ -3095,6 +3149,18 @@ _wasm_ipint_call_return_location_wide32:
     crash()
 
 end # WEBASSEMBLY
+
+if not C_LOOP
+entry(llint_webassembly, macro()
+    macro trampolineEntries(setEntries) end
+    macro bytecodeEntries(setEntries) end
+    macro webAssemblyEntries(setEntries) setEntries() end
+    include InitBytecodes
+end)
+end
+
+endSectionPart()
+section "trampolines"
 
 include? LowLevelInterpreterAdditions
 

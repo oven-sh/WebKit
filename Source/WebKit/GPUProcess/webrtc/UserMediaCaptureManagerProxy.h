@@ -100,7 +100,7 @@ public:
     void didReceiveMessageFromGPUProcess(IPC::Connection& connection, IPC::Decoder& decoder) { didReceiveMessage(connection, decoder); }
     void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
-    bool NODELETE hasSourceProxies() const;
+    bool LEGACY_NODELETE hasSourceProxies() const;
 
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
@@ -142,7 +142,7 @@ private:
     HashMap<WebCore::RealtimeMediaSourceIdentifier, Ref<UserMediaCaptureManagerProxySourceProxy>> m_proxies;
     const UniqueRef<ConnectionProxy> m_connectionProxy;
     WebCore::OrientationNotifier m_orientationNotifier { 0 };
-    Ref<GenericPromise> m_pendingAction { GenericPromise::createAndResolve() };
+    const Ref<GenericPromise> m_pendingAction { GenericPromise::createAndResolve() };
 
     struct PageSources {
 #if PLATFORM(IOS_FAMILY)

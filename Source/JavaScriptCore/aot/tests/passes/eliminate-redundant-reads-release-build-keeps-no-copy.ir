@@ -1,0 +1,7 @@
+# A release build keeps no copy of a replaced read
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+# CHECK: outcome: Changed
+# CHECK-NOT: ValidateSameValue
+# CHECK-COUNT-1: = GetSlot
+# PROGRAM-OF: eliminate-redundant-reads-validating-build.ir

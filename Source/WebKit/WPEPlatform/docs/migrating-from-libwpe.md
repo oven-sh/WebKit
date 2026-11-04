@@ -2,7 +2,7 @@ Title: Migrating from libwpe
 Slug: migrating-from-libwpe
 
 This guide is for embedders moving an application from
-[libwpe](https://github.com/WebKit/libwpe) and
+[libwpe](https://github.com/WebPlatformForEmbedded/libwpe) and
 [WPEBackend-fdo](https://github.com/Igalia/WPEBackend-fdo) to WPEPlatform.
 The higher-level `WebKitWebView` API is unchanged; almost everything you
 did *below* it disappears.

@@ -1,0 +1,104 @@
+# A value read from a container is tested for what is expected of the container's contents, also where a pass creates the read; where nothing more is expected the access stays as general as the proven contents allow
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxDeclarationsPredictedFromNames:0 heat=NothingIsHottest
+# RUN: pass ExpandIteration SimplifyControlFlow ThreadJumps FoldConstants SimplifyControlFlow EliminateDeadCode SimplifyCasts InsertObjectCoercibleChecks ResolveAccesses PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Stable" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Other" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="expectedElement" parameters=[{type=Array<object, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<object, proven, Contiguous, pristine[Storage, Names]> ~ Array<L0, proven, Contiguous, pristine[Storage, Names]>, v1: int[0, 1000]):
+    v2 = ElemGet v0, v1
+    v3 = PropGet v2 key="x"
+    Return v3
+# CHECK: v2: {{*}}object ~ {{*}}L0 = GetArrayElement v0, v1
+# CHECK-NEXT: [[isStable0]]:{{*}}= TypeTest v2 testedType=L0
+# CHECK-NEXT: Branch [[isStable0]] -> taken [[stableBlock0]](| 0), notTaken
+# CHECK-NOT: = TypeTest
+# CHECK: v3: number = GetSlot [[stable0]], {{*}} key="x" receivers=[L0] level=Expected
+# CHECK: frequency=Unlikely:
+# CHECK: = PropGet {{*}} key="x"
+# CHECK-NOT: = TypeTest
+# CHECK: [[stableBlock0]]([[stable0]]: L0):
+}
+
+function f1 name="elementWithoutExpectedType" parameters=[{type=Array<object, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    v3 = PropGet v2 key="x"
+    Return v3
+# CHECK: v2: {{*}}object = GetArrayElement v0, v1
+# CHECK-NOT: Test
+# CHECK-NOT: GetSlot
+# CHECK: v3: anything = PropGet {{*}} key="x"
+# CHECK-NOT: Test
+# CHECK-NOT: GetSlot
+}
+
+function f2 name="expectedElementOfOtherLayout" parameters=[{type=Array<object, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<object, proven, Contiguous, pristine[Storage, Names]> ~ Array<L1, proven, Contiguous, pristine[Storage, Names]>, v1: int[0, 1000]):
+    v2 = ElemGet v0, v1
+    v3 = PropGet v2 key="x"
+    Return v3
+# CHECK: v2: {{*}}object ~ {{*}}L1 = GetArrayElement v0, v1
+# CHECK-NEXT: = TypeTest v2 testedType=L1
+# CHECK: v3: number = GetSlot [[other2]], {{*}} key="x" receivers=[L1] level=Expected
+# CHECK: ([[other2]]: L1):
+}
+
+function f3 name="expectedRow" parameters=[{type=Array<Array<number, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<Array<number, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]> ~ Array<Array<number, proven, Double, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]>, v1: int[0, 1000]):
+    v2 = ElemGet v0, v1
+    v3 = ElemGet v2, v1
+    Return v3
+# CHECK: [[row3]]: Array<number, proven, pristine[Storage, Names]> ~ Array<number, proven, Double, pristine[Storage, Names]> = RequireObjectCoercible v2
+# CHECK-NEXT: [[isDouble3]]:{{*}}= HasArrayStorage [[row3]] arrayStorage=Double
+# CHECK-NEXT: Branch [[isDouble3]] -> taken [[doubleBlock3]](| 0), notTaken
+# CHECK-NOT: HasArrayStorage
+# CHECK: v3: {{*}}number = GetArrayElement [[row3]], v1, {{*}} arrayStorage=Double level=Expected
+# CHECK-NOT: HasArrayStorage
+# CHECK: [[doubleBlock3]]({{*}}: guard):
+}
+
+function f4 name="rowWithoutExpectedType" parameters=[{type=Array<Array<number, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    v3 = ElemGet v2, v1
+    Return v3
+# An array of numbers is expected to hold doubles, whatever else is expected of it.
+# CHECK-COUNT-1: = HasArrayStorage {{*}} arrayStorage=Double
+# CHECK-NOT: HasArrayStorage
+# CHECK: v3: {{*}}number = GetArrayElement {{*}}, v1, {{*}} arrayStorage=Double level=Expected
+# CHECK-NOT: HasArrayStorage
+}
+
+function f5 name="forOf" parameters=[{type=Array<object, proven, Contiguous, pristine[Storage, Names]>}] results=[{type=undefined}] {
+  b0(v0: Array<object, proven, Contiguous, pristine[Storage, Names]> ~ Array<L0, proven, Contiguous, pristine[Storage, Names]>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b6(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b5():
+    v6 = PropGet v5 key="x"
+    v7 = ToBoolean v6
+    Branch v7 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v1
+    Return
+  b5() role=IterationCleanup subject=v1:
+    v9 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v9
+  b6():
+    Return
+# CHECK: [[element5]]: {{*}}object ~ {{*}}L0 = GetArrayElement v0,
+# CHECK: [[isStable5]]:{{*}}= TypeTest [[element5]] testedType=L0
+# CHECK-NEXT: Branch [[isStable5]] -> taken [[stableBlock5]](| 0), notTaken
+# CHECK: [[stableBlock5]]([[stable5]]: L0):
+# CHECK: : number = GetSlot [[stable5]], {{*}} key="x" receivers=[L0] level=Expected
+}

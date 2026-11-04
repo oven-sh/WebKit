@@ -1,5 +1,9 @@
 set_property(DIRECTORY . PROPERTY FOLDER "WebKitLegacy")
 
+list(APPEND WebKitLegacy_UNIFIED_SOURCE_LIST_FILES
+    "Sources.txt"
+)
+
 set(WebKitLegacy_SOURCES
     Storage/InProcessIDBServer.cpp
     Storage/StorageAreaImpl.cpp
@@ -11,9 +15,6 @@ set(WebKitLegacy_SOURCES
     Storage/WebDatabaseProvider.cpp
     Storage/WebStorageNamespaceProvider.cpp
 
-    WebCoreSupport/NetworkStorageSessionMap.cpp
-    WebCoreSupport/WebBroadcastChannelRegistry.cpp
-    WebCoreSupport/WebResourceLoadScheduler.cpp
     WebCoreSupport/WebViewGroup.mm
 )
 

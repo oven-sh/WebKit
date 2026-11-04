@@ -43,34 +43,25 @@ BasicBlockLocation::BasicBlockLocation(int startOffset, int endOffset)
 {
 }
 
-void BasicBlockLocation::insertGap(int startOffset, int endOffset)
+void BasicBlockLocation::insertGaps(const Vector<Gap>& gaps)
 {
-    std::pair<int, int> gap(startOffset, endOffset);
-    if (!m_gaps.contains(gap))
-        m_gaps.append(gap);
+    m_gaps.appendVector(gaps);
+    std::ranges::sort(m_gaps);
+    m_gaps.shrink(std::ranges::unique(m_gaps).begin() - m_gaps.begin());
 }
 
 Vector<std::pair<int, int>> BasicBlockLocation::getExecutedRanges() const
 {
     Vector<Gap> result;
-    Vector<Gap> gaps = m_gaps;
     int nextRangeStart = m_startOffset;
-    while (gaps.size()) {
-        Gap minGap(INT_MAX, 0);
-        unsigned minIdx = std::numeric_limits<unsigned>::max();
-        for (unsigned idx = 0; idx < gaps.size(); idx++) {
-            // Because we know that the Gaps inside m_gaps aren't enclosed within one another, it suffices to just check the first element to test ordering.
-            if (gaps[idx].first < minGap.first) {
-                minGap = gaps[idx];
-                minIdx = idx;
-            }
-        }
-        result.append(Gap(nextRangeStart, minGap.first - 1));
-        nextRangeStart = minGap.second + 1;
-        gaps.removeAt(minIdx);
+    for (Gap gap : m_gaps) {
+        if (nextRangeStart < gap.first)
+            result.append(Gap(nextRangeStart, gap.first - 1));
+        nextRangeStart = gap.second + 1;
     }
 
-    result.append(Gap(nextRangeStart, m_endOffset));
+    if (nextRangeStart <= m_endOffset)
+        result.append(Gap(nextRangeStart, m_endOffset));
     return result;
 }
 

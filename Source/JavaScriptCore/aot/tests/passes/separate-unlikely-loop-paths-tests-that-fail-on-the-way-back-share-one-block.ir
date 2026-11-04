@@ -1,0 +1,44 @@
+# Two labels go around a loop that joins them in every turn. Where the copy comes back both are tested, and either test that fails goes on through one block, which hands the carried values to the copy once
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="twoLabels" parameters=[{type=anything}, {type=boolean}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: i32):
+    v3 = Integer integer=0
+    v4 = String string=""
+    v5 = String string=""
+    Jump -> next b1(v3, v4, v5)
+  b1(v6, v7, v8):
+    LoopHint
+    v10 = Add v7, v8
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v11 = String string="its own"
+    v12 = String string="another"
+    Jump -> next b4(v11, v12)
+  b3() frequency=Unlikely:
+    v13 = Call v0, -
+    v14 = Call v0, -
+    Jump -> next b4(v13, v14)
+  b4(v15, v16):
+    v17 = Increment v6
+    v18 = Less v17, v2
+    Branch v18 -> taken b1(v17, v15, v16), notTaken b5()
+  b5():
+    Return v10
+# CHECK: Jump -> next b1(
+# CHECK-NEXT: [[tests]]([[counter]]: int|whole, [[first]]: anything{{*}}, [[second]]: anything{{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[test]]: {{*}} = TypeTest [[first]] testedType=string
+# CHECK-NEXT: Branch [[test]] -> taken {{*}}(| 0), notTaken [[firstFailed]](| 0)
+# CHECK-NEXT: [[failed]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy]]([[counter]], [[first]], [[second]])
+# CHECK: = TypeTest [[second]] testedType=string
+# CHECK: [[firstFailed]]({{*}}) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[failed]]()
+# CHECK: Jump -> next [[failed]]()
+# CHECK-NOT: Jump -> next [[copy]](
+}

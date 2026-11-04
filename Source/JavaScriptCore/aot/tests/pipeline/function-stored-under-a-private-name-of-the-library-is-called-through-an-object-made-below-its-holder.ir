@@ -1,0 +1,33 @@
+# const holder = { plain: 1 }; holder.$call = function (x) { return x + 1 }  const k = same(Object.create(holder))  print(k.$call(1))
+# Nothing outside the library can write the name, so the function does not leave with the object below its holder. The read through what the shell hands back finds it on the holder, which stands above another object.
+# OPTIONS: check=VerifyEachPass,FlowFixpoint
+# RUN: run-in-shell globalThis.same = value => value;
+# CHECK: 2
+# CHECK-NEXT: exited with 0
+
+layout L0 name="Made" fields=[{key="plain" declared={type=number}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    PropSet v1, v2 key=@#"call" mode=Strict
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="same" [isFreeName]
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectCreate
+    v8 = Call v7, v6, v1 calleeName="Object.create"
+    v9 = Call v5, -, v8 calleeName="same"
+    v10 = PropGet v9 key=@#"call"
+    v11 = Integer integer=1
+    v12 = Call v10, v9, v11 calleeKey=@#"call" calleeName="call"
+    v13 = PropGet v4 key="print" [isFreeName]
+    v14 = Call v13, -, v12 calleeName="print"
+    Return
+}
+function f1 name="call" module=m0 position=20 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}

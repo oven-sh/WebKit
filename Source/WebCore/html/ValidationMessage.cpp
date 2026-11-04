@@ -173,7 +173,7 @@ void ValidationMessage::adjustBubblePosition()
         return;
     if (!m_element->renderer())
         return;
-    LayoutRect hostRect = m_element->renderer()->absoluteBoundingBoxRect();
+    LayoutRect hostRect = protect(m_element->renderer())->absoluteBoundingBoxRect();
     if (hostRect.isEmpty())
         return;
     double hostX = hostRect.x();
@@ -186,13 +186,13 @@ void ValidationMessage::adjustBubblePosition()
         }
     }
 
-    protect(m_bubble)->setInlineStyleProperty(CSSPropertyTop, hostY + hostRect.height(), CSSUnitType::Px);
+    protect(m_bubble)->setInlineStyleProperty(CSSPropertyID::Top, hostY + hostRect.height(), CSSUnitType::Px);
     // The 'left' value of ::-webkit-validation-bubble-arrow.
     const int bubbleArrowTopOffset = 32;
     double bubbleX = hostX;
     if (hostRect.width() / 2 < bubbleArrowTopOffset)
         bubbleX = std::max(hostX + hostRect.width() / 2 - bubbleArrowTopOffset, 0.0);
-    protect(m_bubble)->setInlineStyleProperty(CSSPropertyLeft, bubbleX, CSSUnitType::Px);
+    protect(m_bubble)->setInlineStyleProperty(CSSPropertyID::Left, bubbleX, CSSUnitType::Px);
 }
 
 void ValidationMessage::buildBubbleTree()
@@ -213,7 +213,7 @@ void ValidationMessage::buildBubbleTree()
     protect(m_bubble)->setUserAgentPart(UserAgentParts::webkitValidationBubble());
     // Need to force position:absolute because RenderMenuList doesn't assume it
     // contains non-absolute or non-fixed renderers as children.
-    protect(m_bubble)->setInlineStyleProperty(CSSPropertyPosition, CSSValueAbsolute);
+    protect(m_bubble)->setInlineStyleProperty(CSSPropertyID::Position, CSSValueID::Absolute);
 
     Ref clipper = HTMLDivElement::create(document.get());
     protect(m_bubble)->appendChild(clipper);

@@ -47,7 +47,7 @@
 #import <wtf/SafeStrerror.h>
 #import <wtf/StdLibExtras.h>
 #import <wtf/WeakObjCPtr.h>
-#import <wtf/spi/darwin/DataVaultSPI.h>
+#import <wtf/darwin/DarwinExtras.h>
 #import <wtf/text/MakeString.h>
 
 #if JSC_OBJC_API_ENABLED
@@ -101,7 +101,7 @@ static bool validateBytecodeCachePath(NSURL* cachePath, NSError** error)
     }
 
 #if USE(APPLE_INTERNAL_SDK)
-    if (rootless_check_datavault_flag(FileSystem::fileSystemRepresentation(directory).legacyCStringPointer(), nullptr)) {
+    if (rootlessCheckDatavaultFlag(FileSystem::fileSystemRepresentation(directory), nullptr)) {
         createError([NSString stringWithFormat:@"Cache directory `%@` is not a data vault", directory.createNSString().get()], error);
         return false;
     }

@@ -4341,22 +4341,22 @@ void Context::initCaps()
     {
         INFO() << "Limiting compressed format support.\n";
 
-        mSupportedExtensions.compressedETC1RGB8SubTextureEXT                 = false;
-        mSupportedExtensions.compressedETC1RGB8TextureOES                    = false;
-        mSupportedExtensions.compressedTextureEtcANGLE                       = false;
-        mSupportedExtensions.textureCompressionPvrtcIMG                      = false;
-        mSupportedExtensions.pvrtcSRGBEXT                                    = false;
-        mSupportedExtensions.copyCompressedTextureCHROMIUM                   = false;
-        mSupportedExtensions.textureCompressionAstcHdrKHR                    = false;
-        mSupportedExtensions.textureCompressionAstcLdrKHR                    = false;
-        mSupportedExtensions.textureCompressionAstcOES                       = false;
-        mSupportedExtensions.textureCompressionBptcEXT                       = false;
-        mSupportedExtensions.textureCompressionDxt1EXT                       = false;
-        mSupportedExtensions.textureCompressionDxt3ANGLE                     = false;
-        mSupportedExtensions.textureCompressionDxt5ANGLE                     = false;
-        mSupportedExtensions.textureCompressionRgtcEXT                       = false;
-        mSupportedExtensions.textureCompressionS3tcSrgbEXT                   = false;
-        mSupportedExtensions.textureCompressionAstcSliced3dKHR               = false;
+        mSupportedExtensions.compressedETC1RGB8SubTextureEXT   = false;
+        mSupportedExtensions.compressedETC1RGB8TextureOES      = false;
+        mSupportedExtensions.compressedTextureEtcANGLE         = false;
+        mSupportedExtensions.textureCompressionPvrtcIMG        = false;
+        mSupportedExtensions.pvrtcSRGBEXT                      = false;
+        mSupportedExtensions.copyCompressedTextureCHROMIUM     = false;
+        mSupportedExtensions.textureCompressionAstcHdrKHR      = false;
+        mSupportedExtensions.textureCompressionAstcLdrKHR      = false;
+        mSupportedExtensions.textureCompressionAstcOES         = false;
+        mSupportedExtensions.textureCompressionBptcEXT         = false;
+        mSupportedExtensions.textureCompressionDxt1EXT         = false;
+        mSupportedExtensions.textureCompressionDxt3ANGLE       = false;
+        mSupportedExtensions.textureCompressionDxt5ANGLE       = false;
+        mSupportedExtensions.textureCompressionRgtcEXT         = false;
+        mSupportedExtensions.textureCompressionS3tcSrgbEXT     = false;
+        mSupportedExtensions.textureCompressionAstcSliced3dKHR = false;
 
         caps->compressedTextureFormats.clear();
     }
@@ -9073,6 +9073,11 @@ void Context::getSemaphoreParameterui64v(SemaphoreID semaphore, GLenum pname, GL
     UNIMPLEMENTED();
 }
 
+void Context::trimMemory(MemoryTrimLevel trimLevel)
+{
+    mImplementation->trimMemory(this, trimLevel);
+}
+
 void Context::acquireTextures(GLuint numTextures,
                               const TextureID *textureIds,
                               const GLenum *layouts)
@@ -9700,17 +9705,23 @@ egl::Error Context::setDefaultFramebuffer(egl::Surface *drawSurface, egl::Surfac
     mCurrentDrawSurface = drawSurface;
     mCurrentReadSurface = readSurface;
 
+    egl::Error result = egl::NoError();
     if (drawSurface != nullptr)
     {
-        ANGLE_TRY(drawSurface->makeCurrent(this));
+        result = drawSurface->makeCurrent(this);
     }
-
-    ANGLE_TRY(mDefaultFramebuffer->setSurfaces(this, drawSurface, readSurface));
-
-    if (readSurface && (drawSurface != readSurface))
+    if (drawSurface != readSurface)
     {
-        ANGLE_TRY(readSurface->makeCurrent(this));
+        ASSERT(readSurface != nullptr);
+        egl::Error readResult = readSurface->makeCurrent(this);
+        if (!result.isError())
+        {
+            result = readResult;
+        }
     }
+    ANGLE_TRY(result);
+
+    mDefaultFramebuffer->setSurfaces(this, drawSurface, readSurface);
 
     // Update default framebuffer, the binding of the previous default
     // framebuffer (or lack of) will have a nullptr.
@@ -9747,7 +9758,7 @@ egl::Error Context::unsetDefaultFramebuffer()
             mDrawFramebufferObserverBinding.bind(nullptr);
         }
 
-        ANGLE_TRY(defaultFramebuffer->unsetSurfaces(this));
+        defaultFramebuffer->unsetSurfaces(this);
         mState.mFramebufferManager->setDefaultFramebuffer(nullptr);
     }
 
@@ -9762,6 +9773,7 @@ egl::Error Context::unsetDefaultFramebuffer()
     }
     if (drawSurface != readSurface)
     {
+        ASSERT(readSurface != nullptr);
         ANGLE_TRY(readSurface->unMakeCurrent(this));
     }
 

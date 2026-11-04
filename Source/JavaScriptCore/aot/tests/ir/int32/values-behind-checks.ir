@@ -1,0 +1,70 @@
+# A Check names the type that it tests for, so behind it the proof has the bounds of that type, whatever was known of the value in front of it
+# FORM: AsRead
+# RUN: int32-bounds
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Result
+function f0 name="halfOfCheckedValue" parameters=[{type=anything}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+    v1 = Builtin builtin=Math
+    v2 = Builtin builtin=MathFloor
+    v3 = Check v0 expectedType=i32
+    v4 = Integer integer=2
+    v5 = Div v3, v4
+    v6 = Call v2, v1, v5
+    v7 = Convert v6 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v7
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v7: integers [-1073741824, 1073741824]
+function f1 name="oneMoreThanHalf" parameters=[{type=anything}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+    v1 = Builtin builtin=Math
+    v2 = Builtin builtin=MathFloor
+    v3 = Check v0 expectedType=i32
+    v4 = Integer integer=2
+    v5 = Div v3, v4
+    v6 = Call v2, v1, v5
+    v7 = Integer integer=1
+    v8 = Add v6, v7
+    v9 = Convert v8 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v9
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v9: integers [-1073741823, 1073741825]
+function f2 name="halfOfCheckedNumber" parameters=[{type=anything}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+    v1 = Builtin builtin=Math
+    v2 = Builtin builtin=MathFloor
+    v3 = Check v0 expectedType=number
+    v4 = Integer integer=2
+    v5 = Div v3, v4
+    v6 = Call v2, v1, v5
+    v7 = Convert v6 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v7
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v7: unknown
+function f3 name="halfOfCheckedSmallInteger" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+    v1 = Builtin builtin=Math
+    v2 = Builtin builtin=MathFloor
+    v3 = Check v0 expectedType=int[0, 255]
+    v4 = Integer integer=2
+    v5 = Div v3, v4
+    v6 = Call v2, v1, v5
+    v7 = Convert v6 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v7
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v7: integers [0, 128]
+function f4 name="halfOfCheckedOptionalInteger" parameters=[{type=anything}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+    v1 = Builtin builtin=Math
+    v2 = Builtin builtin=MathFloor
+    v3 = Check v0 expectedType=undefined|i32
+    v4 = Integer integer=2
+    v5 = Div v3, v4
+    v6 = Call v2, v1, v5
+    v7 = Convert v6 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v7
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v7: unknown

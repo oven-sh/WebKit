@@ -1,0 +1,51 @@
+# function plain() {}  function other() {}  function first() {}  function second() {}
+# plain.prototype.method = first; replacement.method = second; plain.prototype = replacement; new plain().method.x; Reflect.construct(plain, [], other).method.x
+# The prototype property of a plain function can be stored to. What a construction makes lies below whatever the property of new.target holds: for `plain` the object it had from the start or the replacement,
+# for `other` its own prototype object, on which nothing was stored.
+# RUN: valueflow-why values=f0:v10 values=f0:v11 values=f0:v16 values=f0:v17
+# CHECK: values=f0:v10
+# CHECK: operand 0 {{*}} 1 members: constructed@f1
+# CHECK: values=f0:v11
+# CHECK: operand 0 {{*}} f3 f4
+# CHECK: values=f0:v16
+# CHECK: operand 0 {{*}} constructed@f2
+# CHECK: values=f0:v17
+# CHECK-NOT: f3
+# CHECK-NOT: f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Replacement"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = PropGet v0 key="prototype"
+    PropSet v4, v2 key="method"
+    v6 = NewObject layout=L0
+    PropSet v6, v3 key="method"
+    PropSet v0, v6 key="prototype"
+    v9 = Construct v0
+    v10 = PropGet v9 key="method"
+    v11 = PropGet v10 key="x"
+    v12 = Builtin builtin=Reflect
+    v13 = Builtin builtin=ReflectConstruct
+    v14 = NewArray
+    v15 = Call v13, v12, v0, v14, v1
+    v16 = PropGet v15 key="method"
+    v17 = PropGet v16 key="x"
+    Return
+}
+function f1 name="plain" module=m0 results=[{type=anything}] {
+    Return
+}
+function f2 name="other" module=m0 results=[{type=anything}] {
+    Return
+}
+function f3 name="first" module=m0 results=[{type=anything}] {
+    Return
+}
+function f4 name="second" module=m0 results=[{type=anything}] {
+    Return
+}

@@ -1,0 +1,19 @@
+# interface Identifier { kind: 80 }  and 130 other layouts with `kind`: 129 write the literal 245, one writes 80.
+# The limit on how many layouts may meet a type by its names (128) counts those that can pass for it: a layout that a literal field tells apart is none of them. So Identifier
+# admits the one layout with its own literal, though far more than 128 layouts have the name.
+# FORM: AsRead
+# RUN: members
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+layout L0 name="Identifier" fields=[{key="kind" declared={type=80} flags=[IsRequired]}]
+layout L1 name="Same" fields=[{key="kind" declared={type=80} flags=[IsRequired]}, {key="text" declared={type=string} flags=[IsRequired]}]
+# REPEAT: i = 2..130
+layout L%(i) name="Other%(i)" fields=[{key="kind" declared={type=245} flags=[IsRequired]}, {key="own%(i)" declared={type=number} flags=[IsRequired]}]
+# END REPEAT
+# CHECK: L0: members [L0, L1]
+# CHECK-NEXT: L1: members [L1]
+
+function f0 name="take" parameters=[{type=L0}] results=[{type=anything}] {
+    Return
+}

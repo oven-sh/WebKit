@@ -1,0 +1,65 @@
+# Named reads the members it lists, which runs a getter and nothing else. What a read finds is called only under CallsNamed, and converted only where the operand also runs ToPrimitive and its members are not merely inspected
+# FORM: Prepared
+# RUN(READ): members-run-by Named:length f0
+# RUN(CALLED): members-run-by CallsNamed:length f0
+# RUN(CONVERTED): members-run-by Named:length+ToPrimitive f0
+# RUN(INSPECTED): members-run-by Named:length+ToPrimitive only-inspected f0
+# RUN(EACH): members-run-by Named:length+CallsNamed:valueOf f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Counted" fields=[{key="length" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L1 name="CountedByObject" fields=[{key="length" declared={type=L2} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L2 kind=Instance name="Amount" constructor=f1 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="valueOf" function=f4 mutability=Fixed}]}
+layout L3 name="HoldsFunction" fields=[{key="length" declared={type=function} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L4 kind=Instance name="Measured" constructor=f2 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="length" function=f5 mutability=Fixed}]}
+layout L5 kind=Instance name="Lazy" constructor=f3 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="length" kind=Getter function=f6 mutability=Fixed}]}
+function f0 name="operands" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}, {type=L4}, {type=L5}] results=[{type=undefined}] {
+    Return
+}
+function f1 name="Amount" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f2 name="Measured" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f3 name="Lazy" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f4 name="valueOf" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f5 name="length" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f6 name="length" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+
+# READ: v0: none
+# READ-NEXT: v1: none
+# READ-NEXT: v2: none
+# READ-NEXT: v3: none
+# READ-NEXT: v4: none
+# READ-NEXT: v5: f6
+# READ-NOT: ?
+
+# CALLED: v0: none
+# CALLED-NEXT: v1: none
+# CALLED-NEXT: v2: none
+# CALLED-NEXT: v3: ?
+# CALLED-NEXT: v4: f5
+# CALLED-NOT: ?
+# CALLED: v5: f6, ?
+
+# CONVERTED: v0: ObjectPrototypeToString, ObjectPrototypeValueOf
+# CONVERTED-NOT: ?
+# CONVERTED: v1: ObjectPrototypeToString, ObjectPrototypeValueOf, ?
+# CONVERTED-NEXT: v2: f4, ObjectPrototypeToString
+# CONVERTED-NOT: ?
+# CONVERTED: v3: ObjectPrototypeToString, ObjectPrototypeValueOf, ?
+# CONVERTED-NEXT: v4: ObjectPrototypeToString, ObjectPrototypeValueOf, ?
+# CONVERTED-NEXT: v5: f6, ObjectPrototypeToString, ObjectPrototypeValueOf, ?
+
+# INSPECTED: v0: ObjectPrototypeToString, ObjectPrototypeValueOf
+# INSPECTED-NEXT: v1: ObjectPrototypeToString, ObjectPrototypeValueOf
+# INSPECTED-NEXT: v2: f4, ObjectPrototypeToString
+# INSPECTED-NEXT: v3: ObjectPrototypeToString, ObjectPrototypeValueOf
+# INSPECTED-NEXT: v4: ObjectPrototypeToString, ObjectPrototypeValueOf
+# INSPECTED-NEXT: v5: f6, ObjectPrototypeToString, ObjectPrototypeValueOf
+# INSPECTED-NOT: ?
+
+# EACH: v0: ObjectPrototypeValueOf
+# EACH-NEXT: v1: ObjectPrototypeValueOf
+# EACH-NEXT: v2: f4
+# EACH-NEXT: v3: ObjectPrototypeValueOf
+# EACH-NEXT: v4: ObjectPrototypeValueOf
+# EACH-NEXT: v5: f6, ObjectPrototypeValueOf
+# EACH-NOT: ?

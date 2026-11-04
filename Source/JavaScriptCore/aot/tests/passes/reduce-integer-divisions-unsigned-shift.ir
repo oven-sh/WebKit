@@ -1,0 +1,64 @@
+# An unsigned shift converts both operands to 32 bits, so a quotient of two integers on either side is an integer division
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ReduceIntegerDivisions
+# STATISTIC: IntegerDivisionsReduced = 5
+# STATISTIC: ReduceIntegerDivisionsChanges = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="shiftedQuotient" parameters=[{type=i32}, {type=int[1, 8]}] results=[{type=int[0, 4294967295]}] {
+    v2 = Div v0, v1
+    v3 = Integer integer=0
+    v4 = URShift v2, v3
+    Return v4
+# CHECK: v2: number = Div v0, v1
+# CHECK: [[q0]]: i32 = DivideIntegers v0, v1 rounding=ToInt32
+# CHECK-NEXT: v4: int[0, 4294967295] = URShift [[q0]], v3
+}
+
+function f1 name="divisorMayBeZero" parameters=[{type=i32}, {type=i32}] results=[{type=int[0, 4294967295]}] {
+    v2 = Div v0, v1
+    v3 = Integer integer=0
+    v4 = URShift v2, v3
+    Return v4
+# CHECK: [[q1]]: i32 = DivideIntegers v0, v1 rounding=ToInt32
+# CHECK-NEXT: v4: int[0, 4294967295] = URShift [[q1]], v3
+}
+
+function f2 name="shiftTakesRangeOfQuotient" parameters=[{type=int[0, 100]}, {type=int[1, 8]}] results=[{type=int[0, 4294967295]}] {
+    v2 = Div v0, v1
+    v3 = Integer integer=0
+    v4 = URShift v2, v3
+    Return v4
+# CHECK: [[q2]]: int[0, 100] = DivideIntegers v0, v1 rounding=ToInt32
+# CHECK-NEXT: v4: int[0, 100] = URShift [[q2]], v3
+}
+
+function f3 name="quotientOnBothSides" parameters=[{type=i32}, {type=int[1, 8]}, {type=i32}] results=[{type=int[0, 4294967295]}] {
+    v3 = Div v0, v1
+    v4 = Div v2, v1
+    v5 = URShift v3, v4
+    Return v5
+# CHECK: [[left]]: i32 = DivideIntegers v0, v1 rounding=ToInt32
+# CHECK-NEXT: [[right]]: i32 = DivideIntegers v2, v1 rounding=ToInt32
+# CHECK-NEXT: v5: int[0, 4294967295] = URShift [[left]], [[right]]
+}
+
+function f4 name="dividendIsNumber" parameters=[{type=number}, {type=int[1, 8]}] results=[{type=int[0, 4294967295]}] {
+    v2 = Div v0, v1
+    v3 = Integer integer=0
+    v4 = URShift v2, v3
+    Return v4
+# CHECK-NOT: DivideIntegers
+# CHECK: = URShift v2, v3
+}
+
+function f5 name="dividendAboveMaxExactInteger" parameters=[{type=int[0, 9007199254740993]}, {type=int[1, 8]}] results=[{type=int[0, 4294967295]}] {
+    v2 = Div v0, v1
+    v3 = Integer integer=0
+    v4 = URShift v2, v3
+    Return v4
+# CHECK-NOT: DivideIntegers
+# CHECK: = URShift v2, v3
+}

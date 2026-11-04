@@ -48,7 +48,7 @@ public:
     constexpr AddressType(AddressType::Kind addressType)
         : m_type(addressType)
     { }
-#if !PLATFORM(PLAYSTATION) && ENABLE(JIT)
+#if !PLATFORM(PLAYSTATION) && ENABLE(CODE_GENERATION)
     AddressType(B3::Type);
 #endif
     explicit constexpr AddressType(bool is64Bit)
@@ -56,11 +56,11 @@ public:
     { }
 
     AddressType::Kind type() const { return m_type; }
-    TypeKind NODELETE asWasmTypeKind() const;
+    TypeKind LEGACY_NODELETE asWasmTypeKind() const;
     Wasm::Type asWasmType() const;
-    B3::TypeKind NODELETE asB3TypeKind() const;
+    B3::TypeKind LEGACY_NODELETE asB3TypeKind() const;
 
-    friend bool NODELETE operator==(const AddressType& lhs, const AddressType& rhs);
+    friend bool LEGACY_NODELETE operator==(const AddressType& lhs, const AddressType& rhs);
     friend bool operator!=(const AddressType& lhs, const AddressType& rhs);
     constexpr bool is64Bit() const { return m_type == AddressType::I64; }
 

@@ -172,7 +172,9 @@ void RTCRtpSender::setParameters(RTCRtpSendParameters&& parameters, DOMPromiseDe
         }
     } else {
         for (auto& encoding : parameters.encodings) {
-            if (encoding.scaleResolutionDownBy && encoding.scaleResolutionDownBy < 1) {
+            if (!encoding.scaleResolutionDownBy)
+                encoding.scaleResolutionDownBy = 1;
+            else if (encoding.scaleResolutionDownBy < 1) {
                 promise.reject(Exception { ExceptionCode::RangeError });
                 return;
             }
@@ -223,7 +225,7 @@ std::optional<RTCRtpCapabilities> RTCRtpSender::getCapabilities(ScriptExecutionC
 RTCDTMFSender* RTCRtpSender::dtmf()
 {
     if (!m_dtmfSender && m_connection && m_connection->scriptExecutionContext() && m_trackKind == "audio"_s)
-        m_dtmfSender = RTCDTMFSender::create(*protect(m_connection->scriptExecutionContext()), *this, m_backend->createDTMFBackend());
+        lazyInitialize(m_dtmfSender, RTCDTMFSender::create(*protect(m_connection->scriptExecutionContext()), *this, m_backend->createDTMFBackend()));
 
     return m_dtmfSender.get();
 }

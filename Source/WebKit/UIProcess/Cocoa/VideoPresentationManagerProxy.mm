@@ -31,7 +31,6 @@
 #import "APIPageConfiguration.h"
 #import "APIUIClient.h"
 #import "DrawingAreaProxy.h"
-#import "FrameInfoData.h"
 #import "GPUProcessProxy.h"
 #import "LayerHostingVisibilityPropagator.h"
 #import "Logging.h"
@@ -45,7 +44,6 @@
 #import "VideoPresentationManagerMessages.h"
 #import "VideoPresentationManagerProxyMessages.h"
 #import "WKVideoView.h"
-#import "WebFrameProxy.h"
 #import "WebFullScreenManagerProxy.h"
 #import "WebPageProxy.h"
 #import "WebProcessPool.h"
@@ -64,6 +62,7 @@
 #import <WebCore/WebAVPlayerLayer.h>
 #import <WebCore/WebAVPlayerLayerView.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
+#import <wtf/Borrow.h>
 #import <wtf/LoggerHelper.h>
 #import <wtf/MachSendRightAnnotated.h>
 #import <wtf/WeakObjCPtr.h>
@@ -592,17 +591,17 @@ void VideoPresentationModelContext::requestHideCaptionDisplaySettingsPreview()
 #if !RELEASE_LOG_DISABLED
 uint64_t VideoPresentationModelContext::logIdentifier() const
 {
-    return protect(m_playbackSessionModel)->logIdentifier();
+    return m_playbackSessionModel->logIdentifier();
 }
 
 uint64_t VideoPresentationModelContext::nextChildIdentifier() const
 {
-    return LoggerHelper::childLogIdentifier(protect(m_playbackSessionModel)->logIdentifier(), ++m_childIdentifierSeed);
+    return LoggerHelper::childLogIdentifier(m_playbackSessionModel->logIdentifier(), ++m_childIdentifierSeed);
 }
 
 const Logger* VideoPresentationModelContext::loggerPtr() const
 {
-    return protect(m_playbackSessionModel)->loggerPtr();
+    return m_playbackSessionModel->loggerPtr();
 }
 
 WTFLogChannel& VideoPresentationModelContext::logChannel() const
@@ -854,7 +853,7 @@ void VideoPresentationManagerProxy::removeClientForContext(PlaybackSessionContex
     m_clientCounts.set(contextId, clientCount);
 }
 
-void VideoPresentationManagerProxy::forEachSession(Function<void(VideoPresentationModelContext&, PlatformVideoPresentationInterface&)>&& callback)
+void VideoPresentationManagerProxy::forEachSession(NOESCAPE const Function<void(VideoPresentationModelContext&, PlatformVideoPresentationInterface&)>& callback)
 {
     if (m_contextMap.isEmpty())
         return;
@@ -1104,6 +1103,8 @@ void VideoPresentationManagerProxy::setupFullscreenWithID(IPC::Connection& conne
     RefPtr page = m_page.get();
     if (!page)
         return;
+
+    m_lastSetupFullscreenRectForTesting = screenRect;
 
     auto contextId = contextIdForConnection(connection, identifier);
     auto [model, interface] = ensureModelAndInterface(contextId);
@@ -1423,40 +1424,26 @@ void VideoPresentationManagerProxy::setTextTrackRepresentationBounds(PlaybackSes
 
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)
 
-void VideoPresentationManagerProxy::performCaptionDisplaySettingsAction(PlaybackSessionContextIdentifier contextId, Function<void(WebPageProxy&, const FrameInfoData&, WebCore::HTMLMediaElementIdentifier)>&& action)
-{
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
-    RefPtr mainFrame = page->mainFrame();
-    if (!mainFrame)
-        return;
-
-    WebCore::HTMLMediaElementIdentifier htmlMediaElementIdentifier { contextId.object() };
-
-    mainFrame->getFrameInfo([protectedPage = protect(page), action = WTF::move(action), htmlMediaElementIdentifier](std::optional<FrameInfoData>&& frameInfo) {
-        if (!frameInfo || !protectedPage)
-            return;
-
-        action(*protectedPage, *frameInfo, htmlMediaElementIdentifier);
-    });
-}
-
 void VideoPresentationManagerProxy::requestShowCaptionDisplaySettingsPreview(PlaybackSessionContextIdentifier contextId, const String& profileID)
 {
-    performCaptionDisplaySettingsAction(contextId, [profileID](WebPageProxy& page, const FrameInfoData& frameInfo, WebCore::HTMLMediaElementIdentifier htmlMediaElementIdentifier) {
-        page.setCaptionDisplaySettingsPreviewProfileID(frameInfo, profileID);
-        page.showCaptionDisplaySettingsPreview(frameInfo, htmlMediaElementIdentifier);
-    });
+    RefPtr page = m_page.get();
+    RefPtr process = WebProcessProxy::processForIdentifier(contextId.processIdentifier());
+    if (!page || !process)
+        return;
+
+    page->setCaptionDisplaySettingsPreviewProfileID(*process, profileID);
+    page->showCaptionDisplaySettingsPreview(*process, contextId.object());
 }
 
 void VideoPresentationManagerProxy::requestHideCaptionDisplaySettingsPreview(PlaybackSessionContextIdentifier contextId)
 {
-    performCaptionDisplaySettingsAction(contextId, [](WebPageProxy& page, const FrameInfoData& frameInfo, WebCore::HTMLMediaElementIdentifier htmlMediaElementIdentifier) {
-        page.setCaptionDisplaySettingsPreviewProfileID(frameInfo, emptyString());
-        page.hideCaptionDisplaySettingsPreview(frameInfo, htmlMediaElementIdentifier);
-    });
+    RefPtr page = m_page;
+    RefPtr process = WebProcessProxy::processForIdentifier(contextId.processIdentifier());
+    if (!page || !process)
+        return;
+
+    page->setCaptionDisplaySettingsPreviewProfileID(*process, emptyString());
+    page->hideCaptionDisplaySettingsPreview(*process, contextId.object());
 }
 #endif
 
@@ -1485,7 +1472,7 @@ void VideoPresentationManagerProxy::textTrackRepresentationSetHidden(IPC::Connec
 void VideoPresentationManagerProxy::callCloseCompletionHandlers()
 {
     auto closeMediaCallbacks = WTF::move(m_closeCompletionHandlers);
-    for (auto& callback : closeMediaCallbacks)
+    for (auto& callback : borrow(closeMediaCallbacks))
         callback();
 }
 

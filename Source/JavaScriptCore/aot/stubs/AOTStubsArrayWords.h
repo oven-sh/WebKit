@@ -1,0 +1,40 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTThreshold.h"
+#include <cstdint>
+#include <type_traits>
+
+namespace JSC { namespace AOT {
+
+struct ArrayWords {
+    // An array with storage for any value that is asked for the storage of numbers is looked through, in vain where it holds anything else. A realm that has looked in vain at so many elements looks no more.
+    AOT_CLASS_THRESHOLD(uint32_t, maxElementsLookedAtInVain, 4096);
+    // New storage pays for itself in an array that is read again and again, or once from end to end if it is long.
+    AOT_CLASS_THRESHOLD(uint32_t, minLengthThatPaysAtOnce, 32);
+    AOT_CLASS_THRESHOLD(uint32_t, maxShortYoungArraysConverted, 16);
+    static constexpr uint32_t numberOfCounts = 64;
+    static constexpr uint32_t numberOfStructuresWithoutNames = 4;
+
+    uint64_t distanceFromProfileToLastArray;
+    const void* lastArrayLookedAtInVain;
+    uint32_t elementsLookedAtInVain;
+    uint32_t placeThatConverts;
+    uint8_t shortYoungArraysConverted[numberOfCounts];
+    // A for-in loop over an array with such a Structure finds no named property on the array or its prototype chain, as long as the chain's objects keep their Structures.
+    const void* chainsAboveListsWithoutNames[numberOfStructuresWithoutNames];
+    uint32_t structuresOfListsWithoutNames[numberOfStructuresWithoutNames];
+};
+
+static_assert(sizeof(ArrayWords) == 24 + ArrayWords::numberOfCounts + 12 * ArrayWords::numberOfStructuresWithoutNames);
+static_assert(std::is_trivially_default_constructible_v<ArrayWords> && std::is_standard_layout_v<ArrayWords>);
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

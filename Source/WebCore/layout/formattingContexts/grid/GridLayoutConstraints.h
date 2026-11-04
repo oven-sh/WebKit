@@ -35,5 +35,13 @@ struct GridLayoutConstraints {
     AxisConstraint blockAxis;
 };
 
+// https://drafts.csswg.org/css-grid-1/#auto-repeat
+// The grid container sizes in one axis that the number of auto-repeat repetitions is resolved against.
+struct AutoRepeatConstraint {
+    std::optional<LayoutUnit> preferredSize;
+    std::optional<LayoutUnit> minimumSize;
+    std::optional<LayoutUnit> maximumSize;
+};
+
 } // namespace Layout
 } // namespace WebCore

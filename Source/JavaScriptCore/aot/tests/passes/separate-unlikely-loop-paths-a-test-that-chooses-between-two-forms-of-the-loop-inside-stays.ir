@@ -1,0 +1,50 @@
+# `for (let n = first; n > 0; n = next(sum)) for (let i = 0; i < n; i++) sum ^= i`: the loop inside stands there twice, for an int32 and, rare, for any other number, behind one test of `n`.
+# The loop around them stays as it is. Its copy would hold both forms again, and the test would stand where the loop is entered and where the next `n` is made in place of once
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sumOfRuns" parameters=[{type=number}, {type=anything}] results=[{type=i32}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v0, v2)
+  b1(v3: number, v4: i32):
+    LoopHint
+    v6 = Greater v3, v2
+    Branch v6 -> taken b2(), notTaken b12()
+  b2():
+    v7 = TypeTest v3 testedType=i32
+    Branch v7 -> taken b3(| 0), notTaken b7()
+  b3(v8):
+    Jump -> next b4(v2, v4)
+  b4(v9, v10):
+    LoopHint
+    v12 = Less v9, v8
+    Branch v12 -> taken b5(), notTaken b6()
+  b5():
+    v13 = BitXor v10, v9
+    v14 = Increment v9
+    Jump -> next b4(v14, v13)
+  b6():
+    Jump -> next b11(v10)
+  b7() frequency=Rare:
+    Jump -> next b8(v2, v4)
+  b8(v15, v16) frequency=Rare:
+    LoopHint
+    v18 = Less v15, v3
+    Branch v18 -> taken b9(), notTaken b10()
+  b9() frequency=Rare:
+    v19 = BitXor v16, v15
+    v20 = Increment v15
+    Jump -> next b8(v20, v19)
+  b10() frequency=Rare:
+    Jump -> next b11(v16)
+  b11(v21):
+    v22 = Call v1, -, v21
+    v23 = ToNumber v22
+    Jump -> next b1(v23, v21)
+  b12():
+    Return v4
+}

@@ -1,0 +1,141 @@
+# An access to a typed array gets one test, that the view has a fixed length and the position lies inside it, and is a bare load or store behind it: a read has the type of the elements without undefined. A test of the position is no test of a type, so an access to a proven view stays proven. The test is placed on the access by key and on the operation that ResolveAccesses has made of it alike. A view without inline accesses and a read whose result is asked for absence stay as they are
+# FORM: Prepared optimizing
+# RUN: pass ResolveAccesses PlaceTypeTests
+# RUN(DIRECT): pass PlaceTypeTests
+# RUN(PLAN): test-placement
+# STATISTIC: ElementPresenceTestsPlaced = 5
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="read" parameters=[{type=Uint8Array}, {type=number}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# PLAN-LABEL: function f0
+# PLAN-NEXT: stretch 0: test IsInsideView v0, v1 typedArrayType=2 before v2; uses v2; cloned
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f0 name="read"
+# CHECK: [[isInside0]]: boolean = IsInsideView v0, v1 typedArrayType=2
+# CHECK-NEXT: Branch [[isInside0]] -> taken [[insideBlock0]](| 0), notTaken
+# CHECK: [[insideBlock0]]([[inside0]]: guard):
+# CHECK: v2: int[0, 255] = GetTypedArrayElement v0, v1, [[inside0]] typedArrayType=2 level=Proven [isInsideView]
+# CHECK-NEXT: Return v2
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: [[generic0]]: undefined|int[0, 255] = GetTypedArrayElement v0, v1 typedArrayType=2 level=Proven
+# CHECK-NEXT: Return [[generic0]]
+# DIRECT-LABEL: function f0 name="read"
+# DIRECT: [[isInside0]]: boolean = IsInsideView v0, v1 typedArrayType=2
+# DIRECT-NEXT: Branch [[isInside0]] -> taken [[insideBlock0]](| 0), notTaken
+# DIRECT: [[insideBlock0]]([[inside0]]: guard):
+# DIRECT: v2: int[0, 255] = GetTypedArrayElement v0, v1, [[inside0]] typedArrayType=2 level=Proven [isInsideView]
+# DIRECT-NEXT: Return v2
+# DIRECT: frequency=Unlikely:
+# DIRECT-NEXT: [[generic0]]: undefined|int[0, 255] = ElemGet v0, v1
+# DIRECT-NEXT: Return [[generic0]]
+
+function f1 name="readAtInteger" parameters=[{type=Uint8Array}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# PLAN-LABEL: function f1
+# PLAN-NEXT: stretch 0: test IsInsideView v0, v1 typedArrayType=2 before v2; uses v2; cloned
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f1 name="readAtInteger"
+# CHECK: = IsInsideView v0, v1 typedArrayType=2 [keyIsIntegral]
+# CHECK: v2: int[0, 255] = GetTypedArrayElement v0, v1, {{*}} typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+# DIRECT-LABEL: function f1 name="readAtInteger"
+# DIRECT: = IsInsideView v0, v1 typedArrayType=2 [keyIsIntegral]
+# DIRECT: v2: int[0, 255] = GetTypedArrayElement v0, v1, {{*}} typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+
+# A store outside a typed array does nothing, and no program relies on that
+function f2 name="store" parameters=[{type=Uint8Array}, {type=number}, {type=number}] results=[{type=undefined}] {
+    ElemSet v0, v1, v2
+    Return
+}
+# PLAN-LABEL: function f2
+# PLAN-NEXT: stretch 0: test IsInsideView v0, v1 typedArrayType=2 before v3; uses v3; cloned
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f2 name="store"
+# CHECK: = IsInsideView v0, v1 typedArrayType=2
+# CHECK: PutTypedArrayElement v0, v1, v2, {{*}} typedArrayType=2 level=Proven [isInsideView]
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PutTypedArrayElement v0, v1, v2 typedArrayType=2 level=Proven
+# DIRECT-LABEL: function f2 name="store"
+# DIRECT: = IsInsideView v0, v1 typedArrayType=2
+# DIRECT: PutTypedArrayElement v0, v1, v2, {{*}} typedArrayType=2 level=Proven [isInsideView]
+# DIRECT: frequency=Unlikely:
+# DIRECT-NEXT: ElemSet v0, v1, v2
+
+function f3 name="floats" parameters=[{type=Float64Array}, {type=number}, {type=number}] results=[{type=anything}] {
+    ElemSet v0, v1, v2
+    v4 = ElemGet v0, v1
+    Return v4
+}
+# The store writes an element and leaves the length of the view as it is, so one test serves both.
+# PLAN-LABEL: function f3
+# PLAN-NEXT: stretch 0: test IsInsideView v0, v1 typedArrayType=10 before v3; uses v3 v4; cloned
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f3 name="floats"
+# CHECK: PutTypedArrayElement v0, v1, v2, [[inside3]] typedArrayType=10 level=Proven [isInsideView]
+# CHECK-NEXT: v4: number = GetTypedArrayElement v0, v1, [[inside3]] typedArrayType=10 level=Proven [isInsideView]
+# DIRECT-LABEL: function f3 name="floats"
+# DIRECT: PutTypedArrayElement v0, v1, v2, [[inside3]] typedArrayType=10 level=Proven [isInsideView]
+# DIRECT-NEXT: v4: number = GetTypedArrayElement v0, v1, [[inside3]] typedArrayType=10 level=Proven [isInsideView]
+
+function f4 name="halfFloats" parameters=[{type=Float16Array}, {type=number}, {type=number}] results=[{type=anything}] {
+    ElemSet v0, v1, v2
+    v4 = ElemGet v0, v1
+    Return v4
+}
+# PLAN-LABEL: function f4
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f4 name="halfFloats"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PutTypedArrayElement v0, v1, v2 typedArrayType=8 level=Proven
+# CHECK-NEXT: v4: undefined|number = GetTypedArrayElement v0, v1 typedArrayType=8 level=Proven
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# DIRECT-LABEL: function f4 name="halfFloats"
+# DIRECT-NEXT: b0(
+# DIRECT-NEXT: ElemSet v0, v1, v2
+# DIRECT-NEXT: = ElemGet v0, v1
+# DIRECT-NEXT: Return v4
+# DIRECT-NEXT: }
+
+function f5 name="bigIntegers" parameters=[{type=BigInt64Array}, {type=number}, {type=bigint}] results=[{type=anything}] {
+    ElemSet v0, v1, v2
+    v4 = ElemGet v0, v1
+    Return v4
+}
+# PLAN-LABEL: function f5
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f5 name="bigIntegers"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PutTypedArrayElement v0, v1, v2 typedArrayType=11 level=Proven
+# CHECK-NEXT: v4: undefined|bigint = GetTypedArrayElement v0, v1 typedArrayType=11 level=Proven
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# DIRECT-LABEL: function f5 name="bigIntegers"
+# DIRECT-NEXT: b0(
+# DIRECT-NEXT: ElemSet v0, v1, v2
+# DIRECT-NEXT: = ElemGet v0, v1
+# DIRECT-NEXT: Return v4
+# DIRECT-NEXT: }
+
+# b[k] === undefined
+function f6 name="comparedWithUndefined" parameters=[{type=Uint8Array}, {type=number}] results=[{type=boolean}] {
+    v2 = ElemGet v0, v1
+    v3 = Undefined
+    v4 = StrictEq v2, v3
+    Return v4
+}
+# PLAN-LABEL: function f6
+# PLAN-NOT: IsInsideView
+# CHECK-LABEL: function f6 name="comparedWithUndefined"
+# CHECK-NOT: IsInsideView
+# CHECK: v2: undefined|int[0, 255] = GetTypedArrayElement v0, v1 typedArrayType=2 level=Proven
+# CHECK-NOT: IsInsideView
+# DIRECT-LABEL: function f6 name="comparedWithUndefined"
+# DIRECT-NOT: IsInsideView
+# DIRECT: v2: undefined|int[0, 255] = ElemGet v0, v1
+# DIRECT-NOT: IsInsideView

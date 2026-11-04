@@ -1,0 +1,102 @@
+# A call by value with more callees than the limit stays one call, whichever of them are expected. Several callees that are only expected get no arms: another function may come, so the call has to stay, and it serves them as well
+# FORM: Prepared
+# OPTIONS: report=Declines heat=EverythingIsHot
+# RUN: pass ResolveCalls
+# RUN(TWICE): pass ResolveCalls ResolveCalls
+# LOSS: MaxDispatchCases
+# STATISTIC: CallsResolved = 2
+# CHECK: outcome: Changed
+# CHECK-NEXT: decline HotCallNotResolved f8 v2 MaxDispatchCases [0] reason=TooManyCallees
+# CHECK-NEXT: decline HotCallNotResolved f9 v2 MaxDispatchCases [0] reason=TooManyCallees
+# CHECK-NEXT: decline HotCallNotResolved f10 v2 MaxDispatchCases [0] reason=TooManyCallees
+# CHECK-NEXT: decline HotCallNotResolved f12 v2 MaxDispatchCases [0] reason=TooManyCallees
+# CHECK-NEXT: decline HotCallNotResolved f13 v2 MaxDispatchCases [0] reason=TooManyCallees
+# CHECK-NOT: decline
+# TWICE: outcome: Changed
+# TWICE-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="first" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f1 name="second" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f2 name="third" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="fourth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f4 name="fifth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f5 name="sixth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f6 name="seventh" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f7 name="as-many-callees-as-the-limit" parameters=[{type=f0|f1|f2|f3}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 accessSite=0 callees=[f0, f1, f2, f3]
+    Return v2
+}
+# CHECK-LABEL: function f7 name="as-many-callees-as-the-limit"
+# CHECK-COUNT-3: = TypeTest
+# CHECK-NOT: TypeTest
+# CHECK-NOT: = Call v
+# CHECK-LABEL: function f8
+function f8 name="one-callee-more" parameters=[{type=f0|f1|f2|f3|f4}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 accessSite=1 callees=[f0, f1, f2, f3, f4]
+    Return v2
+}
+# CHECK-NEXT: b0(v0: f0|f1|f2|f3|f4, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1 accessSite=1 callees=[f0, f1, f2, f3, f4]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f9 name="one-expected-callee" parameters=[{type=f0|f1|f2|f3|f4|f5|f6}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0|f1|f2|f3|f4|f5|f6 ~ f5, v1: anything):
+    v2 = Call v0, -, v1 accessSite=2 callees=[f0, f1, f2, f3, f4, f5, f6]
+    Return v2
+# CHECK-NEXT: b0(v0: f0|f1|f2|f3|f4|f5|f6 ~ f5, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1 accessSite=2 callees=[f0, f1, f2, f3, f4, f5, f6]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}
+function f10 name="more-expected-callees-than-the-limit" parameters=[{type=f0|f1|f2|f3|f4|f5|f6}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0|f1|f2|f3|f4|f5|f6 ~ f0|f1|f2|f3|f4, v1: anything):
+    v2 = Call v0, -, v1 accessSite=3 callees=[f0, f1, f2, f3, f4, f5, f6]
+    Return v2
+# CHECK-NEXT: b0(
+# CHECK-NEXT: v2: anything = Call v0, -, v1 accessSite=3 callees=[f0, f1, f2, f3, f4, f5, f6]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}
+function f11 name="narrowed-copy-of-a-site-past-the-limit" parameters=[{type=f2|f6}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 accessSite=3 callees=[f0, f1, f2, f3, f4, f5, f6]
+    Return v2
+# CHECK: = TypeTest v0 testedType=f2
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v1 function=f2
+# CHECK: = CallDirect v1 function=f6
+# CHECK-NOT: = Call v
+}
+function f12 name="unproven-with-as-many-expected-callees-as-the-limit" parameters=[{type=f0|f1|f2|f3 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ f0|f1|f2|f3, v1: anything):
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK-NEXT: b0(v0: anything ~ f0|f1|f2|f3, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}
+function f13 name="unproven-with-one-expected-callee-more" parameters=[{type=f0|f1|f2|f3|f4 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ f0|f1|f2|f3|f4, v1: anything):
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK-NEXT: b0(v0: anything ~ f0|f1|f2|f3|f4, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}

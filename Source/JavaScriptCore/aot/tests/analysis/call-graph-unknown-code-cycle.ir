@@ -1,0 +1,52 @@
+# Unknown code is a node of the call graph. Only functions that reach it and are reachable from it are in its cycle; dead functions that call it rank above it
+# FORM: Prepared
+# RUN: pass BuildCallGraph
+# OPTIONS: check=VerifyEachPass
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    Return v1
+}
+function f1 name="leaf" role=OutlinedBody results=[{type=undefined}] {
+    Return
+}
+function f2 name="callsUnknownCode" role=OutlinedBody results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="other" [isFreeName]
+    v2 = Call v1
+    Return v2
+}
+function f3 name="deadCallsUnknownCode" role=OutlinedBody results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="other" [isFreeName]
+    v2 = Call v1
+    Return v2
+}
+function f4 name="deadCaller" role=OutlinedBody results=[{type=anything}] {
+    v0 = CallDirect function=f3
+    Return v0
+}
+function f5 name="deadCycleA" role=OutlinedBody results=[{type=anything}] {
+    v0 = CallDirect function=f6
+    Return v0
+}
+function f6 name="deadCycleB" role=OutlinedBody results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="other" [isFreeName]
+    v2 = Call v1
+    v3 = CallDirect function=f5
+    Return v3
+}
+# CHECK: called by unknown code f0
+# CHECK-NEXT: roots f0
+# CHECK-NEXT: f0: callees f1 f2 | callers | {{*}} | callers Unknown | callees Complete | {{*}} | Unknown | rank 4 |
+# CHECK-NEXT: f1: callees | callers f0 | {{*}} | callers Complete | callees Complete | {{*}} | NotRecursive | rank 0 |
+# CHECK-NEXT: f2: callees | callers f0 | {{*}} | callers Complete | callees Unknown | {{*}} | Unknown | rank 4 |
+# CHECK-NEXT: f3: callees | callers f4 | {{*}} | callers Complete | callees Unknown | {{*}} | NotRecursive | rank 5 |
+# CHECK-NEXT: f4: callees f3 | callers | {{*}} | callers Complete | callees Complete | {{*}} | NotRecursive | rank 6 |
+# CHECK-NEXT: f5: callees f6 | callers f6 | {{*}} | callers Complete | callees Complete | {{*}} | Unknown | rank 8 |
+# CHECK-NEXT: f6: callees f5 | callers f5 | {{*}} | callers Complete | callees Unknown | {{*}} | Unknown | rank 8 |

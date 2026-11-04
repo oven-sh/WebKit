@@ -115,7 +115,7 @@ RetainPtr<NSAttributedString> AXTextMarkerRange::toAttributedString(AXCoreObject
             return;
 
         if (result)
-            [result appendAttributedString:string.autorelease()];
+            [result appendAttributedString:string];
         else
             result = WTF::move(string);
     };
@@ -171,8 +171,8 @@ AXTextMarkerRange::AXTextMarkerRange(AXTextMarkerRangeRef textMarkerRangeRef)
 RetainPtr<AXTextMarkerRangeRef> AXTextMarkerRange::platformData() const
 {
     return adoptCF(AXTextMarkerRangeCreate(kCFAllocatorDefault
-        , m_start.platformData().autorelease()
-        , m_end.platformData().autorelease()
+        , m_start.platformData()
+        , m_end.platformData()
     ));
 }
 
@@ -198,7 +198,7 @@ RetainPtr<NSArray> AXTextMarkerRange::platformData() const
         return nil;
 
     RefPtr object = downcast<AccessibilityObject>(m_start.object());
-    auto* cache = object->axObjectCache();
+    CheckedPtr cache = object->axObjectCache();
     if (!cache)
         return nil;
 

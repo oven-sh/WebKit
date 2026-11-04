@@ -77,7 +77,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerMessagingProxy);
 // vice versa.
 class WorkerUserGestureForwarder : public ThreadSafeRefCounted<WorkerUserGestureForwarder, WTF::DestructionThread::Main> {
 public:
-    static Ref<WorkerUserGestureForwarder> NODELETE create(RefPtr<UserGestureToken>&& token) { return *new WorkerUserGestureForwarder(WTF::move(token)); }
+    static Ref<WorkerUserGestureForwarder> LEGACY_NODELETE create(RefPtr<UserGestureToken>&& token) { return *new WorkerUserGestureForwarder(WTF::move(token)); }
 
     ~WorkerUserGestureForwarder()
     {
@@ -113,7 +113,7 @@ static ScriptExecutionContextIdentifier loaderContextIdentifierFromContext(const
 {
     if (is<Document>(context))
         return context.identifier();
-    return downcast<WorkerGlobalScope>(context).thread()->workerLoaderProxy()->loaderContextIdentifier();
+    return protect(downcast<WorkerGlobalScope>(context).thread()->workerLoaderProxy())->loaderContextIdentifier();
 }
 
 WorkerMessagingProxy::WorkerMessagingProxy(Worker& workerObject)
@@ -171,7 +171,11 @@ void WorkerMessagingProxy::startWorkerGlobalScope(const URL& scriptURL, PAL::Ses
         scriptExecutionContext->advancedPrivacyProtections(),
         scriptExecutionContext->noiseInjectionHashSalt(),
         WTF::move(agentClusterID),
-        scriptExecutionContext->networkLoadPolicy()
+        scriptExecutionContext->networkLoadPolicy(),
+        scriptExecutionContext->isSecureContext() ? IsSecureContext::Yes : IsSecureContext::No,
+        scriptExecutionContext->hasUnpartitionedStorageAccess(),
+        scriptExecutionContext->crossOriginIsolated() && !scriptURL.protocolIsData() ? CanBeCrossOriginIsolated::Yes : CanBeCrossOriginIsolated::No,
+        scriptExecutionContext->documentIsolationPolicy()
     };
     auto thread = DedicatedWorkerThread::create(params, sourceCode, *this, *this, *this, *this, startMode, protect(scriptExecutionContext->topOrigin()), proxy.get(), socketProvider.get(), runtimeFlags);
 
@@ -327,7 +331,7 @@ RefPtr<CacheStorageConnection> WorkerMessagingProxy::createCacheStorageConnectio
     ASSERT(document);
     if (!document || !document->page())
         return nullptr;
-    return document->page()->cacheStorageProvider().createCacheStorageConnection();
+    return protect(document->page()->cacheStorageProvider())->createCacheStorageConnection();
 }
 
 RefPtr<RTCDataChannelRemoteHandlerConnection> WorkerMessagingProxy::createRTCDataChannelRemoteHandlerConnection()
@@ -535,7 +539,7 @@ void WorkerMessagingProxy::setAppBadge(std::optional<uint64_t> badge)
         if (!document || !document->page())
             return;
 
-        document->page()->badgeClient().setAppBadge(nullptr, SecurityOriginData::fromURL(m_scriptURL), badge);
+        protect(document->page()->badgeClient())->setAppBadge(nullptr, SecurityOriginData::fromURL(m_scriptURL), badge);
     });
 }
 

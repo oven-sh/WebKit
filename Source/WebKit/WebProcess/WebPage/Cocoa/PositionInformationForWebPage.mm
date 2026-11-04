@@ -31,7 +31,6 @@
 #import "InteractionInformationAtPosition.h"
 #import "InteractionInformationRequest.h"
 #import "PluginView.h"
-#import "ShareableBitmapUtilities.h"
 #import "WebPage.h"
 #import <WebCore/AccessibilityObject.h>
 #import <WebCore/ContainerNodeInlines.h>
@@ -63,6 +62,7 @@
 #import <WebCore/LocalFrameInlines.h>
 #import <WebCore/Model.h>
 #import <WebCore/NodeDocument.h>
+#import <WebCore/NodeInlines.h>
 #import <WebCore/Page.h>
 #import <WebCore/PlatformScreen.h>
 #import <WebCore/Quirks.h>
@@ -74,14 +74,17 @@
 #import <WebCore/RenderImage.h>
 #import <WebCore/RenderLayer.h>
 #import <WebCore/RenderObjectDocument.h>
+#import <WebCore/RenderObjectInlines.h>
 #import <WebCore/RenderObjectStyle.h>
 #import <WebCore/RenderVideo.h>
 #import <WebCore/RenderVideoInlines.h>
+#import <WebCore/RenderView.h>
 #import <WebCore/ScrollingCoordinator.h>
+#import <WebCore/TypedElementDescendantIteratorInlines.h>
 #import <WebCore/VisibleUnits.h>
 #import <wtf/text/StringToIntegerConversion.h>
 
-#if ENABLE(SPATIAL_PORTAL)
+#if ENABLE(SPATIAL_PORTAL) && ENABLE(MODEL_ELEMENT_STAGE_MODE_INTERACTION)
 #import <WebCore/SpatialPortalController.h>
 #endif
 
@@ -205,14 +208,15 @@ static std::optional<std::pair<WebCore::RenderImage&, WebCore::Image&>> imageRen
     if (!renderImage)
         return std::nullopt;
 
-    if (!renderImage->cachedImage() || renderImage->cachedImage()->errorOccurred())
+    RefPtr cachedImage = renderImage->cachedImage();
+    if (!cachedImage || !cachedImage->canRender())
         return std::nullopt;
 
-    RefPtr image = protect(renderImage->cachedImage())->imageForRenderer(renderImage);
-    if (!image || image->width() <= 1 || image->height() <= 1)
+    auto imageSize = renderImage->concreteObjectSizeForPositionInformation().size();
+    if (imageSize.width() <= 1 || imageSize.height() <= 1)
         return std::nullopt;
 
-    return { { *renderImage, *image } };
+    return { { *renderImage, *cachedImage->image() } };
 }
 
 static WebCore::FloatSize platformBitmapSizeCap(const WebCore::LocalFrame& localRoot)
@@ -239,7 +243,7 @@ static void videoPositionInformation(WebPage& page, WebCore::HTMLVideoElement& e
     info.isPausedVideo = true;
 
     if (request.includeImageData)
-        info.image = createShareableBitmap(*renderVideo);
+        info.image = element.bitmapImageForCurrentTimeSync();
 
     info.hostImageOrVideoElementContext = page.contextForElement(element);
 }
@@ -265,7 +269,7 @@ static void imagePositionInformation(WebPage& page, const WebCore::LocalFrame& l
     info.isImage = true;
 #if PLATFORM(IOS_FAMILY)
     // UIImageDataWriteToSavedPhotosAlbum works with resource data, and thus only for bitmap images.
-    info.hasSaveableImage = image.isBitmapImage() && !image.isNull();
+    info.hasSaveableImage = image.isBitmapImage() && image.hasSomethingToDraw();
 #endif
     info.imageURL = page.applyLinkDecorationFiltering(protect(element.document())->encodingParseURL(protect(renderImage.cachedImage())->url().string()), WebCore::LinkDecorationFilteringTrigger::Unspecified);
     info.imageMIMEType = image.mimeType();
@@ -278,7 +282,7 @@ static void imagePositionInformation(WebPage& page, const WebCore::LocalFrame& l
 #endif
 
     if (request.includeSnapshot || request.includeImageData)
-        info.image = createShareableBitmap(renderImage, { platformBitmapSizeCap(localRoot) * page.corePage()->deviceScaleFactor(), AllowAnimatedImages::Yes, UseSnapshotForTransparentImages::Yes });
+        info.image = renderImage.createShareableBitmapForPositionInformation(platformBitmapSizeCap(localRoot) * page.corePage()->deviceScaleFactor());
 
     info.hostImageOrVideoElementContext = page.contextForElement(element);
 }
@@ -346,7 +350,7 @@ static void elementPositionInformation(WebPage& page, const WebCore::LocalFrame&
                     auto& [renderImage, image] = *rendererAndImage;
                     info.imageURL = page.applyLinkDecorationFiltering(document->encodingParseURL(protect(renderImage.cachedImage())->url().string()), WebCore::LinkDecorationFilteringTrigger::Unspecified);
                     info.imageMIMEType = image.mimeType();
-                    info.image = createShareableBitmap(renderImage, { platformBitmapSizeCap(localRoot) * page.corePage()->deviceScaleFactor(), AllowAnimatedImages::Yes, UseSnapshotForTransparentImages::Yes });
+                    info.image = renderImage.createShareableBitmapForPositionInformation(platformBitmapSizeCap(localRoot) * page.corePage()->deviceScaleFactor());
                 }
             }
         }
@@ -367,6 +371,49 @@ static bool isRangeInput(const RefPtr<WebCore::Node>& node)
     RefPtr input = dynamicDowncast<WebCore::HTMLInputElement>(node);
     return input && input->isRangeControl() && !input->isDisabledFormControl();
 }
+
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+static bool isARIASlider(const WebCore::Element& element)
+{
+    const auto ariaRole = element.attributeWithoutSynchronization(WebCore::HTMLNames::roleAttr);
+    return WebCore::AccessibilityObject::ariaRoleToWebCoreRole(ariaRole) == WebCore::AccessibilityRole::Slider;
+}
+
+static bool isVisuallyHidden(const WebCore::Element& element)
+{
+    CheckedPtr renderer = element.renderer();
+    if (!renderer)
+        return false;
+
+    auto visibleRect = WebCore::snappedIntRect(renderer->absoluteClippedOverflowRectForRepaint());
+    if (visibleRect.width() <= 1 || visibleRect.height() <= 1)
+        return true;
+
+    return !visibleRect.intersects(renderer->view().documentRect());
+}
+
+static bool isCustomSlider(WebCore::Node& hitNode, WebCore::HTMLVideoElement& video)
+{
+    static constexpr unsigned maximumAncestorDepth = 3;
+
+    // Ignore built-in media controls.
+    if (hitNode.isInUserAgentShadowTree())
+        return false;
+
+    unsigned depth = 0;
+    for (RefPtr ancestor = hitNode.parentElementInComposedTree(); ancestor && depth < maximumAncestorDepth; ancestor = ancestor->parentElementInComposedTree(), ++depth) {
+        for (Ref descendant : WebCore::descendantsOfType<WebCore::Element>(*ancestor)) {
+            if ((isRangeInput(descendant.ptr()) || isARIASlider(descendant)) && isVisuallyHidden(descendant))
+                return true;
+        }
+
+        if (ancestor->isShadowIncludingInclusiveAncestorOf(video))
+            break;
+    }
+
+    return false;
+}
+#endif
 
 static void selectionPositionInformation(WebPage& page, WebCore::LocalFrame& localRoot, const InteractionInformationRequest& request, InteractionInformationAtPosition& info)
 {
@@ -409,6 +456,9 @@ static void selectionPositionInformation(WebPage& page, WebCore::LocalFrame& loc
 
         return InteractionInformationAtPosition::Selectability::Selectable;
     })();
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+    info.shouldTreatLongClickAsSecondaryClickQuirk = protect(hitNode->document())->quirks().shouldTreatLongClickAsSecondaryClick(*hitNode);
+#endif
     info.isSelected = result.isSelected();
     info.isOverEditableContent = hitNode->isContentEditable();
 
@@ -473,20 +523,24 @@ static void selectionPositionInformation(WebPage& page, WebCore::LocalFrame& loc
         WebCore::HitTestRequest::Type::IncludeAllElementsUnderPoint,
     };
     const auto allElementsResult = localRoot.eventHandler().hitTestResultAtPoint(contentsPoint, allElementsHitType);
+    RefPtr<WebCore::HTMLVideoElement> videoUnderPoint;
     for (Ref node : allElementsResult.listBasedTestResult()) {
-        if (!info.isOverVideo)
-            info.isOverVideo = !!hostVideoElementIgnoringImageOverlay(node.get());
+        if (!videoUnderPoint) {
+            videoUnderPoint = hostVideoElementIgnoringImageOverlay(node.get());
+            info.isOverVideo = !!videoUnderPoint;
+        }
 
         if (!info.isRangeInput && !info.isARIASlider) {
-            if (const RefPtr element = dynamicDowncast<WebCore::Element>(node)) {
-                const auto ariaRole = element->attributeWithoutSynchronization(WebCore::HTMLNames::roleAttr);
-                info.isARIASlider = WebCore::AccessibilityObject::ariaRoleToWebCoreRole(ariaRole) == WebCore::AccessibilityRole::Slider;
-            }
+            if (const RefPtr element = dynamicDowncast<WebCore::Element>(node))
+                info.isARIASlider = isARIASlider(*element);
         }
 
         if (info.isOverVideo && (info.isRangeInput || info.isARIASlider))
             break;
     }
+
+    if (videoUnderPoint && !info.isRangeInput && !info.isARIASlider)
+        info.isCustomSlider = isCustomSlider(*hitNode, *videoUnderPoint);
 
     if (request.inputSource == WebEventInputSource::Automation)
         automationAdjustedInteractionPositionInformation(localRoot, *frameView, contentsPoint, info);
@@ -653,6 +707,20 @@ static void animationPositionInformation(WebPage& page, const InteractionInforma
 #endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 }
 
+std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventDataForHitTestResult(const WebCore::HitTestResult& hitTestResult, WebCore::LocalFrameView& localRootView, const WebCore::IntPoint& pointInRootView)
+{
+    if (!hitTestResult.isOverWidget())
+        return std::nullopt;
+
+    RefPtr remoteFrame = dynamicDowncast<WebCore::RemoteFrame>(WebCore::EventHandler::subframeForTargetNode(protect(hitTestResult.targetNode()).get()));
+    RefPtr remoteFrameView = remoteFrame ? remoteFrame->view() : nullptr;
+    if (!remoteFrameView)
+        return std::nullopt;
+
+    WebCore::RemoteFrameGeometryTransformer transformer(remoteFrameView.releaseNonNull(), Ref { localRootView }, remoteFrame->frameID());
+    return WebCore::RemoteUserInputEventData { remoteFrame->frameID(), transformer.transformToRemoteFrameCoordinates(WebCore::DoublePoint { pointInRootView }) };
+}
+
 Variant<InteractionInformationAtPosition, WebCore::RemoteUserInputEventData> positionInformationForWebPage(WebPage& page, WebCore::LocalFrame& localRoot, const InteractionInformationRequest& request)
 {
     // `request.point` is in `localRoot`'s root-view coordinate space.
@@ -692,13 +760,8 @@ Variant<InteractionInformationAtPosition, WebCore::RemoteUserInputEventData> pos
     auto hitTestPoint = localRootView->rootViewToContents(request.point);
     auto hitTestResult = eventHandler.hitTestResultAtPoint(hitTestPoint, hitTestRequestTypes);
 
-    if (hitTestResult.isOverWidget()) {
-        RefPtr remoteFrame = dynamicDowncast<WebCore::RemoteFrame>(WebCore::EventHandler::subframeForTargetNode(protect(hitTestResult.targetNode()).get()));
-        if (RefPtr remoteFrameView = remoteFrame ? remoteFrame->view() : nullptr) {
-            WebCore::RemoteFrameGeometryTransformer transformer(remoteFrameView.releaseNonNull(), localRootView.releaseNonNull(), remoteFrame->frameID());
-            return WebCore::RemoteUserInputEventData { remoteFrame->frameID(), transformer.transformToRemoteFrameCoordinates(WebCore::DoublePoint { hitTestPoint }) };
-        }
-    }
+    if (auto remoteUserInputEventData = remoteUserInputEventDataForHitTestResult(hitTestResult, *localRootView, request.point))
+        return *remoteUserInputEventData;
 
 #if ENABLE(PDF_PLUGIN)
     RefPtr pluginView = hitTestResult.isOverWidget() ? WebPage::pluginViewForFrame(WTF::protect(hitTestResult.innerNodeFrame())) : nullptr;
@@ -766,8 +829,13 @@ Variant<InteractionInformationAtPosition, WebCore::RemoteUserInputEventData> pos
         textInteractionPositionInformation(localRoot, *input, request, info);
 
 #if ENABLE(MODEL_PROCESS)
-    if (RefPtr modelElement = dynamicDowncast<WebCore::HTMLModelElement>(hitTestNode))
+    if (RefPtr modelElement = dynamicDowncast<WebCore::HTMLModelElement>(hitTestNode)) {
         info.isInteractiveModel = modelElement->model() && modelElement->supportsStageModeInteraction();
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+        if (info.isInteractiveModel && modelElement->isPresentedInVolumetricScene())
+            info.isInteractiveModel = false;
+#endif
+    }
 #elif ENABLE(MODEL_ELEMENT_STAGE_MODE)
     // There is no stage mode session in this configuration. Instead, the orbit is driven by mouse events
     // forwarded by HTMLModelElement to the model player. This behavior is gated behind `isInteractive`.
@@ -775,7 +843,7 @@ Variant<InteractionInformationAtPosition, WebCore::RemoteUserInputEventData> pos
         info.isInteractiveModel = modelElement->model() && modelElement->isInteractive();
 #endif
 
-#if ENABLE(SPATIAL_PORTAL)
+#if ENABLE(SPATIAL_PORTAL) && ENABLE(MODEL_ELEMENT_STAGE_MODE_INTERACTION)
     if (!info.isInteractiveModel) {
         RefPtr element = dynamicDowncast<WebCore::Element>(hitTestNode);
         info.isInteractiveModel = !!WebCore::SpatialPortalController::interactiveControllerForHitTestedElement(element);

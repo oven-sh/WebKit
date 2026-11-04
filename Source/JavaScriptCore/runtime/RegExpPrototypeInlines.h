@@ -22,18 +22,15 @@
 
 #include "CommonIdentifiers.h"
 #include "JSGlobalObject.h"
+#include "JSObjectInlines.h"
 #include "RegExpObject.h"
 #include "RegExpPrototype.h"
 #include "StructureCreateInlines.h"
 
 namespace JSC {
 
-ALWAYS_INLINE bool regExpExecWatchpointIsValid(VM& vm, JSObject* thisObject)
+ALWAYS_INLINE bool regExpExecWatchpointIsValid(VM& vm, JSGlobalObject* globalObject, JSObject* thisObject)
 {
-    JSGlobalObject* globalObject = thisObject->realmMayBeNull();
-    if (!globalObject)
-        return false;
-
     RegExpPrototype* regExpPrototype = globalObject->regExpPrototype();
 
     ASSERT(globalObject->regExpPrimordialPropertiesWatchpointSet().state() != ClearWatchpoint);
@@ -46,7 +43,7 @@ ALWAYS_INLINE bool regExpExecWatchpointIsValid(VM& vm, JSObject* thisObject)
     if (!thisObject->hasCustomProperties())
         return true;
 
-    return thisObject->getDirectOffset(vm, vm.propertyNames->exec) == invalidOffset;
+    return !thisObject->hasDirectProperty(globalObject, vm.propertyNames->exec);
 }
 
 inline Structure* RegExpPrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

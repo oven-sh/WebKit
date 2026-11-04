@@ -23,6 +23,8 @@ use core::{
     }, //
 };
 
+use bssl_crypto::FromFfiSlice;
+
 use crate::{
     EarlyCallbackMethods,
     abort_on_panic,
@@ -30,8 +32,7 @@ use crate::{
     connection::{
         Server,
         lifecycle::TlsConnectionInHandshake, //
-    },
-    ffi::sanitize_slice, //
+    }, //
 };
 
 bssl_macros::bssl_enum! {
@@ -158,7 +159,7 @@ macro_rules! client_hello_getter {
     ($client_hello:expr, $data:ident, $len:ident) => {
         unsafe {
             // Safety: `$client_hello` is a valid pointer
-            sanitize_slice($client_hello.$data, $client_hello.$len)?
+            u8::from_ffi_ptr($client_hello.$data, $client_hello.$len)
         }
     };
 }
@@ -215,22 +216,12 @@ impl<'a, M> ClientHello<'a, M> {
 
     /// Get the legacy compression methods bytes.
     pub fn legacy_compression_methods(&self) -> &'a [u8] {
-        unsafe {
-            // Safety: `self.ptr` is a valid pointer to `SSL_CLIENT_HELLO` provided by BoringSSL.
-            sanitize_slice(
-                (*self.ptr).compression_methods,
-                (*self.ptr).compression_methods_len,
-            )
-            .unwrap_or(&[])
-        }
+        client_hello_getter!(*self.ptr, compression_methods, compression_methods_len)
     }
 
     /// Get the extensions bytes.
     pub fn extensions(&self) -> &'a [u8] {
-        unsafe {
-            // Safety: `self.ptr` is a valid pointer to `SSL_CLIENT_HELLO` provided by BoringSSL.
-            sanitize_slice((*self.ptr).extensions, (*self.ptr).extensions_len).unwrap_or(&[])
-        }
+        client_hello_getter!(*self.ptr, extensions, extensions_len)
     }
 
     /// Extract a specific extension from the client hello.
@@ -253,7 +244,7 @@ impl<'a, M> ClientHello<'a, M> {
         if ret == 1 {
             unsafe {
                 // Safety: `out_data` and `out_len` are valid if the function returns 1.
-                sanitize_slice(out_data, out_len)
+                Some(u8::from_ffi_ptr(out_data, out_len))
             }
         } else {
             None
@@ -274,7 +265,8 @@ pub trait EarlyCallback<M>: Send + Sync {
     fn process(&self, client_hello: &mut ClientHello<'_, M>) -> EarlyCallbackResult;
 }
 
-pub(crate) unsafe extern "C" fn early_select_cert_cb<Mode, MethodsT>(
+// For this callback, MethodsT could only be RustContextMethods<Mode>.
+pub(crate) unsafe extern "C" fn early_cb<Mode, MethodsT>(
     client_hello: *const bssl_sys::SSL_CLIENT_HELLO,
 ) -> bssl_sys::ssl_select_cert_result_t
 where

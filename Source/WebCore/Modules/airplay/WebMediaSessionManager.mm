@@ -59,7 +59,7 @@ struct ClientState {
     {
     }
 
-    bool NODELETE operator==(const ClientState& other) const
+    bool LEGACY_NODELETE operator==(const ClientState& other) const
     {
         return contextId == other.contextId && &client == &other.client;
     }
@@ -75,7 +75,7 @@ struct ClientState {
 
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(ClientState);
 
-static bool NODELETE flagsAreSet(MediaProducerMediaStateFlags value, MediaProducerMediaStateFlags flags)
+static bool LEGACY_NODELETE flagsAreSet(MediaProducerMediaStateFlags value, MediaProducerMediaStateFlags flags)
 {
     return value.containsAny(flags);
 }
@@ -153,7 +153,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WebMediaSessionLogger);
 WebMediaSessionLogger& WebMediaSessionManager::logger()
 {
     if (!m_logger)
-        m_logger = WebMediaSessionLogger::create(*this);
+        lazyInitialize(m_logger, WebMediaSessionLogger::create(*this));
 
     return *m_logger;
 }
@@ -194,7 +194,7 @@ FloatRect WebMediaSessionManager::mockMediaPlaybackTargetPickerRect()
 MediaPlaybackTargetPickerMock& WebMediaSessionManager::mockPicker()
 {
     if (!m_pickerOverride)
-        m_pickerOverride = makeUnique<MediaPlaybackTargetPickerMock>(*this);
+        lazyInitialize(m_pickerOverride, makeUnique<MediaPlaybackTargetPickerMock>(*this));
 
     return *m_pickerOverride.get();
 }

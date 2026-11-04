@@ -27,6 +27,7 @@
     <script src="../../UserInterface/External/CodeMirror/xml.js"></script>
     <script src="../../UserInterface/Views/CodeMirrorLocalOverrideURLMode.js"></script>
     <script src="../../UserInterface/Views/CodeMirrorRegexMode.js"></script>
+    <script src="../../UserInterface/Views/CodeMirrorWGSLMode.js"></script>
 </head>
 <body>
     <h1>Debug CodeMirrorModes</h1>
@@ -42,7 +43,11 @@
             <option>text/html</option>
             <option>text/javascript</option>
             <option>text/plain</option>
+            <option>text/wgsl</option>
             <option>text/xml</option>
+            <option>x-shader/x-compute</option>
+            <option>x-shader/x-fragment</option>
+            <option>x-shader/x-vertex</option>
         </optgroup>
         <optgroup id="extra-group" label="Extra Modes"></optgroup>
     </select>

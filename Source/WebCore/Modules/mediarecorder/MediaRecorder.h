@@ -33,7 +33,6 @@
 #include "MediaStream.h"
 #include "MediaStreamTrackPrivate.h"
 #include "Timer.h"
-#include <wtf/Deque.h>
 #include <wtf/UniqueRef.h>
 
 namespace WebCore {
@@ -65,7 +64,7 @@ public:
 
     using CreatorFunction = ExceptionOr<std::unique_ptr<MediaRecorderPrivate>> (*)(MediaStreamPrivate&, const Options&);
 
-    WEBCORE_EXPORT static void NODELETE setCustomPrivateRecorderCreator(CreatorFunction);
+    WEBCORE_EXPORT static void LEGACY_NODELETE setCustomPrivateRecorderCreator(CreatorFunction);
 
     RecordingState state() const { return m_state; }
     const String& mimeType() const LIFETIME_BOUND { return m_options.mimeType; }
@@ -88,20 +87,21 @@ private:
 
     static ExceptionOr<std::unique_ptr<MediaRecorderPrivate>> createMediaRecorderPrivate(MediaStreamPrivate&, const Options&);
     
-    Document* NODELETE document() const;
+    Document* LEGACY_NODELETE document() const;
 
     // EventTarget
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::MediaRecorder; }
-    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
+    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
 
     // ActiveDOMObject.
     void suspend(ReasonForSuspension) final;
     void stop() final;
-    bool NODELETE virtualHasPendingActivity() const final;
+    bool LEGACY_NODELETE virtualHasPendingActivity() const final;
     
     void stopRecordingInternal(CompletionHandler<void()>&& = [] { });
+    void discardRecording();
     void dispatchError(Exception&&);
 
     enum class TakePrivateRecorder : bool { No, Yes };
@@ -139,8 +139,7 @@ private:
     Timer m_timeSliceTimer;
 
     bool m_isActive { true };
-    bool m_isFetchingData { false };
-    Deque<FetchDataCallback> m_pendingFetchDataTasks;
+    uint64_t m_discardedRecordingCount { 0 };
 
     unsigned m_audioBitsPerSecond { 0 };
     unsigned m_videoBitsPerSecond { 0 };

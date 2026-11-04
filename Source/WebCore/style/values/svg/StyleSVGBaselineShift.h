@@ -59,7 +59,7 @@ struct SVGBaselineShift {
     bool isLengthPercentage() const { return WTF::holdsAlternative<LengthPercentage>(m_value); }
     std::optional<LengthPercentage> tryLengthPercentage() const { return isLengthPercentage() ? std::make_optional(std::get<LengthPercentage>(m_value)) : std::nullopt; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -79,7 +79,7 @@ template<> struct CSSValueConversion<SVGBaselineShift> { auto operator()(Builder
 // MARK: - Blending
 
 template<> struct Blending<SVGBaselineShift> {
-    bool NODELETE canBlend(const SVGBaselineShift&, const SVGBaselineShift&);
+    bool LEGACY_NODELETE canBlend(const SVGBaselineShift&, const SVGBaselineShift&);
     auto requiresInterpolationForAccumulativeIteration(const SVGBaselineShift&, const SVGBaselineShift&) -> bool;
     auto blend(const SVGBaselineShift&, const SVGBaselineShift&, const BlendingContext&) -> SVGBaselineShift;
 };

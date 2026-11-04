@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include <WebCore/Image.h>
 #include <WebCore/IntPoint.h>
+#include <WebCore/NativeImage.h>
 #include <wtf/Assertions.h>
 #include <wtf/Platform.h>
 #include <wtf/RefPtr.h>
@@ -51,7 +51,7 @@ typedef HICON HCURSOR;
 
 namespace WebCore {
 
-class Image;
+class ShareableBitmap;
 
 #if PLATFORM(WIN)
 
@@ -130,7 +130,7 @@ public:
     using Type = PlatformCursorType;
 
     struct CustomCursorIPCData {
-        Ref<Image> image;
+        Ref<ShareableBitmap> image;
         IntPoint hotSpot;
 #if ENABLE(MOUSE_CURSOR_SCALE)
         float scaleFactor { 0 };
@@ -139,23 +139,23 @@ public:
     using IPCData = Variant<Type /* Non custom type */, std::optional<CustomCursorIPCData>>;
 
     Cursor() = default;
-    static std::optional<Cursor> fromIPCData(IPCData&&);
+    WEBCORE_EXPORT static std::optional<Cursor> fromIPCData(IPCData&&);
 
-    WEBCORE_EXPORT static const Cursor& NODELETE fromType(Cursor::Type);
+    WEBCORE_EXPORT static const Cursor& LEGACY_NODELETE fromType(Cursor::Type);
 
-    WEBCORE_EXPORT Cursor(Image*, const IntPoint& hotSpot);
+    WEBCORE_EXPORT Cursor(RefPtr<NativeImage>&&, const IntPoint& hotSpot);
 
 #if ENABLE(MOUSE_CURSOR_SCALE)
     // Hot spot is in image pixels.
-    WEBCORE_EXPORT Cursor(Image*, const IntPoint& hotSpot, float imageScaleFactor);
+    WEBCORE_EXPORT Cursor(RefPtr<NativeImage>&&, const IntPoint& hotSpot, float imageScaleFactor);
 #endif
 
     explicit Cursor(Type);
 
-    IPCData ipcData() const;
+    WEBCORE_EXPORT IPCData ipcData() const;
 
     Type type() const;
-    RefPtr<Image> image() const { return m_image; }
+    RefPtr<NativeImage> image() const { return m_image; }
     const IntPoint& hotSpot() const LIFETIME_BOUND { return m_hotSpot; }
 
 #if ENABLE(MOUSE_CURSOR_SCALE)
@@ -171,7 +171,7 @@ private:
     void ensurePlatformCursor() const;
 
     Type m_type { Type::Invalid };
-    RefPtr<Image> m_image;
+    RefPtr<NativeImage> m_image;
     IntPoint m_hotSpot;
 
 #if ENABLE(MOUSE_CURSOR_SCALE)
@@ -186,95 +186,57 @@ private:
 
 };
 
-IntPoint determineHotSpot(Image*, const IntPoint& specifiedHotSpot);
+IntPoint LEGACY_NODELETE determineHotSpot(const IntSize& imageSize, std::optional<IntPoint> specifiedHotSpot, std::optional<IntPoint> intrinsicHotSpot = std::nullopt);
 
-WEBCORE_EXPORT const Cursor& NODELETE pointerCursor();
-const Cursor& NODELETE crossCursor();
-WEBCORE_EXPORT const Cursor& NODELETE handCursor();
-const Cursor& NODELETE moveCursor();
-WEBCORE_EXPORT const Cursor& NODELETE iBeamCursor();
-const Cursor& NODELETE waitCursor();
-const Cursor& NODELETE helpCursor();
-const Cursor& NODELETE eastResizeCursor();
-const Cursor& NODELETE northResizeCursor();
-const Cursor& NODELETE northEastResizeCursor();
-const Cursor& NODELETE northWestResizeCursor();
-const Cursor& NODELETE southResizeCursor();
-const Cursor& NODELETE southEastResizeCursor();
-const Cursor& NODELETE southWestResizeCursor();
-const Cursor& NODELETE westResizeCursor();
-const Cursor& NODELETE northSouthResizeCursor();
-const Cursor& NODELETE eastWestResizeCursor();
-const Cursor& NODELETE northEastSouthWestResizeCursor();
-const Cursor& NODELETE northWestSouthEastResizeCursor();
-const Cursor& NODELETE columnResizeCursor();
-const Cursor& NODELETE rowResizeCursor();
-const Cursor& NODELETE middlePanningCursor();
-const Cursor& NODELETE eastPanningCursor();
-const Cursor& NODELETE northPanningCursor();
-const Cursor& NODELETE northEastPanningCursor();
-const Cursor& NODELETE northWestPanningCursor();
-const Cursor& NODELETE southPanningCursor();
-const Cursor& NODELETE southEastPanningCursor();
-const Cursor& NODELETE southWestPanningCursor();
-const Cursor& NODELETE westPanningCursor();
-const Cursor& NODELETE verticalTextCursor();
-const Cursor& NODELETE cellCursor();
-const Cursor& NODELETE contextMenuCursor();
-const Cursor& NODELETE noDropCursor();
-const Cursor& NODELETE notAllowedCursor();
-const Cursor& NODELETE progressCursor();
-const Cursor& NODELETE aliasCursor();
-const Cursor& NODELETE zoomInCursor();
-const Cursor& NODELETE zoomOutCursor();
-const Cursor& NODELETE copyCursor();
-const Cursor& NODELETE noneCursor();
-const Cursor& NODELETE grabCursor();
-const Cursor& NODELETE grabbingCursor();
+WEBCORE_EXPORT const Cursor& LEGACY_NODELETE pointerCursor();
+const Cursor& LEGACY_NODELETE crossCursor();
+WEBCORE_EXPORT const Cursor& LEGACY_NODELETE handCursor();
+const Cursor& LEGACY_NODELETE moveCursor();
+WEBCORE_EXPORT const Cursor& LEGACY_NODELETE iBeamCursor();
+const Cursor& LEGACY_NODELETE waitCursor();
+const Cursor& LEGACY_NODELETE helpCursor();
+const Cursor& LEGACY_NODELETE eastResizeCursor();
+const Cursor& LEGACY_NODELETE northResizeCursor();
+const Cursor& LEGACY_NODELETE northEastResizeCursor();
+const Cursor& LEGACY_NODELETE northWestResizeCursor();
+const Cursor& LEGACY_NODELETE southResizeCursor();
+const Cursor& LEGACY_NODELETE southEastResizeCursor();
+const Cursor& LEGACY_NODELETE southWestResizeCursor();
+const Cursor& LEGACY_NODELETE westResizeCursor();
+const Cursor& LEGACY_NODELETE northSouthResizeCursor();
+const Cursor& LEGACY_NODELETE eastWestResizeCursor();
+const Cursor& LEGACY_NODELETE northEastSouthWestResizeCursor();
+const Cursor& LEGACY_NODELETE northWestSouthEastResizeCursor();
+const Cursor& LEGACY_NODELETE columnResizeCursor();
+const Cursor& LEGACY_NODELETE rowResizeCursor();
+const Cursor& LEGACY_NODELETE middlePanningCursor();
+const Cursor& LEGACY_NODELETE eastPanningCursor();
+const Cursor& LEGACY_NODELETE northPanningCursor();
+const Cursor& LEGACY_NODELETE northEastPanningCursor();
+const Cursor& LEGACY_NODELETE northWestPanningCursor();
+const Cursor& LEGACY_NODELETE southPanningCursor();
+const Cursor& LEGACY_NODELETE southEastPanningCursor();
+const Cursor& LEGACY_NODELETE southWestPanningCursor();
+const Cursor& LEGACY_NODELETE westPanningCursor();
+const Cursor& LEGACY_NODELETE verticalTextCursor();
+const Cursor& LEGACY_NODELETE cellCursor();
+const Cursor& LEGACY_NODELETE contextMenuCursor();
+const Cursor& LEGACY_NODELETE noDropCursor();
+const Cursor& LEGACY_NODELETE notAllowedCursor();
+const Cursor& LEGACY_NODELETE progressCursor();
+const Cursor& LEGACY_NODELETE aliasCursor();
+const Cursor& LEGACY_NODELETE zoomInCursor();
+const Cursor& LEGACY_NODELETE zoomOutCursor();
+const Cursor& LEGACY_NODELETE copyCursor();
+const Cursor& LEGACY_NODELETE noneCursor();
+const Cursor& LEGACY_NODELETE grabCursor();
+const Cursor& LEGACY_NODELETE grabbingCursor();
 
 inline Cursor::Type Cursor::type() const
 {
     ASSERT(m_type > Type::Invalid);
     ASSERT(m_type <= Type::Custom);
     return m_type;
-}
-
-inline std::optional<Cursor> Cursor::fromIPCData(IPCData&& ipcData)
-{
-    return WTF::switchOn(WTF::move(ipcData), [](Type&& type) -> std::optional<Cursor> {
-        if (type == Type::Invalid || type == Type::Custom)
-            return std::nullopt;
-        auto& cursorReference = Cursor::fromType(type);
-        // Calling platformCursor here will eagerly create the platform cursor for the cursor singletons inside WebCore.
-        // This will avoid having to re-create the platform cursors over and over.
-        (void)cursorReference.platformCursor();
-        return cursorReference;
-    }, [](std::optional<CustomCursorIPCData>&& imageData) -> std::optional<Cursor> {
-        if (!imageData)
-            return Cursor { &Image::nullImage(), IntPoint() };
-        ASSERT(imageData->image->rect().contains(imageData->hotSpot));
-#if ENABLE(MOUSE_CURSOR_SCALE)
-        return Cursor(imageData->image.ptr(), imageData->hotSpot, imageData->scaleFactor);
-#else
-        return Cursor(imageData->image.ptr(), imageData->hotSpot);
-#endif
-    });
-}
-
-inline auto Cursor::ipcData() const -> IPCData
-{
-    auto type = this->type();
-    if (type != Type::Custom)
-        return type;
-    if (Ref { *m_image }->isNull())
-        return std::nullopt;
-    return CustomCursorIPCData {
-        *m_image
-        , m_hotSpot
-#if ENABLE(MOUSE_CURSOR_SCALE)
-        , m_imageScaleFactor
-#endif
-    };
 }
 
 } // namespace WebCore

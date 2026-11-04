@@ -1,0 +1,10 @@
+# an int32 promise is about the numbers of the type, which may be one part of a union
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidLayout 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="badNumberInUnion" fields=[{key="x" declared={type=number|string flags=[IsInt32Promise]}}]
+layout L1 name="badRangeInUnion" fields=[{key="x" declared={type=int[0, 4294967296]|string flags=[IsInt32Promise]}}]
+layout L2 name="goodInt32InUnion" fields=[{key="x" declared={type=undefined|i32|string|L3 flags=[IsInt32Promise]}}]
+layout L3 name="goodInt32" fields=[{key="x" declared={type=i32 flags=[IsInt32Promise]}}]

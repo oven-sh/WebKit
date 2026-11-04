@@ -161,7 +161,8 @@ static RetainPtr<NSArray> cookiesForURLFromStorage(NSHTTPCookieStorage *storage,
 
     // Filter all cookies that aren't in the specified partition.
     RetainPtr<NSMutableArray<NSHTTPCookie *>> partitionedCookies = adoptNS([[NSMutableArray alloc] initWithCapacity:[cookiesPtr->get() count]]);
-    for (NSHTTPCookie *nsCookie in cookiesPtr->get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *nsCookie in cookiesPtr->get()) {
         if (![nsCookie._storagePartition isEqualToString:partition])
             continue;
         [partitionedCookies.get() addObject:nsCookie];
@@ -204,7 +205,7 @@ RetainPtr<NSHTTPCookie> CookieStorageSession::capExpiryOfPersistentCookie(NSHTTP
         return cookie;
 
     if (!cookie.expiresDate || cookie.expiresDate.timeIntervalSinceNow > cap.seconds()) {
-        RetainPtr properties = adoptNS([[cookie properties] mutableCopy]);
+        RetainPtr<NSMutableDictionary> properties = adoptNS([[cookie properties] mutableCopy]);
         RetainPtr date = adoptNS([[NSDate alloc] initWithTimeIntervalSinceNow:cap.seconds()]);
         [properties setObject:date.get() forKey:NSHTTPCookieExpires];
         return adoptNS([[NSHTTPCookie alloc] initWithProperties:properties.get()]);
@@ -226,7 +227,7 @@ NSHTTPCookie *CookieStorageSession::setCookiePartition(NSHTTPCookie *cookie, NSS
         return cookie;
     }
 
-    RetainPtr properties = adoptNS([[cookie properties] mutableCopy]);
+    RetainPtr<NSMutableDictionary> properties = adoptNS([[cookie properties] mutableCopy]);
     [properties setObject:partitionKey forKey:@"StoragePartition"];
     return [NSHTTPCookie cookieWithProperties:properties.get()];
 }
@@ -241,7 +242,8 @@ Vector<Cookie> CookieStorageSession::nsCookiesToCookieVector(NSArray *nsCookies,
 {
     Vector<Cookie> cookies;
     cookies.reserveInitialCapacity(nsCookies.count);
-    for (NSHTTPCookie *nsCookie in nsCookies) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *nsCookie in nsCookies) {
         @autoreleasepool {
             if (!filter || filter(nsCookie))
                 cookies.append(nsCookie);
@@ -264,7 +266,8 @@ std::pair<String, bool> CookieStorageSession::cookiesForSession(const URL& first
 
     StringBuilder cookiesBuilder;
     bool didAccessSecureCookies = false;
-    for (NSHTTPCookie *cookie in cookies.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *cookie in cookies.get()) {
         if (![[cookie name] length])
             continue;
         if (cookiesFor == CookiesFor::DOMAccess && [cookie isHTTPOnly])
@@ -274,7 +277,13 @@ std::pair<String, bool> CookieStorageSession::cookiesForSession(const URL& first
             if (includeSecureCookies == IncludeSecureCookies::No)
                 continue;
         }
-        cookiesBuilder.append(cookiesBuilder.isEmpty() ? ""_s : "; "_s, [cookie name], '=', [cookie value]);
+        String cookieName { cookie.name };
+        String cookieValue { cookie.value };
+        if (cookiesFor == CookiesFor::DOMAccess) {
+            cookieName = CookieUtil::cookieStringForScript(cookieName);
+            cookieValue = CookieUtil::cookieStringForScript(cookieValue);
+        }
+        cookiesBuilder.append(cookiesBuilder.isEmpty() ? ""_s : "; "_s, cookieName, '=', cookieValue);
     }
     return { cookiesBuilder.toString(), didAccessSecureCookies };
 
@@ -294,7 +303,8 @@ std::optional<Vector<Cookie>> CookieStorageSession::cookiesForSessionAsVector(co
 
     Vector<Cookie> cookiesVector;
     RetainPtr name = cookieName.createNSString();
-    for (NSHTTPCookie *cookie in cookies.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *cookie in cookies.get()) {
         if (![[cookie name] length])
             continue;
         if (cookiesFor == CookiesFor::DOMAccess && [cookie isHTTPOnly])
@@ -333,7 +343,7 @@ static RetainPtr<NSHTTPCookie> adjustScriptWrittenCookie(NSHTTPCookie *initialCo
         return nil;
 
 #if ENABLE(JS_COOKIE_CHECKING)
-    RetainPtr mutableProperties = adoptNS([[initialCookie properties] mutableCopy]);
+    RetainPtr<NSMutableDictionary> mutableProperties = adoptNS([[initialCookie properties] mutableCopy]);
     [mutableProperties.get() setValue:@1 forKey:@"SetInJavaScript"];
     RetainPtr cookie = adoptNS([[NSHTTPCookie alloc] initWithProperties:mutableProperties.get()]);
 #else
@@ -448,7 +458,7 @@ void CookieStorageSession::deleteCookie(const URL& firstParty, const URL& url, c
 
     NSUInteger count = [cookies count];
     for (NSUInteger i = 0; i < count; ++i) {
-        RetainPtr<NSHTTPCookie> cookie = [cookies objectAtIndex:i];
+        RetainPtr cookie = checked_objc_cast<NSHTTPCookie>([cookies objectAtIndex:i]);
         if ([[cookie name] isEqualToString:cookieNameString.get()])
             deleteHTTPCookie(cookieStorage.get(), cookie.get(), [aggregator] { });
     }
@@ -463,7 +473,8 @@ void CookieStorageSession::deleteAllCookies(CompletionHandler<void()>&& completi
     auto work = [completionHandler = WTF::move(completionHandler), cookieStorage = RetainPtr { cookieStorage() }] () mutable {
         if (!cookieStorage) {
             RetainPtr cookieStorage = [NSHTTPCookieStorage sharedHTTPCookieStorage];
-            for (NSHTTPCookie *cookie in [cookieStorage cookies])
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *cookie in [cookieStorage cookies])
                 [cookieStorage deleteCookie:cookie];
         } else
             CFHTTPCookieStorageDeleteAllCookies(cookieStorage.get());

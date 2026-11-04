@@ -341,7 +341,7 @@ WI.TimelineRecordingContentView = class TimelineRecordingContentView extends WI.
 
         this._timelineOverview.viewMode = newViewMode;
         this._updateTimelineOverviewHeight();
-        this._updateProgressView(WI.timelineManager.capturingState);
+        this._updateProgressView();
         this._updateFilterBar();
 
         if (timelineView) {
@@ -517,6 +517,9 @@ WI.TimelineRecordingContentView = class TimelineRecordingContentView extends WI.
         if (!WI.visible)
             return;
 
+        if (WI.timelineManager.activeRecording !== this._recording || !WI.timelineManager.isCapturing())
+            return;
+
         if (typeof startTime === "number")
             this._currentTime = startTime;
         else if (!isNaN(this._currentTime)) {
@@ -550,14 +553,14 @@ WI.TimelineRecordingContentView = class TimelineRecordingContentView extends WI.
 
     _handleTimelineCapturingStateChanged(event)
     {
-        let {capturingState} = event.data;
+        let {startTime, endTime} = event.data;
 
-        this._updateProgressView(capturingState);
+        this._updateProgressView();
 
-        switch (capturingState) {
+        switch (WI.timelineManager.capturingState) {
         case WI.TimelineManager.CapturingState.Active:
             if (!this._updating)
-                this._startUpdatingCurrentTime(event.data.startTime);
+                this._startUpdatingCurrentTime(startTime);
 
             this._clearTimelineNavigationItem.enabled = !this._recording.readonly;
             this._exportButtonNavigationItem.enabled = false;
@@ -983,9 +986,10 @@ WI.TimelineRecordingContentView = class TimelineRecordingContentView extends WI.
         this._filterBarNavigationItem.filterBar.clear();
     }
 
-    _updateProgressView(capturingState)
+    _updateProgressView()
     {
-        this._progressView.visible = capturingState !== WI.TimelineManager.CapturingState.Inactive && this.currentTimelineView && !this.currentTimelineView.showsLiveRecordingData;
+        let isCapturing = WI.timelineManager.isCapturing();
+        this._progressView.visible = isCapturing && WI.timelineManager.activeRecording === this._recording && this.currentTimelineView && !this.currentTimelineView.showsLiveRecordingData;
     }
 
     _updateFilterBar()

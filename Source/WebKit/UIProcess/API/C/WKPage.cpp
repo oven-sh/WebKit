@@ -113,6 +113,7 @@
 #include <WebCore/SerializedCryptoKeyWrap.h>
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/WindowFeatures.h>
+#include <wtf/Borrow.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
@@ -2064,6 +2065,13 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
             m_client.decidePolicyForNotificationPermissionRequest(toAPI(&page), toAPI(&origin), toAPI(NotificationPermissionRequest::create(WTF::move(completionHandler)).ptr()), m_client.base.clientInfo);
         }
 
+        void decidePolicyForLocalNetworkAccessPermissionRequest(WebPageProxy&, API::SecurityOrigin& requestingOrigin, API::SecurityOrigin&, WebCore::IPAddressSpace addressSpace, CompletionHandler<void(bool)>&& completionHandler) final
+        {
+            queryPermission(addressSpace == WebCore::IPAddressSpace::Loopback ? "loopback-network"_s : "local-network"_s, requestingOrigin, [completionHandler = WTF::move(completionHandler)](std::optional<WebCore::PermissionState> state) mutable {
+                completionHandler(state == WebCore::PermissionState::Granted);
+            });
+        }
+
         void requestStorageAccessConfirm(WebPageProxy& page, WebFrameProxy* frame, const WebCore::RegistrableDomain& requestingDomain, const WebCore::RegistrableDomain& currentDomain, std::optional<WebCore::OrganizationStorageAccessPromptQuirk>&&, CompletionHandler<void(bool)>&& completionHandler) final
         {
             if (!m_client.requestStorageAccessConfirm) {
@@ -2371,7 +2379,8 @@ void WKPageSetPageNavigationClient(WKPageRef pageRef, const WKPageNavigationClie
 
         void didFailProvisionalNavigationWithError(WebPageProxy& page, FrameInfoData&& frameInfo, API::Navigation* navigation, const URL&, const WebCore::ResourceError& error, API::Object* userData) override
         {
-            if (frameInfo.isMainFrame) {
+            RefPtr frame = WebFrameProxy::webFrame(frameInfo.frameID);
+            if (frame && frame->isMainFrame()) {
                 if (m_client.didFailProvisionalNavigation)
                     m_client.didFailProvisionalNavigation(toAPI(&page), toAPI(navigation), toAPI(error), toAPI(userData), m_client.base.clientInfo);
             } else {
@@ -2509,10 +2518,10 @@ void WKPageSetPageNavigationClient(WKPageRef pageRef, const WKPageNavigationClie
 
             Vector<RefPtr<API::Object>> apiListIdentifiers;
             Vector<RefPtr<API::Object>> apiNotifications;
-            for (const auto& pair : results.results) {
+            for (const auto& pair : borrow(results.results)) {
                 const String& listIdentifier = pair.first;
                 const auto& result = pair.second;
-                for (const String& notification : result.notifications) {
+                for (const String& notification : borrow(result.notifications)) {
                     apiListIdentifiers.append(API::String::create(listIdentifier));
                     apiNotifications.append(API::String::create(notification));
                 }
@@ -2960,7 +2969,7 @@ void WKPageComputePagesForPrinting(WKPageRef pageRef, WKFrameRef frame, WKPrintI
     CRASH_IF_SUSPENDED;
     protect(toImpl(pageRef))->computePagesForPrinting(toImpl(frame)->frameID(), printInfoFromWKPrintInfo(printInfo), [context, callback](const Vector<WebCore::IntRect>& rects, double scaleFactor, const WebCore::FloatBoxExtent& computedPageMargin) {
         auto wkRects = rects.map([](auto& rect) { return toAPI(rect); });
-        callback(wkRects.mutableSpan().data(), wkRects.size(), scaleFactor, nullptr, context);
+        callback(borrow(wkRects)->mutableSpan().data(), wkRects.size(), scaleFactor, nullptr, context);
     });
 }
 
@@ -3274,7 +3283,7 @@ ProcessID WKPageGetProcessIdentifier(WKPageRef page)
 ProcessID WKPageGetGPUProcessIdentifier(WKPageRef page)
 {
 #if ENABLE(GPU_PROCESS)
-    RefPtr gpuProcess = protect(toImpl(page)->configuration().processPool())->gpuProcess();
+    RefPtr gpuProcess = protect(protect(toImpl(page)->configuration())->processPool())->gpuProcess();
     if (!gpuProcess)
         return 0;
     return gpuProcess->processID();

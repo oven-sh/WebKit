@@ -1,0 +1,53 @@
+# A granule of an Extension holds eight bytes: two references of four. An object has the granule as soon as it has one of the two, so an object that gets both pays for one granule where they share it
+# and for two where each lies beside a row that the object never gets. What a function stores one after the other into one object lies together: r5 beside r15, r6 beside r16 and so on.
+# Five rows have room in the cell. What is stored with one of those has nobody to lie beside, and takes what is free behind the pairs
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests references=narrow heat=EverythingIsHot testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Resolved" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="r0" declared={type=undefined|L1}}, {key="r1" declared={type=undefined|L1}}, {key="r2" declared={type=undefined|L1}}, {key="r3" declared={type=undefined|L1}}, {key="r4" declared={type=undefined|L1}}, {key="r5" declared={type=undefined|L1}}, {key="r6" declared={type=undefined|L1}}, {key="r7" declared={type=undefined|L1}}, {key="r8" declared={type=undefined|L1}}, {key="r9" declared={type=undefined|L1}}, {key="r10" declared={type=undefined|L1}}, {key="r11" declared={type=undefined|L1}}, {key="r12" declared={type=undefined|L1}}, {key="r13" declared={type=undefined|L1}}, {key="r14" declared={type=undefined|L1}}, {key="r15" declared={type=undefined|L1}}, {key="r16" declared={type=undefined|L1}}, {key="r17" declared={type=undefined|L1}}, {key="r18" declared={type=undefined|L1}}, {key="r19" declared={type=undefined|L1}}]
+layout L1 name="Leaf" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = NewObject -, v2 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    v8 = Call v0
+    v9 = ToBoolean v8
+    Branch v9 -> taken b1(), notTaken b2()
+  b2():
+# REPEAT: i = 1..10
+    v%(i+9) = CallDirect v7, v4 function=f%(i)
+# END REPEAT
+    v20 = ForInOpen v7
+    Return
+}
+# REPEAT: i = 0..9
+function f%(i+1) name="store%(i)And%(i+10)" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="r%(i)"
+    PropSet v0, v1 key="r%(i+10)"
+    Return
+}
+# END REPEAT
+# CHECK: L0 CompiledObject size=48 extension=68
+# CHECK: .5 "r4" OptionalCell32 @44
+# CHECK-NEXT: .6 "r5" OptionalCell32 out@8
+# CHECK-NEXT: .7 "r6" OptionalCell32 out@16
+# CHECK-NEXT: .8 "r7" OptionalCell32 out@24
+# CHECK-NEXT: .9 "r8" OptionalCell32 out@32
+# CHECK-NEXT: .10 "r9" OptionalCell32 out@40
+# CHECK-NEXT: .11 "r10" OptionalCell32 out@48
+# CHECK: .15 "r14" OptionalCell32 out@64
+# CHECK-NEXT: .16 "r15" OptionalCell32 out@12
+# CHECK-NEXT: .17 "r16" OptionalCell32 out@20
+# CHECK-NEXT: .18 "r17" OptionalCell32 out@28
+# CHECK-NEXT: .19 "r18" OptionalCell32 out@36
+# CHECK-NEXT: .20 "r19" OptionalCell32 out@44

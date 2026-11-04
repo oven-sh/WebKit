@@ -32,6 +32,7 @@
 #include "AirCode.h"
 #include "AirInstInlines.h"
 #include "AirRegLiveness.h"
+#include "B3Procedure.h"
 
 namespace JSC { namespace B3 { namespace Air {
 
@@ -59,7 +60,7 @@ void logRegisterPressure(Code& code)
             Inst::forEachDefWithExtraClobberedRegs<Reg>(
                 prevInst, &inst,
                 [&] (Reg reg, Arg::Role, Bank, Width width, PreservedWidth) {
-                    ASSERT(width <= Width64 || Options::useWasmSIMD());
+                    ASSERT(width <= Width64 || code.proc().policy().upstream.allowsSIMD); // Bun: the procedure's policy, not Options::useWasmSIMD().
                     set.add(reg, width);
                 });
 

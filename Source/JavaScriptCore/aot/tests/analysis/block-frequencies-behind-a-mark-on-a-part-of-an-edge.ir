@@ -1,0 +1,38 @@
+# A block that only jumps on to an unlikely block counts as a part of the edge to it. Once it is recorded as unlikely itself it is a block of its own, and frequencies that are held from before are not handed out again
+# FORM: Prepared
+# RUN(BEFORE): frequencies function=f0
+# RUN(MARKED): record-frequency function=f0 block=b2 frequency=Unlikely
+# RUN(ANEW): frequencies function=f1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="armThatIsMarkedLater" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Jump -> next b3()
+  b3() frequency=Unlikely:
+    Return
+}
+# BEFORE: b0 frequency: Normal count: 1.000000
+# BEFORE-NEXT: b1 frequency: Normal count: 0.941176
+# BEFORE-NEXT: b2 frequency: Unlikely count: 0.058824
+# BEFORE-NEXT: b3 frequency: Unlikely count: 0.058824
+# MARKED: b2() frequency=Unlikely:
+# MARKED: b0 frequency: Normal count: 1.000000
+# MARKED-NEXT: b1 frequency: Normal count: 0.996109
+# MARKED-NEXT: b2 frequency: Unlikely count: 0.003891
+# MARKED-NEXT: b3 frequency: Unlikely count: 0.003891
+function f1 name="armThatIsMarkedFromTheStart" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2() frequency=Unlikely:
+    Jump -> next b3()
+  b3() frequency=Unlikely:
+    Return
+}
+# ANEW: b0 frequency: Normal count: 1.000000
+# ANEW-NEXT: b1 frequency: Normal count: 0.996109
+# ANEW-NEXT: b2 frequency: Unlikely count: 0.003891
+# ANEW-NEXT: b3 frequency: Unlikely count: 0.003891

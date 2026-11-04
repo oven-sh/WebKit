@@ -40,14 +40,14 @@
 
 namespace WebCore {
 
-static inline bool NODELETE shouldEventCrossShadowBoundary(Event& event, ShadowRoot& shadowRoot, EventTarget& target)
+static inline bool LEGACY_NODELETE shouldEventCrossShadowBoundary(Event& event, ShadowRoot& shadowRoot, EventTarget& target)
 {
     auto* targetNode = dynamicDowncast<Node>(target);
     bool targetIsInShadowRoot = targetNode && &targetNode->treeScope().rootNode() == &shadowRoot;
     return !targetIsInShadowRoot || event.composed();
 }
 
-static Node* NODELETE nodeOrHostIfPseudoElement(Node* node)
+static Node* LEGACY_NODELETE nodeOrHostIfPseudoElement(Node* node)
 {
     auto* pseudoElement = dynamicDowncast<PseudoElement>(*node);
     return pseudoElement ? pseudoElement->hostElement() : node;
@@ -57,14 +57,14 @@ class RelatedNodeRetargeter {
 public:
     RelatedNodeRetargeter(Ref<Node>&& relatedNode, Node& target);
 
-    Node* NODELETE currentNode(Node& currentTreeScope);
+    Node* LEGACY_NODELETE currentNode(Node& currentTreeScope);
     void moveToNewTreeScope(TreeScope* previousTreeScope, TreeScope& newTreeScope);
 
 private:
-    Node* NODELETE nodeInLowestCommonAncestor();
+    Node* LEGACY_NODELETE nodeInLowestCommonAncestor();
     void collectTreeScopes();
 
-    void NODELETE checkConsistency(Node& currentTarget);
+    void LEGACY_NODELETE checkConsistency(Node& currentTarget);
 
     const Ref<Node> m_relatedNode;
     RefPtr<Node> m_retargetedRelatedNode;
@@ -106,7 +106,7 @@ void EventPath::buildPath(Node& originalTarget, Event& event)
     RefPtr<ShadowRoot> shadowRoot;
     while (node) {
         while (node) {
-            m_path.append(EventContext { contextType, *node, eventTargetRespectingTargetRules(*node), target.get(), closedShadowDepth });
+            m_path.append(EventContext { contextType, *node, protect(eventTargetRespectingTargetRules(*node)), target.get(), closedShadowDepth });
 
             if (RefPtr maybeShadowRoot = dynamicDowncast<ShadowRoot>(*node)) {
                 shadowRoot = WTF::move(maybeShadowRoot);
@@ -251,7 +251,8 @@ Vector<Ref<EventTarget>> EventPath::computePathUnclosedToTarget(const EventTarge
     RELEASE_ASSERT(pathSize);
     path.reserveInitialCapacity(pathSize);
 
-    auto currentTargetIndex = m_path.findIf([&target] (auto& context) {
+    // The last match is the use element's own context, not its shadow tree's.
+    auto currentTargetIndex = m_path.reverseFindIf([&target](auto& context) {
         return context.currentTarget() == &target;
     });
     RELEASE_ASSERT(currentTargetIndex != notFound);
@@ -265,7 +266,7 @@ Vector<Ref<EventTarget>> EventPath::computePathUnclosedToTarget(const EventTarge
         bool movedOutOfShadowTree = depth < currentDepthAllowed;
         if (movedOutOfShadowTree)
             currentDepthAllowed = depth;
-        path.append(*currentContext.currentTarget());
+        path.append(Ref { *currentContext.currentTarget() });
     };
 
     auto currentDepthAllowed = currentTargetDepth;
@@ -291,7 +292,7 @@ Vector<Ref<EventTarget>> EventPath::computePathTreatingAllShadowRootsAsOpen() co
     for (auto& currentContext : m_path) {
         if (auto* currentNode = currentContext.node(); currentNode && currentNode->hasBeenInUserAgentShadowTree())
             continue;
-        path.append(*currentContext.currentTarget());
+        path.append(Ref { *currentContext.currentTarget() });
     }
     return path;
 }
@@ -310,7 +311,7 @@ EventPath::EventPath(EventTarget& target)
     m_path = { EventContext { EventContext::Type::Normal, nullptr, &target, &target, 0 } };
 }
 
-static Node* NODELETE moveOutOfAllShadowRoots(Node& startingNode)
+static Node* LEGACY_NODELETE moveOutOfAllShadowRoots(Node& startingNode)
 {
     auto* node = &startingNode;
     while (node && node->isInShadowTree())
@@ -372,7 +373,7 @@ RelatedNodeRetargeter::RelatedNodeRetargeter(Ref<Node>&& relatedNode, Node& targ
     m_retargetedRelatedNode = nodeInLowestCommonAncestor();
 }
 
-inline Node* NODELETE RelatedNodeRetargeter::currentNode(Node& currentTarget)
+inline Node* LEGACY_NODELETE RelatedNodeRetargeter::currentNode(Node& currentTarget)
 {
     checkConsistency(currentTarget);
     return m_retargetedRelatedNode.get();
@@ -412,7 +413,7 @@ void RelatedNodeRetargeter::moveToNewTreeScope(TreeScope* previousTreeScope, Tre
     }
 }
 
-inline Node* NODELETE RelatedNodeRetargeter::nodeInLowestCommonAncestor()
+inline Node* LEGACY_NODELETE RelatedNodeRetargeter::nodeInLowestCommonAncestor()
 {
     if (!m_lowestCommonAncestorIndex)
         return m_relatedNode.ptr();
@@ -430,7 +431,7 @@ void RelatedNodeRetargeter::collectTreeScopes()
 
 #if !ASSERT_ENABLED
 
-inline void NODELETE RelatedNodeRetargeter::checkConsistency(Node&)
+inline void LEGACY_NODELETE RelatedNodeRetargeter::checkConsistency(Node&)
 {
 }
 

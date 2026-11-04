@@ -31,6 +31,7 @@
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/JSCJSValuePropertyInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
+#include <JavaScriptCore/JSContextRefPrivate.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSRetainPtr.h>
 #include <JavaScriptCore/JSStringRefCPP.h>
@@ -72,7 +73,7 @@ public:
     ~WebExtensionCallbackHandler();
 
     JSGlobalContextRef globalContext() const { return m_globalContext.get(); }
-    JSValueRef NODELETE callbackFunction() const;
+    JSValueRef LEGACY_NODELETE callbackFunction() const;
 
     void reportError(const String&);
 
@@ -89,7 +90,7 @@ private:
     JSObjectRef m_callbackFunction = nullptr;
     JSObjectRef m_rejectFunction = nullptr;
     JSRetainPtr<JSGlobalContextRef> m_globalContext;
-    RefPtr<WebExtensionAPIRuntimeBase> m_runtime;
+    const RefPtr<WebExtensionAPIRuntimeBase> m_runtime;
 };
 
 enum class NullStringPolicy : uint8_t {
@@ -116,7 +117,7 @@ enum class ValuePolicy : bool {
 RefPtr<WebFrame> toWebFrame(JSContextRef);
 RefPtr<WebPage> toWebPage(JSContextRef);
 
-inline JSRetainPtr<JSStringRef> toJSString(const String& string)
+inline RefPtr<OpaqueJSString> toJSString(const String& string)
 {
     return createJSString(string);
 }
@@ -155,13 +156,22 @@ JSValueRef callObjectWithArguments(JSValueRef callbackFunction, JSContextRef con
     if (!callbackObject)
         return nullptr;
 
-    auto* globalObject = toJS(JSContextGetGlobalContext(context));
+    JSGlobalContextRef globalContext = JSContextGetGlobalContext(context);
+    auto* globalObject = toJS(globalContext);
     RefPtr executionContext = globalObject ? downcast<WebCore::JSDOMGlobalObject>(globalObject)->scriptExecutionContext() : nullptr;
     if (!executionContext || executionContext->activeDOMObjectsAreStopped())
         return nullptr;
 
+    bool includesNativeCallStack = JSGlobalContextGetIncludesNativeCallStackWhenReportingExceptions(globalContext);
+    if (!reportException)
+        JSGlobalContextSetIncludesNativeCallStackWhenReportingExceptions(globalContext, false);
+
     JSValueRef internalException = nullptr;
     JSValueRef result = JSObjectCallAsFunction(context, callbackObject, nullptr, ArgumentCount, arguments.data(), &internalException);
+
+    if (!reportException)
+        JSGlobalContextSetIncludesNativeCallStackWhenReportingExceptions(globalContext, includesNativeCallStack);
+
     if (internalException && reportException) {
         JSC::JSLockHolder lock(globalObject->vm());
         auto exceptionValue = toJS(globalObject, internalException);
@@ -209,7 +219,7 @@ JSValueRef toJSValueRef(JSContextRef, URL, NullOrEmptyString = NullOrEmptyString
 JSValueRef toWindowObject(JSContextRef, WebFrame&);
 JSValueRef toWindowObject(JSContextRef, WebPage&);
 
-RefPtr<JSON::Value> fromJSValue(JSContextRef, JSValueRef);
+RefPtr<JSON::Value> fromJSValue(JSContextRef, JSValueRef, NullValuePolicy = NullValuePolicy::NotAllowed, ValuePolicy = ValuePolicy::Recursive);
 RefPtr<JSON::Value> toJSONValue(JSContextRef, JSValueRef, NullValuePolicy = NullValuePolicy::NotAllowed, ValuePolicy = ValuePolicy::Recursive);
 inline JSValueRef toJSValueRefOrJSNull(JSContextRef context, RefPtr<JSON::Object> value)
 {

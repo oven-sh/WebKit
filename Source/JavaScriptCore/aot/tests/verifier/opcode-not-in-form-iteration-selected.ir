@@ -1,0 +1,5 @@
+# An operation that a required pass removes is reported as left by that pass in form Prepared only
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: OpcodeNotInForm 1
+# PROGRAM-OF: required-pass-left-operation.ir

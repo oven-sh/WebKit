@@ -1,0 +1,40 @@
+# A store into a variable nobody reads stays where it may store an object, also in a program that makes no weak reference: an object of the host may release what it holds when it goes.
+# A call goes with its store only where it is annotated as pure and the store was the only use of its answer. With a weak reference: remove-unread-exports-pure-call.ir
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadExports
+# OPTIONS: only-passes=RemoveUnreadExports
+# STATISTIC: UnreadVariableStoresRemoved = 1
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/maps.ts" displayPath="maps.ts" body=f1 exports=[{name="annotated" variable=g0}, {name="plain" variable=g1}, {name="used" variable=g2}]
+entry module=m0
+variable g0 name="annotated" module=m1 declared={type=anything}
+variable g1 name="plain" module=m1 declared={type=anything}
+variable g2 name="used" module=m1 declared={type=anything}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+
+function f1 name="maps" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="make" [isFreeName]
+    v2 = Call v1, - [isAnnotatedPure]
+    v3 = Convert v2 declared={type=object flags=[IsExpected]}
+    v4 = Construct v1, -, v3 [isAnnotatedPure]
+    v5 = Convert v4 declared={type=Map flags=[IsExpected]}
+    PutModuleVariable v5 variable=g0
+    v7 = Call v1, -
+    PutModuleVariable v7 variable=g1
+    v9 = Call v1, - [isAnnotatedPure]
+    PutModuleVariable v9 variable=g2
+    v11 = Call v1, -, v9
+    Return
+# CHECK: v1: anything = PropGet v0 key="make"
+# CHECK-NEXT: v7: anything = Call v1 accessSite
+# CHECK-NEXT: PutModuleVariable v7 variable=g1
+# CHECK-NEXT: v9: anything = Call v1 {{*}}[isAnnotatedPure]
+# CHECK-NEXT: PutModuleVariable v9 variable=g2
+# CHECK-NEXT: v11: anything = Call v1, -, v9
+# CHECK-NEXT: Return
+}

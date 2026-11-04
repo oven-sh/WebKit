@@ -1,0 +1,26 @@
+# Listed functions and built-ins are compared by list, a function of the application overlaps no built-in, and function holds every callable one
+# RUN: subset
+# CHECK: t0 <= t1: yes overlaps: yes
+# CHECK: t0 <= t2: yes overlaps: yes
+# CHECK: t0 <= t3: yes overlaps: yes
+# CHECK: t0 <= t4: no overlaps: no
+# CHECK: t0 <= t5: no overlaps: no
+# CHECK: t1 <= t0: no overlaps: yes
+# CHECK: t2 <= t0: no overlaps: yes
+# CHECK: t2 <= t3: yes overlaps: yes
+# CHECK: t2 <= t5: no overlaps: yes
+# CHECK: t3 <= t2: no overlaps: yes
+# CHECK: t5 <= t2: yes overlaps: yes
+# CHECK: t5 <= t3: yes overlaps: yes
+# CHECK: t5 <= t6: yes overlaps: yes
+# CHECK: t5 <= t7: no overlaps: no
+# CHECK: t6 <= t5: no overlaps: yes
+# CHECK: t7 <= t2: no overlaps: yes
+# CHECK: t7 <= t3: yes overlaps: yes
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=f1}, {type=f1|f2}, {type=function}, {type=object}, {type=f3}, {type=builtin(ArrayPrototypePush)}, {type=builtin(ArrayPrototypePush)|builtin(ObjectFreeze)}, {type=builtin(GlobalThis)}] results=[{type=undefined}]
+function f1 name="first" results=[{type=anything}]
+function f2 name="second" results=[{type=anything}]
+function f3 name="third" results=[{type=anything}]

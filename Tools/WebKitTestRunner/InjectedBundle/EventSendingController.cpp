@@ -130,7 +130,7 @@ static JSClassRef getMenuItemClass()
 
 #endif
 
-static WKEventModifiers parseModifier(const JSRetainPtr<JSStringRef>& modifier)
+static WKEventModifiers parseModifier(const RefPtr<OpaqueJSString>& modifier)
 {
     if (JSStringIsEqualToUTF8CString(modifier.get(), "ctrlKey"))
         return kWKEventModifiersControlKey;
@@ -723,16 +723,18 @@ void EventSendingController::smartMagnify()
 #endif
 }
 
-#if ENABLE(MAC_GESTURE_EVENTS)
-
 void EventSendingController::scaleGestureStart(double scale)
 {
     if (m_isDisabled)
         return;
 
+#if PLATFORM(MAC)
     auto body = createEventSenderDictionary("ScaleGestureStart");
     setValue(body, "Scale", scale);
     postSynchronousPageMessage("EventSender", body);
+#else
+    UNUSED_PARAM(scale);
+#endif
 }
 
 void EventSendingController::scaleGestureChange(double scale)
@@ -740,9 +742,13 @@ void EventSendingController::scaleGestureChange(double scale)
     if (m_isDisabled)
         return;
 
+#if PLATFORM(MAC)
     auto body = createEventSenderDictionary("ScaleGestureChange");
     setValue(body, "Scale", scale);
     postSynchronousPageMessage("EventSender", body);
+#else
+    UNUSED_PARAM(scale);
+#endif
 }
 
 void EventSendingController::scaleGestureEnd(double scale)
@@ -750,12 +756,14 @@ void EventSendingController::scaleGestureEnd(double scale)
     if (m_isDisabled)
         return;
 
+#if PLATFORM(MAC)
     auto body = createEventSenderDictionary("ScaleGestureEnd");
     setValue(body, "Scale", scale);
     postSynchronousPageMessage("EventSender", body);
+#else
+    UNUSED_PARAM(scale);
+#endif
 }
-
-#endif // ENABLE(MAC_GESTURE_EVENTS)
 
 // Object Creation
 

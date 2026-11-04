@@ -1,0 +1,13 @@
+# A store by name whose plan is a store to a filled slot writes the field alone, so the form that may add the field does more than the store it replaces
+# FORM: Prepared
+# RUN: check-replacement f0 v3 v2
+# DIAGNOSTIC: EffectsExceedReplacedGroup 1
+# CHECK-NOT: valid
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="store" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+    PropSet v0, v1 key="x"
+    PutSlotOrAdd v0, -, v1 key="x" receivers=[L0] level=Proven
+    Return
+}

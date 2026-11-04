@@ -1,0 +1,93 @@
+# `typeof window`: the table has every property that the global object is created with, so a name outside it is absent for as long as nothing adds it.
+# Flow says that nothing does: no code runs that the build has not seen, and no store reaches the global object under the name or under a key nobody knows.
+# Without the results of flow nothing is known about the global object, and only a locked global is settled.
+# The same reads in a program that evaluates text are in free-name-locked-global-under-scripts.ir
+# RUN: pass ResolveBuiltins
+# RUN(FLOW): pipeline ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    v3 = CallDirect function=f4
+    v4 = CallDirect function=f5
+    v5 = CallDirect function=f6
+    v6 = CallDirect function=f7
+    Return
+}
+
+function f1 name="nameOutsideTheTable" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="window" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return v2
+# CHECK: v1: anything = PropGet v0 key="window" [isFreeName, isForTypeOf]
+# FLOW-NOT: PropGet
+# FLOW: [[absent]]: undefined = Undefined
+# FLOW-NEXT: = TypeOf [[absent]]
+}
+
+# `slice` is a name of the table, and no member of the global object or of Object.prototype
+function f2 name="nameOfOtherHolders" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="slice" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return v2
+# CHECK: = PropGet v0 key="slice" [isFreeName, isForTypeOf]
+# FLOW-NOT: PropGet
+# FLOW: = Undefined
+}
+
+function f3 name="nameStoredOnTheGlobalObject" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    PropSet v0, v1 key="added" mode=Strict
+    v3 = PropGet v0 key="added" [isFreeName, isForTypeOf]
+    v4 = TypeOf v3
+    Return v4
+# CHECK: = PropGet v0 key="added" [isFreeName, isForTypeOf]
+# FLOW-NOT: = Undefined
+# FLOW: = PropGet {{*}}key="added"{{*}}[isFreeName, isForTypeOf]
+}
+
+# Sloppy code creates a property of the global object by assigning to a name that nothing declares
+function f4 name="nameAssignedBySloppyCode" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    PropSet v0, v1 key="leaked" mode=Sloppy [isFreeName]
+    Return
+}
+function f5 name="nameThatOtherFunctionAssigns" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="leaked" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return v2
+# CHECK: = PropGet v0 key="leaked" [isFreeName, isForTypeOf]
+# FLOW-NOT: = Undefined
+# FLOW: = PropGet {{*}}key="leaked"{{*}}[isFreeName, isForTypeOf]
+}
+
+function f6 name="lockedGlobal" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Array" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return v2
+# CHECK: v1: builtin(Array) = Builtin builtin=Array
+# CHECK-NEXT: = TypeOf v1
+# FLOW-NOT: PropGet
+# FLOW: = Builtin builtin=Array
+}
+
+# No script can run, so none declares a `let Date` in front of the global
+function f7 name="globalNeverWritten" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return v2
+# CHECK: = PropGet v0 key="Date" [isFreeName, isForTypeOf]
+# FLOW-NOT: PropGet
+# FLOW: = Builtin builtin=Date
+}

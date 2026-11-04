@@ -1,0 +1,26 @@
+# A sum of which only the low word is used is added in words, whichever width its operands come in: it asks nothing of them, so what goes around the loop has the width in which it is made
+# FORM: Placed
+# RUN: pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sumOfWordsKeptToAWord" parameters=[{type=i32}, {type=int[1, 9]}, {type=int[0, 16777215]}] results=[{type=i32}] {
+    v3 = Integer integer=0
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5: i32, v6: int[0, 2147483647]):
+    LoopHint
+    v8 = Less v6, v0 form=Integers
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9: int[0, 2147483646]):
+    v10 = Add v5, v1 form=Integers
+    v11 = Integer integer=0
+    v12 = BitOr v10, v11 form=Numbers
+    v13 = Increment v9 form=Integers
+    Jump -> next b1(v12, v13)
+  b3():
+    v14 = Add v2, v5 form=Integers
+    v15 = Integer integer=16777215
+    v16 = BitAnd v14, v15 form=Numbers
+    Return v16
+# CHECK: b1(v5: i32 @Int32,
+}

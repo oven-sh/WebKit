@@ -26,7 +26,7 @@
 #include "config.h"
 #include "WasmOSREntryPlan.h"
 
-#if ENABLE(WEBASSEMBLY_OMGJIT)
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 
 #include "HeapCellInlines.h"
 #include "JITCompilation.h"
@@ -67,7 +67,7 @@ OSREntryPlan::OSREntryPlan(VM& vm, Ref<Module>&& module, Ref<BBQCallee>&& callee
 void OSREntryPlan::dumpDisassembly(CompilationContext& context, LinkBuffer& linkBuffer, const RTT& signature, FunctionSpaceIndex functionIndexSpace)
 {
     CompilationMode targetCompilationMode = CompilationMode::OMGForOSREntryMode;
-    dataLogLnIf(context.procedure->shouldDumpIR() || shouldDumpDisassemblyFor(targetCompilationMode), "Generated OMGforOSREntry functionIndexSpace:(", functionIndexSpace, "),sig:(", signature.toString().ascii().data(), "),name:(", m_callee->nameWithHash(), "),wasmSize:(", m_moduleInformation->functionWasmSizeImportSpace(functionIndexSpace), ")");
+    dataLogLnIf(context.procedure->shouldDumpIR() || shouldDumpDisassemblyFor(targetCompilationMode), "Generated OMGforOSREntry functionIndexSpace:(", functionIndexSpace, "),sig:(", signature.toString(), "),name:(", m_callee->nameWithHash(), "),wasmSize:(", m_moduleInformation->functionWasmSizeImportSpace(functionIndexSpace), ")");
     if (shouldDumpDisassemblyFor(targetCompilationMode)) [[unlikely]] {
         auto* disassembler = context.procedure->code().disassembler();
 
@@ -163,10 +163,14 @@ void OSREntryPlan::work()
     if (newlyInstalled) {
         WTF::storeStoreFence();
 
-        Locker locker { m_callee->tierUpCounter().getLock() };
-        m_callee->setOSREntryCallee(callee.copyRef(), mode());
-        m_callee->tierUpCounter().osrEntryTriggers()[m_loopIndex] = TierUpCount::TriggerReason::CompilationDone;
-        m_callee->tierUpCounter().setCompilationStatusForOMGForOSREntry(mode(), TierUpCount::CompilationStatus::Compiled);
+        {
+            Locker locker { m_callee->tierUpCounter().getLock() };
+            m_callee->setOSREntryCallee(callee.copyRef(), mode());
+            m_callee->tierUpCounter().osrEntryTriggers()[m_loopIndex] = TierUpCount::TriggerReason::CompilationDone;
+            m_callee->tierUpCounter().setCompilationStatusForOMGForOSREntry(mode(), TierUpCount::CompilationStatus::Compiled);
+        }
+        if (Options::freeRetiredWasmCode())
+            callee->reportToVMsForDestruction();
     }
 
     // We don't register our BBQCallee for deletion because this entrypoint isn't a general one and is only used for loop OSR.
@@ -178,4 +182,4 @@ void OSREntryPlan::work()
 
 } } // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY_OMGJIT)
+#endif // ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)

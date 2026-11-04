@@ -1,0 +1,103 @@
+# A block is rare because the test above it seldom sends anybody there. An edge that passes the test by, because its outcome is known on that way, always goes there.
+# In a loop the block and what it jumps on to then run as often as the edge: what is held for unlikely in a loop is sent round another header.
+# The frequency of a block also stands for the edges into it, so nothing changes for an edge out of an unlikely block, nor for a block that others than that test lead to.
+# Outside a loop nothing changes either: how often the edge itself is taken nobody knows.
+# FORM: Prepared optimizing
+# RUN: pass ThreadJumps VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="oneWayAlwaysFailsTheTest" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+    v2 = Boolean boolean=true
+    v3 = Boolean
+    Jump -> next b1(v1)
+  b1(v4):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4(v2)
+  b3():
+    Jump -> next b4(v3)
+  b4(v6):
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v4
+  b6() frequency=Rare:
+    Jump -> next b7()
+  b7() frequency=Rare:
+    v7 = Negate v4
+    Jump -> next b1(v7)
+# CHECK: b3():
+# CHECK-NEXT: Jump -> next b6()
+# CHECK: b6():
+# CHECK-NEXT: Jump -> next b7()
+# CHECK: b7():
+}
+
+function f1 name="theWayIsUnlikelyItself" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+    v2 = Boolean boolean=true
+    v3 = Boolean
+    Jump -> next b1(v1)
+  b1(v4):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4(v2)
+  b3() frequency=Unlikely:
+    Jump -> next b4(v3)
+  b4(v6):
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v4
+  b6() frequency=Rare:
+    v7 = Negate v4
+    Jump -> next b1(v7)
+# CHECK: b3() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6()
+# CHECK: b6() frequency=Rare:
+}
+
+function f2 name="anotherTestLeadsThereToo" parameters=[{type=boolean}, {type=boolean}, {type=number}] results=[{type=number}] {
+    v3 = Boolean boolean=true
+    v4 = Boolean
+    Jump -> next b1(v2)
+  b1(v5):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Branch v1 -> taken b7(), notTaken b6()
+  b3():
+    Jump -> next b4(v4)
+  b4(v7):
+    Branch v7 -> taken b5(), notTaken b6()
+  b5():
+    Return v5
+  b6() frequency=Rare:
+    v8 = Negate v5
+    Jump -> next b1(v8)
+  b7():
+    Jump -> next b4(v3)
+# CHECK: b3():
+# CHECK-NEXT: Jump -> next b6()
+# CHECK: b6() frequency=Rare:
+}
+
+function f3 name="noLoopHoldsTheBlock" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+    v2 = Boolean boolean=true
+    v3 = Boolean
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v3)
+  b3(v4):
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v1
+  b5() frequency=Rare:
+    v5 = Negate v1
+    Return v5
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b5()
+# CHECK: b5() frequency=Rare:
+}

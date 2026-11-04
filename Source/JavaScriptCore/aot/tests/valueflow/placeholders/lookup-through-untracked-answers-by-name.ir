@@ -1,0 +1,54 @@
+# holder = { go: one, get made() { return two } }; any = first or second or third; others = holder or first or second; any.go(); any.made(); any.missing()
+# Each variable holds more than the analysis follows in one set, so the untracked object stands for what they held: a read through it may be a read of the holder, which never came to this variable.
+# The read answers by name: it finds what lies under the name on an object of the program, and it runs a getter that lies there. The answer lists what was written and no placeholder,
+# a name that nobody has written gives nothing to call, and nothing escapes.
+# OPTIONS: limit=MaxValueFlowSetMembers:2
+# STATISTIC: MaxValueFlowSetMembersHits >= 2
+# RUN: valueflow-solve calls
+# CHECK: f0 v15 -> f1
+# CHECK: f0 v17 -> f2
+# CHECK-NOT: f0 v19 -> {{*}}
+# RUN(NUMBERS): valueflow-solve
+# NUMBERS: reached-functions-escaped 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First"
+layout L1 name="Second"
+layout L2 name="Third"
+layout L3 name="Holder" fields=[{key="go" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="any" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="others" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewObject layout=L1 fields=[]
+    v2 = NewObject layout=L2 fields=[]
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v2 variable=g0
+    v6 = NewClosure function=f1
+    v7 = NewObject -, v6 layout=L3 fields=[0]
+    v8 = NewClosure function=f3
+    DefineGetter v7, v8 key="made"
+    PutModuleVariable v7 variable=g1
+    PutModuleVariable v0 variable=g1
+    PutModuleVariable v1 variable=g1
+    v13 = GetModuleVariable variable=g0
+    v14 = PropGet v13 key="go"
+    v15 = Call v14, v13
+    v16 = PropGet v13 key="made"
+    v17 = Call v16, v13
+    v18 = PropGet v13 key="missing"
+    v19 = Call v18, v13
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+    Return
+}
+function f3 name="made" kind=Getter results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    Return v0
+}

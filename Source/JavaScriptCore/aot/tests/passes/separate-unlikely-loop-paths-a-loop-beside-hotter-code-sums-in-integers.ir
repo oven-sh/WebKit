@@ -1,0 +1,85 @@
+# A loop that is expected to run, beside code that runs more often, gets its copy where a sum that goes round it is a double only for an unlikely path: each turn waits for that sum
+# FORM: Prepared
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 1
+
+module m0 path="main.js" displayPath="main.js" body=f2
+entry module=m0
+function f0 name="sum" parameters=[{type=undefined|int[0, 9]}, {type=number}] results=[{type=i32}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = TypeTest v0 testedType=number
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    v10 = Add v4, v9
+    Jump -> next b5(v10)
+  b4() frequency=Unlikely:
+    v11 = Add v4, v0
+    Jump -> next b5(v11)
+  b5(v12):
+    v13 = Integer integer=0
+    v14 = BitOr v12, v13
+    v15 = Increment v5
+    Jump -> next b1(v14, v15)
+  b6():
+    Return v4
+# CHECK: b5(v12: int[-2147483648, 2147483656]):
+}
+function f1 name="count" parameters=[{type=i32}] results=[{type=i32}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b9()
+  b2():
+    Jump -> next b3(v2, v1)
+  b3(v6, v7):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b4(), notTaken b8()
+  b4():
+    Jump -> next b5(v6, v1)
+  b5(v10, v11):
+    LoopHint
+    v13 = Less v11, v0
+    Branch v13 -> taken b6(), notTaken b7()
+  b6():
+    v14 = BitXor v10, v11
+    v15 = BitXor v14, v7
+    v16 = BitXor v15, v3
+    v17 = BitOr v16, v1
+    v18 = BitXor v17, v11
+    v19 = BitXor v18, v7
+    v20 = BitXor v19, v3
+    v21 = BitOr v20, v1
+    v22 = BitXor v21, v11
+    v23 = BitXor v22, v7
+    v24 = BitXor v23, v3
+    v25 = BitOr v24, v1
+    v26 = Increment v11
+    v27 = BitOr v26, v1
+    Jump -> next b5(v25, v27)
+  b7():
+    v28 = Increment v7
+    v29 = BitOr v28, v1
+    Jump -> next b3(v10, v29)
+  b8():
+    v30 = Increment v3
+    v31 = BitOr v30, v1
+    Jump -> next b1(v6, v31)
+  b9():
+    Return v2
+}
+function f2 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=9
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v0, v0 function=f0
+    Return v2
+}

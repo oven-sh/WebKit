@@ -1,0 +1,57 @@
+# An assignment asks the objects above the one it stores to. Object.prototype has toString, and Object.freeze(Object.prototype) makes it read-only at any time: from then on the assignment
+# is refused. So it stays where it stands, with the object that it fills. A definition asks nobody, and neither does an assignment under a name that no object above has or can get.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline DeferInitializers
+# STATISTIC: InitializersDeferred = 2
+# STATISTIC: VariablesFilledByInitializers = 2
+# CHECK: variable g0 name="plain" module=m0 declared={type=absent|L0}
+# CHECK-NEXT: variable g1 name="assigned" module=m0 declared={type=L0}
+# CHECK-NEXT: variable g2 name="defined" module=m0 declared={type=absent|L0}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[assigned]]: L0 = NewObject
+# CHECK-NEXT: PropSet [[assigned]], {{*}} key="toString"
+# CHECK-NEXT: PropSet [[assigned]], {{*}} key="n"
+# CHECK-NEXT: PutModuleVariable [[assigned]] variable=g1
+# CHECK-NOT: NewObject
+# CHECK: Return
+# CHECK: function {{*}} name="" {{*}}role=OutlinedBody
+# CHECK: PropSet {{*}} key="n"
+# CHECK: PutModuleVariable {{*}} variable=g0
+# CHECK: function {{*}} name="" {{*}}role=OutlinedBody
+# CHECK: PropDefine {{*}} key="toString"
+# CHECK: PutModuleVariable {{*}} variable=g2
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="toString" declared={type=anything}}]
+variable g0 name="plain" module=m0 declared={type=L0}
+variable g1 name="assigned" module=m0 declared={type=L0}
+variable g2 name="defined" module=m0 declared={type=L0}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Double number=1.5
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v1, v0 key="n" mode=Strict
+    PropSet v1, v0 key="n" mode=Strict
+    PutModuleVariable v1 variable=g0
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v5, v0 key="toString" mode=Strict
+    PropSet v5, v0 key="n" mode=Strict
+    PutModuleVariable v5 variable=g1
+    v9 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v9, v0 key="toString"
+    PropDefine v9, v0 key="n"
+    PutModuleVariable v9 variable=g2
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="publish" [isFreeName]
+    v15 = NewClosure function=f1
+    v16 = Call v14, -, v15
+    Return
+}
+function f1 name="reader" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = GetModuleVariable variable=g1
+    v3 = GetModuleVariable variable=g2
+    v4 = Call v0, -, v1, v2, v3
+    Return v4
+}

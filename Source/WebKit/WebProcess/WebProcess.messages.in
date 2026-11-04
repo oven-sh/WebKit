@@ -82,6 +82,13 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     SetAccessibilityMode(enum:uint8_t WebCore::AccessibilityMode mode)
     BindAccessibilityFrameWithData(WebCore::FrameIdentifier frameID, std::span<const uint8_t> data);
 
+#if ENABLE(GPU_PROCESS)
+    DrawFrameToSnapshot(WebCore::FrameIdentifier frameID, WebCore::IntRect rect, WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC
+#endif
+#if ENABLE(GPU_PROCESS) && PLATFORM(COCOA)
+    PrepareForPrinting() -> (bool success)
+#endif
+
     GarbageCollectJavaScriptObjects()
     GetStorageAreaMapCountForTesting() -> (uint64_t storageAreaMapCount)
     SetJavaScriptGarbageCollectorTimerEnabled(bool enable)
@@ -133,6 +140,10 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
 #endif
 #if PLATFORM(MAC)
     ScrollerStylePreferenceChanged(bool useOvelayScrollbars)
+#endif
+
+#if HAVE(TEXT_SCALE_FACTOR)
+    SetTextScaleFactor(std::optional<float> textScaleFactor)
 #endif
 
 #if PLATFORM(IOS_FAMILY)
@@ -258,4 +269,8 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
 #endif
 
     ContentWorldDestroyed(WebKit::ContentWorldIdentifier identifier)
+
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+    CommitOffscreenCanvasPlaceholderFrame(WebCore::PlaceholderRenderingContextIdentifier identifier, struct WebCore::ImageBufferTransferHandle transferHandle, WebCore::PlaceholderFrameIdentifier frame, bool originClean, bool opaque) -> (bool handled)
+#endif
 }

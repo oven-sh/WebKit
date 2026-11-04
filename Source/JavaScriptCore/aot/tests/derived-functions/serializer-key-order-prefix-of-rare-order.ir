@@ -1,0 +1,17 @@
+# Flow lists the most common key order first. Where that order shares the arm of a rarer order it is a prefix of, the arm stays first, and the limit cuts off the rarest of the other orders
+# FORM: Prepared
+# RUN: derived-functions Serializer:L0
+# STATISTIC: SerializersCreated = 1
+# LOSS: MaxExpandedKeyOrders x1 L0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Record" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}, {key="c" declared={type=undefined|number}}] flow={constructorOrders=[{fields=[0, 1]}, {fields=[1, 0]}, {fields=[2, 0]}, {fields=[2, 1]}, {fields=[1, 2]}, {fields=[0, 1, 2]}]}
+
+# CHECK: function {{*}}creator=Serializer{layout=L0}
+# CHECK-NOT: HasKeyOrder
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[1, 0]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[2, 0]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[2, 1]
+# CHECK-NOT: fields=[1, 2]

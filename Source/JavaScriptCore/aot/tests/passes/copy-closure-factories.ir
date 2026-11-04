@@ -1,0 +1,59 @@
+# const once = run => { let result; return () => result = run(); };  const a = once(loadA), b = once(loadB);
+# Each call in the body of the module gets a copy of the factory, of the function it creates closures of, and of the layout of the environment.
+# A copy has the name, the position and the length of its original.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK: layout L1 kind=Environment
+# CHECK: layout L2 kind=Environment
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[first]]{{*}} = NewClosure function=f6
+# CHECK-NEXT: Call [[first]], -, v1
+# CHECK: [[second]]{{*}} = NewClosure function=f8
+# CHECK-NEXT: Call [[second]], -, v3
+# CHECK-LABEL: function f5 name="get" module=m0 position=20 kind=Arrow captures=[{type=env L1 flags=[IsFromCompiler]}, {type=anything}]
+# CHECK: PutEnvironmentField v0, v2 layout=L1
+# CHECK: GetEnvironmentField v0 layout=L1
+# CHECK-LABEL: function f6 name="once" module=m0 position=10 kind=Arrow length=1
+# CHECK: NewObject -, v1 layout=L1
+# CHECK: NewClosure v2, v0 function=f5
+# CHECK-LABEL: function f7 name="get" module=m0 position=20 kind=Arrow captures=[{type=env L2 flags=[IsFromCompiler]}, {type=anything}]
+# CHECK: PutEnvironmentField v0, v2 layout=L2
+# CHECK-LABEL: function f8 name="once" module=m0 position=10 kind=Arrow length=1
+# CHECK: NewObject -, v1 layout=L2
+# CHECK: NewClosure v2, v0 function=f7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f3
+    v2 = Call v0, -, v1
+    v3 = NewClosure function=f4
+    v4 = Call v0, -, v3
+    v5 = Call v2
+    v6 = Call v4
+    v7 = NewArray v5, v6 contents=anything holes=[]
+    Return v7
+}
+function f1 name="once" module=m0 position=10 kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v2, v0 function=f2
+    Return v3
+}
+function f2 name="get" module=m0 position=20 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1
+    PutEnvironmentField v0, v2 layout=L0
+    v4 = GetEnvironmentField v0 layout=L0
+    Return v4
+}
+function f3 name="loadA" module=m0 position=30 kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f4 name="loadB" module=m0 position=40 kind=Arrow results=[{type=anything}] {
+    v0 = String string="b"
+    Return v0
+}

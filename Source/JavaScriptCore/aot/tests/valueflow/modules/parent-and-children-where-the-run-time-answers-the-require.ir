@@ -1,0 +1,48 @@
+# main.cjs: module.exports = exportedByMain; require("./child.cjs"); module.children[i].exports()        child.cjs: module.exports = exportedByChild; module.parent.exports(); require("./back.mjs")        back.mjs: import "./child.cjs"
+# The loader of the run time answers the `require` in main.cjs, so main.cjs has no request for child.cjs. The two module objects hang together all the same:
+# `parent` in child.cjs answers the module object of main.cjs, and `children` in main.cjs lists that of child.cjs.
+# RUN: valueflow-solve calls
+# CHECK: f0 v9 -> unknown f3
+# CHECK: f2 v5 -> {{*}}f1
+# RUN(APPLY): valueflow-apply
+# APPLY-NOT: variable g0 name="exports" {{*}}writers=AllKnown
+# APPLY-NOT: variable g1 name="exports" {{*}}writers=AllKnown
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects, IsLoadedByLoader] requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/app/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects, IsLoadedByLoader, MayBeImportedWhileItRuns] requireResult=ModuleExports body=f2 exportsVariable=g1
+module m2 path="/app/back.mjs" displayPath="back.mjs" flags=[KeepsError, IsLoadedByLoader, IsRequiredDuringLoad] body=f4 requests=[{target=m1 completes=true}]
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = RequireModule module=m1 referrer=m0 specifier="./child.cjs"
+    v3 = ModuleBuiltin builtin=ModuleObject module=m0
+    v4 = PropGet v3 key="children"
+    v5 = Integer integer=0
+    v6 = ElemGet v4, v5
+    v7 = PropGet v6 key="exports"
+    v8 = Undefined
+    v9 = Call v7, v6
+    Return
+}
+function f1 name="exportedByMain" module=m0 results=[{type=anything}] {
+    Return
+}
+function f2 name="child" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    PutModuleVariable v0 variable=g1
+    v2 = ModuleBuiltin builtin=ModuleObject module=m1
+    v3 = PropGet v2 key="parent"
+    v4 = PropGet v3 key="exports"
+    v5 = Call v4, v3
+    v6 = RequireModule module=m2 referrer=m1 specifier="./back.mjs"
+    Return
+}
+function f3 name="exportedByChild" module=m1 results=[{type=anything}] {
+    Return
+}
+function f4 name="back" module=m2 kind=Module results=[{type=anything}] {
+    Return
+}

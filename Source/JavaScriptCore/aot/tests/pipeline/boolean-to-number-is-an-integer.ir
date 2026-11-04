@@ -1,0 +1,54 @@
+# function count(a, b) { return Number(a < b) + +(a === b) }   function negative(a, b) { return -(a < b) }   function up(a, b) { let c = a < b; c++; return c }
+# Converting a known boolean to a number gives an integer from 0 to 1, taken straight from the test's result. Number(value) is the same conversion except for a BigInt.
+# Adding to it stays an integer. Negating false still gives -0.
+# FORM: AsRead
+# RUN(IR): pipeline Select
+# RUN: run-in-shell globalThis.register = (count, negative, up) => { print(count(1, 2), count(2, 2), count(3, 2)); print(1 / negative(1, 2), 1 / negative(2, 1)); print(up(1, 2), up(2, 1)); };
+# IR: name="count"
+# IR-NOT: CallBuiltin
+# IR: : int[0, 1] = ToNumber {{*}}form=Booleans
+# IR: : int[0, 1] = ToNumber {{*}}form=Booleans
+# IR: : int[0, 2] = Add {{*}}form=Integers
+# IR: name="negative"
+# IR: : int[0, 1] = ToNume{{*}}form=Booleans
+# CHECK: 1 1 0
+# CHECK-NEXT: -1 -Infinity
+# CHECK-NEXT: 2 1
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return
+}
+function f1 name="count" length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Less v0, v1
+    v3 = Builtin builtin=Number
+    v4 = Call v3, -, v2
+    v5 = StrictEq v0, v1
+    v6 = ToNumber v5
+    v7 = Add v4, v6
+    Return v7
+}
+function f2 name="negative" length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Less v0, v1
+    v3 = ToNumeric v2
+    v4 = Negate v3
+    Return v4
+}
+function f3 name="up" length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Less v0, v1
+    v3 = ToNumeric v2
+    v4 = Increment v3
+    Return v4
+}

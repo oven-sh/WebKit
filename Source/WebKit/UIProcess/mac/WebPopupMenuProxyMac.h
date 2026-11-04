@@ -51,7 +51,7 @@ public:
     void hidePopupMenu() override;
     void cancelTracking() override;
 
-    NSPopUpButtonCell *NODELETE popup() const;
+    NSPopUpButtonCell *LEGACY_NODELETE popup() const;
     bool isVisible() const { return m_isVisible; }
 
 private:
@@ -61,7 +61,7 @@ private:
     bool isWebPopupMenuProxyMac() const final { return true; }
     NSMenu *menu() const;
 
-    RetainPtr<NSPopUpButtonCell> m_popup;
+    const RetainPtr<NSPopUpButtonCell> m_popup;
     WeakObjCPtr<NSView> m_webView;
     bool m_wasCanceled { false };
     bool m_isVisible { false };

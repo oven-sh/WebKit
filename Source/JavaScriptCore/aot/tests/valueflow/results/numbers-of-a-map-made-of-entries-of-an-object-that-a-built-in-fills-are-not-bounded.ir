@@ -1,0 +1,25 @@
+# words = { a: 1 }; Object.assign(words, other); return new Map(Object.entries(words)).get("a")
+# Object.assign stores into the object and spells out no value.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined|int}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Words" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Integer integer=4000000000
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectAssign
+    v6 = Call v5, v4, v1, v3
+    v7 = Builtin builtin=ObjectEntries
+    v8 = Call v7, v4, v1
+    v9 = Builtin builtin=Map
+    v10 = Construct v9, -, v8
+    v11 = Builtin builtin=MapPrototypeGet
+    v12 = String string="a"
+    v13 = Call v11, v10, v12
+    Return v13
+}

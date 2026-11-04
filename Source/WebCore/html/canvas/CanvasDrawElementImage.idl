@@ -31,11 +31,29 @@ typedef (Element or CanvasElementImage) CanvasElementImageSource;
 [
     EnabledBySetting=HTMLInCanvasEnabled
 ] interface mixin CanvasDrawElementImage {
-    DOMMatrix drawElementImage(CanvasElementImageSource source, unrestricted double dx, unrestricted double dy);
+    undefined drawElementImage(
+        CanvasElementImageSource source,
+        unrestricted double dx, unrestricted double dy,
+        optional CanvasDrawElementImageOptions options = {});
 
-    DOMMatrix drawElementImage(CanvasElementImageSource source, unrestricted double dx, unrestricted double dy, unrestricted double dwidth, unrestricted double dheight);
+    undefined drawElementImage(
+        CanvasElementImageSource source,
+        unrestricted double dx, unrestricted double dy,
+        unrestricted double dwidth, unrestricted double dheight,
+        optional CanvasDrawElementImageOptions options = {});
 
-    DOMMatrix drawElementImage(CanvasElementImageSource source, unrestricted double sx, unrestricted double sy, unrestricted double swidth, unrestricted double sheight, unrestricted double dx, unrestricted double dy);
+    undefined drawElementImage(
+        CanvasElementImageSource source,
+        unrestricted double sx, unrestricted double sy,
+        unrestricted double swidth, unrestricted double sheight,
+        unrestricted double dx, unrestricted double dy,
+        optional CanvasDrawElementImageOptions options = {});
 
-    DOMMatrix drawElementImage(CanvasElementImageSource source, unrestricted double sx, unrestricted double sy, unrestricted double swidth, unrestricted double sheight, unrestricted double dx, unrestricted double dy, unrestricted double dwidth, unrestricted double dheight);
+    undefined drawElementImage(
+        CanvasElementImageSource source,
+        unrestricted double sx, unrestricted double sy,
+        unrestricted double swidth, unrestricted double sheight,
+        unrestricted double dx, unrestricted double dy,
+        unrestricted double dwidth, unrestricted double dheight,
+        optional CanvasDrawElementImageOptions options = {});
 };

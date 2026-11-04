@@ -32,7 +32,6 @@ class RenderGrid;
 
 namespace LayoutIntegration {
 
-bool NODELETE canUseForLineLayout(const RenderBlockFlow&);
 bool canUseForGridLayout(const RenderGrid&);
 
 bool canUseForIntrinsicWidthComputation(const RenderBlockFlow&);

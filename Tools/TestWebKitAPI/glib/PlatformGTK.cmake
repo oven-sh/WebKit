@@ -56,7 +56,6 @@ ADD_WK2_TEST(TestInspector ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/gtk
 ADD_WK2_TEST(TestInspectorServer ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/gtk/TestInspectorServer.cpp)
 ADD_WK2_TEST(TestPrinting ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/gtk/TestPrinting.cpp)
 ADD_WK2_TEST(TestWebKitAccessibility ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/gtk/TestWebKitAccessibility.cpp)
-ADD_WK2_TEST(TestWebKitFaviconDatabase ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestWebKitFaviconDatabase.cpp)
 ADD_WK2_TEST(TestWebKitVersion ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/gtk/TestWebKitVersion.cpp)
 ADD_WK2_TEST(TestWebViewEditor ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/gtk/TestWebViewEditor.cpp)
 

@@ -53,19 +53,19 @@ class ValidationMessage : public RefCountedAndCanMakeWeakPtr<ValidationMessage> 
     WTF_MAKE_TZONE_ALLOCATED(ValidationMessage);
     WTF_MAKE_NONCOPYABLE(ValidationMessage);
 public:
-    static Ref<ValidationMessage> create(HTMLElement&);
+    static Ref<ValidationMessage> LEGACY_NODELETE create(HTMLElement&);
     ~ValidationMessage();
 
     void updateValidationMessage(HTMLElement&, const String&);
     void requestToHideMessage();
     bool isVisible() const;
-    bool NODELETE shadowTreeContains(const Node&) const;
+    bool LEGACY_NODELETE shadowTreeContains(const Node&) const;
     void adjustBubblePosition();
 
 private:
     explicit ValidationMessage(HTMLElement&);
 
-    ValidationMessageClient* NODELETE validationMessageClient() const;
+    ValidationMessageClient* LEGACY_NODELETE validationMessageClient() const;
     void setMessage(String&&);
     void setMessageDOMAndStartTimer();
     void buildBubbleTree();

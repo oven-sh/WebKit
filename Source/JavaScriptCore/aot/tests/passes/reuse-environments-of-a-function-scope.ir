@@ -1,0 +1,94 @@
+# The environment of a function's own scope goes back to its layout's free list where the function has done with it, so the next call takes the same cell. A closure that a callee makes on a rare path marks it there. An environment that a closure takes on every path is left alone, and so is one that is handed to a tail call as its last use.
+# FORM: Prepared
+# RUN: pass ReuseEnvironments
+# OPTIONS: disable=pass:AllocateInFrames
+# STATISTIC: EnvironmentsReused = 2
+# CHECK: reused environments: [L0 L3]
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="handedToCallees" fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Environment name="takenOnEveryPath" fields=[{key="x" declared={type=anything}}]
+layout L2 kind=Environment name="lastUseIsATailCall" fields=[{key="x" declared={type=anything}}]
+layout L3 kind=Environment name="diesOnAnEdge" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="handedToCallees" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = CallDirect v2, v1 function=f1
+    v4 = GetEnvironmentField v2 layout=L0 field=0
+    v5 = Call v0, -, v4, v3
+    Return v5
+# CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: = GetEnvironmentField v2 layout=L0
+# CHECK-NEXT: ReleaseEnvironment v2
+# CHECK-NEXT: = Call v0
+# CHECK-NOT: ReleaseEnvironment
+}
+
+function f1 name="callee" captures=[{type=env L0}] parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: env L0, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = NewClosure v0 function=f2
+    Return v2
+  b2():
+    v3 = GetEnvironmentField v0 layout=L0 field=0
+    Return v3
+# CHECK-NOT: ReleaseEnvironment
+# CHECK: MarkEnvironmentEscaped v0
+# CHECK-NEXT: = NewClosure v0 function=f2
+# CHECK-NOT: MarkEnvironmentEscaped
+}
+
+function f2 name="kept" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+
+function f3 name="takenOnEveryPath" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure v1 function=f4
+    Return v2
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+}
+
+function f4 name="kept" captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    Return v1
+}
+
+function f5 name="lastUseIsATailCall" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = CallDirect v1 function=f6
+    ReturnCall v2
+# CHECK-NOT: ReleaseEnvironment
+# CHECK: [[tail]]: anything = CallDirect v1 function=f6
+# CHECK-NEXT: ReturnCall [[tail]]
+}
+
+function f6 name="tailCallee" captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2 field=0
+    Return v1
+# CHECK-NOT: ReleaseEnvironment
+}
+
+function f7 name="diesOnAnEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L3 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetEnvironmentField v2 layout=L3 field=0
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4: anything):
+    v5 = Call v0, -, v4
+    Return v5
+# CHECK: b1():
+# CHECK-NEXT: = GetEnvironmentField v2 layout=L3
+# CHECK-NEXT: ReleaseEnvironment v2
+# CHECK: b2():
+# CHECK-NEXT: ReleaseEnvironment v2
+}

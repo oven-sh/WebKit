@@ -1,0 +1,35 @@
+# Map.prototype.forEach.call({ held: heldByPlain }, visit); Map.prototype.forEach.call(new Map(), visitOfMap)
+# The method accepts a Map. Called on a plain object it throws before it takes its argument: `visit` is never entered, and what the plain object holds goes nowhere. On a Map it enters its callback.
+# callback-of-a-method-is-entered-only-for-the-receivers-that-the-method-accepts.ir with another order of the rules: the answer is the same.
+# OPTIONS: testing=DelayFlowRules
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NOT: unreached f2
+# RUN(ESCAPED): valueflow-why escaped=f3
+# ESCAPED: escaped=f3
+# ESCAPED-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=MapPrototypeForEach
+    v3 = NewClosure function=f1
+    v4 = Call v2, v1, v3
+    v5 = Builtin builtin=Map
+    v6 = Construct v5
+    v7 = NewClosure function=f2
+    v8 = Call v2, v6, v7
+    Return
+}
+function f1 name="visit" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="visitOfMap" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f3 name="heldByPlain" kind=Arrow results=[{type=anything}] {
+    Return
+}

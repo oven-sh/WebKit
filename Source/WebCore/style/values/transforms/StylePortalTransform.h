@@ -76,7 +76,7 @@ struct PortalTransform {
     void applyBeforeAuto(TransformationMatrix&, const FloatSize&, ZoomFactor) const;
     void applyAfterAuto(TransformationMatrix&, const FloatSize&, ZoomFactor) const;
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const { return WTF::switchOn(m_value, std::forward<F>(f)...); }
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const { return WTF::switchOn(m_value, std::forward<F>(f)...); }
 
     bool operator==(const PortalTransform&) const = default;
 
@@ -90,7 +90,7 @@ private:
 
     friend struct Blending<PortalTransform>;
 
-    const TransformList& beforeAutoList() const LIFETIME_BOUND;
+    const TransformList& LEGACY_NODELETE beforeAutoList() const LIFETIME_BOUND;
     const TransformList& afterAutoList() const LIFETIME_BOUND;
 
     Value m_value;

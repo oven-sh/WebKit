@@ -1,0 +1,30 @@
+# const source = { b: 1.5, a: 1.5 }   unknown(source)   function copy(from) { return { z: 1.5, ...from } }   copy(source); copy(unknown())
+# Unknown code holds the source, so the unknown object that arrives beside it stands for it as well. It stays listed among what is copied: the copy expects its keys in its order.
+# RUN: valueflow-apply
+# CHECK: layout L1 name="Copy" {{*}}constructorOrders=[{fields=[2]}, {fields=[2, 1, 0]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Source" fields=[{key="a" declared={type=undefined|number}}, {key="b" declared={type=undefined|number}}]
+layout L1 kind=Record name="Copy" fields=[{key="a" declared={type=undefined|number}}, {key="b" declared={type=undefined|number}}, {key="z" declared={type=undefined|number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = Double number=1.5
+    v3 = NewObject -, v2, v2 layout=L0 fields=[1, 0]
+    v4 = FinishObject v3
+    v5 = Call v1, -, v4
+    v6 = Call v1
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v4
+    v9 = Call v7, -, v6
+    Return
+}
+function f1 name="copy" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5
+    v2 = NewObject -, v1 layout=L1 fields=[2]
+    CopyDataProperties v2, v0
+    v4 = FinishObject v2
+    Return v4
+}

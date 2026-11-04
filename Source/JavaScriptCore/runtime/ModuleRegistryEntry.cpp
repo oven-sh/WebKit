@@ -231,7 +231,7 @@ void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, SourceCode&
     provideFetch(globalObject, JSSourceCode::create(globalObject->vm(), WTF::move(sourceCode)));
 }
 
-void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, JSSourceCode* jsSourceCode)
+void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, JSValue moduleData)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -243,7 +243,7 @@ void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, JSSourceCod
 
     scope.release();
     m_status = Status::Fetching;
-    m_fetchPromise->fulfill(vm, jsSourceCode);
+    m_fetchPromise->fulfill(vm, moduleData);
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -277,6 +277,20 @@ JSPromise* ModuleRegistryEntry::loadedPromise(JSGlobalObject* globalObject)
         m_loadPromise.set(vm, this, promise);
     }
     return m_loadPromise.get();
+}
+
+// The entry holds the record of a CommonJS module as the module was when a load that it started came back to it. Whoever asks from now on gets the record of the whole module.
+void ModuleRegistryEntry::replaceRecord(JSGlobalObject* globalObject, AbstractModuleRecord* record)
+{
+    if (m_status == Status::FetchFailed)
+        return;
+    VM& vm = globalObject->vm();
+    m_record.set(vm, this, record);
+    m_status = Status::Fetched;
+    JSPromise* modulePromise = JSPromise::create(vm, globalObject->promiseStructure());
+    modulePromise->markAsHandled();
+    modulePromise->fulfill(vm, record);
+    m_modulePromise.set(vm, this, modulePromise);
 }
 #endif
 

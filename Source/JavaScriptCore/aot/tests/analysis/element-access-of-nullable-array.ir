@@ -1,0 +1,85 @@
+# An array or a typed array that may be undefined or null keeps its element form: the receiver is tested first, and undefined and null go by key
+# FORM: Prepared
+# RUN: element-access
+# RUN(RESOLVED): pass ResolveAccesses
+# RUN(TESTED): pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="array" parameters=[{type=undefined|Array<number>}, {type=null|Array<number>}, {type=undefined|null|Array<number>}, {type=int[0, 9]}, {type=number}] results=[{type=anything}] {
+    v5 = ElemGet v0, v3
+    ElemSet v1, v3, v4
+    v7 = ElemHas v2, v3
+    Return v5
+}
+# CHECK: F0 v5 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[nullish, pristine(Storage), storage]
+# CHECK-NEXT: F0 v6 ElemSet: form=Array level=Expected operation=PutArrayElement class=[[array]] storage=Double integralKey tests=[nullish, pristine(Storage), storage]
+# CHECK-NEXT: F0 v7 ElemHas: form=Array level=Expected operation=HasArrayElement class=[[array]] storage=Double integralKey tests=[nullish, pristine(Storage), storage]
+function f1 name="typed-array" parameters=[{type=undefined|Uint8Array}, {type=number}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-NEXT: F1 v2 ElemGet: form=TypedArray level=Expected operation=GetTypedArrayElement class=[[uint8]] typedArray=TypeUint8 tests=[nullish]
+function f2 name="unknown-key" parameters=[{type=undefined|Array<number>}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-NEXT: F2 v2 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[nullish, key, pristine(Storage+Names), storage]
+function f3 name="nothing-else-to-test" parameters=[{type=undefined|Array<number, proven, Double, pristine[Storage]>}, {type=int[0, 9]}] results=[{type=boolean}] {
+    v2 = ElemHas v0, v1
+    Return v2
+}
+# CHECK-NEXT: F3 v2 ElemHas: form=Array level=Expected operation=HasArrayElement class=[[array]] storage=Double integralKey tests=[nullish]
+# RESOLVED-LABEL: function f3 name="nothing-else-to-test"
+# RESOLVED-NOT: HasArrayElement
+# RESOLVED: = ElemHas v0, v1 [keyIsIntegral]
+# RESOLVED-NOT: HasArrayElement
+# TESTED-LABEL: function f3 name="nothing-else-to-test"
+# TESTED: = TypeTest v0 testedType=object
+# TESTED: = HasArrayElement [[array]], v1 arrayStorage=Double level=Expected [keyIsIntegral]
+# TESTED: = ElemHas {{*}}, v1
+function f4 name="never-undefined" parameters=[{type=Array<number, proven, Double, pristine[Storage]>}, {type=int[0, 9]}] results=[{type=boolean}] {
+    v2 = ElemHas v0, v1
+    Return v2
+}
+# CHECK-NEXT: F4 v2 ElemHas: form=Array level=Proven operation=HasArrayElement class=[[array]] storage=Double integralKey
+# CHECK-NOT: tests=
+# RESOLVED-LABEL: function f4 name="never-undefined"
+# RESOLVED: = HasArrayElement v0, v1 arrayStorage=Double level=Proven [keyIsIntegral]
+# TESTED-LABEL: function f4 name="never-undefined"
+# TESTED-NOT: TypeTest
+function f5 name="typed-array-store" parameters=[{type=undefined|Uint8Array}, {type=number}] results=[{type=undefined}] {
+    ElemSet v0, v1, v1
+    Return
+}
+# CHECK: F5 v2 ElemSet: form=TypedArray level=Expected operation=PutTypedArrayElement class=[[uint8]] typedArray=TypeUint8 tests=[nullish]
+# RESOLVED-LABEL: function f5 name="typed-array-store"
+# RESOLVED-NOT: PutTypedArrayElement
+# RESOLVED: ElemSet v0, v1, v1
+# RESOLVED-NOT: PutTypedArrayElement
+# TESTED-LABEL: function f5 name="typed-array-store"
+# TESTED: = TypeTest v0 testedType=object
+# TESTED: PutTypedArrayElement [[view]], v1, v1
+# TESTED: ElemSet v0, v1, v1
+function f6 name="expected-receiver" parameters=[{type=Array<number> flags=[IsExpected]}, {type=undefined|Array<number> flags=[IsExpected]}, {type=int[0, 9]}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<number>, v1: anything ~ undefined|Array<number>, v2: int[0, 9]):
+    v3 = ElemGet v0, v2
+    v4 = ElemGet v1, v2
+    Return v3
+}
+# CHECK-NEXT: F6 v3 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[class, pristine(Storage), storage]
+# CHECK-NEXT: F6 v4 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[class, pristine(Storage), storage]
+# RESOLVED-LABEL: function f6 name="expected-receiver"
+# TESTED-LABEL: function f6 name="expected-receiver"
+function f7 name="receivers-without-an-element-form" parameters=[{type=undefined|string}, {type=undefined|Array<number>|Uint8Array}, {type=undefined|Arguments}, {type=undefined|Map<number, number>}, {type=number}] results=[{type=anything}] {
+    v5 = ElemGet v0, v4
+    v6 = ElemGet v1, v4
+    v7 = ElemGet v2, v4
+    v8 = ElemGet v3, v4
+    Return v5
+}
+# CHECK-NEXT: F7 v5 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F7 v6 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F7 v7 ElemGet: form=ByKey level=Unknown
+# CHECK-NEXT: F7 v8 ElemGet: form=ByKey level=Unknown
+# CHECK-NOT: tests=

@@ -52,12 +52,14 @@
 #include <wtf/HashMap.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/RunLoop.h>
+#include <wtf/WeakObjCPtr.h>
 
 OBJC_CLASS NSString;
 OBJC_CLASS NSURL;
 OBJC_CLASS NSView;
 OBJC_CLASS NSWindow;
 OBJC_CLASS WKWebInspectorUIProxyObjCAdapter;
+OBJC_CLASS WKInspectorAttachmentContainerView;
 OBJC_CLASS WKInspectorViewController;
 #elif PLATFORM(WIN)
 #include "WebView.h"
@@ -191,7 +193,7 @@ public:
     void setAttachedWindowHeight(unsigned);
     void setAttachedWindowWidth(unsigned);
 
-    void NODELETE setSheetRect(const WebCore::FloatRect&);
+    void LEGACY_NODELETE setSheetRect(const WebCore::FloatRect&);
 
     void startWindowDrag();
 
@@ -249,7 +251,7 @@ private:
     void platformBringInspectedPageToFront();
     void platformHide();
     bool platformIsFront();
-    void NODELETE platformAttachAvailabilityChanged(bool);
+    void LEGACY_NODELETE platformAttachAvailabilityChanged(bool);
     void platformSetForcedAppearance(WebCore::InspectorFrontendClient::Appearance);
     void platformOpenURLExternally(const String&);
     void platformInspectedURLChanged(const String&);
@@ -258,7 +260,7 @@ private:
     void platformDetach();
     void platformSetAttachedWindowHeight(unsigned);
     void platformSetAttachedWindowWidth(unsigned);
-    void NODELETE platformSetSheetRect(const WebCore::FloatRect&);
+    void LEGACY_NODELETE platformSetSheetRect(const WebCore::FloatRect&);
     void platformStartWindowDrag();
     void platformRevealFileExternally(const String&);
     void platformSave(Vector<WebCore::InspectorFrontendClient::SaveData>&&, bool forceSaveAs);
@@ -291,7 +293,7 @@ private:
     void setInspectorPageDeveloperExtrasEnabled(bool);
     void setPageAndTextZoomFactors(double pageZoomFactor, double textZoomFactor);
     void elementSelectionChanged(bool);
-    void NODELETE timelineRecordingChanged(bool);
+    void LEGACY_NODELETE timelineRecordingChanged(bool);
     void showPaintRectsChanged(bool);
 
     void setDeveloperPreferenceOverride(WebCore::InspectorBackendClient::DeveloperPreference, std::optional<bool>);
@@ -310,7 +312,7 @@ private:
 
     unsigned inspectionLevel() const;
 
-    WebPreferences& NODELETE inspectorPagePreferences() const;
+    WebPreferences& LEGACY_NODELETE inspectorPagePreferences() const;
 
 #if PLATFORM(MAC)
     void applyForcedAppearance();
@@ -354,6 +356,8 @@ private:
     RetainPtr<WKInspectorViewController> m_inspectorViewController;
     RetainPtr<NSWindow> m_inspectorWindow;
     RetainPtr<WKWebInspectorUIProxyObjCAdapter> m_objCAdapter;
+    // The container is owned by the view hierarchy, and it retains the inspected view.
+    WeakObjCPtr<WKInspectorAttachmentContainerView> m_attachmentContainerView;
     HashMap<String, RetainPtr<NSURL>> m_suggestedToActualURLMap;
     RunLoop::Timer m_closeFrontendAfterInactivityTimer;
     String m_urlString;

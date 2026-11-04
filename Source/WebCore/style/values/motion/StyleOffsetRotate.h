@@ -50,7 +50,7 @@ struct OffsetRotate {
 
     Angle angle() const { return m_angle; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -73,8 +73,8 @@ template<> struct CSSValueConversion<OffsetRotate> { OffsetRotate operator()(Bui
 // MARK: - Blending
 
 template<> struct Blending<OffsetRotate> {
-    bool NODELETE canBlend(const OffsetRotate&, const OffsetRotate&);
-    auto blend(const OffsetRotate&, const OffsetRotate&, const BlendingContext&) -> OffsetRotate;
+    bool LEGACY_NODELETE canBlend(const OffsetRotate&, const OffsetRotate&);
+    OffsetRotate LEGACY_NODELETE blend(const OffsetRotate&, const OffsetRotate&, const BlendingContext&);
 };
 
 // MARK: - Evaluation
@@ -82,7 +82,7 @@ template<> struct Blending<OffsetRotate> {
 #if ENABLE(THREADED_ANIMATIONS)
 
 template<> struct Evaluation<OffsetRotate, AcceleratedEffectOffsetRotate> {
-    AcceleratedEffectOffsetRotate NODELETE operator()(const OffsetRotate&);
+    AcceleratedEffectOffsetRotate LEGACY_NODELETE operator()(const OffsetRotate&);
 };
 
 #endif

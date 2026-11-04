@@ -37,7 +37,7 @@
 namespace WebCore {
 namespace Layout {
 
-static bool NODELETE isBoxEligibleForNonLineBuilderMinimumWidth(const ElementBox& box)
+static bool LEGACY_NODELETE isBoxEligibleForNonLineBuilderMinimumWidth(const ElementBox& box)
 {
     // Note that hanging trailing content needs line builder (combination of wrapping is allowed but whitespace is preserved).
     auto& style = box.style();
@@ -56,7 +56,7 @@ static bool isContentEligibleForNonLineBuilderMaximumWidth(const ElementBox& roo
     return inlineTextItem && !inlineTextItem->isWhitespace();
 }
 
-static bool NODELETE isSubtreeEligibleForNonLineBuilderMinimumWidth(const ElementBox& root)
+static bool LEGACY_NODELETE isSubtreeEligibleForNonLineBuilderMinimumWidth(const ElementBox& root)
 {
     auto isSimpleBreakableContent = isBoxEligibleForNonLineBuilderMinimumWidth(root);
     for (auto* child = root.firstChild(); child && isSimpleBreakableContent; child = child->nextSibling()) {
@@ -71,7 +71,7 @@ static bool NODELETE isSubtreeEligibleForNonLineBuilderMinimumWidth(const Elemen
     return isSimpleBreakableContent;
 }
 
-static bool NODELETE isContentEligibleForNonLineBuilderMinimumWidth(const ElementBox& rootBox, const InlineContentCache::InlineItems& inlineItems, bool mayUseSimplifiedTextOnlyInlineLayout)
+static bool LEGACY_NODELETE isContentEligibleForNonLineBuilderMinimumWidth(const ElementBox& rootBox, const InlineContentCache::InlineItems& inlineItems, bool mayUseSimplifiedTextOnlyInlineLayout)
 {
     auto isEligible = (mayUseSimplifiedTextOnlyInlineLayout && isBoxEligibleForNonLineBuilderMinimumWidth(rootBox)) || (!mayUseSimplifiedTextOnlyInlineLayout && isSubtreeEligibleForNonLineBuilderMinimumWidth(rootBox));
     if (!isEligible || !mayUseSimplifiedTextOnlyInlineLayout || !inlineItems.hasInlineBoxes())
@@ -97,7 +97,7 @@ static bool NODELETE isContentEligibleForNonLineBuilderMinimumWidth(const Elemen
     return false;
 }
 
-static bool NODELETE mayUseContentWidthBetweenLineBreaksAsMaximumSize(const ElementBox& rootBox, const InlineItemList& inlineItemList)
+static bool LEGACY_NODELETE mayUseContentWidthBetweenLineBreaksAsMaximumSize(const ElementBox& rootBox, const InlineItemList& inlineItemList)
 {
     if (!TextUtil::shouldPreserveSpacesAndTabs(rootBox))
         return false;
@@ -281,6 +281,51 @@ InlineLayoutUnit IntrinsicWidthHandler::maximumContentSize()
     return maximumContentSize;
 }
 
+static InlineLayoutUnit lineLogicalWidthWithFloats(const InlineFormattingContext& formattingContext, IntrinsicWidthMode intrinsicWidthMode, const LineLayoutResult::PlacedFloatList& placedFloats, InlineLayoutUnit lineContentLogicalWidth)
+{
+    if (placedFloats.isEmpty())
+        return lineContentLogicalWidth;
+
+    auto floatMarginBoxWidth = [&](const ElementBox& floatBox) {
+        return std::max(InlineLayoutUnit { }, formattingContext.formattingUtils().intrinsicMarginBoxWidth(floatBox, intrinsicWidthMode));
+    };
+
+    if (intrinsicWidthMode == IntrinsicWidthMode::Minimum) {
+        // A float that does not fit next to the content goes below it.
+        auto lineLogicalWidth = lineContentLogicalWidth;
+        for (auto& floatItem : placedFloats) {
+            CheckedRef floatBox = downcast<ElementBox>(*floatItem.layoutBox());
+            lineLogicalWidth = std::max(lineLogicalWidth, floatMarginBoxWidth(floatBox.get()));
+        }
+        return lineLogicalWidth;
+    }
+
+    // Floats line up next to the content until one clears the floats before it. That float goes below them and, since a float may not
+    // be placed higher than an earlier one, so does every float after it. These line up next to each other, but not next to the content.
+    auto isLeftToRight = formattingContext.root().writingMode().isBidiLTR();
+    auto lineLogicalWidth = InlineLayoutUnit { };
+    auto contentWidthNextToFloats = lineContentLogicalWidth;
+    auto startFloatsWidth = InlineLayoutUnit { };
+    auto endFloatsWidth = InlineLayoutUnit { };
+    for (auto& floatItem : placedFloats) {
+        CheckedRef floatBox = downcast<ElementBox>(*floatItem.layoutBox());
+        auto clear = floatBox->style().clear();
+        auto clearsStartFloats = clear == Clear::Both || clear == Clear::InlineStart || clear == (isLeftToRight ? Clear::Left : Clear::Right);
+        auto clearsEndFloats = clear == Clear::Both || clear == Clear::InlineEnd || clear == (isLeftToRight ? Clear::Right : Clear::Left);
+        if ((clearsStartFloats && startFloatsWidth) || (clearsEndFloats && endFloatsWidth)) {
+            lineLogicalWidth = std::max(lineLogicalWidth, contentWidthNextToFloats + startFloatsWidth + endFloatsWidth);
+            contentWidthNextToFloats = { };
+            startFloatsWidth = { };
+            endFloatsWidth = { };
+        }
+        if (floatItem.isStartPositioned())
+            startFloatsWidth += floatMarginBoxWidth(floatBox.get());
+        else
+            endFloatsWidth += floatMarginBoxWidth(floatBox.get());
+    }
+    return std::max(lineLogicalWidth, contentWidthNextToFloats + startFloatsWidth + endFloatsWidth);
+}
+
 InlineLayoutUnit IntrinsicWidthHandler::computedIntrinsicWidthForConstraint(IntrinsicWidthMode intrinsicWidthMode, AbstractLineBuilder& lineBuilder, MayCacheLayoutResult mayCacheLayoutResult)
 {
     auto layoutRange = m_inlineItemRange;
@@ -298,22 +343,12 @@ InlineLayoutUnit IntrinsicWidthHandler::computedIntrinsicWidthForConstraint(Intr
 
     while (true) {
         auto lineLayoutResult = lineBuilder.layoutInlineContent({ layoutRange, { 0.f, 0.f, availableWidth, 0.f } }, previousLine, isFirstFormattedLineCandidate);
-        auto floatContentWidth = [&] {
-            auto leftWidth = InlineLayoutUnit { };
-            auto rightWidth = InlineLayoutUnit { };
-            for (auto& floatItem : lineLayoutResult.floatContent.placedFloats) {
-                mayCacheLayoutResult = MayCacheLayoutResult::No;
-                auto marginBoxRect = BoxGeometry::marginBoxRect(floatItem.boxGeometry());
-                if (floatItem.isStartPositioned())
-                    leftWidth = std::max<InlineLayoutUnit>(leftWidth, marginBoxRect.right());
-                else
-                    rightWidth = std::max<InlineLayoutUnit>(rightWidth, availableWidth - marginBoxRect.left());
-            }
-            return InlineLayoutUnit { leftWidth + rightWidth };
-        };
-
         auto lineContentLogicalWidth = [&] {
-            auto contentWidth = lineLayoutResult.lineGeometry.logicalTopLeft.x() + lineLayoutResult.contentGeometry.logicalWidth + floatContentWidth();
+            if (!lineLayoutResult.hasContentfulInFlowContent()) {
+                // Nothing on this line is indented by text-indent: floats sit at the start of the line and out-of-flow boxes take no room on it.
+                return InlineLayoutUnit { };
+            }
+            auto contentWidth = lineLayoutResult.lineGeometry.logicalTopLeft.x() + lineLayoutResult.contentGeometry.logicalWidth;
             if (lineLayoutResult.runs.isEmpty())
                 return contentWidth;
             auto& leadingRun = lineLayoutResult.runs.first();
@@ -321,12 +356,16 @@ InlineLayoutUnit IntrinsicWidthHandler::computedIntrinsicWidthForConstraint(Intr
                 contentWidth -= leadingRun.logicalRight();
             return contentWidth;
         }();
-        maximumContentWidth = std::max(maximumContentWidth, lineContentLogicalWidth);
-        contentWidthBetweenLineBreaks.current += (lineContentLogicalWidth + lineLayoutResult.hangingContent.logicalWidth);
+
+        if (!lineLayoutResult.floatContent.placedFloats.isEmpty())
+            mayCacheLayoutResult = MayCacheLayoutResult::No;
+        auto lineLogicalWidth = lineLogicalWidthWithFloats(formattingContext(), intrinsicWidthMode, lineLayoutResult.floatContent.placedFloats, lineContentLogicalWidth);
+        maximumContentWidth = std::max(maximumContentWidth, lineLogicalWidth);
+        contentWidthBetweenLineBreaks.current += (lineLogicalWidth + lineLayoutResult.hangingContent.logicalWidth);
         if (lineLayoutResult.endsWithLineBreak())
             contentWidthBetweenLineBreaks = { std::max(contentWidthBetweenLineBreaks.maximum, contentWidthBetweenLineBreaks.current), { } };
 
-        layoutRange.start = InlineFormattingUtils::leadingInlineItemPositionForNextLine(lineLayoutResult.inlineItemRange.end, previousLineEnd, !lineLayoutResult.floatContent.hasIntrusiveFloat.isEmpty() || !lineLayoutResult.floatContent.placedFloats.isEmpty(), layoutRange.end);
+        layoutRange.start = InlineFormattingUtils::leadingInlineItemPositionForNextLine(lineLayoutResult, previousLineEnd, layoutRange.end);
         if (layoutRange.isEmpty()) {
             auto cacheLineBreakingResultForSubsequentLayoutIfApplicable = [&] {
                 m_maximumIntrinsicWidthResultForSingleLine = { };
@@ -352,7 +391,7 @@ InlineLayoutUnit IntrinsicWidthHandler::simplifiedMinimumWidth(const ElementBox&
 {
     auto maximumWidth = InlineLayoutUnit { };
 
-    for (auto* child = root.firstChild(); child; child = child->nextInFlowSibling()) {
+    for (auto* child = root.firstInFlowChild(); child; child = child->nextInFlowSibling()) {
         if (auto* inlineTextBox = dynamicDowncast<InlineTextBox>(*child)) {
             ASSERT(inlineTextBox->style().whiteSpaceCollapse() != WhiteSpaceCollapse::Preserve);
             auto& fontCascade = inlineTextBox->style().fontCascade();
@@ -371,8 +410,12 @@ InlineLayoutUnit IntrinsicWidthHandler::simplifiedMinimumWidth(const ElementBox&
             }
             continue;
         }
-        if (child->isAtomicInlineBox() || child->isReplacedBox()) {
+        if (child->isListMarkerBox()) {
             maximumWidth = std::max<InlineLayoutUnit>(maximumWidth, formattingContext().geometryForBox(*child).marginBoxWidth());
+            continue;
+        }
+        if (child->isAtomicInlineBox() || child->isReplacedBox()) {
+            maximumWidth = std::max(maximumWidth, formattingContext().formattingUtils().intrinsicMarginBoxWidth(downcast<ElementBox>(*child), IntrinsicWidthMode::Minimum));
             continue;
         }
         auto isInlineBoxWithInlineContent = child->isInlineBox() && !child->isLineBreakBox();

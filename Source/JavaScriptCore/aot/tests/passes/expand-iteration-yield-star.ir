@@ -1,0 +1,271 @@
+# The three resumptions of yield* are steps of one iteration: a generator is stepped in place, an array has neither return nor throw
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 4
+# STATISTIC: IterationsExpandedGenerically = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Bag" fields=[{key="x" declared={type=number}}]
+
+function f0 name="overGenerator" flags=[IsGenerator, TakesCallee] parameters=[{type=Generator<anything, pristine[Names]>}] results=[{type=anything}] {
+    InitialYield
+    v3 = IteratorOpen v1
+    v4 = Undefined
+    Jump -> next b1(v4)
+  b1(v5):
+    v6 = IteratorResume v3, v5 [readsValueWhenDone]
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b6(v8), notTaken b2(v8)
+  b2(v9):
+    LoopHint
+    v11 = Yield v9
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b3(v12), case b4(v12), otherwise b1(v12)
+  b3(v14):
+    v15 = IteratorResume v3, v14 resumeMode=Throw [readsValueWhenDone]
+    v16 = ResultAt v15
+    v17 = ResultAt v15 index=1
+    Branch v16 -> taken b6(v17), notTaken b2(v17)
+  b4(v18):
+    v19 = IteratorResume v3, v18 resumeMode=Return [readsValueWhenDone]
+    v20 = ResultAt v19
+    v21 = ResultAt v19 index=1
+    Branch v20 -> taken b5(v21), notTaken b2(v21)
+  b5(v22):
+    Return v22
+  b6(v23):
+    Return v23
+# CHECK: b1(v5: anything):
+# CHECK-NEXT: [[next0]]: undefined = StepGenerator v1, v5 check=None
+# CHECK-NEXT: [[nextValue0]]: anything = ResultAt [[next0]]
+# CHECK-NEXT: [[nextStatus0]]: int[0, 2] = ResultAt [[next0]] index=1
+# CHECK-NEXT: [[notStepped0]]: 2 = Integer integer=2
+# CHECK-NEXT: [[wasNotStepped0]]: boolean = StrictEq [[nextStatus0]], [[notStepped0]]
+# CHECK-NEXT: Branch [[wasNotStepped0]] -> taken [[call0]](), notTaken [[stepped0]]()
+# CHECK: b3(v14: anything):
+# CHECK-NEXT: = StepGenerator v1, v14 resumeMode=Throw check=None
+# CHECK: b4(v18: anything):
+# CHECK-NEXT: = StepGenerator v1, v18 resumeMode=Return check=None
+# CHECK: [[after0]](v7: boolean, v8: anything):
+# CHECK: [[call0]]() frequency=Rare:
+# CHECK-NEXT: [[method0]]: builtin(GeneratorPrototypeNext) = Builtin builtin=GeneratorPrototypeNext
+# CHECK-NEXT: = Call [[method0]], v1, v5
+# CHECK: [[stepped0]]():
+# CHECK-NEXT: [[completed0]]: 1 = Integer integer=1
+# CHECK-NEXT: [[done0]]: boolean = StrictEq [[nextStatus0]], [[completed0]]
+# CHECK-NEXT: Jump -> next [[after0]]([[done0]], [[nextValue0]])
+# ABSENT-NOT: IsUnmodifiedGenerator
+# ABSENT-NOT: check=IsUnmodified
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="next"
+# ABSENT-COUNT-3: = StepGenerator
+# ABSENT-NOT: = StepGenerator
+}
+
+function f1 name="overUnprovenGenerator" flags=[IsGenerator, TakesCallee] parameters=[{type=Generator<anything>}] results=[{type=anything}] {
+    InitialYield
+    v3 = IteratorOpen v1
+    v4 = Undefined
+    Jump -> next b1(v4)
+  b1(v5):
+    v6 = IteratorResume v3, v5 [readsValueWhenDone]
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b6(v8), notTaken b2(v8)
+  b2(v9):
+    LoopHint
+    v11 = Yield v9
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b3(v12), case b4(v12), otherwise b1(v12)
+  b3(v14):
+    v15 = IteratorResume v3, v14 resumeMode=Throw [readsValueWhenDone]
+    v16 = ResultAt v15
+    v17 = ResultAt v15 index=1
+    Branch v16 -> taken b6(v17), notTaken b2(v17)
+  b4(v18):
+    v19 = IteratorResume v3, v18 resumeMode=Return [readsValueWhenDone]
+    v20 = ResultAt v19
+    v21 = ResultAt v19 index=1
+    Branch v20 -> taken b5(v21), notTaken b2(v21)
+  b5(v22):
+    Return v22
+  b6(v23):
+    Return v23
+# The methods return and throw are looked up when they are called, so a test at the open says nothing about them.
+# CHECK: InitialYield
+# CHECK-NEXT: [[isUnmodified1]]: boolean = IsUnmodifiedGenerator v1
+# CHECK-NEXT: Branch [[isUnmodified1]] -> taken {{*}}(| 0), notTaken [[modified1]]()
+# CHECK: b1(v5: anything):
+# CHECK-NEXT: = StepGenerator v1, v5 check=None
+# CHECK: b3(v14: anything):
+# CHECK-NEXT: = StepGenerator v1, v14 resumeMode=Throw check=IsUnmodified
+# CHECK: b4(v18: anything):
+# CHECK-NEXT: = StepGenerator v1, v18 resumeMode=Return check=IsUnmodified
+# CHECK: [[protocol1]]([[iterable1]]: Generator) frequency=Unlikely:
+# CHECK-NEXT: = CallDirect [[iterable1]] function=[[openIterator]] [isNeverInlined]
+# CHECK: [[modified1]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[protocol1]](v1)
+# ABSENT-COUNT-3: = StepGenerator
+# ABSENT-NOT: = StepGenerator
+}
+
+function f2 name="overArray" flags=[IsGenerator, TakesCallee] parameters=[{type=Array<number, pristine[Names]>}] results=[{type=anything}] {
+    InitialYield
+    v3 = IteratorOpen v1
+    v4 = Undefined
+    Jump -> next b1(v4)
+  b1(v5):
+    v6 = IteratorResume v3, v5 [readsValueWhenDone]
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b6(v8), notTaken b2(v8)
+  b2(v9):
+    LoopHint
+    v11 = Yield v9
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b3(v12), case b4(v12), otherwise b1(v12)
+  b3(v14):
+    v15 = IteratorResume v3, v14 resumeMode=Throw [readsValueWhenDone]
+    v16 = ResultAt v15
+    v17 = ResultAt v15 index=1
+    Branch v16 -> taken b6(v17), notTaken b2(v17)
+  b4(v18):
+    v19 = IteratorResume v3, v18 resumeMode=Return [readsValueWhenDone]
+    v20 = ResultAt v19
+    v21 = ResultAt v19 index=1
+    Branch v20 -> taken b5(v21), notTaken b2(v21)
+  b5(v22):
+    Return v22
+  b6(v23):
+    Return v23
+# CHECK: b1(v5: anything, {{*}}: int[0, 9007199254740991]):
+# CHECK-NEXT: = PropGet v1 key="length"
+# CHECK: b3(v14: anything):
+# CHECK-NEXT: [[error2]]: object = NewRuntimeError runtimeError=IteratorWithoutThrowMethod
+# CHECK-NEXT: Throw [[error2]]
+# CHECK-NEXT: b4(v18: anything):
+# CHECK-NEXT: [[yes2]]: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next [[afterReturn2]]([[yes2]], v18)
+# CHECK: [[afterReturn2]](v20: boolean, v21: anything):
+# CHECK: Branch v20 -> taken b5(v21), notTaken b2(v21)
+# CHECK: = ElemGet v1, {{*}} [keyIsIntegral]
+# ABSENT-NOT: key="return"
+# ABSENT-NOT: key="throw"
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: = Call
+}
+
+function f3 name="overUnknown" flags=[IsGenerator, TakesCallee] parameters=[{type=L0}] results=[{type=anything}] {
+    InitialYield
+    v3 = IteratorOpen v1
+    v4 = Undefined
+    Jump -> next b1(v4)
+  b1(v5):
+    v6 = IteratorResume v3, v5 [readsValueWhenDone]
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b6(v8), notTaken b2(v8)
+  b2(v9):
+    LoopHint
+    v11 = Yield v9
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b3(v12), case b4(v12), otherwise b1(v12)
+  b3(v14):
+    v15 = IteratorResume v3, v14 resumeMode=Throw [readsValueWhenDone]
+    v16 = ResultAt v15
+    v17 = ResultAt v15 index=1
+    Branch v16 -> taken b6(v17), notTaken b2(v17)
+  b4(v18):
+    v19 = IteratorResume v3, v18 resumeMode=Return [readsValueWhenDone]
+    v20 = ResultAt v19
+    v21 = ResultAt v19 index=1
+    Branch v20 -> taken b5(v21), notTaken b2(v21)
+  b5(v22):
+    Return v22
+  b6(v23):
+    Return v23
+# CHECK: b1(v5: anything):
+# CHECK-NEXT: [[result3]]: anything = Call [[next3]], [[iterator3]], v5
+# CHECK-NEXT: [[object3]]: object = RequireObject [[result3]] runtimeError=IteratorResultNotObject
+# CHECK-NEXT: [[doneValue3]]: anything = PropGet [[object3]] key="done"
+# CHECK-NEXT: [[done3]]: boolean = ToBoolean [[doneValue3]]
+# CHECK-NEXT: [[value3]]: anything = PropGet [[object3]] key="value"
+# CHECK-NEXT: Jump -> next {{*}}([[done3]], [[value3]])
+# CHECK: b3(v14: anything):
+# CHECK-NEXT: [[throwMethod3]]: anything = PropGet [[iterator3]] key="throw"
+# CHECK-NEXT: [[hasNoThrow3]]: boolean = TypeTest [[throwMethod3]] testedType=undefined|null
+# CHECK-NEXT: Branch [[hasNoThrow3]] -> taken [[closes3]](| 0), notTaken [[throws3]](| 0)
+# CHECK: b4(v18: anything):
+# CHECK-NEXT: [[returnMethod3]]: anything = PropGet [[iterator3]] key="return"
+# CHECK-NEXT: [[hasNoReturn3]]: boolean = TypeTest [[returnMethod3]] testedType=undefined|null
+# CHECK-NEXT: Branch [[hasNoReturn3]] -> taken [[returned3]](| 0), notTaken [[returns3]](| 0)
+# CHECK: [[returned3]]({{*}}: undefined|null):
+# CHECK-NEXT: [[yes3]]: true = Boolean boolean=true
+# CHECK-NEXT: Jump -> next {{*}}([[yes3]], v18)
+# CHECK-NEXT: [[returns3]]([[returnCallee3]]: {{*}}):
+# CHECK-NEXT: = Call [[returnCallee3]], [[iterator3]], v18
+# Without a throw method the iterator is closed, then the TypeError of the language is thrown.
+# CHECK: [[closes3]]({{*}}: undefined|null) frequency=Rare:
+# CHECK-NEXT: = PropGet [[iterator3]] key="return"
+# CHECK: [[throws3]]([[throwCallee3]]: {{*}}):
+# CHECK-NEXT: = Call [[throwCallee3]], [[iterator3]], v14
+# CHECK: [[error3]]: object = NewRuntimeError runtimeError=IteratorWithoutThrowMethod
+# CHECK-NEXT: Throw [[error3]]
+# ABSENT-NOT: StepGenerator
+# ABSENT-COUNT-3: key="value"
+# ABSENT-NOT: key="value"
+}
+
+function f4 name="overValueNobodyKnows" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+    InitialYield
+    v3 = IteratorOpen v1
+    v4 = Undefined
+    Jump -> next b1(v4)
+  b1(v5):
+    v6 = IteratorResume v3, v5 [readsValueWhenDone]
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b6(v8), notTaken b2(v8)
+  b2(v9):
+    LoopHint
+    v11 = Yield v9
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Switch v13 cases=[1, 2] -> case b3(v12), case b4(v12), otherwise b1(v12)
+  b3(v14):
+    v15 = IteratorResume v3, v14 resumeMode=Throw [readsValueWhenDone]
+    v16 = ResultAt v15
+    v17 = ResultAt v15 index=1
+    Branch v16 -> taken b6(v17), notTaken b2(v17)
+  b4(v18):
+    v19 = IteratorResume v3, v18 resumeMode=Return [readsValueWhenDone]
+    v20 = ResultAt v19
+    v21 = ResultAt v19 index=1
+    Branch v20 -> taken b5(v21), notTaken b2(v21)
+  b5(v22):
+    Return v22
+  b6(v23):
+    Return v23
+# Whoever sends values into an iterator expects a generator. passes/expand-iteration-generators.ir, notExpected: a loop that sends nothing is not tested for one
+# CHECK: [[isGenerator4]]: boolean = TypeTest v1 testedType=Generator
+# CHECK-NEXT: Branch [[isGenerator4]] -> taken [[generatorArm4]](| 0), notTaken [[others4]](| 0)
+# CHECK: [[generatorArm4]]([[generator4]]: Generator):
+# CHECK-NEXT: = IsUnmodifiedGenerator [[generator4]]
+# CHECK: [[others4]]([[other4]]: {{*}}) frequency=Unlikely:
+# CHECK-NEXT: = TypeTest [[other4]] testedType=Array
+# ABSENT: = StepGenerator
+# ABSENT: function=[[openIterator]] [isNeverInlined]
+}
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

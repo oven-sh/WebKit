@@ -1,0 +1,166 @@
+# A call in the loop clobbers only the variables and environment fields its summary writes
+# FORM: Prepared
+# RUN: pass HoistLoopInvariantReads
+# STATISTIC: HoistLoopInvariantReadsChanges = 4
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="limit" declared={type=number}
+variable g1 name="count" declared={type=number}
+layout L0 kind=Environment name="scope" fields=[{key="limit" declared={type=number}}, {key="count" declared={type=number}}]
+
+function f0 name="writesCount" parameters=[{type=number}] results=[{type=undefined}] {
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f1 name="writesLimit" parameters=[{type=number}] results=[{type=undefined}] {
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f2 name="callsWritesCount" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = CallDirect v0 function=f0
+    Return
+}
+function f3 name="callsWritesLimit" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = CallDirect v0 function=f1
+    Return
+}
+function f4 name="writesCountField" parameters=[{type=env L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: number):
+    PutEnvironmentField v0, v1 layout=L0 field=1
+    Return
+}
+function f5 name="writesLimitField" parameters=[{type=env L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: number):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+
+function f6 name="calleeWritesAnotherVariable" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = GetModuleVariable variable=g0
+    v3 = Less v0, v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallDirect v0 function=f0
+    Jump -> next b1()
+  b3():
+    Return v2
+# CHECK: b0(
+# CHECK-NEXT: GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NOT: GetModuleVariable
+}
+
+function f7 name="calleeWritesTheVariable" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = GetModuleVariable variable=g0
+    v3 = Less v0, v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallDirect v0 function=f1
+    Jump -> next b1()
+  b3():
+    Return v2
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: LoopHint
+# CHECK-NEXT: GetModuleVariable variable=g0
+}
+
+function f8 name="calleeOfCalleeWritesAnotherVariable" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = GetModuleVariable variable=g0
+    v3 = Less v0, v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallDirect v0 function=f2
+    Jump -> next b1()
+  b3():
+    Return v2
+# CHECK: b0(
+# CHECK-NEXT: GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NOT: GetModuleVariable
+}
+
+function f9 name="calleeOfCalleeWritesTheVariable" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = GetModuleVariable variable=g0
+    v3 = Less v0, v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallDirect v0 function=f3
+    Jump -> next b1()
+  b3():
+    Return v2
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: LoopHint
+# CHECK-NEXT: GetModuleVariable variable=g0
+}
+
+function f10 name="callInFrontOfTheRead" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = CallDirect v0 function=f0
+    v3 = GetModuleVariable variable=g0
+    v4 = GetModuleVariable variable=g1
+    v5 = Less v3, v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v3
+# CHECK: b0(
+# CHECK-NEXT: GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: = CallDirect v0 function=f0
+# CHECK-NEXT: GetModuleVariable variable=g1
+}
+
+function f11 name="calleeWritesAnotherField" captures=[{type=env L0}] parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: env L0, v1: number):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = GetEnvironmentField v0 layout=L0 field=0
+    v4 = Less v1, v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = CallDirect v0, v1 function=f4
+    Jump -> next b1()
+  b3():
+    Return v3
+# CHECK: b0(
+# CHECK-NEXT: GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NOT: GetEnvironmentField
+}
+
+function f12 name="calleeWritesTheField" captures=[{type=env L0}] parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: env L0, v1: number):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = GetEnvironmentField v0 layout=L0 field=0
+    v4 = Less v1, v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = CallDirect v0, v1 function=f5
+    Jump -> next b1()
+  b3():
+    Return v3
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: LoopHint
+# CHECK-NEXT: GetEnvironmentField v0 layout=L0
+}

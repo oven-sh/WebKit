@@ -39,7 +39,7 @@ public:
     RenderSVGImage(SVGImageElement&, Style::ComputedStyle&&);
     virtual ~RenderSVGImage();
 
-    SVGImageElement& NODELETE imageElement() const;
+    SVGImageElement& LEGACY_NODELETE imageElement() const;
 
     RenderImageResource& imageResource() { return m_imageResource; }
     const RenderImageResource& imageResource() const { return m_imageResource; }
@@ -70,7 +70,7 @@ private:
     void paint(PaintInfo&, const LayoutPoint&) final;
 
     void paintForeground(PaintInfo&, const LayoutPoint&);
-    ImageDrawResult paintIntoRect(PaintInfo&, const FloatRect&, const FloatRect&);
+    ImageDrawResult paintIntoRect(PaintInfo&, const FloatRect&, const FloatRect& sourceRect, FloatSize imageRenderingSize);
 
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) final;
 
@@ -87,6 +87,8 @@ private:
     FloatRect m_objectBoundingBox;
     const UniqueRef<RenderImageResource> m_imageResource;
     RefPtr<ImageBuffer> m_bufferedForeground;
+    FloatSize m_bufferedForegroundSize;
+    IntSize m_bufferedForegroundScaledSize;
 };
 
 } // namespace WebCore

@@ -1,0 +1,40 @@
+# Select gives Array.prototype.concat an inline way and a slow one, and the parameter that joins the two proves nothing. A result that a read names as its guard would keep the call out of the inline way,
+# which saves far more than the test costs. So the test of the result stays where somebody relies on it, and goes where nobody does.
+# FORM: Prepared
+# RUN: pass EliminateGuards
+# STATISTIC: GuardsEliminated = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="read" parameters=[{type=Array}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ArrayPrototypeConcat/3
+    v2 = Integer integer=0
+    v3 = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = GetArrayElement v1, v2, v4 level=Expected
+    Jump -> next b3(v5)
+  b2() frequency=Unlikely:
+    v6 = ElemGet v1, v2
+    Jump -> next b3(v6)
+  b3(v7):
+    Return v7
+# CHECK: v3: boolean = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
+# CHECK: = GetArrayElement v1, v2, v4
+}
+function f1 name="asked" parameters=[{type=Array}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ArrayPrototypeConcat/3
+    v2 = IsPristine v1 builtinClass=Array aspects=[Names]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = Builtin builtin=ArrayPrototypePush
+    Jump -> next b3(v4)
+  b2() frequency=Unlikely:
+    v5 = PropGet v1 key="push"
+    Jump -> next b3(v5)
+  b3(v6):
+    Return v6
+# CHECK-NOT: IsPristine
+# CHECK: b2():
+# CHECK-NEXT: Unreachable
+}

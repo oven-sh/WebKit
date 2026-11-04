@@ -17,6 +17,9 @@
 #ifndef __UCHARSTRIEBUILDER_H__
 #define __UCHARSTRIEBUILDER_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/utypes.h"
 
 #if U_SHOW_CPLUSPLUS_API

@@ -31,6 +31,9 @@ WI.IndexedDatabaseHostTreeElement = class IndexedDatabaseHostTreeElement extends
 
         this._host = host;
 
+        // StorageTreeElement's constructor set the title from `name` before `_host` existed.
+        this.mainTitle = this.name;
+
         this.hasChildren = true;
         this.expanded = true;
     }

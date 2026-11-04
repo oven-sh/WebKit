@@ -27,16 +27,11 @@
 
 #if ENABLE(GPU_PROCESS)
 
-#include <WebCore/WebGPUIntegralTypes.h>
-#include <optional>
+#include <WebCore/WebGPUCppAPI.h>
 
 namespace WebKit::WebGPU {
 
-struct MultisampleState {
-    WebCore::WebGPU::Size32 count { 1 };
-    WebCore::WebGPU::SampleMask mask { 0xFFFFFFFF };
-    bool alphaToCoverageEnabled { false };
-};
+using MultisampleState = ::WebGPU::MultisampleState;
 
 } // namespace WebKit::WebGPU
 

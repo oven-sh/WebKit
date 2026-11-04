@@ -1,0 +1,44 @@
+# The slot of `run = () => this.x` defers its closure whether or not the store that creates the field was resolved: with ResolveAccesses off the definition stays by name and the run time enters the closure it is handed (native this-allocation/deferred-closure-defined-by-name runs this program)
+# TODO: closures-in-fields: a closure that a field definition by name holds gets a plain cell instead of a slot that makes it on demand
+# OPTIONS: references=narrow disable=pass:ResolveAccesses
+# RUN: tables layouts
+# CHECK: layout shape={{*}} index=L0 kind=Instance name="Counter"
+# CHECK-NEXT: field 0 name="run" flags=[IsStoredOnce DeferredClosureCapturesObject HasOperand IsNeverDeleted IsNeverRedefined IsNeverStoredWithOtherType] slot=DeferredClosure@16
+# RUN(BYNAME): pipeline Select
+# BYNAME-LABEL: function f1 name="Counter"
+# BYNAME: PropDefine {{*}} key="run"
+# BYNAME-NOT: PutSlot
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Counter" constructor=f1 fields=[{key="run" declared={type=function} flags=[IsRequired]}, {key="x" declared={type=anything}}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4
+    PutModuleVariable v5 variable=g0
+    v7 = GetModuleVariable variable=g0
+    v8 = PropGet v7 key="run"
+    v9 = Call v8, v7 calleeKey="run"
+    v10 = PropGet v7 key="run"
+    v11 = StrictEq v8, v10
+    v12 = Call v1, -, v9, v11
+    Return
+}
+function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = NewClosure v2 function=f2
+    PropDefine v2, v3 key="run"
+    v5 = Integer integer=7
+    PropSet v2, v5 key="x" mode=Strict
+    Return v2
+}
+function f2 name="run" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}

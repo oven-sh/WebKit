@@ -64,7 +64,7 @@ JSC_DEFINE_HOST_FUNCTION(callWebAssemblyFunction, (JSGlobalObject* globalObject,
     VM& vm = globalObject->vm();
     WebAssemblyFunction* wasmFunction = uncheckedDowncast<WebAssemblyFunction>(callFrame->jsCallee());
 
-    if (wasmFunction->instance()->taintedness() >= SourceTaintedOrigin::IndirectlyTainted)
+    if (wasmFunction->instance()->taintedness().isTainted())
         vm.setMightBeExecutingTaintedCode();
 
     // Note: we specifically use the WebAssemblyFunction as the callee to begin with in the ProtoCallFrame.
@@ -84,6 +84,10 @@ WebAssemblyFunction* WebAssemblyFunction::create(VM& vm, JSGlobalObject* globalO
     NativeExecutable* base = vm.getHostFunction(callWebAssemblyFunction, ImplementationVisibility::Public, WasmFunctionIntrinsic, callHostFunctionAsConstructor, nullptr, 0, String());
     // Since ClosureCall uses this executable as an identity for Wasm CallIC thunk, we need to make it diversified.
     NativeExecutable* executable = NativeExecutable::create(vm, base->generatedJITCodeForCall(), callWebAssemblyFunction, base->generatedJITCodeForConstruct(), callHostFunctionAsConstructor, ImplementationVisibility::Public, length, name);
+    if (auto* calleeGroup = instance->calleeGroup(); calleeGroup && !instance->taintedness().isTainted()) {
+        if (auto entry = calleeGroup->jsEntrypointInImage(rtt.get()))
+            executable->setCallEntrypoint(entry);
+    }
     WebAssemblyFunction* function = new (NotNull, allocateCell<WebAssemblyFunction>(vm)) WebAssemblyFunction(vm, executable, globalObject, structure, instance, wasmCallee, wasmToWasmEntrypointLoadLocation, WTF::move(rtt));
     function->finishCreation(vm);
     // The LLInt and JIT JS->Wasm entry trampolines read m_boxedJSToWasmCallee and

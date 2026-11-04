@@ -43,18 +43,18 @@ WebNavigationState::WebNavigationState(WebPageProxy& page)
 
 WebNavigationState::~WebNavigationState() = default;
 
-Ref<API::Navigation> WebNavigationState::createLoadRequestNavigation(WebCore::ProcessIdentifier processID, ResourceRequest&& request, RefPtr<WebBackForwardListItem>&& currentItem)
+Ref<API::Navigation> WebNavigationState::createLoadRequestNavigation(WebCore::ProcessIdentifier processID, ResourceRequest&& request, RefPtr<WebBackForwardListItem>&& currentItem, std::optional<WebCore::NavigationIdentifier> navigationID)
 {
-    Ref navigation = API::Navigation::create(processID, WTF::move(request), WTF::move(currentItem));
+    Ref navigation = API::Navigation::create(processID, WTF::move(request), WTF::move(currentItem), navigationID);
 
     m_navigations.set(navigation->navigationID(), navigation);
 
     return navigation;
 }
 
-Ref<API::Navigation> WebNavigationState::createBackForwardNavigation(WebCore::ProcessIdentifier processID, Ref<WebBackForwardListFrameItem>&& targetFrameItem, RefPtr<WebBackForwardListItem>&& currentItem, FrameLoadType frameLoadType)
+Ref<API::Navigation> WebNavigationState::createBackForwardNavigation(WebCore::ProcessIdentifier processID, Ref<WebBackForwardListFrameItem>&& targetFrameItem, RefPtr<WebBackForwardListItem>&& currentItem, FrameLoadType frameLoadType, std::optional<WebCore::NavigationIdentifier> navigationID)
 {
-    Ref navigation = API::Navigation::create(processID, WTF::move(targetFrameItem), WTF::move(currentItem), frameLoadType);
+    Ref navigation = API::Navigation::create(processID, WTF::move(targetFrameItem), WTF::move(currentItem), frameLoadType, navigationID);
 
     m_navigations.set(navigation->navigationID(), navigation);
 
@@ -96,26 +96,36 @@ API::Navigation* WebNavigationState::navigation(WebCore::NavigationIdentifier na
 RefPtr<API::Navigation> WebNavigationState::takeNavigation(WebCore::NavigationIdentifier navigationID)
 {
     ASSERT(m_navigations.contains(navigationID));
-    
-    return m_navigations.take(navigationID);
+
+    RefPtr navigation = m_navigations.take(navigationID);
+    if (navigation)
+        navigation->clearAgentClusterKeyingReservation();
+    return navigation;
 }
 
 void WebNavigationState::didDestroyNavigation(WebCore::ProcessIdentifier processID, WebCore::NavigationIdentifier navigationID)
 {
     auto it = m_navigations.find(navigationID);
-    if (it != m_navigations.end() && (*it).value->processID() == processID)
+    if (it != m_navigations.end() && (*it).value->processID() == processID) {
+        protect(it->value)->clearAgentClusterKeyingReservation();
         m_navigations.remove(it);
+    }
 }
 
 void WebNavigationState::clearAllNavigations()
 {
+    for (Ref navigation : m_navigations.values())
+        navigation->clearAgentClusterKeyingReservation();
     m_navigations.clear();
 }
 
 void WebNavigationState::clearNavigationsFromProcess(WebCore::ProcessIdentifier processID)
 {
     m_navigations.removeIf([&](auto& entry) {
-        return entry.value->processID() == processID;
+        if (entry.value->processID() != processID)
+            return false;
+        protect(entry.value)->clearAgentClusterKeyingReservation();
+        return true;
     });
 }
 

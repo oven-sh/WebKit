@@ -26,11 +26,11 @@
 #pragma once
 
 #include "SandboxExtension.h"
-#include <WebCore/FrameIdentifier.h>
+#include <WebCore/RemoteUserInputEventData.h>
 
 namespace WebKit {
 struct DragEventForwardingData {
-    WebCore::FrameIdentifier targetFrameID;
+    WebCore::RemoteUserInputEventData remoteUserInputEventData;
     SandboxExtensionHandle sandboxExtensionHandle;
     Vector<SandboxExtensionHandle> sandboxExtensionsForUpload;
 };

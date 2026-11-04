@@ -1,0 +1,59 @@
+# The run time looks up a key nobody knows, and it takes cells of the heap only: a record that is read or tested under such a key does not escape and still is no cell of the frame. The same record read by name is in the frame
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# RUN(PLAN): frame-plan flow
+# OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,AllocateInFrames
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="ReadByName" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="ReadByKey" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 name="TestedByKey" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = CallDirect v2 function=f1
+    v5 = CallDirect v2, v3 function=f2
+    v6 = CallDirect v2, v3 function=f3
+    Return
+}
+
+function f1 name="readByName" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f4
+    Return v2
+}
+# CHECK-LABEL: function f1 name="readByName"
+# CHECK: = NewObject {{*}}layout=L0 {{*}}storage=Frame
+# PLAN-LABEL: function f1
+# PLAN-NEXT: v1: Frame
+
+function f2 name="readByKey" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = ElemGet v2, v1
+    v4 = TypeOf v3
+    Return v4
+}
+# CHECK-LABEL: function f2 name="readByKey"
+# CHECK-NOT: storage=
+# PLAN-LABEL: function f2
+# PLAN-NEXT: v2: Heap SeenByNativeCode by v3(0)
+
+function f3 name="testedByKey" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    v3 = ElemHas v2, v1
+    Return v3
+}
+# CHECK-LABEL: function f3 name="testedByKey"
+# CHECK-NOT: storage=
+# PLAN-LABEL: function f3
+# PLAN-NEXT: v2: Heap SeenByNativeCode by v3(0)
+
+function f4 name="reader" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = Add v1, v1
+    Return v2
+}

@@ -28,6 +28,7 @@
 
 #include <JavaScriptCore/ConsoleMessage.h>
 #include <WebCore/CacheStorageConnection.h>
+#include <WebCore/CanBeCrossOriginIsolated.h>
 #include <WebCore/ClientOrigin.h>
 #include <WebCore/ImageBitmap.h>
 #include <WebCore/NetworkLoadPolicy.h>
@@ -73,6 +74,7 @@ class WorkerSWClientConnection;
 class WorkerStorageConnection;
 class WorkerStorageConnection;
 class WorkerThread;
+struct SecurityPolicyViolationEventInit;
 struct WorkerParameters;
 
 enum class ViolationReportType : uint8_t;
@@ -125,7 +127,7 @@ public:
     virtual ExceptionOr<void> importScripts(const FixedVector<Variant<Ref<TrustedScriptURL>, String>>& urls);
     WorkerNavigator& navigator();
 
-    void NODELETE setIsOnline(bool);
+    void LEGACY_NODELETE setIsOnline(bool);
     bool isOnline() const { return m_isOnline; }
 
     ExceptionOr<int> setTimeout(std::unique_ptr<ScheduledAction>, int timeout, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
@@ -134,7 +136,7 @@ public:
     void clearInterval(int timeoutId);
 
     bool isSecureContext() const final;
-    bool NODELETE crossOriginIsolated() const final;
+    bool LEGACY_NODELETE crossOriginIsolated() const final;
 
     WorkerNavigator* optionalNavigator() const { return m_navigator.get(); }
     WorkerLocation* optionalLocation() const { return m_location.get(); }
@@ -142,9 +144,10 @@ public:
     void addConsoleMessage(std::unique_ptr<Inspector::ConsoleMessage>&&) final;
 
     SecurityOrigin& topOrigin() const final { return m_topOrigin.get(); }
+    bool hasUnpartitionedStorageAccess() const final { return m_hasUnpartitionedStorageAccess; }
 
     Crypto& crypto();
-    Performance& NODELETE performance() const;
+    Performance& LEGACY_NODELETE performance() const;
     ReportingScope& reportingScope() const { return m_reportingScope.get(); }
 
     void prepareForDestruction() override;
@@ -160,7 +163,7 @@ public:
     RefPtr<FontLoadRequest> fontLoadRequest(const String& url, bool isSVG, bool isInitiatingElementInUserAgentShadowTree, LoadedFromOpaqueSource) final;
     void beginLoadingFontSoon(FontLoadRequest&) final;
 
-    const SettingsValues& settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
+    const SettingsValues& LEGACY_NODELETE settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
 
     const NetworkLoadPolicy& networkLoadPolicy() const LIFETIME_BOUND final { return m_networkLoadPolicy; }
 
@@ -170,7 +173,7 @@ public:
     static void releaseMemoryInWorkers(Synchronous);
     static void dumpGCHeapForWorkers();
 
-    void NODELETE setMainScriptSourceProvider(ScriptBufferSourceProvider&);
+    void LEGACY_NODELETE setMainScriptSourceProvider(ScriptBufferSourceProvider&);
     void addImportedScriptSourceProvider(const URL&, ScriptBufferSourceProvider&);
 
     ClientOrigin clientOrigin() const { return { topOrigin().data(), securityOrigin()->data() }; }
@@ -180,6 +183,8 @@ public:
     String agentClusterID() const final { return m_agentClusterID; }
 
     void reportErrorToWorkerObject(const String&);
+
+    void enqueueSecurityPolicyViolationEvent(SecurityPolicyViolationEventInit&&);
 
 protected:
     WorkerGlobalScope(WorkerThreadType, const WorkerParameters&, Ref<SecurityOrigin>&&, WorkerThread&, Ref<SecurityOrigin>&& topOrigin, IDBClient::IDBConnectionProxy*, SocketProvider*, std::unique_ptr<WorkerClient>&&);
@@ -205,7 +210,7 @@ private:
 
     EventTarget* errorEventTarget() final;
     String resourceRequestIdentifier() const final { return m_inspectorIdentifier; }
-    SocketProvider* NODELETE socketProvider() final;
+    SocketProvider* LEGACY_NODELETE socketProvider() final;
     RefPtr<RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() final;
 
     bool shouldBypassMainWorldContentSecurityPolicy() const final { return m_shouldBypassMainWorldContentSecurityPolicy; }
@@ -229,6 +234,8 @@ private:
 
     bool m_isOnline;
     bool m_shouldBypassMainWorldContentSecurityPolicy;
+    bool m_isSecureContext;
+    const bool m_hasUnpartitionedStorageAccess;
 
     const Ref<SecurityOrigin> m_topOrigin;
 
@@ -254,6 +261,7 @@ private:
     FetchOptions::Credentials m_credentials;
     String m_agentClusterID;
     const NetworkLoadPolicy m_networkLoadPolicy;
+    const CanBeCrossOriginIsolated m_canBeCrossOriginIsolated;
     const RefPtr<WorkerStorageConnection> m_storageConnection;
     RefPtr<WorkerFileSystemStorageConnection> m_fileSystemStorageConnection;
 };

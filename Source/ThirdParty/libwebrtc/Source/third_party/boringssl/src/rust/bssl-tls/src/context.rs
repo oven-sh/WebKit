@@ -48,6 +48,7 @@ pub use crate::connection::{
     Server, //
 };
 
+mod alpn;
 mod credentials;
 mod methods;
 mod sessions;
@@ -75,16 +76,14 @@ pub enum TlsExternalVerifierMode {}
 /// [`TlsContextBuilder::with_certificate_verifier`].
 pub enum DtlsExternalVerifierMode {}
 
-pub(crate) trait HasBasicIo {}
-
 /// A marker trait for modes that have built-in X.509 support.
-pub trait UseBuiltinX509 {}
+pub(crate) trait UseBuiltinX509: SupportedMode {}
 
 impl UseBuiltinX509 for TlsMode {}
 impl UseBuiltinX509 for DtlsMode {}
 
 /// A collection of supported mode of operations.
-pub trait SupportedMode:
+pub(crate) trait SupportedMode:
     HasTlsContextMethod + HasTlsConnectionMethod + HasPrivateKeyMethods
 {
 }
@@ -95,10 +94,22 @@ impl SupportedMode for QuicMode {}
 impl SupportedMode for TlsExternalVerifierMode {}
 impl SupportedMode for DtlsExternalVerifierMode {}
 
-impl HasBasicIo for TlsMode {}
-impl HasBasicIo for DtlsMode {}
-impl HasBasicIo for TlsExternalVerifierMode {}
-impl HasBasicIo for DtlsExternalVerifierMode {}
+pub(crate) trait HasStreamIo: SupportedMode {}
+
+impl HasStreamIo for TlsMode {}
+impl HasStreamIo for TlsExternalVerifierMode {}
+
+pub(crate) trait HasDatagramIo: SupportedMode {}
+
+impl HasDatagramIo for DtlsMode {}
+impl HasDatagramIo for DtlsExternalVerifierMode {}
+
+pub(crate) trait HasShutdown: SupportedMode {}
+
+impl HasShutdown for TlsMode {}
+impl HasShutdown for DtlsMode {}
+impl HasShutdown for TlsExternalVerifierMode {}
+impl HasShutdown for DtlsExternalVerifierMode {}
 
 /// General TLS configuration
 ///

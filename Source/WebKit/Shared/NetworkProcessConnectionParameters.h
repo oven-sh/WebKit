@@ -26,6 +26,7 @@
 #pragma once
 
 #include "LoadedWebArchive.h"
+#include "ProcessCrossOriginIsolation.h"
 #include "SharedPreferencesForWebProcess.h"
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/PageIdentifier.h>
@@ -43,7 +44,9 @@ struct NetworkProcessConnectionParameters {
     LoadedWebArchive loadedWebArchive { LoadedWebArchive::No };
     HashSet<WebCore::RegistrableDomain> allowedFirstPartiesForCookies;
     Vector<WebPageProxyIdentifier> allowedWebPageProxyIdentifiers;
+    std::optional<HashSet<WebCore::RegistrableDomain>> hostedDomains;
     HashMap<WebCore::PageIdentifier, Vector<String>> corsDisablingPatternsPerPage;
+    ProcessCrossOriginIsolation crossOriginIsolation { ProcessCrossOriginIsolation::None };
 };
 
 } // namespace WebKit

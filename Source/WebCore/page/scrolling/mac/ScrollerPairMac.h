@@ -76,8 +76,8 @@ public:
     void updateValues();
 
     FloatSize visibleSize() const;
-    bool NODELETE useDarkAppearance() const;
-    ScrollbarWidth NODELETE scrollbarWidthStyle() const;
+    bool LEGACY_NODELETE useDarkAppearance() const;
+    ScrollbarWidth LEGACY_NODELETE scrollbarWidthStyle() const;
 
     struct Values {
         float value;
@@ -136,7 +136,7 @@ private:
     std::optional<FloatPoint> m_lastScrollOffset;
 
     RetainPtr<NSScrollerImpPair> m_scrollerImpPair;
-    RetainPtr<WebScrollerImpPairDelegateMac> m_scrollerImpPairDelegate;
+    const RetainPtr<WebScrollerImpPairDelegateMac> m_scrollerImpPairDelegate;
 
     ScrollbarWidth m_scrollbarWidth { ScrollbarWidth::Auto };
     std::atomic<bool> m_usingPresentationValues { false };

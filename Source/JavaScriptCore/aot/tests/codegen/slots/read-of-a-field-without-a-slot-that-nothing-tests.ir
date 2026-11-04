@@ -1,0 +1,16 @@
+# A read that relies on flow alone for its slot being filled, of a field that has no slot: nothing in the code says that no run reaches it, so the build ends, at the check of placement
+# FORM: Selected
+# OPTIONS: references=narrow
+# RUN: generate-code calls
+# DIAGNOSTIC: PlacementCheckFailed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="NeverFilled" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="note" declared={type=string} flow={location={writers=AllKnown stores=Never} occupancy=AlwaysFilled}}] flow={members=[L0]}
+function f0 name="make" parameters=[{type=number}] results=[{type=L0}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f1 name="noteOf" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSlot v0 key="note" receivers=[L0] level=Proven
+    Return v1
+}

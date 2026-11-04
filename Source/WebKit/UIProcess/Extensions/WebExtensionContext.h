@@ -213,7 +213,7 @@ public:
 
     static bool isURLForAnyExtension(const URL&);
 
-    static WebExtensionContext* NODELETE get(WebExtensionContextIdentifier);
+    static WebExtensionContext* LEGACY_NODELETE get(WebExtensionContextIdentifier);
 
 #if PLATFORM(COCOA)
     explicit WebExtensionContext(Ref<WebExtension>&&);
@@ -374,7 +374,7 @@ public:
     };
 #endif
 
-    WebExtensionContextIdentifier NODELETE privilegedIdentifier() const;
+    WebExtensionContextIdentifier LEGACY_NODELETE privilegedIdentifier() const;
 
     WebExtensionContextParameters parameters(IncludePrivilegedIdentifier, WebProcessProxy& destinationProcess) const;
 
@@ -412,6 +412,8 @@ public:
     void setBaseURL(URL&&);
 
     bool isURLForThisExtension(const URL&) const;
+    bool canOpenURLInNewTabOrWindow(const URL&) const;
+    String unsupportedURLForNewTabOrWindowMessage(const URL&) const;
 
     bool hasCustomUniqueIdentifier() const { return m_customUniqueIdentifier; }
 
@@ -434,7 +436,7 @@ public:
     bool hasInjectedContent();
     bool safeToInjectContent() const { return isLoaded() && m_safeToInjectContent; }
 
-    bool NODELETE hasContentModificationRules();
+    bool LEGACY_NODELETE hasContentModificationRules();
 
     URL optionsPageURL() const;
     URL overrideNewTabPageURL() const;
@@ -541,6 +543,7 @@ public:
     void didMoveTab(WebExtensionTab&, size_t oldIndex, const WebExtensionWindow* oldWindow = nullptr);
     void didReplaceTab(WebExtensionTab& oldTab, WebExtensionTab& newTab, SuppressEvents = SuppressEvents::No);
     void didChangeTabProperties(WebExtensionTab&, OptionSet<WebExtensionTab::ChangedProperties> = { });
+    void firePendingTabsUpdatedEvent(WebExtensionTab&, WebExtensionTab::ValueSource);
 
     void didStartProvisionalLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime);
     void didCommitLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime);
@@ -616,15 +619,21 @@ public:
 
     CocoaMenuItem *singleMenuItemOrExtensionItemWithSubmenu(const WebExtensionMenuItemContextParameters&) const;
 
+#if ENABLE(WK_WEB_EXTENSIONS_NOTIFICATIONS)
+    void fireNotificationsClickedEventIfNeeded(const String& identifier);
+    void fireNotificationsButtonClickedEventIfNeeded(const String& identifier, size_t buttonIndex);
+    void fireNotificationsClosedEventIfNeeded(const String& identifier, UserTriggered);
+#endif
+
 #if PLATFORM(MAC)
     void addItemsToContextMenu(WebPageProxy&, const ContextMenuContextData&, NSMenu *);
 #endif
 
     void userGesturePerformed(WebExtensionTab&);
-    bool NODELETE hasActiveUserGesture(WebExtensionTab&) const;
+    bool LEGACY_NODELETE hasActiveUserGesture(WebExtensionTab&) const;
     void clearUserGesture(WebExtensionTab&);
 
-    bool NODELETE inTestingMode() const;
+    bool LEGACY_NODELETE inTestingMode() const;
 
 #if PLATFORM(COCOA)
     void sendTestMessage(const String& message, id argument);
@@ -652,6 +661,7 @@ public:
     void didFinishDocumentLoad(WebViewClass *);
     void didFailNavigation(WebViewClass *, RefPtr<API::Error>);
     void webViewWebContentProcessDidTerminate(WebViewClass *);
+    void webViewDidClose(WebViewClass *);
 
 #if PLATFORM(MAC)
     void runOpenPanel(WKWebView *, WKOpenPanelParameters *, void (^)(NSArray *));
@@ -692,7 +702,7 @@ public:
     void addExtensionTabPage(WebPageProxy&, WebExtensionTab&);
     void addPopupPage(WebPageProxy&, WebExtensionAction&);
 
-    void enumerateExtensionPages(NOESCAPE Function<void(WebPageProxy&, bool& stop)>&&);
+    void enumerateExtensionPages(NOESCAPE const Function<void(WebPageProxy&, bool& stop)>&);
 
     WebViewClass *relatedWebView();
     String processDisplayName();
@@ -719,9 +729,9 @@ public:
         return processes(WTF::move(typeSet), ContentWorldTypeSet { contentWorldType });
     }
 
-    HashSet<Ref<WebProcessProxy>> processes(EventListenerTypeSet&&, ContentWorldTypeSet&&, Function<bool(WebProcessProxy&, WebPageProxy&, WebFrameProxy&)>&& predicate = nullptr) const;
+    HashSet<Ref<WebProcessProxy>> processes(EventListenerTypeSet&&, ContentWorldTypeSet&&, NOESCAPE const Function<bool(WebProcessProxy&, WebPageProxy&, WebFrameProxy&)>& predicate = nullptr) const;
 
-    const UserContentControllerProxySet& NODELETE userContentControllers() const LIFETIME_BOUND;
+    const UserContentControllerProxySet& LEGACY_NODELETE userContentControllers() const LIFETIME_BOUND;
 
     template<typename T>
     void sendToProcesses(const WebProcessProxySet&, const T& message) const;
@@ -745,7 +755,7 @@ private:
 
     explicit WebExtensionContext();
 
-    int NODELETE toAPIError(WebExtensionContext::Error);
+    int LEGACY_NODELETE toAPIError(WebExtensionContext::Error);
 
     String stateFilePath() const;
 #if PLATFORM(COCOA)
@@ -778,7 +788,7 @@ private:
     bool isBackgroundPage(WebCore::FrameIdentifier) const;
     bool isBackgroundPage(WebPageProxyIdentifier) const;
     bool isExtensionPage(WebPageProxyIdentifier) const;
-    bool NODELETE backgroundContentIsLoaded() const;
+    bool LEGACY_NODELETE backgroundContentIsLoaded() const;
 
     bool isNotRunningInTestRunner();
 
@@ -810,7 +820,7 @@ private:
 #if ENABLE(INSPECTOR_EXTENSIONS)
     URL inspectorBackgroundPageURL() const;
 
-    InspectorTabVector openInspectors(Function<bool(WebExtensionTab&, WebInspectorUIProxy&)>&& = nullptr) const;
+    InspectorTabVector openInspectors(NOESCAPE const Function<bool(WebExtensionTab&, WebInspectorUIProxy&)>& = nullptr) const;
     InspectorTabVector loadedInspectors() const;
 
     bool isInspectorBackgroundPage(WKWebView *) const;
@@ -825,7 +835,7 @@ private:
     void unloadInspectorBackgroundPage(WebInspectorUIProxy&);
 
     RefPtr<API::InspectorExtension> inspectorExtension(WebPageProxyIdentifier) const;
-    RefPtr<WebInspectorUIProxy> NODELETE inspector(const API::InspectorExtension&) const;
+    RefPtr<WebInspectorUIProxy> LEGACY_NODELETE inspector(const API::InspectorExtension&) const;
     HashSet<Ref<WebProcessProxy>> processes(const API::InspectorExtension&) const;
 #endif // ENABLE(INSPECTOR_EXTENSIONS)
 
@@ -906,7 +916,7 @@ private:
     void alarmsGet(const String& name, CompletionHandler<void(std::optional<WebExtensionAlarmParameters>&&)>&&);
     void alarmsClear(const String& name, CompletionHandler<void(bool)>&&);
     void alarmsGetAll(CompletionHandler<void(Vector<WebExtensionAlarmParameters>&&)>&&);
-    void alarmsClearAll(CompletionHandler<void(bool)>&&);
+    void alarmsClearAll(CompletionHandler<void()>&&);
     void fireAlarmsEventIfNeeded(const WebExtensionAlarm&);
 
     // Bookmarks APIs
@@ -984,7 +994,11 @@ private:
     // Notifications APIs
     bool isNotificationsMessageAllowed(IPC::Decoder&);
 
-    void notificationsCreate(const WebExtensionNotificationParameters&, CompletionHandler<void()>&&);
+    void notificationsCreate(const WebExtensionNotificationParameters&, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
+    void notificationsUpdate(const String& identifier, const WebExtensionNotificationParameters&, CompletionHandler<void(std::expected<bool, WebExtensionError>&&)>&&);
+    void notificationsClear(const String& identifier, CompletionHandler<void(std::expected<bool, WebExtensionError>&&)>&&);
+    void notificationsGetAll(CompletionHandler<void(Vector<String>&&)>&&);
+    void notificationsGetPermissionLevel(CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&&);
 #endif
 
 #if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
@@ -1130,7 +1144,7 @@ private:
 
     bool isLoaded(IPC::Decoder&) const { return isLoaded(); }
     bool isLoadedAndPrivilegedMessage(IPC::Decoder& message) const { return isLoaded() && isPrivilegedMessage(message); }
-    bool NODELETE isPrivilegedMessage(IPC::Decoder&) const;
+    bool LEGACY_NODELETE isPrivilegedMessage(IPC::Decoder&) const;
 
     mutable Markable<WebExtensionContextIdentifier> m_privilegedIdentifier;
 
@@ -1150,7 +1164,7 @@ private:
     String m_uniqueIdentifier = WTF::UUID::createVersion4().toString();
     bool m_customUniqueIdentifier { false };
 
-    RefPtr<WebExtensionLocalization> m_localization;
+    const RefPtr<WebExtensionLocalization> m_localization;
 
     bool m_inspectable { false };
 
@@ -1201,7 +1215,7 @@ private:
 #endif
 #endif
 
-    RetainPtr<_WKWebExtensionContextDelegate> m_delegate;
+    const RetainPtr<_WKWebExtensionContextDelegate> m_delegate;
 #elif ENABLE(2022_GLIB_API)
     GRefPtr<WebKitWebView> m_backgroundWebView;
     GWeakPtr<WebKitWebExtensionContext> m_delegate;
@@ -1258,7 +1272,7 @@ private:
     PopupPageActionMap m_popupPageActionMap;
 
 #if PLATFORM(COCOA)
-    RetainPtr<NSMapTable> m_tabDelegateToIdentifierMap;
+    const RetainPtr<NSMapTable> m_tabDelegateToIdentifierMap;
 #endif
 
     CommandsVector m_commands;
@@ -1300,7 +1314,7 @@ private:
     Deque<TestMessage> m_testStartedQueue;
     Deque<TestMessage> m_testFinishedQueue;
 
-    bool NODELETE hasTestEventListeners(WebExtensionEventListenerType);
+    bool LEGACY_NODELETE hasTestEventListeners(WebExtensionEventListenerType);
     void sendQueuedTestMessagesIfNeeded(WebExtensionEventListenerType);
 #if PLATFORM(COCOA)
     void addTestMessageToQueue(const String& message, id argument, WebExtensionEventListenerType);

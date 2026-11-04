@@ -27,7 +27,6 @@ var testCurves = []struct {
 	{"P-384", CurveP384},
 	{"P-521", CurveP521},
 	{"X25519", CurveX25519},
-	{"Kyber", CurveX25519Kyber768},
 	{"X25519MLKEM768", CurveX25519MLKEM768},
 	{"MLKEM1024", CurveMLKEM1024},
 }
@@ -37,7 +36,7 @@ const bogusCurve = 0x1234
 const curveEqualPreferenceWithNextFlag = 0x01
 
 func isPqGroup(r CurveID) bool {
-	return r == CurveX25519Kyber768 || isMLKEMGroup(r)
+	return isMLKEMGroup(r)
 }
 
 func isMLKEMGroup(r CurveID) bool {
@@ -49,7 +48,7 @@ func isECDHGroup(r CurveID) bool {
 }
 
 func isX25519Group(r CurveID) bool {
-	return r == CurveX25519 || r == CurveX25519Kyber768 || r == CurveX25519MLKEM768
+	return r == CurveX25519 || r == CurveX25519MLKEM768
 }
 
 func addCurveTests() {
@@ -81,7 +80,7 @@ func addCurveTests() {
 					},
 					flags: append(
 						[]string{"-expect-curve-id", strconv.Itoa(int(curve.id))},
-						flagCurves("-curves", []CurveID{curve.id})...,
+						flagInts("-curves", []CurveID{curve.id})...,
 					),
 					expectations: connectionExpectations{
 						curveID: curve.id,
@@ -108,7 +107,7 @@ func addCurveTests() {
 							TruncateKeyShare: true,
 						},
 					},
-					flags:              flagCurves("-curves", []CurveID{curve.id}),
+					flags:              flagInts("-curves", []CurveID{curve.id}),
 					shouldFail:         true,
 					expectedError:      ":BAD_ECPOINT:",
 					expectedLocalError: badKeyShareLocalError,
@@ -125,7 +124,7 @@ func addCurveTests() {
 							PadKeyShare: true,
 						},
 					},
-					flags:              flagCurves("-curves", []CurveID{curve.id}),
+					flags:              flagInts("-curves", []CurveID{curve.id}),
 					shouldFail:         true,
 					expectedError:      ":BAD_ECPOINT:",
 					expectedLocalError: badKeyShareLocalError,
@@ -143,7 +142,7 @@ func addCurveTests() {
 								SendCompressedCoordinates: true,
 							},
 						},
-						flags:              flagCurves("-curves", []CurveID{curve.id}),
+						flags:              flagInts("-curves", []CurveID{curve.id}),
 						shouldFail:         true,
 						expectedError:      ":BAD_ECPOINT:",
 						expectedLocalError: badKeyShareLocalError,
@@ -159,7 +158,7 @@ func addCurveTests() {
 								ECDHPointNotOnCurve: true,
 							},
 						},
-						flags:              flagCurves("-curves", []CurveID{curve.id}),
+						flags:              flagInts("-curves", []CurveID{curve.id}),
 						shouldFail:         true,
 						expectedError:      ":BAD_ECPOINT:",
 						expectedLocalError: badKeyShareLocalError,
@@ -179,7 +178,7 @@ func addCurveTests() {
 								SetX25519HighBit: true,
 							},
 						},
-						flags: flagCurves("-curves", []CurveID{curve.id}),
+						flags: flagInts("-curves", []CurveID{curve.id}),
 						expectations: connectionExpectations{
 							curveID: curve.id,
 						},
@@ -197,7 +196,7 @@ func addCurveTests() {
 								LowOrderX25519Point: true,
 							},
 						},
-						flags:              flagCurves("-curves", []CurveID{curve.id}),
+						flags:              flagInts("-curves", []CurveID{curve.id}),
 						shouldFail:         true,
 						expectedError:      ":BAD_ECPOINT:",
 						expectedLocalError: badKeyShareLocalError,
@@ -216,7 +215,7 @@ func addCurveTests() {
 								MLKEMEncapKeyNotReduced: true,
 							},
 						},
-						flags:              flagCurves("-curves", []CurveID{curve.id}),
+						flags:              flagInts("-curves", []CurveID{curve.id}),
 						shouldFail:         true,
 						expectedError:      ":BAD_ECPOINT:",
 						expectedLocalError: badKeyShareLocalError,
@@ -663,10 +662,14 @@ func addCurveTests() {
 			},
 		})
 
-		// If both ML-KEM and Kyber are configured, only the preferred one's
+		// If multiple PQ groups are configured, only the preferred one's
 		// key share should be sent.
+		otherMLKEM := CurveMLKEM1024
+		if curve.id == CurveMLKEM1024 {
+			otherMLKEM = CurveX25519MLKEM768
+		}
 		testCases = append(testCases, testCase{
-			name: "BothMLKEMAndKyber-" + curve.name,
+			name: "MultiplePQGroups-" + curve.name,
 			config: Config{
 				MinVersion: VersionTLS13,
 				Bugs: ProtocolBugs{
@@ -675,7 +678,7 @@ func addCurveTests() {
 			},
 			flags: []string{
 				"-curves", strconv.Itoa(int(curve.id)),
-				"-curves", strconv.Itoa(int(CurveX25519Kyber768)),
+				"-curves", strconv.Itoa(int(otherMLKEM)),
 				"-expect-curve-id", strconv.Itoa(int(curve.id)),
 			},
 		})
@@ -777,7 +780,7 @@ func addCurveTests() {
 				// Set the -cipher flag to force SSL_OP_CIPHER_SERVER_PREFERENCE.
 				"-cipher", "ALL:3DES",
 				"-expect-curve-id", strconv.Itoa(int(CurveMLKEM1024))},
-			flagCurves("-curves", []CurveID{CurveX25519MLKEM768, CurveMLKEM1024, CurveX25519})...),
+			flagInts("-curves", []CurveID{CurveX25519MLKEM768, CurveMLKEM1024, CurveX25519})...),
 			flagInts("-curves-flags", []int{curveEqualPreferenceWithNextFlag, 0, 0})...,
 		),
 		expectations: connectionExpectations{

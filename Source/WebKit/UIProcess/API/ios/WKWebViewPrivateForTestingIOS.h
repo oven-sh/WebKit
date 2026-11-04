@@ -79,6 +79,7 @@
 
 - (void)_simulateElementAction:(_WKElementActionType)actionType atLocation:(CGPoint)location;
 - (void)_simulateLongPressActionAtLocation:(CGPoint)location;
+- (void)_simulateDoubleClickAtLocation:(CGPoint)location;
 - (void)_simulateTextEntered:(NSString *)text;
 
 - (void)_doAfterReceivingEditDragSnapshotForTesting:(dispatch_block_t)action;
@@ -107,12 +108,16 @@
 // exercising the site-isolation conversion used to anchor Look Up / Translate / Share popovers.
 - (void)_selectionBoundingRectInMainFrameCoordinatesForTesting:(void (^)(CGRect))completionHandler;
 
+- (void)_linkIndicatorBoundingRectAtPointForTesting:(CGPoint)point completionHandler:(void (^)(CGRect))completionHandler;
+
 // Returns the rect that -[WKContentView _zoomToRevealFocusedElement] reveals: the selection's bounding
 // rect intersected with the focused element's interaction rect, both in main-frame coordinates.
 @property (nonatomic, readonly) CGRect _rectToRevealWhenZoomingToFocusedElementForTesting;
 
 @property (nonatomic, readonly) BOOL _hasPendingVisibleContentRectUpdateTimerForTesting;
 @property (nonatomic, readonly) CGRect _fixedClippingViewBoundsForTesting;
+
+- (void)_screenIsBeingCapturedForFrame:(_WKFrameHandle *)frameHandle completionHandler:(void (^)(BOOL))completionHandler;
 
 @end
 

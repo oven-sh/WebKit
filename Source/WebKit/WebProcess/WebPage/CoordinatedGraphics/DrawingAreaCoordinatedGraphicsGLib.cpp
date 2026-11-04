@@ -114,7 +114,7 @@ void DrawingAreaCoordinatedGraphics::updatePreferences(const WebPreferencesStore
 {
     Ref page = *m_webPage->corePage();
     Settings& settings = page->settings();
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
     if (settings.hardwareAccelerationEnabled()) {
         WebProcess::singleton().initializePlatformDisplayIfNeeded();
         WebProcess::singleton().initializeVulkanIfNeeded();
@@ -129,7 +129,7 @@ void DrawingAreaCoordinatedGraphics::updatePreferences(const WebPreferencesStore
 #if ENABLE(DEVELOPER_MODE)
     if (m_supportsAsyncScrolling) {
         auto disableAsyncScrolling = StringView::fromLatin1(getenv("WEBKIT_DISABLE_ASYNC_SCROLLING"));
-        if (!disableAsyncScrolling.isEmpty() && disableAsyncScrolling == "0"_s)
+        if (!disableAsyncScrolling.isEmpty() && disableAsyncScrolling != "0"_s)
             m_supportsAsyncScrolling = false;
     }
 #endif
@@ -384,12 +384,12 @@ void DrawingAreaCoordinatedGraphics::resetDamageHistoryForTesting()
     m_renderer->resetDamageHistoryForTesting();
 }
 
-void DrawingAreaCoordinatedGraphics::foreachRegionInDamageHistoryForTesting(Function<void(const Region&)>&& callback) const
+void DrawingAreaCoordinatedGraphics::foreachRegionInDamageHistoryForTesting(NOESCAPE const Function<void(const Region&)>& callback) const
 {
     if (!m_renderer)
         return;
 
-    m_renderer->foreachRegionInDamageHistoryForTesting(WTF::move(callback));
+    m_renderer->foreachRegionInDamageHistoryForTesting(callback);
 }
 #endif
 

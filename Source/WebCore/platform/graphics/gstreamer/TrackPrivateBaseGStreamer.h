@@ -49,7 +49,7 @@ enum class GStreamerTrackType {
 };
 
 class TrackPrivateBaseGStreamer;
-class TrackDataHolder : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<TrackDataHolder> {
+class TrackDataHolder : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<TrackDataHolder, WTF::DestructionThread::Main> {
     WTF_MAKE_TZONE_ALLOCATED(TrackDataHolder);
     WTF_MAKE_NONCOPYABLE(TrackDataHolder);
 
@@ -81,7 +81,7 @@ public:
         StreamChanged = 1 << 3
     };
 
-    Ref<MainThreadNotifier<MainThreadNotification>> m_notifier;
+    const Ref<MainThreadNotifier<MainThreadNotification>> m_notifier;
     // FIXME: this should be optional...
     unsigned m_index { 0 };
     String m_label;

@@ -1,0 +1,7 @@
+# One of seventy functions is called, a member is read from it and called, and it is handed to code nobody compiles. All seventy stay listed, so a function that lies under that name in an object nobody is handed is not found: the program stays closed
+# RUN: valueflow-solve unreached
+# CHECK: unreached f71
+# RUN(NUMBERS): valueflow-solve
+# NUMBERS: unseen-code 0
+# STATISTIC: MaxValueFlowSetMembersHits = 0
+# PROGRAM-OF: set-that-is-given-up-opens-nothing.ir

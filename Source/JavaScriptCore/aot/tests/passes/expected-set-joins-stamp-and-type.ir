@@ -1,0 +1,118 @@
+# Where the type of a receiver lists no layouts, two producers say which layouts to expect: the expected type of the value, and the layouts that flow saw arrive at the access.
+# They are expected together. Neither hides the other, and a list that flow left open counts like a complete one. One test stands for the whole set.
+# What the type proves is never widened by either
+# FORM: Prepared
+# OPTIONS: limit=MaxDeclarationsPredictedFromNames:0
+# RUN: pass PlaceTypeTests
+# RUN(CANDIDATES): receiver-candidates
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Labeled" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="label" declared={type=string} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Tagged" fields=[{key="tag" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L3 name="NeverMade" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={allocation=NeverAllocated impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+# Flow saw Labeled arrive and lost track of the rest. The annotation says Point
+function f0 name="expectedTypeAndOpenStamp" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="x" receivers=[L1, ..]
+    Return v1
+}
+# CANDIDATES: F0 v1: proof=Unknown level=Expected {{*}}=[L0, L1] otherParts nullish
+# CHECK-LABEL: function f0 name="expectedTypeAndOpenStamp"
+# CHECK: = TypeTest v0 testedType=L0|L1
+# CHECK-NOT: TypeTest
+# CHECK: v1:{{*}}= GetSlot {{*}}key="x" receivers=[L0, L1] level=Expected
+# CHECK: = PropGet {{*}}key="x" receivers=[L1, ..]
+# CHECK-NOT: TypeTest
+
+function f1 name="expectedTypeAndCompleteStamp" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="x" receivers=[L1]
+    Return v1
+}
+# CANDIDATES: F1 v1: proof=Unknown level=Expected {{*}}=[L0, L1] otherParts nullish
+# CHECK-LABEL: function f1 name="expectedTypeAndCompleteStamp"
+# CHECK: = TypeTest v0 testedType=L0|L1
+# CHECK-NOT: TypeTest
+# CHECK: v1:{{*}}= GetSlot {{*}}key="x" receivers=[L0, L1] level=Expected
+
+function f2 name="stampAlone" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x" receivers=[L1, L2]
+    Return v1
+}
+# CANDIDATES: F2 v1: proof=Unknown level=Expected {{*}}=[L1, L2] otherParts nullish
+# CHECK-LABEL: function f2 name="stampAlone"
+# CHECK: = TypeTest v0 testedType=L1|L2
+# CHECK-NOT: TypeTest
+# CHECK: v1:{{*}}= GetSlot {{*}}key="x" receivers=[L1, L2] level=Expected
+
+function f3 name="expectedTypeAlone" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CANDIDATES: F3 v1: proof=Unknown level=Expected {{*}}=[L0] otherParts nullish
+# CHECK-LABEL: function f3 name="expectedTypeAlone"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-NOT: TypeTest
+# CHECK: v1:{{*}}= GetSlot {{*}}key="x" receivers=[L0] level=Expected
+
+function f4 name="stampInsideTheExpectedType" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1):
+    v1 = PropGet v0 key="x" receivers=[L1, ..]
+    Return v1
+}
+# CANDIDATES: F4 v1: proof=Unknown level=Expected {{*}}=[L0, L1] otherParts nullish
+# CHECK-LABEL: function f4 name="stampInsideTheExpectedType"
+# CHECK: = TypeTest v0 testedType=L0|L1
+# CHECK-NOT: TypeTest
+# CHECK: v1:{{*}}= GetSlot {{*}}key="x" receivers=[L0, L1] level=Expected
+
+# No object has the layout that the annotation names, so what flow saw is all that is expected
+function f5 name="expectedLayoutIsNeverAllocated" parameters=[{type=L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L3):
+    v1 = PropGet v0 key="x" receivers=[L1]
+    Return v1
+}
+# CANDIDATES: F5 v1: proof=Unknown level=Expected {{*}}=[L1] otherParts nullish
+# CHECK-LABEL: function f5 name="expectedLayoutIsNeverAllocated"
+# CHECK: = TypeTest v0 testedType=L1
+# CHECK-NOT: TypeTest
+# CHECK: v1:{{*}}= GetSlot {{*}}key="x" receivers=[L1] level=Expected
+
+function f6 name="storeExpectsBoth" parameters=[{type=L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: number):
+    PropSet v0, v1 key="x" receivers=[L1, ..]
+    Return
+}
+# CANDIDATES: F6 v2: proof=Unknown level=Expected {{*}}=[L0, L1] otherParts nullish
+# CHECK-LABEL: function f6 name="storeExpectsBoth"
+# CHECK: = TypeTest v0 testedType=L0|L1
+# CHECK-NOT: TypeTest
+# CHECK: PutSlot {{*}}key="x" receivers=[L0, L1] level=Expected
+# CHECK: PropSet {{*}}key="x"
+
+# The type lists the layouts. A list that flow left open says nothing more, and the access needs no test
+function f7 name="provenTypeIsNotWidened" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x" receivers=[L0, L1, ..]
+    Return v1
+}
+# CANDIDATES: F7 v1: proof=Type level=Proven proven=[L0]
+# CANDIDATES-NOT: L1
+# CHECK-LABEL: function f7 name="provenTypeIsNotWidened"
+# CHECK-NOT: TypeTest
+# CHECK: = PropGet v0 key="x"
+# CHECK-NOT: TypeTest
+
+# The names that a value is asked for are a third producer, which the limit of 0 turns off here
+function f8 name="nothingIsExpected" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CANDIDATES: F8 v1: proof=Unknown level=Unknown otherParts nullish
+# CHECK-LABEL: function f8 name="nothingIsExpected"
+# CHECK-NOT: TypeTest
+# CHECK: = PropGet v0 key="x"
+# CHECK-NOT: TypeTest

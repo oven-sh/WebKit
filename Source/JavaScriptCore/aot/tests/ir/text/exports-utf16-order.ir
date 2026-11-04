@@ -1,0 +1,11 @@
+# Exports are sorted by UTF-16 code units and not by bytes: the surrogate pair of U+10000 comes before U+FFFD
+# RUN: round-trip
+# CHECK: exports=[{name="\u{10000}" variable=g0}, {name="\u{fffd}" variable=g1}]
+# CHECK: round trip: same
+# RUN(V): verify
+# V: valid
+
+variable g0 declared={type=anything}
+variable g1 declared={type=anything}
+module m0 path="/a.ts" displayPath="a.ts" exports=[{name="\u{10000}" variable=g0}, {name="\u{fffd}" variable=g1}]
+entry module=m0

@@ -168,7 +168,6 @@
 #include <JavaScriptCore/HeapCellInlines.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/IndexingHeader.h>
-#include <JavaScriptCore/IndexingHeaderInlines.h>
 #include <JavaScriptCore/InferredValue.h>
 #include <JavaScriptCore/Intrinsic.h>
 #include <JavaScriptCore/IterationKind.h>
@@ -224,7 +223,7 @@
 #include <JavaScriptCore/SlotVisitor.h>
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/SourceProvider.h>
-#include <JavaScriptCore/SourceTaintedOrigin.h>
+#include <JavaScriptCore/SourceTaintedness.h>
 #include <JavaScriptCore/SparseArrayValueMap.h>
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/StackVisitor.h>
@@ -344,8 +343,8 @@
 #include <WebCore/IPAddressSpace.h>
 #include <WebCore/Image.h>
 #include <WebCore/ImageAdapter.h>
+#include <WebCore/ImageDrawingOptions.h>
 #include <WebCore/ImageOrientation.h>
-#include <WebCore/ImagePaintingOptions.h>
 #include <WebCore/ImageTypes.h>
 #include <WebCore/IntPoint.h>
 #include <WebCore/IntRect.h>
@@ -550,7 +549,7 @@
 #include "MessageReceiver.h"
 #include "MessageReceiverMap.h"
 #include "MessageSender.h"
-#include "MonotonicObjectIdentifier.h"
+#include <wtf/MonotonicObjectIdentifier.h>
 #include "ReceiverMatcher.h"
 #include "SandboxExtension.h"
 #include "ScopedActiveMessageReceiveQueue.h"

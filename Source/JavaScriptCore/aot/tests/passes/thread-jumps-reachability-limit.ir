@@ -1,0 +1,29 @@
+# Past the limit of the walk below the chosen successor an edge keeps its target
+# FORM: Prepared
+# OPTIONS: limit=MaxThreadingReachabilitySteps:1
+# RUN: pass ThreadJumps
+# LOSS: MaxThreadingReachabilitySteps f0
+# STATISTIC: ThreadJumpsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="walkExceedsLimit" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Null
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4):
+    v5 = Null
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b6()
+  b5():
+    Return v4
+  b6():
+    Return v0
+# CHECK: b1():
+# CHECK: Jump -> next b3(v3)
+}

@@ -38,6 +38,7 @@
 
 namespace WebCore {
 
+class BitmapImage;
 class Document;
 
 namespace Style {
@@ -53,9 +54,7 @@ public:
     virtual ~CanvasImage();
 
     bool operator==(const Image&) const final;
-    bool NODELETE equals(const CanvasImage&) const;
-
-    static constexpr bool isFixedSize = true;
+    bool LEGACY_NODELETE equals(const CanvasImage&) const;
 
     OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
 
@@ -66,9 +65,17 @@ private:
     Ref<DeprecatedCSSOMValue> computedStyleDeprecatedCSSOMValue(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&) const final;
     bool isPending() const final;
     void load(CachedResourceLoader&, const ResourceLoaderOptions&) final;
-    RefPtr<WebCore::Image> image(const RenderElement*, const FloatSize&, const GraphicsContext& destinationContext, bool isForFirstLine) const final;
+    ImageDrawResult draw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawTiled(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawNinePiece(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const NinePieceGeometry&, ImageDrawingOptions) const final;
     bool knownToBeOpaque(const RenderElement&) const final;
-    FloatSize fixedSize(const RenderElement&) const final;
+    bool canDraw(const RenderElement&) const final;
+    bool containsCurrentColor() const final { return false; }
+    bool canDrawAtSize(const RenderElement&, const FloatSize&) const final;
+    InterpolationQuality interpolationQualityForImageDraw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const void* layer, const LayoutSize&) const final;
+    FloatRect mapChangedRectToSource(const RenderElement&, ConcreteObjectSize, const FloatRect& changedRect) const final;
+    NaturalDimensions naturalDimensions(const RenderElement&, const ImageSizingContext&) const final;
     void didAddClient(RenderElement&) final;
     void didRemoveClient(RenderElement&) final;
 
@@ -79,6 +86,7 @@ private:
     void canvasDestroyed(CanvasBase&) final;
 
     HTMLCanvasElement* element(Document&) const;
+    RefPtr<BitmapImage> resolvedImage(const RenderElement&) const;
 
     // The name of the canvas.
     CustomIdent m_name;

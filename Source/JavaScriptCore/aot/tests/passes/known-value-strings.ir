@@ -1,0 +1,86 @@
+# The text of a concatenation, an addition or a conversion to a string whose operands are all known primitives
+# FORM: Prepared
+# RUN: known-value
+# RUN(SEVEN): known-value assume=v0:7
+# RUN(NULL): known-value assume=v0:null
+# RUN(OBJECT): known-value assume=v0:object
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Open" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="strings" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="a"
+    v2 = String string="b"
+    v3 = Integer integer=12
+    v4 = Double number=1.5
+    v5 = Double number=-0
+    v6 = Double number=NaN
+    v7 = Double number=Infinity
+    v8 = Double number=1e21
+    v9 = Undefined
+    v10 = Null
+    v11 = Boolean boolean=true
+    v12 = String string=""
+    v13 = String string="\u{d83d}"
+    v14 = String string="\u{de00}"
+    v15 = NewObject -, v0 layout=L0 fields=[0]
+    v16 = Strcat v1, v2
+    v17 = Strcat v1, v3, v2, v4
+    v18 = Strcat v5, v6, v7, v8
+    v19 = Strcat v9, v10, v11
+    v20 = Strcat v12, v12
+    v21 = Strcat v13, v14
+    v22 = Strcat v1, v15
+    v23 = Add v1, v3
+    v24 = Add v3, v1
+    v25 = Add v1, v9
+    v26 = Add v3, v3
+    v27 = Add v1, v15
+    v28 = ToString v1
+    v29 = ToString v3
+    v30 = ToString v4
+    v31 = ToString v10
+    v32 = ToString v15
+    v33 = Strcat v1, v0, v2
+    v34 = Add v1, v0
+    v35 = Add v0, v0
+    v36 = ToString v0
+    Return v0
+}
+# CHECK: v16 string: String "ab"
+# CHECK: v17 string: String "a12b1.5"
+# CHECK: v18 string: String "0NaNInfinity1e+21"
+# CHECK: v19 string: String "undefinednulltrue"
+# CHECK: v20 string: String ""
+# CHECK-NEXT: v20 truthy: False
+# CHECK: v21 string: String "\u{1f600}"
+# CHECK: v22 string: Unknown
+# CHECK: v23 string: String "a12"
+# CHECK: v24 string: String "12a"
+# CHECK: v25 string: String "aundefined"
+# CHECK: v26 evaluated: Integer 24
+# CHECK-NEXT: v26 string: Unknown
+# CHECK: v27 string: Unknown
+# CHECK: v28 string: String "a"
+# CHECK: v29 string: String "12"
+# CHECK: v30 string: String "1.5"
+# CHECK: v31 string: String "null"
+# CHECK: v32 string: Unknown
+# CHECK: v33 string: Unknown
+# CHECK: v34 string: Unknown
+# CHECK: v35 string: Unknown
+# CHECK: v36 string: Unknown
+# SEVEN: v16 string: String "ab"
+# SEVEN: v33 string: String "a7b"
+# SEVEN: v34 string: String "a7"
+# SEVEN: v35 evaluated: Integer 14
+# SEVEN-NEXT: v35 string: Unknown
+# SEVEN: v36 string: String "7"
+# NULL: v33 string: String "anullb"
+# NULL: v34 string: String "anull"
+# NULL: v35 string: Unknown
+# NULL: v36 string: String "null"
+# OBJECT: v33 string: Unknown
+# OBJECT: v34 string: Unknown
+# OBJECT: v35 string: Unknown
+# OBJECT: v36 string: Unknown

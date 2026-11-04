@@ -1,0 +1,26 @@
+# The append of a list, or of the members of a set, is the moves of two operands and one call of a stub. As a function of its own it is no shorter, and away from the literal
+# that it fills the list is no longer made with them in it.
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 0
+# STATISTIC: ColdSitesOutlined = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="loneAppendsOfMembers" parameters=[{type=number}, {type=Array<number, pristine[Storage, Names]>}, {type=Set<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), case b17(), case b18(), case b19(), case b20(), case b21(), case b22(), case b23(), case b24(), otherwise b25()
+# REPEAT: i = 1..25
+  b%(i)() frequency=Rare:
+    AppendMembers v1, v2
+    Return
+# END REPEAT
+}
+function f1 name="loneAppendsOfLists" parameters=[{type=number}, {type=Array<number, pristine[Storage, Names]>}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), case b17(), case b18(), case b19(), case b20(), case b21(), case b22(), case b23(), case b24(), otherwise b25()
+# REPEAT: i = 1..25
+  b%(i)() frequency=Rare:
+    AppendElements v1, v2
+    Return
+# END REPEAT
+}

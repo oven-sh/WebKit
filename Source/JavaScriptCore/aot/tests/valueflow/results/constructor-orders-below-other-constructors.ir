@@ -1,0 +1,96 @@
+# Until an object leaks it inherits from what it was given when it was made, whatever is done later to the objects that were handed out. So a derived constructor, a helper and a constructor function
+# create their fields in the order of their stores although the instances reach unknown JavaScript. What a base class that nobody sees makes has escaped from birth, also for the class two levels below:
+# nothing is stated about those layouts
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Base" {{*}}constructorOrders=[{fields=[0]}] cause=ReachesUnknownJavaScript}
+# CHECK: layout L1 kind=Instance name="Derived" {{*}}constructorOrders=[{fields=[1, 0]}] cause=ReachesUnknownJavaScript}
+# CHECK: layout L2 kind=Instance name="FilledByHelper" {{*}}constructorOrders=[{fields=[1, 0]}] cause=ReachesUnknownJavaScript}
+# CHECK: layout L3 kind=Instance name="Old" {{*}}constructorOrders=[{fields=[1, 0]}] cause=ReachesUnknownJavaScript}
+# CHECK: layout L4 kind=Instance name="BelowUnseen" {{*}}fields=[{key="m" declared={type=anything} flags=[{{*}}]}] {{*}}constructorOrders=[{}] cause=ReachesUnknownJavaScript}
+# CHECK: layout L5 kind=Instance name="TwoBelowUnseen" {{*}}fields=[{key="n" declared={type=anything} flags=[{{*}}]}, {{*}}constructorOrders=[{}] cause=ReachesUnknownJavaScript}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Derived" base=L0 constructor=f2 fields=[{key="c" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+layout L2 kind=Instance name="FilledByHelper" constructor=f3 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L3 kind=Instance name="Old" constructor=f5 fields=[{key="p" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L4 kind=Instance name="BelowUnseen" constructor=f6 fields=[{key="m" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+layout L5 kind=Instance name="TwoBelowUnseen" base=L4 constructor=f7 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = NewClosure function=f2
+    v6 = ResolveHeritage v4
+    v7 = NewClass v5, v4, v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = Construct v8, -, v1
+    v10 = Call v1, -, v9
+    v11 = NewClosure function=f3
+    v12 = NewClass v11 layout=L2
+    v13 = FinishClass v12 layout=L2
+    v14 = Construct v13, -, v1
+    v15 = Call v1, -, v14
+    v16 = NewClosure function=f5
+    v17 = Construct v16, -, v1
+    v18 = Call v1, -, v17
+    v19 = NewClosure function=f6
+    v20 = ResolveHeritage v1
+    v21 = NewClass v19, v1, v20 layout=L4
+    v22 = FinishClass v21 layout=L4
+    v23 = NewClosure function=f7
+    v24 = ResolveHeritage v22
+    v25 = NewClass v23, v22, v24 layout=L5
+    v26 = FinishClass v25 layout=L5
+    v27 = Construct v26, -, v1
+    v28 = PropGet v27 key="n"
+    v29 = PropGet v27 key="m"
+    v30 = Construct v4, -, v1
+    v31 = Call v1, -, v30
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="a" mode=Strict
+    Return v3
+}
+function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    PropSet v4, v2 key="b" mode=Strict
+    PropSet v4, v2 key="c" mode=Strict
+    Return v4
+}
+function f3 name="FilledByHelper" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    v4 = CallDirect v3, v1 function=f4
+    Return v3
+}
+function f4 name="fill" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="y" mode=Strict
+    PropSet v0, v1 key="x" mode=Strict
+    Return
+}
+function f5 name="Old" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L3 {
+    PropSet v0, v1 key="q" mode=Strict
+    PropSet v0, v1 key="p" mode=Strict
+    Return
+}
+function f6 name="BelowUnseen" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L4
+    PropSet v4, v2 key="m" mode=Strict
+    Return v4
+}
+function f7 name="TwoBelowUnseen" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L5
+    PropSet v4, v2 key="n" mode=Strict
+    Return v4
+}

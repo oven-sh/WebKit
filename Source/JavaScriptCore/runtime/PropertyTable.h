@@ -107,8 +107,8 @@ public:
 
     // Constructor is passed an initial capacity, a PropertyTable to copy, or both.
     static PropertyTable* create(VM&, unsigned initialCapacity);
-    static PropertyTable* clone(VM&, const PropertyTable&);
-    static PropertyTable* clone(VM&, unsigned initialCapacity, const PropertyTable&);
+    JS_EXPORT_PRIVATE static PropertyTable* clone(VM&, const PropertyTable&);
+    JS_EXPORT_PRIVATE static PropertyTable* clone(VM&, unsigned initialCapacity, const PropertyTable&);
     ~PropertyTable();
 
     // Find a value in the table.
@@ -163,9 +163,21 @@ public:
 #endif
 
     template<typename Functor>
-    void forEachProperty(const Functor&) const;
+    void forEachProperty(NOESCAPE const Functor&) const;
+
+    // The entries stand in the order in which they were added, numbered from 1 as in FindResult::entryIndex. One that was removed keeps its number, without a key, until the table is rehashed.
+    unsigned numberOfEntriesWithRemovedOnes() const { return m_keyCount + m_deletedCount; }
+    unsigned numberOfRemovedEntries() const { return m_deletedCount; }
+    KeyType keyOfEntry(unsigned entryIndex) const;
 
     static constexpr unsigned EmptyEntryIndex = 0;
+
+    static constexpr ptrdiff_t offsetOfIndexSize() { return OBJECT_OFFSETOF(PropertyTable, m_indexSize); }
+    static constexpr ptrdiff_t offsetOfIndexVector() { return OBJECT_OFFSETOF(PropertyTable, m_indexVector); }
+    static constexpr ptrdiff_t offsetOfKeyCount() { return OBJECT_OFFSETOF(PropertyTable, m_keyCount); }
+    static constexpr ptrdiff_t offsetOfDeletedCount() { return OBJECT_OFFSETOF(PropertyTable, m_deletedCount); }
+    static constexpr ptrdiff_t offsetOfDeletedOffsets() { return OBJECT_OFFSETOF(PropertyTable, m_deletedOffsets); }
+    static constexpr uintptr_t flagOfCompactIndexVector = 0x1;
 
 private:
     PropertyTable(VM&, unsigned initialCapacity);
@@ -222,7 +234,7 @@ private:
     bool isCompact() const { return m_indexVector & isCompactFlag; }
 
     template<typename Functor>
-    void forEachPropertyMutable(const Functor&);
+    void forEachPropertyMutable(NOESCAPE const Functor&);
 
     // The table of values lies after the hash index.
     static CompactPropertyTableEntry* tableFromIndexVector(uint8_t* index, unsigned indexSize)
@@ -269,7 +281,7 @@ private:
     static void destroyIndexVector(uintptr_t indexVector);
 
     template<typename Func>
-    static ALWAYS_INLINE auto withIndexVector(uintptr_t indexVector, Func&& function) -> decltype(auto)
+    static ALWAYS_INLINE auto withIndexVector(uintptr_t indexVector, NOESCAPE const Func& function) -> decltype(auto)
     {
         if (indexVector & isCompactFlag)
             return function(std::bit_cast<uint8_t*>(indexVector & indexVectorMask));
@@ -277,12 +289,12 @@ private:
     }
 
     template<typename Func>
-    ALWAYS_INLINE auto withIndexVector(Func&& function) const -> decltype(auto)
+    ALWAYS_INLINE auto withIndexVector(NOESCAPE const Func& function) const -> decltype(auto)
     {
-        return withIndexVector(m_indexVector, std::forward<Func>(function));
+        return withIndexVector(m_indexVector, function);
     }
 
-    static constexpr uintptr_t isCompactFlag = 0x1;
+    static constexpr uintptr_t isCompactFlag = flagOfCompactIndexVector;
     static constexpr uintptr_t indexVectorMask = ~isCompactFlag;
 
     unsigned m_indexSize;
@@ -645,8 +657,17 @@ inline bool PropertyTable::canInsert(const ValueType& entry)
     return canFitInCompact(entry);
 }
 
+inline PropertyTable::KeyType PropertyTable::keyOfEntry(unsigned entryIndex) const
+{
+    ASSERT(entryIndex && entryIndex <= usedCount());
+    return withIndexVector([&](const auto* vector) -> KeyType {
+        KeyType key = tableFromIndexVector(vector)[entryIndex - 1].key();
+        return key == PROPERTY_MAP_DELETED_ENTRY_KEY ? nullptr : key;
+    });
+}
+
 template<typename Functor>
-inline void PropertyTable::forEachProperty(const Functor& functor) const
+inline void PropertyTable::forEachProperty(NOESCAPE const Functor& functor) const
 {
     withIndexVector([&](const auto* vector) {
         const auto* cursor = tableFromIndexVector(vector);

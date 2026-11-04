@@ -1,0 +1,70 @@
+# `{ "+1": "a", smile: "b" }` where the type names no keys is an ordinary object that is filled name by name. What is defined with constants is a data record without a layout
+# where the object would share its Structures with no other: the literal is made once, and no other literal of the program has its names in its order.
+# A name that is defined twice keeps its first place and its last value. The definition of an index stays: an index is listed in front of the names whenever it is defined.
+# The first member that is no constant ends what is taken.
+# RUN: pipeline EmbedConstantCollections
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewDictionary
+    v3 = String string="a"
+    PropDefine v2, v3 key="+1"
+    v5 = Integer integer=7
+    v6 = String string="index"
+    ElemDefine v2, v5, v6
+    v8 = Integer integer=1
+    PropDefine v2, v8 key="smile"
+    v10 = Null
+    PropDefine v2, v10 key="nothing"
+    v12 = String string="b"
+    PropDefine v2, v12 key="+1"
+    v14 = NewDictionary
+    PropDefine v14, v3 key="first"
+    PropDefine v14, v8 key="second"
+    PropDefine v14, v1 key="third"
+    PropDefine v14, v12 key="fourth"
+    v19 = NewDictionary
+    PropDefine v19, v3 key="shared"
+    PropDefine v19, v8 key="names"
+    v22 = NewDictionary
+    PropDefine v22, v8 key="shared"
+    PropDefine v22, v1 key="names"
+    v25 = NewClosure function=f1
+    v26 = Call v1, -, v25, v2, v14, v19, v22
+    Return v26
+}
+# CHECK-LABEL: kind=Module
+# CHECK: : object = Data data=d0
+# CHECK-NOT: PropDefine
+# CHECK: ElemDefine
+# CHECK-NOT: PropDefine
+# CHECK: : object = Data data=d1
+# CHECK: PropDefine {{*}} key="third"
+# CHECK-NEXT: PropDefine {{*}} key="fourth"
+# CHECK-NOT: Data
+# CHECK: = NewDictionary
+# CHECK: PropDefine {{*}} key="shared"
+# CHECK-NEXT: PropDefine {{*}} key="names"
+# CHECK: = NewDictionary
+# CHECK: PropDefine {{*}} key="shared"
+# CHECK-NEXT: PropDefine {{*}} key="names"
+
+function f1 name="again" module=m0 results=[{type=anything}] {
+    v0 = NewDictionary
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="x"
+    PropDefine v0, v1 key="y"
+    Return v0
+}
+# CHECK-LABEL: name="again"
+# CHECK-NOT: Data
+# CHECK: = NewDictionary
+# CHECK: PropDefine
+# CHECK: PropDefine
+
+# CHECK: data d0 root=Object{layout=- members=[{key="+1" value=String{value="b"}}, {key="smile" value=Number{value=1}}, {key="nothing" value=Null}]}
+# CHECK-NEXT: data d1 root=Object{layout=- members=[{key="first" value=String{value="a"}}, {key="second" value=Number{value=1}}]}
+# CHECK-NOT: data d2

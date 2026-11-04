@@ -1,0 +1,152 @@
+# A function that can return before it touches a parameter is split in front of the first use, so that a caller need not make the argument on the way to that return
+# FORM: Prepared
+# RUN: pass PromoteAggregateParameters
+# STATISTIC: AggregateParametersPromoted = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="logsWhenEnabled" position=10 flags=[IsSloppy, HasRestParameter] parameters=[{type=Array}] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis @20
+    v2 = PropGet v1 key="enabled" [isFreeName] @20
+    v3 = ToBoolean v2 @20
+    Branch v3 -> taken b1(), notTaken b2() @20
+  b1():
+    v4 = PropGet v1 key="sink" [isFreeName] @30
+    v5 = Call v4, -, v0, v2 @30
+    Jump -> next b2() @30
+  b2():
+    v6 = Undefined @40
+    Return v6 @40
+}
+# The test may run a getter. It runs once, in the wrapper, and a stack that is captured there shows the function.
+# CHECK-LABEL: function f0 name="logsWhenEnabled"
+# CHECK: role=ParameterWrapper flags=[IsSloppy, HasRestParameter] {{*}}creator=ParameterWrapper{body=[[logBody]]} inlineFrames=[{}, {callee=[[logBody]] callPosition=10 module=m0}]
+# CHECK: [[enabled]]: anything = PropGet {{*}}key="enabled" {{*}}@20:1
+# CHECK: Branch
+# CHECK-NOT: key="sink"
+# CHECK: = CallDirect v0, [[enabled]] function=[[logBody]]
+# CHECK-NEXT: ReturnCall
+# CHECK-NOT: key="sink"
+# CHECK: Return
+
+function f1 name="readsOptionsBehindTest" parameters=[{type=anything}, {type=L0}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v1
+    Return v5
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f1 name="readsOptionsBehindTest"
+# CHECK: role=ParameterWrapper {{*}}creator=ParameterWrapper{body=[[optionsBody]] parameter=1}
+# CHECK-NOT: key="sink"
+# CHECK: = CallDirect v0, v1 function=[[optionsBody]]
+
+function f2 name="passesLiteral" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = CallDirect v0, v1 function=f1
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = CallDirect v0, v3 function=f4
+    v5 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v6 = CallDirect v0, v5 function=f5
+    v7 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v8 = CallDirect v0, v7 function=f6
+    v9 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v10 = CallDirect v0, v9 function=f7
+    Return v2
+}
+
+function f3 name="returnsFromTwoPlaces" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2(v0)
+  b1():
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v1
+    Jump -> next b2(v5)
+  b2(v6):
+    Return v6
+}
+# The block that returns is reached from both parts: the wrapper keeps it, and the body has a copy.
+# CHECK-LABEL: function f3 name="returnsFromTwoPlaces"
+# CHECK: role=ParameterWrapper
+# CHECK: = CallDirect v0, v1 function=[[twoPlacesBody]]
+# CHECK: Return
+
+function f4 name="touchesAtEntry" parameters=[{type=anything}, {type=L0}] results=[{type=anything}] {
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = ToBoolean v0
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    Return v4
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f4 name="touchesAtEntry"
+# CHECK-NOT: role=ParameterWrapper
+
+function f5 name="onlyThrowsEarly" parameters=[{type=anything}, {type=L0}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v1
+    Return v5
+  b2():
+    Throw v0
+}
+# CHECK-LABEL: function f5 name="onlyThrowsEarly"
+# CHECK-NOT: role=ParameterWrapper
+
+function f6 name="rarelyReturnsEarly" parameters=[{type=anything}, {type=L0}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v1
+    Return v5
+  b2() frequency=Rare:
+    Return v0
+}
+# CHECK-LABEL: function f6 name="rarelyReturnsEarly"
+# CHECK-NOT: role=ParameterWrapper
+
+function f7 name="loopsBeforeTheUse" parameters=[{type=anything}, {type=L0}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="more" [isFreeName]
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    v6 = ToBoolean v0
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = PropGet v3 key="sink" [isFreeName]
+    v8 = Call v7, -, v1
+    Return v8
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f7 name="loopsBeforeTheUse"
+# CHECK-NOT: role=ParameterWrapper
+
+# The body takes the list as an ordinary argument.
+# CHECK: function [[logBody]] name="logsWhenEnabled" {{*}}flags=[IsSloppy] {{*}}parameters=[{type=Array}, {type=anything}]
+# CHECK: key="sink"
+# CHECK: Return
+# CHECK: function [[optionsBody]] name="readsOptionsBehindTest"
+# CHECK: key="sink"
+# CHECK: function [[twoPlacesBody]] name="returnsFromTwoPlaces"
+# CHECK: key="sink"
+# CHECK: Return

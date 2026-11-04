@@ -163,8 +163,7 @@ void NodeIterator::updateForNodeRemoval(Node& removedNode, NodePointer& referenc
 {
     ASSERT(&root().document() == &removedNode.document());
 
-    // Iterator is not affected if the removed node is the reference node and is the root.
-    // or if removed node is not the reference node, or the ancestor of the reference node.
+    // https://dom.spec.whatwg.org/#nodeiterator-adjust-a-node-pointer
     auto& root = this->root();
     if (!removedNode.isDescendantOf(root))
         return;
@@ -174,47 +173,19 @@ void NodeIterator::updateForNodeRemoval(Node& removedNode, NodePointer& referenc
         return;
 
     if (referenceNode.isPointerBeforeNode) {
-        RefPtr node = NodeTraversal::next(removedNode, &root);
-        if (node) {
-            // Move out from under the node being removed if the new reference
-            // node is a descendant of the node being removed.
-            while (node && node->isDescendantOf(removedNode))
-                node = NodeTraversal::next(*node, &root);
-            if (node)
-                referenceNode.node = node;
-        } else {
-            node = NodeTraversal::previous(removedNode);
-            if (node) {
-                // Move out from under the node being removed if the reference node is
-                // a descendant of the node being removed.
-                if (willRemoveReferenceNodeAncestor) {
-                    while (node && node->isDescendantOf(&removedNode))
-                        node = NodeTraversal::previous(*node);
-                }
-                if (node) {
-                    // Removing last node.
-                    // Need to move the pointer after the node preceding the
-                    // new reference node.
-                    referenceNode.node = node;
-                    referenceNode.isPointerBeforeNode = false;
-                }
-            }
+        if (RefPtr next = NodeTraversal::nextSkippingChildren(removedNode, &root)) {
+            referenceNode.node = WTF::move(next);
+            return;
         }
-    } else {
-        // NodeTraversal::previous() without a stayWithin boundary only returns null when
-        // the node has no parent. Since removedNode.isDescendantOf(root) was verified above,
-        // removedNode is in the tree and always has a parent.
-        RefPtr node = NodeTraversal::previous(removedNode);
-        ASSERT(node);
-        // Move out from under the node being removed if the reference node is
-        // a descendant of the node being removed.
-        if (willRemoveReferenceNodeAncestor) {
-            while (node && node->isDescendantOf(removedNode))
-                node = NodeTraversal::previous(*node);
-        }
-        if (node)
-            referenceNode.node = node;
+        referenceNode.isPointerBeforeNode = false;
     }
+
+    // NodeTraversal::previous() without a stayWithin boundary only returns null when
+    // the node has no parent. Since removedNode.isDescendantOf(root) was verified above,
+    // removedNode is in the tree and always has a parent.
+    RefPtr previous = NodeTraversal::previous(removedNode);
+    ASSERT(previous);
+    referenceNode.node = WTF::move(previous);
 }
 
 } // namespace WebCore

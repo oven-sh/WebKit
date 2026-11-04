@@ -1,0 +1,140 @@
+# A value that enters a declared position fits its type
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: StoredTypeMismatch 15
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="c" declared={type=number}}]
+layout L1 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=anything}}]
+layout L2 fields=[{key="a" declared={type=number|string} flags=[IsRequired]}]
+layout L3 kind=Instance fields=[{key=#"brand"@L3 declared={type=classtoken} flags=[IsPrivate, IsBrand, IsHidden]}, {key=#"p"@L3 declared={type=number} flags=[IsPrivate]}]
+variable g0 name="g" module=m0 declared={type=number}
+variable g1 name="untyped" module=m0 declared={type=anything}
+function f0 name="badVariable" parameters=[{type=anything}] results=[{type=undefined}] {
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f1 name="goodVariable" parameters=[{type=number}] results=[{type=undefined}] {
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f2 name="badEnvironmentField" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: anything):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+function f3 name="goodEnvironmentField" captures=[{type=env L0}] parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: number):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+function f4 name="badCapture" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewClosure v0 function=f27
+    Return
+}
+function f5 name="goodCapture" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = NewClosure v0 function=f27
+    Return
+}
+function f6 name="badInitialField" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    Return
+}
+function f7 name="goodInitialField" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
+    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    Return
+}
+function f8 name="badArgument" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = CallDirect v0 function=f26
+    Return
+}
+function f9 name="goodArgument" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = CallDirect v0 function=f26
+    Return
+}
+function f10 name="badTailArgument" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = CallDirect v0 function=f26
+    ReturnCall v1
+}
+function f11 name="goodTailArgument" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = CallDirect v0 function=f26
+    ReturnCall v1
+}
+function f12 name="badSlot" parameters=[{type=number}, {type=string}] results=[{type=undefined}] {
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    PutSlot v2, v2, v1 key="a" receivers=[L1] level=Proven
+    Return
+}
+function f13 name="badSlotOfOneReceiver" parameters=[{type=number}, {type=string}] results=[{type=undefined}] {
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    PutSlot v2, v2, v1 key="a" receivers=[L1, L2] level=Proven
+    Return
+}
+function f14 name="goodSlot" parameters=[{type=number}, {type=string}] results=[{type=undefined}] {
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    PutSlot v2, v2, v0 key="a" receivers=[L1, L2] level=Proven
+    PutSlot v2, v2, v1 key="a" receivers=[L2] level=Proven
+    Return
+}
+function f15 name="badSlotOrAdd" parameters=[{type=number}, {type=string}] results=[{type=undefined}] {
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    PutSlotOrAdd v2, v2, v1 key="a" receivers=[L1] level=Proven
+    Return
+}
+function f16 name="goodSlotOrAdd" parameters=[{type=number}, {type=string}] results=[{type=undefined}] {
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    PutSlotOrAdd v2, v2, v0 key="a" receivers=[L1] level=Proven
+    PutSlotOrAdd v2, v2, v1 key="b" receivers=[L1] level=Proven
+    Return
+}
+function f17 name="badReturnedResult" parameters=[{type=number}] results=[{type=number}, {type=string}] {
+    v1 = Results v0, v0
+    Return v1
+}
+function f18 name="goodReturnedResult" parameters=[{type=number}, {type=string}] results=[{type=number}, {type=string}] {
+    v2 = Results v0, v1
+    Return v2
+}
+function f19 name="goodResultsNotReturned" parameters=[{type=number}, {type=string}] results=[{type=number}, {type=string}] {
+    v2 = Results v1, v0
+    v3 = ResultAt v2 index=1
+    v4 = ResultAt v2 index=0
+    v5 = Results v3, v4
+    Return v5
+}
+function f20 name="badBrand" parameters=[{type=object}, {type=number}] results=[{type=undefined}] {
+    v2 = NewClassToken layout=L3
+    PrivateDefine v0, v2, v1 layout=L3 field=0
+    Return
+}
+function f21 name="badTokenInPrivateField" parameters=[{type=object}] results=[{type=undefined}] {
+    v1 = NewClassToken layout=L3
+    PrivateDefine v0, v1, v1 layout=L3 field=1
+    Return
+}
+function f22 name="goodPrivateDefinitions" parameters=[{type=object}, {type=string}] results=[{type=undefined}] {
+    v2 = NewClassToken layout=L3
+    PrivateDefine v0, v2, v2 layout=L3 field=0
+    PrivateDefine v0, v2, v1 layout=L3 field=1
+    Return
+}
+function f23 name="badEnvironmentInUntypedVariable" captures=[{type=env L0}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f24 name="badEnumeratorInUntypedField" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
+    v2 = ForInOpen v1
+    v3 = NewObject -, v0, v2 layout=L1 fields=[0, 1]
+    Return
+}
+function f25 name="badGuardInUntypedSlot" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = AllGuards v1
+    PutSlotOrAdd v1, v1, v2 key="b" receivers=[L1] level=Proven
+    Return
+}
+function f26 name="callee" parameters=[{type=number}] results=[{type=undefined}] {
+    Return
+}
+function f27 name="closure" captures=[{type=number}] results=[{type=undefined}]

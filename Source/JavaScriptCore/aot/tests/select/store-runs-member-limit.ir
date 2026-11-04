@@ -1,0 +1,49 @@
+# A run of stores has at most as many members as a group may have: the stores past the limit start another run, or stay as they are
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot limit=MaxSelectionGroupMembers:4
+# STATISTIC: SlotStoreRunGroups = 3
+# STATISTIC: PropertyRunGroups = 1
+# LOSS: MaxSelectionGroupMembers x3 f0 v10
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Wide" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}, {key="c" declared={type=number}}, {key="d" declared={type=number}}, {key="e" declared={type=number}}, {key="f" declared={type=number}}] flow={members=[L0]}
+
+function f0 name="one-store-past-the-limit" parameters=[{type=L0}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=anything}] {
+    PutSlotOrAdd v0, -, v1 key="a" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v2 key="b" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v3 key="c" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v4 key="d" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v5 key="e" receivers=[L0] level=Proven
+    Return v0
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PutSlots v0, -, v1, v2, v3, v4 placedKeys=[{key="a" level=Proven mayAdd=true}, {key="b" level=Proven mayAdd=true}, {key="c" level=Proven mayAdd=true}, {key="d" level=Proven mayAdd=true}] receivers=[L0]
+# CHECK-NEXT: PutSlotOrAdd v0, -, v5 key="e"
+# CHECK-NEXT: Return v0
+}
+function f1 name="two-stores-past-the-limit" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PutSlotOrAdd v0, -, v1 key="a" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="b" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="c" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="d" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="e" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="f" receivers=[L0] level=Proven
+    Return v0
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PutSlots v0, -, v1, v1, v1, v1 placedKeys=[{key="a" level=Proven mayAdd=true}, {key="b" level=Proven mayAdd=true}, {key="c" level=Proven mayAdd=true}, {key="d" level=Proven mayAdd=true}] receivers=[L0]
+# CHECK-NEXT: PutSlots v0, -, v1, v1 placedKeys=[{key="e" level=Proven mayAdd=true}, {key="f" level=Proven mayAdd=true}] receivers=[L0]
+# CHECK-NEXT: Return v0
+}
+function f2 name="five-stores-by-name" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="a" mode=Strict
+    PropSet v0, v1 key="b" mode=Strict
+    PropSet v0, v1 key="c" mode=Strict
+    PropSet v0, v1 key="d" mode=Strict
+    PropSet v0, v1 key="e" mode=Strict
+    Return v0
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[four]]: boolean = TryPutByIds v0, v1, v1, v1, v1 keys=["a", "b", "c", "d"]
+# CHECK-NEXT: Branch [[four]] -> taken [[done]](), notTaken
+# CHECK: [[done]]():
+# CHECK: PropSet v0, v1 key="e"
+}

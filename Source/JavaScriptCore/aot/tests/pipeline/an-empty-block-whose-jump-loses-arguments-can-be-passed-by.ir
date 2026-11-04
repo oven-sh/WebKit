@@ -1,0 +1,34 @@
+# SimplifyControlFlow leads edges past an empty block only where that writes no more arguments than the block's own jump does.
+# EliminateDeadCode takes parameters that nobody reads from the block behind it, and with them arguments of that jump, so the edges can now be led past:
+# such a run of EliminateDeadCode does not say that it leaves SimplifyControlFlow idle
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pipeline RemoveUnreadFields
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+
+function f1 name="threeWays" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="sink" [isFreeName]
+    v7 = ToBoolean v0
+    Branch v7 -> taken b2(), notTaken b1()
+  b1():
+    v8 = ToBoolean v1
+    Branch v8 -> taken b4(), notTaken b2()
+  b2():
+    Jump -> next b3(v2, v3, v4)
+  b3(v9, v10, v11):
+    Return v9
+  b4():
+    v12 = Call v6, -, v1
+    Jump -> next b3(v12, v12, v12)
+}
+# CHECK: function f1 name="threeWays"

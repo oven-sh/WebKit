@@ -40,9 +40,11 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, copy, nullable) void (^didFailProvisionalLoadWithRequestInFrameWithError)(WKWebView *, NSURLRequest *, WKFrameInfo *, NSError *);
 @property (nonatomic, copy, nullable) void (^didFailProvisionalLoadInSubframeWithError)(WKWebView *, WKFrameInfo *, NSError *);
 @property (nonatomic, copy, nullable) void (^didStartProvisionalNavigation)(WKWebView *, WKNavigation * _Null_unspecified);
+@property (nonatomic, copy, nullable) void (^didStartProvisionalLoadWithRequestInFrame)(WKWebView *, NSURLRequest *, WKFrameInfo *);
 @property (nonatomic, copy, nullable) void (^didCommitNavigation)(WKWebView *, WKNavigation * _Null_unspecified);
 @property (nonatomic, copy, nullable) void (^didCommitLoadWithRequestInFrame)(WKWebView *, NSURLRequest *, WKFrameInfo *);
 @property (nonatomic, copy, nullable) void (^didFinishNavigation)(WKWebView *, WKNavigation * _Null_unspecified);
+@property (nonatomic, copy, nullable) void (^didFailNavigation)(WKWebView *, WKNavigation * _Null_unspecified, NSError *);
 @property (nonatomic, copy, nullable) void (^didFinishLoadWithRequestInFrame)(WKWebView *, NSURLRequest *, WKFrameInfo *);
 @property (nonatomic, copy, nullable) void (^didSameDocumentNavigation)(WKWebView *, WKNavigation * _Null_unspecified);
 @property (nonatomic, copy, nullable) void (^renderingProgressDidChange)(WKWebView *, _WKRenderingProgressEvents);
@@ -76,7 +78,8 @@ NS_SWIFT_UI_ACTOR
 - (void)_test_waitForDidSameDocumentNavigation NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
 - (void)_test_waitForDidFinishNavigationWithPreferences:(WKWebpagePreferences *)preferences NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
 - (void)_test_waitForDidFinishNavigationWithoutPresentationUpdate NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
-- (void)_test_waitForDidFinishNavigationWhileIgnoringSSLErrors NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (void)_test_waitForDidFinishNavigationWhileIgnoringSSLErrors NS_SWIFT_UNAVAILABLE("Use the async variant instead.");
+- (void)_test_waitForDidFinishNavigationWhileIgnoringSSLErrorsWithCompletionHandler:(void (^)(NSError * _Nullable))completionHandler;
 - (void)_test_waitForDidFailProvisionalNavigation NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
 - (_WKProcessTerminationReason)_test_waitForWebContentProcessDidTerminate NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
 @end

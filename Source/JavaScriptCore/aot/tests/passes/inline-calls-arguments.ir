@@ -1,0 +1,114 @@
+# How arguments reach the copy of a callee and how its results reach the caller
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 8
+# STATISTIC: InlineDecisionSignatureMismatch = 0
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="oneOperation" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Mul v0, v0
+    Return v1
+}
+
+function f1 name="returnsNothing" parameters=[{type=number}] results=[{type=undefined}] {
+    Return
+}
+
+function f2 name="returnsTwoResults" parameters=[{type=number}] results=[{type=number}, {type=number}] {
+    v1 = Mul v0, v0
+    v2 = Results v1, v0
+    Return v2
+}
+
+function f3 name="takesNumberExpectedToBeInt32" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number ~ i32):
+    v1 = Mul v0, v0
+    Return v1
+}
+
+function f4 name="usesCaptureThisAndParameter" kind=Method flags=[HasThis] captures=[{type=number}] thisType={type=string} parameters=[{type=boolean}] results=[{type=string}] {
+    v3 = Strcat v1, v0, v2
+    Return v3
+}
+
+function f5 name="returnsRest" flags=[HasRestParameter] parameters=[{type=number}, {type=Array<anything>}] results=[{type=Array<anything>}] {
+    Return v1
+}
+
+function f6 name="returnsSecond" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}
+
+function f7 name="readsNoResult" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = CallDirect v0 function=f1
+    Return v1
+}
+# CHECK-LABEL: name="readsNoResult"
+# CHECK-NOT: CallDirect
+# CHECK: [[nothing7]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next b1([[nothing7]])
+
+function f8 name="readsTwoResults" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f2
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = Add v2, v3
+    Return v4
+}
+# CHECK-LABEL: name="readsTwoResults"
+# CHECK-NOT: CallDirect
+# CHECK: b1([[first8]]: number, [[second8]]: number):
+# CHECK: Return v4
+# CHECK: [[square8]]: number = Mul v0, v0
+# CHECK-NEXT: Jump -> next b1([[square8]], v0)
+
+function f9 name="twoSitesInOneBlock" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0
+    v2 = CallDirect v1 function=f0
+    Return v2
+}
+# CHECK-LABEL: name="twoSitesInOneBlock"
+# CHECK-NOT: CallDirect
+# CHECK-NOT: Upcast
+# CHECK: Return v2
+# CHECK-COUNT-2: = Mul
+# CHECK-NOT: = Mul
+
+function f10 name="argumentNeedsUpcast" parameters=[{type=int[0, 9]}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f3
+    Return v1
+}
+# CHECK-LABEL: name="argumentNeedsUpcast"
+# CHECK-NOT: CallDirect
+# CHECK: [[upcast10]]: int[0, 9] = Upcast v0 castType=number
+# CHECK: : int[0, 81] = Mul [[upcast10]], [[upcast10]]
+
+function f11 name="passesCaptureThisAndArgument" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=string}] {
+    v3 = CallDirect v0, v1, v2 function=f4
+    Return v3
+}
+# CHECK-LABEL: name="passesCaptureThisAndArgument"
+# CHECK-NOT: CallDirect
+# CHECK: = Strcat v1, v0, v2
+
+function f12 name="passesRestArray" parameters=[{type=number}, {type=anything}] results=[{type=Array<anything>}] {
+    v2 = NewArray v1, v1 contents=anything
+    v3 = CallDirect v0, v2 function=f5
+    Return v3
+}
+# CHECK-LABEL: name="passesRestArray"
+# CHECK-NOT: CallDirect
+# CHECK: Jump -> next b1(v2)
+
+function f13 name="passesUndefinedForMissingArgument" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallDirect v0, v1 function=f6
+    Return v2
+}
+# CHECK-LABEL: name="passesUndefinedForMissingArgument"
+# CHECK-NOT: CallDirect
+# CHECK: [[missing13]]: undefined = Upcast v1 castType=anything
+# CHECK: Jump -> next b1([[missing13]])

@@ -69,20 +69,20 @@ public:
     std::optional<StorageType> toStorageType(WebsiteDataType) const;
     String toStorageIdentifier(StorageType) const;
     StorageBucket(const String& rootPath, const String& identifier, const String& localStoragePath, const String& idbStoragePath, const String& cacheStoragePath, UnifiedOriginStorageLevel);
-    StorageBucketMode NODELETE mode() const { return m_mode; }
-    void NODELETE setMode(StorageBucketMode mode) { m_mode = mode; }
+    StorageBucketMode LEGACY_NODELETE mode() const { return m_mode; }
+    void LEGACY_NODELETE setMode(StorageBucketMode mode) { m_mode = mode; }
     void connectionClosed(IPC::Connection::UniqueID);
     String typeStoragePath(StorageType) const;
     FileSystemStorageManager& fileSystemStorageManager(FileSystemStorageHandleRegistry&, const WebCore::ClientOrigin&, FileSystemStorageManager::QuotaCheckFunction&&);
-    FileSystemStorageManager* NODELETE existingFileSystemStorageManager() { return m_fileSystemStorageManager.get(); }
+    FileSystemStorageManager* LEGACY_NODELETE existingFileSystemStorageManager() { return m_fileSystemStorageManager.get(); }
     LocalStorageManager& localStorageManager(StorageAreaRegistry&);
-    LocalStorageManager* NODELETE existingLocalStorageManager() { return m_localStorageManager.get(); }
+    LocalStorageManager* LEGACY_NODELETE existingLocalStorageManager() { return m_localStorageManager.get(); }
     SessionStorageManager& sessionStorageManager(StorageAreaRegistry&);
-    SessionStorageManager* NODELETE existingSessionStorageManager() { return m_sessionStorageManager.get(); }
+    SessionStorageManager* LEGACY_NODELETE existingSessionStorageManager() { return m_sessionStorageManager.get(); }
     IDBStorageManager& idbStorageManager(IDBStorageRegistry&, IDBStorageManager::QuotaCheckFunction&&, bool useSQLiteMemoryBackingStore);
-    IDBStorageManager* NODELETE existingIDBStorageManager() { return m_idbStorageManager.get(); }
+    IDBStorageManager* LEGACY_NODELETE existingIDBStorageManager() { return m_idbStorageManager.get(); }
     CacheStorageManager& cacheStorageManager(CacheStorageRegistry&, const WebCore::ClientOrigin&, CacheStorageManager::QuotaCheckFunction&&, Ref<WorkQueue>&&);
-    CacheStorageManager* NODELETE existingCacheStorageManager() { return m_cacheStorageManager.get(); }
+    CacheStorageManager* LEGACY_NODELETE existingCacheStorageManager() { return m_cacheStorageManager.get(); }
     BackgroundFetchStoreManager& backgroundFetchManager(Ref<WorkQueue>&&, BackgroundFetchStoreManager::QuotaCheckFunction&&);
     ServiceWorkerStorageManager& serviceWorkerStorageManager();
     uint64_t cacheStorageSize();
@@ -117,16 +117,16 @@ private:
     String m_customLocalStoragePath;
     String m_resolvedLocalStoragePath;
     std::unique_ptr<SessionStorageManager> m_sessionStorageManager;
-    std::unique_ptr<IDBStorageManager> m_idbStorageManager;
+    const std::unique_ptr<IDBStorageManager> m_idbStorageManager;
     String m_customIDBStoragePath;
     String m_resolvedIDBStoragePath;
     RefPtr<CacheStorageManager> m_cacheStorageManager;
     String m_customCacheStoragePath;
     String m_resolvedCacheStoragePath;
     UnifiedOriginStorageLevel m_level;
-    RefPtr<BackgroundFetchStoreManager> m_backgroundFetchManager;
+    const RefPtr<BackgroundFetchStoreManager> m_backgroundFetchManager;
     String m_resolvedBackgroundFetchStoragePath;
-    std::unique_ptr<ServiceWorkerStorageManager> m_serviceWorkerStorageManager;
+    const std::unique_ptr<ServiceWorkerStorageManager> m_serviceWorkerStorageManager;
 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(OriginStorageManager::StorageBucket);
@@ -156,7 +156,7 @@ void OriginStorageManager::StorageBucket::connectionClosed(IPC::Connection::Uniq
         manager->connectionClosed(connection);
 }
 
-std::optional<OriginStorageManager::StorageBucket::StorageType> NODELETE OriginStorageManager::StorageBucket::toStorageType(WebsiteDataType websiteDataType) const
+std::optional<OriginStorageManager::StorageBucket::StorageType> LEGACY_NODELETE OriginStorageManager::StorageBucket::toStorageType(WebsiteDataType websiteDataType) const
 {
     switch (websiteDataType) {
     case WebsiteDataType::FileSystem:
@@ -241,7 +241,7 @@ SessionStorageManager& OriginStorageManager::StorageBucket::sessionStorageManage
 IDBStorageManager& OriginStorageManager::StorageBucket::idbStorageManager(IDBStorageRegistry& registry, IDBStorageManager::QuotaCheckFunction&& quotaCheckFunction, bool useSQLiteMemoryBackingStore)
 {
     if (!m_idbStorageManager)
-        m_idbStorageManager = makeUnique<IDBStorageManager>(resolvedIDBStoragePath(), registry, WTF::move(quotaCheckFunction), useSQLiteMemoryBackingStore);
+        lazyInitialize(m_idbStorageManager, makeUnique<IDBStorageManager>(resolvedIDBStoragePath(), registry, WTF::move(quotaCheckFunction), useSQLiteMemoryBackingStore));
     return *m_idbStorageManager;
 }
 
@@ -258,7 +258,7 @@ CacheStorageManager& OriginStorageManager::StorageBucket::cacheStorageManager(Ca
 BackgroundFetchStoreManager& OriginStorageManager::StorageBucket::backgroundFetchManager(Ref<WorkQueue>&& queue, BackgroundFetchStoreManager::QuotaCheckFunction&& quotaCheckFunction)
 {
     if (!m_backgroundFetchManager)
-        m_backgroundFetchManager = BackgroundFetchStoreManager::create(resolvedBackgroundFetchStoragePath(), WTF::move(queue), WTF::move(quotaCheckFunction));
+        lazyInitialize(m_backgroundFetchManager, BackgroundFetchStoreManager::create(resolvedBackgroundFetchStoragePath(), WTF::move(queue), WTF::move(quotaCheckFunction)));
 
     return *m_backgroundFetchManager;
 }
@@ -268,7 +268,7 @@ ServiceWorkerStorageManager& OriginStorageManager::StorageBucket::serviceWorkerS
     RELEASE_ASSERT(m_level >= UnifiedOriginStorageLevel::Standard);
 
     if (!m_serviceWorkerStorageManager)
-        m_serviceWorkerStorageManager = makeUnique<ServiceWorkerStorageManager>(resolvedPath(WebsiteDataType::ServiceWorkerRegistrations));
+        lazyInitialize(m_serviceWorkerStorageManager, makeUnique<ServiceWorkerStorageManager>(resolvedPath(WebsiteDataType::ServiceWorkerRegistrations)));
 
     return *m_serviceWorkerStorageManager;
 }
@@ -674,7 +674,7 @@ void OriginStorageManager::connectionClosed(IPC::Connection::UniqueID connection
 OriginStorageManager::StorageBucket& OriginStorageManager::defaultBucket()
 {
     if (!m_defaultBucket)
-        m_defaultBucket = makeUnique<StorageBucket>(m_path, "default"_s, m_customLocalStoragePath, m_customIDBStoragePath, m_customCacheStoragePath, m_level);
+        lazyInitialize(m_defaultBucket, makeUnique<StorageBucket>(m_path, "default"_s, m_customLocalStoragePath, m_customIDBStoragePath, m_customCacheStoragePath, m_level));
 
     return *m_defaultBucket;
 }

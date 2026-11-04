@@ -1,0 +1,33 @@
+# const table: number[] = [0, 7, ..]; const pairs: number[][] = [[0, 1], [1, 2], ..]; const fractions: number[] = [0, 1, 2, 1.5, ..]; const written: number[] = [0, 7, ..]; written[0] = 0.5
+# A record too large to become literals stays constant data, and its arrays are made with the storage that `contents` asks for. Their readers go by what flow says the arrays hold:
+# whole numbers, where nothing else is ever stored. So the record says the same, at the root and further down. An array that holds or gets a fraction is one of fractions.
+# RUN: valueflow-apply
+# CHECK: data d0 root=Array{contents=int[0, 49] elements=
+# CHECK: data d1 root=Array{contents=undefined|null|Array<number> elements=[Array{contents=int[0, 1] elements=
+# CHECK: data d2 root=Array{contents=int[0, 39]|fractional elements=
+# CHECK: data d3 root=Array{contents=int[0, 49]|fractional elements=
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="table" module=m0 declared={type=undefined|null|Array<number>}
+variable g1 name="pairs" module=m0 declared={type=undefined|null|Array<undefined|null|Array<number>>}
+variable g2 name="fractions" module=m0 declared={type=undefined|null|Array<number>}
+variable g3 name="written" module=m0 declared={type=undefined|null|Array<number>}
+data d0 root=Array{contents=number elements=[Number{value=0}, Number{value=7}, Number{value=14}, Number{value=21}, Number{value=28}, Number{value=35}, Number{value=42}, Number{value=49}, Number{value=6}, Number{value=13}, Number{value=20}, Number{value=27}, Number{value=34}, Number{value=41}, Number{value=48}, Number{value=5}, Number{value=12}, Number{value=19}, Number{value=26}, Number{value=33}, Number{value=40}, Number{value=47}, Number{value=4}, Number{value=11}, Number{value=18}, Number{value=25}, Number{value=32}, Number{value=39}, Number{value=46}, Number{value=3}, Number{value=10}, Number{value=17}, Number{value=24}, Number{value=31}, Number{value=38}, Number{value=45}, Number{value=2}, Number{value=9}, Number{value=16}, Number{value=23}]} module=m0
+data d1 root=Array{contents=undefined|null|Array<number> elements=[Array{contents=number elements=[Number{value=0}, Number{value=1}]}, Array{contents=number elements=[Number{value=1}, Number{value=2}]}, Array{contents=number elements=[Number{value=2}, Number{value=3}]}, Array{contents=number elements=[Number{value=3}, Number{value=4}]}, Array{contents=number elements=[Number{value=4}, Number{value=5}]}, Array{contents=number elements=[Number{value=5}, Number{value=6}]}, Array{contents=number elements=[Number{value=6}, Number{value=7}]}, Array{contents=number elements=[Number{value=7}, Number{value=8}]}, Array{contents=number elements=[Number{value=8}, Number{value=9}]}, Array{contents=number elements=[Number{value=9}, Number{value=10}]}, Array{contents=number elements=[Number{value=10}, Number{value=11}]}, Array{contents=number elements=[Number{value=11}, Number{value=12}]}, Array{contents=number elements=[Number{value=12}, Number{value=13}]}, Array{contents=number elements=[Number{value=13}, Number{value=14}]}, Array{contents=number elements=[Number{value=14}, Number{value=15}]}, Array{contents=number elements=[Number{value=15}, Number{value=16}]}, Array{contents=number elements=[Number{value=16}, Number{value=17}]}, Array{contents=number elements=[Number{value=17}, Number{value=18}]}, Array{contents=number elements=[Number{value=18}, Number{value=19}]}, Array{contents=number elements=[Number{value=19}, Number{value=20}]}]} module=m0
+data d2 root=Array{contents=number elements=[Number{value=0}, Number{value=1}, Number{value=2}, Number{value=1.5}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}, Number{value=9}, Number{value=10}, Number{value=11}, Number{value=12}, Number{value=13}, Number{value=14}, Number{value=15}, Number{value=16}, Number{value=17}, Number{value=18}, Number{value=19}, Number{value=20}, Number{value=21}, Number{value=22}, Number{value=23}, Number{value=24}, Number{value=25}, Number{value=26}, Number{value=27}, Number{value=28}, Number{value=29}, Number{value=30}, Number{value=31}, Number{value=32}, Number{value=33}, Number{value=34}, Number{value=35}, Number{value=36}, Number{value=37}, Number{value=38}, Number{value=39}]} module=m0
+data d3 root=Array{contents=number elements=[Number{value=0}, Number{value=7}, Number{value=14}, Number{value=21}, Number{value=28}, Number{value=35}, Number{value=42}, Number{value=49}, Number{value=6}, Number{value=13}, Number{value=20}, Number{value=27}, Number{value=34}, Number{value=41}, Number{value=48}, Number{value=5}, Number{value=12}, Number{value=19}, Number{value=26}, Number{value=33}, Number{value=40}, Number{value=47}, Number{value=4}, Number{value=11}, Number{value=18}, Number{value=25}, Number{value=32}, Number{value=39}, Number{value=46}, Number{value=3}, Number{value=10}, Number{value=17}, Number{value=24}, Number{value=31}, Number{value=38}, Number{value=45}, Number{value=2}, Number{value=9}, Number{value=16}, Number{value=23}]} module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Data data=d0
+    PutModuleVariable v0 variable=g0
+    v2 = Data data=d1
+    PutModuleVariable v2 variable=g1
+    v4 = Data data=d2
+    PutModuleVariable v4 variable=g2
+    v6 = Data data=d3
+    PutModuleVariable v6 variable=g3
+    v8 = Integer
+    v9 = Double number=0.5
+    ElemSet v6, v8, v9 mode=Strict
+    Return
+}

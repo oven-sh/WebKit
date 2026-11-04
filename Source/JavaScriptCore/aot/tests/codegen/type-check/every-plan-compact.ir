@@ -1,0 +1,7 @@
+# Every kind of type test generates code as a value, as the condition of a branch and as what is left of a Check, a branch whose edges pass on what the test proved, in compact code
+# FORM: Selected
+# RUN: generate-code
+# OPTIONS: check=validate-back-end validate heat=everything-is-cold
+# CHECK: f2: size=
+# CHECK: f49: size=
+# PROGRAM-OF: every-plan.ir

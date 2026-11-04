@@ -1,0 +1,31 @@
+# As a-pattern-handed-to-replace-of-a-value-nobody-knows-is-converted-as-the-unknown-object-is.ir
+# OPTIONS: testing=DelayFlowRules:13
+# RUN: valueflow-solve used
+# CHECK-NOT: run DatePrototypeToString
+# CHECK-NOT: run ErrorPrototypeToString
+# CHECK: run RegExpPrototypeExec
+# CHECK: run RegExpPrototypeSymbolReplace
+# CHECK: run StringPrototypeReplace
+# CHECK-NOT: run SymbolPrototypeToString
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f1
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewRegExp pattern="a" regExpFlags=[Global]
+    v1 = String string="text"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="given" [isFreeName]
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(v1), notTaken b1(v3)
+  b1(v5: anything):
+    v6 = PropGet v5 key="replace"
+    v7 = String string="-"
+    v8 = Call v6, v5, v0, v7 calleeKey="replace"
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="report" [isFreeName]
+    v11 = Call v10, -, v8
+    Return
+}

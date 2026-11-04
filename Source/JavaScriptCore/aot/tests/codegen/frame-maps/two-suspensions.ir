@@ -1,0 +1,21 @@
+# Each of two suspensions in a block lists only the values that are live after it
+# RUN: frame-maps
+# STATISTIC: SuspensionRoots = 4
+# CHECK: f0:
+# CHECK-NEXT: v4: v1:value v2:value v3:value
+# CHECK-NOT: v
+# CHECK: v6: v2:value
+# CHECK-NOT: v
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 declared={type=anything} initialization=Undefined
+function f0 name="two-suspensions" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=3} {
+  b0(v0: anything @JSValue, v1: anything @JSValue, v2: anything @JSValue, v3: undefined|Promise @JSValue):
+    v4 @JSValue = AwaitBySavingFrame v0, v3
+    PutModuleVariable v1 variable=g0
+    v6 @JSValue = AwaitBySavingFrame v4, v3
+    PutModuleVariable v2 variable=g0
+    v8 @JSValue = Undefined
+    Return v8
+}
+function f1 name="two-suspensions" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=3}

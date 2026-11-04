@@ -1,0 +1,35 @@
+# A `var` that lives in an environment starts as undefined: the allocation lists it so. Where a store comes before every read and no store puts undefined there, no read sees undefined:
+# the field is what a `let` would be: the type loses undefined, one store is at most one store, and the allocation no longer lists the field.
+# A field that a closure reads before its store keeps it, and so does one that the program itself stores undefined to
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}{key="early" declared={type=1} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead isStoredBeforeCapturersRun=true}{{*}}{key="late" declared={type=undefined|1} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation}{{*}}{key="cleared" declared={type=undefined|1} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead isStoredBeforeCapturersRun=true}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = NewObject -, {{*}} layout=L0 fields=[1]
+# CHECK-LABEL: function f1 name="reader"
+# CHECK: : 1 = GetEnvironmentField {{*}}layout=L0
+# CHECK: : undefined|1 = GetEnvironmentField {{*}}layout=L0 field=1
+# CHECK: : undefined|1 = GetEnvironmentField {{*}}layout=L0 field=2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key="early" declared={type=anything}}, {key="late" declared={type=anything}}, {key="cleared" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Undefined
+    v2 = NewObject -, v1, v1, v1 layout=L0 fields=[0, 1, 2]
+    v3 = NewClosure v2 function=f1
+    PutEnvironmentField v2, v0 layout=L0
+    PutEnvironmentField v2, v0 layout=L0 field=2
+    PutEnvironmentField v2, v1 layout=L0 field=2
+    v7 = Call v3
+    PutEnvironmentField v2, v0 layout=L0 field=1
+    Return v7
+}
+function f1 name="reader" captures=[{type=env L0 flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = GetEnvironmentField v0 layout=L0 field=1
+    v3 = GetEnvironmentField v0 layout=L0 field=2
+    v4 = NewArray v1, v2, v3 contents=anything holes=[]
+    Return v4
+}

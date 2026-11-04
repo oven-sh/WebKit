@@ -114,6 +114,8 @@
     }
 
     _inUserInteraction = YES;
+    _pendingSnapContentOffset = std::nullopt;
+    _isAnimatingToSnapContentOffset = NO;
 
     if (scrollView.panGestureRecognizer.state == UIGestureRecognizerStateBegan)
         scrollingTreeNodeDelegate->scrollViewWillStartPanGesture();
@@ -159,6 +161,15 @@
             targetContentOffset->y = potentialSnapPosition;
     }
 
+    // FIXME: Remove this workaround once UIKit no longer decelerates very slowly towards a target that lies against the
+    // direction of the velocity (rdar://189252768). This happens when flicking past the last snap position. Stop the
+    // momentum here and animate to the snap position once dragging ends.
+    CGPoint currentContentOffset = scrollView.contentOffset;
+    if (!snapOffsetsInfo.isEmpty() && ((targetContentOffset->x - currentContentOffset.x) * velocity.x < 0 || (targetContentOffset->y - currentContentOffset.y) * velocity.y < 0)) {
+        _pendingSnapContentOffset = *targetContentOffset;
+        *targetContentOffset = currentContentOffset;
+    }
+
     if (originalHorizontalSnapPosition != scrollingNode->currentHorizontalSnapPointIndex()
         || originalVerticalSnapPosition != scrollingNode->currentVerticalSnapPointIndex()) {
         scrollingTreeNodeDelegate->currentSnapPointIndicesDidChange(scrollingNode->currentHorizontalSnapPointIndex(), scrollingNode->currentVerticalSnapPointIndex());
@@ -180,6 +191,12 @@
             WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES;");
             _scrollPerfIntervalState = ScrollPerfIntervalState::Momentum;
         }
+    }
+
+    if (auto pendingSnapContentOffset = std::exchange(_pendingSnapContentOffset, std::nullopt); pendingSnapContentOffset && !willDecelerate) {
+        _isAnimatingToSnapContentOffset = YES;
+        [scrollView setContentOffset:*pendingSnapContentOffset animated:YES];
+        return;
     }
 
     if (_inUserInteraction && !willDecelerate) {
@@ -214,6 +231,11 @@
     CheckedPtr scrollingTreeNodeDelegate = _scrollingTreeNodeDelegate.get();
     if (!scrollingTreeNodeDelegate) [[unlikely]]
         return;
+
+    if (std::exchange(_isAnimatingToSnapContentOffset, NO) && _inUserInteraction) {
+        _inUserInteraction = NO;
+        scrollingTreeNodeDelegate->scrollViewDidScroll(scrollView.contentOffset, _inUserInteraction);
+    }
 
     scrollingTreeNodeDelegate->scrollDidEnd();
 }
@@ -377,7 +399,7 @@ void ScrollingTreeScrollingNodeDelegateIOS::commitStateAfterChildren(const Scrol
         RetainPtr scrollView = this->scrollView();
         if (scrollingStateNode.hasChangedProperty(ScrollingStateNode::Property::ScrollContainerLayer)) {
             if (!m_scrollViewDelegate)
-                m_scrollViewDelegate = adoptNS([[WKScrollingNodeScrollViewDelegate alloc] initWithScrollingTreeNodeDelegate:*this]);
+                lazyInitialize(m_scrollViewDelegate, adoptNS([[WKScrollingNodeScrollViewDelegate alloc] initWithScrollingTreeNodeDelegate:*this]));
 
             scrollView.get().scrollsToTop = NO;
             scrollView.get().delegate = m_scrollViewDelegate.get();
@@ -385,7 +407,7 @@ void ScrollingTreeScrollingNodeDelegateIOS::commitStateAfterChildren(const Scrol
 
             bool useAdaptiveDecelerationTracking = false;
 #if HAVE(UISCROLLVIEW_DECELERATION_TRACKING_BEHAVIOR)
-            if (CheckedPtr scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy())
+            if (RefPtr scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy())
                 useAdaptiveDecelerationTracking = protect(protect(scrollingCoordinatorProxy->webPageProxy())->preferences())->scrollViewAdaptiveDecelerationTrackingEnabled();
 
             if (useAdaptiveDecelerationTracking) [[unlikely]] {
@@ -515,7 +537,7 @@ void ScrollingTreeScrollingNodeDelegateIOS::stopAnimatedScroll(EnumSet<AnimatedS
 #if HAVE(UISCROLLVIEW_ASYNCHRONOUS_SCROLL_EVENT_HANDLING)
 void ScrollingTreeScrollingNodeDelegateIOS::handleAsynchronousCancelableScrollEvent(WKBaseScrollView *scrollView, WKBEScrollViewScrollUpdate *update, void (^completion)(BOOL handled))
 {
-    CheckedPtr scrollingCoordinatorProxy = downcast<WebKit::RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
+    RefPtr scrollingCoordinatorProxy = downcast<WebKit::RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
     if (scrollingCoordinatorProxy) {
         if (RefPtr pageClient = protect(scrollingCoordinatorProxy->webPageProxy())->pageClient())
             pageClient->handleAsynchronousCancelableScrollEvent(scrollView, update, completion);
@@ -587,7 +609,7 @@ UIScrollView *ScrollingTreeScrollingNodeDelegateIOS::findActingScrollParent(UISc
 {
     ASSERT(scrollView == this->scrollView());
 
-    CheckedPtr scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
+    RefPtr scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
     if (!scrollingCoordinatorProxy)
         return nil;
 
@@ -612,7 +634,7 @@ bool ScrollingTreeScrollingNodeDelegateIOS::shouldAllowPanGestureRecognizerToRec
 
 void ScrollingTreeScrollingNodeDelegateIOS::computeActiveTouchActionsForGestureRecognizer(UIGestureRecognizer* gestureRecognizer)
 {
-    CheckedPtr scrollingCoordinatorProxy = dynamicDowncast<RemoteScrollingCoordinatorProxyIOS>(downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy());
+    RefPtr scrollingCoordinatorProxy = dynamicDowncast<RemoteScrollingCoordinatorProxyIOS>(downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy());
     if (!scrollingCoordinatorProxy)
         return;
 
@@ -626,7 +648,7 @@ void ScrollingTreeScrollingNodeDelegateIOS::computeActiveTouchActionsForGestureR
 
 void ScrollingTreeScrollingNodeDelegateIOS::cancelPointersForGestureRecognizer(UIGestureRecognizer* gestureRecognizer)
 {
-    CheckedPtr scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
+    RefPtr scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
     if (!scrollingCoordinatorProxy)
         return;
 

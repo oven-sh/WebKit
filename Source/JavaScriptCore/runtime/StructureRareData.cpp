@@ -29,6 +29,7 @@
 #include "AdaptiveInferredPropertyValueWatchpointBase.h"
 #include "CacheableIdentifierInlines.h"
 #include "CachedSpecialPropertyAdaptiveStructureWatchpoint.h"
+#include "ImmutablePropertyNames.h"
 #include "JSCellButterfly.h"
 #include "JSObjectInlines.h"
 #include "JSPropertyNameEnumerator.h"
@@ -37,6 +38,7 @@
 #include "StructureChain.h"
 #include "StructureInlines.h"
 #include "StructureRareDataInlines.h"
+#include "AOTPropertyWalk.h"
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -120,6 +122,11 @@ SpecialPropertyCache& StructureRareData::ensureSpecialPropertyCacheSlow()
     return *m_specialPropertyCache.get();
 }
 
+void StructureRareData::setImmutablePropertyNames(ImmutablePropertyNames& names)
+{
+    ensureSpecialPropertyCache().m_immutablePropertyNames = &names;
+}
+
 inline void StructureRareData::giveUpOnSpecialPropertyCache(CachedSpecialPropertyKey key)
 {
     // Invalidate the memoized fast-path verdict along with the cache it is derived from.
@@ -148,6 +155,21 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
         break;
     }
 
+#if ENABLE(AOT)
+    if (ownStructure->isCompiledStructure()) [[unlikely]] {
+        if (slot.isUnset() && AOT::PropertyWalk::hasPropertyOnChain(ownStructure, uid) == AOT::PropertyWalk::Presence::Absent)
+            ensureSpecialPropertyCache().m_cache[static_cast<unsigned>(key)].m_value.set(vm, this, value);
+        else
+            giveUpOnSpecialPropertyCache(key);
+        return;
+    }
+    // A class makes its static members when one of them is first asked for. Until then it shares a Structure that lists none of them with other classes.
+    if (ownStructure->typeInfo().type() == CompiledClosureType) [[unlikely]] {
+        giveUpOnSpecialPropertyCache(key);
+        return;
+    }
+#endif
+
     if (!ownStructure->propertyAccessesAreCacheable() || ownStructure->isProxy()) {
         giveUpOnSpecialPropertyCache(key);
         return;
@@ -171,7 +193,12 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
         conditionSet = generateConditionsForPrototypePropertyHit(vm, this, globalObject, ownStructure, slot.slotBase(), uid);
         ASSERT(!conditionSet.isValid() || conditionSet.hasOneSlotBaseCondition());
     } else if (slot.isUnset()) {
-        if (!ownStructure->propertyAccessesAreCacheableForAbsence()) {
+        bool canCacheAbsence = ownStructure->propertyAccessesAreCacheableForAbsence();
+#if ENABLE(AOT)
+        // A slim closure overrides getOwnPropertySlot only for length, name, prototype and Symbol.hasInstance, and adding any other property transitions its Structure.
+        canCacheAbsence |= ownStructure->typeInfo().type() == SlimClosureType;
+#endif
+        if (!canCacheAbsence) {
             giveUpOnSpecialPropertyCache(key);
             return;
         }

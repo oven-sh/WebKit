@@ -31,7 +31,6 @@
 #include "Uint16WithFraction.h"
 #include <wtf/Assertions.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/dragonbox/dragonbox_to_chars.h>
 #include <wtf/dtoa.h>
 #include <wtf/dtoa/double-conversion.h>
 #include <wtf/text/MakeString.h>
@@ -89,7 +88,7 @@ void NumberPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 
 // ------------------------------ Functions ---------------------------
 
-static ALWAYS_INLINE bool NODELETE toThisNumber(JSValue thisValue, double& x)
+static ALWAYS_INLINE bool LEGACY_NODELETE toThisNumber(JSValue thisValue, double& x)
 {
     if (thisValue.isInt32()) {
         x = thisValue.asInt32();
@@ -117,19 +116,7 @@ static ALWAYS_INLINE EncodedJSValue throwVMToThisNumberError(JSGlobalObject* glo
     return throwVMTypeError(globalObject, scope, WTF::makeString("thisNumberValue called on incompatible "_s, typeString.data));
 }
 
-// The largest finite floating point number is 1.mantissa * 2^(0x7fe-0x3ff).
-// Since 2^N in binary is a one bit followed by N zero bits. 1 * 2^3ff requires
-// at most 1024 characters to the left of a decimal point, in base 2 (1025 if
-// we include a minus sign). For the fraction, a value with an exponent of 0
-// has up to 52 bits to the right of the decimal point. Each decrement of the
-// exponent down to a minimum of -0x3fe adds an additional digit to the length
-// of the fraction. As such the maximum fraction size is 1075 (1076 including
-// a point). We pick a buffer size such that can simply place the point in the
-// center of the buffer, and are guaranteed to have enough space in each direction
-// fo any number of digits an IEEE number may require to represent.
-typedef char RadixBuffer[2180];
-
-static inline char* NODELETE int52ToStringWithRadix(char* startOfResultString, int64_t int52Value, unsigned radix)
+static inline char* LEGACY_NODELETE int52ToStringWithRadix(char* startOfResultString, int64_t int52Value, unsigned radix)
 {
     bool negative = false;
     uint64_t positiveNumber = int52Value;
@@ -150,7 +137,7 @@ static inline char* NODELETE int52ToStringWithRadix(char* startOfResultString, i
     return startOfResultString;
 }
 
-static char* toStringWithRadixInternal(RadixBuffer& buffer, double originalNumber, unsigned radix)
+char* toStringWithRadixInternal(RadixBuffer& buffer, double originalNumber, unsigned radix)
 {
     ASSERT(std::isfinite(originalNumber));
     ASSERT(radix >= 2 && radix <= 36);
@@ -414,14 +401,13 @@ JSC_DEFINE_HOST_FUNCTION(numberProtoFuncToExponential, (JSGlobalObject* globalOb
 
     // Round if the argument is not undefined, always format as exponential.
     NumberToStringBuffer buffer;
+    if (arg.isUndefined())
+        return JSValue::encode(jsString(vm, String::fromLatin1(WTF::numberToShortestExponentialString(x, buffer))));
+
     DoubleConversionStringBuilder builder { std::span<char> { buffer } };
     builder.Reset();
-    if (arg.isUndefined())
-        WTF::dragonbox::ToExponential(x, &builder);
-    else {
-        const DoubleToStringConverter& converter = DoubleToStringConverter::EcmaScriptConverter();
-        converter.ToExponential(x, decimalPlaces, &builder);
-    }
+    const DoubleToStringConverter& converter = DoubleToStringConverter::EcmaScriptConverter();
+    converter.ToExponential(x, decimalPlaces, &builder);
     return JSValue::encode(jsString(vm, String::fromLatin1(builder.Finalize())));
 }
 
@@ -642,6 +628,8 @@ JSC_DEFINE_HOST_FUNCTION(numberProtoFuncToLocaleString, (JSGlobalObject* globalO
     IntlNumberFormat* numberFormat = nullptr;
     if (locales.isUndefined() && options.isUndefined())
         numberFormat = globalObject->defaultNumberFormat();
+    else if (locales.isString() && options.isUndefined())
+        numberFormat = globalObject->cachedToLocaleStringNumberFormat(asString(locales));
     else {
         numberFormat = IntlNumberFormat::create(vm, globalObject->numberFormatStructure());
         numberFormat->initializeNumberFormat(globalObject, locales, options);

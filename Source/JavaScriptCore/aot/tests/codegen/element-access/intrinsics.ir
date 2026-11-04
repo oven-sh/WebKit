@@ -1,0 +1,730 @@
+# Each array intrinsic has code, the ones that name a storage kind for each kind, in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-22: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="isPristineArray" parameters=[{type=Array}, {type=object}, {type=anything}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v5 = IsPristineArray v0
+    v6 = IsPristineArray v1
+    v7 = IsPristineArray v2
+    v8 = IsPristineArray v3
+    v9 = NewArray v5, v6, v7, v8 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v11 = IsPristineArray v0
+    v12 = IsPristineArray v1
+    v13 = IsPristineArray v2
+    v14 = IsPristineArray v3
+    v15 = NewArray v11, v12, v13, v14 contents=anything
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Branch v4 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v16 = IsPristineArray v0
+    v17 = IsPristineArray v1
+    v18 = IsPristineArray v2
+    v19 = IsPristineArray v3
+    v20 = NewArray v16, v17, v18, v19 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b1 Fast
+# S: f0 b3 Compact
+function f1 name="isPristineArrayAsCondition" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v2 = IsPristineArray v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v4 = IsPristineArray v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b3():
+    Branch v1 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v5 = IsPristineArray v0
+    Branch v5 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b2 Fast
+# S: f1 b4 Compact
+function f2 name="arrayStorageKind" parameters=[{type=Array}, {type=boolean}] results=[{type=undefined}] {
+    v2 = ArrayStorageKind v0
+    v3 = NewArray v2 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = ArrayStorageKind v0
+    v6 = NewArray v5 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v7 = ArrayStorageKind v0
+    v8 = NewArray v7 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b1 Fast
+# S: f2 b3 Compact
+function f3 name="contiguousReads" parameters=[{type=Array}, {type=Array<i32, proven>}, {type=Array<string, proven>}, {type=i32}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+    v6 = HasContiguousIndex v0, v3
+    v7 = HasContiguousIndex v0, v4
+    v8 = GetContiguousIndex v0, v3
+    v9 = GetContiguousIndex v0, v4
+    v10 = GetContiguousIndex v1, v3
+    v11 = GetContiguousIndex v1, v4
+    v12 = GetContiguousIndex v2, v3
+    v13 = GetContiguousIndex v2, v4
+    v14 = NewArray v6, v7, v8, v9, v10, v11, v12, v13 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v16 = HasContiguousIndex v0, v3
+    v17 = HasContiguousIndex v0, v4
+    v18 = GetContiguousIndex v0, v3
+    v19 = GetContiguousIndex v0, v4
+    v20 = GetContiguousIndex v1, v3
+    v21 = GetContiguousIndex v1, v4
+    v22 = GetContiguousIndex v2, v3
+    v23 = GetContiguousIndex v2, v4
+    v24 = NewArray v16, v17, v18, v19, v20, v21, v22, v23 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v25 = HasContiguousIndex v0, v3
+    v26 = HasContiguousIndex v0, v4
+    v27 = GetContiguousIndex v0, v3
+    v28 = GetContiguousIndex v0, v4
+    v29 = GetContiguousIndex v1, v3
+    v30 = GetContiguousIndex v1, v4
+    v31 = GetContiguousIndex v2, v3
+    v32 = GetContiguousIndex v2, v4
+    v33 = NewArray v25, v26, v27, v28, v29, v30, v31, v32 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b1 Fast
+# S: f3 b3 Compact
+function f4 name="doubleReads" parameters=[{type=Array}, {type=Array<number, proven>}, {type=i32}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+    v5 = GetDoubleIndex v0, v2
+    v6 = GetDoubleIndex v0, v3
+    v7 = GetDoubleIndex v1, v2
+    v8 = GetDoubleIndex v1, v3
+    v9 = NewArray v5, v6, v7, v8 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v11 = GetDoubleIndex v0, v2
+    v12 = GetDoubleIndex v0, v3
+    v13 = GetDoubleIndex v1, v2
+    v14 = GetDoubleIndex v1, v3
+    v15 = NewArray v11, v12, v13, v14 contents=anything
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Branch v4 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v16 = GetDoubleIndex v0, v2
+    v17 = GetDoubleIndex v0, v3
+    v18 = GetDoubleIndex v1, v2
+    v19 = GetDoubleIndex v1, v3
+    v20 = NewArray v16, v17, v18, v19 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f4 b0 Balanced
+# S: f4 b1 Fast
+# S: f4 b3 Compact
+function f5 name="contiguousStores" parameters=[{type=Array}, {type=i32}, {type=int}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutContiguousIndex v0, v1, v3
+    PutContiguousIndex v0, v1, v4
+    PutContiguousIndex v0, v1, v5
+    PutContiguousIndex v0, v1, v6
+    PutContiguousIndex v0, v2, v6
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutContiguousIndex v0, v1, v3
+    PutContiguousIndex v0, v1, v4
+    PutContiguousIndex v0, v1, v5
+    PutContiguousIndex v0, v1, v6
+    PutContiguousIndex v0, v2, v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Branch v7 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutContiguousIndex v0, v1, v3
+    PutContiguousIndex v0, v1, v4
+    PutContiguousIndex v0, v1, v5
+    PutContiguousIndex v0, v1, v6
+    PutContiguousIndex v0, v2, v6
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f5 b0 Balanced
+# S: f5 b1 Fast
+# S: f5 b3 Compact
+function f6 name="doubleStores" parameters=[{type=Array}, {type=i32}, {type=int}, {type=i32}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+    PutDoubleIndex v0, v1, v3
+    PutDoubleIndex v0, v1, v4
+    PutDoubleIndex v0, v2, v4
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutDoubleIndex v0, v1, v3
+    PutDoubleIndex v0, v1, v4
+    PutDoubleIndex v0, v2, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutDoubleIndex v0, v1, v3
+    PutDoubleIndex v0, v1, v4
+    PutDoubleIndex v0, v2, v4
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f6 b0 Balanced
+# S: f6 b1 Fast
+# S: f6 b3 Compact
+function f7 name="newArraysOfOneKind" parameters=[{type=int[0, 100]}, {type=i32}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+    v4 = NewContiguousArray v0
+    v5 = NewContiguousArray v1
+    v6 = NewContiguousArray v2
+    v7 = NewDoubleArray v0
+    v8 = NewDoubleArray v1
+    v9 = NewDoubleArray v2
+    v10 = NewArray v4, v5, v6, v7, v8, v9 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v12 = NewContiguousArray v0
+    v13 = NewContiguousArray v1
+    v14 = NewContiguousArray v2
+    v15 = NewDoubleArray v0
+    v16 = NewDoubleArray v1
+    v17 = NewDoubleArray v2
+    v18 = NewArray v12, v13, v14, v15, v16, v17 contents=anything
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Branch v3 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v19 = NewContiguousArray v0
+    v20 = NewContiguousArray v1
+    v21 = NewContiguousArray v2
+    v22 = NewDoubleArray v0
+    v23 = NewDoubleArray v1
+    v24 = NewDoubleArray v2
+    v25 = NewArray v19, v20, v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f7 b0 Balanced
+# S: f7 b1 Fast
+# S: f7 b3 Compact
+function f8 name="newArrayLike" parameters=[{type=int[0, 100]}, {type=Array}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = NewArrayLike v0
+    v5 = NewArrayLike v0, v1
+    v6 = NewArrayLike v0, v2
+    v7 = NewArrayLike v0 arrayStorage=Int32
+    v8 = NewArrayLike v0, v1 arrayStorage=Int32
+    v9 = NewArrayLike v0, v2 arrayStorage=Int32
+    v10 = NewArrayLike v0 arrayStorage=Double
+    v11 = NewArrayLike v0, v1 arrayStorage=Double
+    v12 = NewArrayLike v0, v2 arrayStorage=Double
+    v13 = NewArrayLike v0 arrayStorage=Contiguous
+    v14 = NewArrayLike v0, v1 arrayStorage=Contiguous
+    v15 = NewArrayLike v0, v2 arrayStorage=Contiguous
+    v16 = NewArray v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v18 = NewArrayLike v0
+    v19 = NewArrayLike v0, v1
+    v20 = NewArrayLike v0, v2
+    v21 = NewArrayLike v0 arrayStorage=Int32
+    v22 = NewArrayLike v0, v1 arrayStorage=Int32
+    v23 = NewArrayLike v0, v2 arrayStorage=Int32
+    v24 = NewArrayLike v0 arrayStorage=Double
+    v25 = NewArrayLike v0, v1 arrayStorage=Double
+    v26 = NewArrayLike v0, v2 arrayStorage=Double
+    v27 = NewArrayLike v0 arrayStorage=Contiguous
+    v28 = NewArrayLike v0, v1 arrayStorage=Contiguous
+    v29 = NewArrayLike v0, v2 arrayStorage=Contiguous
+    v30 = NewArray v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29 contents=anything
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Branch v3 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v31 = NewArrayLike v0
+    v32 = NewArrayLike v0, v1
+    v33 = NewArrayLike v0, v2
+    v34 = NewArrayLike v0 arrayStorage=Int32
+    v35 = NewArrayLike v0, v1 arrayStorage=Int32
+    v36 = NewArrayLike v0, v2 arrayStorage=Int32
+    v37 = NewArrayLike v0 arrayStorage=Double
+    v38 = NewArrayLike v0, v1 arrayStorage=Double
+    v39 = NewArrayLike v0, v2 arrayStorage=Double
+    v40 = NewArrayLike v0 arrayStorage=Contiguous
+    v41 = NewArrayLike v0, v1 arrayStorage=Contiguous
+    v42 = NewArrayLike v0, v2 arrayStorage=Contiguous
+    v43 = NewArray v31, v32, v33, v34, v35, v36, v37, v38, v39, v40, v41, v42 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f8 b0 Balanced
+# S: f8 b1 Fast
+# S: f8 b3 Compact
+function f9 name="newArrayWithCapacity" parameters=[{type=int[0, 100]}, {type=Array}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = NewArrayWithCapacity v0
+    v5 = NewArrayWithCapacity v0, v1
+    v6 = NewArrayWithCapacity v0, v2
+    v7 = NewArrayWithCapacity v0 arrayStorage=Int32
+    v8 = NewArrayWithCapacity v0, v1 arrayStorage=Int32
+    v9 = NewArrayWithCapacity v0, v2 arrayStorage=Int32
+    v10 = NewArrayWithCapacity v0 arrayStorage=Double
+    v11 = NewArrayWithCapacity v0, v1 arrayStorage=Double
+    v12 = NewArrayWithCapacity v0, v2 arrayStorage=Double
+    v13 = NewArrayWithCapacity v0 arrayStorage=Contiguous
+    v14 = NewArrayWithCapacity v0, v1 arrayStorage=Contiguous
+    v15 = NewArrayWithCapacity v0, v2 arrayStorage=Contiguous
+    v16 = NewArray v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v18 = NewArrayWithCapacity v0
+    v19 = NewArrayWithCapacity v0, v1
+    v20 = NewArrayWithCapacity v0, v2
+    v21 = NewArrayWithCapacity v0 arrayStorage=Int32
+    v22 = NewArrayWithCapacity v0, v1 arrayStorage=Int32
+    v23 = NewArrayWithCapacity v0, v2 arrayStorage=Int32
+    v24 = NewArrayWithCapacity v0 arrayStorage=Double
+    v25 = NewArrayWithCapacity v0, v1 arrayStorage=Double
+    v26 = NewArrayWithCapacity v0, v2 arrayStorage=Double
+    v27 = NewArrayWithCapacity v0 arrayStorage=Contiguous
+    v28 = NewArrayWithCapacity v0, v1 arrayStorage=Contiguous
+    v29 = NewArrayWithCapacity v0, v2 arrayStorage=Contiguous
+    v30 = NewArray v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29 contents=anything
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Branch v3 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v31 = NewArrayWithCapacity v0
+    v32 = NewArrayWithCapacity v0, v1
+    v33 = NewArrayWithCapacity v0, v2
+    v34 = NewArrayWithCapacity v0 arrayStorage=Int32
+    v35 = NewArrayWithCapacity v0, v1 arrayStorage=Int32
+    v36 = NewArrayWithCapacity v0, v2 arrayStorage=Int32
+    v37 = NewArrayWithCapacity v0 arrayStorage=Double
+    v38 = NewArrayWithCapacity v0, v1 arrayStorage=Double
+    v39 = NewArrayWithCapacity v0, v2 arrayStorage=Double
+    v40 = NewArrayWithCapacity v0 arrayStorage=Contiguous
+    v41 = NewArrayWithCapacity v0, v1 arrayStorage=Contiguous
+    v42 = NewArrayWithCapacity v0, v2 arrayStorage=Contiguous
+    v43 = NewArray v31, v32, v33, v34, v35, v36, v37, v38, v39, v40, v41, v42 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f9 b0 Balanced
+# S: f9 b1 Fast
+# S: f9 b3 Compact
+function f10 name="tryPutByValDirectInOtherStorageOfNewArrayLike" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v7 = NewArrayLike v0
+    v8 = TryPutByValDirect v7, v1, v2
+    v9 = TryPutByValDirect v7, v1, v3
+    v10 = TryPutByValDirect v7, v1, v4
+    v11 = TryPutByValDirect v7, v1, v5
+    v12 = NewArray v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = NewArrayLike v0
+    v15 = TryPutByValDirect v14, v1, v2
+    v16 = TryPutByValDirect v14, v1, v3
+    v17 = TryPutByValDirect v14, v1, v4
+    v18 = TryPutByValDirect v14, v1, v5
+    v19 = NewArray v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = NewArrayLike v0
+    v21 = TryPutByValDirect v20, v1, v2
+    v22 = TryPutByValDirect v20, v1, v3
+    v23 = TryPutByValDirect v20, v1, v4
+    v24 = TryPutByValDirect v20, v1, v5
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f10 b0 Balanced
+# S: f10 b1 Fast
+# S: f10 b3 Compact
+function f11 name="tryPutByValDirectInInt32StorageOfNewArrayLike" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v7 = NewArrayLike v0 arrayStorage=Int32
+    v8 = TryPutByValDirect v7, v1, v2 arrayStorage=Int32
+    v9 = TryPutByValDirect v7, v1, v3 arrayStorage=Int32
+    v10 = TryPutByValDirect v7, v1, v4 arrayStorage=Int32
+    v11 = TryPutByValDirect v7, v1, v5 arrayStorage=Int32
+    v12 = NewArray v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = NewArrayLike v0 arrayStorage=Int32
+    v15 = TryPutByValDirect v14, v1, v2 arrayStorage=Int32
+    v16 = TryPutByValDirect v14, v1, v3 arrayStorage=Int32
+    v17 = TryPutByValDirect v14, v1, v4 arrayStorage=Int32
+    v18 = TryPutByValDirect v14, v1, v5 arrayStorage=Int32
+    v19 = NewArray v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = NewArrayLike v0 arrayStorage=Int32
+    v21 = TryPutByValDirect v20, v1, v2 arrayStorage=Int32
+    v22 = TryPutByValDirect v20, v1, v3 arrayStorage=Int32
+    v23 = TryPutByValDirect v20, v1, v4 arrayStorage=Int32
+    v24 = TryPutByValDirect v20, v1, v5 arrayStorage=Int32
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f11 b0 Balanced
+# S: f11 b1 Fast
+# S: f11 b3 Compact
+function f12 name="tryPutByValDirectInDoubleStorageOfNewArrayLike" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v7 = NewArrayLike v0 arrayStorage=Double
+    v8 = TryPutByValDirect v7, v1, v2 arrayStorage=Double
+    v9 = TryPutByValDirect v7, v1, v3 arrayStorage=Double
+    v10 = TryPutByValDirect v7, v1, v4 arrayStorage=Double
+    v11 = TryPutByValDirect v7, v1, v5 arrayStorage=Double
+    v12 = NewArray v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = NewArrayLike v0 arrayStorage=Double
+    v15 = TryPutByValDirect v14, v1, v2 arrayStorage=Double
+    v16 = TryPutByValDirect v14, v1, v3 arrayStorage=Double
+    v17 = TryPutByValDirect v14, v1, v4 arrayStorage=Double
+    v18 = TryPutByValDirect v14, v1, v5 arrayStorage=Double
+    v19 = NewArray v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = NewArrayLike v0 arrayStorage=Double
+    v21 = TryPutByValDirect v20, v1, v2 arrayStorage=Double
+    v22 = TryPutByValDirect v20, v1, v3 arrayStorage=Double
+    v23 = TryPutByValDirect v20, v1, v4 arrayStorage=Double
+    v24 = TryPutByValDirect v20, v1, v5 arrayStorage=Double
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f12 b0 Balanced
+# S: f12 b1 Fast
+# S: f12 b3 Compact
+function f13 name="tryPutByValDirectInContiguousStorageOfNewArrayLike" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v7 = NewArrayLike v0 arrayStorage=Contiguous
+    v8 = TryPutByValDirect v7, v1, v2 arrayStorage=Contiguous
+    v9 = TryPutByValDirect v7, v1, v3 arrayStorage=Contiguous
+    v10 = TryPutByValDirect v7, v1, v4 arrayStorage=Contiguous
+    v11 = TryPutByValDirect v7, v1, v5 arrayStorage=Contiguous
+    v12 = NewArray v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = NewArrayLike v0 arrayStorage=Contiguous
+    v15 = TryPutByValDirect v14, v1, v2 arrayStorage=Contiguous
+    v16 = TryPutByValDirect v14, v1, v3 arrayStorage=Contiguous
+    v17 = TryPutByValDirect v14, v1, v4 arrayStorage=Contiguous
+    v18 = TryPutByValDirect v14, v1, v5 arrayStorage=Contiguous
+    v19 = NewArray v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = NewArrayLike v0 arrayStorage=Contiguous
+    v21 = TryPutByValDirect v20, v1, v2 arrayStorage=Contiguous
+    v22 = TryPutByValDirect v20, v1, v3 arrayStorage=Contiguous
+    v23 = TryPutByValDirect v20, v1, v4 arrayStorage=Contiguous
+    v24 = TryPutByValDirect v20, v1, v5 arrayStorage=Contiguous
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f13 b0 Balanced
+# S: f13 b1 Fast
+# S: f13 b3 Compact
+function f14 name="tryPutByValDirectInOtherStorageOfNewArrayWithCapacity" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v7 = NewArrayWithCapacity v0
+    v8 = TryPutByValDirect v7, v1, v2
+    v9 = TryPutByValDirect v7, v1, v3
+    v10 = TryPutByValDirect v7, v1, v4
+    v11 = TryPutByValDirect v7, v1, v5
+    v12 = NewArray v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = NewArrayWithCapacity v0
+    v15 = TryPutByValDirect v14, v1, v2
+    v16 = TryPutByValDirect v14, v1, v3
+    v17 = TryPutByValDirect v14, v1, v4
+    v18 = TryPutByValDirect v14, v1, v5
+    v19 = NewArray v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = NewArrayWithCapacity v0
+    v21 = TryPutByValDirect v20, v1, v2
+    v22 = TryPutByValDirect v20, v1, v3
+    v23 = TryPutByValDirect v20, v1, v4
+    v24 = TryPutByValDirect v20, v1, v5
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f14 b0 Balanced
+# S: f14 b1 Fast
+# S: f14 b3 Compact
+function f15 name="tryPutByValDirectInInt32StorageOfNewArrayWithCapacity" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v7 = NewArrayWithCapacity v0 arrayStorage=Int32
+    v8 = TryPutByValDirect v7, v1, v2 arrayStorage=Int32
+    v9 = TryPutByValDirect v7, v1, v3 arrayStorage=Int32
+    v10 = TryPutByValDirect v7, v1, v4 arrayStorage=Int32
+    v11 = TryPutByValDirect v7, v1, v5 arrayStorage=Int32
+    v12 = NewArray v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = NewArrayWithCapacity v0 arrayStorage=Int32
+    v15 = TryPutByValDirect v14, v1, v2 arrayStorage=Int32
+    v16 = TryPutByValDirect v14, v1, v3 arrayStorage=Int32
+    v17 = TryPutByValDirect v14, v1, v4 arrayStorage=Int32
+    v18 = TryPutByValDirect v14, v1, v5 arrayStorage=Int32
+    v19 = NewArray v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = NewArrayWithCapacity v0 arrayStorage=Int32
+    v21 = TryPutByValDirect v20, v1, v2 arrayStorage=Int32
+    v22 = TryPutByValDirect v20, v1, v3 arrayStorage=Int32
+    v23 = TryPutByValDirect v20, v1, v4 arrayStorage=Int32
+    v24 = TryPutByValDirect v20, v1, v5 arrayStorage=Int32
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f15 b0 Balanced
+# S: f15 b1 Fast
+# S: f15 b3 Compact
+function f16 name="tryPutByValDirectInDoubleStorageOfNewArrayWithCapacity" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v7 = NewArrayWithCapacity v0 arrayStorage=Double
+    v8 = TryPutByValDirect v7, v1, v2 arrayStorage=Double
+    v9 = TryPutByValDirect v7, v1, v3 arrayStorage=Double
+    v10 = TryPutByValDirect v7, v1, v4 arrayStorage=Double
+    v11 = TryPutByValDirect v7, v1, v5 arrayStorage=Double
+    v12 = NewArray v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = NewArrayWithCapacity v0 arrayStorage=Double
+    v15 = TryPutByValDirect v14, v1, v2 arrayStorage=Double
+    v16 = TryPutByValDirect v14, v1, v3 arrayStorage=Double
+    v17 = TryPutByValDirect v14, v1, v4 arrayStorage=Double
+    v18 = TryPutByValDirect v14, v1, v5 arrayStorage=Double
+    v19 = NewArray v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = NewArrayWithCapacity v0 arrayStorage=Double
+    v21 = TryPutByValDirect v20, v1, v2 arrayStorage=Double
+    v22 = TryPutByValDirect v20, v1, v3 arrayStorage=Double
+    v23 = TryPutByValDirect v20, v1, v4 arrayStorage=Double
+    v24 = TryPutByValDirect v20, v1, v5 arrayStorage=Double
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f16 b0 Balanced
+# S: f16 b1 Fast
+# S: f16 b3 Compact
+function f17 name="tryPutByValDirectInContiguousStorageOfNewArrayWithCapacity" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v7 = NewArrayWithCapacity v0 arrayStorage=Contiguous
+    v8 = TryPutByValDirect v7, v1, v2 arrayStorage=Contiguous
+    v9 = TryPutByValDirect v7, v1, v3 arrayStorage=Contiguous
+    v10 = TryPutByValDirect v7, v1, v4 arrayStorage=Contiguous
+    v11 = TryPutByValDirect v7, v1, v5 arrayStorage=Contiguous
+    v12 = NewArray v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = NewArrayWithCapacity v0 arrayStorage=Contiguous
+    v15 = TryPutByValDirect v14, v1, v2 arrayStorage=Contiguous
+    v16 = TryPutByValDirect v14, v1, v3 arrayStorage=Contiguous
+    v17 = TryPutByValDirect v14, v1, v4 arrayStorage=Contiguous
+    v18 = TryPutByValDirect v14, v1, v5 arrayStorage=Contiguous
+    v19 = NewArray v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = NewArrayWithCapacity v0 arrayStorage=Contiguous
+    v21 = TryPutByValDirect v20, v1, v2 arrayStorage=Contiguous
+    v22 = TryPutByValDirect v20, v1, v3 arrayStorage=Contiguous
+    v23 = TryPutByValDirect v20, v1, v4 arrayStorage=Contiguous
+    v24 = TryPutByValDirect v20, v1, v5 arrayStorage=Contiguous
+    v25 = NewArray v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f17 b0 Balanced
+# S: f17 b1 Fast
+# S: f17 b3 Compact
+function f18 name="tryPutByValDirectInUnknownArray" parameters=[{type=Array}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = TryPutByValDirect v0, v1, v2
+    v5 = NewArray v4 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = TryPutByValDirect v0, v1, v2
+    v8 = NewArray v7 contents=anything
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Branch v3 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v9 = TryPutByValDirect v0, v1, v2
+    v10 = NewArray v9 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f18 b0 Balanced
+# S: f18 b1 Fast
+# S: f18 b3 Compact
+function f19 name="tryPutIndex" parameters=[{type=Array}, {type=i32}, {type=int}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v8 = TryPutIndex v0, v1, v3
+    v9 = TryPutIndex v0, v1, v4
+    v10 = TryPutIndex v0, v1, v5
+    v11 = TryPutIndex v0, v1, v6
+    v12 = TryPutIndex v0, v2, v6
+    v13 = NewArray v8, v9, v10, v11, v12 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v15 = TryPutIndex v0, v1, v3
+    v16 = TryPutIndex v0, v1, v4
+    v17 = TryPutIndex v0, v1, v5
+    v18 = TryPutIndex v0, v1, v6
+    v19 = TryPutIndex v0, v2, v6
+    v20 = NewArray v15, v16, v17, v18, v19 contents=anything
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Branch v7 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v21 = TryPutIndex v0, v1, v3
+    v22 = TryPutIndex v0, v1, v4
+    v23 = TryPutIndex v0, v1, v5
+    v24 = TryPutIndex v0, v1, v6
+    v25 = TryPutIndex v0, v2, v6
+    v26 = NewArray v21, v22, v23, v24, v25 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f19 b0 Balanced
+# S: f19 b1 Fast
+# S: f19 b3 Compact
+function f20 name="growAndTruncate" parameters=[{type=int[0, 100]}, {type=i32}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+    v4 = NewContiguousArray v0
+    GrowNewArray v4, v1
+    GrowNewArray v4, v2
+    v7 = TruncateNewArray v4, v1
+    v8 = TruncateNewArray v4, v2
+    v9 = NewArray v7, v8 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v11 = NewContiguousArray v0
+    GrowNewArray v11, v1
+    GrowNewArray v11, v2
+    v14 = TruncateNewArray v11, v1
+    v15 = TruncateNewArray v11, v2
+    v16 = NewArray v14, v15 contents=anything
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Branch v3 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v17 = NewContiguousArray v0
+    GrowNewArray v17, v1
+    GrowNewArray v17, v2
+    v20 = TruncateNewArray v17, v1
+    v21 = TruncateNewArray v17, v2
+    v22 = NewArray v20, v21 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f20 b0 Balanced
+# S: f20 b1 Fast
+# S: f20 b3 Compact
+function f21 name="tryPutDoubleIndex" parameters=[{type=Array}, {type=i32}, {type=int}, {type=i32}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+    v6 = TryPutDoubleIndex v0, v1, v3
+    v7 = TryPutDoubleIndex v0, v1, v4
+    v8 = TryPutDoubleIndex v0, v2, v4
+    v9 = NewArray v6, v7, v8 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v11 = TryPutDoubleIndex v0, v1, v3
+    v12 = TryPutDoubleIndex v0, v1, v4
+    v13 = TryPutDoubleIndex v0, v2, v4
+    v14 = NewArray v11, v12, v13 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v15 = TryPutDoubleIndex v0, v1, v3
+    v16 = TryPutDoubleIndex v0, v1, v4
+    v17 = TryPutDoubleIndex v0, v2, v4
+    v18 = NewArray v15, v16, v17 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f21 b0 Balanced
+# S: f21 b1 Fast
+# S: f21 b3 Compact

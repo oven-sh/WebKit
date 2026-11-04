@@ -1,0 +1,26 @@
+# The entrypoint of a function that nobody calls by value throws at code nobody has seen and never goes on to its target, so no call by value has to count the error. The same error in front of a call of the target is counted
+# FORM: Prepared
+# RUN: check-entrypoints
+# DIAGNOSTIC: EffectsExceedSummary 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="uncalled" results=[{type=anything}] {
+    Return
+}
+function f1 name="uncalled" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers} {
+    v2 = ThrowNewError message="refused"
+    Unreachable
+}
+function f2 name="called" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="called" role=GenericEntrypoint flags=[HasThis] captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
+    v3 = TypeTest v2 testedType=undefined
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = ThrowNewError message="refused"
+    Unreachable
+  b2():
+    v5 = CallDirect v2 function=f2
+    ReturnCall v5 requirement=Allowed
+}

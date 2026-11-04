@@ -33,7 +33,7 @@
 
 namespace WTF {
 
-StringPrintStream::StringPrintStream()
+NEVER_INLINE StringPrintStream::StringPrintStream()
 {
     m_buffer = std::span { m_inlineBuffer };
     m_buffer[0] = 0; // Make sure that we always have a null terminator.
@@ -78,7 +78,7 @@ void StringPrintStream::vprintf(const char* format, va_list passedArgList)
 UTF8CString StringPrintStream::toUTF8CString() const
 {
     ASSERT(m_length == strlenSpan(m_buffer));
-    return UTF8CString { byteCast<char8_t>(m_buffer.first(m_length)) };
+    return UTF8CString::fromUTF8(m_buffer.first(m_length));
 }
 
 ASCIICString StringPrintStream::toASCIICString() const

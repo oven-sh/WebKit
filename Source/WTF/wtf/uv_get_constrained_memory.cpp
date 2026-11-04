@@ -115,30 +115,58 @@ static uint64_t uv__read_uint64(const char* filename)
     return rc;
 }
 
-/* Given a buffer with the contents of a cgroup1 /proc/self/cgroups,
- * finds the location and length of the memory controller mount path.
- * This disregards the leading / for easy concatenation of paths.
- * Returns NULL if the memory controller wasn't found. */
-static char* uv__cgroup1_find_memory_controller(char buf[1024],
-    int* n)
+/* Finds the line of the cgroup v2 hierarchy, "0::/path", in the contents of
+ * /proc/self/cgroup. It is the only line where nothing but cgroup v2 is
+ * mounted, and the last one where cgroup v1 hierarchies exist beside it:
+ *
+ *   1:name=systemd:/
+ *   0::/system.slice/a.service
+ *
+ * Returns NULL if there is none. */
+static char* uv__find_cgroup2_line(char buf[1024])
 {
-    char* p;
-
-    /* Seek to the memory controller line. */
-    p = strchr(buf, ':');
-    while (p != NULL && strncmp(p, ":memory:", 8)) {
-        p = strchr(p, '\n');
-        if (p != NULL)
-            p = strchr(p, ':');
+    char* line = buf;
+    while (line != NULL && *line != '\0') {
+        if (strncmp(line, "0::/", 4) == 0)
+            return line;
+        line = strchr(line, '\n');
+        if (line != NULL)
+            line++;
     }
+    return NULL;
+}
 
-    if (p != NULL) {
-        /* Determine the length of the mount path. */
-        p = p + strlen(":memory:/");
-        *n = (int)strcspn(p, "\n");
+/* Find the cgroup v1 line whose controller list contains `name` as a whole
+ * token: "cpu" may appear as "cpu", "cpu,cpuacct", or "cpuacct,cpu". Returns
+ * a pointer to the path component (after the leading "/") and its length, or
+ * NULL if no cgroup v1 hierarchy has the controller. */
+static char* uv__cgroup1_find_controller(char buf[1024], const char* name, int* n)
+{
+    int name_len = (int)strlen(name);
+    char* line = buf;
+    while (line != NULL && *line != '\0') {
+        char* ctl = strchr(line, ':');
+        if (ctl == NULL) return NULL;
+        ctl++;
+        char* path = strchr(ctl, ':');
+        if (path == NULL) return NULL;
+
+        char* tok = ctl;
+        while (tok < path) {
+            int len = (int)strcspn(tok, ",:");
+            if (len == name_len && strncmp(tok, name, len) == 0) {
+                path++; /* skip ":" */
+                if (*path == '/') path++;
+                *n = (int)strcspn(path, "\n");
+                return path;
+            }
+            tok += len + 1;
+        }
+
+        line = strchr(path, '\n');
+        if (line != NULL) line++;
     }
-
-    return p;
+    return NULL;
 }
 
 static void uv__get_cgroup1_memory_limits(char buf[1024], uint64_t* high,
@@ -150,7 +178,7 @@ static void uv__get_cgroup1_memory_limits(char buf[1024], uint64_t* high,
     uint64_t cgroup1_max;
 
     /* Find out where the controller is mounted. */
-    p = uv__cgroup1_find_memory_controller(buf, &n);
+    p = uv__cgroup1_find_controller(buf, "memory", &n);
     if (p != NULL) {
         snprintf(filename, sizeof(filename),
             "/sys/fs/cgroup/memory/%.*s/memory.soft_limit_in_bytes", n, p);
@@ -233,12 +261,14 @@ static uint64_t uv__get_cgroup_constrained_memory(char buf[1024])
 {
     uint64_t high;
     uint64_t max;
+    int n;
 
-    /* In the case of cgroupv2, we'll only have a single entry. */
-    if (strncmp(buf, "0::/", 4))
-        uv__get_cgroup1_memory_limits(buf, &high, &max);
+    /* A controller is in one hierarchy: in cgroup v2 unless a cgroup v1 line names it. */
+    char* cgroup2 = uv__find_cgroup2_line(buf);
+    if (cgroup2 != NULL && uv__cgroup1_find_controller(buf, "memory", &n) == NULL)
+        uv__get_cgroup2_memory_limits(cgroup2, &high, &max);
     else
-        uv__get_cgroup2_memory_limits(buf, &high, &max);
+        uv__get_cgroup1_memory_limits(buf, &high, &max);
 
     if (high == 0 || max == 0)
         return 0;
@@ -265,37 +295,6 @@ uint64_t uv_get_constrained_memory()
     return uv__get_cgroup_constrained_memory(buf);
 }
 
-/* Find the cgroup v1 line whose controller list contains "cpu" as a whole
- * token (it may appear as "cpu", "cpu,cpuacct", or "cpuacct,cpu"). Returns
- * a pointer to the path component (after the leading "/") and its length. */
-static char* uv__cgroup1_find_cpu_controller(char buf[1024], int* n)
-{
-    char* line = buf;
-    while (line != NULL && *line != '\0') {
-        char* ctl = strchr(line, ':');
-        if (ctl == NULL) return NULL;
-        ctl++;
-        char* path = strchr(ctl, ':');
-        if (path == NULL) return NULL;
-
-        char* tok = ctl;
-        while (tok < path) {
-            int len = (int)strcspn(tok, ",:");
-            if (len == 3 && strncmp(tok, "cpu", 3) == 0) {
-                path++; /* skip ":" */
-                if (*path == '/') path++;
-                *n = (int)strcspn(path, "\n");
-                return path;
-            }
-            tok += len + 1;
-        }
-
-        line = strchr(path, '\n');
-        if (line != NULL) line++;
-    }
-    return NULL;
-}
-
 static int uv__get_cgroup1_constrained_cpu(char buf[1024])
 {
     char filename[4097];
@@ -304,7 +303,7 @@ static int uv__get_cgroup1_constrained_cpu(char buf[1024])
     long long period;
     int n = 0;
 
-    char* p = uv__cgroup1_find_cpu_controller(buf, &n);
+    char* p = uv__cgroup1_find_controller(buf, "cpu", &n);
     if (p == NULL) {
         p = (char*)"";
         n = 0;
@@ -373,12 +372,15 @@ static int uv__get_cgroup2_constrained_cpu(char buf[1024])
 int uv_get_constrained_cpu()
 {
     char buf[1024];
+    int n;
 
     if (uv__slurp("/proc/self/cgroup", buf, sizeof(buf)))
         return 0;
 
-    if (strncmp(buf, "0::/", 4) == 0)
-        return uv__get_cgroup2_constrained_cpu(buf);
+    /* See uv__get_cgroup_constrained_memory. */
+    char* cgroup2 = uv__find_cgroup2_line(buf);
+    if (cgroup2 != NULL && uv__cgroup1_find_controller(buf, "cpu", &n) == NULL)
+        return uv__get_cgroup2_constrained_cpu(cgroup2);
     return uv__get_cgroup1_constrained_cpu(buf);
 }
 

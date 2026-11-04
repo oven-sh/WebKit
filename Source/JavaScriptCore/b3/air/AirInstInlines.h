@@ -36,7 +36,7 @@
 namespace JSC { namespace B3 { namespace Air {
 
 template<typename Thing, typename Functor>
-void Inst::forEach(const Functor& functor)
+void Inst::forEach(NOESCAPE const Functor& functor)
 {
     forEachArg(
         [&] (Arg& arg, Arg::Role role, Bank bank, Width width) {
@@ -57,7 +57,7 @@ inline RegisterSet Inst::extraEarlyClobberedRegs()
 }
 
 template<typename Thing, typename Functor>
-inline void Inst::forEachUse(Inst* prevInst, Inst* nextInst, const Functor& functor)
+inline void Inst::forEachUse(Inst* prevInst, Inst* nextInst, NOESCAPE const Functor& functor)
 {
     if (prevInst) {
         prevInst->forEach<Thing>(
@@ -77,7 +77,7 @@ inline void Inst::forEachUse(Inst* prevInst, Inst* nextInst, const Functor& func
 }
 
 template<typename Thing, typename Functor>
-inline void Inst::forEachDef(Inst* prevInst, Inst* nextInst, const Functor& functor)
+inline void Inst::forEachDef(Inst* prevInst, Inst* nextInst, NOESCAPE const Functor& functor)
 {
     if (prevInst) {
         prevInst->forEach<Thing>(
@@ -98,7 +98,7 @@ inline void Inst::forEachDef(Inst* prevInst, Inst* nextInst, const Functor& func
 
 template<typename Thing, typename Functor>
 inline void Inst::forEachDefWithExtraClobberedRegs(
-    Inst* prevInst, Inst* nextInst, const Functor& functor)
+    Inst* prevInst, Inst* nextInst, NOESCAPE const Functor& functor)
 {
     forEachDef<Thing>(prevInst, nextInst, [&functor] (Thing thing, Arg::Role role, Bank b,  Width w) {
         functor(thing, role, b, w, PreservesNothing);
@@ -138,7 +138,12 @@ inline bool Inst::admitsExtendedOffsetAddr(Arg& arg)
     return admitsExtendedOffsetAddr(&arg - &args()[0]);
 }
 
-inline std::optional<unsigned> Inst::shouldTryAliasingDef()
+inline bool Inst::clobbersAtBlockEntry()
+{
+    return kind.opcode == Patch && args()[0].special()->clobbersAtBlockEntry(*this);
+}
+
+inline std::optional<unsigned> Inst::shouldTryAliasingDef(CPUFeatureSet features)
 {
     if (!isX86())
         return std::nullopt;
@@ -167,7 +172,7 @@ inline std::optional<unsigned> Inst::shouldTryAliasingDef()
     case AddFloat:
     case MulDouble:
     case MulFloat:
-        if (isX86_64_AVX())
+        if (isX86_64_AVX(features))
             return std::nullopt;
         if (args().size() == 3)
             return 2;

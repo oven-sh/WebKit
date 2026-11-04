@@ -84,7 +84,7 @@ public:
     void pollEvents(Vector<Ref<XRInputSourceEvent>>&);
 
     // For GC reachablitiy.
-    WebXRSession* NODELETE session();
+    WebXRSession* LEGACY_NODELETE session();
 
 private:
     WebXRInputSource(Document&, WebXRSession&, double timestamp, const InputSource&);
@@ -100,7 +100,7 @@ private:
 #endif
 
 #if ENABLE(WEBXR_HANDS)
-    RefPtr<WebXRHand> m_hand;
+    const RefPtr<WebXRHand> m_hand;
 #endif
 
     bool m_selectStarted { false };

@@ -1,0 +1,16 @@
+# member = handedIn[someName]; member.call(handedIn)
+# The call names a member of its receiver, and the read of `call` lists Function.prototype.call. That calls its receiver, which is a value nobody knows: whatever has escaped may be the one.
+# RUN: valueflow-solve used
+# CHECK: run ArrayPrototypeSort
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = PropGet v0 key="someName" [isFreeName]
+    v3 = ElemGet v1, v2
+    v4 = PropGet v3 key="call"
+    v5 = Call v4, v3, v1 calleeKey="call"
+    Return
+}

@@ -58,9 +58,10 @@ static WebCore::IntRect screenRectOfContents(WebCore::Element* element)
 {
     ASSERT(element);
     if (element->renderer() && element->renderer()->hasLayer() && element->renderer()->enclosingLayer()->isComposited()) {
-        WebCore::FloatQuad contentsBox = static_cast<WebCore::FloatRect>(element->renderer()->enclosingLayer()->backing()->contentsBox());
-        contentsBox = element->renderer()->localToContainerQuad(contentsBox, nullptr);
-        return element->renderer()->view().frameView().contentsToScreen(contentsBox.enclosingBoundingBox());
+        // FIXME: Remove suppression once rdar://189998444 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST WebCore::FloatQuad contentsBox = static_cast<WebCore::FloatRect>(element->renderer()->enclosingLayer()->backing()->contentsBox());
+        contentsBox = protect(element->renderer())->localToContainerQuad(contentsBox, nullptr);
+        return protect(element->renderer()->view().frameView())->contentsToScreen(contentsBox.enclosingBoundingBox());
     }
     return element->screenRect();
 }
@@ -126,8 +127,6 @@ static NSRect convertRectToScreen(NSWindow *window, NSRect rect)
 
 - (void)setWebView:(WebView *)webView
 {
-    [webView retain];
-    [_webView release];
     _webView = webView;
 }
 
@@ -204,12 +203,13 @@ static NSRect convertRectToScreen(NSWindow *window, NSRect rect)
         screen = [NSScreen mainScreen];
     NSRect screenFrame = [screen frame];
 
-    NSRect webViewFrame = convertRectToScreen([_webView window], [_webView convertRect:[_webView frame] toView:nil]);
+    RetainPtr webView = _webView;
+    NSRect webViewFrame = convertRectToScreen([webView window], [webView convertRect:[webView frame] toView:nil]);
 
     // Flip coordinate system:
     webViewFrame.origin.y = NSMaxY([[[NSScreen screens] objectAtIndex:0] frame]) - NSMaxY(webViewFrame);
     
-    CGWindowID windowID = [[_webView window] windowNumber];
+    CGWindowID windowID = [[webView window] windowNumber];
     RetainPtr webViewContents = WebCore::cgWindowListCreateImage(NSRectToCGRect(webViewFrame), kCGWindowListOptionIncludingWindow, windowID, kCGWindowImageShouldBeOpaque);
 
     // Screen updates to be re-enabled in beganEnterFullScreenWithInitialFrame:finalFrame:
@@ -217,7 +217,7 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     [[self window] setAutodisplay:NO];
 ALLOW_DEPRECATED_DECLARATIONS_END
 
-    NSResponder *webWindowFirstResponder = [[_webView window] firstResponder];
+    NSResponder *webWindowFirstResponder = [[webView window] firstResponder];
     [[self window] setFrame:screenFrame display:NO];
 
     _initialFrame = screenRectOfContents(_element.get());
@@ -229,23 +229,24 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         [_webViewPlaceholder.get() setWantsLayer:YES];
     }
     [[_webViewPlaceholder.get() layer] setContents:(__bridge id)webViewContents.get()];
-    _scrollPosition = [_webView _mainCoreFrame]->view()->scrollPosition();
-    [self _swapView:_webView with:_webViewPlaceholder.get()];
+    _scrollPosition = protect(protect([webView _mainCoreFrame])->view())->scrollPosition();
+    [self _swapView:webView with:_webViewPlaceholder.get()];
     
     // Then insert the WebView into the full screen window
     NSView* contentView = [[self window] contentView];
-    [contentView addSubview:_webView positioned:NSWindowBelow relativeTo:nil];
-    [_webView setFrame:[contentView bounds]];
+    [contentView addSubview:webView positioned:NSWindowBelow relativeTo:nil];
+    [webView setFrame:[contentView bounds]];
     [[_webViewPlaceholder.get() window] recalculateKeyViewLoop];
     
-    [[self window] makeResponder:webWindowFirstResponder firstResponderIfDescendantOfView:_webView];
+    [[self window] makeResponder:webWindowFirstResponder firstResponderIfDescendantOfView:webView];
 
-    _savedScale = [_webView _viewScaleFactor];
-    [_webView _scaleWebView:1 atOrigin:NSMakePoint(0, 0)];
+    _savedScale = [webView _viewScaleFactor];
+    [webView _scaleWebView:1 atOrigin:NSMakePoint(0, 0)];
     _didEnterFullscreen = WTF::move(didEnterFullscreen);
-    willEnterFullscreen([self _manager]->willEnterFullscreen(*_element, WebCore::HTMLMediaElementEnums::VideoFullscreenModeStandard));
-    [self _manager]->setAnimatingFullscreen(true);
-    [self _document]->updateLayout();
+    RefPtr manager = [self _manager];
+    willEnterFullscreen(manager->willEnterFullscreen(*protect(_element), WebCore::HTMLMediaElementEnums::VideoFullscreenModeStandard));
+    manager->setAnimatingFullscreen(true);
+    protect([self _document].get())->updateLayout();
 
     _finalFrame = screenRectOfContents(_element.get());
     
@@ -259,7 +260,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 static void setClipRectForWindow(NSWindow *window, NSRect clipRect)
 {
     CGSWindowID windowNumber = (CGSWindowID)window.windowNumber;
-    CGSRegionObj shape;
+    // This is an out-parameter which is explicitly released below.
+    SUPPRESS_UNRETAINED_LOCAL CGSRegionObj shape;
     CGRect cgClipRect = NSRectToCGRect(clipRect);
     CGSNewRegionWithRect(&cgClipRect, &shape);
     CGSSetWindowClipShape(CGSMainConnectionID(), windowNumber, shape);
@@ -273,7 +275,7 @@ static void setClipRectForWindow(NSWindow *window, NSRect clipRect)
     _isEnteringFullScreen = NO;
     
     if (completed) {
-        [self _manager]->setAnimatingFullscreen(false);
+        protect([self _manager])->setAnimatingFullscreen(false);
         if (_didEnterFullscreen)
             _didEnterFullscreen(true);
 
@@ -303,7 +305,7 @@ static void setClipRectForWindow(NSWindow *window, NSRect clipRect)
 {
     if (!_element)
         return;
-    _element->document().fullscreen().fullyExitFullscreen();
+    protect(protect(_element->document())->fullscreen())->fullyExitFullscreen();
 }
 
 - (void)exitFullScreen:(CompletionHandler<void()>&&)completionHandler
@@ -318,8 +320,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     _finalFrame = screenRectOfContents(_element.get());
 
-    [self _manager]->willExitFullscreen();
-    [self _manager]->setAnimatingFullscreen(true);
+    RefPtr manager = [self _manager];
+    manager->willExitFullscreen();
+    manager->setAnimatingFullscreen(true);
 
     if (_isEnteringFullScreen)
         [self finishedEnterFullScreenAnimation:NO];
@@ -353,14 +356,15 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     
     [self _updateMenuAndDockForFullScreen];
 
-    [self _manager]->setAnimatingFullscreen(false);
+    protect([self _manager])->setAnimatingFullscreen(false);
     _exitCompletionHandler();
-    [_webView _scaleWebView:_savedScale atOrigin:NSMakePoint(0, 0)];
+    RetainPtr webView = _webView;
+    [webView _scaleWebView:_savedScale atOrigin:NSMakePoint(0, 0)];
 
     NSResponder *firstResponder = [[self window] firstResponder];
-    [self _swapView:_webViewPlaceholder.get() with:_webView];
-    [_webView _mainCoreFrame]->view()->setScrollPosition(_scrollPosition);
-    [[_webView window] makeResponder:firstResponder firstResponderIfDescendantOfView:_webView];
+    [self _swapView:_webViewPlaceholder.get() with:webView];
+    protect(protect([webView _mainCoreFrame])->view())->setScrollPosition(_scrollPosition);
+    [[webView window] makeResponder:firstResponder firstResponderIfDescendantOfView:webView];
     
     NSRect windowBounds = [[self window] frame];
     windowBounds.origin = NSZeroPoint;
@@ -376,7 +380,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [_backgroundWindow.get() orderOut:self];
     [_backgroundWindow.get() setFrame:NSZeroRect display:YES];
 
-    [[_webView window] makeKeyAndOrderFront:self];
+    [[webView window] makeKeyAndOrderFront:self];
 }
 
 - (void)performClose:(id)sender
@@ -445,7 +449,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (WebCore::DocumentFullscreen*)_manager
 {
-    return &_element->document().fullscreen();
+    return &protect(_element->document())->fullscreen();
 }
 
 - (void)_swapView:(NSView*)view with:(NSView*)otherView
@@ -469,7 +473,7 @@ static RetainPtr<NSWindow> createBackgroundFullscreenWindow(NSRect frame)
     return window;
 }
 
-static NSRect NODELETE windowFrameFromApparentFrames(NSRect screenFrame, NSRect initialFrame, NSRect finalFrame)
+static NSRect LEGACY_NODELETE windowFrameFromApparentFrames(NSRect screenFrame, NSRect initialFrame, NSRect finalFrame)
 {
     NSRect initialWindowFrame;
     if (!NSWidth(initialFrame) || !NSWidth(finalFrame) || !NSHeight(initialFrame) || !NSHeight(finalFrame))

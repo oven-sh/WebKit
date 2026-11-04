@@ -1,0 +1,35 @@
+# A protocol that looks a member up reads the fields, the named properties and the prototype links of an object also where it finds no code to run; on a primitive it reads nothing
+# FORM: Prepared optimizing
+# RUN: effects f0
+# RUN(TEST): check-replacement f0 v10 v5
+# RUN(RESOLUTION): check-replacement f0 v5 v8
+# RUN(RECORD): check-replacement f0 v10 v6
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="HoldsThen" fields=[{key="then" declared={type=undefined|f1} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None members=[L0] impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType] addedKeysAreComplete=true ownAccessorsAreComplete=true}
+layout L1 name="Record" fields=[{key="done" declared={type=boolean} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None members=[L1] impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType] addedKeysAreComplete=true ownAccessorsAreComplete=true}
+function f0 name="resolutions" parameters=[{type=1|L0}, {type=L1}, {type=number}] results=[{type=undefined}] {
+    v3 = NewPromise
+    v4 = Builtin builtin=Promise
+    ResolvePromise v3, v0
+    ResolvePromise v3, v1
+    ResolvePromise v3, v2
+    v8 = CallBuiltin v4, v0 overload=PromiseResolve/3
+    v9 = CallBuiltin v4, v2 overload=PromiseResolve/3
+    v10 = IsNotThenable v0
+    v11 = Undefined
+    Return v11
+}
+function f1 name="then" kind=Method parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Undefined
+    Return v1
+}
+# CHECK: v5 ResolvePromise: reads(ObjectFields, PrototypeLinks, NamedProperties, PromiseState, AllocatorState, RuntimeState) writes(PromiseState, AllocatorState, RuntimeState) collects
+# CHECK: v6 ResolvePromise: reads(ObjectFields, PrototypeLinks, NamedProperties, PromiseState, AllocatorState, RuntimeState) writes(PromiseState, AllocatorState, RuntimeState) collects
+# CHECK: v7 ResolvePromise: reads(PromiseState, AllocatorState, RuntimeState) writes(PromiseState, AllocatorState, RuntimeState) collects
+# CHECK: v8 CallBuiltin: reads(ObjectFields, PrototypeLinks, NamedProperties, PromiseState,
+# CHECK: v9 CallBuiltin: reads(PromiseState,
+# CHECK: v10 IsNotThenable: reads(ObjectFields, PrototypeLinks, NamedProperties)
+# TEST: valid
+# RESOLUTION: valid
+# RECORD: valid

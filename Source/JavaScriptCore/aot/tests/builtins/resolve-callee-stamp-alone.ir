@@ -1,0 +1,20 @@
+# A complete callees stamp alone proves nothing: the call resolves only where the type of the callee says which built-in it is
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# CHECK: outcome: Changed
+# STATISTIC: BuiltinCallsResolved = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="stampAndType" parameters=[{type=anything}, {type=Array<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
+    v3 = AssumeType v0 provenType=builtin(ArrayPrototypePush)
+    v4 = Call v3, v1, v2 callees=[builtin(ArrayPrototypePush)]
+    Return v4
+# CHECK: v4: int[0, 4294967295] = CallBuiltin v1, v2 overload=ArrayPrototypePush/0
+}
+
+function f1 name="stampAlone" parameters=[{type=anything}, {type=Array<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
+    v3 = Call v0, v1, v2 callees=[builtin(ArrayPrototypePush)]
+    Return v3
+# CHECK-NOT: CallBuiltin
+# CHECK: v3: anything = Call v0, v1, v2 callees=[builtin(ArrayPrototypePush)]
+}

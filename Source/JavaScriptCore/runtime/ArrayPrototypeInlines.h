@@ -32,6 +32,7 @@
 #include "ExceptionHelpers.h"
 #include "GetVM.h"
 #include "JSGlobalObject.h"
+#include "JSObjectInlines.h"
 #include "JSStringJoiner.h"
 #include "JSStringInlines.h"
 #include "ObjectPrototype.h"
@@ -63,7 +64,7 @@ ALWAYS_INLINE bool arraySpeciesWatchpointIsValid(VM& vm, JSObject* thisObject)
     if (!thisObject->hasCustomProperties())
         return true;
 
-    return thisObject->getDirectOffset(vm, vm.propertyNames->constructor) == invalidOffset;
+    return !thisObject->hasDirectProperty(globalObject, vm.propertyNames->constructor);
 }
 
 ALWAYS_INLINE bool arrayMissingIsConcatSpreadable(VM& vm, JSObject* thisObject)
@@ -87,7 +88,7 @@ ALWAYS_INLINE bool arrayMissingIsConcatSpreadable(VM& vm, JSObject* thisObject)
     if (!thisObject->hasCustomProperties())
         return true;
 
-    return thisObject->getDirectOffset(vm, vm.propertyNames->isConcatSpreadableSymbol) == invalidOffset;
+    return !thisObject->hasDirectProperty(globalObject, vm.propertyNames->isConcatSpreadableSymbol);
 }
 
 ALWAYS_INLINE std::pair<SpeciesConstructResult, JSObject*> speciesConstructArray(JSGlobalObject* globalObject, JSObject* thisObject, uint64_t length)
@@ -111,6 +112,10 @@ ALWAYS_INLINE std::pair<SpeciesConstructResult, JSObject*> speciesConstructArray
 
         constructor = thisObject->get(globalObject, vm.propertyNames->constructor);
         RETURN_IF_EXCEPTION(scope, exceptionResult);
+
+        if (constructor == globalObject->arrayConstructor() && globalObject->arraySpeciesWatchpointSet().state() == IsWatched)
+            return std::pair { SpeciesConstructResult::FastPath, nullptr };
+
         if (constructor.isConstructor()) {
             JSObject* constructorObject = uncheckedDowncast<JSObject>(constructor);
             bool isArrayConstructorFromAnotherRealm = globalObject != constructorObject->realm()
@@ -149,8 +154,12 @@ ALWAYS_INLINE void setLength(JSGlobalObject* globalObject, VM& vm, JSObject* obj
             throwRangeError(globalObject, scope, "Invalid array length"_s);
             return;
         }
+        JSArray* array = uncheckedDowncast<JSArray>(obj);
+        // An array with ArrayStorage or with elements frozen in place can have a read-only length, whose unchanged assignment must still throw.
+        if (!hasAnyArrayStorage(array->indexingType()) && array->length() == value && !(isCopyOnWrite(array->indexingMode()) && array->structure()->hasFrozenElementsInPlace()))
+            return;
         scope.release();
-        uncheckedDowncast<JSArray>(obj)->setLength(globalObject, static_cast<uint32_t>(value), throwException);
+        array->setLength(globalObject, static_cast<uint32_t>(value), throwException);
         return;
     }
     scope.release();
@@ -187,11 +196,8 @@ void shift(JSGlobalObject* globalObject, JSObject* thisObj, uint64_t header, uin
 
     if (isJSArray(thisObj)) {
         JSArray* array = asArray(thisObj);
-        uint32_t header32 = static_cast<uint32_t>(header);
-        ASSERT(header32 == header);
-        if (array->length() == length && array->shiftCount<shiftCountMode>(globalObject, header32, static_cast<uint32_t>(count)))
+        if (array->length() == length && array->shiftCount<shiftCountMode>(globalObject, static_cast<uint32_t>(header + resultCount), static_cast<uint32_t>(count)))
             return;
-        header = header32;
     }
 
     for (uint64_t k = header; k < length - currentCount; ++k) {
@@ -246,7 +252,7 @@ inline void unshift(JSGlobalObject* globalObject, JSObject* thisObj, uint64_t he
 
         JSArray* array = asArray(thisObj);
         if (array->length() == length) {
-            bool handled = array->unshiftCount(globalObject, static_cast<uint32_t>(header), static_cast<uint32_t>(count));
+            bool handled = array->unshiftCount(globalObject, static_cast<uint32_t>(header + currentCount), static_cast<uint32_t>(count));
             EXCEPTION_ASSERT(!scope.exception() || handled);
             if (handled)
                 return;
@@ -296,6 +302,35 @@ inline bool canUseFastArrayJoin(const JSObject* thisObject)
     return false;
 }
 
+inline JSString* repeatSeparator(JSGlobalObject* globalObject, StringView separator, unsigned count)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!count || separator.isEmpty())
+        return jsEmptyString(vm);
+    if (separator.length() == 1) {
+        if (separator.is8Bit())
+            RELEASE_AND_RETURN(scope, repeatCharacter(globalObject, separator.span8().front(), count));
+        RELEASE_AND_RETURN(scope, repeatCharacter(globalObject, separator.span16().front(), count));
+    }
+
+    JSString* result = jsEmptyString(vm);
+    JSString* operand = jsString(vm, separator);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (;;) {
+        if (count & 1) {
+            result = jsString(globalObject, result, operand);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        count >>= 1;
+        if (!count)
+            return result;
+        operand = jsString(globalObject, operand, operand);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+}
+
 // This is intentionally supporting non-JSArray as well.
 ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* thisObject, StringView separator, unsigned length, bool& sawHoles, bool& genericCase)
 {
@@ -312,8 +347,8 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
             break;
         auto data = butterfly.contiguous().data();
 
-        JSOnlyStringsAndInt32sJoiner onlyInt32sJoiner(separator);
-        if (auto joined = onlyInt32sJoiner.tryJoin<Int32Shape>(globalObject, data, length))
+        JSExactLengthJoiner exactLengthJoiner(separator);
+        if (auto joined = exactLengthJoiner.tryJoin<Int32Shape>(globalObject, data, length))
             RELEASE_AND_RETURN(scope, joined);
         RETURN_IF_EXCEPTION(scope, { });
 
@@ -344,8 +379,8 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         auto data = butterfly.contiguous().data();
         bool holesKnownToBeOK = false;
 
-        JSOnlyStringsAndInt32sJoiner onlyStringsJoiner(separator);
-        if (auto joined = onlyStringsJoiner.tryJoin<ContiguousShape>(globalObject, data, length))
+        JSExactLengthJoiner exactLengthJoiner(separator);
+        if (auto joined = exactLengthJoiner.tryJoin<ContiguousShape>(globalObject, data, length))
             RELEASE_AND_RETURN(scope, joined);
         RETURN_IF_EXCEPTION(scope, { });
 
@@ -400,36 +435,7 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
     case ALL_UNDECIDED_INDEXING_TYPES: {
         if (length && holesMustForwardToPrototype(thisObject))
             goto generalCase;
-        switch (separator.length()) {
-        case 0:
-            RELEASE_AND_RETURN(scope, jsEmptyString(vm));
-        case 1: {
-            if (length <= 1)
-                RELEASE_AND_RETURN(scope, jsEmptyString(vm));
-            if (separator.is8Bit())
-                RELEASE_AND_RETURN(scope, repeatCharacter(globalObject, separator.span8().front(), length - 1));
-            RELEASE_AND_RETURN(scope, repeatCharacter(globalObject, separator.span16().front(), length - 1));
-        default:
-            JSString* result = jsEmptyString(vm);
-            if (length <= 1)
-                return result;
-
-            JSString* operand = jsString(vm, separator);
-            RETURN_IF_EXCEPTION(scope, { });
-            unsigned count = length - 1;
-            for (;;) {
-                if (count & 1) {
-                    result = jsString(globalObject, result, operand);
-                    RETURN_IF_EXCEPTION(scope, { });
-                }
-                count >>= 1;
-                if (!count)
-                    return result;
-                operand = jsString(globalObject, operand, operand);
-                RETURN_IF_EXCEPTION(scope, { });
-            }
-        }
-        }
+        RELEASE_AND_RETURN(scope, repeatSeparator(globalObject, separator, length ? length - 1 : 0));
     }
     }
 

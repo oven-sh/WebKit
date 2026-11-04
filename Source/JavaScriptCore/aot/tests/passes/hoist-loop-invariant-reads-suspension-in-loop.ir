@@ -1,0 +1,172 @@
+# Other code runs while a function is suspended, so a suspension in the loop keeps a read of a location it may change in the header
+# FORM: Prepared
+# RUN: pass HoistLoopInvariantReads
+# STATISTIC: HoistLoopInvariantReadsChanges = 3
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="limit" declared={type=number}
+variable g1 name="storedOnce" declared={type=number} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=number}}]
+
+function f0 name="awaitInLoop" flags=[IsAsync] parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = GetModuleVariable variable=g0
+    v4 = Less v0, v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Await v1
+    Jump -> next b1()
+  b3():
+    Return v3
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: LoopHint
+# CHECK-NEXT: v3: number = GetModuleVariable variable=g0
+}
+
+function f1 name="awaitInFrontOfLoop" flags=[IsAsync] parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = Await v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = GetModuleVariable variable=g0
+    v5 = Less v0, v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v4
+# CHECK: = Await v1
+# CHECK-NEXT: v4: number = GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NOT: GetModuleVariable
+}
+
+function f2 name="awaitBehindLoop" flags=[IsAsync] parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = GetModuleVariable variable=g0
+    v4 = Less v0, v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    v5 = Await v1
+    Return v3
+# CHECK: b0(
+# CHECK-NEXT: v3: number = GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NOT: GetModuleVariable
+}
+
+function f3 name="yieldInLoop" flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=anything}] {
+    InitialYield
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = GetModuleVariable variable=g0
+    v5 = Less v1, v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Yield v4
+    Jump -> next b1()
+  b3():
+    Return v4
+# CHECK: InitialYield
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: LoopHint
+# CHECK-NEXT: v4: number = GetModuleVariable variable=g0
+}
+
+function f4 name="environmentFieldAndAwait" flags=[IsAsync] captures=[{type=env L0}] parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number, v2: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = GetEnvironmentField v0 layout=L0 field=0
+    v5 = Less v1, v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Await v2
+    Jump -> next b1()
+  b3():
+    Return v4
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: LoopHint
+# CHECK-NEXT: v4: number = GetEnvironmentField v0 layout=L0
+}
+
+function f5 name="storedOnceAndAwaitBehindRead" flags=[IsAsync] parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = GetModuleVariable variable=g1
+    v4 = Less v0, v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Await v1
+    Jump -> next b1()
+  b3():
+    Return v3
+# What is read in front of the loop would be saved and brought back at every turn.
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: LoopHint
+# CHECK-NEXT: v3: number = GetModuleVariable variable=g1
+}
+
+function f6 name="storedOnceAndAwaitBeforeRead" flags=[IsAsync] parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Await v1
+    v4 = GetModuleVariable variable=g1
+    v5 = Less v0, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: = Await v1
+# CHECK-NEXT: v4: number = GetModuleVariable variable=g1
+}
+
+function f7 name="load" role=CoroutineRamp flags=[IsAsync] parameters=[{type=number}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f7 body=f8 entryWithoutPromise=f8 promiseType=Promise<anything> promiseParameter=2} {
+    v2 = NewPromise
+    v3 = CallDirect v0, v1, v2 function=f8
+    Return v2
+}
+function f8 name="load" role=CoroutineBody parameters=[{type=number}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f7} creator=Coroutine{kind=AsyncFunction ramp=f7 body=f8 entryWithoutPromise=f8 promiseType=Promise<anything> promiseParameter=2} {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = GetModuleVariable variable=g0
+    v5 = Less v0, v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = AwaitBySavingFrame v1, v2
+    Jump -> next b1()
+  b3():
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v8 = GetModuleVariable variable=g0
+    v9 = Less v8, v0
+    Branch v9 -> taken b4(), notTaken b5()
+  b5():
+    v10 = ReturnAsyncResult v2, v8
+    Return v10
+}
+# CHECK-LABEL: function f8 name="load" module=m0 role=CoroutineBody
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: LoopHint
+# CHECK-NEXT: v4: number = GetModuleVariable variable=g0
+# CHECK: b3():
+# CHECK-NEXT: v8: number = GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NOT: GetModuleVariable

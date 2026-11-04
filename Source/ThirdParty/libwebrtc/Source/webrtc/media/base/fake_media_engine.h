@@ -48,11 +48,12 @@
 #include "api/media_types.h"
 #include "api/rtc_error.h"
 #include "api/rtp_headers.h"
+#include "api/rtp_packet_infos.h"
 #include "api/rtp_parameters.h"
 #include "api/rtp_sender_interface.h"
 #include "api/scoped_refptr.h"
 #include "api/task_queue/task_queue_base.h"
-#include "api/transport/rtp/rtp_source.h"
+#include "api/units/timestamp.h"
 #include "api/video/recordable_encoded_frame.h"
 #include "api/video/video_bitrate_allocator_factory.h"
 #include "api/video/video_sink_interface.h"
@@ -99,6 +100,7 @@ class RtpReceiveChannelHelper : public Base, public MediaChannelUtil {
         transport_overhead_per_packet_(0),
         num_network_route_changes_(0) {}
   ~RtpReceiveChannelHelper() override = default;
+  void EnableSframe() override {}
   const std::vector<RtpExtension>& recv_extensions() {
     return recv_extensions_;
   }
@@ -280,6 +282,7 @@ class RtpSendChannelHelper : public Base, public MediaChannelUtil {
         transport_overhead_per_packet_(0),
         num_network_route_changes_(0) {}
   ~RtpSendChannelHelper() override = default;
+  void EnableSframe() override {}
   const std::vector<RtpExtension>& send_extensions() {
     return send_extensions_;
   }
@@ -565,7 +568,6 @@ class FakeVoiceMediaReceiveChannel
 
   webrtc::RtcpMode RtcpMode() const { return recv_rtcp_mode_; }
   void SetRtcpMode(webrtc::RtcpMode mode) override { recv_rtcp_mode_ = mode; }
-  std::vector<RtpSource> GetSources(uint32_t ssrc) const override;
   void SetReceiveNackEnabled(bool /* enabled */) override {}
   void SetReceiveNonSenderRttEnabled(bool /* enabled */) override {}
 
@@ -724,8 +726,6 @@ class FakeVideoMediaReceiveChannel
   bool AddRecvStream(const StreamParams& sp) override;
   bool RemoveRecvStream(uint32_t ssrc) override;
 
-  std::vector<RtpSource> GetSources(uint32_t ssrc) const override;
-
   bool SetBaseMinimumPlayoutDelayMs(uint32_t ssrc, int delay_ms) override;
   std::optional<int> GetBaseMinimumPlayoutDelayMs(uint32_t ssrc) const override;
 
@@ -829,7 +829,10 @@ class FakeVoiceEngine : public VoiceEngineInterface {
       Call* call,
       const MediaConfig& config,
       const AudioOptions& options,
-      const CryptoOptions& crypto_options) override;
+      const CryptoOptions& crypto_options,
+      absl::AnyInvocable<void(uint32_t ssrc)> on_first_packet,
+      absl::AnyInvocable<void(uint32_t ssrc, const RtpPacketInfos&, Timestamp)
+                             const> on_frame_delivered_callback) override;
 
   // TODO(ossu): For proper testing, These should either individually settable
   //             or the voice engine should reference mockable factories.
@@ -957,7 +960,10 @@ class FakeVideoEngine : public VideoEngineInterface {
       const Environment& env,
       Call* call,
       const MediaConfig& config,
-      const CryptoOptions& crypto_options) override;
+      const CryptoOptions& crypto_options,
+      absl::AnyInvocable<void(uint32_t ssrc)> on_first_packet,
+      absl::AnyInvocable<void(uint32_t ssrc, const RtpPacketInfos&, Timestamp)
+                             const> on_frame_delivered_callback) override;
   FakeVideoMediaSendChannel* GetSendChannel(size_t index);
   FakeVideoMediaReceiveChannel* GetReceiveChannel(size_t index);
 

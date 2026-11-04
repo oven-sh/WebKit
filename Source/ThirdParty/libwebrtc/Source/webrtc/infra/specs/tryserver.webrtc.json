@@ -51,6 +51,28 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "dimensions": {
+            "android_devices": "1",
+            "device_os": "AP2A.240705.004",
+            "device_type": "panther",
+            "os": "Android"
+          },
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -90,6 +112,28 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "dimensions": {
+            "android_devices": "1",
+            "device_os": "AP2A.240705.004",
+            "device_type": "panther",
+            "os": "Android"
+          },
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -178,29 +222,6 @@
         },
         "test": "dcsctp_unittests",
         "test_id_prefix": "ninja://net/dcsctp:dcsctp_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "enable": true,
-          "has_native_resultdb_integration": true
-        },
-        "swarming": {
-          "dimensions": {
-            "android_devices": "1",
-            "device_os": "AP2A.240705.004",
-            "device_type": "panther",
-            "os": "Android"
-          },
-          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com",
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -385,6 +406,28 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "dimensions": {
+            "android_devices": "1",
+            "device_os": "AP2A.240705.004",
+            "device_type": "panther",
+            "os": "Android"
+          },
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "module_name": "//pc:slow_peer_connection_unittests",
         "name": "slow_peer_connection_unittests",
         "resultdb": {
@@ -540,6 +583,28 @@
         },
         "test": "video_codec_perf_tests",
         "test_id_prefix": "ninja://modules/video_coding:video_codec_perf_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "dimensions": {
+            "android_devices": "1",
+            "device_os": "AP2A.240705.004",
+            "device_type": "panther",
+            "os": "Android"
+          },
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -806,6 +871,28 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "dimensions": {
+            "android_devices": "1",
+            "device_os": "AP2A.240705.004",
+            "device_type": "panther",
+            "os": "Android"
+          },
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -845,6 +932,28 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "dimensions": {
+            "android_devices": "1",
+            "device_os": "AP2A.240705.004",
+            "device_type": "panther",
+            "os": "Android"
+          },
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -933,29 +1042,6 @@
         },
         "test": "dcsctp_unittests",
         "test_id_prefix": "ninja://net/dcsctp:dcsctp_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_gtest_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "enable": true,
-          "has_native_resultdb_integration": true
-        },
-        "swarming": {
-          "dimensions": {
-            "android_devices": "1",
-            "device_os": "AP2A.240705.004",
-            "device_type": "panther",
-            "os": "Android"
-          },
-          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com",
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -1140,6 +1226,28 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_gtest_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "dimensions": {
+            "android_devices": "1",
+            "device_os": "AP2A.240705.004",
+            "device_type": "panther",
+            "os": "Android"
+          },
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "module_name": "//pc:slow_peer_connection_unittests",
         "name": "slow_peer_connection_unittests",
         "resultdb": {
@@ -1295,6 +1403,28 @@
         },
         "test": "video_codec_perf_tests",
         "test_id_prefix": "ninja://modules/video_coding:video_codec_perf_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "dimensions": {
+            "android_devices": "1",
+            "device_os": "AP2A.240705.004",
+            "device_type": "panther",
+            "os": "Android"
+          },
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -1990,6 +2120,104 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests iPhone 14 17.5",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/mac_toolchain/${platform}",
+              "location": ".",
+              "revision": "git_revision:07e67ff89ff11ed0e3071867ed6bb49319a91b05"
+            }
+          ],
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          },
+          "named_caches": [
+            {
+              "name": "runtime_ios_17_5",
+              "path": "Runtime-ios-17.5"
+            },
+            {
+              "name": "xcode_ios_17f42",
+              "path": "Xcode.app"
+            }
+          ],
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/",
+        "variant_id": "iPhone 14 17.5"
+      },
+      {
+        "args": [
+          "--platform",
+          "iPhone 15",
+          "--version",
+          "18.2",
+          "--xcode-build-version",
+          "17f42",
+          "--out-dir",
+          "${ISOLATED_OUTDIR}",
+          "--xctest"
+        ],
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests iPhone 15 18.2",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/mac_toolchain/${platform}",
+              "location": ".",
+              "revision": "git_revision:07e67ff89ff11ed0e3071867ed6bb49319a91b05"
+            }
+          ],
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          },
+          "named_caches": [
+            {
+              "name": "runtime_ios_18_2",
+              "path": "Runtime-ios-18.2"
+            },
+            {
+              "name": "xcode_ios_17f42",
+              "path": "Xcode.app"
+            }
+          ],
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/",
+        "variant_id": "iPhone 15 18.2"
+      },
+      {
+        "args": [
+          "--platform",
+          "iPhone 14",
+          "--version",
+          "17.5",
+          "--xcode-build-version",
+          "17f42",
+          "--out-dir",
+          "${ISOLATED_OUTDIR}",
+          "--xctest"
+        ],
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests iPhone 14 17.5",
         "resultdb": {
@@ -2169,6 +2397,104 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/",
+        "variant_id": "iPhone 15 18.2"
+      },
+      {
+        "args": [
+          "--platform",
+          "iPhone 14",
+          "--version",
+          "17.5",
+          "--xcode-build-version",
+          "17f42",
+          "--out-dir",
+          "${ISOLATED_OUTDIR}",
+          "--xctest"
+        ],
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests iPhone 14 17.5",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/mac_toolchain/${platform}",
+              "location": ".",
+              "revision": "git_revision:07e67ff89ff11ed0e3071867ed6bb49319a91b05"
+            }
+          ],
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          },
+          "named_caches": [
+            {
+              "name": "runtime_ios_17_5",
+              "path": "Runtime-ios-17.5"
+            },
+            {
+              "name": "xcode_ios_17f42",
+              "path": "Xcode.app"
+            }
+          ],
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/",
+        "variant_id": "iPhone 14 17.5"
+      },
+      {
+        "args": [
+          "--platform",
+          "iPhone 15",
+          "--version",
+          "18.2",
+          "--xcode-build-version",
+          "17f42",
+          "--out-dir",
+          "${ISOLATED_OUTDIR}",
+          "--xctest"
+        ],
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests iPhone 15 18.2",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/mac_toolchain/${platform}",
+              "location": ".",
+              "revision": "git_revision:07e67ff89ff11ed0e3071867ed6bb49319a91b05"
+            }
+          ],
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          },
+          "named_caches": [
+            {
+              "name": "runtime_ios_18_2",
+              "path": "Runtime-ios-18.2"
+            },
+            {
+              "name": "xcode_ios_17f42",
+              "path": "Xcode.app"
+            }
+          ],
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/",
         "variant_id": "iPhone 15 18.2"
       },
       {
@@ -2561,106 +2887,6 @@
         },
         "test": "dcsctp_unittests",
         "test_id_prefix": "ninja://net/dcsctp:dcsctp_unittests/",
-        "variant_id": "iPhone 15 18.2"
-      },
-      {
-        "args": [
-          "--platform",
-          "iPhone 14",
-          "--version",
-          "17.5",
-          "--xcode-build-version",
-          "17f42",
-          "--out-dir",
-          "${ISOLATED_OUTDIR}",
-          "--xctest"
-        ],
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests iPhone 14 17.5",
-        "resultdb": {
-          "enable": true,
-          "has_native_resultdb_integration": true
-        },
-        "swarming": {
-          "cipd_packages": [
-            {
-              "cipd_package": "infra/tools/mac_toolchain/${platform}",
-              "location": ".",
-              "revision": "git_revision:07e67ff89ff11ed0e3071867ed6bb49319a91b05"
-            }
-          ],
-          "dimensions": {
-            "cpu": "arm64",
-            "os": "Mac-26"
-          },
-          "named_caches": [
-            {
-              "name": "runtime_ios_17_5",
-              "path": "Runtime-ios-17.5"
-            },
-            {
-              "name": "xcode_ios_17f42",
-              "path": "Xcode.app"
-            }
-          ],
-          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com",
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/",
-        "variant_id": "iPhone 14 17.5"
-      },
-      {
-        "args": [
-          "--platform",
-          "iPhone 15",
-          "--version",
-          "18.2",
-          "--xcode-build-version",
-          "17f42",
-          "--out-dir",
-          "${ISOLATED_OUTDIR}",
-          "--xctest"
-        ],
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests iPhone 15 18.2",
-        "resultdb": {
-          "enable": true,
-          "has_native_resultdb_integration": true
-        },
-        "swarming": {
-          "cipd_packages": [
-            {
-              "cipd_package": "infra/tools/mac_toolchain/${platform}",
-              "location": ".",
-              "revision": "git_revision:07e67ff89ff11ed0e3071867ed6bb49319a91b05"
-            }
-          ],
-          "dimensions": {
-            "cpu": "arm64",
-            "os": "Mac-26"
-          },
-          "named_caches": [
-            {
-              "name": "runtime_ios_18_2",
-              "path": "Runtime-ios-18.2"
-            },
-            {
-              "name": "xcode_ios_17f42",
-              "path": "Xcode.app"
-            }
-          ],
-          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com",
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/",
         "variant_id": "iPhone 15 18.2"
       },
       {
@@ -3251,6 +3477,104 @@
         },
         "test": "rtc_stats_unittests",
         "test_id_prefix": "ninja://stats:rtc_stats_unittests/",
+        "variant_id": "iPhone 15 18.2"
+      },
+      {
+        "args": [
+          "--platform",
+          "iPhone 14",
+          "--version",
+          "17.5",
+          "--xcode-build-version",
+          "17f42",
+          "--out-dir",
+          "${ISOLATED_OUTDIR}",
+          "--xctest"
+        ],
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests iPhone 14 17.5",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/mac_toolchain/${platform}",
+              "location": ".",
+              "revision": "git_revision:07e67ff89ff11ed0e3071867ed6bb49319a91b05"
+            }
+          ],
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          },
+          "named_caches": [
+            {
+              "name": "runtime_ios_17_5",
+              "path": "Runtime-ios-17.5"
+            },
+            {
+              "name": "xcode_ios_17f42",
+              "path": "Xcode.app"
+            }
+          ],
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/",
+        "variant_id": "iPhone 14 17.5"
+      },
+      {
+        "args": [
+          "--platform",
+          "iPhone 15",
+          "--version",
+          "18.2",
+          "--xcode-build-version",
+          "17f42",
+          "--out-dir",
+          "${ISOLATED_OUTDIR}",
+          "--xctest"
+        ],
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests iPhone 15 18.2",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/mac_toolchain/${platform}",
+              "location": ".",
+              "revision": "git_revision:07e67ff89ff11ed0e3071867ed6bb49319a91b05"
+            }
+          ],
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          },
+          "named_caches": [
+            {
+              "name": "runtime_ios_18_2",
+              "path": "Runtime-ios-18.2"
+            },
+            {
+              "name": "xcode_ios_17f42",
+              "path": "Xcode.app"
+            }
+          ],
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/",
         "variant_id": "iPhone 15 18.2"
       },
       {
@@ -3960,6 +4284,104 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests iPhone 14 17.5",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/mac_toolchain/${platform}",
+              "location": ".",
+              "revision": "git_revision:07e67ff89ff11ed0e3071867ed6bb49319a91b05"
+            }
+          ],
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          },
+          "named_caches": [
+            {
+              "name": "runtime_ios_17_5",
+              "path": "Runtime-ios-17.5"
+            },
+            {
+              "name": "xcode_ios_17f42",
+              "path": "Xcode.app"
+            }
+          ],
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/",
+        "variant_id": "iPhone 14 17.5"
+      },
+      {
+        "args": [
+          "--platform",
+          "iPhone 15",
+          "--version",
+          "18.2",
+          "--xcode-build-version",
+          "17f42",
+          "--out-dir",
+          "${ISOLATED_OUTDIR}",
+          "--xctest"
+        ],
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests iPhone 15 18.2",
+        "resultdb": {
+          "enable": true,
+          "has_native_resultdb_integration": true
+        },
+        "swarming": {
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/mac_toolchain/${platform}",
+              "location": ".",
+              "revision": "git_revision:07e67ff89ff11ed0e3071867ed6bb49319a91b05"
+            }
+          ],
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          },
+          "named_caches": [
+            {
+              "name": "runtime_ios_18_2",
+              "path": "Runtime-ios-18.2"
+            },
+            {
+              "name": "xcode_ios_17f42",
+              "path": "Xcode.app"
+            }
+          ],
+          "service_account": "chromium-tester@chops-service-accounts.iam.gserviceaccount.com"
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/",
+        "variant_id": "iPhone 15 18.2"
+      },
+      {
+        "args": [
+          "--platform",
+          "iPhone 14",
+          "--version",
+          "17.5",
+          "--xcode-build-version",
+          "17f42",
+          "--out-dir",
+          "${ISOLATED_OUTDIR}",
+          "--xctest"
+        ],
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//video:video_tests",
         "name": "video_tests iPhone 14 17.5",
         "resultdb": {
@@ -4348,6 +4770,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -4379,6 +4819,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -4487,25 +4945,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Ubuntu-22.04"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -4653,6 +5092,24 @@
         },
         "test": "rtc_unittests",
         "test_id_prefix": "ninja://:rtc_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
       },
       {
         "merge": {
@@ -4804,6 +5261,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//video:video_tests",
         "name": "video_tests",
         "resultdb": {
@@ -4905,6 +5380,25 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "isolate_profile_data": true,
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -4937,6 +5431,25 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "isolate_profile_data": true,
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "isolate_profile_data": true,
@@ -5051,26 +5564,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "isolate_profile_data": true,
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Ubuntu-22.04"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "isolate_profile_data": true,
@@ -5226,6 +5719,25 @@
         },
         "test": "rtc_unittests",
         "test_id_prefix": "ninja://:rtc_unittests/"
+      },
+      {
+        "isolate_profile_data": true,
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
       },
       {
         "isolate_profile_data": true,
@@ -5405,6 +5917,25 @@
         },
         "test": "video_codec_perf_tests",
         "test_id_prefix": "ninja://modules/video_coding:video_codec_perf_tests/"
+      },
+      {
+        "isolate_profile_data": true,
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "isolate_profile_data": true,
@@ -5534,6 +6065,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -5565,6 +6114,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -5673,25 +6240,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Ubuntu-22.04"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -5844,6 +6392,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//:rust_tests",
         "name": "rust_tests",
         "resultdb": {
@@ -5985,6 +6551,24 @@
         },
         "test": "video_adaptation_tests",
         "test_id_prefix": "ninja://video/adaptation:video_adaptation_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -6108,6 +6692,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -6139,6 +6741,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -6247,25 +6867,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Ubuntu-22.04"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -6413,6 +7014,24 @@
         },
         "test": "rtc_unittests",
         "test_id_prefix": "ninja://:rtc_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
       },
       {
         "merge": {
@@ -6564,6 +7183,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//video:video_tests",
         "name": "video_tests",
         "resultdb": {
@@ -6658,6 +7295,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -6689,6 +7344,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -6797,25 +7470,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Ubuntu-22.04"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -6963,6 +7617,24 @@
         },
         "test": "rtc_unittests",
         "test_id_prefix": "ninja://:rtc_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
       },
       {
         "merge": {
@@ -7133,6 +7805,24 @@
         },
         "test": "video_codec_perf_tests",
         "test_id_prefix": "ninja://modules/video_coding:video_codec_perf_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -7256,6 +7946,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -7287,6 +7995,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -7395,25 +8121,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Ubuntu-22.04"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -7566,6 +8273,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//:rust_tests",
         "name": "rust_tests",
         "resultdb": {
@@ -7707,6 +8432,24 @@
         },
         "test": "video_adaptation_tests",
         "test_id_prefix": "ninja://video/adaptation:video_adaptation_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -7806,6 +8549,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -7837,6 +8598,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -7945,25 +8724,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Ubuntu-22.04"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -8116,6 +8876,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//:rust_tests",
         "name": "rust_tests",
         "resultdb": {
@@ -8257,6 +9035,24 @@
         },
         "test": "video_adaptation_tests",
         "test_id_prefix": "ninja://video/adaptation:video_adaptation_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -8356,6 +9152,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -8387,6 +9201,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -8495,25 +9327,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Ubuntu-22.04"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -8661,6 +9474,24 @@
         },
         "test": "rtc_unittests",
         "test_id_prefix": "ninja://:rtc_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
       },
       {
         "merge": {
@@ -8812,6 +9643,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//video:video_tests",
         "name": "video_tests",
         "resultdb": {
@@ -8906,6 +9755,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -8937,6 +9804,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -9045,25 +9930,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Ubuntu-22.04"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -9216,6 +10082,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//:rust_tests",
         "name": "rust_tests",
         "resultdb": {
@@ -9339,6 +10223,24 @@
         },
         "test": "video_adaptation_tests",
         "test_id_prefix": "ninja://video/adaptation:video_adaptation_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -9438,6 +10340,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -9469,6 +10389,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -9577,25 +10515,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Ubuntu-22.04"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -9748,6 +10667,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//:rust_tests",
         "name": "rust_tests",
         "resultdb": {
@@ -9876,6 +10813,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Ubuntu-22.04"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//video:video_tests",
         "name": "video_tests",
         "resultdb": {
@@ -9970,6 +10925,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -10001,6 +10974,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -10132,25 +11123,6 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "arm64",
-            "os": "Mac-26"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
         "module_name": "//modules:modules_unittests",
         "name": "modules_unittests",
         "resultdb": {
@@ -10298,6 +11270,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//:rust_tests",
         "name": "rust_tests",
         "resultdb": {
@@ -10421,6 +11411,24 @@
         },
         "test": "video_adaptation_tests",
         "test_id_prefix": "ninja://video/adaptation:video_adaptation_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -10522,6 +11530,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -10553,6 +11579,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -10679,25 +11723,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "arm64",
-            "os": "Mac-26"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -10850,6 +11875,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//:rust_tests",
         "name": "rust_tests",
         "resultdb": {
@@ -10973,6 +12016,24 @@
         },
         "test": "video_adaptation_tests",
         "test_id_prefix": "ninja://video/adaptation:video_adaptation_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -11072,6 +12133,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64-64-Apple_M1",
+            "os": "Mac-26"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -11103,6 +12182,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64-64-Apple_M1",
+            "os": "Mac-26"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -11229,25 +12326,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "arm64-64-Apple_M1",
-            "os": "Mac-26"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -11395,6 +12473,24 @@
         },
         "test": "rtc_unittests",
         "test_id_prefix": "ninja://:rtc_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64-64-Apple_M1",
+            "os": "Mac-26"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
       },
       {
         "merge": {
@@ -11528,6 +12624,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64-64-Apple_M1",
+            "os": "Mac-26"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//video:video_tests",
         "name": "video_tests",
         "resultdb": {
@@ -11622,6 +12736,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -11653,6 +12785,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -11779,25 +12929,6 @@
         },
         "test": "desktop_capture_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "arm64",
-            "os": "Mac-26"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -11945,6 +13076,24 @@
         },
         "test": "rtc_unittests",
         "test_id_prefix": "ninja://:rtc_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
       },
       {
         "merge": {
@@ -12097,6 +13246,24 @@
         },
         "test": "video_codec_perf_tests",
         "test_id_prefix": "ninja://modules/video_coding:video_codec_perf_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64",
+            "os": "Mac-26"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -12220,6 +13387,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64-64-Apple_M1",
+            "os": "Mac-26"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -12251,6 +13436,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64-64-Apple_M1",
+            "os": "Mac-26"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -12382,25 +13585,6 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "arm64-64-Apple_M1",
-            "os": "Mac-26"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
         "module_name": "//modules:modules_unittests",
         "name": "modules_unittests",
         "resultdb": {
@@ -12548,6 +13732,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64-64-Apple_M1",
+            "os": "Mac-26"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//:rust_tests",
         "name": "rust_tests",
         "resultdb": {
@@ -12671,6 +13873,24 @@
         },
         "test": "video_adaptation_tests",
         "test_id_prefix": "ninja://video/adaptation:video_adaptation_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "arm64-64-Apple_M1",
+            "os": "Mac-26"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -12770,6 +13990,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-11-22000"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -12801,6 +14039,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-11-22000"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -12927,25 +14183,6 @@
         },
         "test": "desktop_capture_win_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_win_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Windows-11-22000"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -13093,6 +14330,24 @@
         },
         "test": "rtc_unittests",
         "test_id_prefix": "ninja://:rtc_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-11-22000"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
       },
       {
         "merge": {
@@ -13226,6 +14481,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-11-22000"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//video:video_tests",
         "name": "video_tests",
         "resultdb": {
@@ -13320,6 +14593,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-11-22000"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -13351,6 +14642,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-11-22000"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -13477,25 +14786,6 @@
         },
         "test": "desktop_capture_win_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_win_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Windows-11-22000"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -13643,6 +14933,24 @@
         },
         "test": "rtc_unittests",
         "test_id_prefix": "ninja://:rtc_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-11-22000"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
       },
       {
         "merge": {
@@ -13795,6 +15103,24 @@
         },
         "test": "video_codec_perf_tests",
         "test_id_prefix": "ninja://modules/video_coding:video_codec_perf_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-11-22000"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -13918,6 +15244,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -13949,6 +15293,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -14075,25 +15437,6 @@
         },
         "test": "desktop_capture_win_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_win_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Windows-10-19045"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -14246,6 +15589,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//:rust_tests",
         "name": "rust_tests",
         "resultdb": {
@@ -14369,6 +15730,24 @@
         },
         "test": "video_adaptation_tests",
         "test_id_prefix": "ninja://video/adaptation:video_adaptation_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -14472,6 +15851,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -14503,6 +15900,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -14629,25 +16044,6 @@
         },
         "test": "desktop_capture_win_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_win_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Windows-10-19045"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -14800,6 +16196,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//:rust_tests",
         "name": "rust_tests",
         "resultdb": {
@@ -14923,6 +16337,24 @@
         },
         "test": "video_adaptation_tests",
         "test_id_prefix": "ninja://video/adaptation:video_adaptation_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -15022,6 +16454,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -15053,6 +16503,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -15179,25 +16647,6 @@
         },
         "test": "desktop_capture_win_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_win_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Windows-10-19045"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -15350,6 +16799,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//:rust_tests",
         "name": "rust_tests",
         "resultdb": {
@@ -15473,6 +16940,24 @@
         },
         "test": "video_adaptation_tests",
         "test_id_prefix": "ninja://video/adaptation:video_adaptation_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {
@@ -15572,6 +17057,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -15603,6 +17106,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -15729,25 +17250,6 @@
         },
         "test": "desktop_capture_win_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_win_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Windows-10-19045"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -15895,6 +17397,24 @@
         },
         "test": "rtc_unittests",
         "test_id_prefix": "ninja://:rtc_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
       },
       {
         "merge": {
@@ -16028,6 +17548,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//video:video_tests",
         "name": "video_tests",
         "resultdb": {
@@ -16122,6 +17660,24 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//modules/audio_coding:audio_coding_unittests",
+        "name": "audio_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "audio_coding_unittests",
+        "test_id_prefix": "ninja://modules/audio_coding:audio_coding_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
         "module_name": "//modules/audio_coding:audio_decoder_unittests",
         "name": "audio_decoder_unittests",
         "resultdb": {
@@ -16153,6 +17709,24 @@
         },
         "test": "audio_engine_tests",
         "test_id_prefix": "ninja://:audio_engine_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/audio_processing:audio_processing_unittests",
+        "name": "audio_processing_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "audio_processing_unittests",
+        "test_id_prefix": "ninja://modules/audio_processing:audio_processing_unittests/"
       },
       {
         "merge": {
@@ -16279,25 +17853,6 @@
         },
         "test": "desktop_capture_win_unittests",
         "test_id_prefix": "ninja://modules/desktop_capture:desktop_capture_win_unittests/"
-      },
-      {
-        "merge": {
-          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
-        },
-        "module_name": "//modules:modules_tests",
-        "name": "modules_tests",
-        "resultdb": {
-          "result_format": "json"
-        },
-        "swarming": {
-          "dimensions": {
-            "cpu": "x86-64",
-            "os": "Windows-10-19045"
-          },
-          "shards": 2
-        },
-        "test": "modules_tests",
-        "test_id_prefix": "ninja://modules:modules_tests/"
       },
       {
         "merge": {
@@ -16445,6 +18000,24 @@
         },
         "test": "rtc_unittests",
         "test_id_prefix": "ninja://:rtc_unittests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/rtp_rtcp:rtp_rtcp_unittests",
+        "name": "rtp_rtcp_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "rtp_rtcp_unittests",
+        "test_id_prefix": "ninja://modules/rtp_rtcp:rtp_rtcp_unittests/"
       },
       {
         "merge": {
@@ -16597,6 +18170,24 @@
         },
         "test": "video_codec_perf_tests",
         "test_id_prefix": "ninja://modules/video_coding:video_codec_perf_tests/"
+      },
+      {
+        "merge": {
+          "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
+        },
+        "module_name": "//modules/video_coding:video_coding_unittests",
+        "name": "video_coding_unittests",
+        "resultdb": {
+          "result_format": "json"
+        },
+        "swarming": {
+          "dimensions": {
+            "cpu": "x86-64",
+            "os": "Windows-10-19045"
+          }
+        },
+        "test": "video_coding_unittests",
+        "test_id_prefix": "ninja://modules/video_coding:video_coding_unittests/"
       },
       {
         "merge": {

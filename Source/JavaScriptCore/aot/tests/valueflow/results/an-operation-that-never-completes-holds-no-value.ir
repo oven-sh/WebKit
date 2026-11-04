@@ -1,0 +1,56 @@
+# function fail() { throw 1 }  class Made {}
+# fail()  undefined()  null.name  Made()  new (() => {})  and, behind a call that never comes back: const pair = { left: fail() }; take(pair.left)
+# Each of these has values for all its operands and none for its result, and each has its reason: what is called never comes back, is no function, or refuses to be called that way, and null has no properties.
+# The read of `left` finds nothing that was stored, but control never gets there.
+# FORM: AsRead
+# RUN: pipeline AnalyzeFlow
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pair" fields=[{key="left" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = Call v1, -, v0
+    v7 = Call v2
+    v8 = Call v3
+    v9 = Call v4
+    v10 = Call v5, -, v0
+    Return
+}
+function f1 name="fail" results=[{type=anything}] {
+    v0 = Integer integer=1
+    Throw v0
+}
+function f2 name="callsWhatNeverComesBack" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+function f3 name="callsWhatIsNoFunction" results=[{type=anything}] {
+    v0 = Undefined
+    v1 = Call v0
+    Return v1
+}
+function f4 name="readsFromNull" results=[{type=anything}] {
+    v0 = Null
+    v1 = PropGet v0 key="name"
+    Return v1
+}
+function f5 name="constructsAnArrowFunction" results=[{type=anything}] {
+    v0 = NewClosure function=f7
+    v1 = Construct v0, v0
+    Return v1
+}
+function f6 name="readsBehindACallThatNeverComesBack" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = PropGet v2 key="left"
+    Return v3
+}
+function f7 name="arrow" kind=Arrow results=[{type=anything}] {
+    Return
+}

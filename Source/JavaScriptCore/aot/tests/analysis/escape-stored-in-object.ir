@@ -1,0 +1,115 @@
+# Contents escape when their container escapes, even if it escapes after the store
+# FORM: Prepared
+# RUN: analyses escape
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1 name="Empty"
+layout L2 name="Holder" fields=[{key="inner" declared={type=anything}}]
+function f0 name="containerStaysLocal" results=[{type=undefined}] {
+    v0 = NewObject layout=L1 fields=[]
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    Return
+}
+function f1 name="containerEscapesLater" results=[{type=function}] {
+    v0 = Undefined
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = NewClosure v1 function=f3
+    v3 = NewObject layout=L1 fields=[]
+    PutEnvironmentField v1, v3 layout=L0 field=0
+    Jump -> next b1()
+  b1():
+    Return v2
+}
+function f2 name="oneFieldReadBack" results=[{type=anything}] {
+    v0 = NewObject layout=L1 fields=[]
+    v1 = NewObject layout=L1 fields=[]
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = GetEnvironmentField v2 layout=L0 field=0
+    Return v3
+}
+function f3 name="capturing" kind=Arrow captures=[{type=env L0}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    Return
+}
+# CHECK: function f0
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 2
+# CHECK-NEXT: o0 definition: v0
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: DoesNotEscape
+# CHECK-NEXT: o0 reasons: []
+# CHECK-NEXT: o0 first escape: none
+# CHECK-NEXT: o0 uses: [Retains]
+# CHECK-NEXT: o0 live instances: AtMostOne
+# CHECK-NEXT: o0 aliases: [v0]
+# CHECK-NEXT: o0 object uses: [v1(1)]
+# CHECK-NEXT: o0 escaping uses: []
+# CHECK-NEXT: o0 contents: []
+# CHECK-NEXT: o0 containers: [o1]
+# CHECK-NEXT: o1 definition: v1
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: DoesNotEscape
+# CHECK-NEXT: o1 reasons: []
+# CHECK-NEXT: o1 first escape: none
+# CHECK-NEXT: o1 uses: []
+# CHECK: o1 contents: [o0]
+# CHECK-NEXT: o1 containers: []
+# CHECK: function f1
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 3
+# CHECK-NEXT: o0 definition: v1
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: Escapes
+# CHECK-NEXT: o0 reasons: [StoredInEscapingObject]
+# CHECK-NEXT: o0 first escape: v2(0)
+# CHECK-NEXT: o0 uses: [Inspects Retains]
+# CHECK: o0 object uses: [v2(0) v4(0)]
+# CHECK-NEXT: o0 escaping uses: [v2(0)]
+# CHECK-NEXT: o0 contents: [o2]
+# CHECK-NEXT: o0 containers: [o1]
+# CHECK-NEXT: o1 definition: v2
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: Escapes
+# CHECK-NEXT: o1 reasons: [Returned]
+# CHECK-NEXT: o1 first escape: b1.terminator(0)
+# CHECK: o1 contents: [o0]
+# CHECK-NEXT: o1 containers: []
+# CHECK-NEXT: o2 definition: v3
+# CHECK-NEXT: o2 kind: Allocation
+# CHECK-NEXT: o2 state: Escapes
+# CHECK-NEXT: o2 reasons: [StoredInEscapingObject]
+# CHECK-NEXT: o2 first escape: v4(1)
+# CHECK: o2 escaping uses: [v4(1)]
+# CHECK-NEXT: o2 contents: []
+# CHECK-NEXT: o2 containers: [o0]
+# CHECK: function f2
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 3
+# CHECK-NEXT: o0 definition: v0
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: Escapes
+# CHECK-NEXT: o0 reasons: [Returned]
+# CHECK-NEXT: o0 first escape: b0.terminator(0)
+# CHECK: o0 aliases: [v0 v3]
+# CHECK-NEXT: o0 object uses: [v2(1) b0.terminator(0)]
+# CHECK-NEXT: o0 escaping uses: [b0.terminator(0)]
+# CHECK-NEXT: o0 contents: []
+# CHECK-NEXT: o0 containers: [o2]
+# CHECK-NEXT: o1 definition: v1
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: DoesNotEscape
+# CHECK-NEXT: o1 reasons: []
+# CHECK-NEXT: o1 first escape: none
+# CHECK: o1 containers: [o2]
+# CHECK-NEXT: o2 definition: v2
+# CHECK-NEXT: o2 kind: Allocation
+# CHECK-NEXT: o2 state: DoesNotEscape
+# CHECK-NEXT: o2 reasons: []
+# CHECK-NEXT: o2 first escape: none
+# CHECK: o2 object uses: [v3(0)]
+# CHECK-NEXT: o2 escaping uses: []
+# CHECK-NEXT: o2 contents: [o0 o1]
+# CHECK-NEXT: o2 containers: []
+# CHECK: v3 points to: [o0]
+# CHECK-NEXT: v3 may be untracked: yes

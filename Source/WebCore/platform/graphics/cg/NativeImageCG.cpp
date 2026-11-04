@@ -46,6 +46,10 @@
 
 #include "CoreVideoSoftLink.h"
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/ImageInversionClassifier.h>
+#endif
+
 namespace WebCore {
 
 RefPtr<NativeImage> NativeImage::create(PlatformImagePtr&& image, std::optional<GainMap>&& gainMap)
@@ -187,12 +191,12 @@ RefPtr<NativeImage> NativeImage::create(RetainPtr<CVPixelBufferRef> pixelBuffer,
     return NativeImage::create(WTF::move(image));
 }
 
-static CGImageAlphaInfo alphaInfoForAlphaLast(bool isPremultiplied)
+static CGImageAlphaInfo LEGACY_NODELETE alphaInfoForAlphaLast(bool isPremultiplied)
 {
     return isPremultiplied ? kCGImageAlphaPremultipliedLast : kCGImageAlphaLast;
 }
 
-static CGImageAlphaInfo alphaInfoForAlphaFirst(bool isPremultiplied)
+static CGImageAlphaInfo LEGACY_NODELETE alphaInfoForAlphaFirst(bool isPremultiplied)
 {
     return isPremultiplied ? kCGImageAlphaPremultipliedFirst : kCGImageAlphaFirst;
 }
@@ -284,6 +288,53 @@ size_t NativeImage::sizeInBytes() const
         sizeInBytes += CVPixelBufferGetDataSize(m_gainMap->gainMapPixelBuffer);
     return sizeInBytes;
 }
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+ImagePaintTimeTransformation NativeImage::paintTimeTransformation(std::optional<FloatRect> sourceRect) const
+{
+    static constexpr unsigned maximumSubimagePaintTimeTransformations = 64;
+
+    std::optional<IntRect> subimageRect;
+    RetainPtr<CGImageRef> image;
+    {
+        Locker locker { m_lock };
+        if (sourceRect) {
+            IntRect imageRect { { }, IntSize(CGImageGetWidth(m_platformImage.get()), CGImageGetHeight(m_platformImage.get())) };
+            auto rect = intersection(enclosingIntRect(*sourceRect), imageRect);
+            if (rect.isEmpty())
+                return ImagePaintTimeTransformation::Unchanged;
+            if (rect != imageRect)
+                subimageRect = rect;
+        }
+
+        if (!subimageRect) {
+            if (m_paintTimeTransformation)
+                return *m_paintTimeTransformation;
+        } else {
+            auto iterator = m_subimagePaintTimeTransformations.find(*subimageRect);
+            if (iterator != m_subimagePaintTimeTransformations.end())
+                return iterator->value;
+        }
+
+        image = m_platformImage;
+    }
+
+    // Classify without holding the lock; a racing duplicate classification yields the same result.
+    auto paintTimeTransformation = [&] -> ImagePaintTimeTransformation {
+        if (!subimageRect)
+            return ImageInversionClassifier::classify(image.get());
+        RetainPtr subimage = adoptCF(CGImageCreateWithImageInRect(image.get(), *subimageRect));
+        return subimage ? ImageInversionClassifier::classify(subimage.get()) : ImagePaintTimeTransformation::Unchanged;
+    }();
+
+    Locker locker { m_lock };
+    if (!subimageRect)
+        m_paintTimeTransformation = paintTimeTransformation;
+    else if (m_subimagePaintTimeTransformations.size() < maximumSubimagePaintTimeTransformations)
+        m_subimagePaintTimeTransformations.add(*subimageRect, paintTimeTransformation);
+    return paintTimeTransformation;
+}
+#endif
 
 ColorSpace NativeImage::colorSpace() const
 {

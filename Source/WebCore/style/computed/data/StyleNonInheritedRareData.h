@@ -83,7 +83,6 @@
 #include <WebCore/StyleViewTransitionName.h>
 #include <WebCore/StyleWebKitBoxReflect.h>
 #include <WebCore/StyleWebKitInitialLetter.h>
-#include <WebCore/StyleWebKitLineClamp.h>
 #include <WebCore/StyleWhiteSpaceTrim.h>
 #include <WebCore/StyleWillChange.h>
 #include <WebCore/StyleZoom.h>
@@ -129,7 +128,6 @@ public:
     Zoom zoom;
 
     WebkitInitialLetter initialLetter;
-    WebkitLineClamp lineClamp;
     MaximumLines maxLines;
 
     DataRef<MarqueeData> marquee;
@@ -215,6 +213,10 @@ public:
     PositionTryFallbacks positionTryFallbacks;
     std::optional<size_t> usedPositionOptionIndex;
 
+    std::optional<BlendMode> overrideBlendMode;
+    // If set, this overrides the background color in NonInheritedData::backgroundData
+    Markable<Color> overrideBackgroundColor;
+
     BlockStepSize blockStepSize;
 
     PREFERRED_TYPE(BlockStepAlign) unsigned blockStepAlign : 2;
@@ -238,7 +240,7 @@ public:
     PREFERRED_TYPE(bool) unsigned transformStyleForcedToFlat : 1; // The used value for transform-style is forced to flat by a grouping property.
     PREFERRED_TYPE(BackfaceVisibility) unsigned backfaceVisibility : 1;
 
-    PREFERRED_TYPE(BlendMode) unsigned effectiveBlendMode: 5;
+    PREFERRED_TYPE(BlendMode) unsigned blendMode: 5;
 
     PREFERRED_TYPE(TextDecorationStyle) unsigned textDecorationStyle : 3;
     PREFERRED_TYPE(TextGroupAlign) unsigned textGroupAlign : 3;
@@ -272,7 +274,7 @@ public:
     PREFERRED_TYPE(EnumSet<BoxAxis>) unsigned anchorFunctionScrollCompensatedAxes : 2;
     PREFERRED_TYPE(bool) unsigned isPopoverInvoker : 1;
 
-    PREFERRED_TYPE(bool) unsigned useSVGZoomRulesForLength : 1;
+    PREFERRED_TYPE(ScrollAxisLock) unsigned scrollAxisLock : 1;
 
 private:
     NonInheritedRareData();

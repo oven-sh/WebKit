@@ -54,7 +54,7 @@ inline Vector<Ref<AXCoreObject>> AXObjectCache::objectsForIDs(const U& axIDs) co
 
     CheckedPtr cache = this;
     return WTF::compactMap(axIDs, [cache](auto& axID) -> std::optional<Ref<AXCoreObject>> {
-        if (auto* object = cache->objectForID(axID))
+        if (RefPtr object = cache->objectForID(axID))
             return Ref { *object };
         return std::nullopt;
     });

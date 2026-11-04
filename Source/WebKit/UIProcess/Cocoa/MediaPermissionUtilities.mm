@@ -113,9 +113,9 @@ RetainPtr<NSString> applicationVisibleNameFromOrigin(const WebCore::SecurityOrig
 RetainPtr<NSString> applicationVisibleName()
 {
     RetainPtr appBundle = [NSBundle mainBundle];
-    if (RetainPtr<NSString> displayName = appBundle.get().infoDictionary[bridge_cast(_kCFBundleDisplayNameKey)])
+    if (RetainPtr displayName = dynamic_objc_cast<NSString>(appBundle.get().infoDictionary[bridge_cast(_kCFBundleDisplayNameKey)]))
         return displayName;
-    return appBundle.get().infoDictionary[bridge_cast(kCFBundleNameKey)];
+    return dynamic_objc_cast<NSString>(appBundle.get().infoDictionary[bridge_cast(kCFBundleNameKey)]);
 }
 
 static RetainPtr<NSString> alertMessageText(MediaPermissionReason reason, const WebCore::SecurityOriginData& origin)
@@ -178,56 +178,122 @@ static RetainPtr<NSString> doNotAllowButtonText(MediaPermissionReason reason)
     }
 }
 
-void alertForPermission(WebPageProxy& page, MediaPermissionReason reason, const WebCore::SecurityOriginData& origin, CompletionHandler<void(bool)>&& completionHandler)
+#if PLATFORM(MAC)
+static MediaPermissionPromptResult promptResultForAlertResponse(NSModalResponse returnCode, const Vector<MediaPermissionPromptAdditionalAction>& additionalActions)
+{
+    if (returnCode == NSAlertFirstButtonReturn)
+        return { .granted = true, .wasAnswered = true };
+    if (returnCode == NSAlertSecondButtonReturn)
+        return { .granted = false, .wasAnswered = true };
+
+    // Return NSAlertFirstButtonReturn and NSAlertSecondButtonReturn for the two built-in buttons,
+    // NSAlertThirdButtonReturn... for custom buttons
+    size_t index = returnCode - NSAlertThirdButtonReturn;
+    if (index >= additionalActions.size()) {
+        ASSERT_NOT_REACHED();
+        return { };
+    }
+
+    return {
+        .granted = additionalActions[index].decision == MediaPermissionPromptAdditionalAction::Decision::Allow,
+        .wasAnswered = true,
+        .chosenAction = additionalActions[index].source,
+    };
+}
+#endif
+
+static RetainPtr<NSString> promptMessageText(const PermissionPromptRequest& request)
+{
+    if (!request.customization.messageText.isNull())
+        return request.customization.messageText.createNSString();
+    return alertMessageText(request.reason, request.origin);
+}
+
+static RetainPtr<NSString> promptAllowButtonText(const PermissionPromptRequest& request)
+{
+    if (!request.customization.allowButtonTitle.isNull())
+        return request.customization.allowButtonTitle.createNSString();
+    return allowButtonText(request.reason);
+}
+
+static RetainPtr<NSString> promptDenyButtonText(const PermissionPromptRequest& request)
+{
+    if (!request.customization.denyButtonTitle.isNull())
+        return request.customization.denyButtonTitle.createNSString();
+    return doNotAllowButtonText(request.reason);
+}
+
+static RetainPtr<NSString> promptInformativeText(const PermissionPromptRequest& request)
+{
+    if (request.customization.informativeText.isNull())
+        return nil;
+    return request.customization.informativeText.createNSString();
+}
+
+void alertForPermission(WebPageProxy& page, PermissionPromptRequest&& request, CompletionHandler<void(MediaPermissionPromptResult&&)>&& completionHandler)
 {
     ASSERT(isMainRunLoop());
 
 #if PLATFORM(IOS_FAMILY)
-    if (reason == MediaPermissionReason::DeviceOrientation) {
+    if (request.reason == MediaPermissionReason::DeviceOrientation) {
         if (auto& userPermissionHandler = page.deviceOrientationUserPermissionHandlerForTesting())
-            return completionHandler(userPermissionHandler());
+            return completionHandler({ .granted = userPermissionHandler() });
     }
 #endif
 
-    auto webView = page.cocoaView();
-    if (!webView) {
-        completionHandler(false);
-        return;
-    }
-    
-    RetainPtr alertTitle = alertMessageText(reason, origin);
-    if (!alertTitle) {
-        completionHandler(false);
-        return;
-    }
+    RetainPtr webView = page.cocoaView();
+    if (!webView)
+        return completionHandler({ });
 
-    RetainPtr allowButtonString = allowButtonText(reason);
-    RetainPtr doNotAllowButtonString = doNotAllowButtonText(reason);
+    RetainPtr alertTitle = promptMessageText(request);
+    if (!alertTitle)
+        return completionHandler({ });
+
+    RetainPtr allowButtonString = promptAllowButtonText(request);
+    RetainPtr doNotAllowButtonString = promptDenyButtonText(request);
     auto completionBlock = makeBlockPtr(WTF::move(completionHandler));
 
 #if PLATFORM(MAC)
-    auto alert = adoptNS([NSAlert new]);
+    RetainPtr alert = adoptNS([NSAlert new]);
     [alert setMessageText:alertTitle.get()];
+    if (RetainPtr informativeText = promptInformativeText(request))
+        [alert setInformativeText:informativeText.get()];
     RetainPtr button = [alert addButtonWithTitle:allowButtonString.get()];
-    button.get().keyEquivalent = @"";
+    [button setKeyEquivalent:@""];
+    // Tags keep the responses promptResultForAlertResponse expects, which would otherwise follow position.
+    for (size_t index = 0; index < request.customization.additionalActions.size(); ++index) {
+        button = [alert addButtonWithTitle:request.customization.additionalActions[index].title.createNSString().get()];
+        // Cleared so AppKit does not hand Return to a button the application supplied.
+        [button setKeyEquivalent:@""];
+        [button setTag:NSAlertThirdButtonReturn + index];
+    }
     button = [alert addButtonWithTitle:doNotAllowButtonString.get()];
-    button.get().keyEquivalent = @"\E";
-    [alert beginSheetModalForWindow:retainPtr([webView window]).get() completionHandler:[completionBlock](NSModalResponse returnCode) {
-        auto shouldAllow = returnCode == NSAlertFirstButtonReturn;
-        completionBlock(shouldAllow);
+    [button setKeyEquivalent:@"\E"];
+    [button setTag:NSAlertSecondButtonReturn];
+
+    [alert beginSheetModalForWindow:retainPtr([webView window]).get() completionHandler:[completionBlock, additionalActions = WTF::move(request.customization.additionalActions)](NSModalResponse returnCode) {
+        completionBlock(promptResultForAlertResponse(returnCode, additionalActions));
     }];
 #else
-    auto alert = WebKit::createUIAlertController(alertTitle.get(), nil);
-    RetainPtr allowAction = [UIAlertAction actionWithTitle:allowButtonString.get() style:UIAlertActionStyleDefault handler:[completionBlock](UIAlertAction *action) {
-        completionBlock(true);
+    RetainPtr alert = WebKit::createUIAlertController(alertTitle.get(), promptInformativeText(request).get());
+    RetainPtr allowAction = [UIAlertAction actionWithTitle:allowButtonString.get() style:UIAlertActionStyleDefault handler:[completionBlock](UIAlertAction *) {
+        completionBlock({ .granted = true, .wasAnswered = true });
     }];
 
-    RetainPtr doNotAllowAction = [UIAlertAction actionWithTitle:doNotAllowButtonString.get() style:UIAlertActionStyleCancel handler:[completionBlock](UIAlertAction *action) {
-        completionBlock(false);
+    RetainPtr doNotAllowAction = [UIAlertAction actionWithTitle:doNotAllowButtonString.get() style:UIAlertActionStyleCancel handler:[completionBlock](UIAlertAction *) {
+        completionBlock({ .granted = false, .wasAnswered = true });
     }];
+
+    [alert addAction:allowAction.get()];
+
+    for (auto& action : request.customization.additionalActions) {
+        bool granted = action.decision == MediaPermissionPromptAdditionalAction::Decision::Allow;
+        [alert addAction:[UIAlertAction actionWithTitle:action.title.createNSString().get() style:UIAlertActionStyleDefault handler:[completionBlock, source = action.source, granted](UIAlertAction *) {
+            completionBlock({ .granted = granted, .wasAnswered = true, .chosenAction = source });
+        }]];
+    }
 
     [alert addAction:doNotAllowAction.get()];
-    [alert addAction:allowAction.get()];
 
 #if PLATFORM(VISION)
     page.dispatchWillPresentModalUI();
@@ -235,6 +301,72 @@ void alertForPermission(WebPageProxy& page, MediaPermissionReason reason, const 
     [[webView _wk_viewControllerForFullScreenPresentation] presentViewController:alert.get() animated:YES completion:nil];
 #endif
 }
+
+void alertForPermission(WebPageProxy& page, MediaPermissionReason reason, const WebCore::SecurityOriginData& origin, CompletionHandler<void(bool)>&& completionHandler)
+{
+    alertForPermission(page, { .reason = reason, .origin = origin }, [completionHandler = WTF::move(completionHandler)](MediaPermissionPromptResult&& result) mutable {
+        completionHandler(result.granted);
+    });
+}
+
+#if ENABLE(MEDIA_STREAM)
+
+Ref<MediaPermissionPromptForTesting> MediaPermissionPromptForTesting::create(String&& title, String&& informativeText, Vector<String>&& buttonTitles, Vector<MediaPermissionPromptAdditionalAction>&& additionalActions, CompletionHandler<void(MediaPermissionPromptResult&&)>&& completionHandler)
+{
+    return adoptRef(*new MediaPermissionPromptForTesting(WTF::move(title), WTF::move(informativeText), WTF::move(buttonTitles), WTF::move(additionalActions), WTF::move(completionHandler)));
+}
+
+MediaPermissionPromptForTesting::MediaPermissionPromptForTesting(String&& title, String&& informativeText, Vector<String>&& buttonTitles, Vector<MediaPermissionPromptAdditionalAction>&& additionalActions, CompletionHandler<void(MediaPermissionPromptResult&&)>&& completionHandler)
+    : m_title(WTF::move(title))
+    , m_informativeText(WTF::move(informativeText))
+    , m_buttonTitles(WTF::move(buttonTitles))
+    , m_additionalActions(WTF::move(additionalActions))
+    , m_completionHandler(WTF::move(completionHandler))
+{
+}
+
+MediaPermissionPromptForTesting::~MediaPermissionPromptForTesting()
+{
+    respond(std::nullopt);
+}
+
+void MediaPermissionPromptForTesting::respond(std::optional<size_t> buttonIndex)
+{
+    ASSERT(!buttonIndex || *buttonIndex < m_buttonTitles.size());
+    auto completionHandler = std::exchange(m_completionHandler, nullptr);
+    if (!completionHandler)
+        return;
+
+    MediaPermissionPromptResult result;
+    if (auto index = buttonIndex) {
+        result.wasAnswered = true;
+        if (!*index)
+            result.granted = true;
+        else if (*index <= m_additionalActions.size()) {
+            result.chosenAction = m_additionalActions[*index - 1].source;
+            result.granted = m_additionalActions[*index - 1].decision == MediaPermissionPromptAdditionalAction::Decision::Allow;
+        }
+    }
+    completionHandler(WTF::move(result));
+}
+
+MediaPermissionPromptDismisser alertForPermissionForTesting(WebPageProxy& page, PermissionPromptRequest&& request, CompletionHandler<void(MediaPermissionPromptResult&&)>&& completionHandler)
+{
+    Vector<String> buttonTitles;
+    buttonTitles.append(promptAllowButtonText(request).get());
+    for (auto& action : request.customization.additionalActions)
+        buttonTitles.append(action.title);
+    buttonTitles.append(promptDenyButtonText(request).get());
+
+    Ref prompt = MediaPermissionPromptForTesting::create(promptMessageText(request).get(), promptInformativeText(request).get(), WTF::move(buttonTitles), WTF::move(request.customization.additionalActions), WTF::move(completionHandler));
+    page.mediaPermissionPromptHandlerForTesting()(prompt.copyRef());
+
+    return [prompt] {
+        prompt->respond(std::nullopt);
+    };
+}
+
+#endif // ENABLE(MEDIA_STREAM)
 
 
 

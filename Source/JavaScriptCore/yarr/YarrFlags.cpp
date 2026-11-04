@@ -26,13 +26,15 @@
 #include "config.h"
 #include "YarrFlags.h"
 
+#include "AOTRemovableFeature.h"
 #include <wtf/OptionSet.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace Yarr {
 
-std::optional<OptionSet<Flags>> parseFlags(StringView string)
+NEVER_INLINE std::optional<OptionSet<Flags>> parseFlags(StringView string)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, parseFlags);
     OptionSet<Flags> flags;
     for (auto character : string.codeUnits()) {
         switch (character) {
@@ -62,20 +64,20 @@ std::optional<OptionSet<Flags>> parseFlags(StringView string)
 FlagsString flagsString(OptionSet<Flags> flags)
 {
     FlagsString string;
-    unsigned index = 0;
+    uint8_t index = 0;
 
 #define JSC_WRITE_REGEXP_FLAG(key, name, lowerCaseName, _) \
     do { \
         if (flags.contains(Flags::name)) \
-            string[index++] = key; \
+            string.m_characters[index++] = key; \
     } while (0);
 
     JSC_REGEXP_FLAGS(JSC_WRITE_REGEXP_FLAG)
 
 #undef JSC_WRITE_REGEXP_FLAG
 
-    ASSERT(index < string.size());
-    string[index] = 0;
+    ASSERT(index < string.m_characters.size());
+    string.m_length = index;
     return string;
 }
 

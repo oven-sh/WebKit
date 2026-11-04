@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -38,6 +38,7 @@
 #include "TextFlags.h"
 #include "TreeResolutionState.h"
 #include <wtf/BitSet.h>
+#include <wtf/CheckedRef.h>
 
 namespace WebCore {
 
@@ -125,6 +126,7 @@ public:
     const ComputedStyle& style() const LIFETIME_BOUND { return m_style; }
 
     const ComputedStyle& parentStyle() const LIFETIME_BOUND { return *m_context.parentStyle; }
+    const ComputedStyle* parentStyleIfExists() const LIFETIME_BOUND { return m_context.parentStyle; }
 
     // The highlight pseudo-element style this one inherits from. Null for the highlight
     // pseudo-element of the root element, and for anything that isn't a highlight pseudo-element.
@@ -160,10 +162,10 @@ public:
     bool applyPropertyToRegularStyle() const { return m_linkMatch != SelectorChecker::MatchVisited; }
     bool applyPropertyToVisitedLinkStyle() const { return m_linkMatch != SelectorChecker::MatchLink; }
 
-    float NODELETE zoomWithTextZoomFactor();
+    float LEGACY_NODELETE zoomWithTextZoomFactor();
 
-    bool NODELETE useSVGZoomRules() const;
-    bool NODELETE useSVGZoomRulesForLength() const;
+    bool LEGACY_NODELETE useSVGZoomRules() const;
+    bool LEGACY_NODELETE useSVGZoomRulesForLength() const;
 
     // Defaults to Element when called outside property cascade application (e.g. attr() resolution
     // during container-query evaluation), where there is no current property in flight.
@@ -190,20 +192,20 @@ public:
         return m_currentProperty && m_currentProperty->origin == PropertyCascade::Origin::Author;
     }
 
-    CSSPropertyID NODELETE cssPropertyID() const;
-    AtomString NODELETE customPropertyName() const;
+    CSSPropertyID LEGACY_NODELETE cssPropertyID() const;
+    AtomString customPropertyName() const;
 
-    bool NODELETE isCurrentPropertyInvalidAtComputedValueTime() const;
-    void NODELETE setCurrentPropertyInvalidAtComputedValueTime();
+    bool LEGACY_NODELETE isCurrentPropertyInvalidAtComputedValueTime() const;
+    void LEGACY_NODELETE setCurrentPropertyInvalidAtComputedValueTime();
 
-    void NODELETE setUsesViewportUnits();
-    void NODELETE setIsContainerDependent();
+    void LEGACY_NODELETE setUsesViewportUnits();
+    void LEGACY_NODELETE setIsContainerDependent();
 
     double lookupCSSRandomBaseValue(const CSSCalc::RandomCachingKey&, std::optional<CSS::Keyword::ElementScoped>) const;
 
     // Accessors for sibling information used by the sibling-count() and sibling-index() CSS functions.
-    unsigned NODELETE siblingCount();
-    unsigned NODELETE siblingIndex();
+    unsigned LEGACY_NODELETE siblingCount();
+    unsigned LEGACY_NODELETE siblingIndex();
 
     AnchorPositionedStates* anchorPositionedStates() LIFETIME_BOUND { return m_context.treeResolutionState ? &m_context.treeResolutionState->anchorPositionedStates : nullptr; }
     const std::optional<BuilderPositionTryFallback>& positionTryFallback() const LIFETIME_BOUND { return m_context.positionTryFallback; }
@@ -211,7 +213,7 @@ public:
     // FIXME: Copying a FontCascadeDescription is really inefficient. Migrate all callers to
     // setFontDescriptionXXX() variants below, then remove these functions.
     inline void setFontDescription(FontCascadeDescription&&);
-    void setFontSize(FontCascadeDescription&, float size);
+    void LEGACY_NODELETE setFontSize(FontCascadeDescription&, float size);
 
     void setFontDescriptionKeywordSizeFromIdentifier(CSSValueID);
     void setFontDescriptionIsAbsoluteSize(bool);
@@ -266,7 +268,7 @@ private:
 
     BuilderState(ComputedStyle&, BuilderContext&&);
 
-    void NODELETE adjustStyleForInterCharacterRuby();
+    void LEGACY_NODELETE adjustStyleForInterCharacterRuby();
 
     void updateFont();
     void updateFontForTextSizeAdjust();
@@ -282,11 +284,11 @@ private:
             m_cssToLengthConversionData.m_property = m_currentProperty->id;
         } else {
             m_currentProperty = nullptr;
-            m_cssToLengthConversionData.m_property = CSSPropertyInvalid;
+            m_cssToLengthConversionData.m_property = CSSPropertyID::Invalid;
         }
     }
 
-    Style::ComputedStyle& m_style;
+    const CheckedRef<Style::ComputedStyle> m_style;
     BuilderContext m_context;
 
     CSSToLengthConversionData m_cssToLengthConversionData;
@@ -297,12 +299,11 @@ private:
     WTF::BitSet<cssPropertyIDEnumValueCount> m_invalidAtComputedValueTimeProperties;
 
     const PropertyCascade::Property* m_currentProperty { nullptr };
-    SelectorChecker::LinkMatchMask m_linkMatch { };
     const PropertyCascade* m_currentRollbackCascade { nullptr };
-
-    bool m_fontDirty { false };
     Vector<RegisteredSubstitutionAttribute> m_registeredSubstitutionAttributes;
 
+    SelectorChecker::LinkMatchMask m_linkMatch { };
+    bool m_fontDirty { false };
     bool m_isBuildingKeyframeStyle { false };
     bool m_hasRevertRuleOrLayerInKeyframeStyle { false };
     bool m_isResolvingContainerQueries { false };

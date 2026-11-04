@@ -1,0 +1,52 @@
+# A narrow reference counts from the base of the cage of cells, and a frame lies outside of the cage: a cell of a frame is never compressed, whatever kind of cell it is
+# FORM: Placed
+# RUN: verify
+# DIAGNOSTIC: FramePointerRetained 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point"
+layout L1 kind=Environment name="scope"
+
+function f0 name="objectOfTheFrame" results=[{type=boolean}] {
+  b0():
+    v0 @Cell = NewObject layout=L0 fields=[] storage=Frame allocation=0
+    v1 @Cell32 = Compress v0
+    v2 @Boolean = ToBoolean v1 form=Bits
+    Return v2
+}
+
+function f1 name="objectOfTheFrameBehindAJump" results=[{type=boolean}] {
+  b0():
+    v0 @Cell = NewObject layout=L0 fields=[] storage=Frame allocation=0
+    Jump -> next b1(v0)
+  b1(v1: L0 @Cell):
+    v2 @Cell32 = Compress v1
+    v3 @Boolean = ToBoolean v2 form=Bits
+    Return v3
+}
+
+function f2 name="environmentOfTheFrame" results=[{type=boolean}] {
+  b0():
+    v0 @Cell = NewObject layout=L1 fields=[] storage=Frame allocation=1
+    v1 @Cell32 = Compress v0
+    v2 @Cell = Decode v1
+    v3 @Boolean = Boolean boolean=true
+    Return v3
+}
+
+function f3 name="arrayOfTheFrame" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything @JSValue):
+    v1 @Cell = NewArray v0 contents=anything storage=Frame
+    v2 @Cell32 = Compress v1
+    v3 @Boolean = ToBoolean v2 form=Bits
+    Return v3
+}
+
+function f4 name="objectOfTheHeap" results=[{type=boolean}] {
+  b0():
+    v0 @Cell = NewObject layout=L0 fields=[] allocation=0
+    v1 @Cell = NewObject layout=L0 fields=[] storage=Frame allocation=0
+    v2 @Cell32 = Compress v0
+    v3 @Boolean = ToBoolean v2 form=Bits
+    Return v3
+}

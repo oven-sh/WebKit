@@ -49,7 +49,7 @@ class AudioSampleDataSource : public ThreadSafeRefCounted<AudioSampleDataSource,
 #endif
     {
 public:
-    static Ref<AudioSampleDataSource> create(size_t, LoggerHelper&, size_t waitToStartForPushCount = 2);
+    static Ref<AudioSampleDataSource> LEGACY_NODELETE create(size_t, LoggerHelper&, size_t waitToStartForPushCount = 2);
 
     ~AudioSampleDataSource();
 
@@ -63,7 +63,7 @@ public:
     enum PullMode { Copy, Mix };
     bool pullSamples(AudioBufferList&, size_t, uint64_t, double, PullMode);
 
-    bool pullAvailableSamplesAsChunks(AudioBufferList&, size_t frameCount, uint64_t timeStamp, Function<void()>&&);
+    bool pullAvailableSamplesAsChunks(AudioBufferList&, size_t frameCount, uint64_t timeStamp, NOESCAPE const Function<void()>&);
     bool pullAvailableSampleChunk(AudioBufferList&, size_t frameCount, uint64_t timeStamp, PullMode);
 
     void setVolume(float volume) { m_volume = volume; }

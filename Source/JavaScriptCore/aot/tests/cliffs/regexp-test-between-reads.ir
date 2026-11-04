@@ -1,0 +1,52 @@
+# A match against a regular expression that stays as created runs no code of the program, so what was read in front of it still holds behind it. An object in lastIndex is converted by the match, which can store anywhere
+# FORM: AsRead
+# RUN: pipeline EliminateRedundantReads
+# OPTIONS: only-passes=EliminateRedundantReads
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="changing" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="asCreated" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="objectInLastIndex" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToString v1
+    PutModuleVariable v1 variable=g0
+    v4 = NewRegExp pattern="a+b" regExpFlags=[Global] @10
+    PutModuleVariable v4 variable=g1
+    v6 = NewRegExp pattern="a+b" regExpFlags=[Global] @20
+    PutModuleVariable v6 variable=g2
+    v8 = NewObject
+    PropSet v6, v8 key="lastIndex" mode=Strict
+    v10 = CallDirect v2 function=f1
+    v11 = CallDirect v2 function=f2
+    PutModuleVariable v10 variable=g0
+    Return v11
+}
+
+function f1 name="acrossMatch" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = GetModuleVariable variable=g1
+    v3 = PropGet v2 key="test"
+    v4 = Call v3, v2, v0 calleeKey="test"
+    v5 = GetModuleVariable variable=g0
+    v6 = StrictEq v1, v5
+    Return v6
+# CHECK: [[first1]]:{{*}}= GetModuleVariable variable=g0
+# CHECK: = CallBuiltin {{*}}overload=RegExpPrototypeTest/0
+# CHECK-NOT: GetModuleVariable variable=g0
+}
+
+function f2 name="acrossConversionOfObject" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = GetModuleVariable variable=g2
+    v3 = PropGet v2 key="test"
+    v4 = Call v3, v2, v0 calleeKey="test"
+    v5 = GetModuleVariable variable=g0
+    v6 = StrictEq v1, v5
+    Return v6
+# CHECK: = CallBuiltin {{*}}overload=RegExpPrototypeTest/0
+# CHECK: = GetModuleVariable variable=g0
+}

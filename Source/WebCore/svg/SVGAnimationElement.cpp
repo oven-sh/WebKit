@@ -53,7 +53,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGAnimationElement);
 
 SVGAnimationElement::SVGAnimationElement(const QualifiedName& tagName, Document& document)
-    : SVGSMILElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGSMILElement(tagName, document, PropertyRegistry::singleton())
     , SVGTests(this)
 {
 }
@@ -385,7 +385,7 @@ void SVGAnimationElement::calculateKeyTimesForCalcModePaced()
     m_keyTimesForPaced = WTF::move(keyTimesForPaced);
 }
 
-static inline double NODELETE solveEpsilon(double duration) { return 1 / (200 * duration); }
+static inline double LEGACY_NODELETE solveEpsilon(double duration) { return 1 / (200 * duration); }
 
 const Vector<float>& SVGAnimationElement::keyTimes() const
 {

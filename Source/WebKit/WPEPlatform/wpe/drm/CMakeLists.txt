@@ -35,6 +35,7 @@ set(WPEPlatformDRM_SYSTEM_INCLUDE_DIRECTORIES
 set(WPEPlatformDRM_LIBRARIES
     GLib::GioUnix
     LibInput::LibInput
+    Skia::Skia
     Udev::Udev
 )
 
@@ -52,6 +53,7 @@ target_include_directories(WPEPlatformDRM PRIVATE ${WPEPlatformDRM_PRIVATE_INCLU
 target_include_directories(WPEPlatformDRM SYSTEM PRIVATE ${WPEPlatformDRM_SYSTEM_INCLUDE_DIRECTORIES})
 target_link_libraries(WPEPlatformDRM ${WPEPlatform_LIBRARIES} ${WPEPlatformDRM_LIBRARIES})
 add_dependencies(WPEPlatformDRM WPEPlatformGeneratedEnumTypesHeader)
+WEBKIT_ADD_TARGET_UNSAFE_BUFFER_WARNINGS(WPEPlatformDRM)
 
 set_target_properties(WPEPlatformDRM PROPERTIES
     SOURCES_FOR_INTROSPECTION "${WPEPlatformDRM_SOURCES_FOR_INTROSPECTION}"

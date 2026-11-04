@@ -1,0 +1,25 @@
+# The operation copies a record by its words, so the arms of `{ ...source }` buy only the layout of the copy and the call: code that is not hot keeps the operation, while a walk that makes a list is taken apart there too
+# FORM: Prepared optimizing
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="a" declared={type=number}}, {key="b" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1]}]}
+
+function f0 name="copyInWarmCode" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = CopyObject v0
+    Return v1
+# CHECK-NOT: NewObject
+# CHECK: v1: object = CopyObject v0
+# CHECK-NOT: NewObject
+}
+
+function f1 name="valuesInWarmCode" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+# CHECK: = HasKeyOrder {{*}} layout=L0 fields=[0, 1]
+# CHECK: = NewArray
+}

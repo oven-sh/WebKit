@@ -1,0 +1,144 @@
+# An array stored in a NewHeapWords cell goes nowhere at a suspension that holds the cell: a saved frame is out of the program's reach. It escapes where a call takes it, and a load of a word names what was stored in that word
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: GuardNotAvailable 5
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 declared={type=anything} initialization=Undefined
+function f0 name="run" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 promiseType=Promise promiseParameter=1}
+function f1 name="goodCallBeforeFirstAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 promiseType=Promise promiseParameter=1} {
+    v2 = NewHeapWords numberOfWords=2
+    v3 = NewArray v0 contents=anything
+    PutHeapFrameWord v2, v3 index=1 [remembersFrame]
+    v5 = Call v0
+    v6 = GetArrayLength v3, v3
+    v7 = AwaitBySavingFrame v6, v1, v2
+    v8 = GetHeapFrameWord v2 index=1 valueType=anything
+    Return v8
+}
+function f2 name="goodStoreThroughAnotherWord" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f2 promiseType=Promise promiseParameter=1} {
+    v2 = NewHeapWords numberOfWords=3
+    v3 = NewArray contents=number
+    PutHeapFrameWord v2, v3 index=1 [remembersFrame]
+    v5 = NewArray contents=number
+    PutHeapFrameWord v2, v5 index=2 [remembersFrame]
+    v7 = AwaitBySavingFrame v0, v1, v2
+    v8 = GetHeapFrameWord v2 index=1 valueType=anything
+    v9 = AssumeType v8 provenType=Array<number, proven, pristine[Storage, Names]>
+    v10 = GetHeapFrameWord v2 index=2 valueType=anything
+    v11 = AssumeType v10 provenType=Array<number, proven, pristine[Storage, Names]>
+    v12 = HasArrayStorage v9 arrayStorage=Double [isWritable]
+    Branch v12 -> taken b1(| 0), notTaken b2()
+  b1(v13):
+    ConvertToDoubleStorage v11
+    v15 = Integer
+    PutArrayElement v9, v15, v15, v13 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v15
+  b2():
+    Return v0
+}
+function f3 name="badStoreThroughSameWord" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f3 promiseType=Promise promiseParameter=1} {
+    v2 = NewHeapWords numberOfWords=3
+    v3 = NewArray contents=number
+    PutHeapFrameWord v2, v3 index=1 [remembersFrame]
+    v5 = NewArray contents=number
+    PutHeapFrameWord v2, v5 index=2 [remembersFrame]
+    v7 = AwaitBySavingFrame v0, v1, v2
+    v8 = GetHeapFrameWord v2 index=1 valueType=anything
+    v9 = AssumeType v8 provenType=Array<number, proven, pristine[Storage, Names]>
+    v10 = GetHeapFrameWord v2 index=1 valueType=anything
+    v11 = AssumeType v10 provenType=Array<number, proven, pristine[Storage, Names]>
+    v12 = HasArrayStorage v9 arrayStorage=Double [isWritable]
+    Branch v12 -> taken b1(| 0), notTaken b2()
+  b1(v13):
+    ConvertToDoubleStorage v11
+    v15 = Integer
+    PutArrayElement v9, v15, v15, v13 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v15
+  b2():
+    Return v0
+}
+function f4 name="badSameArrayInBothWords" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f4 promiseType=Promise promiseParameter=1} {
+    v2 = NewHeapWords numberOfWords=3
+    v3 = NewArray contents=number
+    PutHeapFrameWord v2, v3 index=1 [remembersFrame]
+    PutHeapFrameWord v2, v3 index=2 [remembersFrame]
+    v6 = AwaitBySavingFrame v0, v1, v2
+    v7 = GetHeapFrameWord v2 index=1 valueType=anything
+    v8 = AssumeType v7 provenType=Array<number, proven, pristine[Storage, Names]>
+    v9 = GetHeapFrameWord v2 index=2 valueType=anything
+    v10 = AssumeType v9 provenType=Array<number, proven, pristine[Storage, Names]>
+    v11 = HasArrayStorage v8 arrayStorage=Double [isWritable]
+    Branch v11 -> taken b1(| 0), notTaken b2()
+  b1(v12):
+    ConvertToDoubleStorage v10
+    v14 = Integer
+    PutArrayElement v8, v14, v14, v12 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v14
+  b2():
+    Return v0
+}
+function f5 name="goodCallAfterAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f5 promiseType=Promise promiseParameter=1} {
+    v2 = NewHeapWords numberOfWords=2
+    v3 = NewArray v0 contents=anything
+    PutHeapFrameWord v2, v3 index=1 [remembersFrame]
+    v5 = AwaitBySavingFrame v0, v1, v2
+    v6 = GetHeapFrameWord v2 index=1 valueType=anything
+    v7 = AssumeType v6 provenType=Array
+    v8 = IsPristine v7 builtinClass=Array aspects=[Storage]
+    Branch v8 -> taken b1(| 0), notTaken b2()
+  b1(v9):
+    v10 = Call v0
+    v11 = GetArrayLength v7, v9
+    Return v11
+  b2():
+    Return v0
+}
+function f6 name="badCellIsStoredElsewhere" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f6 promiseType=Promise promiseParameter=1} {
+    v2 = NewHeapWords numberOfWords=2
+    PutModuleVariable v2 variable=g0
+    v4 = NewArray v0 contents=anything
+    PutHeapFrameWord v2, v4 index=1 [remembersFrame]
+    v6 = Call v0
+    v7 = GetArrayLength v4, v4
+    v8 = AwaitBySavingFrame v7, v1, v2
+    v9 = GetHeapFrameWord v2 index=1 valueType=anything
+    Return v9
+}
+function f7 name="badArrayOfEarlierIterationEscaped" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f7 promiseType=Promise promiseParameter=1} {
+    v2 = NewHeapWords numberOfWords=2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = NewArray v0 contents=anything
+    v5 = GetHeapFrameWord v2 index=1 valueType=anything
+    v6 = AssumeType v5 provenType=Array
+    v7 = IsPristine v6 builtinClass=Array aspects=[Storage]
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = Call v0
+    v10 = GetArrayLength v6, v8
+    PutModuleVariable v4 variable=g0
+    PutHeapFrameWord v2, v4 index=1 [remembersFrame]
+    v13 = AwaitBySavingFrame v0, v1, v2
+    Jump -> next b1()
+  b3():
+    Return v0
+}
+function f8 name="badCallAfterAwaitAndAnotherThatTookTheArray" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f8 promiseType=Promise promiseParameter=1} {
+    v2 = NewHeapWords numberOfWords=2
+    v3 = NewArray v0 contents=anything
+    PutHeapFrameWord v2, v3 index=1 [remembersFrame]
+    v5 = AwaitBySavingFrame v0, v1, v2
+    v6 = GetHeapFrameWord v2 index=1 valueType=anything
+    v7 = AssumeType v6 provenType=Array
+    v8 = Call v0, -, v7
+    v9 = IsPristine v7 builtinClass=Array aspects=[Storage]
+    Branch v9 -> taken b1(| 0), notTaken b2()
+  b1(v10):
+    v11 = Call v0
+    v12 = GetArrayLength v7, v10
+    Return v12
+  b2():
+    Return v0
+}

@@ -25,6 +25,9 @@
 #ifndef __UMACHINE_H__
 #define __UMACHINE_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 
 /**
  * \file

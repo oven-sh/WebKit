@@ -1,0 +1,20 @@
+# value instanceof C with a value of which nothing is known: behind the test that C has its own @@hasInstance and prototype, the chain of the value is walked. A proxy in that chain answers with
+# code of the program, so a test of another object that lasts for a stretch does not last across the walk: the second read has a test of its own.
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests VerifyProgram
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Class" constructor=f0 flow={baseState=None} classFlow={prototypeProperty=Fixed}
+layout L1 name="Counter" fields=[{key="count" declared={type=number flags=[IsExpected]}}]
+function f0 name="Class" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="readsAroundTheWalk" parameters=[{type=L1}, {type=anything}, {type=f0}] results=[{type=anything}] {
+    v3 = PropGet v0 key="count" receivers=[L1]
+    v4 = InstanceOf v1, v2
+    v5 = PropGet v0 key="count" receivers=[L1]
+    v6 = NewArray v3, v4, v5 contents=anything
+    Return v6
+# CHECK: = HasInPrototypeChain v1,
+# CHECK: [[again]]: boolean = IsSlotFilled v0 key="count"
+# CHECK-NEXT: Branch [[again]] ->
+}

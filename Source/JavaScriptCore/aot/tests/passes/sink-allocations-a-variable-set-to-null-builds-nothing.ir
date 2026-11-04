@@ -1,0 +1,44 @@
+# `x = null` lets go of an object. Where the object is not built there is nothing to let go of
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsSunk = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="builtOnRareArm" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+    v3 = NewClosure v2 function=f2
+    v4 = TypeTest v1 testedType=function
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    ReleaseHint v3
+    Return v2
+  b2() frequency=Rare:
+    v6 = Call v1, v0, v3
+    ReleaseHint v3
+    Return v6
+}
+# CHECK-LABEL: function f0 name="builtOnRareArm"
+# CHECK: b0(
+# CHECK-NEXT: = TypeTest v1 testedType=function
+# CHECK: b1():
+# CHECK-NEXT: Return v2
+# CHECK: b2() frequency=Rare:
+# CHECK-NEXT: [[closure]]:{{*}}= NewClosure v2 function=f2
+# CHECK-NEXT: = Call v1, v0, [[closure]]
+# CHECK-NEXT: ReleaseHint [[closure]]
+# CHECK-NEXT: Return
+
+function f1 name="builtWhereItIsMade" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+    v3 = NewClosure v2 function=f2
+    v4 = Call v1, v0, v3
+    ReleaseHint v3
+    Return v4
+}
+# CHECK-LABEL: function f1 name="builtWhereItIsMade"
+# CHECK: [[made]]:{{*}}= NewClosure v2 function=f2
+# CHECK-NEXT: = Call v1, v0, [[made]]
+# CHECK-NEXT: ReleaseHint [[made]]
+
+function f2 name="callback" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}

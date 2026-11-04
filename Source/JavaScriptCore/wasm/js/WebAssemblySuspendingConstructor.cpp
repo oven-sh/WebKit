@@ -91,7 +91,7 @@ void WebAssemblySuspendingConstructor::finishCreation(VM& vm, WebAssemblySuspend
 }
 
 WebAssemblySuspendingConstructor::WebAssemblySuspendingConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callWebAssemblySuspending, constructWebAssemblySuspending)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callWebAssemblySuspending), JSC_REGISTERED_HOST_FUNCTION(constructWebAssemblySuspending))
 {
 }
 

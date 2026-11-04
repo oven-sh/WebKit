@@ -1,0 +1,28 @@
+# An object keeps its layout when an optional field is deleted, so the slot of such a field needs an absent state
+# RUN: check-placement optional-field
+# DIAGNOSTIC: PlacementCheckFailed 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="A" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = NewClosure function=f1
+    v7 = PropGet v0 key="publish" [isFreeName]
+    v8 = Call v7, -, v6
+    Return
+}
+function f1 name="later" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+
+# CHECK: mutated L0.0
+# CHECK-NEXT: rule AbsentStateMissing

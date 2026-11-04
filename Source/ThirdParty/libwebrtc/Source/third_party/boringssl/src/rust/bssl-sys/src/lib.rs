@@ -61,6 +61,7 @@ pub fn init() {
 bssl_macros::bssl_enum! {
     /// Library code of the BoringSSL errors.
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
     pub enum LibCode: i32 {
         /// No module
         None = ERR_LIB_NONE as i32,

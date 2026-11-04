@@ -1,0 +1,51 @@
+# `Number(text.slice(a, b))` resolves to the overload of Number that takes a string, which reads the digits in the base string: no substring is created
+# FORM: AsRead
+# Hot, so that the entrypoint takes the body in: the budget for warm code (InlineBudgetWarmBytes) leaves a body of this size where it is, and the entrypoint calls it
+# OPTIONS: heat=EverythingIsHot
+# RUN: pipeline Select
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    Return
+}
+function f1 name="numberOfSlice" parameters=[{type=string}, {type=number}, {type=number}] results=[{type=anything}] {
+    v3 = PropGet v0 key="slice"
+    v4 = Call v3, v0, v1, v2 calleeKey="slice"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="Number" [isFreeName]
+    v7 = Call v6, -, v4
+    Return v7
+}
+# Only unknown code calls the two functions, so each body ends up in its generic entrypoint.
+# CHECK-LABEL: name="numberOfSlice" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = Substring
+# CHECK-NOT: overload=Number
+# CHECK: [[text1]]: string = AssumeType v2 provenType=string
+# CHECK-NOT: = Substring
+# CHECK-NOT: overload=Number
+# CHECK: [[number1]]: number = StringRangeToNumber [[text1]],
+# CHECK-NEXT: Return [[number1]]
+
+function f2 name="numberOfSliceThatIsKept" parameters=[{type=string}, {type=number}, {type=number}] results=[{type=anything}] {
+    v3 = PropGet v0 key="slice"
+    v4 = Call v3, v0, v1, v2 calleeKey="slice"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="Number" [isFreeName]
+    v7 = Call v6, -, v4
+    v8 = NewArray v4, v7 contents=anything
+    Return v8
+}
+# CHECK-LABEL: name="numberOfSliceThatIsKept" module=m0 role=GenericEntrypoint
+# CHECK: [[text2]]: string = AssumeType v2 provenType=string
+# CHECK-NOT: FlattenString
+# CHECK: [[kept2]]: string = Substring [[text2]],
+# CHECK-NOT: FlattenString
+# CHECK: number = StringRangeToNumber [[text2]],
+# CHECK: = NewArray [[kept2]],

@@ -38,7 +38,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ScrollAnimationKeyboard);
 
-static FloatSize NODELETE perpendicularAbsoluteUnitVector(ScrollDirection direction)
+static FloatSize LEGACY_NODELETE perpendicularAbsoluteUnitVector(ScrollDirection direction)
 {
     switch (direction) {
     case ScrollDirection::ScrollUp:
@@ -52,7 +52,7 @@ static FloatSize NODELETE perpendicularAbsoluteUnitVector(ScrollDirection direct
     return { };
 }
 
-static FloatPoint farthestPointInDirection(FloatPoint a, FloatPoint b, ScrollDirection direction)
+static FloatPoint LEGACY_NODELETE farthestPointInDirection(FloatPoint a, FloatPoint b, ScrollDirection direction)
 {
     switch (direction) {
     case ScrollDirection::ScrollUp:

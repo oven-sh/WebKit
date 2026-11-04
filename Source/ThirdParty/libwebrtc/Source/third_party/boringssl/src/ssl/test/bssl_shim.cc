@@ -502,9 +502,7 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume,
     }
   }
 
-  // early_callback_called is updated in the handshaker, so we don't see it
-  // here.
-  if (!config->handoff && config->is_server && !state->early_callback_called) {
+  if (config->is_server && !state->early_callback_called) {
     fprintf(stderr, "early callback not called\n");
     return false;
   }
@@ -781,8 +779,7 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume,
   return true;
 }
 
-static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
-                       bssl::UniquePtr<SSL> *ssl_uniqueptr,
+static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session, SSL *ssl,
                        const TestConfig *config, bool is_resume, bool is_retry,
                        SettingsWriter *writer);
 
@@ -869,7 +866,8 @@ static bool DoConnection(bssl::UniquePtr<SSL_SESSION> *out_session,
     bio.release();  // SSL_set_bio takes ownership.
   }
 
-  bool ret = DoExchange(out_session, &ssl, config, is_resume, false, writer);
+  bool ret =
+      DoExchange(out_session, ssl.get(), config, is_resume, false, writer);
   if (!config->is_server && is_resume && config->expect_reject_early_data) {
     // We must have failed due to an early data rejection.
     if (ret) {
@@ -914,9 +912,9 @@ static bool DoConnection(bssl::UniquePtr<SSL_SESSION> *out_session,
       return false;
     }
 
-    assert(!config->handoff);
     config = retry_config;
-    ret = DoExchange(out_session, &ssl, retry_config, is_resume, true, writer);
+    ret = DoExchange(out_session, ssl.get(), retry_config, is_resume, true,
+                     writer);
   }
 
   // An ECH rejection appears as a failed connection. Note `ssl` may use a
@@ -978,29 +976,14 @@ static bool DoConnection(bssl::UniquePtr<SSL_SESSION> *out_session,
   return true;
 }
 
-static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session,
-                       bssl::UniquePtr<SSL> *ssl_uniqueptr,
+static bool DoExchange(bssl::UniquePtr<SSL_SESSION> *out_session, SSL *ssl,
                        const TestConfig *config, bool is_resume, bool is_retry,
                        SettingsWriter *writer) {
   int ret;
-  SSL *ssl = ssl_uniqueptr->get();
   SSL_CTX *session_ctx = SSL_get_SSL_CTX(ssl);
   TestState *test_state = GetTestState(ssl);
 
   if (!config->implicit_handshake) {
-    if (config->handoff) {
-#if defined(HANDSHAKER_SUPPORTED)
-      if (!DoSplitHandshake(ssl_uniqueptr, writer, is_resume)) {
-        return false;
-      }
-      ssl = ssl_uniqueptr->get();
-      test_state = GetTestState(ssl);
-#else
-      fprintf(stderr, "The external handshaker can only be used on Linux\n");
-      return false;
-#endif
-    }
-
     do {
       ret = CheckIdempotentError("SSL_do_handshake", ssl, [&]() -> int {
         return SSL_do_handshake(ssl);

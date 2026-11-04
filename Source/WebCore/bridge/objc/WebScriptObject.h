@@ -191,7 +191,6 @@
 // WebScriptObject --------------------------------------------------
 
 @class JSValue;
-@class WebScriptObjectPrivate;
 @class WebFrame;
 
 /*!
@@ -220,9 +219,6 @@
 */
 WEBKIT_CLASS_DEPRECATED_MAC(10_4, 10_14)
 WEBCORE_EXPORT @interface WebScriptObject : NSObject
-{
-    WebScriptObjectPrivate *_private;
-}
 
 /*!
     @method throwException:

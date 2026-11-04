@@ -22,6 +22,8 @@
 #include "config.h"
 #include "Debugger.h"
 
+#include "AOTCompiledCaller.h"
+#include "AOTRemovableFeature.h"
 #include "CodeBlock.h"
 #include "DebuggerCallFrame.h"
 #include "DebuggerScope.h"
@@ -213,8 +215,9 @@ void Debugger::attach(JSGlobalObject* globalObject)
 #endif
 }
 
-void Debugger::detach(JSGlobalObject* globalObject, ReasonForDetach reason)
+NEVER_INLINE void Debugger::detach(JSGlobalObject* globalObject, ReasonForDetach reason)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::detach);
     // If we're detaching from the currently executing global object, manually tear down our
     // stack, since we won't get further debugger callbacks to do so. Also, resume execution,
     // since there's no point in staying paused once a window closes.
@@ -283,8 +286,9 @@ void Debugger::setSteppingMode(SteppingMode mode)
     m_vm.heap.forEachCodeBlock(functor);
 }
 
-void Debugger::registerCodeBlock(CodeBlock* codeBlock)
+NEVER_INLINE void Debugger::registerCodeBlock(CodeBlock* codeBlock)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::registerCodeBlock);
     applyBreakpoints(codeBlock);
     if (isStepping())
         codeBlock->setSteppingMode(CodeBlock::SteppingModeEnabled);
@@ -298,22 +302,25 @@ void Debugger::forEachRegisteredCodeBlock(NOESCAPE const Function<void(CodeBlock
     });
 }
 
-void Debugger::didCreateNativeExecutable(NativeExecutable& nativeExecutable)
+NEVER_INLINE void Debugger::didCreateNativeExecutable(NativeExecutable& nativeExecutable)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didCreateNativeExecutable);
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.didCreateNativeExecutable(nativeExecutable);
     });
 }
 
-void Debugger::willCallNativeExecutable(CallFrame* callFrame)
+NEVER_INLINE void Debugger::willCallNativeExecutable(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::willCallNativeExecutable);
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.willCallNativeExecutable(callFrame);
     });
 }
 
-void Debugger::didCreateInternalFunction(InternalFunction& internalFunction)
+NEVER_INLINE void Debugger::didCreateInternalFunction(InternalFunction& internalFunction)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didCreateInternalFunction);
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.didCreateInternalFunction(internalFunction);
     });
@@ -602,13 +609,13 @@ static std::pair<int, int> inspectorPositionForOffset(SourceProvider& provider, 
     return { static_cast<int>(lineColumn.line), static_cast<int>(lineColumn.column) };
 }
 
-void Debugger::forEachBreakpointLocation(SourceID sourceID, SourceProvider* sourceProvider, int startLine, int startColumn, int endLine, int endColumn, Function<void(int, int)>&& callback)
+void Debugger::forEachBreakpointLocation(SourceID sourceID, SourceProvider* sourceProvider, int startLine, int startColumn, int endLine, int endColumn, NOESCAPE const Function<void(int, int)>& callback)
 {
     auto start = offsetForInspectorPosition(*sourceProvider, startLine, startColumn);
     auto end = offsetForInspectorPosition(*sourceProvider, endLine, endColumn);
 
     auto& parseData = debuggerParseData(sourceID, sourceProvider);
-    parseData.pausePositions.forEachBreakpointLocation(start, end, *sourceProvider, [&, callback = WTF::move(callback)] (JSTextPosition resolvedPosition) {
+    parseData.pausePositions.forEachBreakpointLocation(start, end, *sourceProvider, [&] (JSTextPosition resolvedPosition) {
         auto [line, column] = inspectorPositionForOffset(*sourceProvider, resolvedPosition);
         callback(line, column);
     });
@@ -736,7 +743,7 @@ public:
     {
     }
 
-    void NODELETE operator()(CodeBlock* codeBlock) const
+    void LEGACY_NODELETE operator()(CodeBlock* codeBlock) const
     {
         if (codeBlock->hasDebuggerRequests() && m_debugger == codeBlock->globalObject()->debugger())
             codeBlock->clearDebuggerRequests();
@@ -852,7 +859,7 @@ public:
     {
     }
 
-    void NODELETE operator()(CodeBlock* codeBlock) const
+    void LEGACY_NODELETE operator()(CodeBlock* codeBlock) const
     {
         if (codeBlock->hasDebuggerRequests() && m_globalObject == codeBlock->globalObject())
             codeBlock->clearDebuggerRequests();
@@ -917,10 +924,10 @@ bool Debugger::cancelPauseForSpecialBreakpoint(Breakpoint& breakpoint)
 
 void Debugger::breakProgram(RefPtr<Breakpoint>&& specialBreakpoint)
 {
-    if (m_isPaused)
+    if (m_isPaused || isPauseBlockedByAnotherDebugger())
         return;
 
-    if (!m_vm.topCallFrame)
+    if (!m_vm.topCallFrame || AOT::isTopFrameCompiled(m_vm))
         return;
 
     if (specialBreakpoint) {
@@ -983,7 +990,7 @@ void Debugger::stepOutOfFunction()
         return;
 
     EntryFrame* topEntryFrame = m_vm.topEntryFrame;
-    m_pauseOnCallFrame = m_currentCallFrame ? m_currentCallFrame->callerFrame(topEntryFrame) : nullptr;
+    m_pauseOnCallFrame = m_currentCallFrame ? m_currentCallFrame->callerFrameUnlessCompiled(m_vm, topEntryFrame) : nullptr;
     m_pauseOnStepOut = true;
     setSteppingMode(SteppingModeEnabled);
     m_doneProcessingDebuggerEvents = true;
@@ -1031,6 +1038,9 @@ void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
         return;
 
     if (m_suppressAllPauses)
+        return;
+
+    if (isPauseBlockedByAnotherDebugger())
         return;
 
     SourceID sourceID = DebuggerCallFrame::sourceIDForCallFrame(m_currentCallFrame);
@@ -1227,15 +1237,16 @@ public:
         ASSERT(callFrame->isEmptyTopLevelCallFrameForDebugger());
     }
 
-    CallFrame* NODELETE asCallFrame() { return CallFrame::create(m_values); }
+    CallFrame* LEGACY_NODELETE asCallFrame() { return CallFrame::create(m_values); }
 
 private:
     Register m_values[CallFrame::headerSizeInRegisters + /* thisValue */ 1] { };
 };
 
-void Debugger::exception(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue exception, bool hasCatchHandler)
+NEVER_INLINE void Debugger::exception(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue exception, bool hasCatchHandler)
 {
-    if (m_isPaused)
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::exception);
+    if (m_isPaused || isPauseBlockedByAnotherDebugger())
         return;
 
     if (JSObject* object = dynamicDowncast<JSObject>(exception)) {
@@ -1271,8 +1282,9 @@ void Debugger::exception(JSGlobalObject* globalObject, CallFrame* callFrame, JSV
         m_currentCallFrame = nullptr;
 }
 
-void Debugger::atStatement(CallFrame* callFrame)
+NEVER_INLINE void Debugger::atStatement(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::atStatement);
     if (m_isPaused)
         return;
 
@@ -1282,8 +1294,9 @@ void Debugger::atStatement(CallFrame* callFrame)
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callFrame), callFrame, AttemptPause);
 }
 
-void Debugger::atExpression(CallFrame* callFrame)
+NEVER_INLINE void Debugger::atExpression(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::atExpression);
     if (m_isPaused)
         return;
 
@@ -1300,8 +1313,9 @@ void Debugger::atExpression(CallFrame* callFrame)
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callFrame), callFrame, shouldAttemptPause ? AttemptPause : NoPause);
 }
 
-void Debugger::willAwait(CallFrame* callFrame, JSValue generatorValue)
+NEVER_INLINE void Debugger::willAwait(CallFrame* callFrame, JSValue generatorValue)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::willAwait);
     if (m_isPaused)
         return;
 
@@ -1331,8 +1345,9 @@ void Debugger::willAwait(CallFrame* callFrame, JSValue generatorValue)
     resetEventualPauseState();
 }
 
-void Debugger::didAwait(CallFrame*, JSValue generatorValue)
+NEVER_INLINE void Debugger::didAwait(CallFrame*, JSValue generatorValue)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didAwait);
     if (m_isPaused)
         return;
 
@@ -1350,8 +1365,9 @@ void Debugger::didAwait(CallFrame*, JSValue generatorValue)
     schedulePauseAtNextOpportunity();
 }
 
-void Debugger::callEvent(CallFrame* callFrame)
+NEVER_INLINE void Debugger::callEvent(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::callEvent);
     if (m_isPaused)
         return;
 
@@ -1364,8 +1380,9 @@ void Debugger::callEvent(CallFrame* callFrame)
     }
 }
 
-void Debugger::returnEvent(CallFrame* callFrame)
+NEVER_INLINE void Debugger::returnEvent(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::returnEvent);
     if (m_isPaused)
         return;
 
@@ -1379,7 +1396,7 @@ void Debugger::returnEvent(CallFrame* callFrame)
         return;
 
     EntryFrame* topEntryFrame = m_vm.topEntryFrame;
-    CallFrame* callerFrame = m_currentCallFrame->callerFrame(topEntryFrame);
+    CallFrame* callerFrame = m_currentCallFrame->callerFrameUnlessCompiled(m_vm, topEntryFrame);
 
     // Returning from a call, there was at least one expression on the statement we are returning to.
     m_pastFirstExpressionInStatement = true;
@@ -1393,8 +1410,9 @@ void Debugger::returnEvent(CallFrame* callFrame)
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callerFrame), callerFrame, NoPause);
 }
 
-void Debugger::unwindEvent(CallFrame* callFrame)
+NEVER_INLINE void Debugger::unwindEvent(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::unwindEvent);
     if (m_isPaused)
         return;
 
@@ -1404,7 +1422,7 @@ void Debugger::unwindEvent(CallFrame* callFrame)
         return;
 
     EntryFrame* topEntryFrame = m_vm.topEntryFrame;
-    CallFrame* callerFrame = m_currentCallFrame->callerFrame(topEntryFrame);
+    CallFrame* callerFrame = m_currentCallFrame->callerFrameUnlessCompiled(m_vm, topEntryFrame);
 
     // Treat stepping over an exception location like a step-out.
     if (m_currentCallFrame == m_pauseOnCallFrame)
@@ -1413,16 +1431,18 @@ void Debugger::unwindEvent(CallFrame* callFrame)
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callerFrame), callerFrame, NoPause);
 }
 
-void Debugger::willExecuteProgram(CallFrame* callFrame)
+NEVER_INLINE void Debugger::willExecuteProgram(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::willExecuteProgram);
     if (m_isPaused)
         return;
 
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callFrame), callFrame, NoPause);
 }
 
-void Debugger::didExecuteProgram(CallFrame* callFrame)
+NEVER_INLINE void Debugger::didExecuteProgram(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didExecuteProgram);
     if (m_isPaused)
         return;
 
@@ -1434,7 +1454,7 @@ void Debugger::didExecuteProgram(CallFrame* callFrame)
         return;
 
     EntryFrame* topEntryFrame = m_vm.topEntryFrame;
-    CallFrame* callerFrame = m_currentCallFrame->callerFrame(topEntryFrame);
+    CallFrame* callerFrame = m_currentCallFrame->callerFrameUnlessCompiled(m_vm, topEntryFrame);
 
     // Returning from a program, could be eval(), there was at least one expression on the statement we are returning to.
     m_pastFirstExpressionInStatement = true;
@@ -1478,9 +1498,10 @@ void Debugger::resetAsyncPauseState()
         abandonPauseInAwaitTimer->cancelTimer();
 }
 
-void Debugger::didReachDebuggerStatement(CallFrame* callFrame)
+NEVER_INLINE void Debugger::didReachDebuggerStatement(CallFrame* callFrame)
 {
-    if (m_isPaused)
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didReachDebuggerStatement);
+    if (m_isPaused || isPauseBlockedByAnotherDebugger())
         return;
 
     if (!m_pauseOnDebuggerStatementsBreakpoint)
@@ -1492,22 +1513,25 @@ void Debugger::didReachDebuggerStatement(CallFrame* callFrame)
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callFrame), callFrame, AttemptPause);
 }
 
-void Debugger::didQueueMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
+NEVER_INLINE void Debugger::didQueueMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didQueueMicrotask);
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.didQueueMicrotask(globalObject, identifier);
     });
 }
 
-void Debugger::willRunMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
+NEVER_INLINE void Debugger::willRunMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::willRunMicrotask);
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.willRunMicrotask(globalObject, identifier);
     });
 }
 
-void Debugger::didRunMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
+NEVER_INLINE void Debugger::didRunMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didRunMicrotask);
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.didRunMicrotask(globalObject, identifier);
     });

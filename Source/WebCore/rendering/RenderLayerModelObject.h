@@ -69,7 +69,7 @@ public:
 
     void destroyLayer();
 
-    bool NODELETE hasSelfPaintingLayer() const;
+    bool LEGACY_NODELETE hasSelfPaintingLayer() const;
     RenderLayer* layer() const LIFETIME_BOUND { return m_layer.get(); }
 
     void styleWillChange(Style::Difference, const Style::ComputedStyle& newStyle) override;
@@ -84,18 +84,15 @@ public:
 
     virtual bool isScrollableOrRubberbandableBox() const { return false; }
 
-    bool NODELETE shouldPlaceVerticalScrollbarOnLeft() const;
-
-    std::optional<LayoutRect> NODELETE cachedLayerClippedOverflowRect() const;
+    bool LEGACY_NODELETE shouldPlaceVerticalScrollbarOnLeft() const;
 
     bool startAnimation(double timeOffset, const GraphicsLayerAnimation&, const BlendingKeyframes&) override;
     void animationPaused(double timeOffset, const BlendingKeyframes&) override;
     void animationFinished(const BlendingKeyframes&) override;
     void transformRelatedPropertyDidChange() override;
 
-    // Single source of truth deciding if a SVG renderer should be painted. All SVG renderers
-    // use this method to test if they should continue processing in the paint() function or stop.
-    bool shouldPaintSVGRenderer(const PaintInfo&, const OptionSet<PaintPhase> relevantPaintPhases = OptionSet<PaintPhase>()) const;
+    bool shouldPaintSVGLeafRenderer(const PaintInfo&, const OptionSet<PaintPhase> relevantPaintPhases) const;
+    bool shouldPaintSVGContainerRenderer(const PaintInfo&, const OptionSet<PaintPhase> relevantPaintPhases) const;
 
     // Provides the SVG implementation for computeVisibleRectsInContainer().
     // This lives in RenderLayerModelObject, which is the common base-class for all SVG renderers.
@@ -147,7 +144,7 @@ public:
     void paintSVGMask(PaintInfo&, const LayoutPoint& adjustedPaintOffset) const;
     void paintSVGEventRegion(PaintInfo&, const LayoutPoint& paintOffset);
 
-    TransformationMatrix* NODELETE layerTransform() const;
+    TransformationMatrix* LEGACY_NODELETE layerTransform() const;
 
     virtual void updateLayerTransform();
     virtual void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const = 0;
@@ -161,6 +158,10 @@ public:
     // a renderer whose transform changed without a layout. No-op otherwise.
     virtual void invalidateCachedSVGTransformDependentBoundingBoxes() { }
 
+    void invalidateCachedSVGBoundingBoxesOfAncestors() const;
+    void invalidateNonScalingStrokeCachesInSubtreeForSVG(const std::optional<AffineTransform>& oldTransform, const AffineTransform& newTransform);
+
+    bool LEGACY_NODELETE transformReferenceBoxIsSVGViewport() const;
     inline bool shouldUsePositionedClipping() const;
 
 #if ASSERT_ENABLED
@@ -186,6 +187,10 @@ private:
     bool createLayerIfAllowed();
     void removeOnlyThisLayerWithRepaint();
 
+    std::optional<AffineTransform> svgTransformBeforeStyleChange(const Style::ComputedStyle& oldStyle) const;
+    AffineTransform svgTransformAfterStyleChange() const;
+    bool markSVGTextForRelayoutIfScaleChanged(const AffineTransform& previousTransform, const AffineTransform& currentTransform);
+
     RenderSVGResourceMarker* svgMarkerResourceFromStyle(const Style::SVGMarkerResource&) const;
 
     RenderSVGResourcePaintServer* svgPaintServerResourceFromStyle(const Style::SVGPaint&, const Style::ComputedStyle&, SVGPaintType) const;
@@ -202,7 +207,7 @@ private:
 };
 
 // Pixel-snapping (== 'device pixel alignment') helpers.
-bool NODELETE rendererNeedsPixelSnapping(const RenderLayerModelObject&);
+bool LEGACY_NODELETE rendererNeedsPixelSnapping(const RenderLayerModelObject&);
 FloatRect snapRectToDevicePixelsIfNeeded(const LayoutRect&, const RenderLayerModelObject&);
 FloatRect snapRectToDevicePixelsIfNeeded(const FloatRect&, const RenderLayerModelObject&);
 

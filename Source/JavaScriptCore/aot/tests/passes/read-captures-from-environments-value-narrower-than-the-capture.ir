@@ -1,0 +1,49 @@
+# A closure over one value is not made, and the value stands for each read of the capture. The capture is written as a number and the value is the length of a string,
+# so what is computed from the read is typed again: at the end of the stage every type is what its rule gives
+# FORM: Prepared
+# RUN: pass ReadCapturesFromEnvironments VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="inner" declared={type=f4}}]
+
+function f0 name="makesAndTakesApart" parameters=[{type=string}, {type=int[0, 4294967295]}] results=[{type=number}] {
+    v2 = GetStringLength v0
+    v3 = NewClosure v2 function=f1
+    v4 = CallDirect v3 function=f2
+    v5 = GetCapture v3 function=f1
+    v6 = Mod v5, v1
+    v7 = Add v4, v6
+    Return v7
+# CHECK-NOT: NewClosure
+# CHECK-NOT: GetCapture
+# CHECK: [[length]]: int[0, 2147483647] = GetStringLength v0
+# CHECK: : int[0, 2147483647]|whole = Mod [[length]], v1
+}
+
+function f1 name="reads" kind=Arrow captures=[{type=number}] results=[{type=number}] {
+    Return v0
+}
+
+function f2 name="callsWhatItIsGiven" parameters=[{type=f1}] results=[{type=number}] {
+    v1 = GetCapture v0 function=f1
+    v2 = CallDirect v1 function=f1
+    Return v2
+}
+
+function f3 name="scope" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = NewClosure v1, v0 function=f4
+    PutEnvironmentField v1, v2 layout=L0 field=0
+    v4 = GetCapture v2 function=f4
+    v5 = GetCapture v2 function=f4 index=1
+    v6 = CallDirect v4, v5 function=f4
+    Return v6
+}
+
+function f4 name="inner" captures=[{type=env L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = GetCapture v2 function=f4 index=1
+    v4 = Add v1, v3
+    Return v4
+}

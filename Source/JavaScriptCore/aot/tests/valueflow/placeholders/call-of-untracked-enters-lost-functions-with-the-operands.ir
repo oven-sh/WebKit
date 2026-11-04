@@ -1,0 +1,70 @@
+# chosen = one or two or three; others = four or five or six; chosen(handed)    function one(f) { f() }  function four(f) { f() }
+# Each variable holds more functions than the analysis follows in one set, so the untracked object stands for what they held. It stands for all that the analysis has stopped following, wherever that was:
+# a call of it enters every function among that, also those of the variable that is never called. The operands reach the parameters along edges, as in any call:
+# a parameter holds the function that the call passes and no unknown object. A function that the analysis still follows and that nobody calls is not entered.
+# OPTIONS: limit=MaxValueFlowSetMembers:2
+# STATISTIC: MaxValueFlowSetMembersHits >= 2
+# RUN: valueflow-solve calls
+# CHECK: f0 v14 ->
+# CHECK-NOT: unknown
+# CHECK: f1 v1 -> f7
+# CHECK-NEXT: f4 v1 -> f7
+# CHECK-NOT: unknown
+# RUN(CALLEES): valueflow-families callees
+# CALLEES: application calls 3 unknown-callee 0 untracked-callee 1
+# RUN(LOST): valueflow-why lost=f4 lost=f7
+# LOST: lost=f4
+# LOST-NEXT: n1 lost
+# LOST: lost=f7
+# LOST-NEXT: not held
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+# UNREACHED-NOT: unreached f5
+# UNREACHED-NOT: unreached f6
+# UNREACHED-NOT: unreached f7
+# UNREACHED: unreached f8
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="chosen" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="others" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+# REPEAT: i = 1..6; a = 0 0 0 1 1 1
+    v%(i*2-2) = NewClosure function=f%(i)
+    PutModuleVariable v%(i*2-2) variable=g%(a)
+# END REPEAT
+    v12 = GetModuleVariable variable=g0
+    v13 = NewClosure function=f7
+    v14 = Call v12, -, v13
+    v15 = NewClosure function=f8
+    Return
+}
+function f1 name="one" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0, -
+    Return
+}
+function f2 name="two" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f3 name="three" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f4 name="four" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0, -
+    Return
+}
+function f5 name="five" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f6 name="six" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f7 name="handed" module=m0 results=[{type=anything}] {
+    Return
+}
+function f8 name="kept" module=m0 results=[{type=anything}] {
+    Return
+}

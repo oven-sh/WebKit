@@ -1,0 +1,28 @@
+# Object.assign(globalThis, { someNameOfMine: run }); Date.now(); someNameOfMine()
+# The call spells out the source, so its names are known: the assignment is a store under each of them. No other member of the global object counts as written, and a read under the name finds the value
+# RUN: valueflow-results
+# CHECK: builtin-location GlobalThis."Date" Constant
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f0 v11 -> {{*}}f1
+
+layout L0 fields=[{key="someNameOfMine" declared={type=anything}}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectAssign
+    v2 = Builtin builtin=GlobalThis
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = Call v1, v0, v2, v4
+    v6 = PropGet v2 key="Date" [isFreeName]
+    v7 = PropGet v6 key="now"
+    v8 = Call v7, v6
+    v9 = PropGet v2 key="someNameOfMine" [isFreeName]
+    v10 = Undefined
+    v11 = Call v9, v10
+    Return
+}
+function f1 name="run" results=[{type=anything}] {
+    Return
+}

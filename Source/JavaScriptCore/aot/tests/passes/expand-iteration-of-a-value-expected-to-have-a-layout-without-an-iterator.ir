@@ -1,0 +1,128 @@
+# An object whose layout has nothing under @@iterator is not iterated, so an expectation of only such layouts comes from what else
+# is done with the value, a store under a name that they have, and says nothing about what is iterated:
+# the value is tested for an array, like an iterable that nobody knows anything about.
+# An instance of a class below Array finds @@iterator above its class: it is what is iterated, and it passes no test for an array as it was created.
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 3
+# STATISTIC: IterationsExpandedGenerically = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="flags" declared={type=number}}]
+layout L1 name="Token" fields=[{key="flags" declared={type=number}}, {key="text" declared={type=string}}]
+layout L2 kind=Instance name="Range" constructor=f0 fields=[{key="flags" declared={type=number}}] classFlow={namedMembers=[{key=@@iterator function=f1}]}
+layout L3 kind=Instance name="Numbers" flow={baseState=BuiltinClass baseClass=Array}
+layout L4 kind=Instance name="Failure" flow={baseState=BuiltinClass baseClass=Error}
+function f0 name="Range" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="iterator" kind=Method flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+
+function f2 name="expectedToHaveALayoutWithoutAnIterator" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Call v1, -, v6
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK: = TypeTest v0 testedType=Array
+}
+
+function f3 name="expectedToHaveOneOfTwoSuchLayouts" parameters=[{type=L0|L1 flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything ~ L0|L1, v1: anything):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Call v1, -, v6
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK: = TypeTest v0 testedType=Array
+}
+
+function f4 name="expectedToHaveALayoutWithAnIterator" parameters=[{type=L2 flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything ~ L2, v1: anything):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Call v1, -, v6
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK-NOT: testedType=Array
+}
+
+function f5 name="oneOfTheExpectedLayoutsHasAnIterator" parameters=[{type=L0|L2 flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything ~ L0|L2, v1: anything):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Call v1, -, v6
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK-NOT: testedType=Array
+}
+
+function f6 name="expectedToBeOfAClassBelowArray" parameters=[{type=L3 flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything ~ L3, v1: anything):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Call v1, -, v6
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK-NOT: testedType=Array
+}
+
+function f7 name="expectedToBeOfAClassBelowAClassWithoutAnIterator" parameters=[{type=L4 flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything ~ L4, v1: anything):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Call v1, -, v6
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK: = TypeTest v0 testedType=Array
+}

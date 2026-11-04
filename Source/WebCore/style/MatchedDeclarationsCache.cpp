@@ -82,8 +82,8 @@ bool MatchedDeclarationsCache::isCacheable(const Element& element, const Style::
     // style, which is not part of the cache key.
     if (pseudoElementType && isHighlightPseudoElement(*pseudoElementType))
         return false;
-    // content:attr() value depends on the element it is being applied to.
-    if (style.hasAttrContent() || (pseudoElementType && parentStyle.hasAttrContent()))
+    // attr() value depends on the element it is being applied to.
+    if (style.hasAttrContent())
         return false;
     if (style.zoom() != Style::ComputedStyle::initialZoom())
         return false;
@@ -95,8 +95,6 @@ bool MatchedDeclarationsCache::isCacheable(const Element& element, const Style::
     if (style.useTreeCountingFunctions())
         return false;
     if (style.usesAnchorFunctions())
-        return false;
-    if (style.usesCurrentBackgroundColorKeyword())
         return false;
 
     // Getting computed style after a font environment change but before full style resolution may involve styles with non-current fonts.
@@ -161,6 +159,9 @@ std::optional<MatchedDeclarationsCache::Result> MatchedDeclarationsCache::find(u
         if (&entry.parentRenderStyle->inheritedCustomProperties() != &inheritedCustomProperties)
             continue;
 
+        if (entry.parentRenderStyle->inBaseAppearanceSubtree() != parentStyle.inBaseAppearanceSubtree())
+            continue;
+
         if (parentStyle.inheritedEqual(*entry.parentRenderStyle))
             return std::make_optional(Result { .entry = entry, .inheritedEqual = true });
         partiallyMatchingEntry = &entry;
@@ -211,7 +212,7 @@ void MatchedDeclarationsCache::invalidate()
 }
 
 template<typename Callback>
-void MatchedDeclarationsCache::removeAllMatching(const Callback& matches)
+void MatchedDeclarationsCache::removeAllMatching(NOESCAPE const Callback& matches)
 {
     m_entries.removeIf([&](auto& keyValue) {
         keyValue.value.removeAllMatching(matches);

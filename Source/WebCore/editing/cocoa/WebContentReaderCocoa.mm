@@ -165,7 +165,8 @@ static FragmentAndResources createFragmentInternal(LocalFrame& frame, NSAttribut
     fragment->parseHTML(markup, dummyBodyToForceInBodyInsertionMode, { });
 
     result.fragment = WTF::move(fragment);
-    for (WebArchiveResourceFromNSAttributedString *resource in subresources)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL WebArchiveResourceFromNSAttributedString *resource in subresources)
         result.resources.append(protect(*resource->resource));
 
     return result;
@@ -222,7 +223,7 @@ static bool shouldReplaceSubresourceURLWithBlobDuringSanitization(const URL& url
     return !url.protocolIsData() && !url.protocolIsInHTTPFamily();
 }
 
-static bool NODELETE shouldReplaceRichContentWithAttachments()
+static bool LEGACY_NODELETE shouldReplaceRichContentWithAttachments()
 {
 #if ENABLE(ATTACHMENT_ELEMENT)
     return DeprecatedGlobalSettings::attachmentElementEnabled();
@@ -526,7 +527,7 @@ struct MarkupAndArchive {
     Ref<Archive> archive;
 };
 
-static std::optional<MarkupAndArchive> extractMarkupAndArchive(SharedBuffer& buffer, const std::function<bool(const String)>& canShowMIMETypeAsHTML)
+static std::optional<MarkupAndArchive> extractMarkupAndArchive(SharedBuffer& buffer, NOESCAPE const std::function<bool(const String)>& canShowMIMETypeAsHTML)
 {
     auto archive = LegacyWebArchive::create(URL(), buffer);
     if (!archive)
@@ -543,7 +544,7 @@ static std::optional<MarkupAndArchive> extractMarkupAndArchive(SharedBuffer& buf
     return MarkupAndArchive { String::fromUTF8(protect(protect(mainResource)->data())->makeContiguous()->span()), mainResource.releaseNonNull(), archive.releaseNonNull() };
 }
 
-static String sanitizeMarkupWithArchive(LocalFrame& frame, Document& destinationDocument, MarkupAndArchive& markupAndArchive, MSOListQuirks msoListQuirks, const std::function<bool(const String)>& canShowMIMETypeAsHTML)
+static String sanitizeMarkupWithArchive(LocalFrame& frame, Document& destinationDocument, MarkupAndArchive& markupAndArchive, MSOListQuirks msoListQuirks, NOESCAPE const std::function<bool(const String)>& canShowMIMETypeAsHTML)
 {
     Ref page = createPageForSanitizingWebContent(&destinationDocument);
     RefPtr stagingDocument = page->localTopDocument();
@@ -930,7 +931,7 @@ bool WebContentReader::readURL(const URL& url, const String& title)
     Ref frame = this->frame();
 #if PLATFORM(IOS_FAMILY)
     // FIXME: This code shouldn't be accessing selection and changing the behavior.
-    if (!frame->editor().client()->hasRichlyEditableSelection()) {
+    if (!protect(frame->editor().client())->hasRichlyEditableSelection()) {
         if (readPlainText([url.createNSURL() absoluteString]))
             return true;
     }

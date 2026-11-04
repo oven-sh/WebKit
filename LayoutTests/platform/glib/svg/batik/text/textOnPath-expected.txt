@@ -46,7 +46,7 @@ layer at (0,0) size 450x500
         RenderSVGText {text} at (12,-5) size 57x53 contains 1 chunk(s)
           RenderSVGTextPath {textPath} at (0,0) size 56x53
             RenderSVGInlineText {#text} at (-12,4) size 0x0
-            RenderSVGTSpan {tspan} at (-13,4) size 1x1
+            RenderSVGTSpan {tspan} at (0,0) size 0x0
               RenderSVGInlineText {#text} at (-12,4) size 0x0
             RenderSVGTSpan {tspan} at (0,0) size 56x53
               RenderSVGInlineText {#text} at (0,0) size 56x53
@@ -240,7 +240,7 @@ layer at (0,0) size 450x500
         RenderSVGText {text} at (11,6) size 38x46 contains 1 chunk(s)
           RenderSVGTextPath {textPath} at (0,0) size 37x45
             RenderSVGInlineText {#text} at (-11,-6) size 0x0
-            RenderSVGTSpan {tspan} at (-12,-7) size 1x1
+            RenderSVGTSpan {tspan} at (0,0) size 0x0
               RenderSVGInlineText {#text} at (-11,-6) size 0x0
             RenderSVGTSpan {tspan} at (0,0) size 37x45
               RenderSVGInlineText {#text} at (0,0) size 37x45

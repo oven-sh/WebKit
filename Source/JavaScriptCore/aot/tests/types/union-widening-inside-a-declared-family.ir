@@ -1,0 +1,23 @@
+# A test splits a family that the program declares, and the join behind it puts the two sides together again. The union is longer than either side and longer than the limit,
+# and it is still no longer than the family, which types list anyway: it stays a list, and a position that is declared to hold the family takes it.
+# A layout from outside the family makes the union a list that the join has built, which is widened
+# FORM: Prepared
+# OPTIONS: limit=MaxLayoutsInType:4
+# RUN: union-widening
+# LOSS: MaxLayoutsInType x2 f0
+# CHECK: t0 | t1 = L1|L2|L3|L4|L5|L6
+# CHECK: t0 | t2 = object
+# CHECK: t1 | t2 = L4|L5|L6|L7
+# CHECK: loss MaxLayoutsInType x2
+# CHECK: laws hold
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Node"
+layout L1 name="A" supertypes=[L0]
+layout L2 name="B" supertypes=[L0]
+layout L3 name="C" supertypes=[L0]
+layout L4 name="Expression" supertypes=[L0]
+layout L5 name="D" supertypes=[L4]
+layout L6 name="E" supertypes=[L4]
+layout L7 name="Other"
+function f0 name="types" parameters=[{type=L1|L2|L3}, {type=L4|L5|L6}, {type=L5|L6|L7}] results=[{type=undefined}]

@@ -1,0 +1,55 @@
+# A function that is created with a prototype property keeps it as an own data property: nothing can delete it or turn it into an accessor, so a read of it runs no code. Any other function inherits what the name finds, which may be a getter
+# FORM: Prepared
+# RUN: members-run-by Named:prototype f0
+# RUN(EFFECTS): effects f10
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource
+layout L0 kind=Instance name="Base" constructor=f1 flow={baseState=None}
+layout L1 kind=Instance name="Derived" base=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0}
+layout L2 kind=Instance name="Legacy" constructor=f3 flags=[IsConstructorFunction] flow={baseState=None}
+function f0 name="operands" parameters=[{type=f1}, {type=f2}, {type=f3}, {type=f4}, {type=f5}, {type=f6}, {type=f7}, {type=f8}, {type=f9}, {type=f1|f3}, {type=f1|f5}, {type=function}] results=[{type=undefined}] {
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}]
+function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=object}]
+function f3 name="Legacy" flags=[HasThis] thisType={type=object} results=[{type=undefined}]
+function f4 name="generator" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+    Unreachable
+}
+function f5 name="arrow" kind=Arrow results=[{type=anything}]
+function f6 name="method" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f7 name="asynchronous" flags=[IsAsync] results=[{type=anything}] {
+    Unreachable
+}
+function f8 name="getter" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f9 name="ofTheLibrary" module=m1 results=[{type=anything}]
+# CHECK: v0: none
+# CHECK-NEXT: v1: none
+# CHECK-NEXT: v2: none
+# CHECK-NEXT: v3: none
+# CHECK-NEXT: v4: ?
+# CHECK-NEXT: v5: ?
+# CHECK-NEXT: v6: ?
+# CHECK-NEXT: v7: ?
+# The engine creates a function of its library without the property
+# CHECK-NEXT: v8: ?
+# CHECK-NEXT: v9: none
+# CHECK-NEXT: v10: ?
+# CHECK-NEXT: v11: ?
+function f10 name="reads" parameters=[{type=f1}, {type=f3}, {type=f5}, {type=anything}] results=[{type=undefined}] {
+    v4 = GetConstructPrototype v0 layout=L0
+    v5 = GetConstructPrototype v1 layout=L2
+    v6 = GetConstructPrototype v2 layout=L0
+    v7 = ResolveHeritage v0
+    v8 = ResolveHeritage v1
+    v9 = ResolveHeritage v3
+    Return
+}
+# EFFECTS-LABEL: function f10
+# EFFECTS-NEXT: v4 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throwsForLackOfMemory collects
+# EFFECTS-NEXT: v5 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(MemberGuards/1, AllocatorState) throwsForLackOfMemory collects
+# EFFECTS-NEXT: v6 GetConstructPrototype: unknownCode
+# EFFECTS-NEXT: v7 ResolveHeritage: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# EFFECTS-NEXT: v8 ResolveHeritage: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(MemberGuards/1, AllocatorState) throws collects
+# EFFECTS-NEXT: v9 ResolveHeritage: unknownCode

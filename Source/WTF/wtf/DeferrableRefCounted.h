@@ -28,6 +28,7 @@
 #include <wtf/Assertions.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/SwiftBridging.h>
 
 namespace WTF {
 
@@ -98,22 +99,31 @@ class DeferrableRefCounted : public DeferrableRefCountedBase {
 public:
     void deref() const
     {
+        // T derives from DeferrableRefCounted<T> (CRTP), so this is always a T.
         if (derefBase())
-            delete static_cast<const T*>(this);
+            SUPPRESS_MEMORY_UNSAFE_CAST delete static_cast<const T*>(this);
     }
 
     bool setIsDeferred(bool value)
     {
         if (!setIsDeferredBase(value))
             return false;
-        delete static_cast<T*>(this);
+        // T derives from DeferrableRefCounted<T> (CRTP), so this is always a T.
+        SUPPRESS_MEMORY_UNSAFE_CAST delete static_cast<T*>(this);
         return true;
     }
+
+#if defined(__swift__) && ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+    void swiftRef() const
+    {
+        ref();
+    }
+#endif
 
 protected:
     DeferrableRefCounted() { }
     ~DeferrableRefCounted() { }
-};
+} SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT BASE_CLASS_SWIFT_SHARED_REFERENCE(.swiftRef, .deref);
 
 } // namespace WTF
 

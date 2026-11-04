@@ -1,0 +1,12 @@
+# a position of a function line: an int32 promise has an int32 type, and an expected type may be any type
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: EntryParametersMismatch 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badCapture" captures=[{type=number flags=[IsInt32Promise]}] results=[{type=undefined}]
+function f1 name="badThis" flags=[HasThis] thisType={type=number flags=[IsInt32Promise]} results=[{type=undefined}]
+function f2 name="badParameter" parameters=[{type=number flags=[IsInt32Promise]}] results=[{type=undefined}]
+function f3 name="badResult" results=[{type=number flags=[IsInt32Promise]}]
+function f4 name="goodPromise" flags=[HasThis] captures=[{type=i32 flags=[IsInt32Promise]}] thisType={type=i32 flags=[IsInt32Promise]} parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=i32 flags=[IsInt32Promise]}]
+function f5 name="goodExpectedType" flags=[HasThis] captures=[{type=string flags=[IsExpected]}] thisType={type=string flags=[IsExpected]} parameters=[{type=number|string flags=[IsExpected]}] results=[{type=string flags=[IsExpected]}]

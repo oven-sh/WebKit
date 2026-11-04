@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)
 
 #include "B3WasmStructFieldValue.h"
 
@@ -48,12 +48,12 @@ private:
     friend class Procedure;
     friend class Value;
 
-    static Opcode opcodeFromConstructor(Kind, Origin, Value*, Value*, Ref<const Wasm::RTT>, Wasm::StructFieldCount, uint64_t) { return WasmStructSet; }
-    JS_EXPORT_PRIVATE WasmStructSetValue(Kind, Origin, Value* structPtr, Value*, Ref<const Wasm::RTT>, Wasm::StructFieldCount fieldIndex, uint64_t fieldHeapKey);
+    static Opcode opcodeFromConstructor(Kind, Origin, Value*, Value*, Ref<const Wasm::RTT>, Wasm::StructFieldCount, uint64_t, Mutability) { return WasmStructSet; }
+    JS_EXPORT_PRIVATE WasmStructSetValue(Kind, Origin, Value* structPtr, Value*, Ref<const Wasm::RTT>, Wasm::StructFieldCount fieldIndex, uint64_t fieldHeapKey, Mutability);
 };
 
 } // namespace JSC::B3
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(B3_JIT)
+#endif // ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)

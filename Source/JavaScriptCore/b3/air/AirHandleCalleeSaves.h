@@ -41,7 +41,6 @@ class Code;
 
 // FIXME: It would be cool to make this more interactive with the Air client and also more
 // powerful.
-// We should have shrink wrapping: https://bugs.webkit.org/show_bug.cgi?id=150458
 // We should make this interact with the client: https://bugs.webkit.org/show_bug.cgi?id=150459
 
 void handleCalleeSaves(Code&);

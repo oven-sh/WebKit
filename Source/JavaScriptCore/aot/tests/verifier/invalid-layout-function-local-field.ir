@@ -1,0 +1,11 @@
+# No field holds a value of a kind that lives only inside one activation
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidLayout 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="badGuard" fields=[{key="a" declared={type=guard}}]
+layout L1 kind=Environment name="badFlatString" fields=[{key="a" declared={type=number}}, {key="b" declared={type=flatstring}}]
+layout L2 name="badCodeAddress" fields=[{key="a" declared={type=codeaddress}}]
+layout L3 kind=Environment name="badBuilderCursor" fields=[{key="a" declared={type=buildercursor}}]
+layout L4 kind=Environment name="good" fields=[{key="a" declared={type=classtoken}}, {key="b" declared={type=enumerator}}, {key="c" declared={type=stringbuilder}}]

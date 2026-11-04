@@ -1,0 +1,23 @@
+# known = { held: one }; known.__proto__ = {}; known.label
+# A store under `__proto__` runs the setter of the table, so the stored object lies above the receiver from then on. It is an object of the program that has no such name:
+# the read finds nothing, the receiver stays in the program, and nobody enters what it holds. unknown-prototype-stored-by-name-may-hold-an-accessor.ir stores an object nobody knows
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# RUN(ESCAPES): valueflow-why escape-roots
+# ESCAPES: roots 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="KnownPrototype" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject layout=L1 fields=[]
+    PropSet v1, v2 key="__proto__" mode=Strict
+    v4 = PropGet v1 key="label"
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}

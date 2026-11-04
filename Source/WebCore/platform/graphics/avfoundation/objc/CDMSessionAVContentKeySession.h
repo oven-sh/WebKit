@@ -86,7 +86,7 @@ public:
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const { return m_logger; }
     uint64_t logIdentifier() const { return m_logIdentifier; }
-    WTFLogChannel& NODELETE logChannel() const;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const;
 #endif
 
     void didProvideContentKeyRequest(AVContentKeyRequest *);
@@ -106,7 +106,7 @@ private:
     bool hasContentKeySession() const { return !!m_contentKeySession; }
     RetainPtr<AVContentKeySession> contentKeySession();
 
-    bool hasContentKeyRequest() const;
+    bool LEGACY_NODELETE hasContentKeyRequest() const;
     RetainPtr<AVContentKeyRequest> contentKeyRequest() const;
 
     WeakPtr<LegacyCDMPrivateAVFObjC> m_cdm;
@@ -118,7 +118,7 @@ private:
     mutable Lock m_keyRequestLock;
     RetainPtr<AVContentKeyRequest> m_keyRequest WTF_GUARDED_BY_LOCK(m_keyRequestLock);
     RefPtr<Uint8Array> m_identifier;
-    RefPtr<SharedBuffer> m_sourceBufferInitData;
+    const RefPtr<SharedBuffer> m_sourceBufferInitData;
     RefPtr<SharedBuffer> m_initData;
     RetainPtr<NSData> m_expiredSession;
     Vector<int> m_protocolVersions;

@@ -36,6 +36,7 @@
 #include <cstdint>
 
 #include <JavaScriptCore/BuiltinUtils.h>
+#include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/SlotVisitorInlines.h>

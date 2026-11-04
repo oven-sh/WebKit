@@ -111,6 +111,7 @@ enum class ReasonForSuspension : uint8_t;
 enum class ScriptTrackingPrivacyCategory : uint8_t;
 enum class StorageBlockingPolicy : uint8_t;
 enum class TaskSource : uint8_t;
+struct ClientOrigin;
 struct CryptoKeyData;
 struct NetworkLoadPolicy;
 struct SettingsValues;
@@ -145,6 +146,8 @@ public:
     virtual bool isServiceWorkerGlobalScope() const { return false; }
     virtual bool isWorkletGlobalScope() const { return false; }
 
+    bool isInDestructor() const { return m_inScriptExecutionContextDestructor; }
+
     virtual bool isContextThread() const { return true; }
     virtual bool isJSExecutionForbidden() const = 0;
 
@@ -158,7 +161,7 @@ public:
 
     virtual String userAgent(const URL&) const = 0;
 
-    virtual const SettingsValues& settingsValues() const = 0;
+    virtual const SettingsValues& LEGACY_NODELETE settingsValues() const = 0;
 
     virtual const NetworkLoadPolicy& networkLoadPolicy() const = 0;
 
@@ -195,6 +198,9 @@ public:
     virtual void addConsoleMessage(MessageSource, MessageLevel, const String& message, unsigned long requestIdentifier = 0) = 0;
 
     virtual SecurityOrigin& topOrigin() const = 0;
+    virtual bool hasUnpartitionedStorageAccess() const { return false; }
+    SecurityOrigin& storageTopOrigin() const { return hasUnpartitionedStorageAccess() ? *securityOrigin() : topOrigin(); }
+    ClientOrigin storageClientOrigin() const;
 
     virtual bool shouldBypassMainWorldContentSecurityPolicy() const { return false; }
 
@@ -207,7 +213,7 @@ public:
     bool activeDOMObjectsAreSuspended() const { return m_activeDOMObjectsAreSuspended; }
     bool activeDOMObjectsAreStopped() const { return m_activeDOMObjectsAreStopped; }
 
-    JSC::ScriptExecutionStatus NODELETE jscScriptExecutionStatus() const;
+    JSC::ScriptExecutionStatus LEGACY_NODELETE jscScriptExecutionStatus() const;
 
     enum class CallStackPosition : bool { BottomMost, TopMost };
     URL currentSourceURL(CallStackPosition = CallStackPosition::BottomMost) const;
@@ -235,13 +241,13 @@ public:
     virtual RefPtr<FontLoadRequest> fontLoadRequest(const String& url, bool isSVG, bool isInitiatingElementInUserAgentShadowTree, LoadedFromOpaqueSource);
     virtual void beginLoadingFontSoon(FontLoadRequest&) { }
 
-    WEBCORE_EXPORT static void NODELETE setCrossOriginMode(CrossOriginMode);
-    static CrossOriginMode NODELETE crossOriginMode();
+    WEBCORE_EXPORT static void LEGACY_NODELETE setCrossOriginMode(CrossOriginMode);
+    WEBCORE_EXPORT static CrossOriginMode LEGACY_NODELETE crossOriginMode();
 
-    virtual bool NODELETE crossOriginIsolated() const { return false; }
+    virtual bool crossOriginIsolated() const { return false; }
     virtual String agentClusterID() const = 0;
 
-    WEBCORE_EXPORT void NODELETE ref();
+    WEBCORE_EXPORT void LEGACY_NODELETE ref();
     WEBCORE_EXPORT void deref();
 
     uint32_t checkedPtrCount() const final { return CanMakeThreadSafeCheckedPtr::checkedPtrCount(); }
@@ -296,7 +302,7 @@ public:
     void postTaskToResponsibleDocument(Function<void(Document&)>&&);
 
     // Gets the next id in a circular sequence from 1 to 2^31-1.
-    int NODELETE circularSequentialID();
+    int LEGACY_NODELETE circularSequentialID();
 
     inline bool addTimeout(int timeoutId, DOMTimer&); // Defined in ScriptExecutionContextInlines.h
     inline RefPtr<DOMTimer> takeTimeout(int timeoutId); // Defined in ScriptExecutionContextInlines.h
@@ -367,7 +373,7 @@ public:
     void setHasLoggedAuthenticatedEncryptionWarning(bool value) { m_hasLoggedAuthenticatedEncryptionWarning = value; }
 
     void setStorageBlockingPolicy(StorageBlockingPolicy policy) { m_storageBlockingPolicy = policy; }
-    WEBCORE_EXPORT bool shouldBlockThirdPartyStorage() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE shouldBlockThirdPartyStorage() const;
 
     enum class ResourceType : uint8_t {
         Cookies,
@@ -398,7 +404,7 @@ public:
 
     void addMicrotaskGlobalObject(JSC::JSGlobalObject*);
     template<typename Functor>
-    void forEachMicrotaskGlobalObject(const Functor&);
+    void forEachMicrotaskGlobalObject(NOESCAPE const Functor&);
     void clearMicrotaskGlobalObjects();
     virtual bool isEventLoopGroupStoppedPermanently() const { return false; }
 
@@ -409,7 +415,7 @@ protected:
         inline AddConsoleMessageTask(MessageSource, MessageLevel, const String&);
     };
 
-    ReasonForSuspension reasonForSuspendingActiveDOMObjects() const { return m_reasonForSuspendingActiveDOMObjects; }
+    std::optional<ReasonForSuspension> reasonForSuspendingActiveDOMObjects() const { return m_reasonForSuspendingActiveDOMObjects; }
 
     bool hasPendingActivity() const;
     WEBCORE_EXPORT void addToContextsMap();
@@ -435,7 +441,7 @@ private:
 
     RejectedPromiseTracker* ensureRejectedPromiseTrackerSlow();
 
-    void NODELETE checkConsistency() const;
+    void LEGACY_NODELETE checkConsistency() const;
     WEBCORE_EXPORT GuaranteedSerialFunctionDispatcher& nativePromiseDispatcher();
 
     WeakHashSet<MessagePort, WeakPtrImplWithEventTargetData> m_messagePorts;
@@ -448,7 +454,7 @@ private:
     std::unique_ptr<Vector<std::unique_ptr<PendingException>>> m_pendingExceptions;
     std::unique_ptr<RejectedPromiseTracker> m_rejectedPromiseTracker;
 
-    RefPtr<PublicURLManager> m_publicURLManager;
+    const RefPtr<PublicURLManager> m_publicURLManager;
 
     RefPtr<DatabaseContext> m_databaseContext;
 
@@ -459,9 +465,7 @@ private:
     OrderedHashSet<MessagePortIdentifier> m_portsWithAvailableMessages;
     bool m_dispatchAllPorts { false };
 
-#if ASSERT_ENABLED
     bool m_inScriptExecutionContextDestructor { false };
-#endif
 
     RefPtr<ServiceWorker> m_activeServiceWorker;
     HashMap<ServiceWorkerIdentifier, WeakRef<ServiceWorker, WeakPtrImplWithEventTargetData>> m_serviceWorkers;
@@ -471,7 +475,7 @@ private:
     HashMap<NotificationCallbackIdentifier, CompletionHandler<void()>> m_notificationCallbacks;
 
     StorageBlockingPolicy m_storageBlockingPolicy;
-    ReasonForSuspension m_reasonForSuspendingActiveDOMObjects { static_cast<ReasonForSuspension>(-1) };
+    std::optional<ReasonForSuspension> m_reasonForSuspendingActiveDOMObjects;
 
     Type m_type;
     bool m_activeDOMObjectsAreSuspended { false };
@@ -486,6 +490,6 @@ private:
     std::unique_ptr<JSC::WeakGCSet<JSC::JSGlobalObject, DefaultHash<JSC::JSGlobalObject*>, HashTraits<JSC::JSGlobalObject*>>> m_microtaskGlobalObjects;
 };
 
-WebCoreOpaqueRoot NODELETE root(ScriptExecutionContext*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(ScriptExecutionContext*);
 
 } // namespace WebCore

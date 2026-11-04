@@ -1,0 +1,12 @@
+# In front of the record of a layout with fields out of line there is the data of its extension too
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: tables layouts
+# STATISTIC: ProgramTableBytesLayouts <= 2092
+# CHECK: layout shape=1 index=L0 kind=Record name="Options" size=128
+# CHECK: rare extension=Cell32@16 extraProperties=- extensionSize=320
+# CHECK: layout shape=2 index=L1
+# CHECK-NOT: rare
+# CHECK: layout shape=3 index=L2
+# CHECK: rare extension=Cell32@16 extraProperties=- extensionSize=112
+# PROGRAM-OF: pack-out-of-line.ir

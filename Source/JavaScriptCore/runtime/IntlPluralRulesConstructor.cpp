@@ -68,7 +68,7 @@ static JSC_DECLARE_HOST_FUNCTION(callIntlPluralRules);
 static JSC_DECLARE_HOST_FUNCTION(constructIntlPluralRules);
 
 IntlPluralRulesConstructor::IntlPluralRulesConstructor(VM& vm, Structure* structure)
-    : InternalFunction(vm, structure, callIntlPluralRules, constructIntlPluralRules)
+    : InternalFunction(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callIntlPluralRules), JSC_REGISTERED_HOST_FUNCTION(constructIntlPluralRules))
 {
 }
 

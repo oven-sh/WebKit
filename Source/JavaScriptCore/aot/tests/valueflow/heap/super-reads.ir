@@ -1,0 +1,71 @@
+# class Base { run() {} static run() {} }  class Derived extends Base { run() {} go() { super.run() } static go() { super.run() } }  new Derived().go();  Derived.go()
+# A read through super starts above the home object, so the method of the class itself is not what it finds. The home object of a method is the prototype object of its class,
+# that of a static method the class: each finds the method of its own side.
+# RUN: valueflow-solve calls
+# CHECK: f5 v4 -> f2
+# CHECK: f7 v4 -> f6
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f2
+# UNREACHED: unreached f4
+# UNREACHED-NOT: unreached f6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1
+layout L1 kind=Instance name="Derived" base=L0 constructor=f3 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="run"
+    v4 = NewClosure function=f6
+    DefineMethod v1, v4 layout=L0 side=Static index=1 key="run"
+    v6 = FinishClass v1 layout=L0
+    v7 = ResolveHeritage v6
+    v8 = NewClosure function=f3
+    v9 = NewClass v8, v6, v7 layout=L1
+    v10 = NewClosure function=f4
+    DefineMethod v9, v10 layout=L1 key="run"
+    v12 = NewClosure v9 function=f5
+    DefineMethod v9, v12 layout=L1 index=1 key="go"
+    v14 = NewClosure v9 function=f7
+    DefineMethod v9, v14 layout=L1 side=Static index=2 key="go"
+    v16 = FinishClass v9 layout=L1
+    v17 = Construct v16
+    v18 = PropGet v17 key="go"
+    v19 = Call v18, v17
+    v20 = PropGet v16 key="go"
+    v21 = Call v20, v16
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="run" kind=Method results=[{type=anything}] {
+    Return
+}
+function f3 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f4 name="run" kind=Method results=[{type=anything}] {
+    Return
+}
+function f5 name="go" kind=Method flags=[HasThis] captures=[{type=function}] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=ClassPrototype
+    v3 = SuperGet v2, v1 key="run"
+    v4 = Call v3, v1
+    Return
+}
+function f6 name="run" kind=Method results=[{type=anything}] {
+    Return
+}
+function f7 name="go" kind=Method flags=[HasThis] captures=[{type=function}] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperGet v2, v1 key="run"
+    v4 = Call v3, v1
+    Return
+}

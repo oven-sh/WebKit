@@ -83,12 +83,12 @@ static FloatRect inlineVideoFrame(HTMLVideoElement& element)
         return { };
 
     if (renderer->hasLayer() && renderer->enclosingLayer()->isComposited()) {
-        FloatQuad contentsBox = static_cast<FloatRect>(renderer->enclosingLayer()->backing()->inlineVideoContentsBox());
+        FloatQuad contentsBox { renderer->enclosingLayer()->backing()->inlineVideoContentsBox() };
         contentsBox = renderer->localToContainerQuad(contentsBox, nullptr);
-        return protect(document->view())->contentsToRootView(contentsBox.boundingBox());
+        return protect(document->view())->contentsToMainFrameView(contentsBox.boundingBox());
     }
 
-    return renderer->videoBoxInRootView();
+    return renderer->videoBoxInMainFrameView();
 }
 
 #pragma mark - VideoPresentationInterfaceContext

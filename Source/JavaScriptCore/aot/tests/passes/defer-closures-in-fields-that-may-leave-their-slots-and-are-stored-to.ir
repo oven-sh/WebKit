@@ -1,0 +1,88 @@
+# ({ ...source, run() {} }), its last member resolved to a store into the slot without a test: the type of the field is only expected, so its slot took every value, and the store replaced whatever the copy had brought.
+# A slot that defers its closure holds objects alone: a number that the copy brings lies outside the slot, and the store into the slot would leave it there. The field does not defer.
+# The same holds for any other store into the slot, and for a store in a function that is also entered with an object that is not new.
+# A store right behind the allocation finds a new object: it keeps nothing from deferring.
+# Neither does a store to a field that may be redefined: such a field could leave its slot all along, so the store was resolved with the test that it needs
+# FORM: Prepared
+# OPTIONS: references=narrow check=VerifyEachPass
+# RUN: pass DeferClosuresInFields
+# STATISTIC: FieldsDeferringClosures = 2
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="StoredBehindCopy" fields=[{key="run" declared={type=function flags=[IsExpected]} flow={stability=[IsNeverRedefined]}}]
+layout L1 name="StoredBehindAllocation" fields=[{key="walk" declared={type=function flags=[IsExpected]} flow={stability=[IsNeverRedefined]}}]
+layout L2 name="ClearedLater" fields=[{key="stop" declared={type=function flags=[IsExpected]} flow={stability=[IsNeverRedefined]}}]
+layout L3 name="StoredByCallee" fields=[{key="turn" declared={type=function flags=[IsExpected]} flow={stability=[IsNeverRedefined]}}]
+layout L4 name="MayBeRedefined" fields=[{key="spin" declared={type=function flags=[IsExpected]}}]
+# CHECK: layout L0 name="StoredBehindCopy"
+# CHECK-NOT: deferral=
+# CHECK: layout L1 name="StoredBehindAllocation"{{*}}deferral=CapturesNothing
+# CHECK-NEXT: layout L2 name="ClearedLater"
+# CHECK-NOT: deferral=
+# CHECK: layout L4 name="MayBeRedefined"{{*}}deferral=CapturesNothing
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = NewClosure function=f3
+    PutSlot v1, -, v3 key="run" receivers=[L0] level=Proven
+    PutModuleVariable v1 variable=g0
+    v6 = NewObject layout=L1 fields=[]
+    v7 = NewClosure function=f3
+    PutSlot v6, -, v7 key="walk" receivers=[L1] level=Proven
+    PutModuleVariable v6 variable=g0
+    v10 = NewClosure function=f3
+    v11 = NewObject -, v10 layout=L2 fields=[0]
+    PutModuleVariable v11 variable=g0
+    v13 = NewObject layout=L3 fields=[]
+    v14 = CallDirect v13 function=f2
+    PutModuleVariable v13 variable=g0
+    v16 = NewObject layout=L3 fields=[]
+    CopyDataProperties v16, v0
+    v18 = CallDirect v16 function=f2
+    v19 = NewObject layout=L4 fields=[]
+    PutModuleVariable v19 variable=g0
+    Return
+}
+# CHECK: [[made]]: f3 = NewClosure function=f3
+# CHECK-NEXT: PutSlot v1, -, [[made]] key="run"
+# CHECK: [[unmade]]: f3 = NewClosure function=f3 [isMadeOnDemand]
+# CHECK-NEXT: = NewObject -, [[unmade]] layout=L1 fields=[0]
+# CHECK: [[listed]]: f3 = NewClosure function=f3
+# CHECK-NEXT: = NewObject -, [[listed]] layout=L2 fields=[0]
+function f1 name="clears" module=m0 parameters=[{type=L2}] results=[{type=anything}] {
+    v1 = Null
+    PutSlot v0, -, v1 key="stop" receivers=[L2] level=Proven
+    Return
+}
+function f2 name="fills" module=m0 kind=Initializer flags=[HasThis] thisType={type=L3} results=[{type=undefined}] {
+    v1 = NewClosure function=f3
+    PutSlot v0, -, v1 key="turn" receivers=[L3] level=Proven
+    Return
+}
+# CHECK-LABEL: function f2 name="fills"
+# CHECK: [[stored]]: f3 = NewClosure function=f3
+# CHECK-NEXT: PutSlot v0, -, [[stored]] key="turn"
+function f3 name="run" module=m0 kind=Arrow results=[{type=undefined}] {
+    Return
+}
+function f4 name="storesBehindTest" module=m0 parameters=[{type=L4}] results=[{type=anything}] {
+    v1 = HasNoFieldOutsideSlot v0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    v3 = NewClosure function=f3
+    PutSlotOrAdd v0, v2, v3 key="spin" receivers=[L4] level=Proven
+    Jump -> next b3()
+  b2():
+    v5 = NewClosure function=f3
+    PropDefine v0, v5 key="spin"
+    Jump -> next b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f4 name="storesBehindTest"
+# CHECK: [[behindTest]]: f3 = NewClosure function=f3 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, v2, [[behindTest]] key="spin"

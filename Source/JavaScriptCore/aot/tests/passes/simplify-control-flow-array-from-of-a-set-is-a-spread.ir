@@ -1,0 +1,62 @@
+# Where a program writes Array.from(value), the front end asks whether `[...value]` does as well. It does for a list with its own names, and for a Set that the built-in iterator walks.
+# FORM: Prepared optimizing
+# RUN: pass SimplifyBuiltinCalls SimplifyControlFlow
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="aSetThatTheBuiltInIteratorWalks" parameters=[{type=Set<number, pristine[Names]>}] results=[{type=number}] {
+    v1 = IsPristineArray v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+# CHECK-LABEL: function f0 name="aSetThatTheBuiltInIteratorWalks"
+# CHECK-NOT: Branch
+# CHECK: Integer integer=1
+# CHECK-NOT: Integer integer=2
+
+function f1 name="aSetThatMayHaveAWalkOfItsOwn" parameters=[{type=Set<number>}] results=[{type=number}] {
+    v1 = IsPristineArray v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+# CHECK-LABEL: function f1 name="aSetThatMayHaveAWalkOfItsOwn"
+# CHECK: IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK: Integer integer=2
+
+function f2 name="aSetOrNothing" parameters=[{type=undefined|Set<number, pristine[Names]>}] results=[{type=number}] {
+    v1 = IsPristineArray v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+# CHECK-LABEL: function f2 name="aSetOrNothing"
+# CHECK: IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK: Integer integer=2
+
+function f3 name="aMap" parameters=[{type=Map<string, number, pristine[Names]>}] results=[{type=number}] {
+    v1 = IsPristineArray v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+# CHECK-LABEL: function f3 name="aMap"
+# CHECK: IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK: Integer integer=2

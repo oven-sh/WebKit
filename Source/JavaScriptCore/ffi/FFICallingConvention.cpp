@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFICallingConvention.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "FFISignature.h"
 #include <wtf/MathExtras.h>
@@ -177,4 +177,4 @@ unsigned incomingStackOffset(const CallLayout& layout, unsigned argIndex)
 
 } // namespace JSC::FFI
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

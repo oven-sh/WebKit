@@ -1,0 +1,20 @@
+# A cell is found by the names on its path. The program replaces the global Date and names the original Date.now, whose own location stays constant: the cell of Date is filled at start-up, the cell of Date.now at its first use, from there
+# RUN: tables constants
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="replacement" [isFreeName]
+    v2 = PropGet v0 key="report" [isFreeName]
+    PropSet v0, v1 key="Date" [isFreeName]
+    v4 = Builtin builtin=DateNow
+    v5 = Call v2, -, v4
+    Return
+}
+
+# CHECK: builtinCell [[date]] cell=Date
+# CHECK: builtinCell [[now]] cell=DateNow
+# CHECK-NOT: eagerBuiltinCell
+# CHECK: eagerBuiltinCell [[date]] cell=Date
+# CHECK-NOT: eagerBuiltinCell

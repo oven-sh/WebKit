@@ -1,0 +1,41 @@
+# The call that a ReturnCall names stays with its arguments, though the same call with an unused result goes
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+# STATISTIC: EliminateDeadCodeChanges = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callNamedByReturnCall" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    v2 = CallDirect v1 function=f3
+    ReturnCall v2
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: number = Add v0, v0
+# CHECK-NEXT: v2: number = CallDirect v1 function=f3
+# CHECK-NEXT: ReturnCall v2
+}
+
+function f1 name="sameCallWithUnusedResult" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    v2 = CallDirect v1 function=f3
+    Return v0
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: Return v0
+}
+
+function f2 name="unusedValueBesideTheCall" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Mul v0, v0
+    v3 = CallDirect v0 function=f3
+    ReturnCall v3
+  b2():
+    Return v0
+# CHECK: b1():
+# CHECK-NEXT: v3: number = CallDirect v0 function=f3
+# CHECK-NEXT: ReturnCall v3
+}
+
+function f3 name="withoutEffects" parameters=[{type=number}] results=[{type=number}] {
+    Return v0
+}
+# CHECK-LABEL: function f3 name="withoutEffects"

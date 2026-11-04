@@ -25,6 +25,7 @@
 #include "WebExtensionUtilities.h"
 #include <WebKitWebExtensionInternal.h>
 #include <wtf/HashMap.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
@@ -33,7 +34,7 @@ using namespace TestWebKitAPI;
 
 static GRefPtr<GBytes> createGBytes(const gchar* string)
 {
-    return adoptGRef(g_bytes_new_static(string, strlen(string)));
+    return gBytesNewStatic(unsafeSpan(string));
 }
 
 static void testExtensionCreationFromDirectory(Test*, gconstpointer)
@@ -261,7 +262,7 @@ static void testActionParsing(Test*, gconstpointer)
 
     // `action` should be ignored in manifest v2
     extension = parse("{ \"manifest_version\": 2, \"action\": { \"default_title\": \"Button Title\" }, \"name\": \"Test\", \"version\": \"1.0\", \"description\": \"Test description\" }");
-    g_assert_no_error(error.get());
+    g_assert_error(error.get(), WEBKIT_WEB_EXTENSION_ERROR, WEBKIT_WEB_EXTENSION_ERROR_INVALID_MANIFEST_ENTRY);
     g_assert_null(webkit_web_extension_get_display_action_label(extension.get()));
     g_assert_null(webkit_web_extension_get_action_icon(extension.get(), 16, 16));
 
@@ -273,13 +274,13 @@ static void testActionParsing(Test*, gconstpointer)
 
     // Manifest v3 should never find a browser_action.
     extension = parse("{ \"manifest_version\": 3, \"browser_action\": { \"default_title\": \"Button Title\" }, \"name\": \"Test\", \"version\": \"1.0\", \"description\": \"Test description\" }");
-    g_assert_no_error(error.get());
+    g_assert_error(error.get(), WEBKIT_WEB_EXTENSION_ERROR, WEBKIT_WEB_EXTENSION_ERROR_INVALID_MANIFEST_ENTRY);
     g_assert_null(webkit_web_extension_get_display_action_label(extension.get()));
     g_assert_null(webkit_web_extension_get_action_icon(extension.get(), 16, 16));
 
     // Or a page action
     extension = parse("{ \"manifest_version\": 3, \"page_action\": { \"default_title\": \"Button Title\" }, \"name\": \"Test\", \"version\": \"1.0\", \"description\": \"Test description\" }");
-    g_assert_no_error(error.get());
+    g_assert_error(error.get(), WEBKIT_WEB_EXTENSION_ERROR, WEBKIT_WEB_EXTENSION_ERROR_INVALID_MANIFEST_ENTRY);
     g_assert_null(webkit_web_extension_get_display_action_label(extension.get()));
     g_assert_null(webkit_web_extension_get_action_icon(extension.get(), 16, 16));
 
@@ -1024,6 +1025,22 @@ static void testCommandsParsing(Test*, gconstpointer)
     extension = parse("{ \"commands\": { }, \"page_action\": { \"default_title\": \"Test Action\" }, \"manifest_version\": 2, \"name\": \"Test\", \"description\": \"Test\", \"version\": \"1.0\" }");
     g_assert_true(webkit_web_extension_get_has_commands(extension.get()));
     g_assert_no_error(error.get());
+
+    extension = parse("{ \"commands\": { \"_execute_action\": { } }, \"action\": { \"default_title\": \"Test Action\" }, \"manifest_version\": 3, \"name\": \"Test\", \"description\": \"Test\", \"version\": \"1.0\" }");
+    g_assert_true(webkit_web_extension_get_has_commands(extension.get()));
+    g_assert_no_error(error.get());
+
+    extension = parse("{ \"commands\": { \"_execute_browser_action\": { } }, \"browser_action\": { \"default_title\": \"Test Action\" }, \"manifest_version\": 2, \"name\": \"Test\", \"description\": \"Test\", \"version\": \"1.0\" }");
+    g_assert_true(webkit_web_extension_get_has_commands(extension.get()));
+    g_assert_no_error(error.get());
+
+    extension = parse("{ \"commands\": { \"_execute_page_action\": { } }, \"page_action\": { \"default_title\": \"Test Action\" }, \"manifest_version\": 2, \"name\": \"Test\", \"description\": \"Test\", \"version\": \"1.0\" }");
+    g_assert_true(webkit_web_extension_get_has_commands(extension.get()));
+    g_assert_no_error(error.get());
+
+    extension = parse("{ \"commands\": { \"show-popup\": { } }, \"manifest_version\": 3, \"name\": \"Test\", \"description\": \"Test\", \"version\": \"1.0\" }");
+    g_assert_false(webkit_web_extension_get_has_commands(extension.get()));
+    g_assert_error(error.get(), WEBKIT_WEB_EXTENSION_ERROR, WEBKIT_WEB_EXTENSION_ERROR_INVALID_MANIFEST_ENTRY);
 
     extension = parse("{ \"manifest_version\": 3, \"name\": \"Test\", \"description\": \"Test\", \"version\": \"1.0\" }");
     g_assert_false(webkit_web_extension_get_has_commands(extension.get()));

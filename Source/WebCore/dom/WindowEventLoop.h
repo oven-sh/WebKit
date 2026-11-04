@@ -59,6 +59,9 @@ public:
     HashSet<Ref<MutationObserver>>& suspendedMutationObservers() LIFETIME_BOUND { return m_suspendedObservers; }
     void removeMutationObserversForContext(ScriptExecutionContext&);
 
+    void addAssociatedContext(ScriptExecutionContext&) final;
+    void removeAssociatedContext(ScriptExecutionContext&) final;
+
     CustomElementQueue& backupElementQueue();
 
     void scheduleIdlePeriod();
@@ -68,7 +71,7 @@ public:
     WEBCORE_EXPORT static void breakToAllowRenderingUpdate();
 
 private:
-    static Ref<WindowEventLoop> create(const String&);
+    static Ref<WindowEventLoop> LEGACY_NODELETE create(const String&);
     WindowEventLoop(const String&);
 
     void scheduleToRun() final;
@@ -87,7 +90,7 @@ private:
     String m_agentClusterKey;
     Timer m_timer;
     Timer m_idleTimer;
-    RefPtr<MicrotaskQueue> m_microtaskQueue;
+    const RefPtr<MicrotaskQueue> m_microtaskQueue;
     // Each task scheduled in event loop is associated with a document so that it can be suspened or stopped
     // when the associated document is suspened or stopped. This task group is used to schedule a task
     // which is not scheduled to a specific document, and should only be used when it's absolutely required.
@@ -99,11 +102,12 @@ private:
     HashSet<Ref<MutationObserver>> m_activeObservers;
     HashSet<Ref<MutationObserver>> m_suspendedObservers;
 
-    std::unique_ptr<CustomElementQueue> m_customElementQueue;
+    const std::unique_ptr<CustomElementQueue> m_customElementQueue;
     bool m_processingBackupElementQueue { false };
 
     MonotonicTime m_lastIdlePeriodStartTime;
     Seconds m_expectedIdleCallbackDuration { 4_ms };
+    mutable Markable<MonotonicTime> m_nextRenderingTimeCache;
 };
 
 } // namespace WebCore

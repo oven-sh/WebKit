@@ -1,0 +1,36 @@
+# A range that is stored has to be created. It is created from the flat string
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: HoistStringCharactersGroups = 2
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="last" declared={type=anything} initialization=Undefined
+
+# CHECK-NOT: LoopHint
+# CHECK: [[flat]]: flatstring = FlattenString v0
+# CHECK: LoopHint
+# CHECK-NOT: FlattenString
+# CHECK: v7: int[0, 2147483647] = GetStringLength [[flat]]
+# CHECK: v11: string = Substring [[flat]], v9, v10
+# CHECK-NEXT: PutModuleVariable v11 variable=g0
+# CHECK-NOT: FlattenString
+function f0 name="slice-in-loop" parameters=[{type=string}, {type=number}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=1
+    Jump -> next b1(v2)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetStringLength v0
+    v8 = StringRange v7, v4, v1 method=Slice
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    v11 = Substring v0, v9, v10
+    PutModuleVariable v11 variable=g0
+    v13 = Add v4, v3
+    Jump -> next b1(v13)
+  b3():
+    Return
+}

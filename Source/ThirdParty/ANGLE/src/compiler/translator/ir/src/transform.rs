@@ -1,6 +1,7 @@
 // Copyright 2024 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+pub mod add_driver_uniforms;
 pub mod astify;
 pub mod broadcast_fragcolor;
 pub mod clamp_frag_depth;
@@ -9,6 +10,7 @@ pub mod dead_code_eliminate;
 pub mod dealias;
 pub mod emulate_instanced_multiview;
 pub mod emulate_multi_draw;
+pub mod expand_fragment_outputs_to_vec4;
 pub mod initialize_uninitialized_variables;
 pub mod localized_workarounds;
 pub mod monomorphize_unsupported_functions;

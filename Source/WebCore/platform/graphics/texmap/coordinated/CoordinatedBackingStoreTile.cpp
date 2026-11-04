@@ -83,33 +83,33 @@ void CoordinatedBackingStoreTile::processPendingUpdates()
 
         WTFBeginSignpost(this, CoordinatedSwapBuffer, "%u/%zu, rect %ix%i+%i+%i", updateIndex + 1, updatesCount, update.tileRect.x(), update.tileRect.y(), update.tileRect.width(), update.tileRect.height());
 
-        update.buffer->waitUntilPaintingComplete();
+        update.buffer->waitUntilPaintingFinished();
 
         FloatRect unscaledTileRect(update.tileRect);
         unscaledTileRect.scale(1. / m_scale);
-
-        if (unscaledTileRect != m_rect) {
-            m_rect = unscaledTileRect;
-            m_texture = nullptr;
-        }
 
 #if USE(SKIA)
         if (update.buffer->isBackedByOpenGL()) {
             WTFBeginSignpost(this, CopyTextureGPUToGPU);
             auto& buffer = static_cast<CoordinatedAcceleratedTileBuffer&>(update.buffer.get());
-            buffer.serverWait();
 
-            Ref texture = buffer.texture();
-            // Fast path: whole tile content changed -- take ownership of the incoming texture, replacing the existing tile buffer (avoiding texture copies).
-            if (update.sourceRect.size() == update.tileRect.size()) {
-                ASSERT(update.sourceRect.location().isZero());
-                if (m_texture)
-                    m_texture->swapTexture(texture);
-                else
-                    m_texture = WTF::move(texture);
-            } else {
-                ensureTexture(update.tileRect.size(), buffer);
-                m_texture->copyFromExternalTexture(texture->id(), update.sourceRect, toIntSize(update.bufferOffset));
+            if (RefPtr texture = buffer.takeTexture()) {
+                if (unscaledTileRect != m_rect) {
+                    m_rect = unscaledTileRect;
+                    m_texture = nullptr;
+                }
+
+                // Fast path: whole tile content changed -- take ownership of the incoming texture, replacing the existing tile buffer (avoiding texture copies).
+                if (update.sourceRect.size() == update.tileRect.size()) {
+                    ASSERT(update.sourceRect.location().isZero());
+                    if (m_texture)
+                        m_texture->swapTexture(Ref { *texture });
+                    else
+                        m_texture = WTF::move(texture);
+                } else {
+                    ensureTexture(update.tileRect.size(), buffer);
+                    m_texture->copyFromExternalTexture(texture->id(), update.sourceRect, toIntSize(update.bufferOffset));
+                }
             }
 
             WTFEndSignpost(this, CopyTextureGPUToGPU);
@@ -118,13 +118,20 @@ void CoordinatedBackingStoreTile::processPendingUpdates()
         }
 #endif
         auto& buffer = static_cast<CoordinatedUnacceleratedTileBuffer&>(update.buffer.get());
-        ensureTexture(update.tileRect.size(), buffer);
+        auto data = buffer.takeData();
+        if (!data.isEmpty()) {
+            if (unscaledTileRect != m_rect) {
+                m_rect = unscaledTileRect;
+                m_texture = nullptr;
+            }
 
-        WTFBeginSignpost(this, CopyTextureCPUToGPU);
-        ASSERT(!update.buffer->isBackedByOpenGL());
-        m_texture->updateContents(buffer.data(), update.sourceRect, update.bufferOffset, buffer.stride(), update.buffer->pixelFormat());
-        WTFEndSignpost(this, CopyTextureCPUToGPU);
+            ensureTexture(update.tileRect.size(), buffer);
 
+            WTFBeginSignpost(this, CopyTextureCPUToGPU);
+            ASSERT(!update.buffer->isBackedByOpenGL());
+            m_texture->updateContents(data.span().data(), update.sourceRect, update.bufferOffset, buffer.stride(), update.buffer->pixelFormat());
+            WTFEndSignpost(this, CopyTextureCPUToGPU);
+        }
         WTFEndSignpost(this, CoordinatedSwapBuffer);
     }
     WTFEndSignpost(this, CoordinatedSwapBuffers);

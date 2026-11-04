@@ -1,0 +1,12 @@
+# The generic version of a function is where a call goes on once a test at the entrance has failed: no type test is placed in it. The same body as a function of the source gets its test
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# STATISTIC: TypeTestsPlaced = 1
+
+# CHECK-LABEL: function f0 name="square"
+# CHECK: = TypeTest v0 testedType=number
+
+# CHECK-LABEL: function f1 name="square"
+# CHECK-NOT: TypeTest
+# CHECK: = Mul v0, v0
+# PROGRAM-OF: ../select/code-shapes-generic-version.ir

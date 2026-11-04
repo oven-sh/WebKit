@@ -1,0 +1,134 @@
+# a -= a - b, sixty times, then a | 0. Every line names a twice, so 2^60 ways lead from the last a back to the first: each value of the arithmetic is asked once, and no code is emitted for an integer that is not there.
+# FORM: Selected
+# RUN: generate-code ExactIntegersBehindNumbers
+# CHECK: : size=
+# CHECK-NOT: no code
+# CHECK: statistic ExactIntegersBehindNumbers 0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="settle" parameters=[{type=number}, {type=i32}] results=[{type=anything}] {
+  b0(v0: number, v1: i32):
+    v2 = Sub v0, v1 form=Numbers
+    v3 = Sub v0, v2 form=Numbers
+    v4 = Sub v3, v1 form=Numbers
+    v5 = Sub v3, v4 form=Numbers
+    v6 = Sub v5, v1 form=Numbers
+    v7 = Sub v5, v6 form=Numbers
+    v8 = Sub v7, v1 form=Numbers
+    v9 = Sub v7, v8 form=Numbers
+    v10 = Sub v9, v1 form=Numbers
+    v11 = Sub v9, v10 form=Numbers
+    v12 = Sub v11, v1 form=Numbers
+    v13 = Sub v11, v12 form=Numbers
+    v14 = Sub v13, v1 form=Numbers
+    v15 = Sub v13, v14 form=Numbers
+    v16 = Sub v15, v1 form=Numbers
+    v17 = Sub v15, v16 form=Numbers
+    v18 = Sub v17, v1 form=Numbers
+    v19 = Sub v17, v18 form=Numbers
+    v20 = Sub v19, v1 form=Numbers
+    v21 = Sub v19, v20 form=Numbers
+    v22 = Sub v21, v1 form=Numbers
+    v23 = Sub v21, v22 form=Numbers
+    v24 = Sub v23, v1 form=Numbers
+    v25 = Sub v23, v24 form=Numbers
+    v26 = Sub v25, v1 form=Numbers
+    v27 = Sub v25, v26 form=Numbers
+    v28 = Sub v27, v1 form=Numbers
+    v29 = Sub v27, v28 form=Numbers
+    v30 = Sub v29, v1 form=Numbers
+    v31 = Sub v29, v30 form=Numbers
+    v32 = Sub v31, v1 form=Numbers
+    v33 = Sub v31, v32 form=Numbers
+    v34 = Sub v33, v1 form=Numbers
+    v35 = Sub v33, v34 form=Numbers
+    v36 = Sub v35, v1 form=Numbers
+    v37 = Sub v35, v36 form=Numbers
+    v38 = Sub v37, v1 form=Numbers
+    v39 = Sub v37, v38 form=Numbers
+    v40 = Sub v39, v1 form=Numbers
+    v41 = Sub v39, v40 form=Numbers
+    v42 = Sub v41, v1 form=Numbers
+    v43 = Sub v41, v42 form=Numbers
+    v44 = Sub v43, v1 form=Numbers
+    v45 = Sub v43, v44 form=Numbers
+    v46 = Sub v45, v1 form=Numbers
+    v47 = Sub v45, v46 form=Numbers
+    v48 = Sub v47, v1 form=Numbers
+    v49 = Sub v47, v48 form=Numbers
+    v50 = Sub v49, v1 form=Numbers
+    v51 = Sub v49, v50 form=Numbers
+    v52 = Sub v51, v1 form=Numbers
+    v53 = Sub v51, v52 form=Numbers
+    v54 = Sub v53, v1 form=Numbers
+    v55 = Sub v53, v54 form=Numbers
+    v56 = Sub v55, v1 form=Numbers
+    v57 = Sub v55, v56 form=Numbers
+    v58 = Sub v57, v1 form=Numbers
+    v59 = Sub v57, v58 form=Numbers
+    v60 = Sub v59, v1 form=Numbers
+    v61 = Sub v59, v60 form=Numbers
+    v62 = Sub v61, v1 form=Numbers
+    v63 = Sub v61, v62 form=Numbers
+    v64 = Sub v63, v1 form=Numbers
+    v65 = Sub v63, v64 form=Numbers
+    v66 = Sub v65, v1 form=Numbers
+    v67 = Sub v65, v66 form=Numbers
+    v68 = Sub v67, v1 form=Numbers
+    v69 = Sub v67, v68 form=Numbers
+    v70 = Sub v69, v1 form=Numbers
+    v71 = Sub v69, v70 form=Numbers
+    v72 = Sub v71, v1 form=Numbers
+    v73 = Sub v71, v72 form=Numbers
+    v74 = Sub v73, v1 form=Numbers
+    v75 = Sub v73, v74 form=Numbers
+    v76 = Sub v75, v1 form=Numbers
+    v77 = Sub v75, v76 form=Numbers
+    v78 = Sub v77, v1 form=Numbers
+    v79 = Sub v77, v78 form=Numbers
+    v80 = Sub v79, v1 form=Numbers
+    v81 = Sub v79, v80 form=Numbers
+    v82 = Sub v81, v1 form=Numbers
+    v83 = Sub v81, v82 form=Numbers
+    v84 = Sub v83, v1 form=Numbers
+    v85 = Sub v83, v84 form=Numbers
+    v86 = Sub v85, v1 form=Numbers
+    v87 = Sub v85, v86 form=Numbers
+    v88 = Sub v87, v1 form=Numbers
+    v89 = Sub v87, v88 form=Numbers
+    v90 = Sub v89, v1 form=Numbers
+    v91 = Sub v89, v90 form=Numbers
+    v92 = Sub v91, v1 form=Numbers
+    v93 = Sub v91, v92 form=Numbers
+    v94 = Sub v93, v1 form=Numbers
+    v95 = Sub v93, v94 form=Numbers
+    v96 = Sub v95, v1 form=Numbers
+    v97 = Sub v95, v96 form=Numbers
+    v98 = Sub v97, v1 form=Numbers
+    v99 = Sub v97, v98 form=Numbers
+    v100 = Sub v99, v1 form=Numbers
+    v101 = Sub v99, v100 form=Numbers
+    v102 = Sub v101, v1 form=Numbers
+    v103 = Sub v101, v102 form=Numbers
+    v104 = Sub v103, v1 form=Numbers
+    v105 = Sub v103, v104 form=Numbers
+    v106 = Sub v105, v1 form=Numbers
+    v107 = Sub v105, v106 form=Numbers
+    v108 = Sub v107, v1 form=Numbers
+    v109 = Sub v107, v108 form=Numbers
+    v110 = Sub v109, v1 form=Numbers
+    v111 = Sub v109, v110 form=Numbers
+    v112 = Sub v111, v1 form=Numbers
+    v113 = Sub v111, v112 form=Numbers
+    v114 = Sub v113, v1 form=Numbers
+    v115 = Sub v113, v114 form=Numbers
+    v116 = Sub v115, v1 form=Numbers
+    v117 = Sub v115, v116 form=Numbers
+    v118 = Sub v117, v1 form=Numbers
+    v119 = Sub v117, v118 form=Numbers
+    v120 = Sub v119, v1 form=Numbers
+    v121 = Sub v119, v120 form=Numbers
+    v122 = Integer integer=0
+    v123 = BitOr v121, v122 form=Numbers
+    Return v123
+}

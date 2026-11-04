@@ -1,0 +1,124 @@
+# A compiled object keeps the names that are no fields in its extra properties, which the emitted code of a property run does not reach: only definitions in code that calls the operation straight away become a run, and only where the operation is known to take them
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot
+# STATISTIC: PropertyRunGroups = 3
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="x" declared={type=number}}] flow={members=[L0]}
+
+function f0 name="definitions-in-compact-code" parameters=[{type=L0}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    Return v0
+  b2():
+    Return v0
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[attempt]]: boolean = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"] [isDefinition]
+# CHECK-NEXT: Branch [[attempt]] -> taken
+# CHECK: PropDefine v0, v1 key="a"
+# CHECK-NEXT: PropDefine v0, v1 key="b"
+# CHECK-NEXT: PropDefine v0, v1 key="c"
+}
+function f1 name="definitions-in-code-that-probes-a-site-cache" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    Return v0
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PropDefine v0, v1 key="a"
+# CHECK-NEXT: PropDefine v0, v1 key="b"
+# CHECK-NEXT: PropDefine v0, v1 key="c"
+# CHECK-NEXT: Return v0
+}
+function f2 name="definition-of-a-field-between" parameters=[{type=L0}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="x"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    Return v0
+  b2():
+    Return v0
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: PropDefine v0, v1 key="a"
+# CHECK-NEXT: PropDefine v0, v1 key="x"
+# CHECK-NEXT: PropDefine v0, v1 key="b"
+# CHECK-NEXT: PropDefine v0, v1 key="c"
+# CHECK-NEXT: Return v0
+}
+function f3 name="stores-in-compact-code" parameters=[{type=L0}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    PropSet v0, v1 key="a" mode=Strict
+    PropSet v0, v1 key="b" mode=Strict
+    PropSet v0, v1 key="c" mode=Strict
+    Return v0
+  b2():
+    Return v0
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: PropSet v0, v1 key="a"
+# CHECK-NEXT: PropSet v0, v1 key="b"
+# CHECK-NEXT: PropSet v0, v1 key="c"
+# CHECK-NEXT: Return v0
+}
+
+# The type says no more than object. Flow saw only compiled objects arrive.
+function f4 name="stores-to-what-flow-saw-arrive" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="a" mode=Strict receivers=[L0]
+    PropSet v0, v1 key="b" mode=Strict receivers=[L0]
+    PropSet v0, v1 key="c" mode=Strict receivers=[L0]
+    Return v0
+# CHECK-NEXT: b0(
+# CHECK-NEXT: PropSet v0, v1 key="a"
+# CHECK-NEXT: PropSet v0, v1 key="b"
+# CHECK-NEXT: PropSet v0, v1 key="c"
+# CHECK-NEXT: Return v0
+}
+function f5 name="definitions-on-what-flow-saw-arrive" parameters=[{type=object}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    PropDefine v0, v1 key="a" receivers=[L0]
+    PropDefine v0, v1 key="b" receivers=[L0]
+    PropDefine v0, v1 key="c" receivers=[L0]
+    Return v0
+  b2():
+    Return v0
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[stamped]]: boolean = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"] [isDefinition]
+# CHECK-NEXT: Branch [[stamped]] -> taken
+}
+
+# It may be a compiled object that has the names as fields.
+function f6 name="definitions-on-some-object-in-compact-code" parameters=[{type=object}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    Return v0
+  b2():
+    Return v0
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: PropDefine v0, v1 key="a"
+# CHECK-NEXT: PropDefine v0, v1 key="b"
+# CHECK-NEXT: PropDefine v0, v1 key="c"
+# CHECK-NEXT: Return v0
+}
+function f7 name="definitions-on-an-ordinary-object-in-compact-code" parameters=[{type=Object}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    Return v0
+  b2():
+    Return v0
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[ordinary]]: boolean = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"] [isDefinition]
+# CHECK-NEXT: Branch [[ordinary]] -> taken
+}

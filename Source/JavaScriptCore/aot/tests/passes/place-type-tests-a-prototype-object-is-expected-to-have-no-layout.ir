@@ -1,0 +1,33 @@
+# `Object.getPrototypeOf(value).socket`: what stands above an object is a prototype object, which has no layout. A test for the layouts that have the name would fail every time, and what stands behind it
+# would run in the copy. The same read on a value that nobody knows gets the test.
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Connection" fields=[{key="socket" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="read-of-the-prototype" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=ObjectGetPrototypeOf/0
+    v2 = PropGet v1 key="socket"
+    Return v2
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: = CallBuiltin -, v0 overload=ObjectGetPrototypeOf/0
+# CHECK-NEXT: = PropGet v1 key="socket"
+# CHECK-NEXT: Return v2
+}
+function f1 name="read-of-the-prototype-by-reflect" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=ReflectGetPrototypeOf/0
+    v2 = PropGet v1 key="socket"
+    Return v2
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: = CallBuiltin -, v0 overload=ReflectGetPrototypeOf/0
+# CHECK-NEXT: = PropGet v1 key="socket"
+# CHECK-NEXT: Return v2
+}
+function f2 name="read-of-an-unknown-object" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="socket"
+    Return v1
+# CHECK-NEXT: b0(v0: object ~ L0):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: = GetSlot {{*}} key="socket" receivers=[L0] level=Expected
+}

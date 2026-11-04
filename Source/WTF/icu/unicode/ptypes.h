@@ -27,6 +27,9 @@
 #ifndef _PTYPES_H
 #define _PTYPES_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \def __STDC_LIMIT_MACROS
  * According to the Linux stdint.h, the ISO C99 standard specifies that in C++ implementations

@@ -39,6 +39,7 @@
 #include <WebCore/LibWebRTCUtils.h>
 #include <WebCore/Settings.h>
 #include <algorithm>
+#include <wtf/Borrow.h>
 #include <wtf/EnumTraits.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -178,16 +179,17 @@ void LibWebRTCNetworkManager::networksChanged(const Vector<RTCNetwork>& networks
             }
         }
 #endif
-        for (auto& network : networks) {
+        for (auto& network : borrow(networks)) {
             if (std::ranges::any_of(network.ips, [&](const auto& ip) { return ipv4.rtcAddress() == ip.rtcAddress() || ipv6.rtcAddress() == ip.rtcAddress(); }) || (!m_useMDNSCandidates && m_enableEnumeratingVisibleNetworkInterfaces && m_allowedInterfaces.contains(network.name)))
                 filteredNetworks.append(network);
         }
     }
 
     WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([this, protectedThis = Ref { *this }, networks = WTF::move(filteredNetworks), ipv4, ipv6, forceSignaling] {
-        std::vector<std::unique_ptr<webrtc::Network>> networkList(networks.size());
-        for (size_t index = 0; index < networks.size(); ++index)
-            networkList[index] = networks[index].value();
+        Borrow borrowedNetworks = networks;
+        std::vector<std::unique_ptr<webrtc::Network>> networkList(borrowedNetworks->size());
+        for (size_t index = 0; index < borrowedNetworks->size(); ++index)
+            networkList[index] = borrowedNetworks[index].value();
 
         bool hasChanged;
         set_default_local_addresses(ipv4.rtcAddress(), ipv6.rtcAddress());
@@ -239,7 +241,7 @@ void LibWebRTCNetworkManager::CreateNameForAddress(const webrtc::IPAddress& addr
             WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([address, callback = WTF::move(callback), name = WTF::move(name).isolatedCopy(), error] {
                 RELEASE_LOG_ERROR_IF(error, WebRTC, "MDNS registration of a host candidate failed with error %hhu", std::to_underlying(*error));
                 // In case of error, we provide the name to let gathering complete.
-                callback(address, name.utf8().legacyCStringPointer());
+                callback(address, std::string_view { byteCast<char>(name.utf8().span()) });
             });
         });
     });

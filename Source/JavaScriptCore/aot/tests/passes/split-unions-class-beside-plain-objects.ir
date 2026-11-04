@@ -1,0 +1,86 @@
+# What JSON.parse returns is an array, a plain object or a primitive. The class Object has no instance test, so nothing tells whether one of its instances is an array, but a test for Array leaves one part on its passing edge and takes that part away on the failing one: the array has an arm of its own. What the union proves about its arrays does not hold for an array that came in as an Object
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SplitUnions
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lengthOfParsedData" parameters=[{type=boolean|number|Array<number, proven>|Object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return v1
+# CHECK: [[isArray0]]: boolean = TypeTest v0 testedType=Array
+# CHECK-NEXT: Branch [[isArray0]] -> taken [[arrayArm0]](| 0), notTaken [[rest0]](| 0)
+# CHECK: [[arrayArm0]]([[array0]]: Array<number>):
+# CHECK-NEXT: = PropGet [[array0]] key="length"
+# CHECK: [[rest0]]([[other0]]: boolean|number|Object) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[other0]] key="length"
+}
+
+function f1 name="elementOfParsedData" parameters=[{type=boolean|number|Array<number, proven>|Object}, {type=int[0, 100]}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK: [[isArray1]]: boolean = TypeTest v0 testedType=Array
+# CHECK: ([[array1]]: Array<number>):
+# CHECK-NEXT: = ElemGet [[array1]], v1
+# CHECK: ([[other1]]: boolean|number|Object) frequency=Unlikely:
+# CHECK-NEXT: = ElemGet [[other1]], v1
+}
+
+function f2 name="classAndItsSubclass" parameters=[{type=Error|TypeError}] results=[{type=anything}] {
+    v1 = PropGet v0 key="toString"
+    Return v1
+# A test for Error passes for a TypeError. A test for TypeError leaves the TypeError alone.
+# CHECK-NOT: testedType=Error
+}
+
+function f3 name="armOrderFollowsUses" parameters=[{type=Map<string, number>|Array<number, proven>}, {type=int[0, 100]}] results=[{type=anything}] {
+    v2 = PropGet v0 key="toString"
+    v3 = ElemGet v0, v1
+    v4 = Add v2, v3
+    Return v4
+# Both classes have toString. The array serves the read by index as well, so it is tested first.
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+}
+
+function f4 name="partsThatServeAsMuch" parameters=[{type=boolean|string|Array<number, proven>}, {type=int[0, 100]}] results=[{type=anything}] {
+    v2 = PropGet v0 key="length"
+    v3 = ElemGet v0, v1
+    v4 = Add v2, v3
+    Return v4
+# Nothing was seen and both serve as much: what is read under a number is expected to be an array
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK: testedType=string
+}
+
+function f5 name="stringThatServesMore" parameters=[{type=string|Array<number, proven>}, {type=int[0, 100]}] results=[{type=anything}] {
+    v2 = PropGet v0 key="length"
+    v3 = PropGet v0 key="charCodeAt"
+    v4 = Add v2, v3
+    Return v4
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = TypeTest v0 testedType=string
+}
+
+
+function f6 name="arraysWereSeen" parameters=[{type=boolean|string|Array<number, proven>}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: boolean|string|Array<number, proven> ~ Array<number, proven>, v1: int[0, 100]):
+    v2 = PropGet v0 key="length"
+    v3 = ElemGet v0, v1
+    v4 = Add v2, v3
+    Return v4
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK: testedType=string
+}
+
+function f7 name="stringsWereSeen" parameters=[{type=boolean|string|Array<number, proven>}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: boolean|string|Array<number, proven> ~ string, v1: int[0, 100]):
+    v2 = PropGet v0 key="length"
+    v3 = ElemGet v0, v1
+    v4 = Add v2, v3
+    Return v4
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = TypeTest v0 testedType=string
+# CHECK: testedType=Array
+}

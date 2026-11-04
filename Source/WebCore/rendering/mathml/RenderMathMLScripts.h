@@ -42,25 +42,25 @@ public:
     RenderMathMLScripts(Type, MathMLScriptsElement&, Style::ComputedStyle&&);
     virtual ~RenderMathMLScripts();
 
-    RenderMathMLOperator* unembellishedOperator() const final;
+    CheckedPtr<RenderMathMLOperator> unembellishedOperator() const final;
 
 protected:
     bool isRenderMathMLScripts() const override { return true; }
     ASCIILiteral renderName() const override { return "RenderMathMLScripts"_s; }
-    MathMLScriptsElement::ScriptType NODELETE scriptType() const;
+    MathMLScriptsElement::ScriptType LEGACY_NODELETE scriptType() const;
     void computeIntrinsicLogicalWidthContributions() override;
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) override;
 
 private:
-    MathMLScriptsElement& NODELETE element() const;
+    MathMLScriptsElement& LEGACY_NODELETE element() const;
     std::optional<LayoutUnit> firstLineBaseline() const final;
     struct ReferenceChildren {
-        RenderBox* base;
-        RenderBox* prescriptDelimiter;
-        RenderBox* firstPostScript;
-        RenderBox* firstPreScript;
+        const CheckedPtr<RenderBox> base;
+        const CheckedPtr<RenderBox> prescriptDelimiter;
+        const CheckedPtr<RenderBox> firstPostScript;
+        const CheckedPtr<RenderBox> firstPreScript;
     };
-    std::optional<ReferenceChildren> validateAndGetReferenceChildren() const;
+    std::optional<ReferenceChildren> LEGACY_NODELETE validateAndGetReferenceChildren() const;
     LayoutUnit spaceAfterScript();
     LayoutUnit italicCorrection(const ReferenceChildren&);
     struct VerticalParameters {

@@ -16,7 +16,7 @@
 # earliest point where SWIFT_REQUIRED is known for every port.
 
 if (NOT SWIFT_REQUIRED)
-    return()
+    return ()
 endif ()
 
 # Helpers
@@ -73,7 +73,9 @@ set(WEBKIT_SWIFT_UPCOMING_FEATURE_FLAGS
 
 set(WEBKIT_SWIFT_EXPERIMENTAL_FEATURE_FLAGS
     "-enable-experimental-feature DebugDescriptionMacro"
+    "-enable-experimental-feature ForeignReferenceTypeInheritance"
     "-enable-experimental-feature ImportCxxMembersLazily"
+    "-enable-experimental-feature SafeInteropWrappers"
     "-enable-experimental-feature SuppressedAssociatedTypes"
     "-enable-experimental-feature SuppressedAssociatedTypesWithDefaults"
 )
@@ -87,27 +89,35 @@ set(WEBKIT_SWIFT_MEMORY_SAFETY_FLAGS
 
 set(WEBKIT_SWIFT_MEMORY_SAFETY_ERROR_FLAGS
     "-Werror ForeignReferenceType"
+    "-Werror RegionIsolation"
     "-Werror StrictMemorySafety"
 )
 
 set(WEBKIT_SWIFT_FATAL_DIAGNOSTIC_FLAGS
     "-Werror ExistentialAny"
+    "-Werror NoUsage"
+    "-Werror NoUseUnstructuredThrowingTask"
+    "-Werror UnusedImportAccess"
+    "-Werror VariableNeverMutated"
     ${WEBKIT_SWIFT_MEMORY_SAFETY_ERROR_FLAGS}
 )
-
-if (CMAKE_Swift_LANGUAGE_VERSION VERSION_GREATER_EQUAL 6.4)
-    list(APPEND WEBKIT_SWIFT_FATAL_DIAGNOSTIC_FLAGS "-Werror NoUsage")
-    list(APPEND WEBKIT_SWIFT_FATAL_DIAGNOSTIC_FLAGS "-Werror NoUseUnstructuredThrowingTask")
-endif ()
 
 set(WEBKIT_SWIFT_CLANG_IMPORTER_FLAGS
     "-Xcc -fvisibility=hidden"
 )
 
-# Avoid failing due to a nested process sandbox (e.g. when building from an agent session). 
+# Avoid failing due to a nested process sandbox (e.g. when building from an agent session).
 # Xcode does not do this by default.
 set(WEBKIT_SWIFT_MACRO_FLAGS
     -disable-sandbox
+)
+
+# Mirrors -Xfrontend -disable-round-trip-debug-types in CommonBase.xcconfig's OTHER_SWIFT_FLAGS.
+# An asserts swiftc aborts in IRGenDebugInfo getMangledName on a captured mutable variable of a
+# namespaced C++ type such as IPC.Connection.
+# FIXME(rdar://189511928, rdar://189512247): remove when both are resolved.
+set(WEBKIT_SWIFT_DEBUG_INFO_FLAGS
+    "-Xfrontend -disable-round-trip-debug-types"
 )
 
 set(WEBKIT_SWIFT_CONCURRENCY_FLAGS
@@ -131,7 +141,22 @@ webkit_add_swift_options(
     ${WEBKIT_SWIFT_FATAL_DIAGNOSTIC_FLAGS}
     ${WEBKIT_SWIFT_CLANG_IMPORTER_FLAGS}
     ${WEBKIT_SWIFT_MACRO_FLAGS}
+    ${WEBKIT_SWIFT_DEBUG_INFO_FLAGS}
 )
+
+webkit_add_swift_options(
+    "-module-cache-path ${CMAKE_BINARY_DIR}/SwiftModuleCache"
+    # Needed because WebKit's modules are marked [system].
+    -track-system-dependencies
+)
+set_property(DIRECTORY "${CMAKE_BINARY_DIR}" APPEND PROPERTY
+    ADDITIONAL_CLEAN_FILES "${CMAKE_BINARY_DIR}/SwiftModuleCache")
+
+# Ninja tricks compilers into turning off color support. See the matching clang
+# flags in WebKitCompilerFlags.cmake.
+if (CMAKE_GENERATOR STREQUAL "Ninja")
+    webkit_add_swift_options(-color-diagnostics)
+endif ()
 
 if (APPLE)
     webkit_add_swift_options(
@@ -141,12 +166,11 @@ if (APPLE)
 
     webkit_add_swift_options(
         -explicit-module-build
-        "-module-cache-path ${CMAKE_BINARY_DIR}/SwiftModuleCache"
-        # Needed because WebKit's modules are marked [system].
-        -track-system-dependencies
+        # Reuse the previous build's dependency scan, revalidated against its
+        # inputs, instead of rescanning from scratch: the WebKit target's scan
+        # reads ~16K files and takes ~14 s, on every rebuild of its Swift module.
+        -incremental-dependency-scan
     )
-    set_property(DIRECTORY "${CMAKE_BINARY_DIR}" APPEND PROPERTY
-        ADDITIONAL_CLEAN_FILES "${CMAKE_BINARY_DIR}/SwiftModuleCache")
 
     webkit_add_swift_options(
         # Needed for compatibility with modules in the (internal) SDK:
@@ -164,5 +188,9 @@ if (APPLE)
     # FIXME: Consider building with -wmo in release / performance builds.
     webkit_add_swift_options(
         -enable-batch-mode
+    )
+else ()
+    webkit_add_swift_options(
+        "-Xcc -fmodules-validate-system-headers"
     )
 endif ()

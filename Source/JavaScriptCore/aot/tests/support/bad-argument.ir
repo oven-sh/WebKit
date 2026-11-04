@@ -1,0 +1,37 @@
+# a command answers an argument it cannot use with one line
+# RUN(A): arena-merge nine
+# RUN(B): arena-merge 9
+# RUN(C): diagnostics NoSuchKind,f0
+# RUN(D): diagnostics LimitExceeded,f0,f1
+# RUN(E): limits None 1
+# RUN(F): losses declines HotCallNotInlined,b0
+# RUN(G): build-context nothing
+# RUN(H): diagnostics Unknown,f0
+# RUN(I): diagnostics LimitExceeded,f0,pass=VerifyProgram
+# RUN(J): losses limit-hits MaxLayoutsInType,count=1
+# RUN(K): losses allocation-remarks Heap,at=0:1
+# RUN(L): losses nothing
+# RUN(M): parallel-loops threads=0
+# RUN(N): limits
+# RUN(N): losses
+# RUN(N): build-context
+# A: error: bad argument nine
+# B: error: bad argument 9
+# C: error: bad argument NoSuchKind,f0
+# D: error: bad argument LimitExceeded,f0,f1
+# E: error: bad argument None
+# F: error: bad argument HotCallNotInlined,b0
+# G: error: bad argument nothing
+# H: error: bad argument Unknown,f0
+# I: error: bad argument LimitExceeded,f0,pass=VerifyProgram
+# J: error: bad argument MaxLayoutsInType,count=1
+# K: error: bad argument Heap,at=0:1
+# L: error: bad argument nothing
+# M: error: bad argument threads=0
+# N: error: missing argument
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="main" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}

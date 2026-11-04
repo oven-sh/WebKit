@@ -42,7 +42,7 @@ public:
 
     VM& vm() const { return m_vm; }
 
-    HeapSnapshot* NODELETE mostRecentSnapshot();
+    HeapSnapshot* LEGACY_NODELETE mostRecentSnapshot();
     void appendSnapshot(std::unique_ptr<HeapSnapshot>);
     void clearSnapshots();
 

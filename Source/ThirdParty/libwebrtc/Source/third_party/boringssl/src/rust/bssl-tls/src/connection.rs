@@ -44,6 +44,7 @@ use crate::{
     sessions::TlsSession, //
 };
 
+mod alpn;
 mod credentials;
 pub mod io;
 pub mod lifecycle;
@@ -115,7 +116,10 @@ where
 
     /// Disable session creation.
     pub fn disable_session(&mut self) -> &mut Self {
-        self.as_in_handshake().disable_session();
+        unsafe {
+            // Safety: the validity of the handle `ptr` is witnessed by `self`.
+            bssl_sys::SSL_set_mode(self.ptr(), ConnectionMode::MODE_NO_SESSION_CREATION.bits());
+        }
         self
     }
 
@@ -132,7 +136,10 @@ where
 
     /// Set the session for resumption.
     pub fn with_session(&mut self, session: &TlsSession) -> &mut Self {
-        self.as_in_handshake().set_session(session);
+        unsafe {
+            // Safety: self.ptr and session.0 are valid.
+            bssl_sys::SSL_set_session(self.ptr(), session.ptr());
+        }
         self
     }
 

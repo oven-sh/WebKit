@@ -1,0 +1,43 @@
+# `{ a: 1, ...style, d: 2 }` allocates an object with `a` and defines `d` in it before anybody else sees it: no finished object has the keys of that allocation alone.
+# Whoever has room for a few orders takes them from the front of the list, an arm of a spread for each: the orders that a finished object may have come first, `[a]` comes behind them
+# though its field has the lowest number. An allocation that only gets a field it lists already, or a copy that may copy nothing, may end as it began
+# RUN: valueflow-apply
+# LOSS: MaxExpandedKeyOrders
+# CHECK: layout L0 name="Style" {{*}}constructorOrders=[{}, {fields=[1]}, {fields=[2]}, {fields=[0]}
+# CHECK: layout L1 name="Kept" {{*}}constructorOrders=[{fields=[0]}, {fields=[1]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Style" fields=[{key="a" declared={type=undefined|number}}, {key="b" declared={type=undefined|number}}, {key="c" declared={type=undefined|number}}, {key="d" declared={type=undefined|number}}]
+layout L1 kind=Record name="Kept" fields=[{key="a" declared={type=undefined|number}}, {key="b" declared={type=undefined|number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Double number=1.5
+    v2 = NewObject layout=L0
+    v3 = FinishObject v2
+    v4 = Call v0, -, v3
+    v5 = NewObject -, v1 layout=L0 fields=[1]
+    v6 = FinishObject v5
+    v7 = Call v0, -, v6
+    v8 = NewObject -, v1 layout=L0 fields=[2]
+    v9 = FinishObject v8
+    v10 = Call v0, -, v9
+    v11 = NewObject -, v1 layout=L0 fields=[0]
+    CopyDataProperties v11, v3
+    PropDefine v11, v1 key="d"
+    v14 = FinishObject v11
+    v15 = Call v0, -, v14
+    v16 = NewObject -, v1 layout=L1 fields=[0]
+    CopyDataProperties v16, v3
+    PropDefine v16, v1 key="a"
+    v19 = FinishObject v16
+    v20 = Call v0, -, v19
+    v21 = NewObject -, v1 layout=L1 fields=[1]
+    v22 = FinishObject v21
+    v23 = Call v0, -, v22
+    Return v23
+}
+function f1 name="same" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0):
+    Return v0
+}

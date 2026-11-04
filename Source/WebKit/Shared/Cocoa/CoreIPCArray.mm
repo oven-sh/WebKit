@@ -30,12 +30,14 @@
 
 #import "CoreIPCNSCFObject.h"
 #import "CoreIPCTypes.h"
+#import <wtf/Borrow.h>
 
 namespace WebKit {
 
 CoreIPCArray::CoreIPCArray(NSArray *array)
 {
-    for (id value in array) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id value in array) {
         if (!IPC::isSerializableValue(value))
             continue;
         m_array.append(CoreIPCNSCFObject(value));
@@ -55,7 +57,7 @@ CoreIPCArray::CoreIPCArray(Vector<CoreIPCNSCFObject>&& array)
 RetainPtr<id> CoreIPCArray::toID() const
 {
     auto result = adoptNS([[NSMutableArray alloc] initWithCapacity:m_array.size()]);
-    for (auto& object : m_array) {
+    for (auto& object : borrow(m_array)) {
         if (RetainPtr objectID = object.toID())
             [result addObject:objectID.get()];
     }

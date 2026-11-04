@@ -1,0 +1,156 @@
+# What one lookup of a key finds from an instance, a class prototype or a class object, and which tests the answer needs where flow proved less
+# FORM: Prepared
+# RUN(INHERITED): member-lookup layout=L2 key="m"
+# INHERITED: Method level=Proven holder=L0 method=F1
+# RUN(FROMBASE): member-lookup layout=L2 key="n"
+# FROMBASE: Method level=Proven holder=L1 method=F7
+# RUN(OVERRIDE): member-lookup layout=L2 key="k"
+# OVERRIDE: Method level=Proven holder=L2 method=F9
+# RUN(SUPER): member-lookup start=ClassPrototype layout=L1 key="k"
+# SUPER: Method level=Proven holder=L0 method=F4
+# RUN(GETTER): member-lookup layout=L2 key="g"
+# GETTER: Accessor level=Proven holder=L0 getter=F2 setter=F3
+# RUN(SETTER): member-lookup layout=L2 key="g" access=Store
+# SETTER: Accessor level=Proven holder=L0 getter=F2 setter=F3
+# RUN(ONLYGETTER): member-lookup layout=L16 key="size"
+# ONLYGETTER: Accessor level=Proven holder=L16 getter=F28 setter=none
+# RUN(ONLYSETTER): member-lookup layout=L17 key="size" access=Store
+# ONLYSETTER: Accessor level=Proven holder=L17 getter=none setter=F30
+# RUN(FIELD): member-lookup layout=L2 key="x"
+# FIELD: Field level=Proven holder=L0 field=0
+# RUN(FIELDUNPROVEN): member-lookup layout=L14 key="x"
+# FIELDUNPROVEN: Field level=Proven holder=L0 field=0
+# RUN(HIDDEN): member-lookup layout=L3 key="m"
+# HIDDEN: Field level=Proven holder=L3 field=0
+# RUN(OWN): member-lookup layout=L2 key="m" own
+# OWN: Absent level=Proven
+# RUN(DEFINE): member-lookup layout=L2 key="m" access=Define
+# DEFINE: Absent level=Proven
+# RUN(ABSENT): member-lookup layout=L2 key="missing"
+# ABSENT: Absent level=Proven
+# RUN(SUPERABSENT): member-lookup start=ClassPrototype layout=L0 key="missing"
+# SUPERABSENT: Absent level=Proven
+# RUN(BUILTIN): member-lookup layout=L2 key="toString"
+# BUILTIN: Builtin level=Proven builtin=B
+# RUN(CONSTRUCTOR): member-lookup layout=L2 key="constructor"
+# CONSTRUCTOR: Unknown level=Unknown cause=Unknown
+# RUN(INDEX): member-lookup layout=L2 key="0"
+# INDEX: Unknown level=Unknown cause=Unknown
+# RUN(NAMES): member-lookup layout=L5 key="m"
+# NAMES: Method level=Expected holder=L0 method=F1 conditions=[MemberUnchanged(L5, Prototype, K{{*}})]
+# RUN(MUTABLE): member-lookup layout=L7 key="m"
+# MUTABLE: Method level=Expected holder=L6 method=F14 conditions=[MemberUnchanged(L7, Prototype, K{{*}})]
+# RUN(LINK): member-lookup layout=L8 key="m"
+# LINK: Method level=Expected holder=L0 method=F1 conditions=[PrototypeLinkUnchanged(L8, Prototype)]
+# RUN(EXPECTEDBASE): member-lookup layout=L9 key="m"
+# EXPECTEDBASE: Method level=Expected holder=L0 method=F1 conditions=[PrototypeLinkUnchanged(L9, Prototype)]
+# RUN(UNKNOWNBASE): member-lookup layout=L10 key="m"
+# UNKNOWNBASE: Unknown level=Unknown cause=UnknownBase
+# RUN(NOHERITAGE): member-lookup layout=L11 key="m"
+# NOHERITAGE: Absent level=Proven
+# RUN(EXTRA): member-lookup layout=L12 key="m"
+# EXTRA: Method level=Expected holder=L0 method=F1 conditions=[MemberNotHidden(L12, Prototype, K{{*}})]
+# RUN(PROTOTYPE): member-lookup layout=L13 key="m"
+# PROTOTYPE: Method level=Expected holder=L0 method=F1 conditions=[MemberNotHidden(L13, Prototype, K{{*}})]
+# RUN(OBJECT): member-lookup layout=L14 key="m"
+# OBJECT: Method level=Expected holder=L0 method=F1 conditions=[MemberNotHidden(L14, Prototype, K{{*}})]
+# RUN(OBJECTLACKSNAME): member-lookup layout=L14 key="missing"
+# OBJECTLACKSNAME: Absent level=Expected proofs=[NoExtraProperties, PrototypeLinkUnchanged]
+# RUN(TWOKINDS): member-lookup layout=L15 key="both"
+# TWOKINDS: Accessor level=Expected holder=L15 getter=F26 setter=none conditions=[MemberUnchanged(L15, Prototype, K{{*}})]
+# RUN(RECORD): member-lookup layout=L18 key="m"
+# RECORD: Absent level=Proven
+# RUN(RECORDUNPROVEN): member-lookup layout=L19 key="m"
+# RECORDUNPROVEN: Absent level=Expected proofs=[NoExtraProperties, PrototypeLinkUnchanged]
+# RUN(ENVIRONMENT): member-lookup layout=L20 key="m"
+# ENVIRONMENT: Unknown level=Unknown cause=NonLayoutObject
+# RUN(NOCONSTRUCTOR): member-lookup layout=L21 key="m"
+# NOCONSTRUCTOR: Unknown level=Unknown cause=NonLayoutObject
+# RUN(STATIC): member-lookup start=ClassObject layout=L0 key="make"
+# STATIC: Method level=Proven holder=L0 method=F5
+# RUN(STATICINHERITED): member-lookup start=ClassObject layout=L1 key="make"
+# STATICINHERITED: Method level=Proven holder=L0 method=F5
+# RUN(STATICREPEATED): member-lookup start=ClassObject layout=L6 key="make"
+# STATICREPEATED: Method level=Expected holder=L6 method=F15 conditions=[ClassEvaluatedOnce(L6)]
+# RUN(STATICABSENT): member-lookup start=ClassObject layout=L0 key="missing"
+# STATICABSENT: Absent level=Proven
+# RUN(STATICGAIN): member-lookup start=ClassObject layout=L22 key="missing"
+# STATICGAIN: Unknown level=Unknown cause=PropertyAdded
+# RUN(PROTOTYPEGAIN): member-lookup start=ClassPrototype layout=L22 key="missing"
+# PROTOTYPEGAIN: Unknown level=Unknown cause=PropertyAdded
+# RUN(INSTANCEGAIN): member-lookup layout=L22 key="missing"
+# INSTANCEGAIN: Unknown level=Unknown cause=PropertyAdded
+# RUN(LENGTH): member-lookup start=ClassObject layout=L0 key="length"
+# LENGTH: Unknown level=Unknown cause=Unknown
+# RUN(NAME): member-lookup start=ClassObject layout=L0 key="name"
+# NAME: Unknown level=Unknown cause=Unknown
+# RUN(PROTOTYPEOBJECT): member-lookup start=ClassObject layout=L0 key="prototype"
+# PROTOTYPEOBJECT: Unknown level=Unknown cause=Unknown
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="A" constructor=f0 fields=[{key="x" declared={type=number}}] flow={baseState=None members=[L0] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="m" function=f1 mutability=Fixed}, {key="g" kind=Getter function=f2 mutability=Fixed}, {key="g" kind=Setter function=f3 mutability=Fixed}, {key="k" function=f4 mutability=Fixed}, {key="make" side=Static function=f5 mutability=Fixed}]}
+layout L1 kind=Instance name="B" base=L0 constructor=f6 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="n" function=f7 mutability=Fixed}]}
+layout L2 kind=Instance name="C" base=L1 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L1 members=[L2] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="k" function=f9 mutability=Fixed}]}
+layout L3 kind=Instance name="FieldHidesMethod" base=L0 constructor=f10 fields=[{key="m" declared={type=number}}] flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L3] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L4 kind=Instance name="NamesIncomplete" base=L0 constructor=f11 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L4] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed staticNamesAreComplete=true}
+layout L5 kind=Instance name="BelowNamesIncomplete" base=L4 constructor=f12 flags=[HasHeritage] flow={baseState=Layout base=L4 members=[L5] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L6 kind=Instance name="MethodMayChange" constructor=f13 flow={baseState=None members=[L6] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="m" function=f14}, {key="make" side=Static function=f15 mutability=Fixed}] namedMembers=[{key="m" function=f14}, {key="make" side=Static function=f15 mutability=Fixed}]}
+layout L7 kind=Instance name="BelowMethodMayChange" base=L6 constructor=f16 flags=[HasHeritage] flow={baseState=Layout base=L6 members=[L7] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L8 kind=Instance name="LinkMayChange" base=L0 constructor=f17 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L8] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L9 kind=Instance name="ExpectedBase" base=L0 constructor=f18 flags=[HasHeritage] flow={members=[L9] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L10 kind=Instance name="UnknownBase" constructor=f19 flags=[HasHeritage] flow={members=[L10] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L11 kind=Instance name="NoHeritage" constructor=f20 flow={members=[L11] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L12 kind=Instance name="MayGainProperties" base=L0 constructor=f21 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L12] impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L13 kind=Instance name="MayChangePrototype" base=L0 constructor=f22 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L13] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L14 kind=Instance name="NothingProvenOfObjects" base=L0 constructor=f23 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L14]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L15 kind=Instance name="MethodAndGetter" constructor=f24 flow={baseState=None members=[L15] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="both" function=f25}, {key="both" kind=Getter function=f26}] namedMembers=[{key="both" function=f25}, {key="both" kind=Getter function=f26}]}
+layout L16 kind=Instance name="Reader" constructor=f27 flow={baseState=None members=[L16] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="size" kind=Getter function=f28 mutability=Fixed}]}
+layout L17 kind=Instance name="Writer" constructor=f29 flow={baseState=None members=[L17] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="size" kind=Setter function=f30 mutability=Fixed}]}
+layout L18 name="Options" flow={members=[L18] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true}
+layout L19 name="NothingProvenOfRecord" flow={members=[L19]}
+layout L20 kind=Environment name="scope" fields=[{key="local" declared={type=anything}}]
+layout L21 kind=Instance name="NoConstructor" flow={baseState=None members=[L21] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L22 kind=Instance name="BelowExtensibleBuiltin" constructor=f32 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Error members=[L22] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+
+function f0 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="m" kind=Method flags=[HasThis] results=[{type=anything}]
+function f2 name="g" kind=Getter flags=[HasThis] results=[{type=anything}]
+function f3 name="g" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}]
+function f4 name="k" kind=Method flags=[HasThis] results=[{type=anything}]
+function f5 name="make" kind=Method flags=[HasThis] results=[{type=anything}]
+function f6 name="B" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f7 name="n" kind=Method flags=[HasThis] results=[{type=anything}]
+function f8 name="C" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f9 name="k" kind=Method flags=[HasThis] results=[{type=anything}]
+function f10 name="FieldHidesMethod" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f11 name="NamesIncomplete" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f12 name="BelowNamesIncomplete" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f13 name="MethodMayChange" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f14 name="m" kind=Method flags=[HasThis] results=[{type=anything}]
+function f15 name="make" kind=Method flags=[HasThis] results=[{type=anything}]
+function f16 name="BelowMethodMayChange" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L7
+function f17 name="LinkMayChange" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L8
+function f18 name="ExpectedBase" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L9
+function f19 name="UnknownBase" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L10
+function f20 name="NoHeritage" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L11
+function f21 name="MayGainProperties" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L12
+function f22 name="MayChangePrototype" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L13
+function f23 name="NothingProvenOfObjects" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L14
+function f24 name="MethodAndGetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L15
+function f25 name="both" kind=Method flags=[HasThis] results=[{type=anything}]
+function f26 name="both" kind=Getter flags=[HasThis] results=[{type=anything}]
+function f27 name="Reader" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L16
+function f28 name="size" kind=Getter flags=[HasThis] results=[{type=anything}]
+function f29 name="Writer" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L17
+function f30 name="size" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}]
+function f31 name="otherKeys" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="missing"
+    v2 = PropGet v0 key="constructor"
+    v3 = PropGet v0 key="0"
+    v4 = PropGet v0 key="toString"
+    v5 = PropGet v0 key="length"
+    v6 = PropGet v0 key="name"
+    v7 = PropGet v0 key="prototype"
+    Return v7
+}
+function f32 name="BelowExtensibleBuiltin" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L22

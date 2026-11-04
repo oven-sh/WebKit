@@ -41,6 +41,12 @@ PAS_BEGIN_EXTERN_C;
 
 #define TAGGED_BMALLOC_SMALL_SHARING_SHIFT 4
 
+/* If you change this, make sure that at least one of the medium-segregated and
+   medium-bitfit pages has an object-size ceiling at 32k, and that neither has
+   a ceiling greater than that. Objects not allocated from those heaps will not
+   be tagged, which would violate our system-level tagging policy. */
+#define TAGGED_BMALLOC_PINNED_MIN_OBJECTS_PER_PAGE 11
+
 PAS_API void tagged_bmalloc_heap_config_activate(void);
 
 #define TAGGED_BMALLOC_HEAP_CONFIG PAS_BASIC_HEAP_CONFIG( \
@@ -49,7 +55,7 @@ PAS_API void tagged_bmalloc_heap_config_activate(void);
     .get_type_size = bmalloc_type_as_heap_type_get_type_size, \
     .get_type_alignment = bmalloc_type_as_heap_type_get_type_alignment, \
     .dump_type = bmalloc_type_as_heap_type_dump, \
-    .check_deallocation = false, \
+    .check_deallocation = false, /* FIXME: we can enable this for this heap in the future */ \
     .small_segregated_min_align_shift = TAGGED_BMALLOC_MINALIGN_SHIFT, \
     .small_segregated_sharing_shift = TAGGED_BMALLOC_SMALL_SHARING_SHIFT, \
     .small_segregated_page_size = PAS_SMALL_PAGE_DEFAULT_SIZE, \
@@ -71,13 +77,17 @@ PAS_API void tagged_bmalloc_heap_config_activate(void);
     .medium_exclusive_segregated_logging_mode = pas_segregated_deallocation_size_aware_logging_mode, \
     .use_medium_bitfit = true, \
     .medium_bitfit_min_align_shift = PAS_MIN_MEDIUM_ALIGN_SHIFT, \
-    .use_marge_bitfit = true, \
-    .marge_bitfit_min_align_shift = PAS_MIN_MARGE_ALIGN_SHIFT, \
-    .marge_bitfit_page_size = PAS_MARGE_PAGE_DEFAULT_SIZE, \
+    .use_marge_bitfit = false, \
+    .small_segregated_min_objects_per_page = TAGGED_BMALLOC_PINNED_MIN_OBJECTS_PER_PAGE, \
+    .medium_segregated_min_objects_per_page = TAGGED_BMALLOC_PINNED_MIN_OBJECTS_PER_PAGE, \
+    .small_bitfit_min_objects_per_page = TAGGED_BMALLOC_PINNED_MIN_OBJECTS_PER_PAGE, \
+    .medium_bitfit_min_objects_per_page = TAGGED_BMALLOC_PINNED_MIN_OBJECTS_PER_PAGE, \
+    .marge_bitfit_min_objects_per_page = TAGGED_BMALLOC_PINNED_MIN_OBJECTS_PER_PAGE, \
     .pgm_enabled = true, \
-    .delegate_large_user_allocations = true, \
+    .delegate_large_user_allocations = false, \
     .large_map_variant = pas_default_large_map_variant, \
-    .allow_mte_tagging = true)
+    .allow_mte_tagging = true, \
+    .memory_flavor = pas_memory_flavor_mte)
 
 PAS_API extern const pas_heap_config tagged_bmalloc_heap_config;
 

@@ -36,11 +36,13 @@
 #include "ColorSerialization.h"
 #include "DOMMatrix2DInit.h"
 #include "DOMPointInit.h"
+#include "DefaultSizing.h"
 #include "Document.h"
 #include "Element.h"
 #include "FloatPoint.h"
 #include "GPUCanvasContext.h"
 #include "GPUDevice.h"
+#include "GPUSupportedFeatures.h"
 #include "Gradient.h"
 #include "HTMLCanvasElement.h"
 #include "HTMLImageElement.h"
@@ -427,7 +429,7 @@ static bool shouldSnapshotWebGPUAction(RecordingSwizzleType receiverSwizzleType,
         return name == "submit"_s
             || name == "writeTexture"_s
             || name == "copyExternalImageToTexture"_s
-            || name == "copyElementImageToTexture"_s;
+            || name == "drawElementImageToTexture"_s;
     }
     return false;
 }
@@ -701,7 +703,7 @@ Ref<Inspector::Protocol::Canvas::Canvas> InspectorCanvas::buildObjectForCanvas(b
                 .release();
 
             auto features = JSON::ArrayOf<String>::create();
-            for (const String& feature : device->backing().features().features())
+            for (const String& feature : device->features()->backing().features())
                 features->addItem(feature);
             result->setFeatures(WTF::move(features));
 
@@ -886,12 +888,8 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
         [&](const Ref<HTMLImageElement>& imageElement) {
             String dataURL = "data:,"_s;
 
-            if (RefPtr cachedImage = imageElement->cachedImage()) {
-                RefPtr<Image> image = cachedImage->image();
-                if (image && image != &Image::nullImage()) {
-                    dataURL = encodeDataURL(image->currentNativeImage(), "image/png"_s);
-                }
-            }
+            if (RefPtr image = imageElement->sourceImage())
+                dataURL = encodeDataURL(image->currentNativeImage(DefaultSizing { }.resolve(image->naturalDimensions())), "image/png"_s);
 
             index = indexForData(dataURL);
         },
@@ -958,9 +956,8 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
             String dataURL = "data:,"_s;
 
             if (RefPtr cachedImage = cssImageValue->image()) {
-                RefPtr image = cachedImage->image();
-                if (image && image != &Image::nullImage())
-                    dataURL = encodeDataURL(image->currentNativeImage(), "image/png"_s);
+                if (RefPtr image = cachedImage->image())
+                    dataURL = encodeDataURL(image->currentNativeImage(DefaultSizing { }.resolve(image->naturalDimensions())), "image/png"_s);
             }
 
             index = indexForData(dataURL);

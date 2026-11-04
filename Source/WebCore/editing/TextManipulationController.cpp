@@ -153,17 +153,17 @@ void TextManipulationController::startObservingParagraphs(ManipulationItemCallba
     flushPendingItemsForCallback();
 }
 
-static bool NODELETE isInPrivateUseArea(char16_t character)
+static bool LEGACY_NODELETE isInPrivateUseArea(char16_t character)
 {
     return 0xE000 <= character && character <= 0xF8FF;
 }
 
-static bool NODELETE isTokenDelimiter(char16_t character)
+static bool LEGACY_NODELETE isTokenDelimiter(char16_t character)
 {
     return isHTMLLineBreak(character) || isInPrivateUseArea(character);
 }
 
-static bool NODELETE isNotSpace(char16_t character)
+static bool LEGACY_NODELETE isNotSpace(char16_t character)
 {
     if (character == noBreakSpace)
         return false;
@@ -212,7 +212,7 @@ public:
         return content;
     }
 
-    bool NODELETE atEnd() const { return !m_text && m_node == m_pastEndNode; }
+    bool LEGACY_NODELETE atEnd() const { return !m_text && m_node == m_pastEndNode; }
 
 private:
     bool shouldAdvanceIteratorPastCurrentNode() const
@@ -266,11 +266,11 @@ private:
 
     TextIterator m_iterator;
     RefPtr<Node> m_node;
-    RefPtr<Node> m_pastEndNode;
+    const RefPtr<Node> m_pastEndNode;
     std::optional<Vector<String>> m_text;
 };
 
-static bool NODELETE shouldExtractValueForTextManipulation(const HTMLInputElement& input)
+static bool LEGACY_NODELETE shouldExtractValueForTextManipulation(const HTMLInputElement& input)
 {
     // FIXME: Consider using `type()` instead of checking the attribute, so that plain text fields
     // with and without an explicit `type="text"` behave consistently.
@@ -280,7 +280,7 @@ static bool NODELETE shouldExtractValueForTextManipulation(const HTMLInputElemen
     return input.isTextButton();
 }
 
-static bool NODELETE isAttributeForTextManipulation(const QualifiedName& nameToCheck)
+static bool LEGACY_NODELETE isAttributeForTextManipulation(const QualifiedName& nameToCheck)
 {
     using namespace HTMLNames;
     static const std::array attributeNames {
@@ -299,7 +299,7 @@ static bool NODELETE isAttributeForTextManipulation(const QualifiedName& nameToC
     return false;
 }
 
-static bool NODELETE canPerformTextManipulationByReplacingEntireTextContent(const Element& element)
+static bool LEGACY_NODELETE canPerformTextManipulationByReplacingEntireTextContent(const Element& element)
 {
     return element.hasTagName(HTMLNames::titleTag) || element.hasTagName(HTMLNames::optionTag);
 }
@@ -373,7 +373,7 @@ static bool isEnclosingItemBoundaryElement(const Element& element)
     return false;
 }
 
-static bool shouldIgnoreNodeInTextField(const Node& node)
+static bool LEGACY_NODELETE shouldIgnoreNodeInTextField(const Node& node)
 {
     auto* input = dynamicDowncast<HTMLInputElement>(node.shadowHost());
     if (!input)
@@ -485,10 +485,14 @@ void TextManipulationController::addItemIfPossible(Vector<ManipulationUnit>&& un
         tokens.appendVector(WTF::move(units[index].tokens));
 
     std::optional<ViewportProximityInfo> proximityInfo;
-    if (auto range = makeSimpleRange(startPosition, endPosition))
-        proximityInfo = viewportProximityInfoForRange(*range);
+    std::optional<FloatRect> mainFrameBoundingRect;
+    if (auto range = makeSimpleRange(startPosition, endPosition)) {
+        auto bounds = absoluteTextBounds(*range);
+        proximityInfo = viewportProximityInfoForRange(*range, bounds);
+        mainFrameBoundingRect = boundingRectInMainFrameDocument(protect(range->startContainer().document()), bounds.unclipped);
+    }
 
-    addItem(ManipulationItemData { startPosition, endPosition, nullptr, nullQName(), WTF::move(tokens), proximityInfo });
+    addItem(ManipulationItemData { startPosition, endPosition, nullptr, nullQName(), WTF::move(tokens), proximityInfo, mainFrameBoundingRect });
 }
 
 void TextManipulationController::observeParagraphs(const Position& start, const Position& end)
@@ -524,19 +528,26 @@ void TextManipulationController::observeParagraphs(const Position& start, const 
         }
 
         if (RefPtr currentElement = dynamicDowncast<Element>(*contentNode)) {
+            auto elementBoundingRect = [&] -> std::optional<FloatRect> {
+                CheckedPtr renderer = currentElement->renderer();
+                if (!renderer)
+                    return std::nullopt;
+                return boundingRectInMainFrameDocument(protect(currentElement->document()), renderer->absoluteBoundingBoxRect());
+            };
+
             if (!content.isTextContent && canPerformTextManipulationByReplacingEntireTextContent(*currentElement))
-                addItem(ManipulationItemData { Position(), Position(), *currentElement, nullQName(), { TextManipulationToken { TextManipulationTokenIdentifier::generate(), currentElement->textContent(), tokenInfo(currentElement.get()) } }, std::nullopt });
+                addItem(ManipulationItemData { Position(), Position(), *currentElement, nullQName(), { TextManipulationToken { TextManipulationTokenIdentifier::generate(), currentElement->textContent(), tokenInfo(currentElement.get()) } }, std::nullopt, elementBoundingRect() });
 
             if (currentElement->hasAttributes()) {
                 for (auto& attribute : currentElement->attributes()) {
                     if (isAttributeForTextManipulation(attribute.name()))
-                        addItem(ManipulationItemData { Position(), Position(), *currentElement, attribute.name(), { TextManipulationToken { TextManipulationTokenIdentifier::generate(), attribute.value(), tokenInfo(currentElement.get()) } }, std::nullopt });
+                        addItem(ManipulationItemData { Position(), Position(), *currentElement, attribute.name(), { TextManipulationToken { TextManipulationTokenIdentifier::generate(), attribute.value(), tokenInfo(currentElement.get()) } }, std::nullopt, elementBoundingRect() });
                 }
             }
 
             if (RefPtr input = dynamicDowncast<HTMLInputElement>(*currentElement)) {
                 if (shouldExtractValueForTextManipulation(*input))
-                    addItem(ManipulationItemData { { }, { }, *currentElement, HTMLNames::valueAttr, { TextManipulationToken { TextManipulationTokenIdentifier::generate(), input->value(), tokenInfo(currentElement.get()) } }, std::nullopt });
+                    addItem(ManipulationItemData { { }, { }, *currentElement, HTMLNames::valueAttr, { TextManipulationToken { TextManipulationTokenIdentifier::generate(), input->value(), tokenInfo(currentElement.get()) } }, std::nullopt, elementBoundingRect() });
             }
 
             if (isEnclosingItemBoundaryElement(*currentElement)) {
@@ -681,7 +692,8 @@ void TextManipulationController::addItem(ManipulationItemData&& itemData)
         !protect(protect(m_document)->topOrigin())->isSameSiteAs(protect(protect(m_document)->securityOrigin())),
         newID,
         itemData.tokens.map([](auto& token) { return token; }),
-        itemData.viewportProximityInfo
+        itemData.viewportProximityInfo,
+        itemData.mainFrameBoundingRect
     });
     m_items.add(newID, WTF::move(itemData));
 
@@ -753,8 +765,8 @@ TextManipulationController::ManipulationResult TextManipulationController::compl
 
             CheckedRef style = box->style();
             if (style->width().isFixed() && style->height().isFixed() && !style->hasOutOfFlowPosition() && style->clip().isAuto()) {
-                element->setInlineStyleProperty(CSSPropertyOverflowX, CSSValueHidden);
-                element->setInlineStyleProperty(CSSPropertyOverflowY, CSSValueAuto);
+                element->setInlineStyleProperty(CSSPropertyID::OverflowX, CSSValueID::Hidden);
+                element->setInlineStyleProperty(CSSPropertyID::OverflowY, CSSValueID::Auto);
             }
         }
     }
@@ -799,7 +811,7 @@ void TextManipulationController::updateInsertions(Vector<NodeEntry>& lastTopDown
         for (;i < currentTopDownPath.size(); ++i) {
             Ref<Node> node = currentTopDownPath[i];
             if (!insertedNodes.add(node.copyRef()).isNewEntry) {
-                auto clonedNode = node->cloneNode(false);
+                auto clonedNode = node->cloneNode(CloneSubtree::No);
                 if (auto* data = node->eventTargetData())
                     data->eventListenerMap.copyEventListenersNotCreatedFromMarkupToTarget(clonedNode.ptr());
                 node = WTF::move(clonedNode);

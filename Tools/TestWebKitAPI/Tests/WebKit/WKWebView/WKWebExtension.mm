@@ -1055,10 +1055,10 @@ TEST(WKWebExtension, ActionParsing)
     EXPECT_NS_EQUAL(testExtension.displayActionLabel, @"Button Title");
     EXPECT_NULL([testExtension actionIconForSize:NSMakeSize(16, 16)]);
 
-    // action should be ignored in manifest v2.
+    // action should be ignored in manifest v2, with an error recorded.
     testManifestDictionary = @{ @"manifest_version": @2, @"name": @"Test", @"description": @"Test", @"version": @"1.0", @"action": @{ @"default_title": @"Button Title" } };
     testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
-    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+    EXPECT_NOT_NULL(matchingError(testExtension.errors, WKWebExtensionErrorInvalidManifestEntry));
     EXPECT_NULL(testExtension.displayActionLabel);
     EXPECT_NULL([testExtension actionIconForSize:NSMakeSize(16, 16)]);
 
@@ -1069,17 +1069,17 @@ TEST(WKWebExtension, ActionParsing)
     EXPECT_NS_EQUAL(testExtension.displayActionLabel, @"Button Title");
     EXPECT_NULL([testExtension actionIconForSize:NSMakeSize(16, 16)]);
 
-    // Manifest v3 should never find a browser_action.
+    // Manifest v3 should never find a browser_action, and records an error.
     testManifestDictionary = @{ @"manifest_version": @3, @"name": @"Test", @"description": @"Test", @"version": @"1.0", @"browser_action": @{ @"default_title": @"Button Title" } };
     testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
-    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+    EXPECT_NOT_NULL(matchingError(testExtension.errors, WKWebExtensionErrorInvalidManifestEntry));
     EXPECT_NULL(testExtension.displayActionLabel);
     EXPECT_NULL([testExtension actionIconForSize:NSMakeSize(16, 16)]);
 
     // Or a page action.
     testManifestDictionary = @{ @"manifest_version": @3, @"name": @"Test", @"description": @"Test", @"version": @"1.0", @"page_action": @{ @"default_title": @"Button Title" } };
     testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
-    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+    EXPECT_NOT_NULL(matchingError(testExtension.errors, WKWebExtensionErrorInvalidManifestEntry));
     EXPECT_NULL(testExtension.displayActionLabel);
     EXPECT_NULL([testExtension actionIconForSize:NSMakeSize(16, 16)]);
 
@@ -2201,6 +2201,71 @@ TEST(WKWebExtension, CommandsParsing)
     testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
     EXPECT_TRUE(testExtension.hasCommands);
     EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+
+    testManifestDictionary = @{
+        @"manifest_version": @3,
+        @"name": @"Test",
+        @"description": @"Test",
+        @"version": @"1.0",
+        @"action": @{
+            @"default_title": @"Test Action"
+        },
+        @"commands": @{
+            @"_execute_action": @{ }
+        }
+    };
+
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    EXPECT_TRUE(testExtension.hasCommands);
+    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+
+    testManifestDictionary = @{
+        @"manifest_version": @2,
+        @"name": @"Test",
+        @"description": @"Test",
+        @"version": @"1.0",
+        @"browser_action": @{
+            @"default_title": @"Test Action"
+        },
+        @"commands": @{
+            @"_execute_browser_action": @{ }
+        }
+    };
+
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    EXPECT_TRUE(testExtension.hasCommands);
+    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+
+    testManifestDictionary = @{
+        @"manifest_version": @2,
+        @"name": @"Test",
+        @"description": @"Test",
+        @"version": @"1.0",
+        @"page_action": @{
+            @"default_title": @"Test Action"
+        },
+        @"commands": @{
+            @"_execute_page_action": @{ }
+        }
+    };
+
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    EXPECT_TRUE(testExtension.hasCommands);
+    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+
+    testManifestDictionary = @{
+        @"manifest_version": @3,
+        @"name": @"Test",
+        @"description": @"Test",
+        @"version": @"1.0",
+        @"commands": @{
+            @"show-popup": @{ }
+        }
+    };
+
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary];
+    EXPECT_FALSE(testExtension.hasCommands);
+    EXPECT_EQ(testExtension.errors.count, 1ul);
 
     testManifestDictionary = @{
         @"manifest_version": @3,

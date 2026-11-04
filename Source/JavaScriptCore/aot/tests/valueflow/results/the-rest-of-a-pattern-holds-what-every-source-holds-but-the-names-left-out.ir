@@ -1,0 +1,35 @@
+# function rest(record) { const { secret, ...visible } = record; return visible }  rest({ id: 1, name: "a", secret: "x" }).id; rest({ secret: "y", id: 2, name: "b", age: 3 }).name
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Visible" fields=[{key="id"{{*}}flags=[IsAddedLate{{*}}initialization=SetAtCreation{{*}}occupancy=AlwaysFilled{{*}}{key="name"{{*}}initialization=SetAtCreation{{*}}occupancy=AlwaysFilled{{*}}{key="age"{{*}}location={writers=AllKnown}{{*}}addedKeysAreComplete
+# CHECK-NOT: layout L0 name="Visible"{{*}}key="secret"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Visible"
+layout L1 name="Short" fields=[{key="id" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}, {key="secret" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Long" fields=[{key="age" declared={type=anything} flags=[IsRequired]}, {key="id" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}, {key="secret" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = String string="a"
+    v3 = String string="x"
+    v4 = NewObject -, v1, v2, v3 layout=L1 fields=[0, 1, 2]
+    v5 = Integer integer=3
+    v6 = Integer integer=2
+    v7 = String string="b"
+    v8 = String string="y"
+    v9 = NewObject -, v5, v6, v7, v8 layout=L2 fields=[0, 1, 2, 3]
+    v10 = Call v0, -, v4
+    v11 = Call v0, -, v9
+    v12 = PropGet v10 key="id"
+    v13 = PropGet v11 key="name"
+    Return
+}
+function f1 name="rest" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0):
+    v1 = PropGet v0 key="secret"
+    v2 = NewObject layout=L0
+    CopyDataProperties v2, v0 excludedKeys=["secret"]
+    v4 = FinishObject v2
+    Return v4
+}

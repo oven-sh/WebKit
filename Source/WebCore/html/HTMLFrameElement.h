@@ -33,10 +33,10 @@ class HTMLFrameElement final : public HTMLFrameElementBase {
     WTF_MAKE_TZONE_ALLOCATED(HTMLFrameElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLFrameElement);
 public:
-    static Ref<HTMLFrameElement> create(const QualifiedName&, Document&);
+    static Ref<HTMLFrameElement> LEGACY_NODELETE create(const QualifiedName&, Document&);
 
     bool hasFrameBorder() const { return m_frameBorder; }
-    bool NODELETE noResize() const;
+    bool LEGACY_NODELETE noResize() const;
 
     RenderFrame* renderer() const;
 

@@ -254,7 +254,7 @@ private:
     void requestScrollToRect(const WebCore::FloatRect& targetRect, const WebCore::FloatPoint& origin) override;
 
 #if ENABLE(FULLSCREEN_API)
-    WebFullScreenManagerProxyClient& NODELETE fullScreenManagerProxyClient() final;
+    WebFullScreenManagerProxyClient& LEGACY_NODELETE fullScreenManagerProxyClient() final;
 
     // WebFullScreenManagerProxyClient
     void closeFullScreenManager() override;
@@ -393,7 +393,7 @@ private:
     RetainPtr<WKContentView> contentView() const { return m_contentView.get(); }
 
     WeakObjCPtr<WKContentView> m_contentView;
-    RetainPtr<WKEditorUndoTarget> m_undoTarget;
+    const RetainPtr<WKEditorUndoTarget> m_undoTarget;
     std::optional<WebCore::ColorSpace> m_colorSpace;
 };
 } // namespace WebKit

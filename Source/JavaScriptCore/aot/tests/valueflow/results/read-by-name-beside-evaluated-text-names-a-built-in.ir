@@ -1,0 +1,24 @@
+# new Function(input)(); input.localeCompare(input); new Intl.Segmenter()
+# RUN: valueflow-results
+# CHECK: feature 9 IntlCollator Unnamed
+# CHECK-NOT: feature 9 StringPrototypeLocaleCompare Unnamed
+# CHECK: feature 9 StringPrototypeLocaleCompare
+# CHECK: feature 11 DatePrototypeToLocaleString Unnamed
+# CHECK-NOT: feature 13 IntlSegmenter Unnamed
+# CHECK: feature 13 IntlSegmenter
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = Call v3, -
+    v5 = PropGet v1 key="localeCompare"
+    v6 = Call v5, v1, v1 calleeKey="localeCompare"
+    v7 = Builtin builtin=Intl
+    v8 = PropGet v7 key="Segmenter"
+    v9 = Construct v8, -
+    Return
+}

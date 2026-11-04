@@ -31,35 +31,20 @@
 #include "WebGPUConvertFromBackingContext.h"
 #include "WebGPUConvertToBackingContext.h"
 #include <WebCore/WebGPUVertexBufferLayout.h>
+#include <wtf/Borrow.h>
 
 namespace WebKit::WebGPU {
 
-std::optional<VertexBufferLayout> ConvertToBackingContext::convertToBacking(const WebCore::WebGPU::VertexBufferLayout& vertexBufferLayout)
+std::optional<VertexBufferLayout> ConvertToBackingContext::convertToBacking(const ::WebGPU::VertexBufferLayout& vertexBufferLayout)
 {
-    Vector<VertexAttribute> attributes;
-    attributes.reserveInitialCapacity(vertexBufferLayout.attributes.size());
-    for (const auto& attribute : vertexBufferLayout.attributes) {
-        auto convertedAttribute = convertToBacking(attribute);
-        if (!convertedAttribute)
-            return std::nullopt;
-        attributes.append(WTF::move(*convertedAttribute));
-    }
-
-    return { { vertexBufferLayout.arrayStride, vertexBufferLayout.stepMode, WTF::move(attributes) } };
+    return { { vertexBufferLayout.arrayStride, vertexBufferLayout.stepMode, Vector<VertexAttribute> { vertexBufferLayout.attributes } } };
 }
 
-std::optional<WebCore::WebGPU::VertexBufferLayout> ConvertFromBackingContext::convertFromBacking(const VertexBufferLayout& vertexBufferLayout)
+std::optional<::WebGPU::VertexBufferLayout> ConvertFromBackingContext::convertFromBacking(const VertexBufferLayout& vertexBufferLayout, Vector<::WebGPU::VertexAttribute>& attributesStorage)
 {
-    Vector<WebCore::WebGPU::VertexAttribute> attributes;
-    attributes.reserveInitialCapacity(vertexBufferLayout.attributes.size());
-    for (const auto& backingAttribute : vertexBufferLayout.attributes) {
-        auto attribute = convertFromBacking(backingAttribute);
-        if (!attribute)
-            return std::nullopt;
-        attributes.append(WTF::move(*attribute));
-    }
+    attributesStorage = vertexBufferLayout.attributes;
 
-    return { { vertexBufferLayout.arrayStride, vertexBufferLayout.stepMode, WTF::move(attributes) } };
+    return { { vertexBufferLayout.arrayStride, vertexBufferLayout.stepMode, attributesStorage.span() } };
 }
 
 } // namespace WebKit

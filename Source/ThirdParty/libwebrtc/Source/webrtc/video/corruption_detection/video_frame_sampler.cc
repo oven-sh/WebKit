@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <utility>
 
 #include "api/scoped_refptr.h"
 #include "api/video/video_frame.h"
@@ -23,7 +24,7 @@ namespace webrtc {
 class I420FrameSampler : public VideoFrameSampler {
  public:
   explicit I420FrameSampler(scoped_refptr<const I420BufferInterface> buffer)
-      : buffer_(buffer) {}
+      : buffer_(std::move(buffer)) {}
 
   uint8_t GetSampleValue(ChannelType channel, int col, int row) const override {
     RTC_DCHECK_GE(col, 0);
@@ -71,7 +72,7 @@ class I420FrameSampler : public VideoFrameSampler {
 class NV12FrameSampler : public VideoFrameSampler {
  public:
   explicit NV12FrameSampler(scoped_refptr<const NV12BufferInterface> buffer)
-      : buffer_(buffer) {}
+      : buffer_(std::move(buffer)) {}
 
   uint8_t GetSampleValue(ChannelType channel, int col, int row) const override {
     RTC_DCHECK_GE(col, 0);
@@ -136,7 +137,7 @@ std::unique_ptr<VideoFrameSampler> VideoFrameSampler::Create(
     default:
       // Conversion and copy to I420 from some other format.
       return std::make_unique<I420FrameSampler>(
-          frame.video_frame_buffer()->ToI420());
+          frame.video_frame_buffer()->ToI420ForInspection());
   }
 }
 

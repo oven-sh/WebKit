@@ -26,6 +26,7 @@
 #include "config.h"
 #include "YarrUnicodeProperties.h"
 
+#include "AOTRemovableFeature.h"
 #include "Yarr.h"
 #include "YarrPattern.h"
 #include <array>
@@ -75,8 +76,9 @@ struct HashTable {
 
 #include "UnicodePatternTables.h"
 
-std::optional<BuiltInCharacterClassID> unicodeMatchPropertyValue(WTF::String unicodePropertyName, WTF::String unicodePropertyValue)
+NEVER_INLINE std::optional<BuiltInCharacterClassID> unicodeMatchPropertyValue(WTF::String unicodePropertyName, WTF::String unicodePropertyValue)
 {
+    JSC_REMOVABLE_DEFINITION(RegExpUnicodeProperties, unicodeMatchPropertyValue);
     int propertyIndex = -1;
 
     if (unicodePropertyName == "Script"_s || unicodePropertyName == "sc"_s)
@@ -92,8 +94,9 @@ std::optional<BuiltInCharacterClassID> unicodeMatchPropertyValue(WTF::String uni
     return std::optional<BuiltInCharacterClassID>(static_cast<BuiltInCharacterClassID>(static_cast<int>(BuiltInCharacterClassID::BaseUnicodePropertyID) + propertyIndex));
 }
 
-std::optional<BuiltInCharacterClassID> unicodeMatchProperty(WTF::String unicodePropertyValue, CompileMode compileMode)
+NEVER_INLINE std::optional<BuiltInCharacterClassID> unicodeMatchProperty(WTF::String unicodePropertyValue, CompileMode compileMode)
 {
+    JSC_REMOVABLE_DEFINITION(RegExpUnicodeProperties, unicodeMatchProperty);
     int propertyIndex = -1;
 
     propertyIndex = binaryPropertyHashTable.entry(unicodePropertyValue);
@@ -110,8 +113,9 @@ std::optional<BuiltInCharacterClassID> unicodeMatchProperty(WTF::String unicodeP
 
 static std::array<std::atomic<CharacterClass*>, std::size(createCharacterClassFunctions)> sharedUnicodeCharacterClasses;
 
-CharacterClass* sharedUnicodeCharacterClassFor(BuiltInCharacterClassID unicodeClassID)
+NEVER_INLINE CharacterClass* sharedUnicodeCharacterClassFor(BuiltInCharacterClassID unicodeClassID)
 {
+    JSC_REMOVABLE_DEFINITION(RegExpUnicodeProperties, sharedUnicodeCharacterClassFor);
     ASSERT(unicodeClassID >= BuiltInCharacterClassID::BaseUnicodePropertyID);
     unsigned unicodePropertyIndex = static_cast<unsigned>(unicodeClassID) - static_cast<unsigned>(BuiltInCharacterClassID::BaseUnicodePropertyID);
 

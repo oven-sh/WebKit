@@ -1,0 +1,26 @@
+# A set of one layout is inside every set that lists the layout and overlaps no other
+# RUN: subset
+# CHECK: t0 <= t0: yes overlaps: yes
+# CHECK-NEXT: t0 <= t1: yes overlaps: yes
+# CHECK-NEXT: t0 <= t2: no overlaps: no
+# CHECK-NEXT: t0 <= t3: no overlaps: no
+# CHECK-NEXT: t1 <= t0: no overlaps: yes
+# CHECK-NEXT: t1 <= t1: yes overlaps: yes
+# CHECK-NEXT: t1 <= t2: no overlaps: yes
+# CHECK-NEXT: t1 <= t3: no overlaps: no
+# CHECK-NEXT: t2 <= t0: no overlaps: no
+# CHECK-NEXT: t2 <= t1: yes overlaps: yes
+# CHECK-NEXT: t2 <= t2: yes overlaps: yes
+# CHECK-NEXT: t2 <= t3: no overlaps: no
+# CHECK-NEXT: t3 <= t0: no overlaps: no
+# CHECK-NEXT: t3 <= t1: no overlaps: no
+# CHECK-NEXT: t3 <= t2: no overlaps: no
+# CHECK-NEXT: t3 <= t3: yes overlaps: yes
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Shape"
+layout L1 name="Circle" supertypes=[L0]
+layout L2 name="Square" supertypes=[L0]
+layout L3 name="Other"
+function f0 name="types" parameters=[{type=L0}, {type=L0|L1|L2}, {type=L1}, {type=L3}] results=[{type=undefined}]

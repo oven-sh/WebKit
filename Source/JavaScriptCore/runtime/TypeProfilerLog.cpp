@@ -29,6 +29,7 @@
 #include "config.h"
 #include "TypeProfilerLog.h"
 
+#include "AOTRemovableFeature.h"
 #include "FrameTracers.h"
 #include "JSCJSValueInlines.h"
 #include "TypeLocation.h"
@@ -134,6 +135,7 @@ void TypeProfilerLog::processLogEntries(VM& vm, const String& reason)
 // dev tools, and is therefore not on the critical path for performance.
 void TypeProfilerLog::visit(AbstractSlotVisitor& visitor)
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Profilers, ReturnDefault, void)
     for (LogEntry* entry = m_logStartPtr; entry != m_currentLogEntryPtr; ++entry) {
         visitor.appendUnbarriered(entry->value);
         if (StructureID id = entry->structureID) {
@@ -141,6 +143,7 @@ void TypeProfilerLog::visit(AbstractSlotVisitor& visitor)
             visitor.appendUnbarriered(structure);
         }
     }
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
 } // namespace JSC

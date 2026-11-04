@@ -38,7 +38,6 @@
 #import <QuartzCore/CALayer.h>
 #import <QuartzCore/CATransaction.h>
 #import <cmath>
-#import <numbers>
 #import <pal/avfoundation/MediaTimeAVFoundation.h>
 #import <pal/spi/cocoa/AVFoundationSPI.h>
 #import <wtf/MainThread.h>
@@ -145,7 +144,7 @@ static void runWithoutAnimations(NOESCAPE const WTF::Function<void()>& function)
     [CATransaction commit];
 }
 
-static bool isValidLayerGeometry(CGRect rect)
+static bool LEGACY_NODELETE isValidLayerGeometry(CGRect rect)
 {
     return std::isfinite(rect.origin.x) && std::isfinite(rect.origin.y)
         && std::isfinite(rect.size.width) && std::isfinite(rect.size.height);
@@ -173,7 +172,10 @@ LocalSampleBufferDisplayLayer::LocalSampleBufferDisplayLayer(RetainPtr<AVSampleB
     , m_sampleBufferDisplayLayer(WTF::move(sampleBufferDisplayLayer))
     , m_processingQueue(WorkQueue::create("LocalSampleBufferDisplayLayer queue"_s))
 #if !RELEASE_LOG_DISABLED
-    , m_frameRateMonitor([this](auto info) { onIrregularFrameRateNotification(info.frameTime, info.lastFrameTime); })
+    , m_frameRateMonitor([weakThis = ThreadSafeWeakPtr { *this }](auto info) {
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->onIrregularFrameRateNotification(info.frameTime, info.lastFrameTime);
+    })
 #endif
 {
     ASSERT(isMainThread());
@@ -405,15 +407,10 @@ static inline CGAffineTransform transformationMatrixForVideoFrame(VideoFrame& vi
         return CGAffineTransformIdentity;
 
 #if PLATFORM(MAC)
-    int rotationAngle = -static_cast<int>(videoFrame.rotation());
+    return videoFrame.affineTransform(VideoFrame::RotationDirection::CounterClockwise);
 #else
-    int rotationAngle = static_cast<int>(videoFrame.rotation());
+    return videoFrame.affineTransform();
 #endif
-    auto videoTransform = CGAffineTransformMakeRotation(rotationAngle * std::numbers::pi / 180);
-    if (videoFrame.isMirrored())
-        videoTransform = CGAffineTransformScale(videoTransform, -1, 1);
-
-    return videoTransform;
 }
 
 void LocalSampleBufferDisplayLayer::enqueueVideoFrame(VideoFrame& videoFrame)

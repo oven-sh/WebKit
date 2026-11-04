@@ -40,12 +40,15 @@ if (rtc_enable_protobuf) {
       "../../../../api/audio:aec3_config",
       "../../../../api/audio:neural_residual_echo_estimator_api",
       "../../../../api/audio:tflite_model_handle",
+      "../../../../api/environment",
       "../../../../api/task_queue",
+      "../../../../api/units:timestamp",
       "../../../../common_audio",
       "../../../../rtc_base:checks",
       "../../../../rtc_base:logging",
       "../../../../rtc_base:macromagic",
       "../../../../rtc_base/synchronization:mutex",
+      "../../../../system_wrappers:metrics",
       "//third_party/abseil-cpp/absl/base:nullability",
       "//third_party/abseil-cpp/absl/strings:string_view",
       "//third_party/flatbuffers",
@@ -88,8 +91,7 @@ if (rtc_include_tests) {
       }
     }
 
-    rtc_library("neural_feature_extractor_unittest") {
-      testonly = true
+    rtc_cc_test("neural_feature_extractor_unittest") {
       sources = [ "neural_feature_extractor_unittest.cc" ]
       deps = [
         ":neural_residual_echo_estimator_impl",
@@ -114,8 +116,7 @@ if (rtc_include_tests) {
       ]
     }
 
-    rtc_library("neural_residual_echo_estimator_impl_unittest") {
-      testonly = true
+    rtc_cc_test("neural_residual_echo_estimator_impl_unittest") {
       sources = [ "neural_residual_echo_estimator_impl_unittest.cc" ]
       deps = [
         ":neural_residual_echo_estimator_impl",
@@ -123,10 +124,20 @@ if (rtc_include_tests) {
         "..:aec3_block",
         "..:aec3_common",
         "../..:echo_canceller_test_tools",
+        "../../../../api:make_ref_counted",
+        "../../../../api:scoped_refptr",
+        "../../../../api/audio:tflite_model_handle",
+        "../../../../api/environment",
+        "../../../../api/units:time_delta",
+        "../../../../api/units:timestamp",
         "../../../../rtc_base:checks",
         "../../../../rtc_base:random",
+        "../../../../system_wrappers:metrics",
+        "../../../../test:create_test_environment",
         "../../../../test:fileutils",
         "../../../../test:test_support",
+        "../../../../test:wait_until",
+        "../../../../test/time_controller",
         "//third_party/abseil-cpp/absl/strings:string_view",
       ]
       if (build_with_chromium) {
@@ -144,15 +155,11 @@ if (rtc_include_tests) {
         "../..:apm_debug_dump",
         "//third_party/tflite:tflite_config_no_undef",
       ]
-    }
-
-    rtc_library("neural_residual_echo_estimator_unittest") {
-      testonly = true
-      sources = []
-      deps = [
-        ":neural_feature_extractor_unittest",
-        ":neural_residual_echo_estimator_impl_unittest",
-      ]
+      data_deps = [ "../../../../resources:audio_processing_unittests_data" ]
+      if (is_ios) {
+        deps +=
+            [ "../../../../resources:audio_processing_unittests_bundle_data" ]
+      }
     }
   }
 }

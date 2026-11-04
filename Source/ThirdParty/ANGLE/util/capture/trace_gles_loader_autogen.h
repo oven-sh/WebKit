@@ -579,6 +579,7 @@
 #define glSampleMaskiANGLE t_glSampleMaskiANGLE
 #define glTexStorage2DMultisampleANGLE t_glTexStorage2DMultisampleANGLE
 #define glGetTranslatedShaderSourceANGLE t_glGetTranslatedShaderSourceANGLE
+#define glTrimMemoryANGLE t_glTrimMemoryANGLE
 #define glBindMetalRasterizationRateMapANGLE t_glBindMetalRasterizationRateMapANGLE
 #define glAcquireTexturesANGLE t_glAcquireTexturesANGLE
 #define glReleaseTexturesANGLE t_glReleaseTexturesANGLE
@@ -1478,6 +1479,7 @@ ANGLE_TRACE_LOADER_EXPORT extern PFNGLTEXSTORAGE2DMULTISAMPLEANGLEPROC
     t_glTexStorage2DMultisampleANGLE;
 ANGLE_TRACE_LOADER_EXPORT extern PFNGLGETTRANSLATEDSHADERSOURCEANGLEPROC
     t_glGetTranslatedShaderSourceANGLE;
+ANGLE_TRACE_LOADER_EXPORT extern PFNGLTRIMMEMORYANGLEPROC t_glTrimMemoryANGLE;
 ANGLE_TRACE_LOADER_EXPORT extern PFNGLBINDMETALRASTERIZATIONRATEMAPANGLEPROC
     t_glBindMetalRasterizationRateMapANGLE;
 ANGLE_TRACE_LOADER_EXPORT extern PFNGLACQUIRETEXTURESANGLEPROC t_glAcquireTexturesANGLE;

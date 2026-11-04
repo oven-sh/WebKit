@@ -1,0 +1,34 @@
+# `inst.value`, asked of a value that is expected to be a store of the application or an instance of a library's class. Each has a getter of its own under the name.
+# One test is made for both, wherever the access is written, and the read is divided among the getters behind it, as a field and a getter are: place-type-tests-a-field-here-and-a-getter-there.ir.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="application.js" displayPath="application.js"
+module m1 path="library.js" displayPath="library.js"
+layout L0 kind=Instance name="Store" module=m0 constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="value" kind=Getter function=f1 mutability=Fixed}]}
+layout L1 kind=Instance name="Instance" module=m1 constructor=f2 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="value" kind=Getter function=f3 mutability=Fixed}]}
+function f0 name="Store" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="value" module=m0 kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=number}] {
+    v1 = Integer integer=1
+    Return v1
+}
+function f2 name="Instance" module=m1 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="value" module=m1 kind=Getter flags=[HasThis] thisType={type=L1} results=[{type=number}] {
+    v1 = Integer integer=2
+    Return v1
+}
+
+function f4 name="inTheLibrary" module=m1 parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1):
+    v1 = PropGet v0 key="value"
+    Return v1
+# CHECK: = TypeTest v0 testedType=L0|L1
+}
+
+function f5 name="inTheApplication" module=m0 parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1):
+    v1 = PropGet v0 key="value"
+    Return v1
+# CHECK: = TypeTest v0 testedType=L0|L1
+}

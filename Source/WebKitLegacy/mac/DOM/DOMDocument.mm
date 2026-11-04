@@ -92,7 +92,7 @@
 #import <WebCore/XPathResult.h>
 #import <wtf/URL.h>
 
-#define IMPL protect(static_cast<WebCore::Document*>(reinterpret_cast<WebCore::Node*>(_internal)))
+#define IMPL protect(downcast<WebCore::Document>(reinterpret_cast<WebCore::Node*>(_internal)))
 
 @implementation DOMDocument
 
@@ -376,7 +376,7 @@
 - (BOOL)webkitFullscreenEnabled
 {
     WebCore::JSMainThreadNullState state;
-    return WebCore::DocumentFullscreen::webkitFullscreenEnabled(*IMPL);
+    return WebCore::DocumentFullscreen::fullscreenEnabled(*IMPL);
 }
 
 - (DOMElement *)webkitFullscreenElement

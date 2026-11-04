@@ -1,0 +1,40 @@
+# `child.outline.corner`, and nobody could follow `child.outline`. Six kinds of records have a `corner`, more than a test is made for. One of them is what the program stores under `outline`:
+# it comes first, though it is allocated once and the others three times each
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="/application.js" displayPath="application.js" body=f0
+module m1 path="/library.js" displayPath="library.js"
+entry module=m0
+layout L0 name="Cursor" module=m0 fields=[{key="corner" declared={type=anything}}, {key="a" declared={type=anything}}]
+layout L1 name="Scroll" module=m0 fields=[{key="b" declared={type=anything}}, {key="corner" declared={type=anything}}]
+layout L2 name="Marker" module=m0 fields=[{key="c" declared={type=anything}}, {key="d" declared={type=anything}}, {key="corner" declared={type=anything}}]
+layout L3 name="Token" module=m0 fields=[{key="corner" declared={type=anything}}, {key="e" declared={type=anything}}, {key="f" declared={type=anything}}]
+layout L4 name="Caret" module=m0 fields=[{key="g" declared={type=anything}}, {key="corner" declared={type=anything}}, {key="h" declared={type=anything}}]
+layout L5 name="Rest" module=m0 fields=[{key="corner" declared={type=anything}}]
+layout L6 name="Element" module=m0 fields=[{key="outline" declared={type=anything}}]
+
+function f0 name="" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = Undefined
+# REPEAT: i = 0..2
+    v%(i*5+3) = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v%(i*5+4) = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v%(i*5+5) = NewObject -, v2, v2, v2 layout=L2 fields=[0, 1, 2]
+    v%(i*5+6) = NewObject -, v2, v2, v2 layout=L3 fields=[0, 1, 2]
+    v%(i*5+7) = NewObject -, v2, v2, v2 layout=L4 fields=[0, 1, 2]
+# END REPEAT
+    v18 = NewObject -, v2 layout=L5 fields=[0]
+    v19 = NewObject -, v18 layout=L6 fields=[0]
+    v20 = NewClosure function=f1
+    v21 = Call v1, -, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v19, v20
+    Return v21
+}
+
+function f1 name="inTheLibrary" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="outline"
+    v2 = PropGet v1 key="corner"
+    Return v2
+}
+# CHECK-LABEL: name="inTheLibrary"
+# CHECK: = TypeTest {{*}} testedType={{*}}L5

@@ -163,7 +163,7 @@ String WebSocketHandshake::clientLocation() const
     return makeString(m_secure ? "wss"_s : "ws"_s, "://"_s, hostName(m_url, m_secure), resourceName(m_url));
 }
 
-static bool isStandardWebSocketHandshakeRequestHeader(HTTPHeaderName name)
+static bool LEGACY_NODELETE isStandardWebSocketHandshakeRequestHeader(HTTPHeaderName name)
 {
     switch (name) {
     case HTTPHeaderName::Upgrade:
@@ -198,7 +198,7 @@ void WebSocketHandshake::setClientHandshakeRequestHeaders(const HTTPHeaderMap& h
     m_clientHandshakeRequestHeaders = WTF::move(filtered);
 }
 
-CString WebSocketHandshake::clientHandshakeMessage() const
+UTF8CString WebSocketHandshake::clientHandshakeMessage() const
 {
     // Keep the following consistent with clientHandshakeRequest just below.
 

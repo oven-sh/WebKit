@@ -176,13 +176,6 @@ ALWAYS_INLINE bool JSStringJoiner::appendWithoutSideEffects(JSGlobalObject* glob
         return true;
     }
 
-#if USE(BIGINT32)
-    if (value.isBigInt32()) {
-        appendNumber(globalObject->vm(), value.bigInt32AsInt32());
-        return true;
-    }
-#endif
-
     ASSERT(value.isUndefinedOrNull());
     appendEmptyString();
     return true;
@@ -224,11 +217,12 @@ ALWAYS_INLINE void JSStringJoiner::appendNumber(VM& vm, double value)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-// Avoids the overhead of accumulating intermediate vectors of values when
-// we're only joining existing strings.
-class JSOnlyStringsAndInt32sJoiner {
+// Joins straight from array storage, without accumulating an intermediate vector of values, when
+// every element's string length is known without converting it: a string, an int32, a boolean,
+// undefined, or null. The result is allocated once at its exact length.
+class JSExactLengthJoiner {
 public:
-    JSOnlyStringsAndInt32sJoiner(StringView separator)
+    JSExactLengthJoiner(StringView separator)
         : m_separator(separator)
         , m_isAll8Bit(m_separator.is8Bit())
     {
@@ -246,6 +240,12 @@ public:
             if constexpr (indexingShape == ContiguousShape) {
                 if (value.isString())
                     return asString(value);
+                if (value.isBoolean()) {
+                    VM& vm = globalObject->vm();
+                    return value.isTrue() ? vm.smallStrings.trueString() : vm.smallStrings.falseString();
+                }
+                if (value.isUndefinedOrNull())
+                    return jsEmptyString(globalObject->vm());
                 if (!value.isInt32())
                     return nullptr;
             }
@@ -266,6 +266,12 @@ public:
                     m_isAll8Bit &= string->is8Bit();
                     continue;
                 }
+                if (value.isBoolean()) {
+                    m_accumulatedStringsLength += value.isTrue() ? "true"_s.length() : "false"_s.length();
+                    continue;
+                }
+                if (value.isUndefinedOrNull())
+                    continue;
                 if (!value.isInt32())
                     return nullptr;
             }
@@ -276,9 +282,26 @@ public:
         return joinImpl<indexingShape>(globalObject, data, length);
     }
 
+#if ENABLE(AOT)
+    // Compiled code chooses an array's storage by the type of its elements: an array of numbers holds doubles, whatever their values.
+    JSString* tryJoin(JSGlobalObject* globalObject, const double* data, unsigned length)
+    {
+        for (size_t i = 0; i < length; ++i) {
+            auto int32Value = tryConvertToStrictInt32(data[i]);
+            if (!int32Value)
+                return nullptr;
+            m_accumulatedStringsLength += WTF::StringTypeAdapter<int32_t> { *int32Value }.length();
+        }
+        return joinImpl(globalObject, data, length);
+    }
+#endif
+
 private:
     template<IndexingType indexingShape>
     JSString* joinImpl(JSGlobalObject*, const WriteBarrier<Unknown>*, unsigned);
+#if ENABLE(AOT)
+    JSString* joinImpl(JSGlobalObject*, const double*, unsigned);
+#endif
 
     StringView m_separator;
     CheckedUint32 m_accumulatedStringsLength;

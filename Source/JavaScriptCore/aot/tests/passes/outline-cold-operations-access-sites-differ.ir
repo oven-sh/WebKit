@@ -1,0 +1,106 @@
+# Equal reads by name share a body whatever their access sites are; different receiver stamps, or an operand that flow finds by the access site, keep sites apart
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 2
+# STATISTIC: ColdSitesOutlined = 12
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="First" fields=[{key="owner" declared={type=anything}}]
+layout L1 name="Second" fields=[{key="owner" declared={type=anything}}]
+
+function f0 name="accessSitesDiffer" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..5
+  b%(i)() frequency=Rare:
+    v%(i*2) = PropGet v1 key="config" accessSite=%(i*2-1)
+    v%(i*2+1) = PropGet v%(i*2) key="detail" accessSite=%(i*2)
+    Return v%(i*2+1)
+# END REPEAT
+  b6() frequency=Rare:
+    v12 = PropGet v1 key="config"
+    v13 = PropGet v12 key="detail"
+    Return v13
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: = PropGet
+# CHECK-COUNT-6: anything = CallDirect v1 function=f4
+# CHECK-NOT: = PropGet
+
+function f1 name="receiversDiffer" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v2 = PropGet v1 key="owner" accessSite=11 receivers=[L0]
+    v3 = PropGet v2 key="name" accessSite=12
+    Return v3
+  b2() frequency=Rare:
+    v4 = PropGet v1 key="owner" accessSite=11 receivers=[L1]
+    v5 = PropGet v4 key="name" accessSite=12
+    Return v5
+  b3() frequency=Rare:
+    v6 = PropGet v1 key="owner" accessSite=11 receivers=[L0, L1]
+    v7 = PropGet v6 key="name" accessSite=12
+    Return v7
+  b4() frequency=Rare:
+    v8 = PropGet v1 key="owner" accessSite=11
+    v9 = PropGet v8 key="name" accessSite=12
+    Return v9
+  b5() frequency=Rare:
+    v10 = PropGet v1 key="owner" accessSite=11
+    v11 = PropGet v10 key="name" accessSite=12 receivers=[L0]
+    Return v11
+  b6() frequency=Rare:
+    v12 = PropGet v1 key="owner" accessSite=11
+    v13 = PropGet v12 key="name" accessSite=12 receivers=[L1]
+    Return v13
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-12: = PropGet
+# CHECK-NOT: CallDirect
+
+function f2 name="operandIsFoundByAccessSite" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*2) = PropGet v1 key="pattern" accessSite=%(i*2+20)
+    v%(i*2+1) = CallBuiltin -, v%(i*2) overload=RegExp/7 accessSite=%(i*2+21)
+    Return v%(i*2+1)
+# END REPEAT
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-6: = CallBuiltin -, {{*}} overload=RegExp/7
+# CHECK-NOT: CallDirect
+
+function f3 name="operandIsNotFoundByAccessSite" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*2) = PropGet v1 key="pattern" accessSite=%(i*2+40)
+    v%(i*2+1) = CallBuiltin -, v%(i*2) overload=ArrayIsArray/0 accessSite=%(i*2+41)
+    Return v%(i*2+1)
+# END REPEAT
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: CallBuiltin
+# CHECK-COUNT-6: boolean = CallDirect v1 function=f5
+# CHECK-NOT: CallBuiltin
+
+# CHECK-LABEL: function f4 {{*}}role=OutlinedBody
+# CHECK: [[config]]: anything = PropGet v0 key="config"
+# CHECK-NEXT: [[detail]]: anything = PropGet [[config]] key="detail"
+# CHECK-NEXT: Return [[detail]]
+# CHECK-LABEL: function f5 {{*}}role=OutlinedBody
+# CHECK: [[pattern]]: anything = PropGet v0 key="pattern"
+# CHECK-NEXT: [[answer]]: boolean = CallBuiltin -, [[pattern]] overload=ArrayIsArray/0
+# CHECK-NEXT: Return [[answer]]

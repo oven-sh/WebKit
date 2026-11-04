@@ -50,10 +50,10 @@ public:
 
     IDBIndexInfo createNewIndex(IDBIndexIdentifier, const String& name, IDBKeyPath&&, bool unique, bool multiEntry);
     void addExistingIndex(const IDBIndexInfo&);
-    bool NODELETE hasIndex(const String& name) const;
-    bool hasIndex(IDBIndexIdentifier) const;
-    IDBIndexInfo* NODELETE infoForExistingIndex(const String& name);
-    IDBIndexInfo* infoForExistingIndex(IDBIndexIdentifier);
+    bool LEGACY_NODELETE hasIndex(const String& name) const;
+    bool LEGACY_NODELETE hasIndex(IDBIndexIdentifier) const;
+    IDBIndexInfo* LEGACY_NODELETE infoForExistingIndex(const String& name);
+    IDBIndexInfo* LEGACY_NODELETE infoForExistingIndex(IDBIndexIdentifier);
 
     Vector<String> indexNames() const;
     const HashMap<IDBIndexIdentifier, IDBIndexInfo>& indexMap() const LIFETIME_BOUND { return m_indexMap; }

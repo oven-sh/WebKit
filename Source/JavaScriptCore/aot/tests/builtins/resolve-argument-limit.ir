@@ -1,0 +1,24 @@
+# A call with more arguments than the limit stays a generic call
+# FORM: Prepared
+# OPTIONS: limit=MaxBuiltinCallArguments:2
+# RUN: pass ResolveBuiltins
+# LOSS: MaxBuiltinCallArguments x1 f1 v2
+# STATISTIC: BuiltinCallsResolved = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="atLimit" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = Builtin builtin=StringFromCharCode
+    v2 = Call v1, -, v0, v0
+    Return v2
+# CHECK: v2: string = CallBuiltin -, v0, v0 overload=StringFromCharCode/0
+}
+
+function f1 name="aboveLimit" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = Builtin builtin=StringFromCharCode
+    v2 = Call v1, -, v0, v0, v0
+    v3 = Call v1, -, v0
+    Return v2
+# CHECK: v2: anything = Call v1, -, v0, v0, v0
+# CHECK-NEXT: v3: string = CallBuiltin -, v0 overload=StringFromCharCode/0
+}

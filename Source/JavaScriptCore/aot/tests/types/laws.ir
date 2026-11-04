@@ -1,0 +1,17 @@
+# The laws of the algebra of types, over kinds of which no type says how they are related: a class without an instance test, a class and one that extends it, functions and classes of functions.
+# Nothing is ever lost: an intersection and a cast hold whatever lies in both, a difference whatever the other lacks, a union both, and what overlaps meets somewhere.
+# Six laws do not hold here: no type says that an object is an instance of two classes, so an intersection names the class of its second operand, and a difference is an upper bound.
+# How often each is broken may only shrink, and never at the price of a law that holds.
+# FORM: Prepared
+# RUN: laws-of-types
+# CHECK: laws of types: 21 of 21 types
+# CHECK-NEXT: sum MeetLiesInFirst: 202 times in 202 shapes
+# CHECK-NEXT: sum MeetLiesInSecond: 7 times in 7 shapes
+# CHECK-NEXT: sum MeetIsTheSameBothWays: 98 times in 98 shapes
+# CHECK-NEXT: sum CastLiesInFirst: 202 times in 202 shapes
+# CHECK-NEXT: sum CastLiesInSecond: 7 times in 7 shapes
+# CHECK-NEXT: sum DifferenceMeetsSecondNowhere: 249 times in 249 shapes
+# CHECK-NEXT: 20 of 26 laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=undefined|Arguments}, {type=Array}, {type=Object}, {type=null|string|Array<number, proven, Double>|Object}, {type=undefined|null|Array<number>}, {type=Proxy}, {type=function}, {type=f0}, {type=BoundFunction}, {type=Function}, {type=RangeError}, {type=Error}, {type=Float64Array}, {type=TypedArray}, {type=Buffer}, {type=Uint8Array}, {type=ArrayIterator}, {type=Map}, {type=Number}, {type=object}, {type=anything}] results=[{type=undefined}]

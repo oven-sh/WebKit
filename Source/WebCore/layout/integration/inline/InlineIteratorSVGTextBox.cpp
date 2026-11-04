@@ -30,28 +30,33 @@
 #include "LayoutIntegrationLineLayout.h"
 #include "RenderBlockFlowInlines.h"
 #include "RenderSVGText.h"
-#include "SVGInlineTextBox.h"
-#include "SVGRootInlineBox.h"
 #include "SVGTextBoxPainter.h"
 #include "SVGTextFragment.h"
 
 namespace WebCore {
 namespace InlineIterator {
 
-SVGTextBox::SVGTextBox(PathVariant&& path)
-    : TextBox(WTF::move(path))
+static_assert(std::ranges::bidirectional_range<SVGTextBoxRange> && std::ranges::common_range<SVGTextBoxRange> && std::ranges::view<SVGTextBoxRange> && std::ranges::borrowed_range<SVGTextBoxRange>);
+
+SVGTextBox::SVGTextBox(const LayoutIntegration::InlineContent& inlineContent, size_t boxIndex)
+    : TextBox(inlineContent, boxIndex)
 {
 }
 
 FloatRect SVGTextBox::calculateBoundariesIncludingSVGTransform() const
 {
+    return calculateBoundariesIncludingSVGTransform(protect(renderer()), textFragments());
+}
+
+FloatRect SVGTextBox::calculateBoundariesIncludingSVGTransform(const RenderSVGInlineText& text, std::span<const SVGTextFragment> fragments)
+{
     FloatRect textRect;
 
-    float scalingFactor = renderer().scalingFactor();
+    float scalingFactor = text.scalingFactor();
     ASSERT(scalingFactor);
 
-    float baseline = renderer().scaledFont().metricsOfPrimaryFont().ascent() / scalingFactor;
-    for (auto& fragment : textFragments()) {
+    float baseline = protect(text.scaledFont())->metricsOfPrimaryFont().ascent() / scalingFactor;
+    for (auto& fragment : fragments) {
         auto fragmentRect = FloatRect { fragment.x, fragment.y - baseline, fragment.width, fragment.height };
 
         AffineTransform fragmentTransform;
@@ -84,7 +89,7 @@ LayoutRect SVGTextBox::localSelectionRect(unsigned start, unsigned end) const
         if (!mapStartEndPositionsIntoFragmentCoordinates(this->start(), fragment, fragmentStartPosition, fragmentEndPosition))
             continue;
 
-        FloatRect fragmentRect = selectionRectForTextFragment(renderer(), direction(), fragment, fragmentStartPosition, fragmentEndPosition, style);
+        FloatRect fragmentRect = selectionRectForTextFragment(protect(renderer()), direction(), fragment, fragmentStartPosition, fragmentEndPosition, style);
         fragment.buildFragmentTransform(fragmentTransform);
         if (!fragmentTransform.isIdentity())
             fragmentRect = fragmentTransform.mapRect(fragmentRect);
@@ -97,24 +102,7 @@ LayoutRect SVGTextBox::localSelectionRect(unsigned start, unsigned end) const
 
 const Vector<SVGTextFragment>& SVGTextBox::textFragments() const
 {
-    return WTF::switchOn(m_pathVariant, [&](auto& path) -> const Vector<SVGTextFragment>& {
-        return path.svgTextFragments();
-    });
-}
-
-const SVGInlineTextBox* SVGTextBox::legacyInlineBox() const
-{
-    return downcast<SVGInlineTextBox>(TextBox::legacyInlineBox());
-}
-
-SVGTextBoxIterator::SVGTextBoxIterator(Box::PathVariant&& path)
-    : TextBoxIterator(WTF::move(path))
-{
-}
-
-SVGTextBoxIterator::SVGTextBoxIterator(const Box& box)
-    : TextBoxIterator(box)
-{
+    return inlineContent().svgTextFragments(boxIndex());
 }
 
 SVGTextBoxIterator firstSVGTextBoxFor(const RenderSVGInlineText& text)
@@ -125,18 +113,12 @@ SVGTextBoxIterator firstSVGTextBoxFor(const RenderSVGInlineText& text)
             return { };
         return { *box };
     }
-
-    return { BoxLegacyPath { text.firstLegacyTextBox() } };
+    return { };
 }
 
-BoxRange<SVGTextBoxIterator> svgTextBoxesFor(const RenderSVGInlineText& text)
+SVGTextBoxRange svgTextBoxesFor(const RenderSVGInlineText& text)
 {
     return { firstSVGTextBoxFor(text) };
-}
-
-SVGTextBoxIterator svgTextBoxFor(const SVGInlineTextBox* box)
-{
-    return { BoxLegacyPath { box } };
 }
 
 SVGTextBoxIterator svgTextBoxFor(const LayoutIntegration::InlineContent& inlineContent, size_t boxIndex)
@@ -144,28 +126,21 @@ SVGTextBoxIterator svgTextBoxFor(const LayoutIntegration::InlineContent& inlineC
     auto& box = inlineContent.displayContent().boxes[boxIndex];
     if (!box.isText() || !box.layoutBox().rendererForIntegration()->isRenderSVGInlineText())
         return { };
-    return { BoxModernPath { inlineContent, boxIndex } };
-}
-
-SVGTextBox::Key makeKey(const SVGTextBox& textBox)
-{
-    return { &textBox.renderer(), textBox.start() };
+    return { Box { inlineContent, boxIndex } };
 }
 
 BoxRange<BoxIterator> boxesFor(const RenderSVGText& svgText)
 {
     if (CheckedPtr lineLayout = svgText.inlineLayout())
-        return { BoxIterator { *lineLayout->firstRootInlineBox() } };
-
-    return { BoxIterator { BoxLegacyPath { svgText.legacyRootBox() } } };
+        return { lineLayout->firstRootInlineBox() };
+    return { };
 }
 
 BoxIterator lastBoxFor(const RenderSVGText& svgText)
 {
     if (CheckedPtr lineLayout = svgText.inlineLayout())
-        return { BoxIterator { *lineLayout->lastRootInlineBox() } };
-
-    return { BoxIterator { BoxLegacyPath { svgText.legacyRootBox() } } };
+        return lineLayout->lastBox();
+    return { };
 }
 
 }

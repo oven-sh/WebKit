@@ -1,0 +1,37 @@
+# A search in a string, and behind it the length and a range of the same string: one read of characters. A range of a rope that is itself a range is taken from the base again, so nothing is made flat
+# FORM: Prepared
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="range-behind-a-search" parameters=[{type=string}] results=[{type=undefined|string}] {
+    v1 = Integer integer=2147483647
+    v2 = StringLastIndexOfLiteral v0, v1 literal=".d."
+    v3 = Integer integer=0
+    v4 = GreaterEq v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = GetStringLength v0
+    v6 = StringRange v5, v2 method=Substring
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    v9 = Substring v0, v7, v8
+    Return v9
+  b2():
+    v10 = Undefined
+    Return v10
+# CHECK-NOT: FlattenString
+# CHECK: = StringLastIndexOfLiteral v0,
+# CHECK-NOT: FlattenString
+# CHECK: = Substring v0,
+}
+
+function f1 name="two-searches" parameters=[{type=string}] results=[{type=int}] {
+    v1 = Integer integer=2147483647
+    v2 = StringLastIndexOfLiteral v0, v1 literal=".d."
+    v3 = StringLastIndexOfLiteral v0, v1 literal="/"
+    v4 = Add v2, v3
+    Return v4
+# CHECK: [[flat]]: flatstring = FlattenString v0
+# CHECK: = StringLastIndexOfLiteral [[flat]],
+# CHECK: = StringLastIndexOfLiteral [[flat]],
+}

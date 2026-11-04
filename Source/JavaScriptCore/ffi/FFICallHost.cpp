@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFICallHost.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 
 #include "CallFrame.h"
@@ -34,6 +34,7 @@
 #include "FFIContext.h"
 #include "FFIConversions.h"
 #include "FFISignature.h"
+#include "FFIStubs.h"
 #include "FFIType.h"
 #include "FrameTracers.h"
 #include "JSCInlines.h"
@@ -66,11 +67,20 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
     }
     slots[argumentCount] = 0;
 
-    CodePtr<JITThunkPtrTag> thunk = signature.invokeThunk();
-    if (!thunk) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope, "bun:ffi failed to allocate executable memory for the invoke thunk"_s);
-        return { };
+    const Stubs* stubs = Stubs::current();
+    CodePtr<JITThunkPtrTag> thunk;
+    if (!stubs) [[likely]] {
+        thunk = signature.invokeThunk();
+        if (!thunk) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope, "bun:ffi failed to allocate executable memory for the invoke thunk"_s);
+            return { };
+        }
     }
+    auto invoke = [&] ALWAYS_INLINE_LAMBDA {
+        if (stubs) [[unlikely]]
+            return invokeThroughStub(stubs->invoke(), signature, function->target(), slots);
+        thunk.taggedPtr<InvokeThunkFunction>()(function->target(), slots);
+    };
 
     if (const CallHooks* hooks = function->hooks()) [[unlikely]] {
         Exception* pending = nullptr;
@@ -78,7 +88,7 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
             auto hookScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             void* hookToken = hooks->before ? hooks->before(globalObject, callFrame) : nullptr;
             if (!hookScope.exception()) [[likely]]
-                thunk.taggedPtr<InvokeThunkFunction>()(function->target(), slots);
+                invoke();
             pending = hookScope.exception(); // from a throwing before-hook or an in-call callback
             if (pending) [[unlikely]]
                 hookScope.clearException();
@@ -98,7 +108,7 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
             return { };
         }
     } else
-        thunk.taggedPtr<InvokeThunkFunction>()(function->target(), slots);
+        invoke();
     RETURN_IF_EXCEPTION(scope, { });
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsValueFromSlot(globalObject, context, signature.returnType(), slots[argumentCount])));
@@ -122,4 +132,4 @@ JSC_DEFINE_JIT_OPERATION(operationFFICallSlowPath, EncodedJSValue, (JSGlobalObje
 } // namespace JSC
 
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

@@ -1,0 +1,55 @@
+# const [first, ...rest] = parts: the loop reads `parts` under a guard on its storage and appends to `rest`, a new array. The guard lasts over the appends because `rest` is seen to be allocated
+# in this function, on the usual path and on a rare one. What a call returns may be any array, `parts` among them: so the allocation on the rare path stays where it is.
+# The same allocation in functions without a guard is outlined
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="restOfList" parameters=[{type=Array}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = Integer integer=7
+    v3 = NewArray v2, v2, v2, v2 contents=anything
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewArray contents=anything
+    Jump -> next b3(v4)
+  b3(v5: Array):
+    v6 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v6 -> taken b4(| 0), notTaken b7()
+  b4(v7):
+    v8 = Integer
+    v9 = IsElementPresent v0, v8, v7 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v9 -> taken b5(| 0), notTaken b7()
+  b5(v10):
+    v11 = AllGuards v7, v10
+    v12 = GetArrayElement v0, v8, v11 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    AppendElement v5, v12
+    v14 = Integer integer=1
+    v15 = IsElementPresent v0, v14, v7 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v15 -> taken b6(| 0), notTaken b7()
+  b6(v16):
+    Return
+  b7():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-2: = NewArray
+# CHECK-LABEL: function f1
+# CHECK: = CallDirect function=
+# REPEAT: i = 1..8
+
+function f%(i) name="plain%(i)" parameters=[{type=boolean}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v1 = Integer integer=7
+    v2 = NewArray v1, v1, v1, v1 contents=anything
+    Return v2
+  b2():
+    Return
+}
+# END REPEAT

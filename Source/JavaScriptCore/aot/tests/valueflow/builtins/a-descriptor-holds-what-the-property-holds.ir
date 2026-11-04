@@ -1,0 +1,37 @@
+# holder = { kept: stored }; Object.getOwnPropertyDescriptor(holder, "kept").value(); Reflect.getOwnPropertyDescriptor(holder, "kept").value()
+# The rows say of `value`, `get` and `set` that they hold only what the records store there: what the property holds. So the call of `value` calls the function that was stored and nothing that nobody knows,
+# and `get` of a property that holds a value is undefined.
+# RUN: valueflow-solve calls
+# CHECK: f0 v5 -> ObjectGetOwnPropertyDescriptor
+# CHECK-NEXT: f0 v7 -> f1
+# CHECK-NEXT: f0 v9 -> ReflectGetOwnPropertyDescriptor
+# CHECK-NEXT: f0 v11 -> f1
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="kept" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = String string="kept"
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v5 = Call v4, v3, v1, v2
+    v6 = PropGet v5 key="value"
+    v7 = Call v6, v5
+    v8 = Builtin builtin=ReflectGetOwnPropertyDescriptor
+    v9 = Call v8, -, v1, v2
+    v10 = PropGet v9 key="value"
+    v11 = Call v10, v9
+    v12 = NewClosure function=f2
+    Return
+}
+function f1 name="stored" results=[{type=anything}] {
+    Return
+}
+function f2 name="neverStored" results=[{type=anything}] {
+    Return
+}

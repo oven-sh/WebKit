@@ -48,12 +48,14 @@ class StackmapValue;
 // work if you do that.
 class StackmapGenerationParams {
 public:
+    using Reps = Vector<ValueRep, 8>;
+
     // This is the stackmap value that we're generating.
     StackmapValue* value() const { return m_value; }
     
     // This tells you the actual value representations that were chosen. This is usually different
     // from the constraints we supplied.
-    const Vector<ValueRep>& reps() const { return m_reps; };
+    const Reps& reps() const { return m_reps; };
 
     // Usually we wish to access the reps. We make this easy by making ourselves appear to be a
     // collection of reps.
@@ -65,7 +67,7 @@ public:
     
     // This tells you the registers that were used.
     // NOTE: This will report bogus information if you did proc.setNeedsUsedRegisters(false).
-    const RegisterSet& NODELETE usedRegisters() const;
+    const RegisterSet& LEGACY_NODELETE usedRegisters() const;
 
     // This is a useful helper if you want to do register allocation inside of a patchpoint. The
     // usedRegisters() set is not directly useful for this purpose because:
@@ -101,24 +103,18 @@ public:
     JS_EXPORT_PRIVATE bool fallsThroughToSuccessor(unsigned successorIndex) const;
 
     // These are provided for convenience; they mean that you don't have to capture them if you don't want to.
-    JS_EXPORT_PRIVATE Procedure& NODELETE proc() const;
-    JS_EXPORT_PRIVATE Air::Code& NODELETE code() const;
+    JS_EXPORT_PRIVATE Procedure& LEGACY_NODELETE proc() const;
+    JS_EXPORT_PRIVATE Air::Code& LEGACY_NODELETE code() const;
     
     // The Air::GenerationContext gives you even more power.
     Air::GenerationContext& context() const { return m_context; };
 
-    JS_EXPORT_PRIVATE Origin NODELETE origin() const;
+    JS_EXPORT_PRIVATE Origin LEGACY_NODELETE origin() const;
 
     template<typename Functor>
     void addLatePath(const Functor& functor) const
     {
-        context().latePaths.append(std::tuple {
-            origin(),
-            createSharedTask<Air::GenerationContext::LatePathFunction>(
-                [=] (CCallHelpers& jit, Air::GenerationContext&) {
-                    functor(jit);
-                })
-            });
+        context().addLatePath(origin(), functor);
     }
 
 private:
@@ -126,11 +122,12 @@ private:
     friend class PatchpointSpecial;
     
     StackmapGenerationParams(StackmapValue*, const Vector<ValueRep>& reps, Air::GenerationContext&);
+    StackmapGenerationParams(StackmapValue*, Reps&& reps, Air::GenerationContext&);
 
     StackmapValue* m_value;
-    Vector<ValueRep> m_reps;
-    Vector<GPRReg> m_gpScratch;
-    Vector<FPRReg> m_fpScratch;
+    Reps m_reps;
+    Vector<GPRReg, 4> m_gpScratch;
+    Vector<FPRReg, 4> m_fpScratch;
     Air::GenerationContext& m_context;
 };
 

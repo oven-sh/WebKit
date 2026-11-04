@@ -1,0 +1,256 @@
+# A member call on a receiver nothing is known about, under a name that more kinds of receivers have than a site dispatches over, is split on the identity of the callee that was read, over the methods of that name in the table.
+# The arm of a method tests the receiver for the classes that have the method: the call is matched against the class that the test proves, and any other receiver takes the same method in an unlikely block.
+# Where few kinds of receivers have the name the call is left alone: the receiver itself is tested for them, in front of the read (passes/place-type-tests-receivers-of-called-methods.ir)
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# RUN(TWICE): pass ResolveBuiltins ResolveBuiltins
+# RUN(PLACED): pass ResolveBuiltins PlaceTypeTests
+# CHECK: outcome: Changed
+# TWICE: outcome: Changed
+# TWICE: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Stack" fields=[{key="depth" declared={type=number}}]
+
+function f0 name="oneClassHasTheMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2: anything = PropGet v0 key="push"
+# CHECK-NEXT: v3: anything = Call v2, v0, v1 calleeKey="push"
+# CHECK-NEXT: Return v3
+# PLACED-NEXT: b0(v0: anything ~ Array, v1: anything):
+# PLACED-NEXT: [[isArray0]]: boolean ~ true = TypeTest v0 testedType=Array
+# PLACED-NEXT: Branch [[isArray0]] -> taken [[array0]](| 0), notTaken
+# PLACED-NOT: PropGet
+# PLACED: int[0, 4294967295] = CallBuiltin [[tested0]], v1 overload=ArrayPrototypePush/0 [needsPristineReceiver]
+# PLACED: [[byName0]]: anything = PropGet v0 key="push"
+# PLACED: anything = Call {{*}}, v0, v1 calleeKey="push"
+# PLACED: [[array0]]([[tested0]]: Array):
+# PLACED-NEXT: boolean = IsPristine [[tested0]] builtinClass=Array aspects=[Names]
+# PLACED-NOT: PropGet
+# PLACED: boolean = IsPristine [[tested0]] builtinClass=Array aspects=[Storage]
+# PLACED: frequency=Unlikely:
+}
+
+function f1 name="methodsOfTwoClasses" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="get"
+    v3 = Call v2, v0, v1 calleeKey="get"
+    Return v3
+}
+# PLACED-LABEL: function f1 name="methodsOfTwoClasses"
+# CHECK-LABEL: function f1 name="methodsOfTwoClasses"
+# CHECK: [[isMapGet]]: boolean = TypeTest v2 testedType=builtin(MapPrototypeGet)
+# CHECK-NEXT: Branch [[isMapGet]] -> taken [[mapArm]](| 0), notTaken
+# CHECK: [[mapArm]]({{*}}: builtin(MapPrototypeGet)):
+# CHECK-NEXT: [[isMap]]: boolean = TypeTest v0 testedType=Map
+# CHECK-NEXT: Branch [[isMap]] -> taken [[mapReceiver]](| 0), notTaken [[notMapReceiver]](| 0)
+# CHECK: [[isWeakMapGet]]: boolean = TypeTest {{*}} testedType=builtin(WeakMapPrototypeGet)
+# CHECK-NEXT: Branch [[isWeakMapGet]] -> taken [[weakMapArm]](| 0), notTaken [[getRest]](| 0)
+# CHECK: [[mapReceiver]]([[map]]: Map):
+# CHECK-NEXT: anything = CallBuiltin [[map]], v1 overload=MapPrototypeGet/0
+# CHECK: [[notMapReceiver]]([[notMap]]: anything) frequency=Unlikely:
+# CHECK-NEXT: anything = CallBuiltin [[notMap]], v1 overload=MapPrototypeGet/0 builtinCallForm=AnyReceiver
+# CHECK: [[weakMapArm]]({{*}}: builtin(WeakMapPrototypeGet)):
+# CHECK-NEXT: [[isWeakMap]]: boolean = TypeTest v0 testedType=WeakMap
+# CHECK-NEXT: Branch [[isWeakMap]] -> taken [[weakMapReceiver]](| 0), notTaken
+# CHECK: [[getRest]]([[otherGet]]: anything) frequency=Unlikely:
+# CHECK-NEXT: anything = Call [[otherGet]], v0, v1 calleeKey="get"
+# CHECK: [[weakMapReceiver]]([[weakMap]]: WeakMap):
+# CHECK-NEXT: anything = CallBuiltin [[weakMap]], v1 overload=WeakMapPrototypeGet/0
+
+function f2 name="methodOfClassAndOfPrimitive" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+    v2 = PropGet v0 key="slice"
+    v3 = Call v2, v0, v1 calleeKey="slice"
+    Return v3
+# CHECK: TypeTest v2 testedType=builtin(ArrayPrototypeSlice)
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK: TypeTest {{*}} testedType=builtin(StringPrototypeSlice)
+# CHECK: = TypeTest v0 testedType=string
+# CHECK: ([[otherSlice]]: anything) frequency=Unlikely:
+# CHECK-NEXT: anything = Call [[otherSlice]], v0, v1 calleeKey="slice"
+# CHECK: ([[text]]: string):
+# CHECK-NEXT: string = CallBuiltin [[text]], v1 overload=StringPrototypeSlice/0
+}
+
+function f3 name="expectedReceiver" parameters=[{type=Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ Array, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+# CHECK-NEXT: b0(v0: anything ~ Array, v1: anything):
+# CHECK-NEXT: v2: anything = PropGet v0 key="push"
+# CHECK-NEXT: v3: anything = Call v2, v0, v1 calleeKey="push"
+# CHECK-NEXT: Return v3
+}
+
+function f4 name="receiverOfOneLayout" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, v0, v1 calleeKey="push"
+# CHECK-NEXT: Return v3
+}
+
+function f5 name="receiverOfOneClass" parameters=[{type=Date}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, v0, v1 calleeKey="push"
+# CHECK-NEXT: Return v3
+}
+
+function f6 name="expectedCallee" parameters=[{type=anything}, {type=anything}, {type=builtin(ArrayPrototypePush)|builtin(StringPrototypeTrim) flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything ~ builtin(ArrayPrototypePush)|builtin(StringPrototypeTrim)):
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+}
+# CHECK-LABEL: function f6 name="expectedCallee"
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything ~ builtin(ArrayPrototypePush)|builtin(StringPrototypeTrim)):
+# CHECK-NEXT: [[isPush]]: boolean = TypeTest v2 testedType=builtin(ArrayPrototypePush)
+# CHECK-NEXT: Branch [[isPush]] -> taken [[pushArm]](| 0), notTaken [[pushRest]](| 0)
+# CHECK-NOT: TypeTest
+# CHECK: [[pushArm]]([[push]]: builtin(ArrayPrototypePush)):
+# CHECK-NEXT: [[isArray]]: boolean = TypeTest v0 testedType=Array
+# CHECK-NEXT: Branch [[isArray]] -> taken [[arrayReceiver]](| 0), notTaken [[otherReceiver]](| 0)
+# CHECK-NOT: TypeTest
+# CHECK: [[pushRest]]([[notPush]]: anything ~ builtin(StringPrototypeTrim)) frequency=Unlikely:
+# CHECK-NEXT: anything = Call [[notPush]], v0, v1 calleeKey="push"
+# CHECK-NOT: TypeTest
+# CHECK: [[arrayReceiver]]([[array]]: Array):
+# The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
+# CHECK-NEXT: = CallBuiltin [[array]], v1 overload=ArrayPrototypePush/0 builtinCallForm=AnyReceiver
+# CHECK-NOT: TypeTest
+# CHECK: [[otherReceiver]]([[notArray]]: anything) frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin [[notArray]], v1 overload=ArrayPrototypePush/0 builtinCallForm=AnyReceiver
+# CHECK-NOT: TypeTest
+# PLACED-LABEL: function f6 name="expectedCallee"
+# PLACED: TypeTest v2 testedType=builtin(ArrayPrototypePush)
+# PLACED: = TypeTest v0 testedType=Array
+# PLACED: ([[tested]]: Array):
+# PLACED-NEXT: boolean = IsPristine [[tested]] builtinClass=Array aspects=[Storage]
+# PLACED: int[0, 4294967295] = CallBuiltin [[tested]], v1 overload=ArrayPrototypePush/0 [needsPristineReceiver]
+# PLACED-LABEL: function f7 name="calleesListedByFlow"
+
+function f7 name="calleesListedByFlow" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push" callees=[f14]
+    v4 = Call v2, v0, v1 calleeKey="push" callees=[f14, ..]
+    Return v4
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, v0, v1 calleeKey="push" callees=[f14]
+# CHECK-NEXT: v4: anything = Call v2, v0, v1 calleeKey="push" callees=[f14, ..]
+# CHECK-NEXT: Return v4
+}
+
+function f8 name="unlikelyBlock" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = PropGet v0 key="push"
+    v4 = Call v3, v0, v1 calleeKey="push"
+    Return v4
+  b2():
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: v4: anything = Call v3, v0, v1 calleeKey="push"
+# CHECK-NEXT: Return v4
+}
+
+function f9 name="rareBlock" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = PropGet v0 key="push"
+    v4 = Call v3, v0, v1 calleeKey="push"
+    Return v4
+  b2():
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: v4: anything = Call v3, v0, v1 calleeKey="push"
+# CHECK-NEXT: Return v4
+}
+
+function f10 name="everyMethodIsHostCall" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="reverse"
+    v2 = Call v1, v0 calleeKey="reverse"
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: v2: anything = Call v1, v0 calleeKey="reverse"
+# CHECK-NEXT: Return v2
+}
+
+function f11 name="nameOfNoClass" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="enqueue"
+    v2 = Call v1, v0 calleeKey="enqueue"
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: v2: anything = Call v1, v0 calleeKey="enqueue"
+# CHECK-NEXT: Return v2
+}
+
+function f12 name="callWithoutKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1
+    Return v3
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, v0, v1
+# CHECK-NEXT: Return v3
+}
+
+function f13 name="callWithoutThis" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, -, v1 calleeKey="push"
+    Return v3
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, -, v1 calleeKey="push"
+# CHECK-NEXT: Return v3
+}
+
+function f14 name="push" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f15 name="calleeExpectedAmongOtherValues" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+    v2 = PropGet v0 key="slice"
+    v3: anything ~ undefined|null|boolean|number|string|symbol|bigint|builtin(StringPrototypeSlice)|builtin(StringPrototypeTrim) = Upcast v2 castType=anything
+    v4 = Call v3, v0, v1 calleeKey="slice" callees=[builtin(StringPrototypeSlice), builtin(StringPrototypeTrim), ..]
+    Return v4
+# CHECK-NOT: ArrayPrototypeSlice
+# CHECK: TypeTest v3 testedType=builtin(StringPrototypeSlice)
+# CHECK-NOT: ArrayPrototypeSlice
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NOT: TypeTest
+# PLACED: TypeTest v3 testedType=builtin(StringPrototypeSlice)
+# PLACED: string = CallBuiltin {{*}} overload=StringPrototypeSlice/
+}
+
+function f16 name="calleeExpectedToBeAnotherBuiltin" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+    v2 = PropGet v0 key="slice"
+    v3: anything ~ undefined|builtin(StringPrototypeTrim) = Upcast v2 castType=anything
+    v4 = Call v3, v0, v1 calleeKey="slice"
+    Return v4
+# CHECK-NOT: TypeTest
+# CHECK: v4: anything = Call v3, v0, v1 calleeKey="slice"
+# CHECK-NEXT: Return v4
+}
+
+function f17 name="calleeOfOneLayout" parameters=[{type=anything}, {type=i32}, {type=L0}] results=[{type=anything}] {
+    v3 = Call v2, v0, v1 calleeKey="slice"
+    Return v3
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, v0, v1 calleeKey="slice"
+# CHECK-NEXT: Return v3
+}
+
+function f18 name="calleesListedByFlowUnderNameThatIsSplit" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="get"
+    v3 = Call v2, v0, v1 calleeKey="get" callees=[f14]
+    v4 = Call v2, v0, v1 calleeKey="get" callees=[f14, ..]
+    Return v4
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, v0, v1 calleeKey="get" callees=[f14]
+# CHECK-NEXT: v4: anything = Call v2, v0, v1 calleeKey="get" callees=[f14, ..]
+# CHECK-NEXT: Return v4
+}

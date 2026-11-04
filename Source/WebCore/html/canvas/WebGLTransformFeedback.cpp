@@ -83,11 +83,11 @@ void WebGLTransformFeedback::setBoundIndexedTransformFeedbackBuffer(const Abstra
     m_boundIndexedTransformFeedbackBuffers[index] = buffer;
 }
 
-bool WebGLTransformFeedback::getBoundIndexedTransformFeedbackBuffer(GCGLuint index, WebGLBuffer** outBuffer)
+bool WebGLTransformFeedback::getBoundIndexedTransformFeedbackBuffer(GCGLuint index, RefPtr<WebGLBuffer>& outBuffer)
 {
     if (index >= m_boundIndexedTransformFeedbackBuffers.size())
         return false;
-    *outBuffer = m_boundIndexedTransformFeedbackBuffers[index].get();
+    outBuffer = m_boundIndexedTransformFeedbackBuffers[index];
     return true;
 }
 

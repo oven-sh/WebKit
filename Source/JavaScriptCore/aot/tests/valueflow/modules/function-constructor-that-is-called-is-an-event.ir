@@ -1,0 +1,18 @@
+# (function () {}).constructor("text")
+# The read climbs from the closure to %Function.prototype% and finds `Function` there. The value arrives at the call, so the call evaluates text
+# RUN: valueflow-solve unseen
+# CHECK: unseen EvaluatesText Function f0:v3
+# CHECK: unseen-code yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="constructor"
+    v2 = String string="text"
+    v3 = Call v1, v0, v2
+    Return
+}
+function f1 name="any" results=[{type=anything}] {
+    Return
+}

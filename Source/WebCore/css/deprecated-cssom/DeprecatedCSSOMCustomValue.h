@@ -38,10 +38,10 @@ class DeprecatedCSSOMCustomValue final : public DeprecatedCSSOMValue {
 public:
     using SerializationFunctor = Function<String(const CSS::SerializationContext&)>;
 
-    static Ref<DeprecatedCSSOMCustomValue> create(SerializationFunctor&&, CSSStyleDeclaration&);
+    static Ref<DeprecatedCSSOMCustomValue> LEGACY_NODELETE create(SerializationFunctor&&, CSSStyleDeclaration&);
 
     String cssText() const override;
-    unsigned short NODELETE cssValueType() const override;
+    unsigned short LEGACY_NODELETE cssValueType() const override;
     bool isCustomValue() const override { return true; }
 
 private:

@@ -264,7 +264,7 @@ void HTMLDialogElement::close(const String& result, Element* source)
 
     if (RefPtr element = std::exchange(m_previouslyFocusedElement, nullptr).get()) {
         RefPtr focusedElement = document().focusedElement();
-        bool focusIsInsideDialog = focusedElement == this || (focusedElement && focusedElement->isComposedTreeDescendantOf(*this));
+        bool focusIsInsideDialog = focusedElement && focusedElement->isComposedTreeInclusiveDescendantOf(*this);
         if (wasModal || focusIsInsideDialog) {
             FocusOptions options;
             options.preventScroll = true;
@@ -510,7 +510,7 @@ void HTMLDialogElement::setIsModal(bool newValue)
 void HTMLDialogElement::queueDialogToggleEventTask(ToggleState oldState, ToggleState newState, Element* source)
 {
     if (!m_toggleEventTask)
-        m_toggleEventTask = ToggleEventTask::create(*this);
+        lazyInitialize(m_toggleEventTask, ToggleEventTask::create(*this));
 
     RefPtr { m_toggleEventTask }->queue(oldState, newState, source);
 }

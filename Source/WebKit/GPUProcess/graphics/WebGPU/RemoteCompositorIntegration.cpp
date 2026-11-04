@@ -44,7 +44,7 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteCompositorIntegration);
 
-RemoteCompositorIntegration::RemoteCompositorIntegration(WebCore::WebGPU::CompositorIntegration& compositorIntegration, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
+RemoteCompositorIntegration::RemoteCompositorIntegration(WebCore::WebGPUCompositorIntegration& compositorIntegration, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     : m_backing(compositorIntegration)
     , m_objectHeap(objectHeap)
     , m_streamConnection(WTF::move(streamConnection))
@@ -77,7 +77,7 @@ void RemoteCompositorIntegration::stopListeningForIPC()
 }
 
 #if PLATFORM(COCOA)
-void RemoteCompositorIntegration::recreateRenderBuffers(int width, int height, WebCore::ColorSpace&& destinationColorSpace, WebCore::AlphaPremultiplication alphaMode, WebCore::WebGPU::TextureFormat textureFormat, unsigned bufferCount, WebKit::WebGPUIdentifier deviceIdentifier, CompletionHandler<void(Vector<MachSendRight>&&)>&& callback)
+void RemoteCompositorIntegration::recreateRenderBuffers(int width, int height, WebCore::ColorSpace&& destinationColorSpace, WebCore::AlphaPremultiplication alphaMode, ::WebGPU::TextureFormat textureFormat, unsigned bufferCount, WebKit::WebGPUIdentifier deviceIdentifier, CompletionHandler<void(Vector<MachSendRight>&&)>&& callback)
 {
     auto convertedDevice = protect(m_objectHeap)->convertDeviceFromBacking(deviceIdentifier);
     MESSAGE_CHECK_COMPLETION(convertedDevice, callback({ }));
@@ -86,10 +86,10 @@ void RemoteCompositorIntegration::recreateRenderBuffers(int width, int height, W
 }
 #endif
 
-void RemoteCompositorIntegration::prepareForDisplay(uint32_t frameIndex, CompletionHandler<void(Seconds)>&& completionHandler)
+void RemoteCompositorIntegration::prepareForDisplay(uint32_t frameIndex, CompletionHandler<void(Seconds, Seconds)>&& completionHandler)
 {
     protect(m_backing)->prepareForDisplay(frameIndex, [completionHandler = WTF::move(completionHandler), backing = protect(m_backing)]() mutable {
-        completionHandler(backing->lastFrameGPUCost());
+        completionHandler(backing->lastFrameGPUCost(), backing->lastFramePresentStall());
     });
 }
 

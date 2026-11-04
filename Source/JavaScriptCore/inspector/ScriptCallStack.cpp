@@ -32,6 +32,8 @@
 #include "config.h"
 #include "ScriptCallStack.h"
 
+#include "AOTRemovableFeature.h"
+
 namespace Inspector {
 
 Ref<ScriptCallStack> ScriptCallStack::create()
@@ -85,8 +87,9 @@ void ScriptCallStack::append(const ScriptCallFrame& frame)
     m_frames.append(frame);
 }
 
-void ScriptCallStack::removeParentStackTrace()
+NEVER_INLINE void ScriptCallStack::removeParentStackTrace()
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &ScriptCallStack::removeParentStackTrace);
     m_parentStackTrace = nullptr;
 }
 

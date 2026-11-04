@@ -1,0 +1,82 @@
+# No operation of an iteration is left behind the pass, wherever it stands and however few uses its open has
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration VerifyProgram
+# RUN(LEFT): pass ExpandIteration
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="openInUnreachableBlock" parameters=[{type=anything}] results=[{type=undefined}] {
+    Return
+  b1():
+    v1 = IteratorOpen v0
+    v2 = IteratorResume v1
+    v3 = ResultAt v2 index=1
+    IteratorClose v1
+    Return
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: Return
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+}
+
+function f1 name="stepInUnreachableBlock" parameters=[{type=Array<number, pristine[Names]>}] results=[{type=undefined}] {
+    v1 = IteratorOpen v0
+    Return
+  b1():
+    v2 = IteratorResume v1
+    v3 = ResultAt v2 index=1
+    IteratorClose v1
+    Return
+# CHECK-NOT: ElemGet
+# CHECK: b1():
+# CHECK-NEXT: Unreachable
+# CHECK-NOT: ElemGet
+}
+
+function f2 name="spreadInUnreachableBlock" parameters=[{type=anything}] results=[{type=undefined}] {
+    Return
+  b1():
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return
+# CHECK: b1():
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+}
+
+function f3 name="openWithoutStepOrClose" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = IteratorOpen v0
+    Return
+# What the open does by itself stays: the tests, and on the failing edges the reads and the call of the protocol.
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK: [[open3]]: undefined = CallDirect {{*}} function=[[openStringOrIterator]] [isNeverInlined]
+# CHECK: = ResultAt [[open3]] index=1
+}
+
+function f4 name="closeOnlyInLandingBlock" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Call v1
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=IterationCleanup subject=v2:
+    v4 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v4
+# CHECK: role=CleanupHandler
+# CHECK: = CallDirect [[subject4]] function=[[closeStringOrIteratorAfterThrow]] [isNeverInlined]
+# CHECK: [[subject4]]: string|object = ResultAt
+# CHECK: function [[openStringOrIterator]] name="openStringOrIterator"
+# CHECK: function [[closeStringOrIteratorAfterThrow]] name="closeStringOrIteratorAfterThrow"
+}
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread
+# LEFT-NOT: role=IterationCleanup

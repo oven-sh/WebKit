@@ -223,7 +223,6 @@ static const int testFooterBannerHeight = 58;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     if (_findBarClickMonitor)
         [NSEvent removeMonitor:_findBarClickMonitor];
-    _webView._findDelegate = nil;
     _textFinder.client = nil;
     _textFinder.findBarContainer = nil;
     [_webView removeObserver:self forKeyPath:@"title"];
@@ -357,6 +356,23 @@ static NSRect frameForWindowFeatures(WKWindowFeatures *features, NSWindow *windo
         [[NSUserDefaults standardUserDefaults] setObject:permissions forKey:@"NotificationPermissions"];
 
         decisionHandler(granted);
+    }];
+}
+
+- (void)_webView:(WKWebView *)webView requestLocalNetworkAccessPermissionForSecurityOrigin:(WKSecurityOrigin *)securityOrigin topLevelOrigin:(WKSecurityOrigin *)topLevelOrigin isLoopback:(BOOL)isLoopback decisionHandler:(void (^)(WKPermissionDecision))decisionHandler
+{
+    NSString *originString = [NSString stringWithFormat:@"%@://%@", topLevelOrigin.protocol, topLevelOrigin.host];
+    NSString *frameString = [securityOrigin.host isEqualToString:topLevelOrigin.host] ? @"" : [NSString stringWithFormat:@" (requested by %@://%@)", securityOrigin.protocol, securityOrigin.host];
+    NSString *target = isLoopback ? @"this device (loopback)" : @"devices on your local network";
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert setMessageText:[NSString stringWithFormat:@"Allow %@ to connect to %@?%@", originString, target, frameString]];
+    [alert setInformativeText:@"Allowing this grants access to every address in that space, not just one device or port."];
+    [alert addButtonWithTitle:@"Deny"];
+    [alert addButtonWithTitle:@"Allow"];
+
+    [alert beginSheetModalForWindow:self.window completionHandler:^void (NSModalResponse response) {
+        decisionHandler(response == NSAlertSecondButtonReturn ? WKPermissionDecisionGrant : WKPermissionDecisionDeny);
     }];
 }
 
@@ -819,6 +835,20 @@ static BOOL areEssentiallyEqual(double a, double b)
     [[[NSApplication sharedApplication] browserAppDelegate] didCreateBrowserWindowController:controller];
 
     return controller->_webView;
+}
+
+- (void)webViewDidClose:(WKWebView *)webView
+{
+    // WebKit asks to close the web view, for example for window.close() or WebDriver's Close Window.
+    // Unlike Cmd-W, this doesn't ask windowShouldClose:, because closing has already been decided:
+    // window.close() runs beforeunload handlers first, and WebDriver's Close Window doesn't run them
+    // at all.
+    [self.window close];
+
+    // Close the web view now, too, rather than when it's deallocated, which can be much later, for
+    // example after the animation that closes a tab. WebDriver replies to Close Window after this
+    // returns, and by then, the web view must be gone from its list of windows.
+    [webView _close];
 }
 
 - (void)webView:(WKWebView *)webView runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(void))completionHandler

@@ -1,0 +1,43 @@
+# A method of a built-in class that is called in tail position becomes a call of the built-in where the receiver passes its test, also where flow saw a function of the program arrive at the call.
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="functionOfTheProgramSeenToo" parameters=[{type=Date}] results=[{type=anything}] {
+  b0(v0: Date):
+    v1 = PropGet v0 key="toISOString"
+    v2 = Call v1, v0 calleeKey="toISOString" callees=[f1, builtin(DatePrototypeToISOString), ..]
+    ReturnCall v2
+}
+# CHECK-LABEL: function f0 name="functionOfTheProgramSeenToo"
+# CHECK: = IsPristine v0 builtinClass=Date aspects=[Names]
+# CHECK-NOT: IsClosureOf
+# CHECK: string = CallBuiltin v0 overload=DatePrototypeToISOString/0
+# CHECK-NOT: IsClosureOf
+# CHECK: frequency=Unlikely:
+# CHECK: = PropGet v0 key="toISOString"
+# CHECK: ReturnCall
+
+function f1 name="own" results=[{type=anything}] {
+  b0():
+    v0 = String string="own"
+    Return v0
+}
+
+function f2 name="onlyTheBuiltinSeen" parameters=[{type=Date}] results=[{type=anything}] {
+  b0(v0: Date):
+    v1 = PropGet v0 key="getTime"
+    v2 = Call v1, v0 calleeKey="getTime" callees=[builtin(DatePrototypeGetTime), ..]
+    ReturnCall v2
+}
+# CHECK-LABEL: function f2 name="onlyTheBuiltinSeen"
+# CHECK: = CallBuiltin v0 overload=DatePrototypeGetTime/0
+
+function f3 name="calleeThatIsNoMember" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, - callees=[f1, builtin(DatePrototypeToISOString), ..]
+    ReturnCall v1
+}
+# CHECK-LABEL: function f3 name="calleeThatIsNoMember"
+# CHECK: = IsClosureOf v0 function=f1

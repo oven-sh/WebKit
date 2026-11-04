@@ -1,0 +1,29 @@
+# class Labeled extends Array { constructor(label) { super() } }; Array.prototype.slice.call(input(new Labeled("mine")))
+# A class that extends Array is its own species. slice finds it under `constructor` of the instance that the unknown object stands for and constructs it with a length, so the string that the program
+# passes is not all that arrives at the parameter.
+# RUN: valueflow-apply
+# CHECK: function f1 name="Labeled" {{*}}parameters=[{type=anything}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Labeled" constructor=f1 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Array
+    v1 = NewClosure function=f1
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = String string="mine"
+    v6 = Construct v4, -, v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = Call v8, -, v6
+    v10 = Builtin builtin=ArrayPrototypeSlice
+    v11 = Call v10, v9
+    Return
+}
+function f1 name="Labeled" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1 layout=L0
+    Return v4
+}

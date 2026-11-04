@@ -26,6 +26,7 @@
 #pragma once
 
 #include "MetadataTable.h"
+#include "Options.h"
 #include "UnlinkedMetadataTable.h"
 #include <array>
 #include <wtf/FastMalloc.h>
@@ -33,6 +34,15 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
+
+// The handlers of LowLevelInterpreterAOT.asm read the 32-bit offset without a look at the 16-bit one, and do not round what they compute from it.
+ALWAYS_INLINE bool metadataTablesAlwaysHave32BitOffsets()
+{
+    return Options::runsCompiledImage();
+}
+
+// Every Metadata is aligned here, so all that follow are: they lie in the order of their alignments.
+inline constexpr unsigned offsetOfFirstMetadata = roundUpToMultipleOf<UnlinkedMetadataTable::s_maxMetadataAlignment>((NUMBER_OF_BYTECODE_WITH_METADATA + 1) * sizeof(uint16_t));
 
 ALWAYS_INLINE UnlinkedMetadataTable::UnlinkedMetadataTable()
     : m_hasMetadata(false)
@@ -73,7 +83,8 @@ unsigned UnlinkedMetadataTable::expandSteps(std::span<const uint32_t> steps, Off
 {
     // finalize()'s layout, from (opcode, count) pairs instead of the preprocess buffer. 64-bit so that counts out of a
     // payload cannot wrap the offset; a table too big for 32-bit offsets is refused rather than truncated.
-    uint64_t offset = s_offset16TableSize;
+    static_assert(offsetOfFirstMetadata >= s_offset16TableSize);
+    uint64_t offset = offsetOfFirstMetadata;
     unsigned i = 0;
     for (uint32_t step : steps) {
         unsigned opcode = step >> stepIndexShift;
@@ -90,7 +101,7 @@ unsigned UnlinkedMetadataTable::expandSteps(std::span<const uint32_t> steps, Off
         if (table)
             table[i] = offset;
     }
-    if (offset > UINT16_MAX) {
+    if (offset > UINT16_MAX || metadataTablesAlwaysHave32BitOffsets()) {
         ASSERT(!table || sizeof(OffsetType) == sizeof(Offset32));
         if (table) {
             for (i = 0; i < s_offsetTableEntries; ++i)
@@ -187,10 +198,11 @@ ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()
         // One walk over the steps sizes the allocation, decides the offset width and produces the table (narrowed below
         // if it fits 16 bits); later CodeBlocks of this UnlinkedCodeBlock copy the linked table.
         unsigned endOffset = expandSteps(std::span { m_steps, m_stepsCount }, expanded.data());
-        m_is32Bit = endOffset > UINT16_MAX;
+        m_is32Bit = endOffset > UINT16_MAX || metadataTablesAlwaysHave32BitOffsets();
         totalSize = valueProfileSize + endOffset;
     } else
         totalSize = this->totalSize();
+    RELEASE_ASSERT(m_is32Bit || !metadataTablesAlwaysHave32BitOffsets());
     unsigned offsetTableSize = this->offsetTableSize();
     uint8_t* buffer = static_cast<uint8_t*>(MetadataTableMalloc::zeroedMalloc(sizeof(LinkingData) + totalSize));
     uint8_t* table = buffer + valueProfileSize + sizeof(LinkingData);

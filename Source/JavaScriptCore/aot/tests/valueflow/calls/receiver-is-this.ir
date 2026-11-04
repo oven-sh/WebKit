@@ -1,0 +1,28 @@
+# function run(other) { this() }  receiver.run = run; receiver.run(argument); run()
+# The receiver of a call is `this` of the callee, and an argument is not. A call without a receiver passes no object.
+# RUN: valueflow-solve calls
+# CHECK: f1 v2 -> f2
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f2
+# UNREACHED: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Call v0, v1, v2
+    v4 = Call v0, -
+    Return
+}
+function f1 name="run" module=m0 flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -
+    Return
+}
+function f2 name="receiver" module=m0 results=[{type=anything}] {
+    Return
+}
+function f3 name="argument" module=m0 results=[{type=anything}] {
+    Return
+}

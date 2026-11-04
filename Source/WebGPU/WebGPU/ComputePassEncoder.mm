@@ -37,7 +37,7 @@
 #import "QuerySet.h"
 #import <wtf/TZoneMallocInlines.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 #define RETURN_IF_FINISHED() \
 if (!m_parentEncoder->isLocked() || m_parentEncoder->isFinished()) { \
@@ -52,7 +52,7 @@ if (!m_computeCommandEncoder || !m_parentEncoder->isValid() || !protect(m_parent
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ComputePassEncoder);
 
-ComputePassEncoder::ComputePassEncoder(id<MTLComputeCommandEncoder> computeCommandEncoder, const WGPUComputePassDescriptor&, CommandEncoder& parentEncoder, Device& device)
+ComputePassEncoder::ComputePassEncoder(id<MTLComputeCommandEncoder> computeCommandEncoder, const WebGPU::ComputePassDescriptor&, CommandEncoder& parentEncoder, Device& device)
     : m_computeCommandEncoder(computeCommandEncoder)
     , m_device(device)
     , m_parentEncoder(parentEncoder)
@@ -89,7 +89,7 @@ using EntryMapContainer = HashMap<const void*, EntryUsage>;
 struct BindGroupId {
     uint32_t bindGroup { 0 };
 };
-static bool addTextureToActiveResources(const void* resourceAddress, id<MTLResource> mtlResource, OptionSet<BindGroupEntryUsage> initialUsage, TextureEntryMapContainer& usagesForResource, BindGroupId bindGroup, uint32_t baseMipLevel, uint32_t baseArrayLayer, WGPUTextureAspect aspect)
+static bool addTextureToActiveResources(const void* resourceAddress, id<MTLResource> mtlResource, OptionSet<BindGroupEntryUsage> initialUsage, TextureEntryMapContainer& usagesForResource, BindGroupId bindGroup, uint32_t baseMipLevel, uint32_t baseArrayLayer, WebGPU::TextureAspect aspect)
 {
     UNUSED_PARAM(mtlResource);
 
@@ -136,18 +136,18 @@ static bool addResourceToActiveResources(const void* resourceAddress, OptionSet<
 
 static bool addResourceToActiveResources(const TextureView& texture, OptionSet<BindGroupEntryUsage> resourceUsage, BindGroupId bindGroup, auto& usagesForResource)
 {
-    WGPUTextureAspect textureAspect = texture.aspect();
-    if (textureAspect != WGPUTextureAspect_All)
+    WebGPU::TextureAspect textureAspect = texture.aspect();
+    if (textureAspect != WebGPU::TextureAspect::All)
         return addTextureToActiveResources(&texture.apiParentTexture(), texture.parentTexture(), resourceUsage, usagesForResource, bindGroup, texture.baseMipLevel(), texture.baseArrayLayer(), textureAspect);
 
-    return addTextureToActiveResources(&texture.apiParentTexture(), texture.parentTexture(), resourceUsage, usagesForResource, bindGroup, texture.baseMipLevel(), texture.baseArrayLayer(), WGPUTextureAspect_DepthOnly) && addTextureToActiveResources(&texture.apiParentTexture(), texture.parentTexture(), resourceUsage, usagesForResource, bindGroup, texture.baseMipLevel(), texture.baseArrayLayer(), WGPUTextureAspect_StencilOnly);
+    return addTextureToActiveResources(&texture.apiParentTexture(), texture.parentTexture(), resourceUsage, usagesForResource, bindGroup, texture.baseMipLevel(), texture.baseArrayLayer(), WebGPU::TextureAspect::DepthOnly) && addTextureToActiveResources(&texture.apiParentTexture(), texture.parentTexture(), resourceUsage, usagesForResource, bindGroup, texture.baseMipLevel(), texture.baseArrayLayer(), WebGPU::TextureAspect::StencilOnly);
 }
 
 static bool addResourceToActiveResources(const Texture& texture, OptionSet<BindGroupEntryUsage> resourceUsage, BindGroupId bindGroup, auto& usagesForResource)
 {
     constexpr uint32_t baseMipLevel = 0;
     constexpr uint32_t baseArrayLayer = 0;
-    return addTextureToActiveResources(&texture, texture.texture(), resourceUsage, usagesForResource, bindGroup, baseMipLevel, baseArrayLayer, WGPUTextureAspect_DepthOnly) && addTextureToActiveResources(&texture, texture.texture(), resourceUsage, usagesForResource, bindGroup, baseMipLevel, baseArrayLayer, WGPUTextureAspect_StencilOnly);
+    return addTextureToActiveResources(&texture, texture.texture(), resourceUsage, usagesForResource, bindGroup, baseMipLevel, baseArrayLayer, WebGPU::TextureAspect::DepthOnly) && addTextureToActiveResources(&texture, texture.texture(), resourceUsage, usagesForResource, bindGroup, baseMipLevel, baseArrayLayer, WebGPU::TextureAspect::StencilOnly);
 }
 
 static bool addResourceToActiveResources(const BindGroupEntryUsageData::Resource& resource, OptionSet<BindGroupEntryUsage> resourceUsage, BindGroupId bindGroup, EntryMapContainer& usagesForResource, TextureEntryMapContainer& textureUsagesForResource, CommandEncoder& parentEncoder)
@@ -323,8 +323,8 @@ void ComputePassEncoder::dispatchIndirect(const Buffer& indirectBuffer, uint64_t
     }
 
     auto indirectOffsetSum = checkedSum<uint64_t>(indirectOffset, 3 * sizeof(uint32_t));
-    if ((indirectOffset % 4) || !(indirectBuffer.usage() & WGPUBufferUsage_Indirect) || indirectOffsetSum.hasOverflowed() || (indirectOffsetSum.value() > indirectBuffer.initialSize())) {
-        makeInvalid([NSString stringWithFormat:@"GPUComputePassEncoder.dispatchIndirect: (indirectOffset(%llu) mod 4) || !(indirectBuffer.usage(%llu) & WGPUBufferUsage_Indirect(%llu)) || indirectOffsetSum.hasOverflowed(%d) || (indirectOffsetSum(%llu) > indirectBuffer.initialSize(%llu))", indirectOffset, indirectBuffer.usage(), WGPUBufferUsage_Indirect, indirectOffsetSum.hasOverflowed(), indirectOffsetSum.hasOverflowed() ? 0 : indirectOffsetSum.value(), indirectBuffer.initialSize()]);
+    if ((indirectOffset % 4) || !indirectBuffer.usage().contains(WebGPU::BufferUsage::Indirect) || indirectOffsetSum.hasOverflowed() || (indirectOffsetSum.value() > indirectBuffer.initialSize())) {
+        makeInvalid([NSString stringWithFormat:@"GPUComputePassEncoder.dispatchIndirect: (indirectOffset(%llu) mod 4) || !(indirectBuffer.usage(%llu) & BufferUsage::Indirect(%llu)) || indirectOffsetSum.hasOverflowed(%d) || (indirectOffsetSum(%llu) > indirectBuffer.initialSize(%llu))", indirectOffset, static_cast<unsigned long long>(indirectBuffer.usage().toRaw()), static_cast<unsigned long long>(WebGPU::BufferUsage::Indirect), indirectOffsetSum.hasOverflowed(), indirectOffsetSum.hasOverflowed() ? 0 : indirectOffsetSum.value(), indirectBuffer.initialSize()]);
         return;
     }
 
@@ -474,8 +474,28 @@ static void setCommandEncoder(const BindGroupEntryUsageData::Resource& resource,
     });
 }
 
-void ComputePassEncoder::setBindGroup(uint32_t groupIndex, const BindGroup* groupPtr, std::optional<Vector<uint32_t>>&& dynamicOffsets)
+void ComputePassEncoder::setPipeline(const WebGPU::ComputePipeline& pipeline)
 {
+    setPipeline(downcast<ComputePipeline>(pipeline));
+}
+
+void ComputePassEncoder::dispatchIndirect(const WebGPU::Buffer& indirectBuffer, uint64_t indirectOffset)
+{
+    dispatchIndirect(downcast<Buffer>(indirectBuffer), indirectOffset);
+}
+
+void ComputePassEncoder::setBindGroup(uint32_t groupIndex, const WebGPU::BindGroup* group, std::optional<std::span<const uint32_t>> dynamicOffsets)
+{
+    setBindGroup(groupIndex, downcast<BindGroup>(group), dynamicOffsets);
+}
+
+void ComputePassEncoder::setBindGroup(uint32_t groupIndex, const BindGroup* groupPtr, std::optional<std::span<const uint32_t>> apiDynamicOffsets)
+{
+    // The encoder keeps the dynamic offsets.
+    std::optional<Vector<uint32_t>> dynamicOffsets;
+    if (apiDynamicOffsets)
+        dynamicOffsets = Vector<uint32_t> { *apiDynamicOffsets };
+
     RETURN_IF_FINISHED();
 
     auto dynamicOffsetCount = (groupPtr && groupPtr->bindGroupLayout()) ? groupPtr->bindGroupLayout()->dynamicBufferCount() : 0;
@@ -565,61 +585,63 @@ id<MTLComputeCommandEncoder> ComputePassEncoder::computeCommandEncoder() const
 
 #undef RETURN_IF_FINISHED
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
 
-void NODELETE wgpuComputePassEncoderAddRef(WGPUComputePassEncoder computePassEncoder)
+void LEGACY_NODELETE wgpuComputePassEncoderAddRef(WGPUComputePassEncoder computePassEncoder)
 {
-    WebGPU::fromAPI(computePassEncoder).ref();
+    WebGPU::Metal::fromAPI(computePassEncoder).ref();
 }
 
 void wgpuComputePassEncoderRelease(WGPUComputePassEncoder computePassEncoder)
 {
-    WebGPU::fromAPI(computePassEncoder).deref();
+    WebGPU::Metal::fromAPI(computePassEncoder).deref();
 }
 
 void wgpuComputePassEncoderDispatchWorkgroups(WGPUComputePassEncoder computePassEncoder, uint32_t x, uint32_t y, uint32_t z)
 {
-    protect(WebGPU::fromAPI(computePassEncoder))->dispatch(x, y, z);
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->dispatch(x, y, z);
 }
 
 void wgpuComputePassEncoderDispatchWorkgroupsIndirect(WGPUComputePassEncoder computePassEncoder, WGPUBuffer indirectBuffer, uint64_t indirectOffset)
 {
-    protect(WebGPU::fromAPI(computePassEncoder))->dispatchIndirect(protect(WebGPU::fromAPI(indirectBuffer)), indirectOffset);
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->dispatchIndirect(protect(WebGPU::Metal::fromAPI(indirectBuffer)), indirectOffset);
 }
 
 void wgpuComputePassEncoderEnd(WGPUComputePassEncoder computePassEncoder)
 {
-    protect(WebGPU::fromAPI(computePassEncoder))->endPass();
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->endPass();
 }
 
 void wgpuComputePassEncoderInsertDebugMarker(WGPUComputePassEncoder computePassEncoder, WGPUStringView markerLabel)
 {
-    protect(WebGPU::fromAPI(computePassEncoder))->insertDebugMarker(WebGPU::fromAPI(markerLabel));
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->insertDebugMarker(WebGPU::Metal::fromAPI(markerLabel));
 }
 
 void wgpuComputePassEncoderPopDebugGroup(WGPUComputePassEncoder computePassEncoder)
 {
-    protect(WebGPU::fromAPI(computePassEncoder))->popDebugGroup();
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->popDebugGroup();
 }
 
 void wgpuComputePassEncoderPushDebugGroup(WGPUComputePassEncoder computePassEncoder, WGPUStringView groupLabel)
 {
-    protect(WebGPU::fromAPI(computePassEncoder))->pushDebugGroup(WebGPU::fromAPI(groupLabel));
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->pushDebugGroup(WebGPU::Metal::fromAPI(groupLabel));
 }
 
-void wgpuComputePassEncoderSetBindGroup(WGPUComputePassEncoder computePassEncoder, uint32_t groupIndex, WGPUBindGroup group, std::optional<Vector<uint32_t>>&& dynamicOffsets)
+// No dynamic offsets is std::nullopt.
+void wgpuComputePassEncoderSetBindGroup(WGPUComputePassEncoder computePassEncoder, uint32_t groupIndex, WGPUBindGroup group, size_t dynamicOffsetCount, const uint32_t* dynamicOffsets)
 {
-    protect(WebGPU::fromAPI(computePassEncoder))->setBindGroup(groupIndex, group ? protect(WebGPU::fromAPI(group)).ptr() : nullptr, WTF::move(dynamicOffsets));
+    auto offsets = dynamicOffsetCount ? std::optional { unsafeMakeSpan(dynamicOffsets, dynamicOffsetCount) } : std::nullopt;
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->setBindGroup(groupIndex, group ? protect(WebGPU::Metal::fromAPI(group)).ptr() : nullptr, offsets);
 }
 
 void wgpuComputePassEncoderSetPipeline(WGPUComputePassEncoder computePassEncoder, WGPUComputePipeline pipeline)
 {
-    protect(WebGPU::fromAPI(computePassEncoder))->setPipeline(protect(WebGPU::fromAPI(pipeline)));
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->setPipeline(protect(WebGPU::Metal::fromAPI(pipeline)));
 }
 
 void wgpuComputePassEncoderSetLabel(WGPUComputePassEncoder computePassEncoder, WGPUStringView label)
 {
-    protect(WebGPU::fromAPI(computePassEncoder))->setLabel(WebGPU::fromAPI(label));
+    protect(WebGPU::Metal::fromAPI(computePassEncoder))->setLabel(WebGPU::Metal::fromAPI(label));
 }

@@ -57,8 +57,7 @@ private:
     void prepareForDisplay() final;
 
     const Ref<GraphicsLayerContentsDisplayDelegate> m_layerContentsDisplayDelegate;
-    RefPtr<DMABufBuffer> m_drawingBuffer;
-    RefPtr<DMABufBuffer> m_displayBuffer;
+    HashMap<uint64_t, Ref<DMABufBuffer>> m_buffers;
 };
 
 void RemoteGraphicsContextGLProxyGBM::prepareForDisplay()
@@ -66,32 +65,43 @@ void RemoteGraphicsContextGLProxyGBM::prepareForDisplay()
     if (isContextLost())
         return;
 
-    auto sendResult = sendSync(Messages::RemoteGraphicsContextGL::PrepareForDisplay());
+    Vector<uint64_t> inUseBuffers;
+    for (const auto& buffer : m_buffers.values()) {
+        if (!buffer->hasOneRef())
+            inUseBuffers.append(buffer->id());
+    }
+
+    auto sendResult = sendSync(Messages::RemoteGraphicsContextGL::PrepareForDisplay(WTF::move(inUseBuffers)));
     if (!sendResult.succeeded()) {
         markContextLost();
         return;
     }
 
-    auto [bufferID, bufferAttributes, fenceFD] = sendResult.takeReply();
+    auto [bufferID, bufferAttributes, fenceFD, drawingBufferIDs] = sendResult.takeReply();
 
-    if (bufferAttributes || (m_drawingBuffer && m_drawingBuffer->id() == bufferID))
-        std::swap(m_drawingBuffer, m_displayBuffer);
+    m_buffers.removeIf([&](auto& entry) {
+        return !drawingBufferIDs.contains(entry.key);
+    });
 
-    if (bufferAttributes)
-        m_displayBuffer = DMABufBuffer::create(bufferID, WTF::move(*bufferAttributes));
+    RefPtr<DMABufBuffer> displayBuffer;
+    if (bufferAttributes) {
+        displayBuffer = DMABufBuffer::create(bufferID, WTF::move(*bufferAttributes));
+        m_buffers.add(bufferID, Ref { *displayBuffer });
+    } else
+        displayBuffer = m_buffers.get(bufferID);
 
-    if (!m_displayBuffer)
+    if (!displayBuffer)
         return;
 
 #if USE(TEXTURE_MAPPER)
     OptionSet<TextureMapperFlags> flags = TextureMapperFlags::ShouldFlipTexture;
     if (contextAttributes().alpha)
         flags.add(TextureMapperFlags::ShouldBlend);
-    m_layerContentsDisplayDelegate->setDisplayBuffer(CoordinatedPlatformLayerBufferDMABuf::create(protect(*m_displayBuffer), flags, WTF::move(fenceFD)));
+    m_layerContentsDisplayDelegate->setDisplayBuffer(CoordinatedPlatformLayerBufferDMABuf::create(protect(*displayBuffer), flags, WTF::move(fenceFD)));
 #else
     auto alphaMode = contextAttributes().alpha ? CoordinatedPlatformLayerBuffer::AlphaMode::Premultiplied : CoordinatedPlatformLayerBuffer::AlphaMode::Opaque;
     auto origin = CoordinatedPlatformLayerBuffer::Origin::BottomLeft;
-    m_layerContentsDisplayDelegate->setDisplayBuffer(CoordinatedPlatformLayerBufferDMABuf::create(protect(*m_displayBuffer), alphaMode, origin, WTF::move(fenceFD), m_layerContentsDisplayDelegate->threadSafeGrContext()));
+    m_layerContentsDisplayDelegate->setDisplayBuffer(CoordinatedPlatformLayerBufferDMABuf::create(protect(*displayBuffer), alphaMode, origin, WTF::move(fenceFD), m_layerContentsDisplayDelegate->threadSafeGrContext()));
 #endif
     m_hasPreparedForDisplay = true;
 }

@@ -42,6 +42,7 @@
 #import <WebCore/ScreenCaptureKitSharingSessionManager.h>
 #import <WebCore/SecurityOriginData.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/MainThread.h>
 #import <wtf/NeverDestroyed.h>
 #import <wtf/URLHelpers.h>
@@ -108,7 +109,7 @@ void DisplayCaptureSessionManager::alertForGetDisplayMedia(WebPageProxy& page, c
 std::optional<WebCore::CaptureDevice> DisplayCaptureSessionManager::deviceSelectedForTesting(WebCore::CaptureDevice::DeviceType deviceType, unsigned indexOfDeviceSelectedForTesting)
 {
     unsigned index = 0;
-    for (auto& device : WebCore::RealtimeMediaSourceCenter::singleton().displayCaptureFactory().displayCaptureDeviceManager().captureDevices()) {
+    for (auto& device : borrow(WebCore::RealtimeMediaSourceCenter::singleton().displayCaptureFactory().displayCaptureDeviceManager().captureDevices())) {
         if (device.enabled() && device.type() == deviceType) {
             if (index == indexOfDeviceSelectedForTesting)
                 return { device };
@@ -179,7 +180,7 @@ bool DisplayCaptureSessionManager::canRequestDisplayCapturePermission()
 }
 
 #if HAVE(SCREEN_CAPTURE_KIT)
-static WebCore::DisplayCapturePromptType NODELETE toScreenCaptureKitPromptType(UserMediaPermissionRequestProxy::UserMediaDisplayCapturePromptType promptType)
+static WebCore::DisplayCapturePromptType LEGACY_NODELETE toScreenCaptureKitPromptType(UserMediaPermissionRequestProxy::UserMediaDisplayCapturePromptType promptType)
 {
     if (promptType == UserMediaPermissionRequestProxy::UserMediaDisplayCapturePromptType::Screen)
         return WebCore::DisplayCapturePromptType::Screen;

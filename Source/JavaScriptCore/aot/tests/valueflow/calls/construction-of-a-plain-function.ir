@@ -1,0 +1,23 @@
+# function Thing() { this.run = one }  new Thing().run()
+# The construction of a plain function allocates `this`, and that object is what the construction gives.
+# RUN: valueflow-solve calls
+# CHECK: f0 v3 -> f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Thing" constructor=f1 fields=[{key="run" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Construct v0
+    v2 = PropGet v1 key="run"
+    v3 = Call v2, v1
+    Return
+}
+function f1 name="Thing" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = NewClosure function=f2
+    PropSet v0, v1 key="run" mode=Strict
+    Return
+}
+function f2 name="one" module=m0 results=[{type=anything}] {
+    Return
+}

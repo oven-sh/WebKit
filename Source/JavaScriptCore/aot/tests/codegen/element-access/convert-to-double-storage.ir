@@ -1,0 +1,65 @@
+# The conversion of an array to storage of doubles looks at the storage kind in line and calls the run time only for an array of integers, for one that has held nothing yet and, where the type promises numbers alone, for one on the heap with storage for any value.
+# An array of any other kind, and one that lies in a frame, which come by each time their test for doubles fails, pay a few compares and no call: the call lies in rare code, so a function that does nothing else sets no frame up at its entry, as one that always calls does.
+# It has code in the three code shapes and on the failing edge of the test, where the pass puts it
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="alwaysCalls" parameters=[{type=Array<number>}, {type=i32}] results=[{type=undefined}] {
+    ReserveArrayCapacity v0, v1
+    Return
+}
+# CHECK: f0: size={{*}} frame={{*}}@[[setup]]-
+# CHECK-NEXT: operation operationAOTReserveArrayCapacity x1
+function f1 name="converts" parameters=[{type=Array<number>}] results=[{type=undefined}] {
+    ConvertToDoubleStorage v0
+    Return
+}
+# CHECK: f1: size=
+# CHECK-NOT: frame=none
+# CHECK-NOT: @[[setup]]-
+# CHECK: operation operationAOTConvertToDoubleStorage x1
+function f2 name="convertsInEachShape" parameters=[{type=Array<number>}, {type=boolean}] results=[{type=undefined}] {
+    ConvertToDoubleStorage v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    ConvertToDoubleStorage v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    ConvertToDoubleStorage v0
+    Jump -> next b4()
+  b4():
+    Return
+}
+# CHECK: f2: size=
+# CHECK-NEXT: operation operationAOTConvertToDoubleStorage x
+# S: f2 b0 Balanced
+# S: f2 b1 Fast
+# S: f2 b3 Compact
+function f3 name="behindFailedTest" parameters=[{type=Array<number>}, {type=i32}] results=[{type=anything}] {
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    TestAndBranch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsElementPresent v0, v1, v3 arrayStorage=Double
+    TestAndBranch v4 -> taken b2(| 0), notTaken b4()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Double level=Expected [isPresent]
+    Return v7
+  b3() frequency=Unlikely:
+    ConvertToDoubleStorage v0
+    Jump -> next b4()
+  b4() frequency=Unlikely:
+    v9 = Undefined
+    Return v9
+}
+# An array of doubles runs through the test and the read without a frame.
+# CHECK: f3: size=
+# CHECK-NOT: frame=none
+# CHECK-NOT: @[[setup]]-
+# CHECK: operation operationAOTConvertToDoubleStorage x1

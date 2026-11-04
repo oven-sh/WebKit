@@ -38,7 +38,7 @@ messages -> RemoteGraphicsContextGL Stream {
     void PrepareForDisplay() -> (std::optional<WebKit::WCContentBufferIdentifier> contentBuffer) Synchronous
 #endif
 #if USE(GBM)
-    void PrepareForDisplay() -> (uint64_t bufferID, std::optional<WebCore::DMABufBufferAttributes> dmabufAttributes, UnixFileDescriptor fenceFD) Synchronous NotStreamEncodableReply
+    void PrepareForDisplay(Vector<uint64_t> inUseBuffers) -> (uint64_t bufferID, std::optional<WebCore::DMABufBufferAttributes> dmabufAttributes, UnixFileDescriptor fenceFD, Vector<uint64_t> drawingBufferIDs) Synchronous NotStreamEncodableReply
 #endif
 #if !PLATFORM(COCOA) && !USE(GRAPHICS_LAYER_WC) && !USE(GBM)
     void PrepareForDisplay() -> () Synchronous

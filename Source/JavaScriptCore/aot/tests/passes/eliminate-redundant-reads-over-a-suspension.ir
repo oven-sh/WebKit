@@ -1,0 +1,52 @@
+# What a read has left is not remembered over a suspension where a new read tells as much: the value would lie in the frame, which is written out and read back. The location is read again.
+# Between two suspensions it is remembered as ever. So is, over a suspension, a value of which more is known than a read tells.
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Entry" module=m0 fields=[{key="weight" declared={type=number} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation isUnchangedDuringActivation=true} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1
+
+function f0 name="readAgainBehindAwait" flags=[IsAsync] parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    v2 = GetSlot v0 key="weight" receivers=[L0] level=Proven
+    v3 = Await v1
+    v4 = GetSlot v0 key="weight" receivers=[L0] level=Proven
+    v5 = GetSlot v0 key="weight" receivers=[L0] level=Proven
+    v6 = Add v2, v4
+    v7 = Add v6, v5
+    Return v7
+# CHECK: v2: number = GetSlot v0
+# CHECK: v4: number = GetSlot v0
+# CHECK-NOT: = GetSlot
+# CHECK: = Add v2, v4
+}
+
+function f1 name="readAgainBehindYield" flags=[IsGenerator, TakesCallee] parameters=[{type=L0}] results=[{type=Generator}] {
+    InitialYield
+    v3 = GetSlot v1 key="weight" receivers=[L0] level=Proven
+    v4 = Yield v3
+    v5 = GetSlot v1 key="weight" receivers=[L0] level=Proven
+    Return v5
+# CHECK: v3: number = GetSlot v1
+# CHECK: v5: number = GetSlot v1
+# CHECK: Return v5
+}
+
+function f2 name="noSuspensionBetween" flags=[IsAsync] parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    v2 = Await v1
+    v3 = GetSlot v0 key="weight" receivers=[L0] level=Proven
+    v4 = GetSlot v0 key="weight" receivers=[L0] level=Proven
+    v5 = Add v3, v4
+    Return v5
+# CHECK: v3: number = GetSlot v0
+# CHECK-NOT: = GetSlot
+}
+
+function f3 name="moreIsKnownOfWhatTheAllocationStored" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=7
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = Await v0
+    v4 = GetSlot v2 key="weight" receivers=[L0] level=Proven
+    Return v4
+# CHECK-NOT: = GetSlot
+}

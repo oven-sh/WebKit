@@ -40,6 +40,7 @@
 #include <wtf/UUID.h>
 #include <wtf/cf/TypeCastsCF.h>
 #include <wtf/darwin/DispatchExtras.h>
+#include <wtf/posix/POSIXExtras.h>
 #include <wtf/spi/cf/CFPrivSPI.h>
 #include <wtf/spi/darwin/dyldSPI.h>
 
@@ -142,9 +143,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     va_start(argList, format);
     stream.vprintf(format, argList);
     va_end(argList);
-
-    os_log_error(m_osLog, "%{public}s", stream.toUTF8CString().legacyCStringPointer());
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+    SAFE_OS_LOG_ERROR(m_osLog, "%{public}s", stream.toUTF8CString());
 }
 
 void LibraryPathDiagnosticsLogger::logExecutablePath(void)
@@ -165,7 +166,7 @@ void LibraryPathDiagnosticsLogger::logDYLDSharedCacheInfo(void)
 }
 
 #if HAVE(SHARED_REGION_SPI)
-static bool NODELETE isAddressInSharedRegion(const void* addr)
+static bool LEGACY_NODELETE isAddressInSharedRegion(const void* addr)
 {
     return std::bit_cast<uintptr_t>(addr) >= SHARED_REGION_BASE && std::bit_cast<uintptr_t>(addr) < (SHARED_REGION_BASE + SHARED_REGION_SIZE);
 }
@@ -173,7 +174,7 @@ static bool NODELETE isAddressInSharedRegion(const void* addr)
 
 void LibraryPathDiagnosticsLogger::logDynamicLibraryInfo(const String& installName)
 {
-    void *handle = dlopen(installName.utf8().legacyCStringPointer(), RTLD_NOLOAD);
+    void *handle = posixDlopen(installName.utf8(), RTLD_NOLOAD);
     if (!handle)
         return;
 

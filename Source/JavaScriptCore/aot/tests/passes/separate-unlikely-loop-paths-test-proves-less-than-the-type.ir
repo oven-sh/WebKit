@@ -1,0 +1,152 @@
+# A test for a class lets a built-in object that the tested type does not name, and that may be an instance of the class, pass as any member of the class, so what it proves is not inside the type of the variable. Such a test stays in the loop.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="value" declared={type=builtin(RegExpPrototype)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>}}, {key="plain" declared={type=undefined|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>}}, {key="callable" declared={type=builtin(MathMax)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>}}]
+
+function f0 name="builtinObjectOrRegExp" parameters=[{type=env L0}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything, v2: i32):
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = GetEnvironmentField v0 layout=L0 field=0
+    v7 = TypeTest v6 testedType=RegExp
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    Jump -> next b4()
+  b3() frequency=Unlikely:
+    v9 = Call v1, -
+    Jump -> next b4()
+  b4():
+    v10 = Increment v4
+    v11 = Less v10, v2
+    Branch v11 -> taken b1(v10), notTaken b5()
+  b5():
+    v12 = Undefined
+    Return v12
+# CHECK: b1(v4: int|whole, [[carried0]]: builtin(RegExpPrototype)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v6: builtin(RegExpPrototype)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]> = Upcast [[carried0]]
+# CHECK-NEXT: v7: boolean = TypeTest v6 testedType=RegExp
+# CHECK: Branch v11 -> taken b1(v10, [[carried0]]), notTaken b5()
+# CHECK: ({{*}}: int|whole ~ 1):
+# CHECK-NEXT: [[entering0]]: builtin(RegExpPrototype)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]> = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: Jump -> next b1({{*}}, [[entering0]])
+}
+
+# What this test proves is inside the type of the variable: it stands on the way into the loop
+function f1 name="undefinedOrRegExp" parameters=[{type=env L0}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything, v2: i32):
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = GetEnvironmentField v0 layout=L0 field=1
+    v7 = TypeTest v6 testedType=RegExp
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    Jump -> next b4()
+  b3() frequency=Unlikely:
+    v9 = Call v1, -
+    Jump -> next b4()
+  b4():
+    v10 = Increment v4
+    v11 = Less v10, v2
+    Branch v11 -> taken b1(v10), notTaken b5()
+  b5():
+    v12 = Undefined
+    Return v12
+# CHECK: b6(v15: int|whole):
+# CHECK-NEXT: v16: undefined|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]> = GetEnvironmentField v0 layout=L0 field=1
+# CHECK: v17: boolean = TypeTest v16 testedType=RegExp
+# CHECK: b8(v18: RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>):
+# CHECK-NEXT: Jump -> next b9(v15, v18)
+# CHECK-NEXT: b9(v19: int|whole, v20: RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>):
+# CHECK-NEXT: LoopHint
+}
+
+# The same where no path has to leave the loop, and the test is what a turn begins with
+function f2 name="testAtTheHeadOfEveryTurn" parameters=[{type=env L0}, {type=i32}] results=[{type=anything}] {
+  b0(v0: env L0, v1: i32):
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = GetEnvironmentField v0 layout=L0 field=0
+    v6 = TypeTest v5 testedType=RegExp
+    Branch v6 -> taken b2(| 0), notTaken b4()
+  b2(v7):
+    v8 = Increment v3
+    v9 = Less v8, v1
+    Branch v9 -> taken b1(v8), notTaken b3()
+  b3():
+    Return v7
+  b4() frequency=Unlikely:
+    v10 = Undefined
+    Return v10
+# CHECK: b1(v3: int|whole, [[carried2]]: builtin(RegExpPrototype)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>):
+# CHECK-NEXT: LoopHint
+# CHECK: v6: boolean = TypeTest [[carried2]] testedType=RegExp
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b4()
+}
+
+# The same for a value that goes around the loop without a variable
+function f3 name="valueGoesAroundTheLoop" parameters=[{type=anything}, {type=number}, {type=builtin(RegExpPrototype)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: builtin(RegExpPrototype)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>):
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = TypeTest v4 testedType=RegExp
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    Jump -> next b5()
+  b4() frequency=Unlikely:
+    v10 = Call v0, -, v4
+    Jump -> next b5()
+  b5():
+    v11 = Increment v5
+    Jump -> next b1(v4, v11)
+  b6():
+    Return v4
+# CHECK: b1(v4: builtin(RegExpPrototype)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>, v5: int|whole):
+# CHECK: v8: boolean = TypeTest v4 testedType=RegExp
+# CHECK: Jump -> next b1(v4, v11)
+}
+
+# A function is no instance of the class, so what this test proves is inside the type of the variable: it stands on the way into the loop
+function f4 name="functionOrRegExp" parameters=[{type=env L0}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything, v2: i32):
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = GetEnvironmentField v0 layout=L0 field=2
+    v7 = TypeTest v6 testedType=RegExp
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    Jump -> next b4()
+  b3() frequency=Unlikely:
+    v9 = Call v1, -
+    Jump -> next b4()
+  b4():
+    v10 = Increment v4
+    v11 = Less v10, v2
+    Branch v11 -> taken b1(v10), notTaken b5()
+  b5():
+    v12 = Undefined
+    Return v12
+# CHECK: b6(v15: int|whole):
+# CHECK-NEXT: v16: builtin(MathMax)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]> = GetEnvironmentField v0 layout=L0 field=2
+# CHECK: v17: boolean = TypeTest v16 testedType=RegExp
+# CHECK: b8(v18: RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>):
+# CHECK-NEXT: Jump -> next b9(v15, v18)
+# CHECK-NEXT: b9(v19: int|whole, v20: RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>):
+# CHECK-NEXT: LoopHint
+}

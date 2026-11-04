@@ -77,7 +77,7 @@ public:
     }
 
     // Called with the lock held.
-    void NODELETE threadIsStopping(const AbstractLocker&) final
+    void LEGACY_NODELETE threadIsStopping(const AbstractLocker&) final
     {
         ASSERT(m_pool);
         m_pool->m_numberOfActiveWorkers--;
@@ -90,22 +90,29 @@ public:
         return Ref { *m_pool }->shouldSleep(locker);
     }
 
-    ASCIILiteral NODELETE name() const final
+    ASCIILiteral LEGACY_NODELETE name() const final
     {
         ASSERT(m_pool);
         return m_pool->name();
     }
 
 private:
+    StackAllocationSpecification stackSpecification() final
+    {
+        ASSERT(m_pool);
+        return m_pool->m_stackSpecification;
+    }
+
     CheckedPtr<WorkerPool> m_pool;
     Function<void()> m_task;
 };
 
-WorkerPool::WorkerPool(ASCIILiteral name, unsigned numberOfWorkers, Seconds timeout)
+WorkerPool::WorkerPool(ASCIILiteral name, unsigned numberOfWorkers, Seconds timeout, StackAllocationSpecification stackSpecification)
     : m_lock(Box<Lock>::create())
     , m_condition(AutomaticThreadCondition::create())
     , m_timeout(timeout)
     , m_name(name)
+    , m_stackSpecification(stackSpecification)
 {
     Locker locker { *m_lock };
     for (unsigned i = 0; i < numberOfWorkers; ++i)
@@ -116,9 +123,14 @@ WorkerPool::~WorkerPool()
 {
     {
         Locker locker { *m_lock };
-        for (unsigned i = m_workers.size(); i--;)
+        for (auto& worker : m_workers) {
+            // notifyAll() would start a thread for each worker that has none.
+            if (worker->tryStop(locker))
+                continue;
             m_tasks.append(nullptr); // Use null task to indicate that we want the thread to terminate.
-        m_condition->notifyAll(locker);
+            if (worker->isWaiting(locker))
+                worker->notify(locker);
+        }
     }
     for (auto& worker : m_workers)
         worker->finalize();

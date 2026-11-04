@@ -1,0 +1,14 @@
+# without a program a record keeps its ids and gets no location, and its message has ids without names
+# RUN: diagnostics no-program LimitExceeded,f0,v0 FrameTooLarge,f2 OperandTypeMismatch,f0,v0 InvalidLayout,f2,L0
+# RUN(NAMES): diagnostics no-program LimitExceeded,f0,v0 FrameTooLarge,f2 OperandTypeMismatch,f0,v0 InvalidLayout,f2,L0
+# CHECK: user records 2
+# CHECK-NEXT: LimitExceeded f0 - v0 - None 0 - Error |
+# CHECK-NEXT: FrameTooLarge f2 - - - None 0 - Error | f2 needs a stack frame of
+# CHECK-NEXT: internal records 2
+# CHECK-NEXT: OperandTypeMismatch f0 - v0 - None 0 - - | the operand has the wrong type; function f0, value v0
+# CHECK-NEXT: InvalidLayout f2 - - L0 None 0 - - | L0 is not a valid layout; function f2
+# CHECK-NEXT: of 4 added
+# NAMES-NOT: parse
+# NAMES-NOT: Point
+# NAMES-NOT: Undefined
+# PROGRAM-OF: diagnostics-messages.ir

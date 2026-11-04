@@ -1,0 +1,19 @@
+# const NullObject = function () {}; NullObject.prototype = Object.create(null); hand(NullObject)
+# Only code that the build cannot read constructs the function, and the function never names `this`: the compiler knows no name of its objects, so no slot would hold any of them. The run time makes ordinary objects.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance {{*}}flow={allocation=NeverAllocated
+
+layout L0 kind=Instance constructor=f1 flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="hand" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="NullObject" module=m0 results=[{type=anything}] constructedClass=L0 {
+    v0 = Undefined
+    Return v0
+}

@@ -1,0 +1,21 @@
+# const made = { flags: 1 }; made.$done = 2; made.$bunNativePtr = 2
+# A private name of the JavaScript modules is an ordinary property that nothing lists, so a store after construction gets it a field, as a symbol would.
+# A private name that native code may also use stays an extra property.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Made" fields=[{key="flags"
+# CHECK-NOT: key=@"bunNativePtr"
+# CHECK: {key=@#"done" {{*}} flags=[IsAddedLate
+# CHECK-NOT: key=@"bunNativePtr"
+# CHECK: function f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Made" fields=[{key="flags" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Integer integer=2
+    PropSet v1, v2 key=@#"done" mode=Strict
+    PropSet v1, v2 key=@"bunNativePtr" mode=Strict
+    Return
+}

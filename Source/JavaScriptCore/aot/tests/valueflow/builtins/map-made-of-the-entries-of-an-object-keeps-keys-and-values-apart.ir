@@ -1,0 +1,22 @@
+# words = { a: 1 }; return new Map(Object.entries(words)).get("a")
+# Object.entries makes its array and its pairs at the call, out of the own values of this operand. Nobody touches a pair before the constructor of the Map takes it apart,
+# so the values of the Map are what the values of the pairs were made with: no key, no pair.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined|1}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Words" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectEntries
+    v4 = Call v3, v2, v1
+    v5 = Builtin builtin=Map
+    v6 = Construct v5, -, v4
+    v7 = Builtin builtin=MapPrototypeGet
+    v8 = String string="a"
+    v9 = Call v7, v6, v8
+    Return v9
+}

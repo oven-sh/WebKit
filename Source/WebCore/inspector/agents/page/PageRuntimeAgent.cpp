@@ -112,7 +112,7 @@ void PageRuntimeAgent::didClearWindowObjectInWorld(LocalFrame& frame, DOMWrapper
         return;
 
     SetForScope ignoreDidClearWindowObject(m_ignoreDidClearWindowObject, true);
-    notifyContextCreated(frameId, frame.script().globalObject(world), world);
+    notifyContextCreated(frameId, protect(frame.script())->globalObject(world), world);
 }
 
 InjectedScript PageRuntimeAgent::injectedScriptForEval(Inspector::Protocol::ErrorString& errorString, std::optional<Inspector::Protocol::Runtime::ExecutionContextId>&& executionContextId)
@@ -149,7 +149,7 @@ void PageRuntimeAgent::reportExecutionContextCreation()
     Ref identifierRegistry = m_inspectedPage->inspectorController().identifierRegistry();
 
     protect(m_inspectedPage)->forEachLocalFrame([&](LocalFrame& frame) {
-        if (!frame.script().canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
+        if (!protect(frame.script())->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
             return;
 
         auto frameId = identifierRegistry->frameId(&frame);
@@ -164,7 +164,7 @@ void PageRuntimeAgent::reportExecutionContextCreation()
                 continue;
 
             Ref securityOrigin = protect(downcast<LocalDOMWindow>(jsWindowProxy->wrapped()).document())->securityOrigin();
-            notifyContextCreated(frameId, globalObject, jsWindowProxy->world(), securityOrigin.ptr());
+            notifyContextCreated(frameId, globalObject, protect(jsWindowProxy->world()), securityOrigin.ptr());
         }
     });
 }
@@ -195,7 +195,7 @@ Inspector::Protocol::ErrorStringOr<std::tuple<Ref<Inspector::Protocol::Runtime::
     if (injectedScript.hasNoValue())
         return makeUnexpected(errorString);
 
-    UserGestureEmulationScope userGestureScope(m_inspectedPage, emulateUserGesture.value_or(false), dynamicDowncast<Document>(executionContext(injectedScript.globalObject())));
+    UserGestureEmulationScope userGestureScope(protect(m_inspectedPage), emulateUserGesture.value_or(false), protect(dynamicDowncast<Document>(executionContext(injectedScript.globalObject()))));
     return InspectorRuntimeAgent::evaluate(injectedScript, expression, objectGroup, WTF::move(includeCommandLineAPI), WTF::move(doNotPauseOnExceptionsAndMuteConsole), WTF::move(returnByValue), WTF::move(generatePreview), WTF::move(saveResult), WTF::move(emulateUserGesture));
 }
 
@@ -207,7 +207,7 @@ void PageRuntimeAgent::callFunctionOn(const Inspector::Protocol::Runtime::Remote
         return;
     }
 
-    UserGestureEmulationScope userGestureScope(m_inspectedPage, emulateUserGesture.value_or(false), dynamicDowncast<Document>(executionContext(injectedScript.globalObject())));
+    UserGestureEmulationScope userGestureScope(protect(m_inspectedPage), emulateUserGesture.value_or(false), protect(dynamicDowncast<Document>(executionContext(injectedScript.globalObject()))));
     return InspectorRuntimeAgent::callFunctionOn(objectId, expression, WTF::move(optionalArguments), WTF::move(doNotPauseOnExceptionsAndMuteConsole), WTF::move(returnByValue), WTF::move(generatePreview), WTF::move(emulateUserGesture), WTF::move(awaitPromise), WTF::move(callback));
 }
 

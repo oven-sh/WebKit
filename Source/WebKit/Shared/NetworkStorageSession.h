@@ -98,6 +98,8 @@ enum class ShouldPartitionCookie : bool;
 
 namespace WebKit {
 
+enum class ExemptAllowlistedCookies : bool { No, Yes };
+
 class NetworkStorageSession
     : public WebCore::CookieStorageSession
     , public CanMakeWeakPtr<NetworkStorageSession> {
@@ -163,7 +165,7 @@ public:
     void deleteAllCookiesModifiedSince(WallTime, CompletionHandler<void()>&&);
     void deleteCookies(const WebCore::ClientOrigin&, CompletionHandler<void()>&&);
     void deleteCookiesForHostnames(std::span<const String> cookieHostNames, CompletionHandler<void()>&&);
-    void deleteCookiesForHostnames(std::span<const String> cookieHostNames, WebCore::IncludeHttpOnlyCookies, WebCore::ScriptWrittenCookiesOnly, CompletionHandler<void()>&&);
+    void deleteCookiesForHostnames(std::span<const String> cookieHostNames, WebCore::IncludeHttpOnlyCookies, WebCore::ScriptWrittenCookiesOnly, ExemptAllowlistedCookies, CompletionHandler<void()>&&);
     Vector<WebCore::Cookie> getAllCookies();
     Vector<WebCore::Cookie> getCookies(const URL&);
     void hasCookies(const WebCore::RegistrableDomain&, CompletionHandler<void(bool)>&&) const;
@@ -184,17 +186,17 @@ public:
     void removeCookiesEnabledStateObserver(WebCore::CookiesEnabledStateObserver&);
     void cookieEnabledStateMayHaveChanged();
 
-    void NODELETE setTrackingPreventionEnabled(bool);
-    bool NODELETE trackingPreventionEnabled() const;
-    void NODELETE setTrackingPreventionDebugLoggingEnabled(bool);
+    void LEGACY_NODELETE setTrackingPreventionEnabled(bool);
+    bool LEGACY_NODELETE trackingPreventionEnabled() const;
+    void LEGACY_NODELETE setTrackingPreventionDebugLoggingEnabled(bool);
     bool trackingPreventionDebugLoggingEnabled() const { return m_isTrackingPreventionDebugLoggingEnabled; }
-    WebCore::ThirdPartyCookieBlockingDecision thirdPartyCookieBlockingDecisionForRequest(const WebCore::ResourceRequest&, std::optional<WebCore::FrameIdentifier>, std::optional<WebPageProxyIdentifier>, WebCore::ShouldRelaxThirdPartyCookieBlocking, WebCore::IsKnownCrossSiteTracker, bool isInitiatedByDedicatedWorker = false, bool navigationLosesFrameSpecificStorageAccess = false) const;
-    WebCore::ThirdPartyCookieBlockingDecision thirdPartyCookieBlockingDecisionForRequest(const URL& firstPartyForCookies, const URL& resource, std::optional<WebCore::FrameIdentifier>, std::optional<WebPageProxyIdentifier>, WebCore::ShouldRelaxThirdPartyCookieBlocking, WebCore::IsKnownCrossSiteTracker, bool isInitiatedByDedicatedWorker = false, bool navigationLosesFrameSpecificStorageAccess = false) const;
+    WebCore::ThirdPartyCookieBlockingDecision thirdPartyCookieBlockingDecisionForRequest(const WebCore::ResourceRequest&, std::optional<WebCore::FrameIdentifier>, std::optional<WebPageProxyIdentifier>, WebCore::ShouldRelaxThirdPartyCookieBlocking, WebCore::IsKnownCrossSiteTracker, bool isInitiatedByWorker = false, bool navigationLosesFrameSpecificStorageAccess = false) const;
+    WebCore::ThirdPartyCookieBlockingDecision thirdPartyCookieBlockingDecisionForRequest(const URL& firstPartyForCookies, const URL& resource, std::optional<WebCore::FrameIdentifier>, std::optional<WebPageProxyIdentifier>, WebCore::ShouldRelaxThirdPartyCookieBlocking, WebCore::IsKnownCrossSiteTracker, bool isInitiatedByWorker = false, bool navigationLosesFrameSpecificStorageAccess = false) const;
     bool shouldBlockCookies(const WebCore::ResourceRequest&, std::optional<WebCore::FrameIdentifier>, std::optional<WebPageProxyIdentifier>, WebCore::ShouldRelaxThirdPartyCookieBlocking, WebCore::IsKnownCrossSiteTracker) const;
     bool shouldBlockCookies(const URL& firstPartyForCookies, const URL& resource, std::optional<WebCore::FrameIdentifier>, std::optional<WebPageProxyIdentifier>, WebCore::ShouldRelaxThirdPartyCookieBlocking, WebCore::IsKnownCrossSiteTracker) const;
     bool shouldBlockThirdPartyCookies(const WebCore::RegistrableDomain&) const;
     bool shouldBlockThirdPartyCookiesButKeepFirstPartyCookiesFor(const WebCore::RegistrableDomain&) const;
-    static bool NODELETE shouldBlockCookies(WebCore::ThirdPartyCookieBlockingDecision);
+    static bool LEGACY_NODELETE shouldBlockCookies(WebCore::ThirdPartyCookieBlockingDecision);
     void setAllCookiesToSameSiteStrict(const WebCore::RegistrableDomain&, CompletionHandler<void()>&&);
     static String cookiePartitionIdentifier(const WebCore::ResourceRequest&);
     bool hasHadUserInteractionAsFirstParty(const WebCore::RegistrableDomain&) const;
@@ -203,7 +205,9 @@ public:
     void setDomainsWithUserInteractionAsFirstParty(const Vector<WebCore::RegistrableDomain>&);
     void setDomainsWithCrossPageStorageAccess(const HashMap<TopFrameDomain, Vector<SubResourceDomain>>&);
     void grantCrossPageStorageAccess(const TopFrameDomain&, const SubResourceDomain&);
-    void NODELETE setAgeCapForClientSideCookies(std::optional<Seconds>);
+    void LEGACY_NODELETE setAgeCapForClientSideCookies(std::optional<Seconds>);
+    void setExemptAllowlistedCookiesFromITP(bool exempt) { m_exemptAllowlistedCookiesFromITP = exempt; }
+    bool exemptAllowlistedCookiesFromITP() const { return m_exemptAllowlistedCookiesFromITP; }
     bool hasStorageAccess(const WebCore::RegistrableDomain& resourceDomain, const WebCore::RegistrableDomain& firstPartyDomain, std::optional<WebCore::FrameIdentifier>, std::optional<WebPageProxyIdentifier>) const;
     Vector<String> getAllStorageAccessEntries() const;
     void grantStorageAccess(const WebCore::RegistrableDomain& resourceDomain, const WebCore::RegistrableDomain& firstPartyDomain, std::optional<WebCore::FrameIdentifier>, WebPageProxyIdentifier);
@@ -211,12 +215,12 @@ public:
     void didCommitMainFrameNavigation(WebPageProxyIdentifier, const WebCore::RegistrableDomain& committedDomain, const WebCore::RegistrableDomain& previouslyCommittedDomain, WebCore::RestoredFromBackForwardCache);
     void clearPageSpecificDataForResourceLoadStatistics(WebPageProxyIdentifier);
     void removeAllStorageAccess();
-    void NODELETE setCacheMaxAgeCapForPrevalentResources(Seconds);
-    void NODELETE resetCacheMaxAgeCapForPrevalentResources();
+    void LEGACY_NODELETE setCacheMaxAgeCapForPrevalentResources(Seconds);
+    void LEGACY_NODELETE resetCacheMaxAgeCapForPrevalentResources();
     std::optional<Seconds> maxAgeCacheCap(const WebCore::ResourceRequest&, WebCore::IsKnownCrossSiteTracker);
     void didCommitCrossSiteLoadWithDataTransferFromPrevalentResource(const WebCore::RegistrableDomain& toDomain, WebPageProxyIdentifier);
     void resetCrossSiteLoadsWithLinkDecorationForTesting();
-    void NODELETE setThirdPartyCookieBlockingMode(WebCore::ThirdPartyCookieBlockingMode);
+    void LEGACY_NODELETE setThirdPartyCookieBlockingMode(WebCore::ThirdPartyCookieBlockingMode);
     void setOptInCookiePartitioningEnabled(bool);
 
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES)
@@ -272,7 +276,7 @@ private:
 
 #if HAVE(COOKIE_CHANGE_LISTENER_API)
 #if PLATFORM(COCOA)
-    RetainPtr<NSMutableSet> m_subscribedDomainsForCookieChanges;
+    const RetainPtr<NSMutableSet> m_subscribedDomainsForCookieChanges;
     bool m_didRegisterCookieListeners { false };
 #elif USE(SOUP)
     void notifyCookie(SoupCookie*, bool added);
@@ -288,7 +292,7 @@ private:
 
     bool m_isTrackingPreventionEnabled = false;
     bool m_isTrackingPreventionDebugLoggingEnabled = false;
-    std::optional<Seconds> NODELETE clientSideCookieCap(const TopFrameDomain&, WebCore::RequiresScriptTrackingPrivacy, std::optional<WebPageProxyIdentifier>) const;
+    std::optional<Seconds> LEGACY_NODELETE clientSideCookieCap(const TopFrameDomain&, WebCore::RequiresScriptTrackingPrivacy, std::optional<WebPageProxyIdentifier>) const;
     bool shouldExemptDomainPairFromThirdPartyCookieBlocking(const TopFrameDomain&, const SubResourceDomain&) const;
     HashSet<WebCore::RegistrableDomain> m_registrableDomainsToBlockAndDeleteCookiesFor;
     HashSet<WebCore::RegistrableDomain> m_registrableDomainsToBlockButKeepCookiesFor;
@@ -305,6 +309,7 @@ private:
 #endif
     HashMap<WebPageProxyIdentifier, WebCore::RegistrableDomain> m_navigatedToWithLinkDecorationByPrevalentResource;
     bool m_navigationWithLinkDecorationTestMode = false;
+    bool m_exemptAllowlistedCookiesFromITP { false };
     WebCore::ThirdPartyCookieBlockingMode m_thirdPartyCookieBlockingMode { WebCore::ThirdPartyCookieBlockingMode::All };
     HashSet<WebCore::RegistrableDomain> m_appBoundDomains;
     HashSet<WebCore::RegistrableDomain> m_managedDomains;

@@ -26,7 +26,7 @@
 #include "config.h"
 #include "B3EliminateWasmGCAllocations.h"
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)
 
 #include "B3PhaseScope.h"
 #include "B3Procedure.h"
@@ -41,8 +41,10 @@ bool eliminateWasmGCAllocations(Procedure& proc)
 {
     PhaseScope phaseScope(proc, "eliminateWasmGCAllocations"_s);
 
-    // Key insight is that we only need to handle WasmStructSet, since a non-escaping struct's
-    // WasmStructGet reads have already been forwarded away by CSE.
+    // Only allocations whose every use is a WasmStructSet into the allocation itself are removed.
+    // ReduceStrength forwards a WasmStructGet only from an access that dominates it, so a read
+    // left behind, such as one after an if-then-else whose arms both store the field, is a use
+    // that keeps the allocation alive.
     //
     // Map every WasmStructNew to its users, looking through Identity nodes (which just
     // forward the pointer) via foldIdentity. Each user is classified as we record it: an
@@ -99,4 +101,4 @@ bool eliminateWasmGCAllocations(Procedure& proc)
 
 } } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT)
+#endif // ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)

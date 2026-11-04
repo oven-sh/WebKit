@@ -244,7 +244,6 @@ WI.contentLoaded = function()
 
     WI.settings.showJavaScriptTypeInformation.addEventListener(WI.Setting.Event.Changed, WI._showJavaScriptTypeInformationSettingChanged, WI);
     WI.settings.enableControlFlowProfiler.addEventListener(WI.Setting.Event.Changed, WI._enableControlFlowProfilerSettingChanged, WI);
-    WI.settings.resourceCachingDisabled.addEventListener(WI.Setting.Event.Changed, WI._resourceCachingDisabledSettingChanged, WI);
     WI.settings.clearNetworkOnNavigate.addEventListener(WI.Setting.Event.Changed, WI._clearResourceDataOnNavigateSettingChanged, WI);
     WI.settings.experimentalAllowInspectingInspector.addEventListener(WI.Setting.Event.Changed, WI._allowInspectingInspectorSettingChanged, WI);
 
@@ -1491,7 +1490,7 @@ WI.showSourceCode = function(sourceCode, options = {})
         representedObject = representedObject.resource || representedObject;
     }
 
-    let cookie = {};
+    let cookie = {forceUnformatted: options.forceUnformatted};
 
     let positionToReveal = options.positionToReveal;
     if (positionToReveal) {
@@ -2087,7 +2086,7 @@ WI._domStorageWasInspected = function(event)
 
 WI._domNodeWasInspected = function(event)
 {
-    WI.domManager.highlightDOMNodeForTwoSeconds(event.data.node.id);
+    WI.domManager.highlightDOMNodeForTwoSeconds(event.data.node);
 
     InspectorFrontendHost.bringToFront();
 
@@ -2670,17 +2669,6 @@ WI._enableControlFlowProfilerSettingChanged = function(event)
     }
 };
 
-WI._resourceCachingDisabledSettingChanged = function(event)
-{
-    for (let target of WI.targets) {
-        // FIXME: <https://webkit.org/b/298979> Add Network support for FrameTarget.
-        if (target instanceof WI.FrameTarget)
-            continue;
-
-        target.NetworkAgent.setResourceCachingDisabled(WI.settings.resourceCachingDisabled.value);
-    }
-};
-
 WI._clearResourceDataOnNavigateSettingChanged = function(event)
 {
     for (let target of WI.targets) {
@@ -2859,10 +2847,18 @@ WI.linkifyElement = function(linkElement, sourceCodeLocation, options = {}) {
         event.stopPropagation();
         event.preventDefault();
 
-        if (event.metaKey)
+        if (event.metaKey) {
             WI.showOriginalUnformattedSourceCodeLocation(sourceCodeLocation, options);
-        else
-            WI.showSourceCodeLocation(sourceCodeLocation, options);
+            return;
+        }
+
+        let stackTrace = options.stackTrace;
+        if (stackTrace?.callFrames.length > 1 || stackTrace?.parentStackTrace || stackTrace?.truncated) {
+            WI.StackTracePopover.present(stackTrace, linkElement);
+            return;
+        }
+
+        WI.showSourceCodeLocation(sourceCodeLocation, options);
     }
 
     linkElement.addEventListener("click", showSourceCodeLocation);
@@ -3093,26 +3089,39 @@ WI.archiveMainFrame = function()
     WI._downloadingPage = true;
     WI._updateDownloadTabBarButton();
 
+    // Under Site Isolation only the backend target's PageAgent archives frames in every process.
     let target = WI.assumingMainTarget();
-    target.PageAgent.archive((error, data) => {
-        WI._downloadingPage = false;
-        WI._updateDownloadTabBarButton();
+    if (WI.backendTarget && WI.networkManager.enabledPageForSiteIsolation && WI.backendTarget.hasCommand("Page.archive"))
+        target = WI.backendTarget;
 
-        if (error) {
-            WI.reportInternalError(error);
-            return;
+    let requested = false;
+    try {
+        target.PageAgent.archive((error, data) => {
+            WI._downloadingPage = false;
+            WI._updateDownloadTabBarButton();
+
+            if (error) {
+                WI.reportInternalError(error);
+                return;
+            }
+
+            let mainFrame = WI.networkManager.mainFrame;
+            let archiveName = mainFrame.mainResource.urlComponents.host || mainFrame.mainResource.displayName || "Archive";
+
+            const forceSaveAs = true;
+            WI.FileUtilities.save(WI.FileUtilities.SaveMode.SingleFile, {
+                suggestedName: archiveName + ".webarchive",
+                content: data,
+                base64Encoded: true,
+            }, forceSaveAs);
+        });
+        requested = true;
+    } finally {
+        if (!requested) {
+            WI._downloadingPage = false;
+            WI._updateDownloadTabBarButton();
         }
-
-        let mainFrame = WI.networkManager.mainFrame;
-        let archiveName = mainFrame.mainResource.urlComponents.host || mainFrame.mainResource.displayName || "Archive";
-
-        const forceSaveAs = true;
-        WI.FileUtilities.save(WI.FileUtilities.SaveMode.SingleFile, {
-            suggestedName: archiveName + ".webarchive",
-            content: data,
-            base64Encoded: true,
-        }, forceSaveAs);
-    });
+    }
 };
 
 WI.canArchiveMainFrame = function()

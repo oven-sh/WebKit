@@ -33,4 +33,11 @@ namespace WTF {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(Vector);
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VectorBuffer);
 
+#if USE(BUN_JSC_ADDITIONS)
+void crashDueToBorrowedVector()
+{
+    CRASH();
+}
+#endif
+
 } // namespace WTF

@@ -78,7 +78,7 @@ public:
     };
 
     static Ref<WebPageOverlay> create(std::unique_ptr<Client>, WebCore::PageOverlay::OverlayType = WebCore::PageOverlay::OverlayType::View);
-    static WebPageOverlay* NODELETE fromCoreOverlay(WebCore::PageOverlay&);
+    static WebPageOverlay* LEGACY_NODELETE fromCoreOverlay(WebCore::PageOverlay&);
     virtual ~WebPageOverlay();
 
     void setNeedsDisplay(const WebCore::IntRect& dirtyRect);
@@ -115,7 +115,7 @@ private:
     Vector<String> copyAccessibilityAttributeNames(WebCore::PageOverlay&, bool /* parameterizedNames */) override;
 
     RefPtr<WebCore::PageOverlay> m_overlay;
-    std::unique_ptr<Client> m_client;
+    const std::unique_ptr<Client> m_client;
 };
 
 } // namespace WebKit

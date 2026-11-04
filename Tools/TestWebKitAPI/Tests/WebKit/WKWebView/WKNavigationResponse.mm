@@ -31,6 +31,8 @@
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
+#import "Helpers/cocoa/TestUIDelegate.h"
+#import "Helpers/cocoa/TestWKWebView.h"
 #import "Helpers/cocoa/WKWebViewConfigurationExtras.h"
 #import <WebKit/WKNavigationActionPrivate.h>
 #import <WebKit/WKNavigationResponsePrivate.h>
@@ -274,5 +276,29 @@ TEST(WebKit, SkipDecidePolicyForResponse)
         [delegate waitForDidFinishNavigation];
         EXPECT_TRUE(std::exchange(responseDelegateCalled, false));
     }
+}
+#endif
+
+#if WK_HAVE_C_SPI
+TEST(WebKit, SkipDecidePolicyForResponseForOpaqueOriginSubframe)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/main"_s, { { { "Content-Type"_s, "text/html"_s } }, "<iframe src='data:text/html,hi'></iframe>"_s } },
+    });
+
+    WKWebViewConfiguration *configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"SkipDecidePolicyForResponsePlugIn"];
+    configuration.preferences.fraudulentWebsiteWarningEnabled = NO;
+    RetainPtr webView = adoptNS([[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration]);
+    RetainPtr delegate = adoptNS([TestNavigationDelegate new]);
+    __block unsigned responseDelegateCalls { 0 };
+    delegate.get().decidePolicyForNavigationResponse = ^(WKNavigationResponse *, void (^completionHandler)(WKNavigationResponsePolicy)) {
+        ++responseDelegateCalls;
+        completionHandler(WKNavigationResponsePolicyAllow);
+    };
+    webView.get().navigationDelegate = delegate.get();
+
+    [webView loadRequest:server.request("/main"_s)];
+    [delegate waitForDidFinishNavigation];
+    EXPECT_EQ(responseDelegateCalls, 0u);
 }
 #endif

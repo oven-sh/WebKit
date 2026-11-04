@@ -37,7 +37,7 @@ static std::optional<CounterStyle> counterStyleForSerialization(const CounterSty
 {
     return WTF::switchOn(style.identifier,
         [&](const CSS::Keyword& predefinedKeyword) -> std::optional<CounterStyle> {
-            return predefinedKeyword.value != CSSValueDecimal ? std::make_optional(style) : std::nullopt;
+            return predefinedKeyword.value != CSSValueID::Decimal ? std::make_optional(style) : std::nullopt;
         },
         [&](const CSS::CustomIdent&) -> std::optional<CounterStyle> {
             return style;
@@ -75,11 +75,6 @@ Ref<DeprecatedCSSOMValue> DeprecatedCSSOMValueCreation<ContentCounterFunction>::
 Ref<DeprecatedCSSOMValue> DeprecatedCSSOMValueCreation<ContentCountersFunction>::operator()(CSSValuePool&, CSSStyleDeclaration& owner, const ContentCountersFunction& value)
 {
     return DeprecatedCSSOMPrimitiveValue::create(ContentCountersFunctionWrapper { value }, owner);
-}
-
-Ref<DeprecatedCSSOMValue> DeprecatedCSSOMValueCreation<ContentLegacyAttrFunction>::operator()(CSSValuePool&, CSSStyleDeclaration& owner, const ContentLegacyAttrFunction& value)
-{
-    return DeprecatedCSSOMPrimitiveValue::create(ContentLegacyAttrFunctionWrapper { value }, owner);
 }
 
 Ref<DeprecatedCSSOMValue> DeprecatedCSSOMValueCreation<Content::Data>::operator()(CSSValuePool& pool, CSSStyleDeclaration& owner, const Content::Data& value)

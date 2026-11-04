@@ -1,0 +1,46 @@
+# A loop that is entered from a branch has no block in front of it that runs only when the loop does. Where a read can leave the loop the entry gets such a block, and where none can the entry stays as it is
+# FORM: Prepared
+# RUN: pass HoistLoopInvariantReads
+# STATISTIC: HoistLoopInvariantReadsChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="neverStored" declared={type=number} flow={writers=AllKnown stores=Never initialization=SetAtCreation isUnchangedDuringActivation=true}
+variable g1 name="storedOnce" declared={type=number} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+
+function f0 name="aReadLeaves" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v3 = GetModuleVariable variable=g0
+    v4 = ToBoolean v3
+    Jump -> next b1()
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: Branch v1 -> taken [[entry]](), notTaken b3()
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: [[entry]]():
+# CHECK-NEXT: GetModuleVariable variable=g0
+# CHECK-NEXT: ToBoolean
+# CHECK-NEXT: Jump -> next b1()
+}
+
+function f1 name="nothingLeaves" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v3 = GetModuleVariable variable=g1
+    v4 = ToBoolean v3
+    Jump -> next b1()
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b3()
+# CHECK: b2():
+# CHECK-NEXT: GetModuleVariable variable=g1
+}

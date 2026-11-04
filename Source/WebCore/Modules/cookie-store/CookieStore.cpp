@@ -73,7 +73,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(CookieStore);
 
 class CookieStore::MainThreadBridge : public ThreadSafeRefCounted<MainThreadBridge, WTF::DestructionThread::Main> {
 public:
-    static Ref<MainThreadBridge> create(CookieStore& cookieStore)
+    static Ref<MainThreadBridge> LEGACY_NODELETE create(CookieStore& cookieStore)
     {
         return adoptRef(*new MainThreadBridge(cookieStore));
     }
@@ -81,7 +81,7 @@ public:
     void get(CookieStoreGetOptions&&, URL&&, Function<void(CookieStore&, ExceptionOr<Vector<Cookie>>&&)>&&);
     void set(Cookie&&, URL&&, Function<void(CookieStore&, std::optional<Exception>&&)>&&);
 
-    void detach() { m_cookieStore = nullptr; }
+    void LEGACY_NODELETE detach() { m_cookieStore = nullptr; }
 
 private:
     explicit MainThreadBridge(CookieStore&);
@@ -279,7 +279,7 @@ void CookieStore::getShared(GetType getType, CookieStoreGetOptions&& options, Re
     }
 
     if (!options.name.isNull())
-        options.name = normalize(options.name);
+        options.name = CookieUtil::cookieStringForStorage(normalize(options.name));
 
     m_promises.add(++m_nextPromiseIdentifier, WTF::move(promise));
     auto completionHandler = [promiseIdentifier = m_nextPromiseIdentifier, getType](CookieStore& cookieStore, ExceptionOr<Vector<Cookie>>&& result) {
@@ -390,6 +390,10 @@ void CookieStore::set(CookieInit&& options, Ref<DeferredPromise>&& promise)
         promise->reject(Exception { ExceptionCode::TypeError, makeString("The size of the cookie name and value must not be greater than "_s, maximumNameValuePairSize, " bytes"_s) });
         return;
     }
+
+    // With all checks complete, reinterpret the string, if necessary, before writing to storage
+    cookie.name = CookieUtil::cookieStringForStorage(cookie.name);
+    cookie.value = CookieUtil::cookieStringForStorage(cookie.value);
 
     // FIXME: This should be further down.
     if (!options.domain.isNull() && cookie.name.startsWithIgnoringASCIICase("__Host-"_s)) {
@@ -524,7 +528,7 @@ void CookieStore::remove(CookieStoreDeleteOptions&& options, Ref<DeferredPromise
     }
 
     CookieInit initOptions;
-    initOptions.name = normalize(options.name);
+    initOptions.name = WTF::move(options.name);
     initOptions.value = emptyString();
     initOptions.domain = WTF::move(options.domain);
     initOptions.path = WTF::move(options.path);

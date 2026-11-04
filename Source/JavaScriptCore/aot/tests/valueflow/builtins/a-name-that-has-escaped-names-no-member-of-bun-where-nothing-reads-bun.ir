@@ -1,0 +1,16 @@
+# somebody("Glob"); Bun.version
+# The name is in unknown hands and Bun is not, and no key that nobody knows reads Bun
+# RUN: valueflow-solve used
+# CHECK-NOT: BunGlob
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somebody" [isFreeName]
+    v2 = String string="Glob"
+    v3 = Call v1, -, v2
+    v4 = Builtin builtin=Bun
+    v5 = PropGet v4 key="version"
+    Return v5
+}

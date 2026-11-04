@@ -69,6 +69,7 @@ ResourceRequest::ResourceRequest(ResourceRequestPlatformData&& platformData, boo
         setDidFilterLinkDecoration(platformData.m_didFilterLinkDecoration);
         setIsPrivateTokenUsageByThirdPartyAllowed(platformData.m_isPrivateTokenUsageByThirdPartyAllowed);
         setWasSchemeOptimisticallyUpgraded(platformData.m_wasSchemeOptimisticallyUpgraded);
+        setLatchedThirdPartyCookieBlockingDecision(platformData.m_latchedThirdPartyCookieBlockingDecision);
     }
 
     setShouldBlockThirdPartyStorage(shouldBlockThirdPartyStorage);
@@ -127,7 +128,8 @@ ResourceRequestPlatformData ResourceRequest::getResourceRequestPlatformData() co
         useAdvancedPrivacyProtections(),
         didFilterLinkDecoration(),
         isPrivateTokenUsageByThirdPartyAllowed(),
-        wasSchemeOptimisticallyUpgraded()
+        wasSchemeOptimisticallyUpgraded(),
+        latchedThirdPartyCookieBlockingDecision()
     };
 }
 
@@ -136,7 +138,7 @@ CFURLRequestRef ResourceRequest::cfURLRequest(HTTPBodyUpdatePolicy bodyPolicy) c
     return [protect(nsURLRequest(bodyPolicy)) _CFURLRequest];
 }
 
-static inline ResourceRequestCachePolicy NODELETE fromPlatformRequestCachePolicy(NSURLRequestCachePolicy policy)
+static inline ResourceRequestCachePolicy LEGACY_NODELETE fromPlatformRequestCachePolicy(NSURLRequestCachePolicy policy)
 {
     switch (policy) {
     case NSURLRequestUseProtocolCachePolicy:
@@ -150,7 +152,7 @@ static inline ResourceRequestCachePolicy NODELETE fromPlatformRequestCachePolicy
     }
 }
 
-static inline NSURLRequestCachePolicy NODELETE toPlatformRequestCachePolicy(ResourceRequestCachePolicy policy)
+static inline NSURLRequestCachePolicy LEGACY_NODELETE toPlatformRequestCachePolicy(ResourceRequestCachePolicy policy)
 {
     switch (policy) {
     case ResourceRequestCachePolicy::UseProtocolCachePolicy:
@@ -173,7 +175,7 @@ void ResourceRequest::doUpdateResourceRequest()
     m_requestData.m_timeoutInterval = [m_nsRequest timeoutInterval];
     m_requestData.m_firstPartyForCookies = [m_nsRequest mainDocumentURL];
 
-    URL siteForCookies { [m_nsRequest _propertyForKey:@"_kCFHTTPCookiePolicyPropertySiteForCookies"] };
+    URL siteForCookies { dynamic_objc_cast<NSURL>([m_nsRequest _propertyForKey:@"_kCFHTTPCookiePolicyPropertySiteForCookies"]) };
     m_requestData.m_sameSiteDisposition = siteForCookies.isNull() ? SameSiteDisposition::Unspecified : (areRegistrableDomainsEqual(siteForCookies, m_requestData.m_url) ? SameSiteDisposition::SameSite : SameSiteDisposition::CrossSite);
 
     m_requestData.m_isTopSite = static_cast<NSNumber*>([m_nsRequest _propertyForKey:@"_kCFHTTPCookiePolicyPropertyIsTopLevelNavigation"]).boolValue;
@@ -193,7 +195,8 @@ void ResourceRequest::doUpdateResourceRequest()
     m_requestData.m_responseContentDispositionEncodingFallbackArray.clear();
     RetainPtr<NSArray> encodingFallbacks = [m_nsRequest contentDispositionEncodingFallbackArray];
     m_requestData.m_responseContentDispositionEncodingFallbackArray.reserveCapacity([encodingFallbacks count]);
-    for (NSNumber *encodingFallback in encodingFallbacks.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSNumber *encodingFallback in encodingFallbacks.get()) {
         CFStringEncoding encoding = CFStringConvertNSStringEncodingToEncoding([encodingFallback unsignedLongValue]);
         if (encoding != kCFStringEncodingInvalidId)
             m_requestData.m_responseContentDispositionEncodingFallbackArray.append(CFStringConvertEncodingToIANACharSetName(encoding));
@@ -262,7 +265,7 @@ void ResourceRequest::doUpdatePlatformRequest()
         return;
     }
 
-    auto nsRequest = adoptNS<NSMutableURLRequest *>([m_nsRequest mutableCopy]);
+    RetainPtr<NSMutableURLRequest> nsRequest = adoptNS([m_nsRequest mutableCopy]);
 
     if (nsRequest)
         [nsRequest setURL:url().createNSURL().get()];
@@ -299,12 +302,11 @@ void ResourceRequest::doUpdatePlatformRequest()
     [nsRequest _setProperty:m_requestData.m_isTopSite ? @YES : @NO forKey:@"_kCFHTTPCookiePolicyPropertyIsTopLevelNavigation"];
 
     // Cannot just use setAllHTTPHeaderFields here, because it does not remove headers.
-    for (NSString *oldHeaderName in [nsRequest allHTTPHeaderFields])
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *oldHeaderName in [nsRequest allHTTPHeaderFields])
         [nsRequest setValue:nil forHTTPHeaderField:oldHeaderName];
-    for (const auto& header : httpHeaderFields()) {
-        RetainPtr encodedValue = httpHeaderValueUsingSuitableEncoding(header);
-        [nsRequest setValue:bridge_cast(encodedValue.get()) forHTTPHeaderField:header.key.createNSString().get()];
-    }
+    for (const auto& header : httpHeaderFields())
+        [nsRequest setValue:header.value.createNSString().get() forHTTPHeaderField:header.key.createNSString().get()];
 
     [nsRequest setContentDispositionEncodingFallbackArray:createNSArray(m_requestData.m_responseContentDispositionEncodingFallbackArray, [] (auto& name) -> NSNumber * {
         auto encoding = CFStringConvertEncodingToNSStringEncoding(CFStringConvertIANACharSetNameToEncoding(name.createCFString().get()));
@@ -338,7 +340,7 @@ void ResourceRequest::doUpdatePlatformHTTPBody()
         return;
     }
 
-    auto nsRequest = adoptNS<NSMutableURLRequest *>([m_nsRequest mutableCopy]);
+    RetainPtr<NSMutableURLRequest> nsRequest = adoptNS([m_nsRequest mutableCopy]);
 
     if (nsRequest)
         [nsRequest setURL:url().createNSURL().get()];
@@ -353,7 +355,7 @@ void ResourceRequest::doUpdatePlatformHTTPBody()
 
     if (RetainPtr bodyStream = [nsRequest HTTPBodyStream]) {
         // For streams, provide a Content-Length to avoid using chunked encoding, and to get accurate total length in callbacks.
-        RetainPtr<NSString> lengthString = [bodyStream propertyForKey:RetainPtr { bridge_cast(formDataStreamLengthPropertyNameSingleton()) }.get()];
+        RetainPtr lengthString = dynamic_objc_cast<NSString>([bodyStream propertyForKey:RetainPtr { bridge_cast(formDataStreamLengthPropertyNameSingleton()) }.get()]);
         if (lengthString) {
             [nsRequest setValue:lengthString.get() forHTTPHeaderField:@"Content-Length"];
             // Since resource request is already marked updated, we need to keep it up to date too.

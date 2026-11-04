@@ -66,7 +66,7 @@ LayoutUnit GridBaselineAlignment::ascentForGridItem(const RenderBox& gridItem, S
     auto baseline = 0_lu;
     if (alignmentContextType == Style::GridTrackSizingDirection::Rows) {
         auto alignmentContextDirection = [&] {
-            return gridStyle->writingMode().isHorizontal() ? LineDirection::Horizontal : LineDirection::Vertical;
+            return gridStyle->writingMode().isHorizontal() ? BoxAxis::Horizontal : BoxAxis::Vertical;
         };
 
         if (!isParallelToAlignmentAxisForGridItem(gridItem, alignmentContextType)) {
@@ -93,7 +93,7 @@ LayoutUnit GridBaselineAlignment::ascentForGridItem(const RenderBox& gridItem, S
                 return m_writingMode.isBlockFlipped() ? gridItemMargin + gridItem.borderBoxSize().width().toInt() : gridItemMargin;
             auto gridWritingMode = gridStyle->writingMode();
             return gridItemMargin + BaselineAlignment::synthesizedBaseline(gridItem, BaselineAlignment::dominantBaseline(gridWritingMode),
-                gridWritingMode, LineDirection::Horizontal, BaselineSynthesisEdge::BorderBox);
+                gridWritingMode, BoxAxis::Horizontal, BaselineSynthesisEdge::BorderBox);
         }
         baseline = *firstOrLastLineBaseline;
     }

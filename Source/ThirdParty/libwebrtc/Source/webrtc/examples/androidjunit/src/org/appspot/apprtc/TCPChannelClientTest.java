@@ -15,6 +15,7 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
+import android.os.Build;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Ignore;
@@ -33,7 +34,7 @@ import java.util.concurrent.TimeUnit;
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class TCPChannelClientTest {
-  private static final int PORT = 8888;
+  private static final int PORT = 9000 + Build.VERSION.SDK_INT;
   /**
    * How long we wait before trying to connect to the server. Note: was
    * previously only 10, which was too short (tests were flaky).
@@ -83,8 +84,7 @@ public class TCPChannelClientTest {
     }
   }
 
-  @Test
-  public void testConnectIPv4() {
+  private void connectIPv4Helper() {
     setUpIPv4Server();
     try {
       Thread.sleep(SERVER_WAIT);
@@ -95,6 +95,11 @@ public class TCPChannelClientTest {
 
     verify(serverEvents, timeout(CONNECT_TIMEOUT)).onTCPConnected(true);
     verify(clientEvents, timeout(CONNECT_TIMEOUT)).onTCPConnected(false);
+  }
+
+  @Test
+  public void testConnectIPv4() {
+    connectIPv4Helper();
   }
 
   // TODO:b/389829614 - Below test is failing.
@@ -115,7 +120,7 @@ public class TCPChannelClientTest {
 
   @Test
   public void testSendData() {
-    testConnectIPv4();
+    connectIPv4Helper();
 
     executeAndWait(new Runnable() {
       @Override
@@ -131,7 +136,7 @@ public class TCPChannelClientTest {
 
   @Test
   public void testDisconnectServer() {
-    testConnectIPv4();
+    connectIPv4Helper();
     executeAndWait(new Runnable() {
       @Override
       public void run() {
@@ -145,7 +150,7 @@ public class TCPChannelClientTest {
 
   @Test
   public void testDisconnectClient() {
-    testConnectIPv4();
+    connectIPv4Helper();
     executeAndWait(new Runnable() {
       @Override
       public void run() {

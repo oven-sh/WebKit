@@ -334,21 +334,6 @@ bool defaultUseGPUProcessForDOMRenderingEnabled()
     return false;
 }
 
-#if ENABLE(WEB_PUSH_NOTIFICATIONS)
-bool defaultBuiltInNotificationsEnabled()
-{
-#if defined(DEPRECATED_GLOBAL_SETTINGS_BUILT_IN_NOTIFICATIONS_ENABLED_ADDITIONS)
-    DEPRECATED_GLOBAL_SETTINGS_BUILT_IN_NOTIFICATIONS_ENABLED_ADDITIONS;
-#endif
-
-#if defined(WEB_PREFERENCES_BUILT_IN_NOTIFICATIONS_ENABLED_ADDITIONS)
-    WEB_PREFERENCES_BUILT_IN_NOTIFICATIONS_ENABLED_ADDITIONS;
-#endif
-
-    return false;
-}
-#endif
-
 #if ENABLE(DEVICE_ORIENTATION)
 SUPPRESS_NODELETE bool defaultDeviceOrientationPermissionAPIEnabled()
 {
@@ -371,6 +356,11 @@ bool defaultRequiresPageVisibilityForVideoToBeNowPlaying()
     return false;
 }
 #endif
+
+bool defaultRequiresUserGestureToStartAudiblePlaybackWhenHidden()
+{
+    return true;
+}
 
 bool defaultCookieStoreAPIEnabled()
 {
@@ -424,7 +414,7 @@ bool defaultRTCEncodedStreamsQuirkEnabled()
 }
 
 #if PLATFORM(COCOA)
-static bool isSafariOrWebApp()
+bool isSafariOrWebApp()
 {
 #if PLATFORM(MAC)
     return WTF::MacApplication::isSafari();
@@ -437,7 +427,7 @@ static bool isSafariOrWebApp()
 bool defaultMutationEventsEnabled()
 {
 #if PLATFORM(COCOA)
-    return (WTF::CocoaApplication::isAppleApplication() && !isSafariOrWebApp()) || !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::MutationEventsDisabledByDefault);
+    return (WTF::CocoaApplication::isAppleApplication() && !isSafariOrWebApp() && !isRunningTest(applicationBundleIdentifier())) || !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::MutationEventsDisabledByDefault);
 #else
     return false;
 #endif

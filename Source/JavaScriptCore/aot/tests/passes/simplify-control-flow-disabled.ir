@@ -1,0 +1,24 @@
+# With the pass switched off a branch on a constant stays
+# FORM: Prepared
+# OPTIONS: disable=pass:SimplifyControlFlow
+# RUN: pass SimplifyControlFlow
+# STATISTIC: SimplifyControlFlowChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="branchOnConstant" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Boolean boolean=true
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Return v1
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: v2: true = Boolean boolean=true
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}

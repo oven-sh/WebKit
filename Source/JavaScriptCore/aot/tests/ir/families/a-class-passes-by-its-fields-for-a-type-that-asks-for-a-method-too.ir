@@ -1,0 +1,19 @@
+# function f(a) { a.run(); return a.depth }   function g(a) { a.run() }   class Task { depth; run() {} }   { depth: 1 }   { depth: 1, run() {} }
+# FORM: AsRead
+# RUN: members
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 fields=[{key="depth" declared={type=anything} flags=[IsRequired]}, {key="run" declared={type=anything} flags=[IsRequired, IsMethod]}]
+layout L1 fields=[{key="run" declared={type=anything} flags=[IsRequired, IsMethod]}]
+layout L2 kind=Instance name="Task" fields=[{key="depth" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Bare" fields=[{key="depth" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Whole" fields=[{key="depth" declared={type=anything} flags=[IsRequired]}, {key="run" declared={type=anything} flags=[IsRequired, IsMethod]}]
+layout L5 name="Declared" fields=[{key="run" declared={type=anything} flags=[IsRequired, IsMethod]}]
+# CHECK: L0: members [L0, L2, L4]
+# CHECK-NEXT: L1: members [L1]
+# CHECK: L5: members [L0, L1, L4, L5]
+
+function f0 name="take" parameters=[{type=L0}, {type=L1}] results=[{type=anything}] {
+    Return
+}

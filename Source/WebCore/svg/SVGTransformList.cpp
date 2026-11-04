@@ -39,6 +39,20 @@
 
 namespace WebCore {
 
+SVGTransformList::SVGTransformList() = default;
+
+SVGTransformList::SVGTransformList(SVGPropertyOwner* owner, SVGPropertyAccess access)
+    : Base(owner, access)
+{
+}
+
+SVGTransformList::SVGTransformList(const SVGTransformList& other, SVGPropertyAccess access)
+    : Base(other, access)
+{
+}
+
+SVGTransformList::~SVGTransformList() = default;
+
 template<typename CharacterType> static constexpr std::array<CharacterType, 5> skewXDesc  { 's', 'k', 'e', 'w', 'X' };
 template<typename CharacterType> static constexpr std::array<CharacterType, 5> skewYDesc  { 's', 'k', 'e', 'w', 'Y' };
 template<typename CharacterType> static constexpr std::array<CharacterType, 5> scaleDesc  { 's', 'c', 'a', 'l', 'e' };
@@ -46,7 +60,7 @@ template<typename CharacterType> static constexpr std::array<CharacterType, 9> t
 template<typename CharacterType> static constexpr std::array<CharacterType, 6> rotateDesc  { 'r', 'o', 't', 'a', 't', 'e' };
 template<typename CharacterType> static constexpr std::array<CharacterType, 6> matrixDesc  { 'm', 'a', 't', 'r', 'i', 'x' };
 
-template<typename CharacterType> static std::optional<SVGTransformValue::SVGTransformType> parseTransformTypeGeneric(StringParsingBuffer<CharacterType>& buffer)
+template<typename CharacterType> static std::optional<SVGTransformValue::SVGTransformType> LEGACY_NODELETE parseTransformTypeGeneric(StringParsingBuffer<CharacterType>& buffer)
 {
     if (buffer.atEnd())
         return std::nullopt;

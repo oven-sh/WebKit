@@ -113,7 +113,7 @@ public:
         return *m_ownerThread;
     }
 
-    void NODELETE willDestroyVM(VM*);
+    void LEGACY_NODELETE willDestroyVM(VM*);
 
     class DropAllLocks {
         WTF_MAKE_NONCOPYABLE(DropAllLocks);

@@ -79,7 +79,7 @@
 @end
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-static RetainPtr<WKProcessPool>& NODELETE sharedProcessPool()
+static RetainPtr<WKProcessPool>& LEGACY_NODELETE sharedProcessPool()
 {
     static NeverDestroyed<RetainPtr<WKProcessPool>> sharedProcessPool;
     return sharedProcessPool;
@@ -365,10 +365,12 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 - (void)_addSupportedPlugin:(NSString *) domain named:(NSString *) name withMimeTypes: (NSSet<NSString *> *) nsMimeTypes withExtensions: (NSSet<NSString *> *) nsExtensions
 {
     HashSet<String> mimeTypes;
-    for (NSString *mimeType in nsMimeTypes)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *mimeType in nsMimeTypes)
         mimeTypes.add(mimeType);
     HashSet<String> extensions;
-    for (NSString *extension in nsExtensions)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *extension in nsExtensions)
         extensions.add(extension);
 
     protect(*_processPool)->addSupportedPlugin(domain, name, WTF::move(mimeTypes), WTF::move(extensions));
@@ -393,6 +395,14 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 {
     auto result = adoptNS([[NSMutableSet alloc] init]);
     for (auto pid : protect(*_processPool)->prewarmedProcessIdentifiers())
+        [result addObject:@(pid)];
+    return result.autorelease();
+}
+
+- (NSSet<NSNumber *> *)_crossOriginIsolatedProcessIdentifiersForTesting
+{
+    RetainPtr result = adoptNS([[NSMutableSet alloc] init]);
+    for (auto pid : protect(*_processPool)->crossOriginIsolatedProcessIdentifiers())
         [result addObject:@(pid)];
     return result.autorelease();
 }
@@ -687,6 +697,16 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     protect(*_processPool)->setUsesOnlyHIDGamepadProviderForTesting(usesHIDProvider);
 }
 
+- (void)_setHasEnhancedSecurityDefaultOptOutEntitlementForTesting:(BOOL)hasEntitlement
+{
+    protect(*_processPool)->setHasEnhancedSecurityDefaultOptOutEntitlementForTesting(!!hasEntitlement);
+}
+
+- (void)_clearHasEnhancedSecurityDefaultOptOutEntitlementForTesting
+{
+    protect(*_processPool)->setHasEnhancedSecurityDefaultOptOutEntitlementForTesting(std::nullopt);
+}
+
 - (void)_terminateAllWebContentProcesses
 {
     protect(*_processPool)->terminateAllWebContentProcesses(WebKit::ProcessTerminationReason::RequestedByClient);
@@ -769,7 +789,7 @@ static NSArray<_WKProcessInfo *> *allWebContentProcessInfo()
 @synthesize totalSystemCPUTime = _totalSystemCPUTime;
 @synthesize physicalFootprint = _physicalFootprint;
 
-static _WKProcessState NODELETE processStateFromThrottleState(WebKit::ProcessThrottleState state)
+static _WKProcessState LEGACY_NODELETE processStateFromThrottleState(WebKit::ProcessThrottleState state)
 {
     switch (state) {
     case WebKit::ProcessThrottleState::Foreground:

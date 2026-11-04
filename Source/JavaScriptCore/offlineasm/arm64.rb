@@ -570,6 +570,63 @@ def arm64LowerLabelReferences(list)
     newList
 end
 
+def arm64CheckNoFallThrough(list, section, location)
+    last = list.reverse_each.find { | node | node.is_a? Instruction or node.is_a? Label or node.is_a? LocalLabel }
+    return if last.nil?
+    return if last.is_a? Instruction and (last.opcode == "section" or last.opcode == "break" or not hasFallThrough(last.opcode))
+    raise "Control can fall through the end of section #{section} at #{location}: end the code before it with jmp, ret or break"
+end
+
+# Also runs on the sequences that an instruction lowers itself to, in the middle of a section.
+def arm64BranchToOtherSectionsThroughVeneers(list)
+    section = $asm.section
+    list.each {
+        | node |
+        if node.is_a? Instruction and node.opcode == "section"
+            section = node.operands[0].value
+        elsif node.is_a? Label
+            node.section = section
+        end
+    }
+
+    newList = []
+    veneers = {}
+    veneerCount = 0
+    section = $asm.section
+    putVeneers = lambda {
+        veneers.each {
+            | target, veneer |
+            newList << veneer
+            newList << Instruction.new(veneer.codeOrigin, "jmp", [LabelReference.new(veneer.codeOrigin, target)])
+        }
+        veneers = {}
+    }
+    list.each {
+        | node |
+        if node.is_a? Instruction and node.opcode == "section"
+            arm64CheckNoFallThrough(newList, section, node.codeOriginString)
+            putVeneers.call
+            section = node.operands[0].value
+        elsif node.is_a? Instruction and isBranch(node.opcode) and node.operands.last.is_a? LabelReference
+            target = node.operands.last.label
+            if target.section and target.section != section
+                unless veneers[target]
+                    veneerCount += 1
+                    veneers[target] = Label.forName(node.codeOrigin, "#{target.name}_veneer_#{veneerCount}", true)
+                    veneers[target].section = section
+                end
+                node = Instruction.new(node.codeOrigin, node.opcode, node.operands[0..-2] + [LabelReference.new(node.codeOrigin, veneers[target])], node.annotation)
+            end
+        end
+        newList << node
+    }
+    unless veneers.empty?
+        arm64CheckNoFallThrough(newList, section, "the end of the code")
+        putVeneers.call
+    end
+    newList
+end
+
 def arm64FixSpecialRegisterArithmeticMode(list)
     newList = []
     def usesSpecialRegister(node)
@@ -613,6 +670,7 @@ class Sequence
         getModifiedListARM64Common(result)
     end
     def getModifiedListARM64Common(result = @list)
+        result = arm64BranchToOtherSectionsThroughVeneers(result)
         result = riscLowerNot(result)
         result = riscLowerSimpleBranchOps(result)
 
@@ -1224,9 +1282,12 @@ class Instruction
         when "td2i"
             emitARM64("fcvtzs", operands, [:double, :word])
         when "bcd2i"
-            # FIXME: Remove this instruction, or use it and implement it. Currently it's not
-            # used.
-            raise "ARM64 does not support this opcode yet, #{codeOriginString}"
+            # Zero takes the branch, as on x86: it may be -0.
+            scratch = ARM64_EXTRA_FPRS[0]
+            emitARM64("fcvtzs", operands[0..1], [:double, :word])
+            $asm.puts "cbz #{operands[1].arm64Operand(:word)}, #{operands[2].asmLabel}"
+            emitARM64("scvtf", [operands[1], scratch], [:word, :double])
+            emitARM64Branch("fcmp", [operands[0], scratch, operands[2]], :double, "b.ne")
         when "movdz"
             # FIXME: Remove it or support it.
             raise "ARM64 does not support this opcode yet, #{codeOriginString}"
@@ -1402,7 +1463,43 @@ class Instruction
         when "break"
             $asm.puts "brk \#\" STRINGIZE_VALUE_OF(WTF_FATAL_CRASH_CODE) \""
         when "ret"
+            $asm.puts "hint #31" if $currentSettings["RETURN_ADDRESS_SIGNING"] # AUTIBSP
             $asm.puts "ret"
+        when "tagReturnAddress", "untagReturnAddress"
+            # What arm64e.rb does, in hints. The ones that take a modifier other than sp have it in x16 and the pointer in
+            # x17, which hold nothing between two instructions (ARM64_EXTRA_GPRS).
+            if $currentSettings["RETURN_ADDRESS_SIGNING"]
+                raise unless operands.size == 1 and operands[0].is_a? RegisterID
+                sign = opcode == "tagReturnAddress"
+                if operands[0].name == "sp"
+                    $asm.puts "hint ##{sign ? 27 : 31}" # PACIBSP, AUTIBSP
+                else
+                    $asm.puts "mov x16, #{operands[0].arm64Operand(:quad)}"
+                    $asm.puts "mov x17, x30"
+                    $asm.puts "hint ##{sign ? 10 : 14}" # PACIB1716, AUTIB1716
+                    $asm.puts "mov x30, x17"
+                end
+                # See MacroAssemblerARM64::validateUntaggedPtr().
+                $asm.puts "ldrb wzr, [x30]" unless sign
+            end
+        when "tagCodePtr"
+            # With a register for the modifier it signs a return address that is not in lr.
+            if $currentSettings["RETURN_ADDRESS_SIGNING"]
+                raise unless operands.size == 2 and operands.all? { |operand| operand.is_a? RegisterID }
+                $asm.puts "mov x16, #{operands[1].arm64Operand(:quad)}"
+                $asm.puts "mov x17, #{operands[0].arm64Operand(:quad)}"
+                $asm.puts "hint #10" # PACIB1716
+                $asm.puts "mov #{operands[0].arm64Operand(:quad)}, x17"
+            end
+        when "removeCodePtrTag"
+            if $currentSettings["RETURN_ADDRESS_SIGNING"]
+                raise unless operands.size == 1 and operands[0].is_a? RegisterID
+                $asm.puts "mov x17, x30"
+                $asm.puts "mov x30, #{operands[0].arm64Operand(:quad)}"
+                $asm.puts "hint #7" # XPACLRI
+                $asm.puts "mov #{operands[0].arm64Operand(:quad)}, x30"
+                $asm.puts "mov x30, x17"
+            end
         when "cieq", "cbeq"
             emitARM64Compare(operands, :word, "ne")
         when "cpeq"
@@ -1502,7 +1599,7 @@ class Instruction
         when "pcrtoaddr"
             labelRef = operands[0]
             register = operands[1].arm64Operand(:quad)
-            if labelRef.externOrGlobal?
+            if labelRef.externOrGlobal? or labelRef.label.section != $asm.section
                 $asm.putStr("#if OS(DARWIN)")
                 $asm.puts "adrp #{register}, #{labelRef.asmLabel}@PAGE"
                 $asm.puts "add #{register}, #{register}, #{labelRef.asmLabel}@PAGEOFF"

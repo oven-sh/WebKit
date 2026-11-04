@@ -35,6 +35,7 @@
 #import <WebCore/NSURLUtilities.h>
 #import <WebCore/ShareData.h>
 #import <pal/spi/mac/QuarantineSPI.h>
+#import <wtf/Borrow.h>
 #import <wtf/MainThread.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/RunLoop.h>
@@ -267,13 +268,13 @@ static void appendFilesAsShareableURLs(RetainPtr<NSMutableArray>&& shareDataArra
         RetainPtr<NSData> fileData;
     };
     auto fileWriteTasks = files.map([](auto& file) {
-        return FileWriteTask { file.fileName.isolatedCopy(), file.fileData->createNSData() };
+        return FileWriteTask { file.fileName.isolatedCopy(), protect(file.fileData)->createNSData() };
     });
 
     auto queue = WorkQueue::create("com.apple.WebKit.WKShareSheet.ShareableFileWriter"_s);
     queue->dispatch([shareDataArray = WTF::move(shareDataArray), fileWriteTasks = WTF::move(fileWriteTasks), temporaryDirectory = retainPtr(temporaryDirectory), usePlaceholderFiles, completionHandler = WTF::move(completionHandler)]() mutable {
         RetainPtr fileURLs = adoptNS([[NSMutableArray alloc] initWithCapacity:fileWriteTasks.size()]);
-        for (auto& fileWriteTask : fileWriteTasks) {
+        for (auto& fileWriteTask : borrow(fileWriteTasks)) {
             RetainPtr fileURL = [WKShareSheet writeFileToShareableURL:WebCore::ResourceResponseBase::sanitizeSuggestedFilename(fileWriteTask.fileName).createNSString().get() data:fileWriteTask.fileData.get() temporaryDirectory:temporaryDirectory.get()];
             if (!fileURL)
                 continue;
@@ -284,7 +285,8 @@ static void appendFilesAsShareableURLs(RetainPtr<NSMutableArray>&& shareDataArra
         RunLoop::mainSingleton().dispatch([completionHandler = WTF::move(completionHandler), shareDataArray = WTF::move(shareDataArray), fileURLs = WTF::move(fileURLs), usePlaceholderFiles] mutable {
             if (usePlaceholderFiles) {
                 RetainPtr placeholderShareDataArray = adoptNS([[NSMutableArray alloc] initWithCapacity:[fileURLs count]]);
-                for (NSURL *fileURL in fileURLs.get()) {
+                // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+                for (SUPPRESS_UNRETAINED_LOCAL NSURL *fileURL in fileURLs.get()) {
 #if PLATFORM(IOS_FAMILY)
                     RetainPtr item = adoptNS([[WKShareSheetFileItemProvider alloc] initWithURL:fileURL]);
 #else

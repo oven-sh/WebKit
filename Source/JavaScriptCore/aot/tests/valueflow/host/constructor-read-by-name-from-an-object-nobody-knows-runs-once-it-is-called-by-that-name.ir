@@ -1,0 +1,15 @@
+# handedIn.constructor(1)
+# constructor-read-by-name-from-an-object-nobody-knows-is-held.ir with the call: `x.constructor(..)` calls what the read of that name has handed out.
+# RUN: valueflow-solve used
+# CHECK: run BigInt
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = PropGet v1 key="constructor"
+    v3 = Integer integer=1
+    v4 = Call v2, v1, v3 calleeKey="constructor"
+    Return
+}

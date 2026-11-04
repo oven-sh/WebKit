@@ -1,0 +1,69 @@
+# FORM: AsRead
+# OPTIONS: limit=MaxLayoutsInType:3
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Body" {{*}}observedUses=[ReachesTypedParse]
+# CHECK: function f1
+# CHECK: L0 = Check v0 expectedType=L0
+# RUN(SOLVE): valueflow-solve unreached
+# SOLVE-NOT: unreached f1
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=80 kind=Parameter
+typesite w1 module=m0 position=90 kind=Parameter
+typesite w2 module=m0 position=100 kind=Parameter
+typesite w3 module=m0 position=110 kind=Parameter
+typesite w4 module=m0 position=120 kind=Parameter
+layout L0 name="Body" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}]
+layout L1 name="First" fields=[{key="first" declared={type=string} flags=[IsRequired]}]
+layout L2 name="Second" fields=[{key="second" declared={type=string} flags=[IsRequired]}]
+layout L3 name="Third" fields=[{key="third" declared={type=string} flags=[IsRequired]}]
+layout L4 name="Fourth" fields=[{key="fourth" declared={type=string} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = String string="a"
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v2
+    v6 = String string="{\"id\":2,\"name\":\"b\"}"
+    v7 = Builtin builtin=JSON
+    v8 = Builtin builtin=JSONParse
+    v9 = Call v8, v7, v6
+    v10 = NewClosure function=f1
+    v11 = Call v10, -, v9
+    v12 = String string="k"
+    v13 = NewObject -, v12 layout=L1 fields=[0]
+    v14 = NewClosure function=f2
+    v15 = Call v14, -, v13
+    v16 = NewObject -, v12 layout=L2 fields=[0]
+    v17 = NewClosure function=f3
+    v18 = Call v17, -, v16
+    v19 = NewObject -, v12 layout=L3 fields=[0]
+    v20 = NewClosure function=f4
+    v21 = Call v20, -, v19
+    v22 = NewObject -, v12 layout=L4 fields=[0]
+    v23 = NewClosure function=f5
+    v24 = Call v23, -, v22
+    Return
+}
+function f1 name="handle" flags=[IsChecked] parameters=[{type=L0 site=w0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="name"
+    Return v1
+}
+function f2 name="first" flags=[IsChecked] parameters=[{type=L1 site=w1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="first"
+    Return v1
+}
+function f3 name="second" flags=[IsChecked] parameters=[{type=L2 site=w2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="second"
+    Return v1
+}
+function f4 name="third" flags=[IsChecked] parameters=[{type=L3 site=w3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="third"
+    Return v1
+}
+function f5 name="fourth" flags=[IsChecked] parameters=[{type=L4 site=w4}] results=[{type=anything}] {
+    v1 = PropGet v0 key="fourth"
+    Return v1
+}

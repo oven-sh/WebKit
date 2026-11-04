@@ -1,0 +1,48 @@
+# A literal whose syntax is valid and whose pattern cannot be built throws a SyntaxError where it is evaluated, and a handler around it catches the error
+# FORM: AsRead
+# RUN: pass CheckRegExpLiterals
+# CHECK: outcome: Changed
+# RUN(BUILD): compile
+# BUILD-NOT: diagnostic
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    Return
+}
+function f1 name="longerThanAnyString" results=[{type=anything}] {
+    v0 = NewRegExp pattern="a{4294967295}a"
+    v1 = PropGet v0 key="source"
+    Return v1
+# CHECK: Builtin builtin=SyntaxError
+# CHECK-NEXT: String string="Invalid regular expression: pattern exceeds string length limits"
+# CHECK-NEXT: Construct
+# CHECK-NEXT: Throw
+# CHECK-NOT: NewRegExp
+}
+function f2 name="underHandler" results=[{type=anything}] {
+  b0() handler=b2():
+    v0 = NewRegExp pattern="(?=.{4294967295}.)" regExpFlags=[Global]
+    Jump -> next b1()
+  b1():
+    Return v0
+  b2() role=CatchHandler:
+    v1 = CatchValue
+    Return v1
+# CHECK: handler=
+# CHECK-NEXT: Builtin builtin=SyntaxError
+# CHECK-NEXT: String string="Invalid regular expression: pattern exceeds string length limits"
+# CHECK-NEXT: Construct
+# CHECK-NEXT: Throw
+# CHECK: CatchValue
+# CHECK-NOT: NewRegExp
+}
+function f3 name="asLongAsAString" results=[{type=anything}] {
+    v0 = NewRegExp pattern="a{4294967295}"
+    Return v0
+# CHECK: NewRegExp pattern="a{4294967295}"
+# CHECK-NOT: Throw
+}

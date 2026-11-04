@@ -29,6 +29,7 @@
 #include <wtf/DataLog.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/PageBlock.h>
+#include <wtf/ParkingLot.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
 
@@ -182,13 +183,40 @@ void AutomaticThread::join()
         m_isRunningCondition.wait(*m_lock);
 }
 
+#if ENABLE(AOT)
+bool AutomaticThread::tryEnsureUnderlyingThread(const AbstractLocker& locker)
+{
+    if (!m_hasUnderlyingThread)
+        start(locker, FailedCreation::IsReported);
+    return m_hasUnderlyingThread;
+}
+
+bool AutomaticThread::s_threadsSayWhenTheyAreUp { false };
+
+void AutomaticThread::setThreadsSayWhenTheyAreUp()
+{
+    s_threadsSayWhenTheyAreUp = true;
+}
+
+void AutomaticThread::waitUntilIsUp(const AbstractLocker&)
+{
+    while (s_threadsSayWhenTheyAreUp && m_hasUnderlyingThread && !m_isUp)
+        m_isUpCondition.wait(*m_lock);
+}
+
+void AutomaticThread::start(const AbstractLocker&, FailedCreation failedCreation)
+#else
 void AutomaticThread::start(const AbstractLocker&)
+#endif
 {
     RELEASE_ASSERT(m_isRunning);
     
     RefPtr<AutomaticThread> preserveThisForThread = this;
     
     m_hasUnderlyingThread = true;
+#if ENABLE(AOT)
+    m_isUp = false;
+#endif
 
     auto stackSpec = stackSpecification();
     switch (stackSpec.kind()) {
@@ -202,15 +230,30 @@ void AutomaticThread::start(const AbstractLocker&)
         break;
     }
 
+#if ENABLE(AOT)
+    auto entryPoint =
+#else
     Thread::create(
         name(),
+#endif
         [=, this] () {
             if (verbose)
                 dataLog(RawPointer(this), ": Running automatic thread!\n");
             
             RefPtr<AutomaticThread> thread = preserveThisForThread;
             thread->threadDidStart();
-            
+
+#if ENABLE(AOT)
+            if (s_threadsSayWhenTheyAreUp) [[unlikely]] {
+                // A park whose validation fails allocates this thread's ParkingLot data and the address's bucket, and does not park.
+                for (const void* address : { static_cast<const void*>(m_lock.get()), static_cast<const void*>(&m_waitCondition) })
+                    ParkingLot::parkConditionally(address, [] { return false; }, [] { }, TimeWithDynamicClockType(MonotonicTime::infinity()));
+                Locker locker { *m_lock };
+                m_isUp = true;
+                m_isUpCondition.notifyAll();
+            }
+#endif
+
             if (ASSERT_ENABLED) {
                 Locker locker { *m_lock };
                 ASSERT(m_condition->contains(locker, this));
@@ -219,6 +262,10 @@ void AutomaticThread::start(const AbstractLocker&)
             auto stopImpl = [&] (const AbstractLocker& locker) {
                 thread->threadIsStopping(locker);
                 thread->m_hasUnderlyingThread = false;
+#if ENABLE(AOT)
+                if (s_threadsSayWhenTheyAreUp) [[unlikely]]
+                    m_isUpCondition.notifyAll();
+#endif
             };
             
             auto stopPermanently = [&] (const AbstractLocker& locker) {
@@ -306,7 +353,20 @@ void AutomaticThread::start(const AbstractLocker&)
                 }
                 RELEASE_ASSERT(result == WorkResult::Continue);
             }
+#if ENABLE(AOT)
+        };
+
+    if (Thread::survivesFailedCreation() && (failedCreation == FailedCreation::IsReported || isOptional())) {
+        if (RefPtr thread = Thread::tryCreate(name(), WTF::move(entryPoint), m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec))
+            thread->detach();
+        else
+            m_hasUnderlyingThread = false;
+        return;
+    }
+    Thread::create(name(), WTF::move(entryPoint), m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec)->detach();
+#else
         }, m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec)->detach();
+#endif
 }
 
 void AutomaticThread::threadDidStart()

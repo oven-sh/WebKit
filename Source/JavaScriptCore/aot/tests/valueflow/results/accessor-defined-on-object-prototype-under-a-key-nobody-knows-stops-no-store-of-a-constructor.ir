@@ -1,0 +1,41 @@
+# class Kept { constructor(v) { this.a = v } }  new Kept(1).a;  Object.prototype.__defineSetter__(someName, taker); Object.prototype.__defineGetter__(someName, giver)
+# An accessor that an object inherits keeps a store from creating a property of the object, so the walk through a constructor asks what lies above the object under the name that is stored.
+# Nobody knows the name under which the two accessors are defined. Compiled code relies on Object.prototype having nothing under `a`, so the run time has locked that place and refuses
+# the definition if the name is `a`: the lookup of the rules leaves a locked location out, and so does the walk. Every Kept has its field from its creation.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Kept" {{*}}initialization=SetAtCreation{{*}}constructorOrders=[{fields=[0]}] fieldCreation=OnlyAtConstruction
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Kept" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Integer integer=1
+    v4 = Construct v2, -, v3
+    v5 = PropGet v4 key="a"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="someName" [isFreeName]
+    v8 = Builtin builtin=ObjectPrototype
+    v9 = NewClosure function=f2
+    v10 = PropGet v8 key="__defineSetter__"
+    v11 = Call v10, v8, v7, v9 calleeKey="__defineSetter__"
+    v12 = NewClosure function=f3
+    v13 = PropGet v8 key="__defineGetter__"
+    v14 = Call v13, v8, v7, v12 calleeKey="__defineGetter__"
+    Return
+}
+function f1 name="Kept" module=m0 kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="a" mode=Strict
+    Return v3
+}
+function f2 name="taker" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="giver" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}

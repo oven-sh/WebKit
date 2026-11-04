@@ -1,0 +1,37 @@
+# A loop variable that starts with a set of layouts longer than the limit and gets a member of the set each turn keeps the set. A layout from outside would make the set longer still, so that variable is any object
+# FORM: Prepared
+# OPTIONS: limit=MaxLayoutsInType:4
+# RUN: pass RetypeValues
+# LOSS: MaxLayoutsInType f1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0
+layout L1
+layout L2
+layout L3
+layout L4
+layout L5
+
+function f0 name="memberOfTheSet" parameters=[{type=boolean}, {type=L0|L1|L2|L3|L4}, {type=L1}] results=[{type=anything}] {
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v2)
+  b3():
+    Return v3
+# CHECK: b1(v3: L0|L1|L2|L3|L4):
+}
+
+function f1 name="layoutFromOutside" parameters=[{type=boolean}, {type=L0|L1|L2|L3|L4}, {type=L5}] results=[{type=anything}] {
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v2)
+  b3():
+    Return v3
+# CHECK: b1(v3: object):
+}

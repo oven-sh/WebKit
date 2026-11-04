@@ -1,0 +1,23 @@
+# `{ z: 1, ...source }`: the copy gets the keys of its source in the order in which the source got them, a symbol where it stands among the names
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Source" {{*}}constructorOrders=[{fields=[1, 0, 2]}]
+# CHECK: layout L1 name="Copy" {{*}}constructorOrders=[{fields=[3]}, {fields=[3, 1, 0, 2]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Source" fields=[{key="a" declared={type=undefined|number}}, {key=@@iterator declared={type=undefined|number}}, {key="b" declared={type=undefined|number}}]
+layout L1 kind=Record name="Copy" fields=[{key="a" declared={type=undefined|number}}, {key=@@iterator declared={type=undefined|number}}, {key="b" declared={type=undefined|number}}, {key="z" declared={type=undefined|number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Double number=1.5
+    v2 = NewObject -, v1, v1, v1 layout=L0 fields=[1, 0, 2]
+    v3 = FinishObject v2
+    v4 = NewObject -, v1 layout=L1 fields=[3]
+    CopyDataProperties v4, v3
+    v6 = FinishObject v4
+    v7 = Call v0, -, v6
+    Return v7
+}
+function f1 name="keep" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

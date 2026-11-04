@@ -39,6 +39,7 @@
 #include "LegacyRenderSVGViewportContainer.h"
 #include "LocalFrame.h"
 #include "MutableStyleProperties.h"
+#include "NaturalDimensions.h"
 #include "NodeName.h"
 #include "RenderBoxInlines.h"
 #include "RenderObjectInlines.h"
@@ -72,7 +73,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGSVGElement);
 
 inline SVGSVGElement::SVGSVGElement(const QualifiedName& tagName, Document& document)
-    : SVGGraphicsElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this), TypeFlag::HasDidMoveToNewDocument)
+    : SVGGraphicsElement(tagName, document, PropertyRegistry::singleton(), TypeFlag::HasDidMoveToNewDocument)
     , SVGFitToViewBox(this)
     , m_timeContainer(SMILTimeContainer::create(*this))
 {
@@ -118,7 +119,7 @@ void SVGSVGElement::didMoveToNewDocument(Document& oldDocument, Document& newDoc
 SVGViewSpec& SVGSVGElement::currentView()
 {
     if (!m_viewSpec)
-        m_viewSpec = SVGViewSpec::create(*this);
+        lazyInitialize(m_viewSpec, SVGViewSpec::create(*this));
     return *m_viewSpec;
 }
 
@@ -338,38 +339,38 @@ void SVGSVGElement::collectExtraStyleForPresentationalHints(MutableStyleProperti
             CSSValueListBuilder arguments;
             for (double number : { matrix.a(), matrix.b(), matrix.c(), matrix.d(), matrix.e(), matrix.f() })
                 arguments.append(CSSPrimitiveValue::create(number));
-            functions.append(CSSFunctionValue::create(CSSValueMatrix, WTF::move(arguments)));
+            functions.append(CSSFunctionValue::create(CSSValueID::Matrix, WTF::move(arguments)));
             break;
         }
         case SVGTransformValue::SVG_TRANSFORM_TRANSLATE:
-            functions.append(CSSFunctionValue::create(CSSValueTranslate, px(matrix.e()), px(matrix.f())));
+            functions.append(CSSFunctionValue::create(CSSValueID::Translate, px(matrix.e()), px(matrix.f())));
             break;
         case SVGTransformValue::SVG_TRANSFORM_SCALE:
-            functions.append(CSSFunctionValue::create(CSSValueScale, CSSPrimitiveValue::create(matrix.a()), CSSPrimitiveValue::create(matrix.d())));
+            functions.append(CSSFunctionValue::create(CSSValueID::Scale, CSSPrimitiveValue::create(matrix.a()), CSSPrimitiveValue::create(matrix.d())));
             break;
         case SVGTransformValue::SVG_TRANSFORM_ROTATE: {
             // CSS rotate() has no center argument, so rotate(a, cx, cy) becomes translate(cx, cy) rotate(a) translate(-cx, -cy).
             auto center = value.rotationCenter();
             bool hasCenter = !center.isZero();
             if (hasCenter)
-                functions.append(CSSFunctionValue::create(CSSValueTranslate, px(center.x()), px(center.y())));
-            functions.append(CSSFunctionValue::create(CSSValueRotate, deg(value.angle())));
+                functions.append(CSSFunctionValue::create(CSSValueID::Translate, px(center.x()), px(center.y())));
+            functions.append(CSSFunctionValue::create(CSSValueID::Rotate, deg(value.angle())));
             if (hasCenter)
-                functions.append(CSSFunctionValue::create(CSSValueTranslate, px(-center.x()), px(-center.y())));
+                functions.append(CSSFunctionValue::create(CSSValueID::Translate, px(-center.x()), px(-center.y())));
             break;
         }
         case SVGTransformValue::SVG_TRANSFORM_SKEWX:
-            functions.append(CSSFunctionValue::create(CSSValueSkewX, deg(value.angle())));
+            functions.append(CSSFunctionValue::create(CSSValueID::SkewX, deg(value.angle())));
             break;
         case SVGTransformValue::SVG_TRANSFORM_SKEWY:
-            functions.append(CSSFunctionValue::create(CSSValueSkewY, deg(value.angle())));
+            functions.append(CSSFunctionValue::create(CSSValueID::SkewY, deg(value.angle())));
             break;
         }
     }
 
     if (functions.isEmpty())
         return;
-    addPropertyToPresentationalHintStyle(style, CSSPropertyTransform, CSSTransformListValue::create(WTF::move(functions)));
+    addPropertyToPresentationalHintStyle(style, CSSPropertyID::Transform, CSSTransformListValue::create(WTF::move(functions)));
 }
 
 Ref<NodeList> SVGSVGElement::collectIntersectionOrEnclosureList(SVGRect& rect, SVGElement* referenceElement, bool (*checkFunction)(SVGElement&, SVGRect&))
@@ -650,7 +651,7 @@ void SVGSVGElement::unpauseAnimations()
 bool SVGSVGElement::resumePausedAnimationsIfNeeded(const IntRect& visibleRect)
 {
     bool animationEnabled = document().page() ? document().page()->imageAnimationEnabled() : true;
-    if (!animationEnabled || !renderer() || !renderer()->isVisibleInDocumentRect(visibleRect))
+    if (!animationEnabled || !renderer() || !protect(renderer())->isVisibleInDocumentRect(visibleRect))
         return false;
 
     unpauseAnimations();
@@ -687,8 +688,7 @@ bool SVGSVGElement::hasTransformRelatedAttributes() const
     if (isOutermostSVGSVGElement() ? !!supplementalTransform() : SVGGraphicsElement::hasTransformRelatedAttributes())
         return true;
 
-    // 'x' / 'y' / 'viewBox' lead to a non-identity supplementalLayerTransform in RenderSVGViewportContainer
-    return (hasAttribute(SVGNames::xAttr) || hasAttribute(SVGNames::yAttr)) || (hasAttribute(SVGNames::viewBoxAttr) && !hasEmptyViewBox());
+    return x().valueInSpecifiedUnits() || y().valueInSpecifiedUnits() || !viewBox().isEmpty();
 }
 
 static bool isEmbeddedThroughSVGImage(const SVGSVGElement& element)
@@ -700,16 +700,15 @@ bool SVGSVGElement::hasSynthesizedViewBoxForSVGImage() const
 {
     // An SVG document embedded through SVGImage is resized to the container size chosen by the
     // embedder. Without an explicit viewBox the content has to stretch to that size, which is
-    // modelled by synthesizing a viewBox from the intrinsic size, see currentViewBoxRect().
+    // modeled by synthesizing a viewBox from the intrinsic size, see currentViewBoxRect().
     return !m_useCurrentView && viewBox().isEmpty() && isEmbeddedThroughSVGImage(*this);
 }
 
-bool SVGSVGElement::viewBoxDisablesPainting()
+bool SVGSVGElement::viewBoxDisablesPainting() const
 {
-    if (!hasEmptyViewBox())
-        return false;
-
-    return m_useCurrentView ? currentView().hasEmptyViewBox() : true;
+    if (m_useCurrentView)
+        return m_viewSpec && m_viewSpec->hasEmptyViewBox();
+    return hasEmptyViewBox();
 }
 
 FloatRect SVGSVGElement::currentViewBoxRect() const
@@ -768,7 +767,7 @@ FloatSize SVGSVGElement::computeCurrentViewportSizeExcludingZoom() const
             viewportSize = svgRoot->contentBoxRect().size() / svgRoot->style().usedZoom();
         else if (auto* svgViewportContainer = dynamicDowncast<LegacyRenderSVGViewportContainer>(renderer()))
             viewportSize = svgViewportContainer->viewport().size();
-        else if (auto* svgRoot = dynamicDowncast<RenderSVGRoot>(renderer()))
+        else if (CheckedPtr svgRoot = dynamicDowncast<RenderSVGRoot>(renderer()))
             viewportSize = svgRoot->contentBoxRect().size() / svgRoot->style().usedZoom();
         else if (auto* svgViewportContainer = dynamicDowncast<RenderSVGViewportContainer>(renderer()))
             viewportSize = svgViewportContainer->viewport().size();
@@ -815,6 +814,25 @@ float SVGSVGElement::intrinsicHeight() const
     return height().value(lengthContext);
 }
 
+NaturalDimensions SVGSVGElement::naturalDimensions() const
+{
+    NaturalDimensions naturalDimensions;
+
+    if (hasIntrinsicWidth())
+        naturalDimensions.width = intrinsicWidth();
+    if (hasIntrinsicHeight())
+        naturalDimensions.height = intrinsicHeight();
+
+    // A ratio from a width or height of 0 would count as degenerate so the viewBox's size is used instead.
+    // See https://github.com/w3c/csswg-drafts/issues/6286#issuecomment-866986544.
+    if (naturalDimensions.width.value_or(0) > 0 && naturalDimensions.height.value_or(0) > 0)
+        naturalDimensions.aspectRatio = FloatSize { *naturalDimensions.width, *naturalDimensions.height };
+    else if (auto viewBoxSize = viewBox().size(); !viewBoxSize.isEmpty())
+        naturalDimensions.aspectRatio = viewBoxSize;
+
+    return naturalDimensions;
+}
+
 bool SVGSVGElement::hasIntrinsicDimensions() const
 {
     if (hasIntrinsicWidth() && hasIntrinsicHeight())
@@ -824,21 +842,21 @@ bool SVGSVGElement::hasIntrinsicDimensions() const
 
 AffineTransform SVGSVGElement::viewBoxToViewTransform(float viewWidth, float viewHeight) const
 {
+    SVGPreserveAspectRatioValue none { SVGPreserveAspectRatioValue::SVG_PRESERVEASPECTRATIO_NONE, SVGPreserveAspectRatioValue::SVG_MEETORSLICE_MEET };
+
     if (!m_useCurrentView || !m_viewSpec) {
         auto currentViewBox = currentViewBoxRect();
 
         // If we synthesized a viewBox (no explicit viewBox but embedded through SVGImage),
         // we should also synthesize preserveAspectRatio="none" to allow stretching.
-        if (hasSynthesizedViewBoxForSVGImage()) {
-            auto preserveAspectRatio = SVGPreserveAspectRatioValue(SVGPreserveAspectRatioValue::SVG_PRESERVEASPECTRATIO_NONE, SVGPreserveAspectRatioValue::SVG_MEETORSLICE_MEET);
-            return SVGFitToViewBox::viewBoxToViewTransform(currentViewBox, preserveAspectRatio, viewWidth, viewHeight);
-        }
+        if (hasSynthesizedViewBoxForSVGImage() || m_ignoresPreserveAspectRatioForSVGImage)
+            return SVGFitToViewBox::viewBoxToViewTransform(currentViewBox, none, viewWidth, viewHeight);
 
         return SVGFitToViewBox::viewBoxToViewTransform(currentViewBox, preserveAspectRatio(), viewWidth, viewHeight);
     }
 
     RefPtr viewSpec = m_viewSpec;
-    AffineTransform transform = SVGFitToViewBox::viewBoxToViewTransform(currentViewBoxRect(), viewSpec->preserveAspectRatio(), viewWidth, viewHeight);
+    AffineTransform transform = SVGFitToViewBox::viewBoxToViewTransform(currentViewBoxRect(), m_ignoresPreserveAspectRatioForSVGImage ? none : viewSpec->preserveAspectRatio(), viewWidth, viewHeight);
     transform *= protect(viewSpec->transform())->concatenate().value_or(identity);
     return transform;
 }
@@ -864,6 +882,20 @@ SVGSVGElement* SVGSVGElement::findRootAnchor(StringView fragmentIdentifier) cons
     return nullptr;
 }
 
+void SVGSVGElement::invalidateCurrentView(RenderElement& renderer)
+{
+    if (renderer.document().settings().layerBasedSVGEngineEnabled()) {
+        if (CheckedPtr svgRoot = dynamicDowncast<RenderSVGRoot>(renderer)) {
+            ASSERT(svgRoot->viewportContainer());
+            protect(svgRoot->viewportContainer())->updateHasSVGTransformFlags();
+        }
+        updateSVGRendererForElementChange();
+        return;
+    }
+
+    LegacyRenderSVGResource::markForLayoutAndParentResourceInvalidation(renderer);
+}
+
 bool SVGSVGElement::setViewForFragment(StringView fragmentIdentifier)
 {
     CheckedPtr renderer = downcast<RenderLayerModelObject>(this->renderer());
@@ -875,19 +907,6 @@ bool SVGSVGElement::setViewForFragment(StringView fragmentIdentifier)
     bool hadUseCurrentView = m_useCurrentView;
     m_useCurrentView = false;
 
-    auto invalidateView = [&](RenderElement& renderer) {
-        if (renderer.document().settings().layerBasedSVGEngineEnabled()) {
-            if (CheckedPtr svgRoot = dynamicDowncast<RenderSVGRoot>(renderer)) {
-                ASSERT(svgRoot->viewportContainer());
-                protect(svgRoot->viewportContainer())->updateHasSVGTransformFlags();
-            }
-            updateSVGRendererForElementChange();
-            return;
-        }
-
-        LegacyRenderSVGResource::markForLayoutAndParentResourceInvalidation(renderer);
-    };
-
     if (fragmentIdentifier.startsWith("svgView("_s)) {
         if (!view)
             view = currentView(); // Create the SVGViewSpec.
@@ -896,7 +915,7 @@ bool SVGSVGElement::setViewForFragment(StringView fragmentIdentifier)
         else
             view->reset();
         if (renderer && (hadUseCurrentView || m_useCurrentView))
-            invalidateView(*renderer);
+            invalidateCurrentView(*renderer);
         return m_useCurrentView;
     }
 
@@ -921,7 +940,7 @@ bool SVGSVGElement::setViewForFragment(StringView fragmentIdentifier)
 
             rootElement->inheritViewAttributes(*viewElement);
             if (CheckedPtr renderer = rootElement->renderer())
-                invalidateView(*renderer);
+                invalidateCurrentView(*renderer);
             m_currentViewFragmentIdentifier = fragmentIdentifier.toString();
             return true;
         }
@@ -969,10 +988,12 @@ void SVGSVGElement::inheritViewAttributes(const SVGViewElement& viewElement)
     Ref view = currentView();
     m_useCurrentView = true;
 
-    if (viewElement.hasAttribute(SVGNames::viewBoxAttr))
+    if (viewElement.hasValidViewBox())
         view->setViewBox(viewElement.viewBox());
-    else
+    else if (hasValidViewBox())
         view->setViewBox(viewBox());
+    else
+        view->resetViewBox();
 
     if (viewElement.hasAttribute(SVGNames::preserveAspectRatioAttr))
         view->setPreserveAspectRatio(viewElement.preserveAspectRatio());

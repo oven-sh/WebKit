@@ -1,0 +1,49 @@
+# A direct call is edges: arguments into the callee's parameters once the body is reached, the callee's results and what it throws from the start. The body says which functions it enters.
+# RUN: valueflow-body f0 f3
+# CHECK: body f0: nodes=4 sites=0 edges=3 edgesOnceReached=2 seeds=1 statements=1
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 parameter v1
+# CHECK-NEXT: n2 result
+# CHECK-NEXT: n3 thrown
+# CHECK-NEXT: edge f2.result0 -> n2
+# CHECK-NEXT: edge f1.thrown -> n3
+# CHECK-NEXT: edge f2.thrown -> n3
+# CHECK-NEXT: reached: edge n0 -> f1.parameter0
+# CHECK-NEXT: reached: edge n1 -> f1.parameter1
+# CHECK-NEXT: reached: seed n3 <- unknown
+# CHECK-NEXT: reached: enters f1
+# CHECK-NEXT: reached: enters f2
+# CHECK-NEXT: PropGet v5 (f1.result1) throws n3
+# CHECK-NEXT: body f3: nodes=4 sites=0 edges=3 edgesOnceReached=2 seeds=1 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 result
+# CHECK-NEXT: n3 thrown
+# CHECK-NEXT: edge f1.result0 -> n1
+# CHECK-NEXT: edge f1.result1 -> n2
+# CHECK-NEXT: edge f1.thrown -> n3
+# CHECK-NEXT: reached: edge n0 -> f1.parameter0
+# CHECK-NEXT: reached: edge n0 -> f1.parameter1
+# CHECK-NEXT: reached: seed n3 <- unknown
+# CHECK-NEXT: reached: enters f1
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="calls" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f1
+    v3 = ResultAt v2 index=1
+    v4 = CallDirect function=f2
+    v5 = PropGet v3 key="a"
+    Return v4
+}
+function f1 name="twoResults" parameters=[{type=anything}, {type=anything}] results=[{type=anything}, {type=anything}] {
+    v2 = Results v0, v1
+    Return v2
+}
+function f2 name="oneResult" results=[{type=anything}] {
+    Return
+}
+function f3 name="returnsDirectCallWhole" parameters=[{type=anything}] results=[{type=anything}, {type=anything}] {
+    v1 = CallDirect v0, v0 function=f1
+    Return v1
+}

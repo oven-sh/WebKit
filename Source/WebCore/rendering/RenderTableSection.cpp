@@ -38,6 +38,7 @@
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderChildIterator.h"
+#include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderLayoutState.h"
 #include "RenderObjectInlines.h"
@@ -532,7 +533,7 @@ LayoutUnit RenderTableSection::distributeExtraLogicalHeightToRows(LayoutUnit ext
     return extraLogicalHeight - remainingExtraLogicalHeight;
 }
 
-static bool NODELETE shouldFlexCellChild(const RenderTableCell& cell, const RenderBox& cellDescendant)
+static bool LEGACY_NODELETE shouldFlexCellChild(const RenderTableCell& cell, const RenderBox& cellDescendant)
 {
     if (!cell.style().logicalHeight().isSpecified())
         return false;
@@ -1008,18 +1009,18 @@ void RenderTableSection::paint(PaintInfo& paintInfo, const LayoutPoint& paintOff
     if (pushedClip)
         popContentsClip(paintInfo, phase, adjustedPaintOffset);
 
-    if ((phase == PaintPhase::Outline || phase == PaintPhase::SelfOutline) && style().usedVisibility() == Visibility::Visible)
+    if ((phase == PaintPhase::Outline || phase == PaintPhase::SelfOutline) && usedStyle().visibility() == UsedVisibility::Visible)
         paintOutline(paintInfo, LayoutRect(adjustedPaintOffset, borderBoxSize()));
 }
 
-static inline bool NODELETE compareCellPositions(const SingleThreadWeakPtr<RenderTableCell>& elem1, const SingleThreadWeakPtr<RenderTableCell>& elem2)
+static inline bool LEGACY_NODELETE compareCellPositions(const SingleThreadWeakPtr<RenderTableCell>& elem1, const SingleThreadWeakPtr<RenderTableCell>& elem2)
 {
     return elem1->rowIndex() < elem2->rowIndex();
 }
 
 // This comparison is used only when we have overflowing cells as we have an unsorted array to sort. We thus need
 // to sort both on rows and columns to properly repaint.
-static inline bool NODELETE compareCellPositionsWithOverflowingCells(const SingleThreadWeakPtr<RenderTableCell>& elem1, const SingleThreadWeakPtr<RenderTableCell>& elem2)
+static inline bool LEGACY_NODELETE compareCellPositionsWithOverflowingCells(const SingleThreadWeakPtr<RenderTableCell>& elem1, const SingleThreadWeakPtr<RenderTableCell>& elem2)
 {
     if (elem1->rowIndex() != elem2->rowIndex())
         return elem1->rowIndex() < elem2->rowIndex();
@@ -1173,13 +1174,13 @@ CellSpan RenderTableSection::spannedColumns(const LayoutRect& flippedRect, Shoul
 Color RenderTableSection::rowGroupBorderColor(CSSPropertyID borderColor) const
 {
     switch (borderColor) {
-    case CSSPropertyBorderTopColor:
+    case CSSPropertyID::BorderTopColor:
         return style().visitedDependentBorderTopColorApplyingColorFilter();
-    case CSSPropertyBorderRightColor:
+    case CSSPropertyID::BorderRightColor:
         return style().visitedDependentBorderRightColorApplyingColorFilter();
-    case CSSPropertyBorderBottomColor:
+    case CSSPropertyID::BorderBottomColor:
         return style().visitedDependentBorderBottomColorApplyingColorFilter();
-    case CSSPropertyBorderLeftColor:
+    case CSSPropertyID::BorderLeftColor:
         return style().visitedDependentBorderLeftColorApplyingColorFilter();
     default:
         ASSERT_NOT_REACHED();
@@ -1266,7 +1267,7 @@ void RenderTableSection::paintRowGroupBorderIfRequired(const PaintInfo& paintInf
                 Style::evaluate<LayoutUnit>(style.borderTop().width, style.usedZoomForLength(), style.deviceScaleFactor()),
             },
             BoxSide::Top,
-            CSSPropertyBorderTopColor,
+            CSSPropertyID::BorderTopColor,
             style.borderTopStyle(),
             table()->style().borderTopStyle()
         );
@@ -1282,7 +1283,7 @@ void RenderTableSection::paintRowGroupBorderIfRequired(const PaintInfo& paintInf
                 Style::evaluate<LayoutUnit>(style.borderBottom().width, style.usedZoomForLength(), style.deviceScaleFactor()),
             },
             BoxSide::Bottom,
-            CSSPropertyBorderBottomColor,
+            CSSPropertyID::BorderBottomColor,
             style.borderBottomStyle(),
             table()->style().borderBottomStyle()
         );
@@ -1298,7 +1299,7 @@ void RenderTableSection::paintRowGroupBorderIfRequired(const PaintInfo& paintInf
                 verticalRowGroupBorderHeight(cell, rowGroupRect, row),
             },
             BoxSide::Left,
-            CSSPropertyBorderLeftColor,
+            CSSPropertyID::BorderLeftColor,
             style.borderLeftStyle(),
             table()->style().borderLeftStyle()
         );
@@ -1314,7 +1315,7 @@ void RenderTableSection::paintRowGroupBorderIfRequired(const PaintInfo& paintInf
                 verticalRowGroupBorderHeight(cell, rowGroupRect, row),
             },
             BoxSide::Right,
-            CSSPropertyBorderRightColor,
+            CSSPropertyID::BorderRightColor,
             style.borderRightStyle(),
             table()->style().borderRightStyle()
         );
@@ -1325,7 +1326,7 @@ void RenderTableSection::paintRowGroupBorderIfRequired(const PaintInfo& paintInf
 
 }
 
-static BoxSide NODELETE physicalBorderForDirection(const WritingMode writingMode, CollapsedBorderSide side)
+static BoxSide LEGACY_NODELETE physicalBorderForDirection(const WritingMode writingMode, CollapsedBorderSide side)
 {
     // FIXME: Replace this with types/methods from BoxSides.h
     switch (side) {
@@ -1398,11 +1399,29 @@ void RenderTableSection::paintObject(PaintInfo& paintInfo, const LayoutPoint& pa
             row->paintShadowForRowIfNeeded(paintInfo, paintOffset);
     };
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    auto recordRowBackdrop = [&](unsigned rowIndex, PaintPhase phase) {
+        if (phase != PaintPhase::AXCustomColorCollectBackgrounds)
+            return;
+
+        CheckedPtr row = m_grid[rowIndex].rowRenderer;
+        if (!row || row->hasSelfPaintingLayer())
+            return;
+
+        auto rowPaintOffset = flipForWritingModeForChild(*row, paintOffset) + row->location();
+        auto rowBorderRect = FloatRect { LayoutRect(rowPaintOffset, row->borderBoxSize()) };
+        paintInfo.axCustomColorBackdropContext()->recordBackdrop(*row, rowBorderRect, paintInfo.paintBehavior);
+    };
+#endif
+
     auto paintContiguousCells = [&]() {
         // Draw the dirty cells in the order that they appear.
         for (unsigned r = dirtiedRows.start; r < dirtiedRows.end; r++) {
             paintRowShadow(r , paintInfo.phase);
             paintRowOutline(r, paintInfo.phase);
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+            recordRowBackdrop(r, paintInfo.phase);
+#endif
 
             for (unsigned c = dirtiedColumns.start; c < dirtiedColumns.end; c++) {
                 CellStruct& current = cellAt(r, c);
@@ -1473,6 +1492,9 @@ void RenderTableSection::paintObject(PaintInfo& paintInfo, const LayoutPoint& pa
 
         for (unsigned r = dirtiedRows.start; r < dirtiedRows.end; r++) {
             paintRowOutline(r, paintInfo.phase);
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+            recordRowBackdrop(r, paintInfo.phase);
+#endif
 
             for (unsigned c = dirtiedColumns.start; c < dirtiedColumns.end; c++) {
                 CellStruct& current = cellAt(r, c);

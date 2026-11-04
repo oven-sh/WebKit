@@ -134,8 +134,11 @@ static bool pdfDocumentContainsPrintScript(RetainPtr<CGPDFDocumentRef> pdfDocume
         return false;
 
     // The names are arbitrary. We are only interested in the values.
-    Vector<CGPDFObjectRef> objects;
-    appendValuesInPDFNameSubtreeToVector(javaScriptNameTree, objects);
+    const Vector objects = [&] {
+        Vector<CGPDFObjectRef> objects;
+        appendValuesInPDFNameSubtreeToVector(javaScriptNameTree, objects);
+        return objects;
+    }();
 
     for (auto object : objects) {
         CGPDFDictionaryRef javaScriptAction = nullptr;
@@ -149,7 +152,7 @@ static bool pdfDocumentContainsPrintScript(RetainPtr<CGPDFDocumentRef> pdfDocume
     return false;
 }
 
-void runScripts(CGPDFDocumentRef document, PrintingCallback&& callback)
+void runScripts(CGPDFDocumentRef document, NOESCAPE const PrintingCallback& callback)
 {
     if (pdfDocumentContainsPrintScript(document))
         callback();

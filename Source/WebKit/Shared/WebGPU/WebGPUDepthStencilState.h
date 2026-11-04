@@ -27,30 +27,11 @@
 
 #if ENABLE(GPU_PROCESS)
 
-#include "WebGPUStencilFaceState.h"
-#include <WebCore/WebGPUCompareFunction.h>
-#include <WebCore/WebGPUIntegralTypes.h>
-#include <WebCore/WebGPUTextureFormat.h>
-#include <optional>
+#include <WebCore/WebGPUCppAPI.h>
 
 namespace WebKit::WebGPU {
 
-struct DepthStencilState {
-    WebCore::WebGPU::TextureFormat format { WebCore::WebGPU::TextureFormat::R8unorm };
-
-    std::optional<bool> depthWriteEnabled;
-    std::optional<WebCore::WebGPU::CompareFunction> depthCompare;
-
-    StencilFaceState stencilFront;
-    StencilFaceState stencilBack;
-
-    std::optional<WebCore::WebGPU::StencilValue> stencilReadMask;
-    std::optional<WebCore::WebGPU::StencilValue> stencilWriteMask;
-
-    WebCore::WebGPU::DepthBias depthBias { 0 };
-    float depthBiasSlopeScale { 0 };
-    float depthBiasClamp { 0 };
-};
+using DepthStencilState = ::WebGPU::DepthStencilState;
 
 } // namespace WebKit::WebGPU
 

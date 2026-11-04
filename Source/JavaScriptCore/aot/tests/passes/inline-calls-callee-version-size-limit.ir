@@ -1,0 +1,41 @@
+# A copy of a callee for the function that it is given costs the whole callee, and saves a call by value: a callee over the limit is called as it is
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot limit=MaxValuesInCalleeVersion:10
+# RUN: pass InlineCalls
+# STATISTIC: CalleeVersions = 1
+# LOSS: MaxValuesInCalleeVersion x1 f3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="applyInManyOperations" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+# REPEAT: i = 2..13
+    v%(i+1) = Add v%(i), v1
+# END REPEAT
+    Return v14
+}
+function f2 name="applyWithinLimit" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    v3 = Call v0, -, v2
+    v4 = Call v0, -, v3
+    v5 = Call v0, -, v4
+    v6 = Call v0, -, v5
+    v7 = Call v0, -, v6
+    v8 = Call v0, -, v7
+    v9 = Call v0, -, v8
+    Return v9
+}
+# CHECK-LABEL: name="caller"
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK: = CallDirect {{*}} function=f4
+function f3 name="caller" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f0
+    v2 = CallDirect v1, v0 function=f1
+    v3 = CallDirect v1, v2 function=f2
+    Return v3
+}
+# CHECK: function f4 name="applyWithinLimit"{{*}}role=CalleeVersion

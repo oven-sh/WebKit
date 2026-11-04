@@ -1,0 +1,18 @@
+# A character of a constant text is a constant. Past the end the read asks String.prototype, so it stays.
+# FORM: AsRead
+# RUN: pipeline FoldConstants
+# OPTIONS: only-passes=FoldConstants
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="hello"
+    v1 = Integer integer=1
+    v2 = ElemGet v0, v1 @10
+# CHECK: v2: "e" = String string="e"
+    v3 = Integer integer=5
+    v4 = ElemGet v0, v3 @11
+# CHECK: v4{{*}}= ElemGet
+    Return v2
+}

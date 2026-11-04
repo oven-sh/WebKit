@@ -1,0 +1,27 @@
+# `holder.self = holder` behind a branch that has tested the value. The store asks for a layout of the receiver and for a type that the field holds, and the branch has answered the second.
+# Only undefined and null fit the field in both layouts, and those are no objects: no value passes both tests, so the store gets no tests and stays by name
+# FORM: Prepared optimizing
+# OPTIONS: check=VerifyEachPass
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Count" fields=[{key="self" declared={type=undefined|null|number|L0} flags=[IsEnforced]}, {key="mark" declared={type=number} flags=[IsEnforced]}] flow={baseState=None allocationClasses=[0] constructorOrders=[{}]}
+layout L1 name="Link" fields=[{key="self" declared={type=undefined|null|L1|L2} flags=[IsEnforced]}] flow={baseState=None allocationClasses=[1] constructorOrders=[{}]}
+layout L2 name="End" fields=[{key="last" declared={type=undefined|number} flags=[IsEnforced]}] flow={baseState=None allocationClasses=[2] constructorOrders=[{}]}
+
+function f0 name="nothingPassesBothTests" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything ~ undefined|null|L0|L1):
+    v1 = TypeTest v0 testedType=undefined|null
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v0, v0 key="self"
+    v3 = Undefined
+    Return v3
+  b2():
+    v4 = Undefined
+    Return v4
+# CHECK: = TypeTest v0 testedType=undefined|null
+# CHECK-NOT: = TypeTest
+# CHECK: PropSet v0, v0 key="self"
+# CHECK-NOT: PutSlot
+}

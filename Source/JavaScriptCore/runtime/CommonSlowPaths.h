@@ -225,7 +225,8 @@ static ALWAYS_INLINE void putDirectAccessorWithReify(VM& vm, JSGlobalObject* glo
         RETURN_IF_EXCEPTION(scope, void());
     }
 
-    ASSERT(canPutDirectFast(vm, originalStructureBeforePut(baseObject), propertyName, isJSFunction));
+    // llint_aot_op_new_object may have made a compiled object of the literal's first members. putDirectAccessor() adds to one as to any other object.
+    ASSERT(canPutDirectFast(vm, originalStructureBeforePut(baseObject), propertyName, isJSFunction) || originalStructureBeforePut(baseObject)->isCompiledStructure());
     scope.release();
     baseObject->putDirectAccessor(globalObject, propertyName, accessor, attribute);
 }
@@ -295,7 +296,6 @@ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_typeof);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_typeof_is_object);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_typeof_is_function);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_is_callable);
-JSC_DECLARE_COMMON_SLOW_PATH(slow_path_iterator_close_check);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_is_constructor);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_strcat);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_to_primitive);
@@ -338,9 +338,13 @@ JSC_DECLARE_COMMON_SLOW_PATH(iterator_open_try_fast_wide32);
 JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_try_fast_narrow);
 JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_try_fast_wide16);
 JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_try_fast_wide32);
-JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_index_in_frame_narrow);
-JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_index_in_frame_wide16);
-JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_index_in_frame_wide32);
+JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_fast_array_narrow);
+JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_fast_array_wide16);
+JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_fast_array_wide32);
+JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_fast_string_narrow);
+JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_fast_string_wide16);
+JSC_DECLARE_COMMON_SLOW_PATH(iterator_next_fast_string_wide32);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_iterator_close_check);
 JSC_DECLARE_COMMON_SLOW_PATH(async_iterator_open_try_fast_narrow);
 JSC_DECLARE_COMMON_SLOW_PATH(async_iterator_open_try_fast_wide16);
 JSC_DECLARE_COMMON_SLOW_PATH(async_iterator_open_try_fast_wide32);

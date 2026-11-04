@@ -1,0 +1,55 @@
+# function Emitter(this: EmitterLike) { this.capture = false }   function mark(emitter: EmitterLike) { emitter.marked = 2 }
+# 70 literals of 70 layouts are EmitterLike, and unknown code has them all, with both functions.
+# A name that is stored through a declared receiver gets a field in the layouts that the type lists. Where they are too many to give each of them room (MaxValueFlowMembersToldApart = 64), it gets one
+# only where the program names it through a type of few layouts: nothing names `marked` in that way, so it has no field.
+# What a constructor function stores into its own `this` it stores into every object that passes it: `EventEmitter.call(this)` runs for the objects of a hundred classes. So `capture` gets its field in each,
+# and in the layout of the objects that `new Emitter()` makes: only unknown code constructs with the function here, so its `this` is an object that nobody has followed and no value is listed under the name
+# LOSS: MaxValueFlowMembersToldApart x1 L0
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Made0" fields=[{key="flags"
+# CHECK-NOT: key="marked"
+# CHECK: {key="capture" {{*}} flags=[IsAddedLate
+# CHECK-NOT: key="marked"
+# CHECK: layout L69 name="Made69" fields=[{key="flags"
+# CHECK-NOT: key="marked"
+# CHECK: {key="capture" {{*}} flags=[IsAddedLate
+# CHECK-NOT: key="marked"
+# CHECK: layout L70 name="EmitterLike"
+# CHECK-NOT: IsAddedLate
+# CHECK: layout L71 kind=Instance name="Emitter" constructor=f1 fields=[{key="capture" {{*}} flags=[IsAddedLate
+# CHECK-NOT: key="marked"
+# CHECK: function f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+# REPEAT: i = 0..69
+layout L%(i) name="Made%(i)" fields=[{key="flags" declared={type=number}}, {key="own%(i)" declared={type=number}}] supertypes=[L70]
+# END REPEAT
+layout L70 name="EmitterLike" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="capture" declared={type=boolean}}, {key="marked" declared={type=number}}]
+layout L71 kind=Instance name="Emitter" constructor=f1 supertypes=[L70] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+# REPEAT: i = 0..69
+    v%(i+1) = NewObject -, v0 layout=L%(i) fields=[0]
+# END REPEAT
+    v71 = NewClosure function=f1
+    v72 = NewClosure function=f2
+    v73 = Builtin builtin=GlobalThis
+    v74 = PropGet v73 key="publish" [isFreeName]
+    v75 = Call v74, -, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38, v39, v40, v41, v42, v43, v44, v45, v46, v47, v48, v49, v50, v51, v52, v53, v54, v55, v56, v57, v58, v59, v60, v61, v62, v63, v64, v65, v66, v67, v68, v69, v70, v71, v72
+    Return
+}
+function f1 name="Emitter" flags=[HasThis] thisType={type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65|L66|L67|L68|L69|L70|L71 flags=[IsExpected]} results=[{type=anything}] constructedClass=L71 {
+  b0(v0: anything):
+    v1 = Check v0 expectedType=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65|L66|L67|L68|L69|L70|L71
+    v2 = Boolean
+    PropSet v1, v2 key="capture" mode=Strict
+    Return
+}
+function f2 name="mark" parameters=[{type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65|L66|L67|L68|L69|L70|L71 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 expectedType=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65|L66|L67|L68|L69|L70|L71
+    v2 = Integer integer=2
+    PropSet v1, v2 key="marked" mode=Strict
+    Return
+}

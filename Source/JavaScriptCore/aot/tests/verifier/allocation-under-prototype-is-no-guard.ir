@@ -1,0 +1,61 @@
+# A constructor allocates what new.target asks for: under the prototype object of another class the run time answers with another object, so a NewObject with a prototype operand is no guard for the shape it names
+# while the program has another class, below the layout or not, with instances or without (allocation-under-prototype-is-no-guard-beside-class-without-instances.ir). It is one without the operand.
+# Where flow has proven the layout, the type of the object says so and the store needs no guard.
+# What is known about new.target does not count: the narrowed value is an operand of another operation, a later pass may put the value it was narrowed from in its place, and what was named as a guard has to stay one.
+# The layout of a constructor function stays under any prototype: it is allocated for that function as new.target alone, and the run time never exchanges it.
+# A constructor function and a literal select nothing: allocation-under-prototype-is-guard-with-one-class.ir
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: OperandTypeMismatch 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Base" constructor=f0 fields=[{key="x" declared={type=anything}}] flow={baseState=None}
+layout L1 kind=Instance name="Below" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0}
+layout L2 kind=Instance name="Stranger" constructor=f2 fields=[{key="x" declared={type=anything}}] flow={baseState=None}
+layout L3 kind=Instance name="Legacy" constructor=f9 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None}
+function f0 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Below" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="Stranger" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="badNewTargetUnknown" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PutSlotOrAdd v3, v3, v1 key="x" receivers=[L0] level=Proven
+    Return v3
+}
+function f4 name="badNewTargetIsSubclass" parameters=[{type=f1}, {type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PutSlotOrAdd v3, v3, v1 key="x" receivers=[L0] level=Proven
+    Return v3
+}
+function f5 name="badClassWithoutSubclass" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    PutSlotOrAdd v3, v3, v1 key="x" receivers=[L2] level=Proven
+    Return v3
+}
+function f6 name="goodLayoutProvenByFlow" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = AssumeType v3 provenType=L0
+    PutSlotOrAdd v4, -, v1 key="x" receivers=[L0] level=Proven
+    Return v4
+}
+function f7 name="badNewTargetIsTheClass" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PutSlotOrAdd v3, v3, v1 key="x" receivers=[L0] level=Proven
+    Return v3
+}
+function f8 name="goodWithoutPrototype" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject layout=L0
+    PutSlotOrAdd v2, v2, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+}
+function f9 name="Legacy" flags=[HasThis] thisType={type=object} results=[{type=undefined}]
+function f10 name="goodLayoutOfConstructorFunction" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L3
+    v3 = NewObject v2 layout=L3
+    PutSlotOrAdd v3, v3, v1 key="x" receivers=[L3] level=Proven
+    Return v3
+}

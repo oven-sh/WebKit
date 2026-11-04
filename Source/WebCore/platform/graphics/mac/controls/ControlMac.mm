@@ -398,7 +398,7 @@ void ControlMac::drawListButton(GraphicsContext& context, const FloatRect& rect,
 
     RetainPtr cgContext = comboBoxImageBuffer->context().platformContext();
 
-    NSString *coreUIState;
+    RetainPtr<NSString> coreUIState;
     if (style.states.containsAny({ ControlStyle::State::Presenting, ControlStyle::State::ListButtonPressed }))
         coreUIState = (__bridge NSString *)kCUIStatePressed;
     else
@@ -406,7 +406,7 @@ void ControlMac::drawListButton(GraphicsContext& context, const FloatRect& rect,
     [[NSAppearance currentDrawingAppearance] _drawInRect:NSMakeRect(0, 0, comboBoxSize.width(), comboBoxSize.height()) context:cgContext.get() options:@{
         (__bridge NSString *)kCUIWidgetKey : (__bridge NSString *)kCUIWidgetButtonComboBox,
         (__bridge NSString *)kCUISizeKey : (__bridge NSString *)kCUISizeRegular,
-        (__bridge NSString *)kCUIStateKey : coreUIState,
+        (__bridge NSString *)kCUIStateKey : coreUIState.get(),
         (__bridge NSString *)kCUIUserInterfaceLayoutDirectionKey : (__bridge NSString *)kCUIUserInterfaceLayoutDirectionLeftToRight,
     }];
 
@@ -419,7 +419,7 @@ void ControlMac::drawListButton(GraphicsContext& context, const FloatRect& rect,
     comboBoxButtonContext.scale(desiredComboBoxButtonSize.width() / comboBoxButtonSize.width());
     comboBoxButtonContext.clipRoundedRect(FloatRoundedRect(FloatRect(FloatPoint::zero(), comboBoxButtonSize), CornerRadii(comboBoxButtonCornerRadii)));
     comboBoxButtonContext.translate(comboBoxButtonInset.scaled(-1));
-    comboBoxButtonContext.drawConsumingImageBuffer(WTF::move(comboBoxImageBuffer), FloatPoint::zero(), ImagePaintingOptions { ImageOrientation::Orientation::OriginBottomRight });
+    comboBoxButtonContext.drawConsumingImageBuffer(WTF::move(comboBoxImageBuffer), FloatPoint::zero(), ImageDrawingOptions { ImageOrientation::Orientation::OriginBottomRight });
 
     auto isVerticalWritingMode = style.states.contains(ControlStyle::State::VerticalWritingMode);
 

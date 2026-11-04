@@ -62,7 +62,7 @@ private:
     explicit SharedTimebase(Ref<SharedMemory>&&);
 
     struct Impl;
-    UniqueRef<Impl> m_impl;
+    const UniqueRef<Impl> m_impl;
 };
 
 // Reader-side companion to SharedTimebase. Owns its own read-only mapping of
@@ -84,11 +84,11 @@ public:
     MediaTime currentTime() const;
     double currentRate() const;
 
-    void resetForTimeDiscontinuity();
+    void LEGACY_NODELETE resetForTimeDiscontinuity();
 
 private:
     struct Impl;
-    UniqueRef<Impl> m_impl;
+    const UniqueRef<Impl> m_impl;
     const Function<MonotonicTime()> m_clock;
     mutable std::optional<MediaTime> m_lastReturnedTime;
 };

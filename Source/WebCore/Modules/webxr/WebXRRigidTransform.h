@@ -50,8 +50,8 @@ public:
 
     const DOMPointReadOnly& position() const;
     const DOMPointReadOnly& orientation() const;
-    const Float32Array& NODELETE matrix();
-    const WebXRRigidTransform& NODELETE inverse();
+    const Float32Array& LEGACY_NODELETE matrix();
+    const WebXRRigidTransform& LEGACY_NODELETE inverse();
     const TransformationMatrix& rawTransform() const;
 
     JSValueInWrappedObject& cachedMatrix() LIFETIME_BOUND { return m_cachedMatrix; }
@@ -64,7 +64,7 @@ private:
     Ref<DOMPointReadOnly> m_orientation;
     TransformationMatrix m_rawTransform;
     RefPtr<Float32Array> m_matrix;
-    RefPtr<WebXRRigidTransform> m_inverse;
+    const RefPtr<WebXRRigidTransform> m_inverse;
     WeakPtr<WebXRRigidTransform> m_parentInverse;
     JSValueInWrappedObject m_cachedMatrix;
 };

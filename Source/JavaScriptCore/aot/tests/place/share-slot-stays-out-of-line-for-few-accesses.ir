@@ -1,0 +1,62 @@
+# Wide keeps "shared" in its Extension and Small has it in its cell, as in share-slot-in-the-cell-of-every-layout.ir. Here the access that reads the field of both runs once, and Wide is allocated in a loop:
+# its objects would take more bytes than that is worth, so the field stays where it is and no cell grows
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots layouts accesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Small" fields=[{key="shared" declared={type=undefined|L2}}, {key="own" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Wide" fields=[{key="required0" declared={type=number} flags=[IsRequired]}, {key="required1" declared={type=number} flags=[IsRequired]}, {key="required2" declared={type=number} flags=[IsRequired]}, {key="filled0" declared={type=undefined|L2}}, {key="filled1" declared={type=undefined|L2}}, {key="filled2" declared={type=undefined|L2}}, {key="filled3" declared={type=undefined|L2}}, {key="filled4" declared={type=undefined|L2}}, {key="sometimes0" declared={type=undefined|L2}}, {key="sometimes1" declared={type=undefined|L2}}, {key="sometimes2" declared={type=undefined|L2}}, {key="sometimes3" declared={type=undefined|L2}}, {key="shared" declared={type=undefined|L2}}, {key="optional0" declared={type=undefined|L2}}, {key="optional1" declared={type=undefined|L2}}, {key="optional2" declared={type=undefined|L2}}, {key="optional3" declared={type=undefined|L2}}, {key="optional4" declared={type=undefined|L2}}, {key="optional5" declared={type=undefined|L2}}, {key="optional6" declared={type=undefined|L2}}, {key="optional7" declared={type=undefined|L2}}, {key="optional8" declared={type=undefined|L2}}, {key="optional9" declared={type=undefined|L2}}, {key="optional10" declared={type=undefined|L2}}, {key="optional11" declared={type=undefined|L2}}, {key="optional12" declared={type=undefined|L2}}, {key="optional13" declared={type=undefined|L2}}, {key="optional14" declared={type=undefined|L2}}, {key="optional15" declared={type=undefined|L2}}, {key="optional16" declared={type=undefined|L2}}, {key="optional17" declared={type=undefined|L2}}, {key="optional18" declared={type=undefined|L2}}, {key="optional19" declared={type=undefined|L2}}, {key="optional20" declared={type=undefined|L2}}, {key="optional21" declared={type=undefined|L2}}, {key="optional22" declared={type=undefined|L2}}, {key="optional23" declared={type=undefined|L2}}]
+layout L2 name="Leaf" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+variable g0 name="either" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L2 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v4, v2 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    PutModuleVariable v6 variable=g0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = NewObject -, v2, v2, v2, v4, v4, v4, v4, v4 layout=L1 fields=[0, 1, 2, 3, 4, 5, 6, 7]
+    v10 = FinishObject v9
+    v11 = Call v0
+    v12 = ToBoolean v11
+    Branch v12 -> taken b2(), notTaken b4()
+  b2():
+    v13 = Call v0
+    v14 = ToBoolean v13
+    Branch v14 -> taken b3(), notTaken b4()
+  b3():
+    PropSet v10, v4 key="sometimes0"
+    PropSet v10, v4 key="sometimes1"
+    PropSet v10, v4 key="sometimes2"
+    PropSet v10, v4 key="sometimes3"
+    Jump -> next b4()
+  b4():
+    v19 = Call v0
+    v20 = ToBoolean v19
+    Branch v20 -> taken b1(), notTaken b5()
+  b5():
+    v21 = CallDirect v10, v4 function=f1
+    PutModuleVariable v10 variable=g0
+    v23 = GetModuleVariable variable=g0
+    v24 = PropGet v23 key="shared"
+    Return
+}
+function f1 name="fill" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="shared"
+# REPEAT: i = 0..23
+    PropSet v0, v1 key="optional%(i)"
+# END REPEAT
+    Return
+}
+# CHECK: L1 CompiledObject size=80
+# CHECK: "shared" OptionalCell32 out@
+# CHECK: "shared" {L0 L1} read
+# CHECK-NEXT: 2 groups

@@ -86,8 +86,9 @@ inline void ComputedStyleProperties::setAppearance(StyleAppearance appearance)
 
 inline void ComputedStyleProperties::setBlendMode(BlendMode mode)
 {
-    SET_NESTED(m_nonInheritedData, rareData, effectiveBlendMode, static_cast<unsigned>(mode));
-    SET(m_inheritedRareData, isInSubtreeWithBlendMode, mode != BlendMode::Normal);
+    SET_NESTED(m_nonInheritedData, rareData, blendMode, static_cast<unsigned>(mode));
+    if (!m_nonInheritedData->rareData->overrideBlendMode)
+        SET(m_inheritedRareData, isInSubtreeWithBlendMode, mode != BlendMode::Normal);
 }
 
 inline void ComputedStyleProperties::setDisplay(Display value)

@@ -1,0 +1,17 @@
+# A bound function and a generic entrypoint of a function that never returns end in Unreachable
+# FORM: Prepared
+# RUN: derived-functions BoundFunction:f0:0 GenericEntrypoint:f0
+# STATISTIC: BoundFunctions = 1
+# STATISTIC: GenericEntrypoints = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="fails" kind=Arrow results=[{type=never}] {
+    v0 = Undefined
+    Throw v0
+}
+# CHECK: name="fails"{{*}}role=GenericEntrypoint{{*}}results=[{type=anything}]
+# CHECK: never = CallDirect function=f0
+# CHECK-NEXT: Unreachable
+# CHECK: name="fails"{{*}}role=BoundFunction{{*}}results=[{type=never}]
+# CHECK: never = CallDirect function=f0
+# CHECK-NEXT: Unreachable

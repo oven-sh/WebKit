@@ -1,0 +1,27 @@
+# made = {}; Object.defineProperty(made, globalThis.name, { value: true }); made.kept = 1; made.kept; made.mark
+# Nobody knows which property the definition gives another form.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Made"
+# CHECK-NOT: IsNeverRedefined
+# CHECK: layout L1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Made" fields=[{key="mark" declared={type=anything}}, {key="kept" declared={type=anything}}]
+layout L1 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="name" [isFreeName]
+    v6 = Boolean boolean=true
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = Call v3, v2, v1, v5, v7
+    v9 = Integer integer=1
+    PropSet v1, v9 key="kept" mode=Sloppy
+    v11 = PropGet v1 key="kept"
+    v12 = PropGet v1 key="mark"
+    Return
+}

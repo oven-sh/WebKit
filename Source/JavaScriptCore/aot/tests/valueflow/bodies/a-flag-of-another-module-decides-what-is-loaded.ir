@@ -1,0 +1,79 @@
+# k.cjs: exports.DEBUG = false; exports.MODE = "production"; exports.ON = true;
+# main.ts: import { DEBUG, MODE, ON } from "./k.cjs"; if (DEBUG) require("./debug"); if (MODE === "development") require("./development"); if (ON) require("./on");
+# A statement runs only where the tests in front of its block can pass, in a body of the program without a check too where the tested value is a variable of another module.
+# Nothing truthy arrives in DEBUG and no "development" in MODE, so the two files are not loaded. A variable of the module itself is not read that way.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f2
+# CHECK: unreached f3
+# CHECK-NOT: unreached f4
+# CHECK-NOT: unreached f5
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}, {target=m2 kind=Require completes=true}, {target=m3 kind=Require completes=true}, {target=m4 kind=Require completes=true}, {target=m5 kind=Require completes=true}]
+module m1 path="k.cjs" displayPath="k.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+module m2 path="debug.ts" displayPath="debug.ts" body=f2
+module m3 path="development.ts" displayPath="development.ts" body=f3
+module m4 path="on.ts" displayPath="on.ts" body=f4
+module m5 path="own.ts" displayPath="own.ts" body=f5
+entry module=m0
+variable g0 name="DEBUG" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="MODE" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="ON" module=m1 declared={type=anything} initialization=Undefined
+variable g3 name="own" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    EvaluateModule module=m2 referrer=m0 [isCallOfRequire]
+    Jump -> next b3()
+  b2(v4):
+    Jump -> next b3()
+  b3():
+    v5 = GetModuleVariable variable=g1
+    v6 = String string="development"
+    v7 = StrictEq v5, v6
+    Branch v7 -> taken b4(), notTaken b5()
+  b4():
+    EvaluateModule module=m3 referrer=m0 [isCallOfRequire]
+    Jump -> next b5()
+  b5():
+    v9 = GetModuleVariable variable=g2
+    v10 = ToBoolean v9
+    Branch v10 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v11):
+    EvaluateModule module=m4 referrer=m0 [isCallOfRequire]
+    Jump -> next b8()
+  b7(v13):
+    Jump -> next b8()
+  b8():
+    v14 = GetModuleVariable variable=g3
+    v15 = ToBoolean v14
+    Branch v15 -> taken b9(| 0), notTaken b10(| 0)
+  b9(v16):
+    EvaluateModule module=m5 referrer=m0 [isCallOfRequire]
+    Return
+  b10(v18):
+    Return
+}
+function f1 module=m1 kind=CommonJsModule results=[{type=anything}] {
+    v0 = Boolean
+    PutModuleVariable v0 variable=g0
+    v2 = String string="production"
+    PutModuleVariable v2 variable=g1
+    v4 = Boolean boolean=true
+    PutModuleVariable v4 variable=g2
+    Return
+}
+function f2 module=m2 kind=Module results=[{type=anything}] {
+    Return
+}
+function f3 module=m3 kind=Module results=[{type=anything}] {
+    Return
+}
+function f4 module=m4 kind=Module results=[{type=anything}] {
+    Return
+}
+function f5 module=m5 kind=Module results=[{type=anything}] {
+    Return
+}

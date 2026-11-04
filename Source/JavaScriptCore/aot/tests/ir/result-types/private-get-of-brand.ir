@@ -1,0 +1,25 @@
+# The read of a brand is a class token on every receiver, because only its definition stores it; the private field beside it has its declared type on a proven layout alone
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v5: classtoken
+# CHECK-NEXT: v6: classtoken
+# CHECK-NEXT: v7: classtoken
+# CHECK-NEXT: v8: classtoken
+# CHECK-NEXT: v9: number
+# CHECK-NEXT: v10: anything ~ number
+# CHECK-NEXT: v11: anything
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"secret"@L0 declared={type=number} flags=[IsRequired, IsPrivate] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 kind=Instance name="Stranger"
+function f0 name="reads" parameters=[{type=L0}, {type=L0 flags=[IsExpected]}, {type=anything}, {type=L1}, {type=classtoken}] results=[{type=undefined}] {
+  b0(v0: L0, v1: anything ~ L0, v2: anything, v3: L1, v4: classtoken):
+    v5 = PrivateGet v0, v4 layout=L0
+    v6 = PrivateGet v1, v4 layout=L0
+    v7 = PrivateGet v2, v4 layout=L0
+    v8 = PrivateGet v3, v4 layout=L0
+    v9 = PrivateGet v0, v4 layout=L0 field=1
+    v10 = PrivateGet v1, v4 layout=L0 field=1
+    v11 = PrivateGet v2, v4 layout=L0 field=1
+    Return
+}

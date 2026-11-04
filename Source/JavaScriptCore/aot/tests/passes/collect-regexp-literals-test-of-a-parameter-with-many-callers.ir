@@ -1,0 +1,32 @@
+# The test of a parameter is answered with 64 steps. A function with more callers than that: the walk stops at its budget, says that it did, and so neither arm of the test is ruled out.
+# FORM: Selected
+# RUN: pass CollectRegExpLiterals
+# CHECK: regexp requests: 2
+# CHECK-NEXT: evaluated "a+" flags=- sites=f1:v5
+# CHECK-NEXT: evaluated "b+" flags=- sites=f1:v5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+# REPEAT: i = 0..200
+    v%(i*2) = String string="same"
+    v%(i*2+1) = CallDirect v%(i*2) function=f1
+# END REPEAT
+    Return v399
+}
+
+function f1 name="manyCallers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = String string="a+"
+    Jump -> next b3(v2)
+  b2():
+    v3 = String string="b+"
+    Jump -> next b3(v3)
+  b3(v4: string):
+    v5 = CallInline -, v4 inlineBuiltin=NewRegExp overload=RegExp/4 @10
+    Return v5
+}

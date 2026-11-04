@@ -38,6 +38,7 @@
 #include "LocalFrameView.h"
 #include "MediaPlayer.h"
 #include "MediaPlayerEnums.h"
+#include "NaturalDimensions.h"
 #include "Page.h"
 #include "PaintInfo.h"
 #include "RenderBoxInlines.h"
@@ -47,6 +48,7 @@
 #include "RenderObjectInlines.h"
 #include "RenderVideoInlines.h"
 #include "RenderView.h"
+#include "ShareableBitmap.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -204,6 +206,13 @@ LayoutSize RenderVideo::posterAwareIntrinsicSize() const
     return intrinsicSize();
 }
 
+NaturalDimensions RenderVideo::zoomedNaturalDimensions() const
+{
+    if (protect(videoElement())->shouldDisplayPosterImage())
+        return RenderImage::zoomedNaturalDimensions();
+    return NaturalDimensions::fixed(FloatSize { intrinsicSize() });
+}
+
 IntRect RenderVideo::videoBox() const
 {
     Ref videoElement = this->videoElement();
@@ -222,7 +231,7 @@ IntRect RenderVideo::videoBox() const
     if (!style().objectViewBox().isNone() && videoElement->isFullscreen() && !videoElement->isChangingVideoFullscreenMode())
         return snappedIntRect(contentBoxRect());
 
-    return snappedIntRect(replacedContentRect(intrinsicSize));
+    return snappedIntRect(replacedContentRect());
 }
 
 bool RenderVideo::isBypassingObjectViewBoxForPictureInPicture() const
@@ -254,7 +263,8 @@ std::optional<LayoutRect> RenderVideo::objectFitContentsRectForFullscreenComposi
     if (objectFit != ObjectFit::Cover && objectFit != ObjectFit::Contain)
         return std::nullopt;
 
-    auto naturalSize = FloatSize(posterAwareIntrinsicSize());
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto naturalSize = FloatSize(posterAwareIntrinsicSize());
     auto subrect = resolvedObjectViewBox(naturalSize);
     if (!subrect)
         return std::nullopt;
@@ -267,7 +277,8 @@ std::optional<LayoutRect> RenderVideo::objectFitContentsRectForFullscreenComposi
     // the whole natural frame. The result is the oversized (cover) or undersized (contain)
     // full-frame rect to use as the contents rect; the destination rect itself (unchanged)
     // remains the clip.
-    auto destRect = FloatRect(dest);
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto destRect = FloatRect(dest);
     float scale = objectFit == ObjectFit::Cover
         ? std::max(destRect.width() / subrect->width(), destRect.height() / subrect->height())
         : std::min(destRect.width() / subrect->width(), destRect.height() / subrect->height());
@@ -318,8 +329,6 @@ LayoutRect RenderVideo::inlineVideoBox() const
     if (mediaPlayer && mediaPlayer->shouldIgnoreIntrinsicSize())
         return contentBoxRect();
 
-    LayoutSize intrinsicSize = posterAwareIntrinsicSize();
-
     // For object-fit: cover, replacedContentRect() intentionally returns a rect larger
     // than contentBoxRect() (grown/centered to crop-to-fill) — correct for painting/
     // compositing, where the overflow is clipped separately, but wrong as a transition
@@ -327,7 +336,7 @@ LayoutRect RenderVideo::inlineVideoBox() const
     // frame with no clip layer of its own. Intersecting with contentBoxRect() clamps cover's
     // overshoot to the true visible box; it's a no-op for fill/contain/none, whose rects
     // are already contained within (or equal to) contentBoxRect().
-    LayoutRect result = replacedContentRect(intrinsicSize);
+    LayoutRect result = replacedContentRect();
     result.intersect(contentBoxRect());
 
     // Snap to the same integer CSS-pixel grid as videoBox() (which bounds the steady-state
@@ -338,7 +347,7 @@ LayoutRect RenderVideo::inlineVideoBox() const
     return LayoutRect(snappedIntRect(result));
 }
 
-IntRect RenderVideo::videoBoxInRootView() const
+IntRect RenderVideo::videoBoxInMainFrameView() const
 {
     RefPtr view = document().view();
     if (!view)
@@ -346,7 +355,7 @@ IntRect RenderVideo::videoBoxInRootView() const
 
     auto videoBox = this->videoBox();
     videoBox.moveBy(absoluteBoundingBoxRect().location());
-    return view->contentsToRootView(videoBox);
+    return view->contentsToMainFrameView(videoBox);
 }
 
 bool RenderVideo::shouldDisplayVideo() const
@@ -465,9 +474,19 @@ void RenderVideo::styleDidChange(Style::Difference difference, const Style::Comp
     }
 }
 
-HTMLVideoElement& NODELETE RenderVideo::videoElement() const
+HTMLVideoElement& LEGACY_NODELETE RenderVideo::videoElement() const
 {
     return downcast<HTMLVideoElement>(RenderMedia::mediaElement());
+}
+
+RefPtr<ShareableBitmap> RenderVideo::createShareableBitmap(const CreateShareableBitmapFromImageOptions&) const
+{
+    return protect(videoElement())->bitmapImageForCurrentTimeSync();
+}
+
+Ref<NativePromise<Ref<ShareableBitmap>, void>> RenderVideo::createShareableBitmapAsync(const CreateShareableBitmapFromImageOptions&) const
+{
+    return protect(videoElement())->bitmapImageForCurrentTime();
 }
 
 void RenderVideo::updateFromElement()

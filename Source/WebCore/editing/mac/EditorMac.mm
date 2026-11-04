@@ -123,21 +123,21 @@ void Editor::platformPasteFont()
         backgroundColor = colorFromCocoaColor(nsBackgroundColor.get());
     if (!backgroundColor.isValid())
         backgroundColor = Color::transparentBlack;
-    style->setProperty(CSSPropertyBackgroundColor, CSSValuePool::singleton().createColorValue(backgroundColor));
+    style->setProperty(CSSPropertyID::BackgroundColor, CSSValuePool::singleton().createColorValue(backgroundColor));
 
     if (RetainPtr font = dynamic_objc_cast<NSFont>([fontAttributes objectForKey:NSFontAttributeName])) {
         // FIXME: Need more sophisticated escaping code if we want to handle family names
         // with characters like single quote or backslash in their names.
-        style->setProperty(CSSPropertyFontFamily, [NSString stringWithFormat:@"'%@'", retainPtr([font familyName]).get()]);
-        style->setProperty(CSSPropertyFontSize, CSSPrimitiveValue::create([font pointSize], CSSUnitType::Px));
+        style->setProperty(CSSPropertyID::FontFamily, [NSString stringWithFormat:@"'%@'", retainPtr([font familyName]).get()]);
+        style->setProperty(CSSPropertyID::FontSize, CSSPrimitiveValue::create([font pointSize], CSSUnitType::Px));
         // FIXME: Map to the entire range of CSS weight values.
-        style->setProperty(CSSPropertyFontWeight, ([NSFontManager.sharedFontManager weightOfFont:font.get()] >= 7) ? CSSValueBold : CSSValueNormal);
-        style->setProperty(CSSPropertyFontStyle, ([NSFontManager.sharedFontManager traitsOfFont:font.get()] & NSItalicFontMask) ? CSSValueItalic : CSSValueNormal);
+        style->setProperty(CSSPropertyID::FontWeight, ([NSFontManager.sharedFontManager weightOfFont:font.get()] >= 7) ? CSSValueID::Bold : CSSValueID::Normal);
+        style->setProperty(CSSPropertyID::FontStyle, ([NSFontManager.sharedFontManager traitsOfFont:font.get()] & NSItalicFontMask) ? CSSValueID::Italic : CSSValueID::Normal);
     } else {
-        style->setProperty(CSSPropertyFontFamily, "Helvetica"_s);
-        style->setProperty(CSSPropertyFontSize, CSSPrimitiveValue::create(12, CSSUnitType::Px));
-        style->setProperty(CSSPropertyFontWeight, CSSValueNormal);
-        style->setProperty(CSSPropertyFontStyle, CSSValueNormal);
+        style->setProperty(CSSPropertyID::FontFamily, "Helvetica"_s);
+        style->setProperty(CSSPropertyID::FontSize, CSSPrimitiveValue::create(12, CSSUnitType::Px));
+        style->setProperty(CSSPropertyID::FontWeight, CSSValueID::Normal);
+        style->setProperty(CSSPropertyID::FontStyle, CSSValueID::Normal);
     }
 
     Color foregroundColor;
@@ -147,20 +147,20 @@ void Editor::platformPasteFont()
             foregroundColor = Color::transparentBlack;
     } else
         foregroundColor = Color::black;
-    style->setProperty(CSSPropertyColor, CSSValuePool::singleton().createColorValue(foregroundColor));
+    style->setProperty(CSSPropertyID::Color, CSSValuePool::singleton().createColorValue(foregroundColor));
 
     FontShadow fontShadow;
     if (RetainPtr nsFontShadow = dynamic_objc_cast<NSShadow>([fontAttributes objectForKey:NSShadowAttributeName]))
         fontShadow = fontShadowFromNSShadow(nsFontShadow.get());
-    style->setProperty(CSSPropertyTextShadow, serializationForCSS(fontShadow));
+    style->setProperty(CSSPropertyID::TextShadow, serializationForCSS(fontShadow));
 
     auto superscriptStyle = [[fontAttributes objectForKey:NSSuperscriptAttributeName] intValue];
-    style->setProperty(CSSPropertyVerticalAlign, (superscriptStyle > 0) ? CSSValueSuper : ((superscriptStyle < 0) ? CSSValueSub : CSSValueBaseline));
+    style->setProperty(CSSPropertyID::VerticalAlign, (superscriptStyle > 0) ? CSSValueID::Super : ((superscriptStyle < 0) ? CSSValueID::Sub : CSSValueID::Baseline));
 
     // FIXME: Underline wins here if we have both (see bug 3790443).
     auto underlineStyle = [[fontAttributes objectForKey:NSUnderlineStyleAttributeName] intValue];
     auto strikethroughStyle = [[fontAttributes objectForKey:NSStrikethroughStyleAttributeName] intValue];
-    style->setProperty(CSSPropertyWebkitTextDecorationsInEffect, (underlineStyle != NSUnderlineStyleNone) ? CSSValueUnderline : ((strikethroughStyle != NSUnderlineStyleNone) ? CSSValueLineThrough : CSSValueNone));
+    style->setProperty(CSSPropertyID::WebkitTextDecorationsInEffect, (underlineStyle != NSUnderlineStyleNone) ? CSSValueID::Underline : ((strikethroughStyle != NSUnderlineStyleNone) ? CSSValueID::LineThrough : CSSValueID::None));
 
     applyStyleToSelection(style.ptr(), EditAction::PasteFont);
 
@@ -200,23 +200,6 @@ RefPtr<SharedBuffer> Editor::dataSelectionForPasteboard(const String& pasteboard
     return nullptr;
 }
 
-static void getImage(Element& imageElement, RefPtr<Image>& image, CachedImage*& cachedImage)
-{
-    CheckedPtr renderImage = dynamicDowncast<RenderImage>(imageElement.renderer());
-    if (!renderImage)
-        return;
-
-    RefPtr tentativeCachedImage = renderImage->cachedImage();
-    if (!tentativeCachedImage || tentativeCachedImage->errorOccurred())
-        return;
-
-    image = tentativeCachedImage->imageForRenderer(renderImage.get());
-    if (!image)
-        return;
-
-    cachedImage = tentativeCachedImage.get();
-}
-
 void Editor::selectionWillChange()
 {
     if (!hasComposition() || ignoreSelectionChanges() || document().selection().isNone() || document().renderTreeState() != Document::RenderTreeState::Built)
@@ -241,13 +224,21 @@ String Editor::plainTextFromPasteboard(const PasteboardPlainText& text)
 
 void Editor::writeImageToPasteboard(Pasteboard& pasteboard, Element& imageElement, const URL& url, const String& title)
 {
-    PasteboardImage pasteboardImage;
-
-    CachedImage* cachedImage = nullptr;
-    getImage(imageElement, pasteboardImage.image, cachedImage);
-    if (!pasteboardImage.image)
+    CheckedPtr renderImage = dynamicDowncast<RenderImage>(imageElement.renderer());
+    if (!renderImage)
         return;
-    ASSERT(cachedImage);
+
+    RefPtr cachedImage = renderImage->cachedImage();
+    if (!cachedImage || cachedImage->errorOccurred())
+        return;
+
+    RefPtr image = cachedImage->image();
+    if (!image)
+        return;
+
+    PasteboardImage pasteboardImage;
+    if (RetainPtr tiffData = image->adapter().tiffRepresentation(renderImage->concreteObjectSizeForPasteboard()))
+        pasteboardImage.dataInTIFFFormat = SharedBuffer::create(tiffData.get());
 
     if (!pasteboard.isStatic())
         pasteboardImage.dataInWebArchiveFormat = imageInWebArchiveFormat(imageElement);
@@ -262,7 +253,7 @@ void Editor::writeImageToPasteboard(Pasteboard& pasteboard, Element& imageElemen
         pasteboardImage.resourceData = buffer->makeContiguous();
     pasteboardImage.resourceMIMEType = cachedImage->response().mimeType();
 
-    pasteboard.write(pasteboardImage);
+    pasteboard.write(WTF::move(pasteboardImage));
 }
 
 bool Editor::writingSuggestionsSupportsSuffix()

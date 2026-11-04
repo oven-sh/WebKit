@@ -33,7 +33,7 @@ namespace WebCore {
 
 bool SVGLengthList::parse(StringView value)
 {
-    clearItems();
+    Vector<SVGLengthValue> lengths;
 
     bool parsingSucceeded = readCharactersForParsing(value, [&](auto buffer) {
         skipOptionalSVGSpaces(buffer);
@@ -51,15 +51,19 @@ bool SVGLengthList::parse(StringView value)
             if (parseError != SVGParsingError::None)
                 return false;
 
-            append(SVGLength::create(WTF::move(length)));
+            lengths.append(WTF::move(length));
             skipOptionalSVGSpacesOrDelimiter(buffer);
         }
 
         return buffer.atEnd();
     });
-    if (!parsingSucceeded)
+    if (!parsingSucceeded) {
         clearItems();
-    return parsingSucceeded;
+        return false;
+    }
+
+    updateItems(lengths);
+    return true;
 }
 
 String SVGLengthList::valueAsString() const

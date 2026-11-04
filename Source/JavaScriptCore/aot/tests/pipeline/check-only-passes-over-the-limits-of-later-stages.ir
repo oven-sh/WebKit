@@ -1,0 +1,7 @@
+# What stands behind the analysis of the flow of values has limits of its own, which are about the executable and not about what the program says. A run that only checks does not get there (check-only-twin-meets-a-limit-of-a-later-stage.ir: the same program and the same limit without the word)
+# OPTIONS: check-only only-passes=AnalyzeFlow limit=KeyOrdersPerLayout:1
+# RUN: compile
+# CHECK-NOT: diagnostic
+# CHECK-NOT: loss
+# CHECK: image empty
+# PROGRAM-OF: ../place/stop-after-error.ir

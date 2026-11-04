@@ -27,7 +27,7 @@ namespace WebCore {
 
 class CSSToLengthConversionData;
 
-enum CSSPropertyID : uint16_t;
+enum class CSSPropertyID : uint16_t;
 
 struct ComputedStyleDependencies {
     Vector<CSSPropertyID> properties;

@@ -1,0 +1,15 @@
+# FORM: Placed
+# RUN(WORD): lower-to-b3 everything
+# RUN(FUNCTION): lower-to-b3 f1
+# RUN(STEP): lower-to-b3 after=
+# RUN(ZERO): lower-to-b3 after=reduceStrength:0
+# WORD: error: bad argument everything
+# FUNCTION: error: bad argument f1
+# STEP: error: bad argument after=
+# ZERO: error: bad argument after=reduceStrength:0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="nothing" results=[{type=int[0, 0]}] {
+    v0 = Integer
+    Return v0
+}

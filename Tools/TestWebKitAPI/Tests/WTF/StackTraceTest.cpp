@@ -31,7 +31,8 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/unicode/CharacterNames.h>
 
-#if PLATFORM(WIN) && defined(NDEBUG)
+// Bun: on Linux the lanes compile with -fno-unwind-tables, and backtrace() then ends at its own frame. Upstream disables these for release builds on Windows alone.
+#if (PLATFORM(WIN) && defined(NDEBUG)) || (OS(LINUX) && USE(BUN_JSC_ADDITIONS))
 #define MAYBE(name) DISABLED_##name
 #else
 #define MAYBE(name) name

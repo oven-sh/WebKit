@@ -29,6 +29,7 @@
 #include "ClonedArguments.h"
 #include "CommonSlowPaths.h"
 #include "DirectArguments.h"
+#include "JSArrayBufferViewInlines.h"
 #include "JSGlobalLexicalEnvironment.h"
 #include "JSSetInlines.h"
 #include "ScopedArguments.h"
@@ -118,6 +119,30 @@ inline void tryCachePutToScopeGlobal(
         }
         vm.writeBarrier(codeBlock);
     }
+}
+
+// The property lookup for get_from_scope's slow paths. scopeObject is what resolve_scope returned.
+template<typename CallbackWhenNoException>
+ALWAYS_INLINE typename std::invoke_result<CallbackWhenNoException, bool, PropertySlot&>::type getPropertySlotForGetFromScope(JSGlobalObject* globalObject, JSObject* scopeObject, PropertyName propertyName, CallbackWhenNoException callback)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    // A Proxy's [[Get]] always finds the property. So with a Proxy in the global object's prototype chain, a global that
+    // doesn't exist would read as undefined instead of throwing a ReferenceError. Ask [[HasProperty]] first, as GetBindingValue does.
+    bool hasProxy = false;
+    for (JSValue prototype = scopeObject->isGlobalObject() ? scopeObject->getPrototypeDirect() : jsNull(); prototype.isObject() && !hasProxy; prototype = asObject(prototype)->getPrototypeDirect())
+        hasProxy = asObject(prototype)->type() == ProxyObjectType;
+    if (hasProxy) [[unlikely]] {
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        bool found = scopeObject->hasProperty(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (found)
+            RELEASE_AND_RETURN(scope, scopeObject->getPropertySlot(globalObject, propertyName, callback));
+        PropertySlot slot(scopeObject, PropertySlot::InternalMethodType::Get);
+        RELEASE_AND_RETURN(scope, callback(false, slot));
+    }
+#endif
+    return scopeObject->getPropertySlot(globalObject, propertyName, callback);
 }
 
 inline void tryCacheGetFromScopeGlobal(
@@ -210,6 +235,15 @@ ALWAYS_INLINE JSCellButterfly* trySpreadFast(JSGlobalObject* globalObject, JSCel
             return JSCellButterfly::createFromSet(globalObject, set);
         return nullptr;
     }
+#define CASE_TYPED_ARRAY_TYPE(name) case name##ArrayType:
+    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CASE_TYPED_ARRAY_TYPE)
+#undef CASE_TYPED_ARRAY_TYPE
+    {
+        auto* view = uncheckedDowncast<JSArrayBufferView>(iterable);
+        if (!view->isOutOfBounds() && view->isIteratorProtocolFastAndNonObservable()) [[likely]]
+            return JSCellButterfly::createFromTypedArray(globalObject, view);
+        return nullptr;
+    }
     default:
         return nullptr;
     }
@@ -234,7 +268,7 @@ inline void opEnumeratorPutByVal(JSGlobalObject* globalObject, JSValue baseValue
         if (baseValue.isCell()) [[likely]] {
             auto* baseCell = baseValue.asCell();
             auto* structure = baseCell->structure();
-            if (structure->id() == enumerator->cachedStructureID() && !structure->hasImmutableProperties() && !structure->isWatchingReplacement() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()) {
+            if (structure->id() == enumerator->cachedStructureID() && !structure->mayHaveImmutableProperties() && !structure->isWatchingReplacement() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()) {
                 // We'll only match the structure ID if the base is an object.
                 ASSERT(index < enumerator->endStructurePropertyIndex());
                 scope.release();

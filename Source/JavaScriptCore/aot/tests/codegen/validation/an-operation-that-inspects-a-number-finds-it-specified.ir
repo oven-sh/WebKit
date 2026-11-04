@@ -1,0 +1,61 @@
+# A pointer that nobody specified is zero, and a validating build asks for that in front of an operation that looks at it. Every pattern of bits is a number, so zero says nothing of a number:
+# there a validating build puts a NaN with a payload, which no fraction kept as Double has, or the least integer, and asks for it wherever the type does not reach that far down
+# FORM: Selected
+# RUN: generate-code calls
+# OPTIONS: validate
+# CHECK-LABEL: f0: size=
+# CHECK: operation operationAOTReportValidationFailure x2
+# CHECK-LABEL: f1: size=
+# CHECK: operation operationAOTReportValidationFailure x3
+# CHECK-LABEL: f2: size=
+# CHECK: operation operationAOTReportValidationFailure x1
+# CHECK-LABEL: f3: size=
+# CHECK-NOT: operationAOTReportValidationFailure
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="fraction" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v2 = Unspecified valueType=number
+    Jump -> next b3(v2)
+  b3(v3: number|unspecified):
+    v4 = Specified
+    v5 = AssumeType v3, v4 provenType=number
+    Return v5
+}
+function f1 name="smallInteger" parameters=[{type=boolean}, {type=int[0, 9]}] results=[{type=int[0, 9]}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v2 = Unspecified valueType=int[0, 9]
+    Jump -> next b3(v2)
+  b3(v3: int[0, 9]|unspecified):
+    v4 = Specified
+    v5 = AssumeType v3, v4 provenType=int[0, 9]
+    Return v5
+}
+function f2 name="anyInteger" parameters=[{type=boolean}, {type=int}] results=[{type=int}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v2 = Unspecified valueType=int
+    Jump -> next b3(v2)
+  b3(v3: int|unspecified):
+    v4 = Specified
+    v5 = AssumeType v3, v4 provenType=int
+    Return v5
+}
+function f3 name="handedOn" parameters=[{type=boolean}, {type=number}] results=[{type=number|unspecified}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v2 = Unspecified valueType=number
+    Jump -> next b3(v2)
+  b3(v3: number|unspecified):
+    Return v3
+}

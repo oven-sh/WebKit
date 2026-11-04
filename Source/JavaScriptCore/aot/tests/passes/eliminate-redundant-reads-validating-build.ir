@@ -1,0 +1,20 @@
+# In a validating build a copy of a replaced read stays where the read was and is compared with the value that took its place. A second run leaves the copy alone
+# FORM: Prepared
+# OPTIONS: validate
+# RUN: pass EliminateRedundantReads EliminateRedundantReads
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+
+function f0 name="readsTwice" parameters=[{type=L0}] results=[{type=boolean}] {
+    v1 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v2 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v3 = StrictEq v1, v2
+    Return v3
+# CHECK: v1: anything = GetSlot v0 key="x"
+# CHECK-NEXT: [[kept]]: anything = GetSlot v0 key="x"
+# CHECK-NEXT: ValidateSameValue [[kept]], v1
+# CHECK-NEXT: v2: anything = Upcast v1
+}

@@ -1,0 +1,50 @@
+# An allocation with a guard on it stays in its function: the guard lasts across unknown code while nothing else holds the object, and only the function that allocates it sees that
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="guardedArrays" parameters=[{type=number}, {type=anything}, {type=object}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b4(), case b7(), case b10(), case b13(), case b16(), otherwise b19()
+# REPEAT: i = 0..5
+  b%(i*3+1)() frequency=Rare:
+    v%(i*6+3) = NewArray v1, v1, v1, v1 contents=anything
+    v%(i*6+4) = IsPristine v%(i*6+3) builtinClass=Array aspects=[Storage]
+    TestAndBranch v%(i*6+4) -> taken b%(i*3+2)(| 0), notTaken b%(i*3+3)()
+  b%(i*3+2)(v%(i*6+5)) frequency=Rare:
+    v%(i*6+6) = Integer integer=1
+    PropSet v2, v1 key="seen"
+    v%(i*6+8) = GetArrayElement v%(i*6+3), v%(i*6+6), v%(i*6+5) level=Expected [keyIsIntegral]
+    Return v%(i*6+8)
+  b%(i*3+3)() frequency=Rare:
+    Return
+# END REPEAT
+  b19():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-6: = NewArray v1, v1, v1, v1 contents=anything
+# CHECK-NOT: CallDirect
+
+function f1 name="arraysWithoutGuard" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 2..7
+  b%(i-1)() frequency=Rare:
+    v%(i) = NewArray v1, v1, v1, v1 contents=anything
+    Return v%(i)
+# END REPEAT
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: NewArray
+# CHECK-COUNT-6: = CallDirect v1 function=f2
+# CHECK-NOT: NewArray
+
+# CHECK-LABEL: function f2 {{*}}role=OutlinedBody
+# CHECK: [[array]]:{{*}}= NewArray v0, v0, v0, v0 contents=anything
+# CHECK-NEXT: Return [[array]]

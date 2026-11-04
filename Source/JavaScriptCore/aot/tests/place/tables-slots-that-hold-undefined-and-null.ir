@@ -1,0 +1,29 @@
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: tables layouts
+# CHECK: layout shape=1 index=L0
+# CHECK-NOT: hasSlotWithUnusedMarkers
+# CHECK: name="size"{{*}}slotHoldsUndefinedAndNull
+# CHECK: name="done"{{*}}slotHoldsUndefinedAndNull
+# CHECK: name="label"
+# CHECK-NOT: slotHoldsUndefinedAndNull
+# CHECK: layout shape=2 index=L1 {{*}}hasSlotWithUnusedMarkers
+# CHECK: name="size"
+# CHECK-NOT: slotHoldsUndefinedAndNull
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Open" module=m0 fields=[{key="size" declared={type=number} flags=[IsRequired] flow={occupancy=FilledWithValueAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="done" declared={type=boolean} flags=[IsRequired] flow={occupancy=FilledWithValueAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="label" declared={type=undefined|null|string} flags=[IsRequired] flow={occupancy=FilledAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}]
+layout L1 kind=Record name="Closed" module=m0 fields=[{key="size" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Double number=1.5
+    v1 = Boolean boolean=true
+    v2 = String string="a"
+    v3 = NewObject -, v0, v1, v2 layout=L0 fields=[0, 1, 2]
+    v4 = NewObject layout=L1
+    PropSet v4, v0 key="size" mode=Strict
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="publish" [isFreeName]
+    v8 = Call v7, -, v3, v4
+    Return v3
+}

@@ -1,0 +1,9 @@
+# a function is the constructor of one class
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidClass 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="goodFirst" constructor=f0
+layout L1 kind=Instance name="badSecond" constructor=f0
+function f0 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]

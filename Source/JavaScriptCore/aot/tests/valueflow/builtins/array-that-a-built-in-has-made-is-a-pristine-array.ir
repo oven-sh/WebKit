@@ -1,0 +1,53 @@
+# [element].map(same).filter(keep);  changed = [other].map(alike); Object.setPrototypeOf(changed, Object.prototype); Array.prototype.filter.call(changed, take)
+# What `map` answers is an array that a built-in has allocated, with the prototype object of arrays above it. It passes the test for a pristine array, so `filter` takes the overload for arrays alone:
+# the elements go to `keep` and into the new array, nothing of them escapes, and nobody calls `element`.
+# Given another prototype such an array may fail the test. The overload for any object is then applied too: the elements go to `take` and into the new array, and nobody calls `other`.
+# RUN: valueflow-solve calls
+# CHECK: f0 v4 -> ArrayPrototypeMap
+# CHECK-NEXT: f0 v7 -> ArrayPrototypeFilter
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=ArrayPrototypeMap
+    v3 = NewClosure function=f2
+    v4 = Call v2, v1, v3
+    v5 = Builtin builtin=ArrayPrototypeFilter
+    v6 = NewClosure function=f3
+    v7 = Call v5, v4, v6
+    v8 = NewClosure function=f4
+    v9 = NewArray v8 contents=anything
+    v10 = NewClosure function=f5
+    v11 = Call v2, v9, v10
+    v12 = Builtin builtin=ObjectPrototype
+    v13 = Builtin builtin=ObjectSetPrototypeOf
+    v14 = Call v13, -, v11, v12
+    v15 = NewClosure function=f6
+    v16 = Call v5, v11, v15
+    Return
+}
+function f1 name="element" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="same" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="keep" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f4 name="other" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f5 name="alike" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f6 name="take" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

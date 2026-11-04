@@ -33,6 +33,7 @@ typedef (Uint8ClampedArray or Float16Array) ImageDataArray;
     ExportMacro=WEBCORE_EXPORT,
     Exposed=(Window,Worker),
     ReportExtraMemoryCost,
+    Serializable,
 ] interface ImageData {
     constructor(unsigned long sw, unsigned long sh, optional ImageDataSettings settings = {});
     constructor(Uint8ClampedArray data, unsigned long sw, optional unsigned long sh, optional ImageDataSettings settings = {});

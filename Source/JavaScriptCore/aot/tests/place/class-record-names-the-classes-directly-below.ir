@@ -1,0 +1,61 @@
+# class Base {}   class Middle extends Base {}   class Other extends Base {}   class Leaf extends Middle {}
+# Whoever changes a class breaks the guards of the classes below it, and some of them may not be defined yet. So the record of a class names the classes whose assumed base it is: those directly below, ascending.
+# FORM: AsRead
+# RUN(TABLES): tables layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 constructor=f1
+layout L1 kind=Instance name="Middle" module=m0 base=L0 constructor=f2 flags=[HasHeritage]
+layout L2 kind=Instance name="Other" module=m0 base=L0 constructor=f3 flags=[HasHeritage]
+layout L3 kind=Instance name="Leaf" module=m0 base=L1 constructor=f4 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = ResolveHeritage v4
+    v6 = NewClosure function=f2
+    v7 = NewClass v6, v4, v5 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = ResolveHeritage v4
+    v10 = NewClosure function=f3
+    v11 = NewClass v10, v4, v9 layout=L2
+    v12 = FinishClass v11 layout=L2
+    v13 = ResolveHeritage v8
+    v14 = NewClosure function=f4
+    v15 = NewClass v14, v8, v13 layout=L3
+    v16 = FinishClass v15 layout=L3
+    v17 = Call v1, -, v4, v8, v12, v16
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="Middle" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="Other" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f4 name="Leaf" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L3
+    Return v3
+}
+
+# TABLES: class index=L0
+# TABLES-NEXT: subclasses classes=[L1 L2]
+# TABLES: class index=L1
+# TABLES-NEXT: subclasses classes=[L3]
+# TABLES: class index=L2
+# TABLES-NOT: subclasses
+# TABLES: class index=L3
+# TABLES-NOT: subclasses

@@ -1,0 +1,34 @@
+# Past the limit on shapes at a merge the object is built on the edges into that merge and stays virtual on every path that does not get there
+# FORM: Prepared
+# OPTIONS: limit=MaxVirtualObjectVariants:1
+# RUN: pass SinkAllocations
+# LOSS: MaxVirtualObjectVariants f0 v2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
+
+function f0 name="twoShapesAtOneMergeAndAnEarlyReturn" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Switch v1 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    PropDefine v2, v1 key="b" receivers=[L0]
+    Jump -> next b4()
+  b2():
+    PropDefine v2, v1 key="c" receivers=[L0]
+    Jump -> next b4()
+  b3():
+    v5 = PropGet v2 key="a" receivers=[L0]
+    Return v5
+  b4():
+    v6 = Call v0, -, v2
+    Return v6
+# CHECK: b0(
+# CHECK-NEXT: Switch v1
+# CHECK: b1():
+# CHECK: = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK: b2():
+# CHECK: = NewObject -, v0, v1 layout=L0 fields=[0, 2]
+# CHECK: b3():
+# CHECK-NOT: NewObject
+# CHECK: Return
+}

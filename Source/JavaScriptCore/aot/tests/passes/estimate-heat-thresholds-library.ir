@@ -1,0 +1,64 @@
+# The library has no say in the thresholds: the loops of a large library function are the hottest code and hot, and the application's loop is hot as without them. Code outside every loop is never hot, however little code the application has
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat
+# RUN: pipeline EstimateHeat
+# CHECK: f0 RunsOnce [[percentileOfMain]] 1
+# CHECK-NEXT: f1 Hot [[percentileOfKernel]] 10
+# CHECK-NEXT: f2 Hot [[percentileOfLibrary]] 10
+# CHECK-NEXT: f3 Warm [[percentileOfTwice]] 2
+# CHECK: thresholds: cold=1 hot=10
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect v0 function=f3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = CallDirect v0 function=f1
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+}
+
+function f1 name="kernel" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+
+function f2 name="helper" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v4 = LogicalNot v1
+    v5 = LogicalNot v4
+    v6 = LogicalNot v5
+    v7 = LogicalNot v6
+    v8 = LogicalNot v7
+    v9 = LogicalNot v8
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b2()
+  b4():
+    Branch v1 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b1()
+  b6():
+    Return v0
+}
+
+function f3 name="calledTwice" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

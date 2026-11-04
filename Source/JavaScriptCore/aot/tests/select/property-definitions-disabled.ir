@@ -1,0 +1,28 @@
+# With DescriptorLiteral and AccessorGroup disabled the literal, the call and each accessor definition stay
+# FORM: Prepared
+# OPTIONS: disable=rule:DescriptorLiteral,rule:AccessorGroup
+# STATISTIC: DescriptorLiteralGroups = 0
+# STATISTIC: AccessorGroupGroups = 0
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=anything}}]
+function f0 name="data-descriptor" parameters=[{type=object}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=true
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = CallBuiltin -, v0, v1, v5 overload=ObjectDefineProperty/0
+    Return v6
+# CHECK: v4:{{*}}= NewObject -, v2, v3 layout=L0 fields=[0, 1]
+# CHECK-NEXT: v5:{{*}}= FinishObject v4
+# CHECK-NEXT: v0, v1, v5 overload=ObjectDefineProperty/0
+# CHECK-NOT: DefineOwnProperty
+}
+function f1 name="getter-and-setter" parameters=[{type=object}, {type=function}, {type=function}] results=[{type=undefined}] {
+    DefineGetter v0, v1 key="a"
+    DefineSetter v0, v2 key="b"
+    Return
+# CHECK: DefineGetter v0, v1 key="a"
+# CHECK-NEXT: DefineSetter v0, v2 key="b"
+# CHECK-NOT: DefineAccessors
+}

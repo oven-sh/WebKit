@@ -1,0 +1,38 @@
+# slice() of a list of numbers takes the copy from one stub, which turns whole numbers into doubles. The site tests no storage and has no loop.
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(LOOPS): lower-to-air size loops
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="copy" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    TryCallInline v0 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done b1(), miss b2()
+  b1(v1):
+    Return v1
+  b2() frequency=Rare:
+    v2 = CallBuiltin v0 overload=ArrayPrototypeSlice/0
+    Jump -> next b1(v2)
+}
+# CHECK-LABEL: f0: size=
+# CHECK: stub ArraySlice.WholeAsDoubles x1
+function f1 name="part" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=i32}, {type=i32}] results=[{type=anything}] {
+    TryCallInline v0, v1, v2 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done b1(), miss b2()
+  b1(v3):
+    Return v3
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSlice/0
+    Jump -> next b1(v4)
+}
+# CHECK-LABEL: f1: size=
+# CHECK: stub ArraySlice.BoundedAsDoubles x1
+function f2 name="copyOfWholeNumbers" parameters=[{type=Array<i32, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    TryCallInline v0 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done b1(), miss b2()
+  b1(v1):
+    Return v1
+  b2() frequency=Rare:
+    v2 = CallBuiltin v0 overload=ArrayPrototypeSlice/0
+    Jump -> next b1(v2)
+}
+# CHECK-LABEL: f2: size=
+# CHECK: stub ArraySlice.Whole x1
+# LOOPS-NOT: loop #

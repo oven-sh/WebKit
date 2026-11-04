@@ -1,0 +1,13 @@
+# A terminator only the engine creates does not cross the wire
+# RUN: print
+# DIAGNOSTIC: EngineOnlyOnWire
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    TestAndBranch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}

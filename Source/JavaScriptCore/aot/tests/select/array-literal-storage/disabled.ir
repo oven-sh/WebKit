@@ -1,0 +1,13 @@
+# With the rule disabled every array literal is created without an allocation profile
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot disable=rule:ArrayLiteralStorage
+# RUN: pass Select
+# STATISTIC: ArrayLiteralStorageGroups = 0
+# CHECK: = NewArray contents=anything
+# CHECK-NOT: literalStorage
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="returned" results=[{type=Array<anything>}] {
+    v0 = NewArray contents=anything
+    Return v0
+}

@@ -28,6 +28,7 @@
 #include "config.h"
 #include "IntlDateTimeFormat.h"
 
+#include "AOTRemovableFeature.h"
 #include "ISO8601.h"
 #include "IntlCache.h"
 #include "IntlObjectInlines.h"
@@ -47,6 +48,7 @@
 #include <unicode/udatpg.h>
 #include <unicode/uenum.h>
 #include <wtf/Range.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/TimeZone.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -80,6 +82,12 @@ void UFormattedDateIntervalDeleter::operator()(UFormattedDateInterval* result)
 
 const ClassInfo IntlDateTimeFormat::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlDateTimeFormat) };
 
+NEVER_INLINE void IntlDateTimeFormat::destroy(JSCell* cell)
+{
+    JSC_REMOVABLE_DEFINITION(IntlDateTimeFormat, &IntlDateTimeFormat::destroy);
+    static_cast<IntlDateTimeFormat*>(cell)->IntlDateTimeFormat::~IntlDateTimeFormat();
+}
+
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IntlDateTimeFormatImpl);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IntlDateTimeFormatTemporalFormatterCache);
 
@@ -102,7 +110,7 @@ static std::unique_ptr<UDateFormat, UDateFormatDeleter> openDateFormat(const ASC
     // Failure here means unsupported calendar, and can safely be ignored.
     UErrorCode calStatus = U_ZERO_ERROR;
     UCalendar* cal = const_cast<UCalendar*>(udat_getCalendar(dateFormat));
-    ucal_setGregorianChange(cal, minECMAScriptTime, &calStatus);
+    ucal_setGregorianChange(cal, prolepticGregorianChangeDate, &calStatus);
 
     return std::unique_ptr<UDateFormat, UDateFormatDeleter>(dateFormat);
 }
@@ -240,7 +248,7 @@ Vector<String> IntlDateTimeFormat::localeData(const String& locale, RelevantExte
 }
 
 template<typename Container>
-static inline unsigned NODELETE skipLiteralText(const Container& container, unsigned start, unsigned length)
+static inline unsigned LEGACY_NODELETE skipLiteralText(const Container& container, unsigned start, unsigned length)
 {
     // Skip literal text. We do not recognize '' single quote specially.
     // `'ICU''s change'` is `ICU's change` literal text, but even if we split this text into two literal texts,
@@ -1384,7 +1392,7 @@ JSObject* IntlDateTimeFormat::resolvedOptions(JSGlobalObject* globalObject) cons
 // [3]: https://hg.mozilla.org/mozilla-central/rev/40e2c54d5618
 // [4]: https://chromium.googlesource.com/v8/v8/+/bab790f9165f65a44845b4383c8df7c6c32cf4b3
 template<typename Container>
-static void NODELETE replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(Container& vector)
+static void LEGACY_NODELETE replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(Container& vector)
 {
     // The key of this replacement is that we are not changing size of string.
     // This allows us not to adjust offsets reported from formatToParts / formatRangeToParts
@@ -1785,7 +1793,7 @@ static std::unique_ptr<UFormattedDateInterval, UFormattedDateIntervalDeleter> fo
     };
 
     // UFormattedDateInterval does not have a way to configure gregorian calendar change date while ECMAScript requires that
-    // gregorian calendar change should not have effect (we are setting ucal_setGregorianChange(cal, minECMAScriptTime, &status) explicitly).
+    // gregorian calendar change should not have effect (we are setting ucal_setGregorianChange(cal, prolepticGregorianChangeDate, &status) explicitly).
     // As a result, if the input date is older than gregorian calendar change date (Oct 15, 1582), the formatted string becomes
     // julian calendar date.
     // udtitvfmt_formatCalendarToResult API offers the way to set calendar to each date of the input, so that we can use UDateFormat's

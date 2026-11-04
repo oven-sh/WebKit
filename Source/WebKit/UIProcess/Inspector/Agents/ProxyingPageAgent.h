@@ -76,6 +76,9 @@ public:
     // a WebFrameProxy is destroyed only when the frame is truly removed. See webkit.org/b/308896.
     void frameDestroyed(WebCore::FrameIdentifier);
 
+    // Retires the protocol ID the frame had in the process it left (the hosting process is part of the ID).
+    void frameSwappedOutOfProcess(WebCore::FrameIdentifier, WebCore::ProcessIdentifier oldProcessID);
+
     // PageBackendDispatcherHandler
     CommandResult<void> enable() final;
     CommandResult<void> disable() final;
@@ -99,7 +102,7 @@ public:
     CommandResult<String> snapshotNode(Protocol::DOM::NodeId) final;
     CommandResult<String> snapshotRect(int x, int y, int width, int height, Protocol::Page::CoordinateSystem) final;
 #if ENABLE(WEB_ARCHIVE) && USE(CF)
-    CommandResult<String> archive() final;
+    void archive(Ref<ArchiveCallback>&&) final;
 #endif
 #if !PLATFORM(COCOA)
     CommandResult<void> setScreenSizeOverride(std::optional<int>&& width, std::optional<int>&& height) final;
@@ -110,12 +113,16 @@ private:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
     // IPC message handlers from WebProcess PageAgentProxy
-    void frameNavigated(WebCore::FrameIdentifier, const URL&, const String& mimeType, IPC::Untrusted<WebCore::SecurityOriginData>&&, std::optional<WebCore::FrameIdentifier> parentFrameID, const String& name, const String& loaderId);
+    void frameNavigated(IPC::Connection&, WebCore::FrameIdentifier, const URL&, const String& mimeType, IPC::Untrusted<WebCore::SecurityOriginData>&&, std::optional<WebCore::FrameIdentifier> parentFrameID, const String& name, const String& loaderId);
     void domContentEventFired(double timestamp);
     void loadEventFired(double timestamp);
     void frameDetached(WebCore::FrameIdentifier);
 
     void removeAllRegisteredReceivers();
+
+    // Use this, not WebPageProxy::forEachWebContentProcess(): that misses registered processes the page has swapped out of, and
+    // includes processes holding only a remote page that were never registered, so state sent there outlives disable().
+    void forEachInstrumentedProcess(NOESCAPE const Function<void(WebKit::WebProcessProxy&, WebCore::PageIdentifier)>&);
 
     Ref<Protocol::Page::FrameResourceTree> buildFrameTree(const WebKit::WebFrameProxy&, const String* parentProtocolId, const HashMap<WebCore::FrameIdentifier, FrameResourceData>& resourcesByFrame) const;
 
@@ -126,9 +133,10 @@ private:
     bool m_enabled { false };
     HashMap<std::pair<WebCore::ProcessIdentifier, WebCore::PageIdentifier>, unsigned> m_instrumentedProcessPageCounts;
 
-    // Latest paint-rects toggle, fanned out to every WebContent process and replayed to any
-    // process that registers later (e.g. a cross-origin navigation spawns a new one).
+    // Latest paint-rects toggle and bootstrap script, sent to every instrumented process and replayed
+    // to any process that registers later (e.g. a cross-origin navigation spawns a new one).
     bool m_showPaintRects { false };
+    String m_bootstrapScript;
 
     // Pin each instrumented WebProcessProxy alive while we hold an IPC message
     // receiver registration on it. Without this, the process can be destructed

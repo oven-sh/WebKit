@@ -121,7 +121,7 @@ RefPtr<CSSValueList> CSSValuePool::createFontFaceValue(const AtomString& string)
         // Regular CSS font-family parsing is unaffected and still rejects such names.
         CSSParserContext context = strictCSSParserContext();
         context.legacyFontFaceAttributeMode = true;
-        return dynamicDowncast<CSSValueList>(CSSPropertyParser::parseStylePropertyLonghand(CSSPropertyFontFamily, string, context));
+        return dynamicDowncast<CSSValueList>(CSSPropertyParser::parseStylePropertyLonghand(CSSPropertyID::FontFamily, string, context));
     }).iterator->value;
 }
 

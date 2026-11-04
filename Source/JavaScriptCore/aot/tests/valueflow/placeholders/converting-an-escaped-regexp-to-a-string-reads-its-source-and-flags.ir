@@ -1,0 +1,20 @@
+# pattern = new RegExp; somethingNoTableLists.takes(pattern); `${pattern}`
+# OPTIONS: testing=DelayFlowRules:30
+# RUN: valueflow-solve used
+# CHECK: used RegExpPrototypeFlags
+# CHECK: used RegExpPrototypeGlobal
+# CHECK: used RegExpPrototypeSource
+# CHECK: run RegExpPrototypeToString
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=RegExp
+    v1 = Construct v0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="somethingThatNoTableLists" [isFreeName]
+    v4 = PropGet v3 key="takes"
+    v5 = Call v4, v3, v1 calleeKey="takes"
+    v6 = ToString v1
+    Return
+}

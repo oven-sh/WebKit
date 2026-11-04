@@ -435,7 +435,8 @@ void DcSctpSocket::RestoreFromState(const DcSctpSocketHandoverState& state) {
       capabilities.negotiated_maximum_outgoing_streams =
           state.capabilities.negotiated_maximum_outgoing_streams;
 
-      send_queue_.RestoreFromState(state);
+      webrtc::Timestamp now = callbacks_.Now();
+      send_queue_.RestoreFromState(now, state);
 
       CreateTransmissionControlBlock(
           capabilities, my_verification_tag, TSN(state.my_initial_tsn),
@@ -443,9 +444,12 @@ void DcSctpSocket::RestoreFromState(const DcSctpSocketHandoverState& state) {
           TSN(state.peer_initial_tsn), static_cast<size_t>(0),
           TieTag(state.tie_tag));
 
-      tcb_->RestoreFromState(state);
+      tcb_->RestoreFromState(now, state);
 
       SetState(State::kEstablished, "restored from handover state");
+      // Outstanding data was restored and marked for retransmission. Send it
+      // right away instead of waiting for the T3-RTX timer to expire.
+      tcb_->SendBufferedPackets(now);
       callbacks_.OnConnected();
     }
   }
@@ -968,7 +972,7 @@ bool DcSctpSocket::HandleUnrecognizedChunk(
     webrtc::StringBuilder sb;
     sb << "Received unknown chunk of type: "
        << static_cast<int>(descriptor.type) << " with report-error bit set";
-    callbacks_.OnError(ErrorKind::kParseFailed, sb.str());
+    callbacks_.OnError(ErrorKind::kParseFailed, sb.Release());
     RTC_DLOG(LS_VERBOSE)
         << log_prefix()
         << "Unknown chunk, with type indicating it should be reported.";
@@ -1109,7 +1113,7 @@ bool DcSctpSocket::ValidateHasTCB() {
 void DcSctpSocket::ReportFailedToParseChunk(int chunk_type) {
   webrtc::StringBuilder sb;
   sb << "Failed to parse chunk of type: " << chunk_type;
-  callbacks_.OnError(ErrorKind::kParseFailed, sb.str());
+  callbacks_.OnError(ErrorKind::kParseFailed, sb.Release());
 }
 
 void DcSctpSocket::HandleData(const CommonHeader& /* header */,
@@ -1907,8 +1911,9 @@ DcSctpSocket::GetHandoverStateAndClose() {
     state.socket_state = DcSctpSocketHandoverState::SocketState::kClosed;
   } else if (state_ == State::kEstablished) {
     state.socket_state = DcSctpSocketHandoverState::SocketState::kConnected;
-    tcb_->AddHandoverState(state);
-    send_queue_.AddHandoverState(state);
+    webrtc::Timestamp now = callbacks_.Now();
+    tcb_->AddHandoverState(now, state);
+    send_queue_.AddHandoverState(now, state);
     InternalClose(ErrorKind::kNoError, "handover");
   }
 

@@ -36,9 +36,9 @@ public:
     virtual ~LegacyRenderSVGResourceContainer();
 
     void layout() override;
-    void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
+    void insertedIntoTree() final;
 
-    static float NODELETE computeTextPaintingScale(const RenderElement&);
+    static float LEGACY_NODELETE computeTextPaintingScale(const RenderElement&);
     static AffineTransform transformOnNonScalingStroke(RenderObject*, const AffineTransform& resourceTransform);
 
     void removeClientFromCacheAndMarkForInvalidation(RenderElement&, bool markForInvalidation = true) override;

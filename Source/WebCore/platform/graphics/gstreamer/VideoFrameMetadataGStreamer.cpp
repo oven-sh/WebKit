@@ -25,6 +25,7 @@
 #include "GStreamerCommon.h"
 #include <wtf/HashMap.h>
 #include <wtf/glib/WTFGType.h>
+#include <wtf/text/MakeString.h>
 
 GST_DEBUG_CATEGORY_STATIC(webkit_video_frame_meta_debug);
 #define GST_CAT_DEFAULT webkit_video_frame_meta_debug
@@ -74,6 +75,10 @@ static std::pair<GRefPtr<GstBuffer>, VideoFrameMetadataGStreamer*> ensureVideoFr
     IGNORE_WARNINGS_BEGIN("cast-align");
     GRefPtr modifiedBuffer = adoptGRef(gst_buffer_make_writable(buffer.leakRef()));
     IGNORE_WARNINGS_END;
+    if (!modifiedBuffer) {
+        GST_ERROR("Failed to make buffer writable");
+        return { nullptr, nullptr };
+    }
     meta = VIDEO_FRAME_METADATA_CAST(gst_buffer_add_meta(modifiedBuffer.get(), videoFrameMetadataGetInfo(), nullptr));
     return { WTF::move(modifiedBuffer), meta };
 }
@@ -150,8 +155,22 @@ GRefPtr<GstBuffer> webkitGstBufferSetVideoFrameMetadata(GRefPtr<GstBuffer>&& buf
     IGNORE_WARNINGS_BEGIN("cast-align");
     GRefPtr modifiedBuffer = adoptGRef(gst_buffer_make_writable(buffer.leakRef()));
     IGNORE_WARNINGS_END;
+    if (!modifiedBuffer) {
+        GST_ERROR("Failed to make buffer writable");
+        return nullptr;
+    }
     webkitGstBufferAddVideoFrameMetadata(modifiedBuffer.get(), metadata, rotation, isMirrored, hint, colorSpace);
     return modifiedBuffer;
+}
+
+String webkitGstImageOrientationTag(VideoFrame::Rotation rotation, bool isMirrored)
+{
+    if (!isMirrored)
+        return makeString("rotate-"_s, rotation);
+
+    // Mirroring after a rotation of R is mirroring before a rotation of -R.
+    auto tagRotation = static_cast<VideoFrame::Rotation>((360 - static_cast<int>(rotation)) % 360);
+    return makeString("flip-rotate-"_s, tagRotation);
 }
 
 void webkitGstTraceProcessingTimeForElement(GstElement* element)
@@ -181,6 +200,8 @@ void webkitGstTraceProcessingTimeForElement(GstElement* element)
             return GST_PAD_PROBE_REMOVE;
 
         auto [modifiedBuffer, meta] = ensureVideoFrameMetadata(GRefPtr(GST_PAD_PROBE_INFO_BUFFER(info)));
+        if (!modifiedBuffer || !meta)
+            return GST_PAD_PROBE_OK;
         gst_pad_probe_info_set_buffer(info, modifiedBuffer.leakRef());
 
         Locker locker { meta->priv->lock };

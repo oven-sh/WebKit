@@ -233,15 +233,23 @@ ExecutionHandler::ResumeMode ExecutionHandler::stopCode(Locker<Lock>& locker, St
     m_debuggeeContinue.wait(locker); // Wait for resume mode to be set.
     dataLogLnIf(Options::verboseWasmDebugger(), "[Code][Stop] Unblocked and running...");
 
-    // Determine resume mode
-    if (m_debuggerState == DebuggerState::SwitchRequested)
+    // Only a resume command wakes the wait above, each having set the state below.
+    switch (m_debuggerState) {
+    case DebuggerState::SwitchRequested:
         return ResumeMode::Switch;
-
-    // Defer debugger notification until after VMs resume to prevent interrupt() race.
-    if (m_debuggerState == DebuggerState::ContinueRequested)
+    case DebuggerState::StepRequested:
+        return ResumeMode::One;
+    case DebuggerState::ContinueRequested:
+        // Defer debugger notification until after VMs resume to prevent interrupt() race.
         m_awaitingResumeNotification = true;
-
-    return (m_debuggerState == DebuggerState::StepRequested) ? ResumeMode::One : ResumeMode::All;
+        // 'c' after Hc<id> runs only that VM (RunOne); Hc-1 clears m_continueDebuggeeOnly to resume all.
+        return m_continueDebuggeeOnly ? ResumeMode::One : ResumeMode::All;
+    case DebuggerState::Replied:
+    case DebuggerState::InterruptRequested:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return ResumeMode::All;
 }
 
 StopTheWorldStatus ExecutionHandler::handleStopTheWorld(VM& debuggee, StopTheWorldEvent event)
@@ -318,6 +326,7 @@ void ExecutionHandler::handlePostResume()
     Locker locker { m_lock };
 
     if (takeAwaitingResumeNotification()) {
+        RELEASE_ASSERT(m_debuggerState == DebuggerState::ContinueRequested);
         dataLogLnIf(Options::verboseWasmDebugger(), "[PostResume] Notify debugger to continue");
         m_debuggerContinue.notifyOne(); // Notify that resume is complete.
         m_debuggeeContinue.notifyAll(); // Release resume barrier for VMs blocked in stopTheWorld().
@@ -377,7 +386,7 @@ static inline VM* findVM(uint64_t vmId)
     return result;
 }
 
-void ExecutionHandler::switchTarget(uint64_t vmId)
+bool ExecutionHandler::switchTarget(uint64_t vmId)
 {
     RELEASE_ASSERT(Thread::currentSingleton().uid() == debugServerThreadId());
 
@@ -386,8 +395,10 @@ void ExecutionHandler::switchTarget(uint64_t vmId)
     VM* newDebuggee = findVM(vmId);
     dataLogLnIf(Options::verboseWasmDebugger(), "[Code][SwitchVM] current debuggee=", RawPointer(m_debuggee), " new debuggee=", RawPointer(newDebuggee));
 
+    if (!newDebuggee)
+        return false;
     if (m_debuggee == newDebuggee)
-        return;
+        return true;
 
     RELEASE_ASSERT(debuggeeState()->isStopped);
     m_debuggee = newDebuggee;
@@ -398,8 +409,22 @@ void ExecutionHandler::switchTarget(uint64_t vmId)
     m_debuggerContinue.wait(locker); // Wait for new debuggee VM to stop.
     RELEASE_ASSERT(debuggeeState()->isStopped);
     dataLogLnIf(Options::verboseWasmDebugger(), "[Code][SwitchVM] Code is stopped");
+    return true;
 }
 
+void ExecutionHandler::requestStopAllAndWait(Locker<Lock>& locker)
+{
+    RELEASE_ASSERT(!m_debuggee || !debuggeeState()->isStopped);
+    m_debuggerState = DebuggerState::InterruptRequested;
+    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger][StopAll] Calling VMManager::requestStopAll()...");
+    VMManager::singleton().requestStopAll(VMManager::StopReason::WasmDebugger);
+    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger][StopAll] VMManager::requestStopAll() returned, waiting...");
+    m_debuggerContinue.wait(locker); // Wait for the serving VM to stop.
+    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger][StopAll] Code is stopped");
+}
+
+// FIXME: In RunOne, a debuggee blocked in a wait (VMBlockingScope) leaves no VM to serve this stop:
+// the other VMs stay parked by RunOne.
 void ExecutionHandler::interrupt()
 {
     RELEASE_ASSERT(Thread::currentSingleton().uid() == debugServerThreadId());
@@ -411,18 +436,7 @@ void ExecutionHandler::interrupt()
     // no matter how many Ctrl+C the user types, LLDB will not send additional interrupt packets
     // until it receives a stop reply. This prevents packet flooding and ensures clean protocol behavior.
     // Our WebKit implementation handles each interrupt request by activating StopWorld via VM traps.
-
-    {
-        RELEASE_ASSERT(!m_debuggee || !debuggeeState()->isStopped);
-        m_debuggerState = DebuggerState::InterruptRequested;
-        dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger][Interrupt] Calling VMManager::requestStopAll()...");
-        VMManager::singleton().requestStopAll(VMManager::StopReason::WasmDebugger);
-        dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger][Interrupt] VMManager::requestStopAll() returned");
-    }
-
-    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger][Interrupt] Notified code to stop, waiting...");
-    m_debuggerContinue.wait(locker); // Wait for debuggee VM to stop.
-    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger][Interrupt] Wait completed, sending stop reply...");
+    requestStopAllAndWait(locker);
     sendStopReply(locker);
     dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger][Interrupt] Code is stopped and debugger replied");
 }
@@ -758,7 +772,7 @@ void ExecutionHandler::handleThreadStopInfo(StringView packet)
     sendStopReplyForThread(locker, *vmId);
 }
 
-static uint64_t NODELETE getStopPC(const DebugState& state)
+static uint64_t LEGACY_NODELETE getStopPC(const DebugState& state)
 {
     if (state.isStoppedAtSystemCall())
         return VirtualAddress(VirtualAddress::INVALID_BASE).value();
@@ -928,12 +942,13 @@ void ExecutionHandler::sendReplyImpl(AbstractLocker&, StringView reply) WTF_REQU
 #endif
 
     auto packetData = packet.utf8();
-    int sent = static_cast<int>(send(m_debugServer.m_clientSocket, packetData.legacyCStringPointer(), packetData.length(), 0));
+    auto packetBytes = packetData.span();
+    int sent = static_cast<int>(send(m_debugServer.m_clientSocket, packetBytes.data(), packetBytes.size(), 0));
     if (sent < 0)
-        dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] Failed to send packet: ", packetData.legacyCStringPointer(), " sent: ", sent);
+        dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] Failed to send packet: ", packetData, " sent: ", sent);
     else {
         m_debuggerState = DebuggerState::Replied;
-        dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] Sent reply: ", packetData.legacyCStringPointer());
+        dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] Sent reply: ", packetData);
     }
 }
 
@@ -946,6 +961,13 @@ void ExecutionHandler::reset()
     // VM must not re-hit a breakpoint in that window.
     m_breakpointManager->clearAllBreakpoints();
 
+    // A lone 'c'-after-Hc VM is still running and holds the others stopped; stop it so resume frees all.
+    if (m_debuggee && !debuggeeState()->isStopped && m_continueDebuggeeOnly)
+        requestStopAllAndWait(locker);
+    m_continueDebuggeeOnly = false;
+
+    // FIXME: In RunOne, a debuggee blocked in a wait (VMBlockingScope) has isStopped set but is not in
+    // stopCode, so resumeImpl() would wait forever; this needs to resume every VM instead.
     if (m_debuggee && debuggeeState()->isStopped)
         resumeImpl(locker);
 

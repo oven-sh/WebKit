@@ -44,9 +44,11 @@ enum class FetchOptionsDestination : uint8_t;
 // it can fetch more than just scripts.
 class CachedScriptFetcher : public JSC::ScriptFetcher {
 public:
+    static constexpr ASCIILiteral defaultCrossOriginModeForModule { "anonymous"_s };
+
     virtual CachedResourceHandle<CachedResource> requestModuleResource(Document&, const URL& sourceURL, FetchOptionsDestination, String&& integrity, std::optional<ServiceWorkersMode>, const URL& referrer) const;
 
-    static Ref<CachedScriptFetcher> create(const AtomString& charset);
+    static Ref<CachedScriptFetcher> LEGACY_NODELETE create(const AtomString& charset);
 
 #if USE(BUN_JSC_ADDITIONS)
     Type fetcherType() const final { return Type::Cached; }

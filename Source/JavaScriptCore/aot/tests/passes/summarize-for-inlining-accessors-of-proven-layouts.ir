@@ -1,0 +1,82 @@
+# A callee is measured before its accesses are resolved: an access by name that finds an accessor on the layouts of its receiver counts as the call it becomes, not as a slot operation
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SummarizeForInlining
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Box" constructor=f0 fields=[{key="width" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="area" kind=Getter function=f1 mutability=Fixed}, {key="rim" kind=Getter function=f2 mutability=Fixed}, {key="size" kind=Setter function=f3 mutability=Fixed}] namedMembers=[{key="area" kind=Getter function=f1 mutability=Fixed}, {key="rim" kind=Getter function=f2 mutability=Fixed}, {key="size" kind=Setter function=f3 mutability=Fixed}]}
+layout L1 kind=Instance name="Span" constructor=f4 fields=[{key="area" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 name="WithGetter" fields=[{key="area" declared={type=anything} form=[IsAccessor]}]
+function f0 name="Box" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="area" kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+    v1 = PropGet v0 key="width" receivers=[L0]
+    Return v1
+}
+# CHECK: f1: barrier=None bytes=12
+function f2 name="rim" kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+    v1 = PropGet v0 key="width" receivers=[L0]
+    Return v1
+}
+function f3 name="size" kind=Setter flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="width" receivers=[L0]
+    Return
+}
+function f4 name="Span" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f5 name="readsOneGetter" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="area" receivers=[L0]
+    Return v1
+}
+# CHECK: f5: barrier=None bytes=16
+
+function f6 name="callsOneGetter" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f1
+    Return v1
+}
+# CHECK: f6: barrier=None bytes=16
+
+function f7 name="readsTwoGetters" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="area" receivers=[L0]
+    v2 = PropGet v0 key="rim" receivers=[L0]
+    v3 = Add v1, v2
+    Return v3
+}
+# CHECK: f7: barrier=None bytes=[[twoCalls]]
+
+function f8 name="callsTwoGetters" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v0 function=f2
+    v3 = Add v1, v2
+    Return v3
+}
+# CHECK: f8: barrier=None bytes=[[twoCalls]]
+
+function f9 name="storesThroughSetter" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="size" receivers=[L0]
+    Return v0
+}
+# CHECK: f9: barrier=None bytes=20
+
+function f10 name="callsSetter" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f3
+    Return v0
+}
+# CHECK: f10: barrier=None bytes=20
+
+function f11 name="getterOrField" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="area" receivers=[L0, L1]
+    Return v1
+}
+# CHECK: f11: barrier=None bytes=16
+
+function f12 name="field" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="area" receivers=[L1]
+    Return v1
+}
+# CHECK: f12: barrier=None bytes=12
+
+function f13 name="getterInSlot" parameters=[{type=L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="area" receivers=[L2]
+    Return v1
+}
+# CHECK: f13: barrier=None bytes=44

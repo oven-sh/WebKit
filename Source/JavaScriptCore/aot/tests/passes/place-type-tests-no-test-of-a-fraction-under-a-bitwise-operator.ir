@@ -1,0 +1,56 @@
+# `x | 0` truncates: it is written where x may be a fraction. An operand that is proven a number gets no test for an integer there, which would fail at every fraction
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="truncated" parameters=[{type=number}] results=[{type=i32}] {
+  b0(v0: number ~ i32):
+    v1 = Integer integer=0
+    v2 = BitOr v0, v1
+    Return v2
+# CHECK-NOT: TypeTest
+}
+
+function f1 name="zeroOnTheLeftAndShifts" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=i32}] {
+  b0(v0: number ~ i32, v1: number ~ i32, v2: number ~ i32):
+    v3 = Integer integer=0
+    v4 = BitOr v3, v0
+    v5 = RShift v1, v3
+    v6 = BitXor v2, v3
+    v7 = BitAnd v4, v5
+    v8 = BitAnd v7, v6
+    Return v8
+# CHECK-NOT: TypeTest
+}
+
+function f2 name="masked" parameters=[{type=number}] results=[{type=i32}] {
+  b0(v0: number ~ i32):
+    v1 = Integer integer=255
+    v2 = BitAnd v0, v1
+    Return v2
+# CHECK: TypeTest v0 testedType=i32
+}
+
+function f3 name="zeroIsShifted" parameters=[{type=number}] results=[{type=i32}] {
+  b0(v0: number ~ i32):
+    v1 = Integer integer=0
+    v2 = LShift v1, v0
+    Return v2
+# CHECK: TypeTest v0 testedType=i32
+}
+
+function f4 name="wholeNumber" parameters=[{type=int|whole}] results=[{type=i32}] {
+  b0(v0: int|whole ~ i32):
+    v1 = Integer integer=0
+    v2 = BitOr v0, v1
+    Return v2
+# CHECK: TypeTest v0 testedType=i32
+}
+
+function f5 name="anyValue" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=i32}] {
+  b0(v0: anything ~ i32):
+    v1 = Integer integer=0
+    v2 = BitOr v0, v1
+    Return v2
+# CHECK: TypeTest v0 testedType=i32
+}

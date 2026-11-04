@@ -133,4 +133,37 @@ using __PackedType = typename __PackedTypeImpl<T>::Type;
 )"_s);
 }
 
+TEST(WGSLMetalGenerationTests, RepeatedGenerationIsDeterministic)
+{
+    // Every pipeline created from a GPUShaderModule prepares and generates from the same AST,
+    // so repeated generation must produce the same code for the Metal shader cache to hit.
+    auto result = WGSL::staticCheck(R"(
+@vertex
+fn main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    var positions = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
+    return vec4<f32>(positions[i], 0.0, 1.0);
+})"_s, std::nullopt, { 8 });
+    ASSERT_TRUE(std::holds_alternative<WGSL::SuccessfulCheck>(result));
+    auto& ast = std::get<WGSL::SuccessfulCheck>(result).ast;
+
+    auto generate = [&]() -> String {
+        auto prepareResult = WGSL::prepare(ast, "main"_s, { });
+        if (!std::holds_alternative<WGSL::PrepareResult>(prepareResult))
+            return { };
+        HashMap<String, WGSL::ConstantValue> constantValues;
+        auto generationResult = WGSL::generate(ast, std::get<WGSL::PrepareResult>(prepareResult), constantValues, WGSL::DeviceState {
+            .appleGPUFamily = 4,
+            .shaderValidationEnabled = false
+        });
+        if (!std::holds_alternative<String>(generationResult))
+            return { };
+        return std::get<String>(generationResult);
+    };
+
+    auto first = generate();
+    EXPECT_FALSE(first.isEmpty());
+    EXPECT_EQ(first, generate());
+    EXPECT_EQ(first, generate());
+}
+
 }

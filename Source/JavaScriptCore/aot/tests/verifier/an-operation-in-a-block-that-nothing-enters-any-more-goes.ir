@@ -1,0 +1,30 @@
+# function main(callee) { callee.length; callee() } with callee a function of the program or undefined
+# The call is written as a test for the function, a direct call, and a call of undefined that throws. The check in front of the read lets only the function through: InsertObjectCoercibleChecks hands
+# its result to the test, of the type of what fails the test nothing is left, and the typing empties the block that nothing enters any more. A build that verifies each pass has nothing to say.
+# FORM: Prepared optimizing
+# RUN: pass InsertObjectCoercibleChecks
+# OPTIONS: check=VerifyEachPass
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="callee" results=[{type=undefined}] {
+    Return
+}
+function f1 name="main" parameters=[{type=undefined|f0}] results=[{type=undefined}] {
+    v1 = RequireObjectCoercible v0 name="length"
+    v2 = PropGet v1 key="length"
+    v3 = TypeTest v0 testedType=f0
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = CallDirect function=f0
+    Return
+  b2(v6):
+    v7 = Call v6, -
+    Unreachable
+}
+# CHECK-LABEL: function f1
+# CHECK: = TypeTest v1 testedType=f0
+# CHECK: = CallDirect function=f0
+# CHECK: b2(v6: never):
+# CHECK-NEXT: Unreachable

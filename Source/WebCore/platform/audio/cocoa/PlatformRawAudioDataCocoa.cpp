@@ -26,7 +26,7 @@
 #include "config.h"
 #include "PlatformRawAudioDataCocoa.h"
 
-#if ENABLE(WEB_CODECS) && USE(AVFOUNDATION)
+#if USE(AVFOUNDATION)
 
 #include "AudioSampleFormat.h"
 #include "CAAudioStreamDescription.h"
@@ -36,7 +36,6 @@
 #include "NotImplemented.h"
 #include "SharedBuffer.h"
 #include "WebAudioBufferList.h"
-#include "WebCodecsAudioDataAlgorithms.h"
 
 #include <CoreAudio/CoreAudioTypes.h>
 #include <wtf/MediaTime.h>
@@ -52,7 +51,7 @@ Ref<PlatformRawAudioData> PlatformRawAudioData::create(Ref<MediaSample>&& sample
     return PlatformRawAudioDataCocoa::create(downcast<MediaSampleAVFObjC>(WTF::move(sample)));
 }
 
-static AudioStreamDescription::PCMFormat NODELETE audioSampleFormatToPCMFormat(AudioSampleFormat format)
+static AudioStreamDescription::PCMFormat LEGACY_NODELETE audioSampleFormatToPCMFormat(AudioSampleFormat format)
 {
     switch (format) {
     case AudioSampleFormat::U8:
@@ -74,14 +73,15 @@ static AudioStreamDescription::PCMFormat NODELETE audioSampleFormatToPCMFormat(A
     }
 }
 
-static CAAudioStreamDescription::IsInterleaved NODELETE interleavedFormat(AudioSampleFormat format)
+static CAAudioStreamDescription::IsInterleaved LEGACY_NODELETE interleavedFormat(AudioSampleFormat format)
 {
     return isAudioSampleFormatInterleaved(format) ? CAAudioStreamDescription::IsInterleaved::Yes : CAAudioStreamDescription::IsInterleaved::No;
 }
 
 static RetainPtr<CMSampleBufferRef> createSampleBuffer(const CAAudioStreamDescription& description, const CMTime& time, size_t numberOfFrames, Ref<SharedBuffer>&& data, size_t dataSize)
 {
-    CMAudioFormatDescriptionRef rawFormatDescription;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CMAudioFormatDescriptionRef rawFormatDescription;
     if (PAL::CMAudioFormatDescriptionCreate(kCFAllocatorDefault, &description.streamDescription(), 0, nullptr, 0, nullptr, nullptr, &rawFormatDescription))
         return nullptr;
     RetainPtr formatDescription = adoptCF(rawFormatDescription);
@@ -95,17 +95,19 @@ static RetainPtr<CMSampleBufferRef> createSampleBuffer(const CAAudioStreamDescri
     // The caller may have supplied more bytes than the format describes; the sample buffer must
     // cover exactly the described bytes.
     if (PAL::CMBlockBufferGetDataLength(blockBuffer) != dataSize) {
-        CMBlockBufferRef rawTrimmedBuffer;
+        // This is an out-parameter which is immediately adopted below.
+        SUPPRESS_UNRETAINED_LOCAL CMBlockBufferRef rawTrimmedBuffer;
         if (auto error = PAL::CMBlockBufferCreateContiguous(kCFAllocatorDefault, blockBuffer, kCFAllocatorDefault, nullptr, 0, dataSize, 0, &rawTrimmedBuffer)) {
-            RELEASE_LOG_ERROR(MediaStream, "PlatformRawAudioData::create createSampleBuffer couldn't trim the block buffer with error %d", error);
+            RELEASE_LOG_ERROR(MediaStream, "PlatformRawAudioData::create createSampleBuffer couldn't trim the block buffer with error %d", static_cast<int>(error));
             return nullptr;
         }
         blockBuffer = adoptCF(rawTrimmedBuffer);
     }
 
-    CMSampleBufferRef rawSampleBuffer;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CMSampleBufferRef rawSampleBuffer;
     if (auto error = PAL::CMAudioSampleBufferCreateWithPacketDescriptions(kCFAllocatorDefault, blockBuffer, true, nullptr, nullptr, formatDescription, numberOfFrames, time, nullptr, &rawSampleBuffer)) {
-        RELEASE_LOG_ERROR(MediaStream, "PlatformRawAudioData::create createSampleBuffer couldn't create a sample buffer with error %d", error);
+        RELEASE_LOG_ERROR(MediaStream, "PlatformRawAudioData::create createSampleBuffer couldn't create a sample buffer with error %d", static_cast<int>(error));
         return nullptr;
     }
     return adoptCF(rawSampleBuffer);
@@ -249,7 +251,7 @@ void PlatformRawAudioData::copyTo(std::span<uint8_t> destination, AudioSampleFor
     auto& audioData = downcast<PlatformRawAudioDataCocoa>(*this);
 
     auto sourceFormat = format();
-    WebAudioBufferList sourceList(audioData.m_description, audioData.sampleBuffer());
+    WebAudioBufferList sourceList(audioData.m_description, protect(audioData.sampleBuffer()));
     bool destinationIsInterleaved = isAudioSampleFormatInterleaved(destinationFormat);
 
     // Copy memory when:
@@ -311,4 +313,4 @@ CMSampleBufferRef PlatformRawAudioDataCocoa::sampleBuffer() const
 
 #undef GST_CAT_DEFAULT
 
-#endif // ENABLE(WEB_CODECS) && USE(GSTREAMER)
+#endif // USE(AVFOUNDATION)

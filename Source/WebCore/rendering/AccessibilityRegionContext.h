@@ -34,7 +34,6 @@ namespace WebCore {
 
 class RenderBox;
 class RenderBoxModelObject;
-class RenderInline;
 class RenderLineBreak;
 class RenderText;
 class RenderView;
@@ -52,8 +51,7 @@ public:
     // This group of methods takes paint-time geometry and uses it directly.
     void takeBounds(const RenderBox&, LayoutPoint /* paintOffset */);
     void takeBounds(const RenderBox&, FloatRect /* paintRect */);
-    void takeBounds(const RenderInline*, LayoutRect&&);
-    void takeBounds(const RenderInline&, LayoutRect&& /* paintRect */);
+    void takeBoundsForInlineBox(const RenderBoxModelObject&, LayoutRect&& /* paintRect */);
     void takeBounds(const RenderText&, FloatRect /* paintRect */, size_t /* lineIndex */);
     void takeBounds(const RenderView&, LayoutPoint&& /* paintOffset */);
     void takeBounds(const RenderLineBreak*, const LayoutPoint& /* paintOffset */);
@@ -64,7 +62,7 @@ public:
     void onPaint(const ScrollView&);
 
 private:
-    void takeBoundsInternal(const RenderBoxModelObject&, IntRect&& /* paintRect */);
+    void takeBoundsInternal(const RenderBoxModelObject&, IntRect&& /* paintRect */, AffineTransform* localToPaintRect = nullptr);
 
     // Maps the given rect using the current transform and clip stack.
     // Assumes `rect` is in page-absolute coordinate space (because the clips being applied are).

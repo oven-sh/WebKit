@@ -1,0 +1,20 @@
+# `iterable[Symbol.iterator]()` of an iterator hands back the iterator, and valueOf() of a string the string. As a call they hid what is known of the object from the caller: `first(function* () {..}())`
+# did not count as a loop over a generator made by the caller, and the generator kept its callee, which gave it a prototype object and a Structure of its own in every turn.
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="iterator-of-anything" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=IteratorPrototypeSymbolIterator/0
+    Return v1
+# CHECK: [[same]]: anything = Upcast v0
+# CHECK-NEXT: Return [[same]]
+}
+
+function f1 name="iterator-of-a-generator" parameters=[{type=Generator}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=IteratorPrototypeSymbolIterator/0
+    Return v1
+# CHECK: [[same]]: Generator = Upcast v0
+# CHECK-NEXT: Return [[same]]
+}

@@ -1,0 +1,96 @@
+# From the flow analysis to the removal: a field that nothing reads loses the store of an instance of a class that is evaluated once, where only code of the program has such an
+# instance in hand, nothing holds one weakly and one holds numbers and such instances alone, its own class among them. The same field keeps the store of an instance that a weak
+# reference has taken, of an instance that holds such a one, and of an instance of a class that is evaluated at every call of a function
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,RemoveUnreadExports,RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 5
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/entry.js" displayPath="entry.js" body=f1 requests=[{target=m0 completes=true}]
+entry module=m1
+layout L0 kind=Instance name="Node" constructor=f2 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="HoldsNode" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}, {key="read" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="Target" constructor=f3 fields=[{key="v" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="HoldsTarget" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}, {key="read" declared={type=anything} flags=[IsRequired]}]
+layout L4 kind=Instance name="RefersToTarget" constructor=f4 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="HoldsReferrer" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}, {key="read" declared={type=anything} flags=[IsRequired]}]
+layout L6 kind=Instance name="Local" constructor=f5 fields=[{key="v" declared={type=anything} flags=[IsRequired]}]
+layout L7 name="HoldsLocal" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}, {key="read" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Null
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4, -, v1, v0
+    v6 = Construct v4, -, v5, v0
+    v7 = NewObject -, v6, v0 layout=L1 fields=[0, 1]
+    v8 = PropGet v7 key="read"
+    v9 = NewClosure function=f3
+    v10 = NewClass v9 layout=L2
+    v11 = FinishClass v10 layout=L2
+    v12 = Construct v11, -, v0
+    v13 = Builtin builtin=WeakRef
+    v14 = Construct v13, -, v12
+    v15 = NewObject -, v12, v0 layout=L3 fields=[0, 1]
+    v16 = PropGet v15 key="read"
+    v17 = NewClosure function=f4
+    v18 = NewClass v17 layout=L4
+    v19 = FinishClass v18 layout=L4
+    v20 = Construct v19, -, v12
+    v21 = NewObject -, v20, v0 layout=L5 fields=[0, 1]
+    v22 = PropGet v21 key="read"
+    v23 = CallDirect function=f6
+    v24 = CallDirect function=f6
+    Return
+# CHECK: = NewObject -, v0 layout=L1 fields=[1]
+# CHECK: layout=L3 fields=[0, 1]
+# CHECK: layout=L5 fields=[0, 1]
+}
+
+function f1 name="entry" module=m1 kind=Module results=[{type=anything}] {
+    Return
+}
+
+function f2 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0 fields=[]
+    PropSet v4, v1 key="next" mode=Strict
+    PropSet v4, v2 key="v" mode=Strict
+    Return v4
+}
+
+function f3 name="Target" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2 fields=[]
+    PropSet v3, v1 key="v" mode=Strict
+    Return v3
+}
+
+function f4 name="RefersToTarget" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L4
+    v3 = NewObject v2 layout=L4 fields=[]
+    PropSet v3, v1 key="inner" mode=Strict
+    Return v3
+}
+
+function f5 name="Local" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L6
+    v3 = NewObject v2 layout=L6 fields=[]
+    PropSet v3, v1 key="v" mode=Strict
+    Return v3
+}
+
+function f6 name="makesItsOwnClass" results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewClosure function=f5
+    v2 = NewClass v1 layout=L6
+    v3 = FinishClass v2 layout=L6
+    v4 = Construct v3, -, v0
+    v5 = NewObject -, v4, v0 layout=L7 fields=[0, 1]
+    v6 = PropGet v5 key="read"
+    Return v6
+# CHECK: layout=L7 fields=[0, 1]
+}

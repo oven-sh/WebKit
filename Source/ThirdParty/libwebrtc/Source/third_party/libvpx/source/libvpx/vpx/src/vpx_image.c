@@ -10,6 +10,7 @@
 
 #include <assert.h>
 #include <limits.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -124,7 +125,14 @@ static vpx_image_t *img_alloc_helper(vpx_image_t *img, vpx_img_fmt_t fmt,
   s = (s + stride_align - 1) & ~((uint64_t)stride_align - 1);
   if (s > INT_MAX) goto fail;
   stride_in_bytes = (int)s;
-  s = (fmt & VPX_IMG_FMT_HIGHBITDEPTH) ? s / 2 : s;
+  uint64_t uv_s = s;
+  // Convert to number of samples.
+  uv_s = (fmt & VPX_IMG_FMT_HIGHBITDEPTH) ? uv_s / 2 : uv_s;
+  // Apply chroma subsampling.
+  uv_s = (uv_s + xcs) >> xcs;
+  // Convert back to number of bytes.
+  uv_s = (fmt & VPX_IMG_FMT_HIGHBITDEPTH) ? uv_s * 2 : uv_s;
+  const int uv_stride_in_bytes = (int)uv_s;
 
   /* Allocate the new image */
   if (!img) {
@@ -139,6 +147,7 @@ static vpx_image_t *img_alloc_helper(vpx_image_t *img, vpx_img_fmt_t fmt,
 
   if (!img_data) {
     uint64_t alloc_size;
+    s = (fmt & VPX_IMG_FMT_HIGHBITDEPTH) ? s / 2 : s;
     alloc_size = (fmt & VPX_IMG_FMT_PLANAR) ? (uint64_t)h * s * bps / 8
                                             : (uint64_t)h * s;
 
@@ -160,7 +169,11 @@ static vpx_image_t *img_alloc_helper(vpx_image_t *img, vpx_img_fmt_t fmt,
 
   /* Calculate strides */
   img->stride[VPX_PLANE_Y] = img->stride[VPX_PLANE_ALPHA] = stride_in_bytes;
-  img->stride[VPX_PLANE_U] = img->stride[VPX_PLANE_V] = stride_in_bytes >> xcs;
+  img->stride[VPX_PLANE_U] = img->stride[VPX_PLANE_V] = uv_stride_in_bytes;
+
+  if (fmt == VPX_IMG_FMT_NV12) {
+    img->stride[VPX_PLANE_U] = img->stride[VPX_PLANE_V] = stride_in_bytes;
+  }
 
   if (fmt == VPX_IMG_FMT_NV12) {
     img->stride[VPX_PLANE_U] = img->stride[VPX_PLANE_V] = stride_in_bytes;
@@ -194,6 +207,8 @@ vpx_image_t *vpx_img_wrap(vpx_image_t *img, vpx_img_fmt_t fmt, unsigned int d_w,
 
 int vpx_img_set_rect(vpx_image_t *img, unsigned int x, unsigned int y,
                      unsigned int w, unsigned int h) {
+  if (img->stride[VPX_PLANE_Y] < 0) return -1;
+
   if (x <= UINT_MAX - w && x + w <= img->w && y <= UINT_MAX - h &&
       y + h <= img->h) {
     img->d_w = w;
@@ -220,6 +235,8 @@ int vpx_img_set_rect(vpx_image_t *img, unsigned int x, unsigned int y,
 
       unsigned int uv_x = x >> img->x_chroma_shift;
       unsigned int uv_y = y >> img->y_chroma_shift;
+      const unsigned int uv_height =
+          (img->h + img->y_chroma_shift) >> img->y_chroma_shift;
       if (img->fmt == VPX_IMG_FMT_NV12) {
         img->planes[VPX_PLANE_U] = data + uv_x * bytes_per_sample * 2 +
                                    uv_y * img->stride[VPX_PLANE_U];
@@ -227,15 +244,13 @@ int vpx_img_set_rect(vpx_image_t *img, unsigned int x, unsigned int y,
       } else if (!(img->fmt & VPX_IMG_FMT_UV_FLIP)) {
         img->planes[VPX_PLANE_U] =
             data + uv_x * bytes_per_sample + uv_y * img->stride[VPX_PLANE_U];
-        data +=
-            (size_t)(img->h >> img->y_chroma_shift) * img->stride[VPX_PLANE_U];
+        data += (size_t)uv_height * img->stride[VPX_PLANE_U];
         img->planes[VPX_PLANE_V] =
             data + uv_x * bytes_per_sample + uv_y * img->stride[VPX_PLANE_V];
       } else {
         img->planes[VPX_PLANE_V] =
             data + uv_x * bytes_per_sample + uv_y * img->stride[VPX_PLANE_V];
-        data +=
-            (size_t)(img->h >> img->y_chroma_shift) * img->stride[VPX_PLANE_V];
+        data += (size_t)uv_height * img->stride[VPX_PLANE_V];
         img->planes[VPX_PLANE_U] =
             data + uv_x * bytes_per_sample + uv_y * img->stride[VPX_PLANE_U];
       }
@@ -246,26 +261,24 @@ int vpx_img_set_rect(vpx_image_t *img, unsigned int x, unsigned int y,
 }
 
 void vpx_img_flip(vpx_image_t *img) {
-  /* Note: In the calculation pointer adjustment calculation, we want the
-   * rhs to be promoted to a signed type. Section 6.3.1.8 of the ISO C99
-   * standard indicates that if the adjustment parameter is unsigned, the
-   * stride parameter will be promoted to unsigned, causing errors when
-   * the lhs is a larger type than the rhs.
-   */
-  img->planes[VPX_PLANE_Y] += (signed)(img->d_h - 1) * img->stride[VPX_PLANE_Y];
+  const unsigned int chroma_height =
+      (img->d_h + img->y_chroma_shift) >> img->y_chroma_shift;
+
+  img->planes[VPX_PLANE_Y] +=
+      (ptrdiff_t)(img->d_h - 1) * img->stride[VPX_PLANE_Y];
   img->stride[VPX_PLANE_Y] = -img->stride[VPX_PLANE_Y];
 
-  img->planes[VPX_PLANE_U] += (signed)((img->d_h >> img->y_chroma_shift) - 1) *
-                              img->stride[VPX_PLANE_U];
+  img->planes[VPX_PLANE_U] +=
+      (ptrdiff_t)(chroma_height - 1) * img->stride[VPX_PLANE_U];
   img->stride[VPX_PLANE_U] = -img->stride[VPX_PLANE_U];
 
-  img->planes[VPX_PLANE_V] += (signed)((img->d_h >> img->y_chroma_shift) - 1) *
-                              img->stride[VPX_PLANE_V];
+  img->planes[VPX_PLANE_V] +=
+      (ptrdiff_t)(chroma_height - 1) * img->stride[VPX_PLANE_V];
   img->stride[VPX_PLANE_V] = -img->stride[VPX_PLANE_V];
 
   if (img->fmt & VPX_IMG_FMT_HAS_ALPHA) {
     img->planes[VPX_PLANE_ALPHA] +=
-        (signed)(img->d_h - 1) * img->stride[VPX_PLANE_ALPHA];
+        (ptrdiff_t)(img->d_h - 1) * img->stride[VPX_PLANE_ALPHA];
     img->stride[VPX_PLANE_ALPHA] = -img->stride[VPX_PLANE_ALPHA];
   }
 }

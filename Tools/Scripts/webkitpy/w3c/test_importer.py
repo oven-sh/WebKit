@@ -80,7 +80,7 @@ from webkitpy.common.host import Host
 from webkitpy.common.system.filesystem import FileSystem
 from webkitpy.common.webkit_finder import WebKitFinder
 from webkitpy.layout_tests.controllers.layout_test_finder_legacy import LayoutTestFinder
-from webkitpy.w3c.common import TEMPLATED_TEST_HEADER, WPT_GH_URL, WPTPaths
+from webkitpy.w3c.common import TEMPLATED_TEST_GLOBAL_SUFFIXES, TEMPLATED_TEST_HEADER, WPT_GH_URL, WPTPaths, case_mismatches
 from webkitpy.w3c.test_converter import convert_for_webkit
 from webkitpy.w3c.test_downloader import TestDownloader
 from webkitpy.w3c.test_parser import TestParser
@@ -195,15 +195,6 @@ class TestImporter(object):
 
         self._to_skip_new_directories = set()
 
-        self.globalToSuffixes = {
-            'window': ('html',),
-            'worker': ('worker.html', 'serviceworker.html', 'sharedworker.html'),
-            'dedicatedworker': ('worker.html',),
-            'serviceworker': ('serviceworker.html',),
-            'serviceworker-module': ('serviceworker-module.html',),
-            'sharedworker': ('sharedworker.html',)
-        }
-
     def do_import(self):
         finder = WebKitFinder(self.filesystem)
         self.source_directory = self.source_directory or WPTPaths.ensure_wpt_repository(finder, self.source_directory)
@@ -238,8 +229,24 @@ class TestImporter(object):
             else []
         )
 
+        mismatches = case_mismatches(self.filesystem, self.source_directory, test_paths)
+        for path, upstream_path in sorted(mismatches.items()):
+            _log.error(f'{path} differs only in case from {upstream_path} in the WPT checkout.')
+        if mismatches:
+            return
+
         for test_path in test_paths:
             self.find_importable_tests(self.filesystem.join(self.source_directory, test_path))
+
+        # A case-insensitive file system would write into the existing path and git would keep its case.
+        mismatches = case_mismatches(self.filesystem, self.destination_directory, [
+            self.filesystem.join(self.filesystem.relpath(dir_to_copy['dirname'], self.source_directory), file_to_copy['dest'])
+            for dir_to_copy in self.import_list for file_to_copy in dir_to_copy['copy_list']
+        ])
+        for upstream_path, path in sorted(mismatches.items()):
+            _log.error(f'{self.filesystem.join(self.destination_directory, path)} differs only in case from {upstream_path} in the WPT checkout. Rename it to match before importing.')
+        if mismatches:
+            return
 
         if self.options.clean_destination_directory:
             for test_path in test_paths:
@@ -545,7 +552,7 @@ class TestImporter(object):
                 items = line.split('META: global=', 1)[1].split(',')
                 suffixes = set()
                 for item in items:
-                    suffixes_for_item = self.globalToSuffixes.get(item.strip(), ())
+                    suffixes_for_item = TEMPLATED_TEST_GLOBAL_SUFFIXES.get(item.strip(), ())
                     if len(suffixes_for_item) == 0:
                         suffixes.add('')
                     else:

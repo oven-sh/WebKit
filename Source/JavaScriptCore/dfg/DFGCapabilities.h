@@ -34,8 +34,8 @@ namespace JSC { namespace DFG {
 #if ENABLE(DFG_JIT)
 // Fast check functions; if they return true it is still necessary to
 // check opcodes.
-bool NODELETE isSupported();
-bool NODELETE isSupportedForInlining(CodeBlock*);
+bool LEGACY_NODELETE isSupported();
+bool LEGACY_NODELETE isSupportedForInlining(CodeBlock*);
 bool mightCompileEval(CodeBlock*);
 bool mightCompileProgram(CodeBlock*);
 bool mightCompileFunctionForCall(CodeBlock*);
@@ -43,7 +43,7 @@ bool mightCompileFunctionForConstruct(CodeBlock*);
 bool mightInlineFunctionForCall(JITType, CodeBlock*);
 bool mightInlineFunctionForClosureCall(JITType, CodeBlock*);
 bool mightInlineFunctionForConstruct(JITType, CodeBlock*);
-bool NODELETE canUseOSRExitFuzzing(CodeBlock*);
+bool LEGACY_NODELETE canUseOSRExitFuzzing(CodeBlock*);
 // The mutator has completed the lazily materialized state of this inlinee (or, when the DFG runs on the mutator, does so now).
 bool isLazyStatePreparedForInlining(CodeBlock*);
 #else // ENABLE(DFG_JIT)
@@ -140,11 +140,6 @@ inline bool mightCompileFunctionFor(CodeBlock* codeBlock, CodeSpecializationKind
         return mightCompileFunctionForCall(codeBlock);
     ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
     return mightCompileFunctionForConstruct(codeBlock);
-}
-
-inline bool mightInlineFunction(JITType jitType, CodeBlock* codeBlock)
-{
-    return mightInlineFunctionFor(jitType, codeBlock, codeBlock->specializationKind());
 }
 
 inline CapabilityLevel inlineFunctionForCapabilityLevel(JITType jitType, CodeBlock* codeBlock, CodeSpecializationKind kind, bool isClosureCall)

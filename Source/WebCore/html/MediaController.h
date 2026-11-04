@@ -50,7 +50,7 @@ class MediaController final
     , public EventTarget {
     WTF_MAKE_TZONE_ALLOCATED(MediaController);
 public:
-    static Ref<MediaController> create(ScriptExecutionContext&);
+    static Ref<MediaController> LEGACY_NODELETE create(ScriptExecutionContext&);
     virtual ~MediaController();
 
     // ContextDestructionObserver.
@@ -95,7 +95,7 @@ private:
     void bringElementUpToSpeed(HTMLMediaElement&);
     void scheduleEvent(const AtomString& eventName);
     void asyncEventTimerFired();
-    void NODELETE clearPositionTimerFired();
+    void LEGACY_NODELETE clearPositionTimerFired();
     bool hasEnded() const;
     void scheduleTimeupdateEvent();
     void startTimeupdateTimer();
@@ -133,9 +133,9 @@ private:
 
     ReadyState readyState() const final { return m_readyState; }
 
-    void forEachElement(Function<void(Ref<HTMLMediaElement>&&)>&&) const;
-    bool anyElement(Function<bool(Ref<HTMLMediaElement>&&)>&&) const;
-    bool everyElement(Function<bool(Ref<HTMLMediaElement>&&)>&&) const;
+    void forEachElement(NOESCAPE const Function<void(Ref<HTMLMediaElement>&&)>&) const;
+    bool anyElement(NOESCAPE const Function<bool(Ref<HTMLMediaElement>&&)>&) const;
+    bool everyElement(NOESCAPE const Function<bool(Ref<HTMLMediaElement>&&)>&) const;
 
     enum PlaybackState { WAITING, PLAYING, ENDED };
 
@@ -154,7 +154,7 @@ private:
     Timer m_asyncEventTimer;
     mutable Timer m_clearPositionTimer;
     bool m_closedCaptionsVisible;
-    std::unique_ptr<PAL::Clock> m_clock;
+    const std::unique_ptr<PAL::Clock> m_clock;
     Timer m_timeupdateTimer;
     MonotonicTime m_previousTimeupdateTime;
     bool m_resetCurrentTimeInNextPlay { false };

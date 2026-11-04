@@ -57,7 +57,7 @@ static ScrollbarThemeMac* macScrollbarTheme()
     return !scrollbarTheme.isMockTheme() ? downcast<ScrollbarThemeMac>(&scrollbarTheme) : nullptr;
 }
 
-static NSScrollerImp *scrollerImpForScrollbar(Scrollbar& scrollbar)
+static NSScrollerImp *LEGACY_NODELETE scrollerImpForScrollbar(Scrollbar& scrollbar)
 {
     return ScrollbarThemeMac::scrollerImpForScrollbar(scrollbar);
 }
@@ -602,9 +602,9 @@ ScrollbarsControllerMac::ScrollbarsControllerMac(ScrollableArea& scrollableArea)
     : ScrollbarsController(scrollableArea)
     , m_initialScrollbarPaintTimer(*this, &ScrollbarsControllerMac::initialScrollbarPaintTimerFired)
     , m_sendContentAreaScrolledTimer(*this, &ScrollbarsControllerMac::sendContentAreaScrolledTimerFired)
+    , m_scrollerImpPair(adoptNS([[NSScrollerImpPair alloc] init]))
+    , m_scrollerImpPairDelegate(adoptNS([[WebScrollerImpPairDelegate alloc] initWithScrollableArea:&scrollableArea]))
 {
-    m_scrollerImpPairDelegate = adoptNS([[WebScrollerImpPairDelegate alloc] initWithScrollableArea:&scrollableArea]);
-    m_scrollerImpPair = adoptNS([[NSScrollerImpPair alloc] init]);
     [m_scrollerImpPair setDelegate:m_scrollerImpPairDelegate.get()];
     [m_scrollerImpPair setScrollerStyle:ScrollerStyle::recommendedScrollerStyle()];
 }

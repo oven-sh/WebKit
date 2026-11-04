@@ -1,0 +1,6 @@
+# Truthiness and typeof tests of an untyped value pass the back-end checks in compact code
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end
+# STATISTIC: TestAndBranchGroups >= 1
+# CHECK: image not empty
+# PROGRAM-OF: fast.ir

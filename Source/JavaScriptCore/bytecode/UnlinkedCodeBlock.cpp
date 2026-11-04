@@ -184,7 +184,9 @@ ExpressionInfo& UnlinkedCodeBlock::expressionInfoSlow()
 
 ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
-    return expressionInfo().entryForInstPC(bytecodeIndex.offset());
+    ExpressionInfo& info = expressionInfo(); // may take m_lock itself, to decode
+    ConcurrentJSLocker locker(m_lock);
+    return info.entryForInstPC(locker, bytecodeIndex.offset());
 }
 
 LineColumn UnlinkedCodeBlock::lineColumnInTextForBytecodeIndex(BytecodeIndex bytecodeIndex, SourceProvider& provider, unsigned sourceOffset)

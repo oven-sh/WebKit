@@ -246,7 +246,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     switch (indexingMode()) {
     case ArrayClass: {
         // (Elsewhere such an array has copy-on-write storage, refused above, or dictionary indexing, which putByIndex() refuses.)
-        if (structure()->hasImmutableProperties()) [[unlikely]] {
+        if (structure()->hasImmutableIndexedProperties()) [[unlikely]] {
             throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
             return;
         }
@@ -349,7 +349,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
 
     case ArrayWithSlowPutArrayStorage: {
         // (A put with such an array as its own receiver fails before the prototype chain is asked for a setter.)
-        if (structure()->hasImmutableProperties()) [[unlikely]] {
+        if (structure()->hasImmutableIndexedProperties()) [[unlikely]] {
             throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
             return;
         }

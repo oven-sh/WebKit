@@ -1,0 +1,13 @@
+# function constructs() { function Holder() {} return new Holder() }  register(constructs)
+# Written as it is once the construction is resolved and the empty body is inlined: the caller reads the prototype property of new.target and allocates under it.
+# To the program that is a read. The first read makes the property: the function gets another Structure, and a butterfly. So B3 is told that a call which looks at an object
+# writes the header of cells and the word behind it (AOTHeaps::mayConvertCells()), and repeats what it has loaded from them.
+# The lie: testing=NoCallConvertsCells says that no call does. A validating build compares the header and the word behind it of each operand around a call that is said to convert nothing,
+# and ends the process. Without the lie the same program runs to its end.
+# SinkAllocations and PlaceTypeTests are off so that the allocation and the read of the property stay as they are written
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = constructs => { print(typeof constructs()); };
+# OPTIONS: validate testing=NoCallConvertsCells disable=pass:SinkAllocations,pass:PlaceTypeTests
+# CHECK: AOT validation: OperationConvertedCell f{{*}} object Function
+# CHECK: crashed with
+# PROGRAM-OF: a-call-said-to-convert-may-convert-its-operand.ir

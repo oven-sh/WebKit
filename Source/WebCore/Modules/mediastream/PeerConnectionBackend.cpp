@@ -146,7 +146,7 @@ private:
         assertIsHeld(m_clientsLock);
         ASSERT(!m_logFile);
 
-        m_logFile = FilePrintStream::open(m_path.utf8().legacyCStringPointer(), overwrite ? "w" : "a");
+        m_logFile = FilePrintStream::open(m_path.utf8(), overwrite ? "w"_s : "a"_s);
 
         // Prefer unbuffered output, so that we get a full log upon crash or deadlock.
         setvbuf(m_logFile->file(), nullptr, _IONBF, 0);
@@ -352,7 +352,7 @@ static void setAssociatedRemoteStreams(RTCRtpReceiver& receiver, const PeerConne
     receiver.setAssociatedStreams(WTF::map(state.receiverStreams, [](auto& stream) { return WeakPtr { stream.get() }; }));
 }
 
-static bool NODELETE isDirectionReceiving(RTCRtpTransceiverDirection direction)
+static bool LEGACY_NODELETE isDirectionReceiving(RTCRtpTransceiverDirection direction)
 {
     return direction == RTCRtpTransceiverDirection::Sendrecv || direction == RTCRtpTransceiverDirection::Recvonly;
 }
@@ -431,7 +431,7 @@ void PeerConnectionBackend::setLocalDescriptionSucceeded(std::optional<Descripti
 
             for (auto& pair : removeList) {
                 DEBUG_LOG(LOGIDENTIFIER, "Removing track "_s, pair.track->id(), " from MediaStream "_s, pair.stream->id());
-                pair.stream->privateStream().removeTrack(pair.track->privateTrack());
+                protect(pair.stream->privateStream())->removeTrack(protect(pair.track->privateTrack()));
                 if (peerConnection.isClosed())
                     return;
             }
@@ -534,7 +534,7 @@ void PeerConnectionBackend::setRemoteDescriptionSucceeded(std::optional<Descript
 
             DEBUG_LOG_WITH_THIS(&peerConnection, logIdentifier, "Removing ", removeList.size(), " tracks");
             for (auto& pair : removeList) {
-                pair.stream->privateStream().removeTrack(pair.track->privateTrack());
+                protect(pair.stream->privateStream())->removeTrack(protect(pair.track->privateTrack()));
                 if (peerConnection.isClosed()) {
                     DEBUG_LOG_WITH_THIS(&peerConnection, logIdentifier, "PeerConnection closed while removing tracks");
                     return;

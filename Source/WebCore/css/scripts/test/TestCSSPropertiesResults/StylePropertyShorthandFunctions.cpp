@@ -10,160 +10,160 @@ namespace WebCore {
 StylePropertyShorthand allShorthand()
 {
     static const CSSPropertyID allProperties[] = {
-        CSSPropertyID::CSSPropertyTestTopPriority,
-        CSSPropertyID::CSSPropertyTestHighPriority,
-        CSSPropertyID::CSSPropertyTestMediumPriority,
-        CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete,
-        CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestTwo,
-        CSSPropertyID::CSSPropertyTestAnimationWrapper,
-        CSSPropertyID::CSSPropertyTestAnimationWrapperAccelerationAlways,
-        CSSPropertyID::CSSPropertyTestAnimationWrapperAccelerationThreadedOnly,
-        CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommas,
-        CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasFixed,
-        CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpaces,
-        CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesFixed,
-        CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithType,
-        CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeWithDefaultPrevious,
-        CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeWithDefaultPreviousTwo,
-        CSSPropertyID::CSSPropertyTestColor,
-        CSSPropertyID::CSSPropertyTestColorAllowsTypesAbsolute,
-        CSSPropertyID::CSSPropertyTestColorPropertyWithVisitedLinkSupport,
-        CSSPropertyID::CSSPropertyTestCustomExtractor,
-        CSSPropertyID::CSSPropertyTestFunctionBoundedParameters,
-        CSSPropertyID::CSSPropertyTestFunctionFixedParameters,
-        CSSPropertyID::CSSPropertyTestFunctionNoParameters,
-        CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllAnyOrder,
-        CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllAnyOrderWithOptional,
-        CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllOrdered,
-        CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllOrderedWithOptional,
-        CSSPropertyID::CSSPropertyTestFunctionParametersMatchOneOrMoreAnyOrder,
-        CSSPropertyID::CSSPropertyTestFunctionSingleParameter,
-        CSSPropertyID::CSSPropertyTestFunctionSingleParameterMatchOne,
-        CSSPropertyID::CSSPropertyTestFunctionSingleParameterOptional,
-        CSSPropertyID::CSSPropertyTestFunctionUnboundedParametersNoMin,
-        CSSPropertyID::CSSPropertyTestFunctionUnboundedParametersWithMinimum,
-        CSSPropertyID::CSSPropertyTestImage,
-        CSSPropertyID::CSSPropertyTestImageNoImageSet,
-        CSSPropertyID::CSSPropertyTestKeyword,
-        CSSPropertyID::CSSPropertyTestKeywordWithAliasedTo,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrder,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithCustomType,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptional,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndCustomType,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomType,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomTypeNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomType,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomTypeNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndPreserveOrderAndCustomType,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalWithPreserveOrder,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalWithPreserveOrderNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrder,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrderAndCustomType,
-        CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrderNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchAllOrdered,
-        CSSPropertyID::CSSPropertyTestMatchAllOrderedWithCustomType,
-        CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptional,
-        CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndCustomType,
-        CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndCustomTypeAndNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndMultipleRequired,
-        CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndMultipleRequiredAndCustomType,
-        CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchOne,
-        CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrder,
-        CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithCustomType,
-        CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithCustomTypeNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrder,
-        CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomType,
-        CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomTypeNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestMatchOneWithGroupWithSettingsFlag,
-        CSSPropertyID::CSSPropertyTestMatchOneWithKeywordWithSettingsFlag,
-        CSSPropertyID::CSSPropertyTestMatchOneWithMultipleKeywords,
-        CSSPropertyID::CSSPropertyTestMatchOneWithReferenceWithSettingsFlag,
-        CSSPropertyID::CSSPropertyTestMatchOneWithSettingsFlag,
-        CSSPropertyID::CSSPropertyTestNumericValueRange,
-        CSSPropertyID::CSSPropertyTestProperty,
-        CSSPropertyID::CSSPropertyTestRenderStyleGetterNodeleteFalse,
-        CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin,
-        CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllBorderRadius,
-        CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyValueOnly,
-        CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelEnum,
-        CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelRaw,
-        CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelReference,
-        CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelValue,
-        CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelEnum,
-        CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelRaw,
-        CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelReference,
-        CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelValue,
-        CSSPropertyID::CSSPropertyTestSettingsOne,
-        CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMin,
-        CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMinNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMinSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesNoMin,
-        CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesNoMinNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMin,
-        CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMinNoSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMinSingleItemOpt,
-        CSSPropertyID::CSSPropertyTestUrlWithModifiers,
-        CSSPropertyID::CSSPropertyTestUrlWithNoModifiers,
-        CSSPropertyID::CSSPropertyTestUsingSharedRule,
-        CSSPropertyID::CSSPropertyTestUsingSharedRuleExported,
-        CSSPropertyID::CSSPropertyTestUsingSharedRuleWithOverrideFunction,
-        CSSPropertyID::CSSPropertyTestSinkPriority,
-        CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalHorizontal,
-        CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalVertical,
-        CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalBlock,
-        CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalInline,
+        CSSPropertyID::TestTopPriority,
+        CSSPropertyID::TestHighPriority,
+        CSSPropertyID::TestMediumPriority,
+        CSSPropertyID::BackgroundCoordinatedValueListPropertyTestDiscrete,
+        CSSPropertyID::BackgroundCoordinatedValueListPropertyTestTwo,
+        CSSPropertyID::TestAnimationWrapper,
+        CSSPropertyID::TestAnimationWrapperAccelerationAlways,
+        CSSPropertyID::TestAnimationWrapperAccelerationThreadedOnly,
+        CSSPropertyID::TestBoundedRepetitionWithCommas,
+        CSSPropertyID::TestBoundedRepetitionWithCommasFixed,
+        CSSPropertyID::TestBoundedRepetitionWithCommasNoSingleItemOpt,
+        CSSPropertyID::TestBoundedRepetitionWithCommasSingleItemOpt,
+        CSSPropertyID::TestBoundedRepetitionWithSpaces,
+        CSSPropertyID::TestBoundedRepetitionWithSpacesFixed,
+        CSSPropertyID::TestBoundedRepetitionWithSpacesNoSingleItemOpt,
+        CSSPropertyID::TestBoundedRepetitionWithSpacesSingleItemOpt,
+        CSSPropertyID::TestBoundedRepetitionWithSpacesWithType,
+        CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeNoSingleItemOpt,
+        CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeWithDefaultPrevious,
+        CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeWithDefaultPreviousTwo,
+        CSSPropertyID::TestColor,
+        CSSPropertyID::TestColorAllowsTypesAbsolute,
+        CSSPropertyID::TestColorPropertyWithVisitedLinkSupport,
+        CSSPropertyID::TestCustomExtractor,
+        CSSPropertyID::TestFunctionBoundedParameters,
+        CSSPropertyID::TestFunctionFixedParameters,
+        CSSPropertyID::TestFunctionNoParameters,
+        CSSPropertyID::TestFunctionParametersMatchAllAnyOrder,
+        CSSPropertyID::TestFunctionParametersMatchAllAnyOrderWithOptional,
+        CSSPropertyID::TestFunctionParametersMatchAllOrdered,
+        CSSPropertyID::TestFunctionParametersMatchAllOrderedWithOptional,
+        CSSPropertyID::TestFunctionParametersMatchOneOrMoreAnyOrder,
+        CSSPropertyID::TestFunctionSingleParameter,
+        CSSPropertyID::TestFunctionSingleParameterMatchOne,
+        CSSPropertyID::TestFunctionSingleParameterOptional,
+        CSSPropertyID::TestFunctionUnboundedParametersNoMin,
+        CSSPropertyID::TestFunctionUnboundedParametersWithMinimum,
+        CSSPropertyID::TestImage,
+        CSSPropertyID::TestImageNoImageSet,
+        CSSPropertyID::TestKeyword,
+        CSSPropertyID::TestKeywordWithAliasedTo,
+        CSSPropertyID::TestMatchAllAnyOrder,
+        CSSPropertyID::TestMatchAllAnyOrderWithCustomType,
+        CSSPropertyID::TestMatchAllAnyOrderWithOptional,
+        CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndCustomType,
+        CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomType,
+        CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomTypeNoSingleItemOpt,
+        CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomType,
+        CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomTypeNoSingleItemOpt,
+        CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndPreserveOrderAndCustomType,
+        CSSPropertyID::TestMatchAllAnyOrderWithOptionalNoSingleItemOpt,
+        CSSPropertyID::TestMatchAllAnyOrderWithOptionalSingleItemOpt,
+        CSSPropertyID::TestMatchAllAnyOrderWithOptionalWithPreserveOrder,
+        CSSPropertyID::TestMatchAllAnyOrderWithOptionalWithPreserveOrderNoSingleItemOpt,
+        CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrder,
+        CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrderAndCustomType,
+        CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrderNoSingleItemOpt,
+        CSSPropertyID::TestMatchAllOrdered,
+        CSSPropertyID::TestMatchAllOrderedWithCustomType,
+        CSSPropertyID::TestMatchAllOrderedWithOptional,
+        CSSPropertyID::TestMatchAllOrderedWithOptionalAndCustomType,
+        CSSPropertyID::TestMatchAllOrderedWithOptionalAndCustomTypeAndNoSingleItemOpt,
+        CSSPropertyID::TestMatchAllOrderedWithOptionalAndMultipleRequired,
+        CSSPropertyID::TestMatchAllOrderedWithOptionalAndMultipleRequiredAndCustomType,
+        CSSPropertyID::TestMatchAllOrderedWithOptionalNoSingleItemOpt,
+        CSSPropertyID::TestMatchAllOrderedWithOptionalSingleItemOpt,
+        CSSPropertyID::TestMatchOne,
+        CSSPropertyID::TestMatchOneOrMoreAnyOrder,
+        CSSPropertyID::TestMatchOneOrMoreAnyOrderNoSingleItemOpt,
+        CSSPropertyID::TestMatchOneOrMoreAnyOrderWithCustomType,
+        CSSPropertyID::TestMatchOneOrMoreAnyOrderWithCustomTypeNoSingleItemOpt,
+        CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrder,
+        CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomType,
+        CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomTypeNoSingleItemOpt,
+        CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderNoSingleItemOpt,
+        CSSPropertyID::TestMatchOneWithGroupWithSettingsFlag,
+        CSSPropertyID::TestMatchOneWithKeywordWithSettingsFlag,
+        CSSPropertyID::TestMatchOneWithMultipleKeywords,
+        CSSPropertyID::TestMatchOneWithReferenceWithSettingsFlag,
+        CSSPropertyID::TestMatchOneWithSettingsFlag,
+        CSSPropertyID::TestNumericValueRange,
+        CSSPropertyID::TestProperty,
+        CSSPropertyID::TestRenderStyleGetterNodeleteFalse,
+        CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin,
+        CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllBorderRadius,
+        CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyValueOnly,
+        CSSPropertyID::TestRenderStyleStorageOneLevelEnum,
+        CSSPropertyID::TestRenderStyleStorageOneLevelRaw,
+        CSSPropertyID::TestRenderStyleStorageOneLevelReference,
+        CSSPropertyID::TestRenderStyleStorageOneLevelValue,
+        CSSPropertyID::TestRenderStyleStorageTwoLevelEnum,
+        CSSPropertyID::TestRenderStyleStorageTwoLevelRaw,
+        CSSPropertyID::TestRenderStyleStorageTwoLevelReference,
+        CSSPropertyID::TestRenderStyleStorageTwoLevelValue,
+        CSSPropertyID::TestSettingsOne,
+        CSSPropertyID::TestUnboundedRepetitionWithCommasWithMin,
+        CSSPropertyID::TestUnboundedRepetitionWithCommasWithMinNoSingleItemOpt,
+        CSSPropertyID::TestUnboundedRepetitionWithCommasWithMinSingleItemOpt,
+        CSSPropertyID::TestUnboundedRepetitionWithSpacesNoMin,
+        CSSPropertyID::TestUnboundedRepetitionWithSpacesNoMinNoSingleItemOpt,
+        CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMin,
+        CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMinNoSingleItemOpt,
+        CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMinSingleItemOpt,
+        CSSPropertyID::TestUrlWithModifiers,
+        CSSPropertyID::TestUrlWithNoModifiers,
+        CSSPropertyID::TestUsingSharedRule,
+        CSSPropertyID::TestUsingSharedRuleExported,
+        CSSPropertyID::TestUsingSharedRuleWithOverrideFunction,
+        CSSPropertyID::TestSinkPriority,
+        CSSPropertyID::TestLogicalPropertyGroupPhysicalHorizontal,
+        CSSPropertyID::TestLogicalPropertyGroupPhysicalVertical,
+        CSSPropertyID::TestLogicalPropertyGroupLogicalBlock,
+        CSSPropertyID::TestLogicalPropertyGroupLogicalInline,
     };
-    return StylePropertyShorthand(CSSPropertyID::CSSPropertyAll, std::span { allProperties });
+    return StylePropertyShorthand(CSSPropertyID::All, std::span { allProperties });
 }
 
 StylePropertyShorthand fontShorthand()
 {
     static const CSSPropertyID fontProperties[] = {
-        CSSPropertyID::CSSPropertyTestSinkPriority,
-        CSSPropertyID::CSSPropertyTestHighPriority,
+        CSSPropertyID::TestSinkPriority,
+        CSSPropertyID::TestHighPriority,
     };
-    return StylePropertyShorthand(CSSPropertyID::CSSPropertyFont, std::span { fontProperties });
+    return StylePropertyShorthand(CSSPropertyID::Font, std::span { fontProperties });
 }
 
 StylePropertyShorthand testShorthandOneShorthand()
 {
     static const CSSPropertyID testShorthandOneProperties[] = {
-        CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalHorizontal,
-        CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalVertical,
+        CSSPropertyID::TestLogicalPropertyGroupPhysicalHorizontal,
+        CSSPropertyID::TestLogicalPropertyGroupPhysicalVertical,
     };
-    return StylePropertyShorthand(CSSPropertyID::CSSPropertyTestShorthandOne, std::span { testShorthandOneProperties });
+    return StylePropertyShorthand(CSSPropertyID::TestShorthandOne, std::span { testShorthandOneProperties });
 }
 
 StylePropertyShorthand testShorthandTwoShorthand()
 {
     static const CSSPropertyID testShorthandTwoProperties[] = {
-        CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalBlock,
-        CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalInline,
+        CSSPropertyID::TestLogicalPropertyGroupLogicalBlock,
+        CSSPropertyID::TestLogicalPropertyGroupLogicalInline,
     };
-    return StylePropertyShorthand(CSSPropertyID::CSSPropertyTestShorthandTwo, std::span { testShorthandTwoProperties });
+    return StylePropertyShorthand(CSSPropertyID::TestShorthandTwo, std::span { testShorthandTwoProperties });
 }
 
 StylePropertyShorthand shorthandForProperty(CSSPropertyID id)
 {
     switch (id) {
-    case CSSPropertyID::CSSPropertyAll:
+    case CSSPropertyID::All:
         return allShorthand();
-    case CSSPropertyID::CSSPropertyFont:
+    case CSSPropertyID::Font:
         return fontShorthand();
-    case CSSPropertyID::CSSPropertyTestShorthandOne:
+    case CSSPropertyID::TestShorthandOne:
         return testShorthandOneShorthand();
-    case CSSPropertyID::CSSPropertyTestShorthandTwo:
+    case CSSPropertyID::TestShorthandTwo:
         return testShorthandTwoShorthand();
     default:
         return { };
@@ -173,122 +173,122 @@ StylePropertyShorthand shorthandForProperty(CSSPropertyID id)
 StylePropertyShorthandVector matchingShorthandsForLonghand(CSSPropertyID id)
 {
     switch (id) {
-    case CSSPropertyID::CSSPropertyTestHighPriority:
-    case CSSPropertyID::CSSPropertyTestSinkPriority:
+    case CSSPropertyID::TestHighPriority:
+    case CSSPropertyID::TestSinkPriority:
         return StylePropertyShorthandVector{allShorthand(), fontShorthand()};
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalHorizontal:
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalVertical:
+    case CSSPropertyID::TestLogicalPropertyGroupPhysicalHorizontal:
+    case CSSPropertyID::TestLogicalPropertyGroupPhysicalVertical:
         return StylePropertyShorthandVector{allShorthand(), testShorthandOneShorthand()};
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalBlock:
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalInline:
+    case CSSPropertyID::TestLogicalPropertyGroupLogicalBlock:
+    case CSSPropertyID::TestLogicalPropertyGroupLogicalInline:
         return StylePropertyShorthandVector{allShorthand(), testShorthandTwoShorthand()};
-    case CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete:
-    case CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestTwo:
-    case CSSPropertyID::CSSPropertyTestAnimationWrapper:
-    case CSSPropertyID::CSSPropertyTestAnimationWrapperAccelerationAlways:
-    case CSSPropertyID::CSSPropertyTestAnimationWrapperAccelerationThreadedOnly:
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommas:
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasFixed:
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpaces:
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesFixed:
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithType:
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeWithDefaultPrevious:
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeWithDefaultPreviousTwo:
-    case CSSPropertyID::CSSPropertyTestColor:
-    case CSSPropertyID::CSSPropertyTestColorAllowsTypesAbsolute:
-    case CSSPropertyID::CSSPropertyTestColorPropertyWithVisitedLinkSupport:
-    case CSSPropertyID::CSSPropertyTestCustomExtractor:
-    case CSSPropertyID::CSSPropertyTestFunctionBoundedParameters:
-    case CSSPropertyID::CSSPropertyTestFunctionFixedParameters:
-    case CSSPropertyID::CSSPropertyTestFunctionNoParameters:
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllAnyOrder:
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllAnyOrderWithOptional:
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllOrdered:
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllOrderedWithOptional:
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchOneOrMoreAnyOrder:
-    case CSSPropertyID::CSSPropertyTestFunctionSingleParameter:
-    case CSSPropertyID::CSSPropertyTestFunctionSingleParameterMatchOne:
-    case CSSPropertyID::CSSPropertyTestFunctionSingleParameterOptional:
-    case CSSPropertyID::CSSPropertyTestFunctionUnboundedParametersNoMin:
-    case CSSPropertyID::CSSPropertyTestFunctionUnboundedParametersWithMinimum:
-    case CSSPropertyID::CSSPropertyTestImage:
-    case CSSPropertyID::CSSPropertyTestImageNoImageSet:
-    case CSSPropertyID::CSSPropertyTestKeyword:
-    case CSSPropertyID::CSSPropertyTestKeywordWithAliasedTo:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrder:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithCustomType:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptional:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndCustomType:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomType:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomTypeNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomType:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomTypeNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndPreserveOrderAndCustomType:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalWithPreserveOrder:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalWithPreserveOrderNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrder:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrderAndCustomType:
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrderNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchAllOrdered:
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithCustomType:
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptional:
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndCustomType:
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndCustomTypeAndNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndMultipleRequired:
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndMultipleRequiredAndCustomType:
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchOne:
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrder:
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithCustomType:
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithCustomTypeNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrder:
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomType:
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomTypeNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestMatchOneWithGroupWithSettingsFlag:
-    case CSSPropertyID::CSSPropertyTestMatchOneWithKeywordWithSettingsFlag:
-    case CSSPropertyID::CSSPropertyTestMatchOneWithMultipleKeywords:
-    case CSSPropertyID::CSSPropertyTestMatchOneWithReferenceWithSettingsFlag:
-    case CSSPropertyID::CSSPropertyTestMatchOneWithSettingsFlag:
-    case CSSPropertyID::CSSPropertyTestMediumPriority:
-    case CSSPropertyID::CSSPropertyTestNumericValueRange:
-    case CSSPropertyID::CSSPropertyTestProperty:
-    case CSSPropertyID::CSSPropertyTestRenderStyleGetterNodeleteFalse:
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin:
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllBorderRadius:
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyValueOnly:
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelEnum:
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelRaw:
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelReference:
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelValue:
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelEnum:
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelRaw:
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelReference:
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelValue:
-    case CSSPropertyID::CSSPropertyTestSettingsOne:
-    case CSSPropertyID::CSSPropertyTestTopPriority:
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMin:
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMinNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMinSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesNoMin:
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesNoMinNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMin:
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMinNoSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMinSingleItemOpt:
-    case CSSPropertyID::CSSPropertyTestUrlWithModifiers:
-    case CSSPropertyID::CSSPropertyTestUrlWithNoModifiers:
-    case CSSPropertyID::CSSPropertyTestUsingSharedRule:
-    case CSSPropertyID::CSSPropertyTestUsingSharedRuleExported:
-    case CSSPropertyID::CSSPropertyTestUsingSharedRuleWithOverrideFunction:
+    case CSSPropertyID::BackgroundCoordinatedValueListPropertyTestDiscrete:
+    case CSSPropertyID::BackgroundCoordinatedValueListPropertyTestTwo:
+    case CSSPropertyID::TestAnimationWrapper:
+    case CSSPropertyID::TestAnimationWrapperAccelerationAlways:
+    case CSSPropertyID::TestAnimationWrapperAccelerationThreadedOnly:
+    case CSSPropertyID::TestBoundedRepetitionWithCommas:
+    case CSSPropertyID::TestBoundedRepetitionWithCommasFixed:
+    case CSSPropertyID::TestBoundedRepetitionWithCommasNoSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithCommasSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpaces:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesFixed:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesNoSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithType:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeNoSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeWithDefaultPrevious:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeWithDefaultPreviousTwo:
+    case CSSPropertyID::TestColor:
+    case CSSPropertyID::TestColorAllowsTypesAbsolute:
+    case CSSPropertyID::TestColorPropertyWithVisitedLinkSupport:
+    case CSSPropertyID::TestCustomExtractor:
+    case CSSPropertyID::TestFunctionBoundedParameters:
+    case CSSPropertyID::TestFunctionFixedParameters:
+    case CSSPropertyID::TestFunctionNoParameters:
+    case CSSPropertyID::TestFunctionParametersMatchAllAnyOrder:
+    case CSSPropertyID::TestFunctionParametersMatchAllAnyOrderWithOptional:
+    case CSSPropertyID::TestFunctionParametersMatchAllOrdered:
+    case CSSPropertyID::TestFunctionParametersMatchAllOrderedWithOptional:
+    case CSSPropertyID::TestFunctionParametersMatchOneOrMoreAnyOrder:
+    case CSSPropertyID::TestFunctionSingleParameter:
+    case CSSPropertyID::TestFunctionSingleParameterMatchOne:
+    case CSSPropertyID::TestFunctionSingleParameterOptional:
+    case CSSPropertyID::TestFunctionUnboundedParametersNoMin:
+    case CSSPropertyID::TestFunctionUnboundedParametersWithMinimum:
+    case CSSPropertyID::TestImage:
+    case CSSPropertyID::TestImageNoImageSet:
+    case CSSPropertyID::TestKeyword:
+    case CSSPropertyID::TestKeywordWithAliasedTo:
+    case CSSPropertyID::TestMatchAllAnyOrder:
+    case CSSPropertyID::TestMatchAllAnyOrderWithCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptional:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalWithPreserveOrder:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalWithPreserveOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrder:
+    case CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllOrdered:
+    case CSSPropertyID::TestMatchAllOrderedWithCustomType:
+    case CSSPropertyID::TestMatchAllOrderedWithOptional:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndCustomType:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndCustomTypeAndNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndMultipleRequired:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndMultipleRequiredAndCustomType:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalSingleItemOpt:
+    case CSSPropertyID::TestMatchOne:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrder:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithCustomType:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrder:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneWithGroupWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithKeywordWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithMultipleKeywords:
+    case CSSPropertyID::TestMatchOneWithReferenceWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithSettingsFlag:
+    case CSSPropertyID::TestMediumPriority:
+    case CSSPropertyID::TestNumericValueRange:
+    case CSSPropertyID::TestProperty:
+    case CSSPropertyID::TestRenderStyleGetterNodeleteFalse:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllBorderRadius:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyValueOnly:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelEnum:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelRaw:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelReference:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelValue:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelEnum:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelRaw:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelReference:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelValue:
+    case CSSPropertyID::TestSettingsOne:
+    case CSSPropertyID::TestTopPriority:
+    case CSSPropertyID::TestUnboundedRepetitionWithCommasWithMin:
+    case CSSPropertyID::TestUnboundedRepetitionWithCommasWithMinNoSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithCommasWithMinSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesNoMin:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesNoMinNoSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMin:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMinNoSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMinSingleItemOpt:
+    case CSSPropertyID::TestUrlWithModifiers:
+    case CSSPropertyID::TestUrlWithNoModifiers:
+    case CSSPropertyID::TestUsingSharedRule:
+    case CSSPropertyID::TestUsingSharedRuleExported:
+    case CSSPropertyID::TestUsingSharedRuleWithOverrideFunction:
         return StylePropertyShorthandVector{allShorthand()};
     default:
         return { };

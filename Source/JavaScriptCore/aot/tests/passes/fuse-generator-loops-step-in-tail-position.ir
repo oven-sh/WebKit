@@ -1,0 +1,70 @@
+# function last(x) { return repeats(x).next(); }
+# next() of a generator is in no stack trace, and a call in tail position takes the frame of its caller out of it. The copy of the body that a merge puts into the caller
+# stands where the innermost listed frame called next(), and is called in tail position if next() was.
+# FORM: Prepared
+# RUN: pass FuseGeneratorLoops
+# STATISTIC: GeneratorLoopsFused = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="nextInTailPosition" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f4 callPosition=90 isTailCall=true module=m0}] {
+    v1 = Undefined
+    v2 = NewClosure function=f2
+    v3 = NewGenerator v2 function=f2 @44
+    v4 = CallDirect v2, v0, v3 function=f3 @44
+    v5 = StepGenerator v3, v1 check=None @31:1
+    v6 = ResultAt v5 index=0
+    Return v6
+# CHECK: {callee=f3 callPosition=90 isTailCall=true module=m0}]
+# CHECK-NOT: StepGenerator
+}
+
+function f1 name="nextElsewhere" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f4 callPosition=91 module=m0}] {
+    v1 = Undefined
+    v2 = NewClosure function=f2
+    v3 = NewGenerator v2 function=f2 @45
+    v4 = CallDirect v2, v0, v3 function=f3 @45
+    v5 = StepGenerator v3, v1 check=None @31:1
+    v6 = ResultAt v5 index=0
+    v7 = Add v6, v6
+    Return v7
+# CHECK: {callee=f3 callPosition=91 module=m0}]
+}
+
+function f2 name="repeats" position=10 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f2 body=f3 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f2 @10
+    v3 = CallDirect v0, v1, v2 function=f3 @10
+    Return v2 @10
+}
+function f3 name="repeats" position=10 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f2} creator=Coroutine{ramp=f2 body=f3 promiseParameter=2} {
+    v3 = Undefined @10
+    v4 = YieldBySavingFrame v2, v3 @10
+    v5 = ResultAt v4 index=0 @10
+    v6 = ResultAt v4 index=1 @10
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @10
+  b1() frequency=Rare:
+    Throw v5 @10
+  b2() frequency=Rare:
+    Return v5 @10
+  b3():
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v8 = Call v1, - @11
+    v9 = YieldBySavingFrame v2, v8 @12
+    v10 = ResultAt v9 index=0
+    v11 = ResultAt v9 index=1
+    Switch v11 cases=[1, 2] -> case b5(), case b6(), otherwise b4()
+  b5() frequency=Rare:
+    Throw v10
+  b6() frequency=Rare:
+    Return v10
+}
+
+function f4 name="next" position=30 role=Library flags=[IsHiddenInStackTraces] parameters=[{type=Generator}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = StepGenerator v0, v1 check=None @31
+    v3 = ResultAt v2 index=0
+    Return v3
+}

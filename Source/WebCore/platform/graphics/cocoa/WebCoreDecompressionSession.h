@@ -50,12 +50,12 @@ typedef struct OpaqueVTDecompressionSession*  VTDecompressionSessionRef;
 namespace WebCore {
 
 class VideoDecoder;
-class VideoDecoderVTB;
+class VideoDecoderVTBSession;
 struct PlatformVideoColorSpace;
 
 class WebCoreDecompressionSession : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<WebCoreDecompressionSession> {
 public:
-    WEBCORE_EXPORT static Ref<WebCoreDecompressionSession> createOpenGL(GuaranteedSerialFunctionDispatcher* = nullptr);
+    WEBCORE_EXPORT static Ref<WebCoreDecompressionSession> LEGACY_NODELETE createOpenGL(GuaranteedSerialFunctionDispatcher* = nullptr);
     WEBCORE_EXPORT static Ref<WebCoreDecompressionSession> createRGB(GuaranteedSerialFunctionDispatcher* = nullptr);
     static Ref<WebCoreDecompressionSession> create(NSDictionary *pixelBufferAttributes, GuaranteedSerialFunctionDispatcher* dispatcher = nullptr) { return adoptRef(*new WebCoreDecompressionSession(pixelBufferAttributes, dispatcher)); }
 
@@ -82,7 +82,7 @@ private:
     WEBCORE_EXPORT WebCoreDecompressionSession(NSDictionary *, GuaranteedSerialFunctionDispatcher*);
     static NSDictionary *defaultPixelBufferAttributes();
 
-    std::expected<RefPtr<VideoDecoderVTB>, OSStatus> ensureDecoderForSample(CMSampleBufferRef);
+    std::expected<RefPtr<VideoDecoderVTBSession>, OSStatus> ensureDecoderForSample(CMSampleBufferRef);
 
     Ref<DecodingPromise> decodeSampleInternal(CMSampleBufferRef, DecodingFlags);
     void assignResourceOwner(CVImageBufferRef);
@@ -95,7 +95,7 @@ private:
     const Ref<GuaranteedSerialFunctionDispatcher> m_dispatcher;
 
     mutable Lock m_lock;
-    RefPtr<VideoDecoderVTB> m_videoDecoderVTB WTF_GUARDED_BY_LOCK(m_lock);
+    RefPtr<VideoDecoderVTBSession> m_videoDecoderVTB WTF_GUARDED_BY_LOCK(m_lock);
     mutable std::optional<bool> m_isHardwareAccelerated WTF_GUARDED_BY_LOCK(m_lock);
 
     std::atomic<uint32_t> m_flushId { 0 };

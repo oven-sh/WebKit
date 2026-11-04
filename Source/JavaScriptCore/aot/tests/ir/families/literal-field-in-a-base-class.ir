@@ -1,0 +1,29 @@
+# interface Identifier { kind: 80 }  class Statement { kind: 245 }  class Loop extends Statement { pos }  class Name { kind: 80 }  class Label extends Name { pos }
+# An instance has the fields of its bases: their names count for the names a type requires, and their literals tell it apart from a type just as its own do.
+# Loop has its `kind` from Statement, which writes 245, so neither of the two is an Identifier.
+# Beside them: Label has its `kind` from Name, which writes the literal of Identifier, so both are
+# FORM: AsRead
+# RUN: members
+# RUN(READ): print
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+layout L0 name="Identifier" fields=[{key="kind" declared={type=80} flags=[IsRequired]}]
+layout L1 kind=Instance name="Statement" constructor=f1 fields=[{key="kind" declared={type=245} flags=[IsRequired]}]
+layout L2 kind=Instance name="Loop" base=L1 constructor=f2 fields=[{key="pos" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L3 kind=Instance name="Name" constructor=f3 fields=[{key="kind" declared={type=80} flags=[IsRequired]}]
+layout L4 kind=Instance name="Label" base=L3 constructor=f4 fields=[{key="pos" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+# CHECK: L0: members [L0, L3, L4]
+# CHECK-NEXT: L1: members [L1, L2]
+# CHECK-NEXT: L2: members [L2]
+# CHECK-NEXT: L3: members [L3, L4]
+# CHECK-NEXT: L4: members [L4]
+
+function f0 name="take" parameters=[{type=L0}] results=[{type=anything}] {
+    Return
+# READ: parameters=[{type=L0|L3|L4}]
+}
+function f1 name="Statement" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L1 flags=[IsFromCompiler]}]
+function f2 name="Loop" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=L2 flags=[IsFromCompiler]}]
+function f3 name="Name" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L3 flags=[IsFromCompiler]}]
+function f4 name="Label" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=L4 flags=[IsFromCompiler]}]

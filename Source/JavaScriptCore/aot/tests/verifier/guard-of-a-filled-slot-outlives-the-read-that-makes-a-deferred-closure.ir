@@ -1,0 +1,37 @@
+# previous.step === counter.step, where both are literals with a method `step` whose closure is made at the first read
+# The test of `counter` stands in front of the read of `previous`. That read makes the closure that the slot stands for and writes it into the slot, maybe of the same object.
+# The object has the same property with the same value as before, so the slot of `counter` is still filled when it is read. A store of something else ends the guard.
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: GuardNotAvailable 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Counter" fields=[{key="step" declared={type=f0} flow={location={deferral=CapturesNothing deferredFunction=f0}}}]
+function f0 name="step" results=[{type=undefined}]
+function f1 name="goodReadOfAnotherObjectBetween" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
+    v2 = IsSlotFilled v0 key="step" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3: guard):
+    v4 = IsSlotFilled v1 key="step" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5: guard):
+    v6 = GetDeferredClosureSlot v1, v5 key="step" receivers=[L0] level=Expected [holdsDeclaredType]
+    v7 = GetDeferredClosureSlot v0, v3 key="step" receivers=[L0] level=Expected [holdsDeclaredType]
+    v8 = StrictEq v6, v7
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f2 name="badStoreBetween" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
+    v2 = IsSlotFilled v0 key="step" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: guard):
+    v4 = Undefined
+    PropSet v1, v4 key="step" mode=Sloppy
+    v6 = GetDeferredClosureSlot v0, v3 key="step" receivers=[L0] level=Expected [holdsDeclaredType]
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}

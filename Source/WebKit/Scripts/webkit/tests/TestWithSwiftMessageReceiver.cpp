@@ -58,6 +58,10 @@ void TestWithSwiftMessageForwarder::didReceiveMessage(IPC::Connection& connectio
         IPC::handleMessage<Messages::TestWithSwift::TestThrowingMessageWithoutReply>(connection, decoder, m_handler.get(), &TestWithSwiftWeakRef::dispatchTestThrowingMessageWithoutReply);
         return;
     }
+    if (decoder.messageName() == Messages::TestWithSwift::TestMessageWithEmptyReply::name()) {
+        IPC::handleMessageAsync<Messages::TestWithSwift::TestMessageWithEmptyReply>(connection, decoder, m_handler.get(), &TestWithSwiftWeakRef::dispatchTestMessageWithEmptyReply);
+        return;
+    }
     UNUSED_PARAM(connection);
     RELEASE_LOG_ERROR(IPC, "Unhandled message %s to %" PRIu64, IPC::description(decoder.messageName()).characters(), decoder.destinationID());
     decoder.markInvalid();
@@ -85,13 +89,13 @@ void TestWithSwiftMessageForwarder::didReceiveSyncMessage(IPC::Connection& conne
     decoder.markInvalid();
 }
 
-static std::unique_ptr<TestWithSwiftWeakRef> makeTestWithSwiftWeakRefUniquePtr(TestWithSwiftWeakRef* _Nonnull handler)
+static std::unique_ptr<TestWithSwiftWeakRef> makeTestWithSwiftWeakRefUniquePtr(TestWithSwiftWeakRef* WTF_NONNULL handler)
 {
     auto newRef = _impl::_impl_TestWithSwiftWeakRef::makeRetained(handler);
     return WTF::makeUniqueWithoutFastMallocCheck<TestWithSwiftWeakRef>(newRef);
 }
 
-TestWithSwiftMessageForwarder::TestWithSwiftMessageForwarder(TestWithSwiftWeakRef* _Nonnull target)
+TestWithSwiftMessageForwarder::TestWithSwiftMessageForwarder(TestWithSwiftWeakRef* WTF_NONNULL target)
     : m_handler(makeTestWithSwiftWeakRefUniquePtr(target))
 {
 }
@@ -117,6 +121,16 @@ namespace TestWithSwift {
 void completeWithDefaultReply(TestAsyncMessageCompletionHandler& completionHandler)
 {
     IPC::Connection::cancelReply<Messages::TestWithSwift::TestAsyncMessage>(*completionHandler);
+}
+
+void completeWithDefaultReply(TestMessageWithEmptyReplyCompletionHandler& completionHandler)
+{
+    IPC::Connection::cancelReply<Messages::TestWithSwift::TestMessageWithEmptyReply>(*completionHandler);
+}
+
+void complete(TestAsyncMessageCompletionHandler& completionHandler, uint8_t reply)
+{
+    (*completionHandler)(reply);
 }
 
 } // namespace TestWithSwift
@@ -158,9 +172,21 @@ template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::Tes
 {
     return jsValueForDecodedArguments<Messages::TestWithSwift::TestThrowingMessageWithoutReply::Arguments>(globalObject, decoder);
 }
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSwift_TestMessageWithEmptyReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestMessageWithEmptyReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessageReply<MessageName::TestWithSwift_TestMessageWithEmptyReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestMessageWithEmptyReply::ReplyArguments>(globalObject, decoder);
+}
 template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSwift_TestAsyncMessageReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
 {
     return jsValueForDecodedArguments<Messages::TestWithSwift::TestAsyncMessageReply::Arguments>(globalObject, decoder);
+}
+template<> std::optional<JSC::JSValue> jsValueForDecodedMessage<MessageName::TestWithSwift_TestMessageWithEmptyReplyReply>(JSC::JSGlobalObject* globalObject, Decoder& decoder)
+{
+    return jsValueForDecodedArguments<Messages::TestWithSwift::TestMessageWithEmptyReplyReply::Arguments>(globalObject, decoder);
 }
 
 }

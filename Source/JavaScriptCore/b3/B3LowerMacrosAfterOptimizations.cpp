@@ -30,13 +30,14 @@
 
 #include "AirArg.h"
 #include "B3BlockInsertionSet.h"
+#include "B3BulkMemoryValue.h"
 #include "B3CCallValue.h"
 #include "B3ConstDoubleValue.h"
 #include "B3ConstFloatValue.h"
-#include "B3ConstPtrValue.h"
 #include "B3InsertionSetInlines.h"
 #include "B3Operations.h"
 #include "B3PhaseScope.h"
+#include "B3RelocatableValue.h"
 #include "B3ValueInlines.h"
 
 namespace JSC { namespace B3 {
@@ -46,6 +47,25 @@ using Code = Air::Code;
 using Tmp = Air::Tmp;
 
 namespace {
+
+constexpr bool isLoweredByLowerMacrosAfterOptimizations(Opcode opcode)
+{
+    switch (opcode) {
+    case Abs:
+    case Ceil:
+    case Floor:
+    case FTrunc:
+    case Neg:
+    case PurifyNaN:
+    case RotL:
+    case PopCount:
+    case MemoryMove:
+    case MemoryFill:
+        return true;
+    default:
+        return false;
+    }
+}
 
 class LowerMacrosAfterOptimizations {
 public:
@@ -58,11 +78,15 @@ public:
 
     bool run()
     {
+        bool mayFindWork = m_proc.hasEverAddedAny(isLoweredByLowerMacrosAfterOptimizations);
+        if (!mayFindWork && !shouldValidateIR(m_proc))
+            return false;
         for (BasicBlock* block : m_proc) {
             m_block = block;
             processCurrentBlock();
         }
         m_changed |= m_blockInsertionSet.execute();
+        RELEASE_ASSERT(mayFindWork || (!m_changed && !m_didInsertValues));
         if (m_changed) {
             m_proc.resetReachability();
             m_proc.invalidateCFG();
@@ -94,14 +118,14 @@ private:
                 break;
             }
             case Ceil: {
-                if (MacroAssembler::supportsFloatingPointRounding())
+                if (m_proc.policy().supportsFloatingPointRounding())
                     break;
 
                 Value* functionAddress = nullptr;
                 if (m_value->type() == Double)
-                    functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(Math::ceilDouble));
+                    functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, RuntimeFunction::CeilDouble, m_origin));
                 else if (m_value->type() == Float)
-                    functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(Math::ceilFloat));
+                    functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, RuntimeFunction::CeilFloat, m_origin));
                 else
                     RELEASE_ASSERT_NOT_REACHED();
 
@@ -115,14 +139,14 @@ private:
                 break;
             }
             case Floor: {
-                if (MacroAssembler::supportsFloatingPointRounding())
+                if (m_proc.policy().supportsFloatingPointRounding())
                     break;
 
                 Value* functionAddress = nullptr;
                 if (m_value->type() == Double)
-                    functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(Math::floorDouble));
+                    functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, RuntimeFunction::FloorDouble, m_origin));
                 else if (m_value->type() == Float)
-                    functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(Math::floorFloat));
+                    functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, RuntimeFunction::FloorFloat, m_origin));
                 else
                     RELEASE_ASSERT_NOT_REACHED();
 
@@ -136,14 +160,14 @@ private:
                 break;
             }
             case FTrunc: {
-                if (MacroAssembler::supportsFloatingPointRounding())
+                if (m_proc.policy().supportsFloatingPointRounding())
                     break;
 
                 Value* functionAddress = nullptr;
                 if (m_value->type() == Double)
-                    functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(Math::truncDouble));
+                    functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, RuntimeFunction::TruncDouble, m_origin));
                 else if (m_value->type() == Float)
-                    functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(Math::truncFloat));
+                    functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, RuntimeFunction::TruncFloat, m_origin));
                 else
                     RELEASE_ASSERT_NOT_REACHED();
 
@@ -205,8 +229,30 @@ private:
                 break;
             }
 
-            case MemoryCopy: {
-                Value* functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(operationMemoryCopy));
+            case PopCount: {
+                if (MacroAssembler::supportsCountPopulation(m_proc.policy().targetFeatures))
+                    break;
+                Type type = m_value->type();
+                auto constant = [&](uint64_t bits) {
+                    return m_insertionSet.insertIntConstant(m_index, m_origin, type, static_cast<int64_t>(type == Int32 ? static_cast<int32_t>(bits) : static_cast<int64_t>(bits)));
+                };
+                auto binary = [&](Opcode opcode, Value* left, Value* right) {
+                    return m_insertionSet.insert<Value>(m_index, opcode, m_origin, left, right);
+                };
+                auto shiftedRight = [&](Value* value, int32_t amount) {
+                    return binary(ZShr, value, m_insertionSet.insert<Const32Value>(m_index, m_origin, amount));
+                };
+                Value* bits = m_value->child(0);
+                Value* pairs = binary(Sub, bits, binary(BitAnd, shiftedRight(bits, 1), constant(0x5555555555555555ull)));
+                Value* nibbles = binary(Add, binary(BitAnd, pairs, constant(0x3333333333333333ull)), binary(BitAnd, shiftedRight(pairs, 2), constant(0x3333333333333333ull)));
+                Value* bytes = binary(BitAnd, binary(Add, nibbles, shiftedRight(nibbles, 4)), constant(0x0f0f0f0f0f0f0f0full));
+                m_value->replaceWithIdentity(shiftedRight(binary(Mul, bytes, constant(0x0101010101010101ull)), type == Int32 ? 24 : 56));
+                break;
+            }
+
+            case MemoryMove: {
+                RuntimeFunction function = m_value->as<BulkMemoryValue>()->isGCSafe() ? RuntimeFunction::GCSafeMemoryMove : RuntimeFunction::MemoryMove;
+                Value* functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, function, m_origin));
                 Value* result = m_insertionSet.insert<CCallValue>(
                     m_index,
                     m_value->type(),
@@ -221,7 +267,7 @@ private:
             }
 
             case MemoryFill: {
-                Value* functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(operationMemoryFill));
+                Value* functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, RuntimeFunction::MemoryFill, m_origin));
                 Value* result = m_insertionSet.insert<CCallValue>(
                     m_index,
                     m_value->type(),
@@ -236,9 +282,11 @@ private:
             }
 
             default:
+                RELEASE_ASSERT(!isLoweredByLowerMacrosAfterOptimizations(m_value->opcode()));
                 break;
             }
         }
+        m_didInsertValues |= !m_insertionSet.isEmpty();
         m_insertionSet.execute(m_block);
     }
     
@@ -250,6 +298,7 @@ private:
     Value* m_value;
     Origin m_origin;
     bool m_changed { false };
+    bool m_didInsertValues { false };
 };
 
 bool lowerMacrosImpl(Procedure& proc)
@@ -264,7 +313,7 @@ bool lowerMacrosAfterOptimizations(Procedure& proc)
 {
     PhaseScope phaseScope(proc, "lowerMacrosAfterOptimizations"_s);
     bool result = lowerMacrosImpl(proc);
-    if (shouldValidateIR())
+    if (shouldValidateIR(proc))
         RELEASE_ASSERT(!lowerMacrosImpl(proc));
     return result;
 }

@@ -1,0 +1,35 @@
+# The fulfillment in line that needs arms (a test for thenables, a test of the driver, the call kept beside them) is for fast code. Balanced code calls the stub, which does the same. Without arms it is shorter than the call and stays.
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot
+# STATISTIC: FreshPromiseFulfillmentGroups = 1
+# RUN: pass Select
+# CHECK-LABEL: function f0 name="may-be-thenable"
+# CHECK: v2: anything = ReturnAsyncResult v1, v0
+# CHECK-NEXT: Return v2
+# CHECK-NOT: IsNotThenable
+# CHECK-LABEL: function f2 name="with-or-without-promise"
+# CHECK: v3: anything = ReturnAsyncResult v1, v2
+# CHECK-NEXT: Return v3
+# CHECK-NOT: FulfillFreshPromise
+# CHECK-LABEL: function f4 name="number-with-promise"
+# CHECK: FulfillFreshPromise v1, v2
+# CHECK-NOT: ReturnAsyncResult
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="may-be-thenable" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1} {
+    v2 = ReturnAsyncResult v1, v0
+    Return v2
+}
+function f1 name="may-be-thenable" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1}
+function f2 name="with-or-without-promise" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise|undefined}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f2 promiseType=Promise promiseParameter=1} {
+    v2 = Integer integer=7
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+function f3 name="with-or-without-promise" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f2 promiseType=Promise promiseParameter=1}
+function f4 name="number-with-promise" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f4 promiseType=Promise promiseParameter=1} {
+    v2 = Integer integer=7
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+function f5 name="number-with-promise" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f4 promiseType=Promise promiseParameter=1}

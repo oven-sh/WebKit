@@ -183,9 +183,11 @@ ExceptionOr<void> WebCodecsAudioDecoder::decode(Ref<WebCodecsEncodedAudioChunk>&
         m_isKeyChunkRequired = false;
     }
 
-    queueCodecControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, chunk = WTF::move(chunk)]() mutable {
+    queueCodecControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, data = chunk->encodedData()] mutable {
         incrementCodecOperationCount();
-        protect(scriptExecutionContext())->enqueueTaskWhenSettled(protect(*m_internalDecoder)->decode({ chunk->buffer(), chunk->type() == WebCodecsEncodedAudioChunkType::Key, chunk->timestamp(), chunk->duration() }), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this)] (auto&& result) {
+        // An empty chunk is a decoding error, see https://github.com/w3c/webcodecs/issues/983.
+        auto decodePromise = data.data->isEmpty() ? AudioDecoder::DecodePromise::createAndReject("Empty chunk"_s) : protect(*m_internalDecoder)->decode(WTF::move(data));
+        protect(scriptExecutionContext())->enqueueTaskWhenSettled(WTF::move(decodePromise), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this)](auto&& result) {
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis)
                 return;

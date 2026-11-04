@@ -1,0 +1,61 @@
+# Three fields that are stored behind the creation of an object, so that a read of each may find nothing, are summed in a loop.
+# Each field holds the numbers that are stored into it, each read is tested, the path of a missing field leaves the loop, and the loop adds integers
+# RUN: pipeline Select
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Filled"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = Integer integer=1
+    v2 = Integer integer=2
+    v3 = Integer integer=3
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="fills" [isFreeName]
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v0, v1 key="a" mode=Strict
+    PropSet v0, v2 key="b" mode=Strict
+    PropSet v0, v3 key="c" mode=Strict
+    Jump -> next b2()
+  b2():
+    v10 = CallDirect v0 function=f1
+    v11 = PropGet v4 key="sink" [isFreeName]
+    v12 = Call v11, -, v10
+    Return
+}
+function f1 name="sum" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=1000
+    Jump -> next b1(v1, v1)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v3, v2
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v0 key="a"
+    v8 = Add v4, v7
+    v9 = PropGet v0 key="b"
+    v10 = Add v8, v9
+    v11 = PropGet v0 key="c"
+    v12 = Add v10, v11
+    v13 = BitOr v12, v1
+    v14 = Increment v3
+    Jump -> next b1(v14, v13)
+  b3():
+    Return v4
+# CHECK: [[a]]: undefined|1 = GetSlotOrUndefined v0 key="a"
+# CHECK-NEXT: [[hasA]]: boolean = TypeTest [[a]] testedType=number
+# CHECK-NEXT: TestAndBranch [[hasA]] -> taken {{*}}(), notTaken [[withoutA]]()
+# CHECK: [[first]]: int[-2147483647, 2147483648] = Add {{*}}form=Integers
+# CHECK-NEXT: [[b]]: undefined|2 = GetSlotOrUndefined v0 key="b"
+# CHECK-NEXT: [[hasB]]: boolean = TypeTest [[b]] testedType=number
+# CHECK: [[second]]: int[-2147483645, 2147483650] = Add [[first]], {{*}}form=Integers
+# CHECK-NEXT: [[c]]: undefined|3 = GetSlotOrUndefined v0 key="c"
+# CHECK-NEXT: [[hasC]]: boolean = TypeTest [[c]] testedType=number
+# CHECK: [[third]]: int[-2147483642, 2147483653] = Add [[second]], {{*}}form=Integers
+# CHECK-NEXT: = BitOr [[third]],
+# CHECK: [[withoutA]]() frequency=Rare:
+}

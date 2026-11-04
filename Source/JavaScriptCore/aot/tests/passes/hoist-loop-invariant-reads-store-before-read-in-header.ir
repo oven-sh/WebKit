@@ -1,0 +1,143 @@
+# A read stays in the loop header behind an operation of the header that may store to its location
+# FORM: Prepared
+# RUN: pass HoistLoopInvariantReads
+# STATISTIC: HoistLoopInvariantReadsChanges = 3
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="limit" declared={type=number}
+variable g1 name="other" declared={type=number}
+variable g2 name="storedOnce" declared={type=number} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
+
+function f0 name="storeBeforeRead" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutModuleVariable v0 variable=g0
+    v3 = GetModuleVariable variable=g0
+    v4 = Less v0, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: PutModuleVariable v0 variable=g0
+# CHECK-NEXT: v3: number = GetModuleVariable variable=g0
+}
+
+function f1 name="storeToAnotherVariableBeforeRead" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutModuleVariable v0 variable=g1
+    v3 = GetModuleVariable variable=g0
+    v4 = Less v0, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+# CHECK: b0(
+# CHECK-NEXT: v3: number = GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: PutModuleVariable v0 variable=g1
+# CHECK-NEXT: = Less v0, v3
+}
+
+function f2 name="unknownCallBeforeReadOfStoredOnce" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Call v1
+    v4 = GetModuleVariable variable=g2
+    v5 = Less v0, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: = Call v1
+# CHECK-NEXT: v4: number = GetModuleVariable variable=g2
+}
+
+function f3 name="unknownCallBehindReadOfStoredOnce" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = GetModuleVariable variable=g2
+    v4 = Call v1
+    v5 = Less v0, v3
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+# CHECK: b0(
+# CHECK-NEXT: v3: number = GetModuleVariable variable=g2
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NOT: GetModuleVariable
+}
+
+function f4 name="ownStoreBeforeReadOfStoredOnce" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutModuleVariable v0 variable=g2
+    v3 = GetModuleVariable variable=g2
+    v4 = Less v0, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: PutModuleVariable v0 variable=g2
+# CHECK-NEXT: v3: number = GetModuleVariable variable=g2
+}
+
+function f5 name="fieldStoreBeforeRead" captures=[{type=env L0}] parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: env L0, v1: number):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    v4 = GetEnvironmentField v0 layout=L0 field=0
+    v5 = Less v1, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: PutEnvironmentField v0, v1 layout=L0
+# CHECK-NEXT: v4: number = GetEnvironmentField v0 layout=L0
+}
+
+function f6 name="storeToAnotherFieldBeforeRead" captures=[{type=env L0}] parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: env L0, v1: number):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutEnvironmentField v0, v1 layout=L0 field=1
+    v4 = GetEnvironmentField v0 layout=L0 field=0
+    v5 = Less v1, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+# CHECK: b0(
+# CHECK-NEXT: v4: number = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: PutEnvironmentField v0, v1 layout=L0 field=1
+# CHECK-NEXT: = Less v1, v4
+}
+
+function f7 name="fieldStoreThroughAnotherBase" captures=[{type=env L0}] parameters=[{type=env L0}, {type=number}] results=[{type=number}] {
+  b0(v0: env L0, v1: env L0, v2: number):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutEnvironmentField v1, v2 layout=L0 field=0
+    v5 = GetEnvironmentField v0 layout=L0 field=0
+    v6 = Less v2, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Return v5
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: PutEnvironmentField v1, v2 layout=L0
+# CHECK-NEXT: v5: number = GetEnvironmentField v0 layout=L0
+}

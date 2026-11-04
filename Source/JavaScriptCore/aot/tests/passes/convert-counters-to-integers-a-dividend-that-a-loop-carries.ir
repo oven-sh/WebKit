@@ -1,0 +1,43 @@
+# `while (n % d === 0) n /= d`: a number that a loop carries and takes the remainder of is expected to be an int32, where a turn hands on nothing dearer to test than an integer or a quotient without remainder. The expectation stands on what is handed to the loop. A turn that hands on any other number leaves the loop as it is. A loop that is not expected to run is left alone too: ./convert-counters-to-integers-a-dividend-that-a-cold-loop-carries.ir.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass ConvertCountersToIntegers
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="dividedWhileNothingRemains" parameters=[{type=number}, {type=int[2, 100]}] results=[{type=number}] {
+    Jump -> next b1(v0)
+  b1(v2: number):
+    LoopHint
+    v4 = Mod v2, v1
+    v5 = Integer
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Div v2, v1
+    Jump -> next b1(v7)
+  b3():
+    Return v2
+# CHECK: b0(
+# CHECK-NEXT: [[start]]: number ~ i32 = Upcast v0 castType=number
+# CHECK-NEXT: Jump -> next b1([[start]])
+# CHECK: b2():
+# CHECK-NEXT: v7: number = Div v2, v1
+# CHECK-NEXT: [[next]]: number ~ i32 = Upcast v7 castType=number
+# CHECK-NEXT: Jump -> next b1([[next]])
+}
+
+function f1 name="halvedWhateverRemains" parameters=[{type=number}, {type=int[2, 100]}] results=[{type=number}] {
+    Jump -> next b1(v0)
+  b1(v2: number):
+    LoopHint
+    v4 = Mod v2, v1
+    v5 = Integer
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Div v2, v1
+    Jump -> next b1(v7)
+  b3():
+    Return v2
+# CHECK-NOT: Upcast
+}

@@ -79,12 +79,12 @@ void RenderTableRow::willBeRemovedFromTree()
     section()->setNeedsCellRecalc();
 }
 
-static bool borderWidthChanged(const Style::ComputedStyle* oldStyle, const Style::ComputedStyle* newStyle)
+static bool LEGACY_NODELETE borderWidthChanged(const Style::ComputedStyle* oldStyle, const Style::ComputedStyle* newStyle)
 {
-    return oldStyle->usedBorderLeftWidth() != newStyle->usedBorderLeftWidth()
-        || oldStyle->usedBorderTopWidth() != newStyle->usedBorderTopWidth()
-        || oldStyle->usedBorderRightWidth() != newStyle->usedBorderRightWidth()
-        || oldStyle->usedBorderBottomWidth() != newStyle->usedBorderBottomWidth();
+    return Style::effectiveBorderWidths(*oldStyle).left() != Style::effectiveBorderWidths(*newStyle).left()
+        || Style::effectiveBorderWidths(*oldStyle).top() != Style::effectiveBorderWidths(*newStyle).top()
+        || Style::effectiveBorderWidths(*oldStyle).right() != Style::effectiveBorderWidths(*newStyle).right()
+        || Style::effectiveBorderWidths(*oldStyle).bottom() != Style::effectiveBorderWidths(*newStyle).bottom();
 }
 
 void RenderTableRow::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
@@ -236,7 +236,7 @@ bool RenderTableRow::nodeAtPoint(const HitTestRequest& request, HitTestResult& r
 void RenderTableRow::paintOutlineForRowIfNeeded(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
     PaintPhase paintPhase = paintInfo.phase;
-    if ((paintPhase == PaintPhase::Outline || paintPhase == PaintPhase::SelfOutline) && style().usedVisibility() == Visibility::Visible) {
+    if ((paintPhase == PaintPhase::Outline || paintPhase == PaintPhase::SelfOutline) && usedStyle().visibility() == UsedVisibility::Visible) {
         auto adjustedPaintOffset = paintOffset + location();
         paintOutline(paintInfo, LayoutRect(adjustedPaintOffset, borderBoxSize()));
     }
@@ -252,7 +252,7 @@ void RenderTableRow::paintShadowForRowIfNeeded(PaintInfo& paintInfo, const Layou
     adjustBorderBoxRectForPainting(rect);
 
     BackgroundPainter backgroundPainter { *this, paintInfo };
-    backgroundPainter.paintBoxShadow(rect, style(), Style::ShadowStyle::Normal);
+    backgroundPainter.paintBoxShadow(rect, usedStyle(), Style::ShadowStyle::Normal);
 }
 
 void RenderTableRow::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)

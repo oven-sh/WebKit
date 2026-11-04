@@ -26,6 +26,7 @@
 #pragma once
 
 #include "PlatformCAAnimationRemote.h"
+#include "RemoteSnapshotIdentifier.h"
 #include <WebCore/EventRegion.h>
 #include <WebCore/GraphicsLayerEnums.h>
 #include <WebCore/MediaPlayerEnums.h>
@@ -63,6 +64,7 @@ enum class LayerChangeIndex : size_t {
     AppleVisualEffectChanged,
 #endif
     ShadowPathChanged,
+    DisplayOnlyImageChanged,
 };
 
 enum class LayerChange : uint64_t {
@@ -124,6 +126,7 @@ enum class LayerChange : uint64_t {
     AppleVisualEffectChanged            = 1LLU << static_cast<size_t>(LayerChangeIndex::AppleVisualEffectChanged),
 #endif
     ShadowPathChanged                   = 1LLU << static_cast<size_t>(LayerChangeIndex::ShadowPathChanged),
+    DisplayOnlyImageChanged             = 1LLU << static_cast<size_t>(LayerChangeIndex::DisplayOnlyImageChanged),
 };
 
 struct RemoteLayerBackingStoreOrProperties {
@@ -227,6 +230,8 @@ struct LayerProperties {
     WebCore::AppleVisualEffectData appleVisualEffectData;
 #endif
     WebCore::Path shadowPath;
+    // Resolved by the UI process, which holds the rendering.
+    Markable<RemoteSnapshotIdentifier> displayOnlyImage;
 };
 
 }

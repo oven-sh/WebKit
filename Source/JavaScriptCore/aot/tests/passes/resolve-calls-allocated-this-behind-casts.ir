@@ -1,0 +1,41 @@
+# Casts that test nothing between new.target, the read of its prototype and the allocation do not hide the allocation from the caller
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: ConstructsResolved = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="BehindCasts" constructor=f0 classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="KeepsPrototype" constructor=f1 fields=[{key="parent" declared={type=anything}}] classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+function f0 name="BehindCasts" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] constructedClass=L0 {
+    v1 = AssumeType v0 provenType=f0
+    v2 = GetConstructPrototype v1 layout=L0
+    v3: object ~ builtin(ObjectPrototype) = Upcast v2 castType=object
+    v4 = NewObject v3 layout=L0
+    Return v4
+}
+function f1 name="KeepsPrototype" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] constructedClass=L1 {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2: object ~ builtin(ObjectPrototype) = Upcast v1 castType=object
+    v3 = NewObject v2 layout=L1
+    PropDefine v3, v2 key="parent"
+    Return v3
+}
+
+function f2 name="allocatesInCaller" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = Construct v0 callees=[f0]
+    Return v1
+# CHECK: [[object]]:{{*}}= NewObject layout=L0
+# CHECK-NEXT: = CallDirect [[object]], v0 function=[[version]] [isConstruction]
+}
+
+function f3 name="prototypeHasAnotherUse" parameters=[{type=f1}] results=[{type=anything}] {
+    v1 = Construct v0 callees=[f1]
+    Return v1
+# CHECK-NOT: NewObject
+# CHECK: = CallDirect v0 function=f1 [isConstruction]
+}
+
+# CHECK: function [[version]] name="BehindCasts" {{*}}role=AllocatedThisVersion
+# CHECK-NOT: GetConstructPrototype
+# CHECK-NOT: Upcast
+# CHECK: Return

@@ -1,0 +1,52 @@
+# An object that evaluated text reaches keeps its shape whatever that text does to it, so it has the word for extra properties, whether or not compiled code stores under a computed key on it.
+# The names that only the code of built-ins may put on it get no field
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow references=narrow
+# RUN: plan-slots layouts
+# RUN(CLASSES): flow
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="StoredByComputedKey" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 name="OnlyHandedOut" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L2 name="StoredByIndex" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = Builtin builtin=Function
+    v5 = String string="object"
+    v6 = String string="return object"
+    v7 = Construct v4, -, v5, v6
+    v8 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v9 = FinishObject v8
+    ElemSet v9, v3, v2
+    v11 = Call v7, -, v9
+    v12 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v13 = FinishObject v12
+    v14 = Call v7, -, v13
+    v15 = NewObject -, v2, v2 layout=L2 fields=[0, 1]
+    v16 = FinishObject v15
+    v17 = Integer integer=3
+    ElemSet v16, v17, v2
+    v19 = Call v7, -, v16
+    Return
+}
+
+# CHECK: L0 CompiledObject size=48
+# CHECK-NEXT: .0 "x" {{*}} @16
+# CHECK-NEXT: .1 "y" {{*}} @24
+# CHECK-NEXT: extra-properties Cell32 @32
+# CHECK-NEXT: L1 CompiledObject size=48
+# CHECK-NEXT: .0 "x" {{*}} @16
+# CHECK-NEXT: .1 "y" {{*}} @24
+# CHECK-NEXT: extra-properties Cell32 @32
+# CHECK-NEXT: L2 CompiledObject size=48
+# CHECK-NEXT: .0 "x" {{*}} @16
+# CHECK-NEXT: .1 "y" {{*}} @24
+# CHECK-NEXT: extra-properties Cell32 @32
+
+# CLASSES: class C0 layout=L0 {{*}}cause=ReachesUnknownJavaScript
+# CLASSES: class C1 layout=L1 {{*}}cause=ReachesUnknownJavaScript
+# CLASSES: class C2 layout=L2 {{*}}cause=ReachesUnknownJavaScript

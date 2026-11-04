@@ -52,430 +52,430 @@ StyleRuleType CSSPositionTryDescriptors::ruleType() const
 // @position-try 'margin'
 String CSSPositionTryDescriptors::margin() const
 {
-    return getPropertyValueInternal(CSSPropertyMargin);
+    return getPropertyValueInternal(CSSPropertyID::Margin);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMargin(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMargin, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::Margin, value, IsImportant::No);
 }
 
 // @position-try 'margin-top'
 String CSSPositionTryDescriptors::marginTop() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginTop);
+    return getPropertyValueInternal(CSSPropertyID::MarginTop);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMarginTop(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginTop, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginTop, value, IsImportant::No);
 }
 
 // @position-try 'margin-right'
 String CSSPositionTryDescriptors::marginRight() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginRight);
+    return getPropertyValueInternal(CSSPropertyID::MarginRight);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMarginRight(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginRight, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginRight, value, IsImportant::No);
 }
 
 // @position-try 'margin-bottom'
 String CSSPositionTryDescriptors::marginBottom() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginBottom);
+    return getPropertyValueInternal(CSSPropertyID::MarginBottom);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMarginBottom(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginBottom, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginBottom, value, IsImportant::No);
 }
 
 // @position-try 'margin-left'
 String CSSPositionTryDescriptors::marginLeft() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginLeft);
+    return getPropertyValueInternal(CSSPropertyID::MarginLeft);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMarginLeft(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginLeft, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginLeft, value, IsImportant::No);
 }
 
 // @position-try 'margin-block'
 String CSSPositionTryDescriptors::marginBlock() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginBlock);
+    return getPropertyValueInternal(CSSPropertyID::MarginBlock);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMarginBlock(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginBlock, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginBlock, value, IsImportant::No);
 }
 
 // @position-try 'margin-block-start'
 String CSSPositionTryDescriptors::marginBlockStart() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginBlockStart);
+    return getPropertyValueInternal(CSSPropertyID::MarginBlockStart);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMarginBlockStart(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginBlockStart, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginBlockStart, value, IsImportant::No);
 }
 
 // @position-try 'margin-block-end'
 String CSSPositionTryDescriptors::marginBlockEnd() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginBlockEnd);
+    return getPropertyValueInternal(CSSPropertyID::MarginBlockEnd);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMarginBlockEnd(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginBlockEnd, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginBlockEnd, value, IsImportant::No);
 }
 
 // @position-try 'marginp-inline'
 String CSSPositionTryDescriptors::marginInline() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginInline);
+    return getPropertyValueInternal(CSSPropertyID::MarginInline);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMarginInline(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginInline, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginInline, value, IsImportant::No);
 }
 
 // @position-try 'margin-inline-start'
 String CSSPositionTryDescriptors::marginInlineStart() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginInlineStart);
+    return getPropertyValueInternal(CSSPropertyID::MarginInlineStart);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMarginInlineStart(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginInlineStart, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginInlineStart, value, IsImportant::No);
 }
 
 // @position-try 'margin-inline-end'
 String CSSPositionTryDescriptors::marginInlineEnd() const
 {
-    return getPropertyValueInternal(CSSPropertyMarginInlineEnd);
+    return getPropertyValueInternal(CSSPropertyID::MarginInlineEnd);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMarginInlineEnd(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMarginInlineEnd, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MarginInlineEnd, value, IsImportant::No);
 }
 
 // @position-try 'inset'
 String CSSPositionTryDescriptors::inset() const
 {
-    return getPropertyValueInternal(CSSPropertyInset);
+    return getPropertyValueInternal(CSSPropertyID::Inset);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setInset(const String& value)
 {
-    return setPropertyInternal(CSSPropertyInset, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::Inset, value, IsImportant::No);
 }
 
 // @position-try 'inset-block'
 String CSSPositionTryDescriptors::insetBlock() const
 {
-    return getPropertyValueInternal(CSSPropertyInsetBlock);
+    return getPropertyValueInternal(CSSPropertyID::InsetBlock);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setInsetBlock(const String& value)
 {
-    return setPropertyInternal(CSSPropertyInsetBlock, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::InsetBlock, value, IsImportant::No);
 }
 
 // @position-try 'inset-block-start'
 String CSSPositionTryDescriptors::insetBlockStart() const
 {
-    return getPropertyValueInternal(CSSPropertyInsetBlockStart);
+    return getPropertyValueInternal(CSSPropertyID::InsetBlockStart);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setInsetBlockStart(const String& value)
 {
-    return setPropertyInternal(CSSPropertyInsetBlockStart, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::InsetBlockStart, value, IsImportant::No);
 }
 
 // @position-try 'inset-block-end'
 String CSSPositionTryDescriptors::insetBlockEnd() const
 {
-    return getPropertyValueInternal(CSSPropertyInsetBlockEnd);
+    return getPropertyValueInternal(CSSPropertyID::InsetBlockEnd);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setInsetBlockEnd(const String& value)
 {
-    return setPropertyInternal(CSSPropertyInsetBlockEnd, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::InsetBlockEnd, value, IsImportant::No);
 }
 
 // @position-try 'inset-inline'
 String CSSPositionTryDescriptors::insetInline() const
 {
-    return getPropertyValueInternal(CSSPropertyInsetInline);
+    return getPropertyValueInternal(CSSPropertyID::InsetInline);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setInsetInline(const String& value)
 {
-    return setPropertyInternal(CSSPropertyInsetInline, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::InsetInline, value, IsImportant::No);
 }
 
 // @position-try 'inset-inline-start'
 String CSSPositionTryDescriptors::insetInlineStart() const
 {
-    return getPropertyValueInternal(CSSPropertyInsetInlineStart);
+    return getPropertyValueInternal(CSSPropertyID::InsetInlineStart);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setInsetInlineStart(const String& value)
 {
-    return setPropertyInternal(CSSPropertyInsetInlineStart, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::InsetInlineStart, value, IsImportant::No);
 }
 
 // @position-try 'inset-inline-end'
 String CSSPositionTryDescriptors::insetInlineEnd() const
 {
-    return getPropertyValueInternal(CSSPropertyInsetInlineEnd);
+    return getPropertyValueInternal(CSSPropertyID::InsetInlineEnd);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setInsetInlineEnd(const String& value)
 {
-    return setPropertyInternal(CSSPropertyInsetInlineEnd, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::InsetInlineEnd, value, IsImportant::No);
 }
 
 // @position-try 'top'
 String CSSPositionTryDescriptors::top() const
 {
-    return getPropertyValueInternal(CSSPropertyTop);
+    return getPropertyValueInternal(CSSPropertyID::Top);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setTop(const String& value)
 {
-    return setPropertyInternal(CSSPropertyTop, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::Top, value, IsImportant::No);
 }
 
 // @position-try 'left'
 String CSSPositionTryDescriptors::left() const
 {
-    return getPropertyValueInternal(CSSPropertyLeft);
+    return getPropertyValueInternal(CSSPropertyID::Left);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setLeft(const String& value)
 {
-    return setPropertyInternal(CSSPropertyLeft, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::Left, value, IsImportant::No);
 }
 
 // @position-try 'right'
 String CSSPositionTryDescriptors::right() const
 {
-    return getPropertyValueInternal(CSSPropertyRight);
+    return getPropertyValueInternal(CSSPropertyID::Right);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setRight(const String& value)
 {
-    return setPropertyInternal(CSSPropertyRight, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::Right, value, IsImportant::No);
 }
 
 // @position-try 'bottom'
 String CSSPositionTryDescriptors::bottom() const
 {
-    return getPropertyValueInternal(CSSPropertyBottom);
+    return getPropertyValueInternal(CSSPropertyID::Bottom);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setBottom(const String& value)
 {
-    return setPropertyInternal(CSSPropertyBottom, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::Bottom, value, IsImportant::No);
 }
 
 // @position-try 'width'
 String CSSPositionTryDescriptors::width() const
 {
-    return getPropertyValueInternal(CSSPropertyWidth);
+    return getPropertyValueInternal(CSSPropertyID::Width);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setWidth(const String& value)
 {
-    return setPropertyInternal(CSSPropertyWidth, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::Width, value, IsImportant::No);
 }
 
 // @position-try 'min-width'
 String CSSPositionTryDescriptors::minWidth() const
 {
-    return getPropertyValueInternal(CSSPropertyMinWidth);
+    return getPropertyValueInternal(CSSPropertyID::MinWidth);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMinWidth(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMinWidth, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MinWidth, value, IsImportant::No);
 }
 
 // @position-try 'max-width'
 String CSSPositionTryDescriptors::maxWidth() const
 {
-    return getPropertyValueInternal(CSSPropertyMaxWidth);
+    return getPropertyValueInternal(CSSPropertyID::MaxWidth);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMaxWidth(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMaxWidth, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MaxWidth, value, IsImportant::No);
 }
 
 // @position-try 'height'
 String CSSPositionTryDescriptors::height() const
 {
-    return getPropertyValueInternal(CSSPropertyHeight);
+    return getPropertyValueInternal(CSSPropertyID::Height);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setHeight(const String& value)
 {
-    return setPropertyInternal(CSSPropertyHeight, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::Height, value, IsImportant::No);
 }
 
 // @position-try 'min-height'
 String CSSPositionTryDescriptors::minHeight() const
 {
-    return getPropertyValueInternal(CSSPropertyMinHeight);
+    return getPropertyValueInternal(CSSPropertyID::MinHeight);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMinHeight(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMinHeight, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MinHeight, value, IsImportant::No);
 }
 
 // @position-try 'max-height'
 String CSSPositionTryDescriptors::maxHeight() const
 {
-    return getPropertyValueInternal(CSSPropertyMaxHeight);
+    return getPropertyValueInternal(CSSPropertyID::MaxHeight);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMaxHeight(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMaxHeight, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MaxHeight, value, IsImportant::No);
 }
 
 // @position-try 'block-size'
 String CSSPositionTryDescriptors::blockSize() const
 {
-    return getPropertyValueInternal(CSSPropertyBlockSize);
+    return getPropertyValueInternal(CSSPropertyID::BlockSize);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setBlockSize(const String& value)
 {
-    return setPropertyInternal(CSSPropertyBlockSize, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::BlockSize, value, IsImportant::No);
 }
 
 // @position-try 'min-block-size'
 String CSSPositionTryDescriptors::minBlockSize() const
 {
-    return getPropertyValueInternal(CSSPropertyMinBlockSize);
+    return getPropertyValueInternal(CSSPropertyID::MinBlockSize);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMinBlockSize(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMinBlockSize, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MinBlockSize, value, IsImportant::No);
 }
 
 // @position-try 'max-block-size'
 String CSSPositionTryDescriptors::maxBlockSize() const
 {
-    return getPropertyValueInternal(CSSPropertyMaxBlockSize);
+    return getPropertyValueInternal(CSSPropertyID::MaxBlockSize);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMaxBlockSize(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMaxBlockSize, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MaxBlockSize, value, IsImportant::No);
 }
 
 // @position-try 'inline-size'
 String CSSPositionTryDescriptors::inlineSize() const
 {
-    return getPropertyValueInternal(CSSPropertyInlineSize);
+    return getPropertyValueInternal(CSSPropertyID::InlineSize);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setInlineSize(const String& value)
 {
-    return setPropertyInternal(CSSPropertyInlineSize, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::InlineSize, value, IsImportant::No);
 }
 
 // @position-try 'min-inline-size'
 String CSSPositionTryDescriptors::minInlineSize() const
 {
-    return getPropertyValueInternal(CSSPropertyMinInlineSize);
+    return getPropertyValueInternal(CSSPropertyID::MinInlineSize);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMinInlineSize(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMinInlineSize, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MinInlineSize, value, IsImportant::No);
 }
 
 // @position-try 'max-inline-size'
 String CSSPositionTryDescriptors::maxInlineSize() const
 {
-    return getPropertyValueInternal(CSSPropertyMaxInlineSize);
+    return getPropertyValueInternal(CSSPropertyID::MaxInlineSize);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setMaxInlineSize(const String& value)
 {
-    return setPropertyInternal(CSSPropertyMaxInlineSize, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::MaxInlineSize, value, IsImportant::No);
 }
 
 // @position-try 'place-self'
 String CSSPositionTryDescriptors::placeSelf() const
 {
-    return getPropertyValueInternal(CSSPropertyPlaceSelf);
+    return getPropertyValueInternal(CSSPropertyID::PlaceSelf);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setPlaceSelf(const String& value)
 {
-    return setPropertyInternal(CSSPropertyPlaceSelf, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::PlaceSelf, value, IsImportant::No);
 }
 
 // @position-try 'align-self'
 String CSSPositionTryDescriptors::alignSelf() const
 {
-    return getPropertyValueInternal(CSSPropertyAlignSelf);
+    return getPropertyValueInternal(CSSPropertyID::AlignSelf);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setAlignSelf(const String& value)
 {
-    return setPropertyInternal(CSSPropertyAlignSelf, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::AlignSelf, value, IsImportant::No);
 }
 
 // @position-try 'justify-self'
 String CSSPositionTryDescriptors::justifySelf() const
 {
-    return getPropertyValueInternal(CSSPropertyJustifySelf);
+    return getPropertyValueInternal(CSSPropertyID::JustifySelf);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setJustifySelf(const String& value)
 {
-    return setPropertyInternal(CSSPropertyJustifySelf, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::JustifySelf, value, IsImportant::No);
 }
 
 // @position-try 'position-anchor'
 String CSSPositionTryDescriptors::positionAnchor() const
 {
-    return getPropertyValueInternal(CSSPropertyPositionAnchor);
+    return getPropertyValueInternal(CSSPropertyID::PositionAnchor);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setPositionAnchor(const String& value)
 {
-    return setPropertyInternal(CSSPropertyPositionAnchor, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::PositionAnchor, value, IsImportant::No);
 }
 
 // @position-try 'position-area'
 String CSSPositionTryDescriptors::positionArea() const
 {
-    return getPropertyValueInternal(CSSPropertyPositionArea);
+    return getPropertyValueInternal(CSSPropertyID::PositionArea);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setPositionArea(const String& value)
 {
-    return setPropertyInternal(CSSPropertyPositionArea, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::PositionArea, value, IsImportant::No);
 }
 
 ExceptionOr<void> CSSPositionTryDescriptors::setPropertyInternal(CSSPropertyID propertyID, const String& value, IsImportant isImportant)

@@ -64,7 +64,7 @@ inline void appendAirArgs(Vector<B3::Air::Arg>& args, T&& t, Arguments&&... othe
     appendAirArgs(args, std::forward<Arguments>(others)...);
 }
 
-[[noreturn]] void NODELETE printAirArg(PrintStream&, Context&);
+[[noreturn]] void LEGACY_NODELETE printAirArg(PrintStream&, Context&);
 
 // Printer<Arg&> is only a place-holder which PrintSpecial::generate() will later
 // replace with a Printer for a register, constant, etc. as appropriate. 
@@ -93,7 +93,7 @@ public:
     ~PrintSpecial() final;
 
 private:
-    void forEachArg(Inst&, const ScopedLambda<Inst::EachArgCallback>&) final;
+    void forEachArg(Inst&, NOESCAPE const ScopedLambda<Inst::EachArgCallback>&) final;
     bool isValid(Inst&) final;
     bool admitsStack(Inst&, unsigned argIndex) final;
     bool admitsExtendedOffsetAddr(Inst&, unsigned) final;

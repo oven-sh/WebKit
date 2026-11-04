@@ -1,0 +1,13 @@
+# With everything hot each function has the class Hot, code that runs once as well, and percentiles, activations, order and thresholds stay
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat heat=EverythingIsHot
+# RUN: pipeline EstimateHeat
+# CHECK: f0 Hot 39 1
+# CHECK-NEXT: f1 Hot 97 100
+# CHECK-NEXT: f2 Hot 83 10
+# CHECK-NEXT: f3 Hot 27 2
+# CHECK-NEXT: f4 Hot 0 1
+# CHECK-NEXT: f5 Hot 0 1
+# CHECK-NEXT: hottest: f1 f2 f0 f3 f4 f5
+# CHECK-NEXT: thresholds: cold=1 hot=10
+# PROGRAM-OF: estimate-heat-thresholds.ir

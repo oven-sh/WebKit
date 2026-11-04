@@ -1,0 +1,27 @@
+# const list = [1]; const inner = [list[0]]; return inner[0]
+# The element that is read may be undefined, so the check for a number may fail, and the second literal stands behind it.
+# Flow follows what the check turns away: the contents that it proves of the second literal name undefined too. That claim is what flow holds, cut by nothing, so it is true whether the check stands or goes.
+# What flow says of the checked value itself was cut out of the type that the check gives it, and holds behind the check alone.
+# The element is claimed to be among those contents, in every version too: a list whose claim stays is never left with an element of which less is known.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[checked]]: {{*}} = Check {{*}} expectedType=number
+# CHECK-NEXT: [[known]]: {{*}} = AssumeType [[checked]] provenType=int [isBehindChecks]
+# CHECK-NEXT: [[element]]: {{*}} = AssumeType [[known]] provenType=undefined|1
+# CHECK-NEXT: [[inner]]: {{*}} = NewArray [[element]] contents=undefined|1
+# CHECK-NEXT: = AssumeType [[inner]] provenType=Array<undefined|1, proven, pristine[Storage, Names, Dense]>
+# CHECK-NOT: isBehindChecks
+# CHECK: = ElemGet
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=number
+    v2 = Integer
+    v3 = ElemGet v1, v2
+    v4 = Check v3 expectedType=number
+    v5 = NewArray v4 contents=number
+    v6 = ElemGet v5, v2
+    Return v6
+}

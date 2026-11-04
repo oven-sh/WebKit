@@ -1,0 +1,101 @@
+# One step of the first two loops. source = { open: first, close: second }; copy = {}; for (name in source) copy[name] = source[name]; copy.open(); copy.close()
+# What is stored was read under the very key of the store, so each name takes what the source holds under that name and not what it holds under the others.
+# chosen = {}; for (name in source) chosen[name] = test ? given[name] : source[name]: the same for each of the two objects: given = { open: third }.
+# late = {}; for (name in source) { late[name] = earlier; earlier = source[name] }: what goes round the loop was read under the name of an earlier turn: any name may take any value.
+# RUN: valueflow-solve calls
+# CHECK: f0 v13 -> f1
+# CHECK-NOT: f0 v13 -> f1 f2
+# CHECK: f0 v15 -> f2
+# CHECK-NOT: f0 v15 -> f1
+# CHECK: f0 v32 -> f1 f3
+# CHECK-NOT: f0 v32 -> f1 f2
+# CHECK: f0 v34 -> f2
+# CHECK-NOT: f0 v34 -> f1
+# CHECK: f0 v47 -> f1 f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source" fields=[{key="open" declared={type=anything} flags=[IsRequired]}, {key="close" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Given" fields=[{key="open" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = NewDictionary
+    v4 = ForInOpen v2
+    Jump -> next b1()
+  b1():
+    v5 = ForInStep v4, v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = ElemGet v2, v7
+    ElemSet v3, v7, v8 mode=Strict
+    Jump -> next b3()
+  b3():
+    v10 = Undefined
+    v11 = Undefined
+    v12 = PropGet v3 key="open"
+    v13 = Call v12, v3
+    v14 = PropGet v3 key="close"
+    v15 = Call v14, v3
+    v16 = NewClosure function=f3
+    v17 = NewObject -, v16 layout=L1 fields=[0]
+    v18 = NewDictionary
+    v19 = ForInOpen v2
+    Jump -> next b4()
+  b4():
+    v20 = ForInStep v19, v2
+    v21 = ResultAt v20
+    v22 = ResultAt v20 index=1
+    Branch v21 -> taken b9(), notTaken b5()
+  b5():
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="test" [isFreeName]
+    v25 = ToBoolean v24
+    Branch v25 -> taken b6(), notTaken b7()
+  b6():
+    v26 = ElemGet v17, v22
+    Jump -> next b8(v26)
+  b7():
+    v27 = ElemGet v2, v22
+    Jump -> next b8(v27)
+  b8(v28):
+    ElemSet v18, v22, v28 mode=Strict
+    Jump -> next b9()
+  b9():
+    v30 = Undefined
+    v31 = PropGet v18 key="open"
+    v32 = Call v31, v18
+    v33 = PropGet v18 key="close"
+    v34 = Call v33, v18
+    v35 = NewDictionary
+    v36 = ForInOpen v2
+    v37 = Undefined
+    Jump -> next b10(v37)
+  b10(v38):
+    LoopHint
+    v40 = ForInStep v36, v2
+    v41 = ResultAt v40
+    v42 = ResultAt v40 index=1
+    Branch v41 -> taken b12(), notTaken b11()
+  b11():
+    ElemSet v35, v42, v38 mode=Strict
+    v44 = ElemGet v2, v42
+    Jump -> next b10(v44)
+  b12():
+    v45 = Undefined
+    v46 = PropGet v35 key="open"
+    v47 = Call v46, v35
+    Return
+}
+function f1 name="first" results=[{type=anything}] {
+    Return
+}
+function f2 name="second" results=[{type=anything}] {
+    Return
+}
+function f3 name="third" results=[{type=anything}] {
+    Return
+}

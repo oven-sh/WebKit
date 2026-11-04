@@ -105,6 +105,10 @@ public:
 
     void lastChanceToFinalize();
 
+#if ASAN_ENABLED
+    void unpoisonCellsAwaitingFinalizers();
+#endif
+
     static constexpr size_t weakImplCount();
 
 private:

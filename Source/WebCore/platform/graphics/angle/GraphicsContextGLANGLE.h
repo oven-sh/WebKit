@@ -46,7 +46,7 @@ public:
 
     GCGLDisplay platformDisplay() const;
     GCGLConfig platformConfig() const;
-    std::optional<size_t> NODELETE estimatedMemoryCost() final;
+    std::optional<size_t> LEGACY_NODELETE estimatedMemoryCost() final;
 
     enum class ReleaseThreadResourceBehavior {
         // Releases current context after GraphicsContextGLANGLE calls done in the thread.
@@ -119,6 +119,7 @@ public:
     GCGLint maxCubeMapTextureSize() final;
     GCGLint maxRenderbufferSize() final;
     std::array<GCGLint, 2> maxViewportDims() final;
+    std::array<GCGLint, 2> maxDrawingBufferSize() final;
     GCGLint maxSamples() final;
     GCGLint maxTransformFeedbackSeparateAttribs() final;
     GCGLint maxUniformBufferBindings() final;
@@ -300,6 +301,7 @@ public:
     void bindExternalImage(GCGLenum target, GCGLExternalImage) override;
     GCGLExternalSync createExternalSync(ExternalSyncSource&&) override;
     void deleteExternalSync(GCGLExternalSync) final;
+    void framebufferDiscard(GCGLenum target, std::span<const GCGLenum> attachments) final;
 #endif
     void multiDrawArraysANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLint, const GCGLsizei> firstsAndCounts) final;
     void multiDrawArraysInstancedANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLint, const GCGLsizei, const GCGLsizei> firstsCountsAndInstanceCounts) final;
@@ -360,10 +362,10 @@ public:
     // Returns columns, rows of executed read on success.
     std::optional<IntSize> readPixelsWithStatus(IntRect, GCGLenum format, GCGLenum type, GCGLboolean packReverseRowOrder, std::span<uint8_t> data);
 
-    void NODELETE addError(GCGLErrorCode);
+    void LEGACY_NODELETE addError(GCGLErrorCode);
 
-    EnumSet<GCGLExtension> NODELETE knownActiveExtensions() const;
-    EnumSet<GCGLExtension> NODELETE requestableExtensions() const;
+    EnumSet<GCGLExtension> LEGACY_NODELETE knownActiveExtensions() const;
+    EnumSet<GCGLExtension> LEGACY_NODELETE requestableExtensions() const;
 
 protected:
     GraphicsContextGLANGLE(GraphicsContextGLAttributes);
@@ -384,13 +386,6 @@ protected:
     // the shared state.
     virtual bool platformInitialize();
 
-    // Take into account the user's requested context creation attributes,
-    // in particular stencil and antialias, and determine which could or
-    // could not be honored based on the capabilities of the OpenGL
-    // implementation.
-    void validateDepthStencil(ASCIILiteral packedDepthStencilExtension);
-    void validateAttributes();
-
     bool getBufferSubDataImpl(GCGLenum target, GCGLintptr offset, std::span<uint8_t> data);
     std::optional<IntSize> readPixelsImpl(IntRect, GCGLenum format, GCGLenum type, std::span<uint8_t> data);
 
@@ -401,16 +396,13 @@ protected:
     virtual RefPtr<PixelBuffer> readCompositedResults() = 0;
     RefPtr<PixelBuffer> readPixelsForPaintResults();
 
-    bool reshapeFBOs(const IntSize&);
-    void prepareTexture();
-    void resolveMultisamplingIfNecessary(const IntRect& = IntRect());
-    void attachDepthAndStencilBufferIfNeeded(GCGLuint internalDepthStencilFormat, int width, int height);
+    void LEGACY_NODELETE prepareTexture();
 #if PLATFORM(COCOA)
     static bool makeCurrent(GCGLDisplay, GCGLContext);
 #endif
     virtual bool reshapeDrawingBuffer() = 0;
 
-    static void NODELETE platformReleaseThreadResources();
+    static void LEGACY_NODELETE platformReleaseThreadResources();
 
     virtual void invalidateKnownTextureContent(GCGLuint);
     bool supportsExtensionImpl(ASCIILiteral) const;
@@ -419,31 +411,27 @@ protected:
     bool isExtensionEnabledImpl(ASCIILiteral) const;
 
     // Only for non-WebGL 2.0 contexts.
-    GCGLenum NODELETE adjustWebGL1TextureInternalFormat(GCGLenum internalformat, GCGLenum format, GCGLenum type);
+    GCGLenum LEGACY_NODELETE adjustWebGL1TextureInternalFormat(GCGLenum internalformat, GCGLenum format, GCGLenum type);
     void setPackParameters(GCGLint alignment, GCGLint rowLength, GCGLboolean reverseRowOrder);
-    bool NODELETE validateClearBufferv(GCGLenum buffer, size_t valuesSize);
+    bool LEGACY_NODELETE validateClearBufferv(GCGLenum buffer, size_t valuesSize);
 
     HashSet<UTF8CString> m_allRequestableExtensions;
     HashSet<UTF8CString> m_allEnabledRequestableExtensions;
     HashSet<UTF8CString> m_extensions;
     GCGLuint m_texture { 0 };
     GCGLuint m_fbo { 0 };
-    GCGLuint m_depthStencilBuffer { 0 };
-    GCGLuint m_internalColorFormat { 0 };
-    GCGLuint m_internalDepthStencilFormat { 0 };
-    GCGLuint m_multisampleFBO { 0 };
-    GCGLuint m_multisampleDepthStencilBuffer { 0 };
-    GCGLuint m_multisampleColorBuffer { 0 };
-    // For preserveDrawingBuffer:true without multisampling.
-    GCGLuint m_preserveDrawingBufferTexture { 0 };
-    // Attaches m_texture when m_preserveDrawingBufferTexture is non-zero.
-    GCGLuint m_preserveDrawingBufferFBO { 0 };
     GCGLErrorCodeSet m_errors;
     bool m_isForWebGL2 { false };
     bool m_failNextStatusCheck { false };
+    bool m_failNextDrawingBufferAllocation { false };
+    bool m_failNextRenderbufferAllocation { false };
     GraphicsContextGLState m_state;
 
     GCGLDisplay m_displayObj { nullptr };
+#if PLATFORM(COCOA)
+    // The EGL_PLATFORM_ANGLE_DISPLAY_KEY_ANGLE of m_displayObj.
+    intptr_t m_displayKey { 0 };
+#endif
     GCGLContext m_contextObj { nullptr };
     GCGLContext m_angleSharingContextObj { nullptr };
     GCGLConfig m_configObj { nullptr };

@@ -1,0 +1,57 @@
+# A compact function goes through the short schedule of generic versions: nothing says that it runs, so nothing is tried on it. Here no call is taken in.
+# The same body takes the call in where two functions call it: such a function may run. The callee is no larger than its call, so it is taken in where code runs seldom too.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass limit=MaxWarmCodeValues:1 only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
+# RUN: pipeline InlineCalls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f3
+    v4 = NewClosure function=f4
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+
+function f1 name="compact" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+# REPEAT: i = 3..42
+    v%(i) = Call v2, -, v0
+# END REPEAT
+    v43 = CallDirect v0 function=f5
+    Return v43
+}
+# CHECK-LABEL: function f1 name="compact"
+# CHECK: = CallDirect v0 function=f5
+
+function f2 name="calledByTwo" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+# REPEAT: i = 3..42
+    v%(i) = Call v2, -, v0
+# END REPEAT
+    v43 = CallDirect v0 function=f5
+    Return v43
+}
+# CHECK-LABEL: function f2 name="calledByTwo"
+# CHECK-NOT: CallDirect
+# CHECK-LABEL: function f3 name="firstCaller"
+
+function f3 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+
+function f4 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+
+function f5 name="small" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

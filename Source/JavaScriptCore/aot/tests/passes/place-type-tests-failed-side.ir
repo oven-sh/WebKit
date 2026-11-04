@@ -1,0 +1,154 @@
+# The copy a failed test enters is one class rarer, is open to tests of other conditions, and never repeats the test that failed on the way in
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass PlaceTypeTests
+# RUN(AGAIN): pass PlaceTypeTests PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+# A field that is not always filled may be redefined here, so it may lie outside its slot: a read tests that the slot is filled.
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Sparse" fields=[{key="a" declared={type=number} flow={stability=[IsNeverDeleted, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Filler" fields=[{key="z" declared={type=number}}]
+
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+function f0 name="testsOfReceiverNotRepeated" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="a"
+    Return v1
+# CHECK-NOT: key="a" [
+# CHECK: [[test0]]:{{*}}= TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[test0]] -> taken [[passed0]](| 0), notTaken [[copy0]]()
+# CHECK-NEXT: [[fast0]]([[guard0]]: guard):
+# CHECK-NEXT: v1: number = GetSlot [[object0]], [[guard0]] key="a" receivers=[L0] level=Expected
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: [[copy0]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic0]]:{{*}}= PropGet v0 key="a"
+# CHECK-NEXT: Return [[generic0]]
+# CHECK-NEXT: [[passed0]]([[object0]]: L0):
+# CHECK-NEXT: [[own0]]: boolean = BelongsToInstance [[object0]]
+# CHECK-NEXT: Branch [[own0]] -> taken [[fast0]](| 0), notTaken [[copy0]]()
+# CHECK: }
+# AGAIN: = TypeTest v0 testedType=L0
+# AGAIN-NOT: = TypeTest
+# AGAIN: frequency=Unlikely:
+# AGAIN-NEXT: = PropGet v0 key="a"
+# AGAIN-NOT: = TypeTest
+# AGAIN: = BelongsToInstance
+# AGAIN-NOT: = TypeTest
+# AGAIN-NOT: = BelongsToInstance
+# AGAIN-NOT: frequency=Rare
+}
+
+function f1 name="testOfSlotNotRepeated" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L1):
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="testOfSlotNotRepeated"
+# CHECK: [[type1]]:{{*}}= TypeTest v0 testedType=L1
+# CHECK-NEXT: Branch [[type1]] -> taken [[typePassed1]](| 0), notTaken [[copy1]]()
+# CHECK: [[copy1]]() frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="a"
+# CHECK: [[typePassed1]]([[object1]]: L1):
+# CHECK-NEXT: [[own1]]: boolean = BelongsToInstance [[object1]]
+# CHECK-NEXT: Branch [[own1]] -> taken [[ownPassed1]](| 0), notTaken [[copy1]]()
+# CHECK: [[ownPassed1]]([[ownGuard1]]: guard):
+# CHECK-NEXT: [[filled1]]: boolean = IsSlotFilled [[object1]], [[ownGuard1]] key="a" receivers=[L1] level=Expected
+# CHECK-NEXT: Branch [[filled1]] -> taken {{*}}(| 0), notTaken [[copy1]]()
+# AGAIN-LABEL: function f1 name="testOfSlotNotRepeated"
+# AGAIN: = TypeTest v0 testedType=L1
+# AGAIN-NOT: = TypeTest
+# AGAIN: = IsSlotFilled
+# AGAIN-NOT: = TypeTest
+# AGAIN-NOT: IsSlotFilled
+# AGAIN-NOT: frequency=Rare
+# AGAIN-LABEL: function f2 name="otherExpectationInCopy"
+
+function f2 name="otherExpectationInCopy" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ i32):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Mul v2, v2
+    Return v3
+  b2(v4 ~ number) frequency=Unlikely:
+    v5 = Mul v4, v4
+    Return v5
+# CHECK: b2(v4: anything ~ number) frequency=Unlikely:
+# CHECK-NEXT: [[test2]]:{{*}}= TypeTest v4 testedType=number
+# CHECK-NEXT: Branch [[test2]] -> taken [[fast2]](| 0), notTaken [[failed2]](| 0)
+# CHECK-NEXT: [[fast2]]([[number2]]: number) frequency=Unlikely:
+# CHECK-NEXT: v5: number = Mul [[number2]], [[number2]]
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: [[copy2]]() frequency=Rare:
+# CHECK-NEXT: [[generic2]]:{{*}}= Mul [[rest2]], [[rest2]]
+# CHECK-NEXT: Return [[generic2]]
+# CHECK: [[failed2]]([[rest2]]: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
+# CHECK-NEXT: Jump -> next [[copy2]]()
+# CHECK-NEXT: }
+}
+
+function f3 name="rareCopyIsLeftAlone" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ i32):
+    v1 = TypeTest v0 testedType=i32
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Mul v2, v2
+    Return v3
+  b2(v4 ~ number) frequency=Rare:
+    v5 = Mul v4, v4
+    Return v5
+# CHECK: b2(v4: anything ~ number) frequency=Rare:
+# CHECK-NEXT: v5:{{*}}= Mul v4, v4
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+}
+
+# An earlier round let the failed side come back. The proof of the side that passed serves the use behind the join, and the failed side goes on in a copy of the code there.
+function f4 name="backInNormalCode" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v2 key="a" receivers=[L0] level=Expected
+    Jump -> next b3(v3)
+  b2() frequency=Unlikely:
+    v4 = PropGet v0 key="a"
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = NewObject layout=L2
+    v7 = PropGet v0 key="b"
+    Return v7
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: v4:{{*}}= PropGet v0 key="a"
+# CHECK-NEXT: Jump -> next [[copy4]](v4)
+# CHECK-NEXT: b3(v5:{{*}}):
+# CHECK-NEXT: v6:{{*}}= NewObject layout=L2
+# CHECK-NEXT: [[own4]]: boolean = BelongsToInstance v2
+# CHECK-NEXT: Branch [[own4]] -> taken [[passed4]](| 0), notTaken
+# CHECK-NOT: = TypeTest
+# CHECK: [[passed4]]([[guard4]]: guard):
+# CHECK-NOT: = TypeTest
+# CHECK: v7: number = GetSlot v2, [[guard4]] key="b" receivers=[L0] level=Expected
+# CHECK-NOT: = TypeTest
+# CHECK: [[copy4]]({{*}}) frequency=Unlikely:
+# CHECK-NEXT: = NewObject layout=L2
+# CHECK-NOT: = TypeTest
+# CHECK: = PropGet v0 key="b"
+}
+
+function f5 name="failedValue" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ number):
+    v1 = Mul v0, v0
+    Return v1
+# CHECK: [[test5]]:{{*}}= TypeTest v0 testedType=number
+# CHECK-NEXT: Branch [[test5]] -> taken [[passed5]](| 0), notTaken [[failed5]](| 0)
+# CHECK: [[passed5]]([[number5]]: number):
+# CHECK: v1: number = Mul [[number5]], [[number5]]
+# CHECK: [[copy5]]() frequency=Unlikely:
+# CHECK-NEXT: = Mul [[rest5]], [[rest5]]
+# CHECK: [[failed5]]([[rest5]]: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy5]]()
+}

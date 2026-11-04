@@ -40,8 +40,8 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGFilterPrimitiveStandardAttributes);
 
-SVGFilterPrimitiveStandardAttributes::SVGFilterPrimitiveStandardAttributes(const QualifiedName& tagName, Document& document, UniqueRef<SVGPropertyRegistry>&& propertyRegistry)
-    : SVGElement(tagName, document, WTF::move(propertyRegistry))
+SVGFilterPrimitiveStandardAttributes::SVGFilterPrimitiveStandardAttributes(const QualifiedName& tagName, Document& document, const SVGPropertyRegistry& propertyRegistry)
+    : SVGElement(tagName, document, propertyRegistry)
 {
     static bool didRegistration = false;
     if (!didRegistration) [[unlikely]] {
@@ -98,10 +98,12 @@ OptionSet<FilterEffectGeometry::Flags> SVGFilterPrimitiveStandardAttributes::eff
     return flags;
 }
 
-RefPtr<FilterEffect> SVGFilterPrimitiveStandardAttributes::filterEffect(const FilterEffectVector& inputs, const GraphicsContext& destinationContext)
+RefPtr<FilterEffect> SVGFilterPrimitiveStandardAttributes::filterEffect(const FilterEffectVector& inputs, const GraphicsContext& destinationContext, const FilterEffectPlacement& placement)
 {
-    if (!m_effect)
+    if (!m_effect || (effectDependsOnPlacement() && placement != m_effectPlacement)) {
+        m_effectPlacement = placement;
         m_effect = createFilterEffect(inputs, destinationContext);
+    }
     if (RefPtr effect = m_effect)
         updateTaintsOrigin(*effect, inputs);
     return m_effect;
@@ -151,12 +153,12 @@ void SVGFilterPrimitiveStandardAttributes::markFilterEffectForRepaint()
     if (!renderer)
         return;
 
-    if (auto* filterPrimitiveRenderer = dynamicDowncast<RenderSVGResourceFilterPrimitive>(renderer.get())) {
+    if (CheckedPtr filterPrimitiveRenderer = dynamicDowncast<RenderSVGResourceFilterPrimitive>(renderer.get())) {
         filterPrimitiveRenderer->markFilterEffectForRepaint(m_effect);
         return;
     }
 
-    if (auto* filterPrimitiveRenderer = dynamicDowncast<LegacyRenderSVGResourceFilterPrimitive>(renderer.get())) {
+    if (CheckedPtr filterPrimitiveRenderer = dynamicDowncast<LegacyRenderSVGResourceFilterPrimitive>(renderer.get())) {
         filterPrimitiveRenderer->markFilterEffectForRepaint(m_effect);
         return;
     }
@@ -172,12 +174,12 @@ void SVGFilterPrimitiveStandardAttributes::markFilterEffectForRebuild()
     if (!renderer)
         return;
 
-    if (auto* filterPrimitiveRenderer = dynamicDowncast<RenderSVGResourceFilterPrimitive>(renderer.get())) {
+    if (CheckedPtr filterPrimitiveRenderer = dynamicDowncast<RenderSVGResourceFilterPrimitive>(renderer.get())) {
         filterPrimitiveRenderer->markFilterEffectForRebuild();
         return;
     }
 
-    if (auto* filterPrimitiveRenderer = dynamicDowncast<LegacyRenderSVGResourceFilterPrimitive>(renderer.get())) {
+    if (CheckedPtr filterPrimitiveRenderer = dynamicDowncast<LegacyRenderSVGResourceFilterPrimitive>(renderer.get())) {
         filterPrimitiveRenderer->markFilterEffectForRebuild();
         return;
     }

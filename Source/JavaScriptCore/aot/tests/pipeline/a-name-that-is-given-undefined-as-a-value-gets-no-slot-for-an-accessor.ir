@@ -1,0 +1,60 @@
+# function born() { const made = { first: void 0 }; Object.defineProperty(made, "first", { get: () => "got", enumerable: true, configurable: true }); return made.first }
+# function stored() { const made = Object.create(null); made.second = void 0; Object.defineProperty(made, "second", { get: () => "got", enumerable: true, configurable: true }); return made.second }
+# What TypeScript emits for a name that a CommonJS file exports again: `exports.name = void 0`, then a getter under the name.
+# A descriptor without `value` reads as undefined where a built-in applies it, and that says nothing against an accessor. An operation that gives the name undefined itself, as it allocates the object or by a store,
+# gives it a value: the slot of an accessor takes getters alone, so such a name stays what it was.
+# FORM: AsRead
+# RUN(FLOW): pipeline ApplyFlowResults
+# RUN: run-in-shell globalThis.register = (born, stored) => { print(born(), stored(), born()); };
+# FLOW-NOT: IsAccessor
+# CHECK: got got got
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
+layout L1 fields=[{key="first" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return
+}
+function f1 name="born" results=[{type=anything}] {
+    v0 = Undefined
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=Object
+    v4 = NewClosure function=f3
+    v5 = Boolean boolean=true
+    v6 = NewObject -, v4, v5, v5 layout=L0 fields=[0, 1, 2]
+    v7 = FinishObject v6
+    v8 = String string="first"
+    v9 = Builtin builtin=ObjectDefineProperty
+    v10 = Call v9, v3, v2, v8, v7
+    v11 = PropGet v2 key="first"
+    Return v11
+}
+function f2 name="stored" results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectCreate
+    v2 = Null
+    v3 = Call v1, v0, v2
+    v4 = Undefined
+    PropSet v3, v4 key="second"
+    v6 = NewClosure function=f3
+    v7 = Boolean boolean=true
+    v8 = NewObject -, v6, v7, v7 layout=L0 fields=[0, 1, 2]
+    v9 = FinishObject v8
+    v10 = String string="second"
+    v11 = Builtin builtin=ObjectDefineProperty
+    v12 = Call v11, v0, v3, v10, v9
+    v13 = PropGet v3 key="second"
+    Return v13
+}
+function f3 kind=Arrow results=[{type=anything}] {
+    v0 = String string="got"
+    Return v0
+}

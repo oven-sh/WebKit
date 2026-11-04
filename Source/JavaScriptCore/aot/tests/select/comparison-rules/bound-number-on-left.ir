@@ -1,0 +1,25 @@
+# With the number on the left the bound says so and takes the number's operand position
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: IntegerBoundGroups = 1
+# CHECK: [[bound]]: int = IntegerBound v1 comparison=GreaterEq [numberIsOnLeft]
+# CHECK-NEXT: Jump -> next b1(v0)
+# CHECK-NOT: IntegerBound
+# CHECK: boolean = GreaterEq [[bound]], v4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="number-on-left" parameters=[{type=int}, {type=number}] results=[{type=int}] {
+    v2 = Integer integer=1
+    v3 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v4):
+    LoopHint
+    v6 = GreaterEq v1, v4
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Add v4, v2
+    v8 = BitOr v7, v3
+    Jump -> next b1(v8)
+  b3():
+    Return v4
+}

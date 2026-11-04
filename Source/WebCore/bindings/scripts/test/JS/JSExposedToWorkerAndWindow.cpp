@@ -43,6 +43,7 @@
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
+#include <JavaScriptCore/StructureCreateInlines.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <type_traits>
 #include <wtf/GetPtr.h>
@@ -97,7 +98,7 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
     auto result = WebCore::constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
 
     if (!IDLInterface<TestObj>::isNullValue(dictionary.obj)) {
-        auto objValue = toJS<IDLInterface<TestObj>>(lexicalGlobalObject, globalObject, throwScope, IDLInterface<TestObj>::extractValueFromNullable(dictionary.obj));
+        auto objValue = toJS<IDLInterface<TestObj>>(lexicalGlobalObject, globalObject, throwScope, [&] -> decltype(auto) { return IDLInterface<TestObj>::extractValueFromNullable(dictionary.obj); });
         RETURN_IF_EXCEPTION(throwScope, { });
         result->putDirect(vm, JSC::Identifier::fromString(vm, "obj"_s), objValue);
     }
@@ -267,7 +268,7 @@ static inline JSC::EncodedJSValue jsExposedToWorkerAndWindowPrototypeFunction_do
 
 JSC_DEFINE_HOST_FUNCTION(jsExposedToWorkerAndWindowPrototypeFunction_doSomething, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSExposedToWorkerAndWindow>::call<jsExposedToWorkerAndWindowPrototypeFunction_doSomethingBody>(*lexicalGlobalObject, *callFrame, "doSomething");
+    return IDLOperation<JSExposedToWorkerAndWindow>::call<jsExposedToWorkerAndWindowPrototypeFunction_doSomethingBody>(*lexicalGlobalObject, *callFrame, "doSomething"_s);
 }
 
 JSC::GCClient::IsoSubspace* JSExposedToWorkerAndWindow::subspaceForImpl(JSC::VM& vm)

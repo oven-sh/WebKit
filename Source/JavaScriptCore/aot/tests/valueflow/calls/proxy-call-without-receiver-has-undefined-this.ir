@@ -1,0 +1,31 @@
+# function target() { return this }  target.call(self);  new Proxy(target, {})();  function other() { return this }  other.call(self);  new Proxy(other, {}).call(self)
+# A call that names no receiver hands undefined on as `this`, also where a proxy without an `apply` trap stands between the call and the function. A call through a proxy that names a receiver hands that one on and nothing else.
+# RUN: valueflow-apply
+# CHECK: function f1 name="target" {{*}}thisType={type=undefined|L0}
+# CHECK: function f2 name="other" {{*}}thisType={type=L0}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Self"
+layout L1 name="Handler"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    v2 = Builtin builtin=FunctionPrototypeCall
+    v3 = Call v2, v1, v0
+    v4 = NewObject layout=L1
+    v5 = Builtin builtin=Proxy
+    v6 = Construct v5, -, v1, v4
+    v7 = Call v6
+    v8 = NewClosure function=f2
+    v9 = Call v2, v8, v0
+    v10 = Construct v5, -, v8, v4
+    v11 = Call v2, v10, v0
+    Return
+}
+function f1 name="target" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return v0
+}
+function f2 name="other" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return v0
+}

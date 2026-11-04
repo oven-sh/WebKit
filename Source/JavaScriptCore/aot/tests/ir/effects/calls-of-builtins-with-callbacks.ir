@@ -1,0 +1,39 @@
+# A call by value of a built-in runs the callbacks it is given. A callback whose callers are all known is no part of unknown code, so the call itself has what the callback does
+# FORM: AsRead
+# RUN: write-overlap flow summaries f3
+# The host enters a module body, so what the body reaches is part of unknown code. It does not call f3.
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Box" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+variable g0 name="writtenByArgument" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
+variable g1 name="writtenByListElement" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="passedAsArgument" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = String string="ran"
+    PutModuleVariable v3 variable=g0
+    Return v2
+}
+function f2 name="passedInList" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = String string="ran"
+    PutModuleVariable v3 variable=g1
+    Return v2
+}
+function f3 name="calls" parameters=[{type=L0}, {type=Array<f2, proven>}] results=[{type=anything}] {
+    v2 = GetModuleVariable variable=g0
+    v3 = GetModuleVariable variable=g1
+    v4 = Builtin builtin=JSONStringify
+    v5 = NewClosure function=f1
+    v6 = Call v4, -, v0, v5 callees=[builtin(JSONStringify)]
+    v7 = Call v4, -, v0 callees=[builtin(JSONStringify)]
+    v8 = CallList v4, -, v1 callees=[builtin(JSONStringify)]
+    Return
+}
+# CHECK: v6 on v2: May
+# CHECK: v7 on v2: None
+# CHECK: v8 on v2: None
+# CHECK: v6 on v3: None
+# CHECK: v7 on v3: None
+# CHECK: v8 on v3: May

@@ -1,0 +1,62 @@
+# let hidden = { run: inside }; globalThis.shared = { run: outside }; made = new Function(text); made({ run: handed }); [1].map(mapper); hidden.run()
+# The text of a function that `Function` makes runs in the global scope. It finds what hangs from the global object (outside) and what it is handed (handed), and may call both with anything.
+# It finds no variable of a module and no object that only such a variable leads to: `hidden.run()` has one callee, and nobody but that call enters `inside`.
+# It cannot replace Array.prototype.map, which compiled code relies on: the call of map has one callee
+# RUN: valueflow-solve calls
+# CHECK: f0 v15 -> unknown
+# CHECK: f0 v20 -> ArrayPrototypeMap
+# CHECK: f0 v23 -> f1
+# RUN(ESCAPED): valueflow-why escaped=f1 escaped=f2 escaped=f3
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: not held
+# ESCAPED-NEXT: escaped=f2
+# ESCAPED-NOT: not held
+# ESCAPED: escaped=f3
+# ESCAPED-NOT: not held
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen EvaluatesText Function f0:v11
+# UNSEEN: unseen-code yes
+
+layout L0 fields=[{key="run" declared={type=anything}}] ownFieldCount=1
+variable g0 name="hidden" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = Builtin builtin=GlobalThis
+    v4 = NewClosure function=f2
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    PropSet v3, v5 key="shared" mode=Strict
+    v7 = PropGet v3 key="text" [isFreeName]
+    v8 = Builtin builtin=Function
+    v9 = Undefined
+    v10 = ToString v7
+    v11 = Construct v8, -, v10
+    v12 = NewClosure function=f3
+    v13 = NewObject -, v12 layout=L0 fields=[0]
+    v14 = Undefined
+    v15 = Call v11, v14, v13
+    v16 = Integer integer=1
+    v17 = NewArray v16 contents=anything
+    v18 = PropGet v17 key="map"
+    v19 = NewClosure function=f4
+    v20 = Call v18, v17, v19
+    v21 = GetModuleVariable variable=g0
+    v22 = PropGet v21 key="run"
+    v23 = Call v22, v21
+    Return
+}
+function f1 name="inside" results=[{type=anything}] {
+    Return
+}
+function f2 name="outside" results=[{type=anything}] {
+    Return
+}
+function f3 name="handed" results=[{type=anything}] {
+    Return
+}
+function f4 name="mapper" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

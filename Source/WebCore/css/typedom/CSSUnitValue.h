@@ -49,7 +49,7 @@ public:
     ASCIILiteral unitSerialization() const;
     CSSUnitType unitEnum() const { return m_unit; }
 
-    RefPtr<CSSUnitValue> convertTo(CSSUnitType) const;
+    RefPtr<CSSUnitValue> LEGACY_NODELETE convertTo(CSSUnitType) const;
     static CSSUnitType parseUnit(const String& unit);
 
     RefPtr<CSSValue> toCSSValue() const final;
@@ -61,7 +61,7 @@ private:
 
     CSSStyleValueType styleValueType() const final { return CSSStyleValueType::CSSUnitValue; }
     std::optional<SumValue> toSumValue() const final;
-    bool NODELETE equals(const CSSNumericValue&) const final;
+    bool LEGACY_NODELETE equals(const CSSNumericValue&) const final;
 
     double m_value;
     const CSSUnitType m_unit;

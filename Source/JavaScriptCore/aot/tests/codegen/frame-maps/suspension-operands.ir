@@ -1,0 +1,14 @@
+# The operands of a suspension are not roots when nothing uses them after it
+# RUN: frame-maps
+# CHECK: f0:
+# CHECK-NEXT: v2:
+# CHECK-NOT: v
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="suspension-operands" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything @JSValue, v1: undefined|Promise @JSValue):
+    v2 @JSValue = AwaitBySavingFrame v0, v1
+    v3 @JSValue = Undefined
+    Return v3
+}
+function f1 name="suspension-operands" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1}

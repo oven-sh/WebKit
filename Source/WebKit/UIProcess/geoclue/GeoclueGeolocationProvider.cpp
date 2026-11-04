@@ -31,6 +31,7 @@
 #include <glib/gi18n-lib.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/glib/Application.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/Sandbox.h>
 #include <wtf/text/MakeString.h>
@@ -225,7 +226,7 @@ void GeoclueGeolocationProvider::createPortalSession()
 
             auto& provider = *static_cast<GeoclueGeolocationProvider*>(userData);
             if (error) {
-                provider.didFail(_("Failed to connect to geolocation service"));
+                provider.didFail(UTF8CString::unsafeFromUTF8(_("Failed to connect to geolocation service")));
                 return;
             }
             provider.startPortalSession();
@@ -252,7 +253,7 @@ void GeoclueGeolocationProvider::startPortalSession()
 
             auto& provider = *static_cast<GeoclueGeolocationProvider*>(userData);
             if (response) {
-                provider.didFail(_("Failed to connect to geolocation service"));
+                provider.didFail(UTF8CString::unsafeFromUTF8(_("Failed to connect to geolocation service")));
                 provider.stopPortalSession();
             }
         }, this, nullptr);
@@ -272,7 +273,7 @@ void GeoclueGeolocationProvider::startPortalSession()
     g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&options, "{sv}", "handle_token", g_variant_new_string(token.ascii().data()));
 
-    g_dbus_proxy_call(m_portal.locationPortal.get(), "Start", g_variant_new("(osa{sv})", m_portal.sessionId->ascii().data(), "", &options), G_DBUS_CALL_FLAGS_NONE, -1, m_cancellable.get(),
+    g_dbus_proxy_call(m_portal.locationPortal.get(), "Start", gVariantNew("(osa{sv})", m_portal.sessionId->ascii(), "", &options), G_DBUS_CALL_FLAGS_NONE, -1, m_cancellable.get(),
         [](GObject* manager, GAsyncResult* result, gpointer userData) {
             GUniqueOutPtr<GError> error;
             GRefPtr<GVariant> returnValue = adoptGRef(g_dbus_proxy_call_finish(G_DBUS_PROXY(manager), result, &error.outPtr()));
@@ -281,7 +282,7 @@ void GeoclueGeolocationProvider::startPortalSession()
 
             auto& provider = *static_cast<GeoclueGeolocationProvider*>(userData);
             if (error)
-                provider.didFail(_("Failed to connect to geolocation service"));
+                provider.didFail(UTF8CString::unsafeFromUTF8(_("Failed to connect to geolocation service")));
         }, this);
 }
 
@@ -344,7 +345,7 @@ void GeoclueGeolocationProvider::createGeoclueManager()
 
             auto& provider = *static_cast<GeoclueGeolocationProvider*>(userData);
             if (error) {
-                provider.didFail(_("Failed to connect to geolocation service"));
+                provider.didFail(UTF8CString::unsafeFromUTF8(_("Failed to connect to geolocation service")));
                 return;
             }
             provider.setupGeoclueManager(WTF::move(proxy));
@@ -370,7 +371,7 @@ void GeoclueGeolocationProvider::setupGeoclueManager(GRefPtr<GDBusProxy>&& proxy
 
             auto& provider = *static_cast<GeoclueGeolocationProvider*>(userData);
             if (error) {
-                provider.didFail(_("Failed to connect to geolocation service"));
+                provider.didFail(UTF8CString::unsafeFromUTF8(_("Failed to connect to geolocation service")));
                 return;
             }
             const char* clientPath;
@@ -396,7 +397,7 @@ void GeoclueGeolocationProvider::createGeoclueClient(const char* clientPath)
 
             auto& provider = *static_cast<GeoclueGeolocationProvider*>(userData);
             if (error) {
-                provider.didFail(_("Failed to connect to geolocation service"));
+                provider.didFail(UTF8CString::unsafeFromUTF8(_("Failed to connect to geolocation service")));
                 return;
             }
             provider.setupGeoclueClient(WTF::move(proxy));
@@ -414,7 +415,7 @@ void GeoclueGeolocationProvider::setupGeoclueClient(GRefPtr<GDBusProxy>&& proxy)
     // Geoclue2 requires the client to provide a desktop ID for security
     // reasons, which should identify the application requesting the location.
     g_dbus_proxy_call(m_geoclue.client.get(), "org.freedesktop.DBus.Properties.Set",
-        g_variant_new("(ssv)", "org.freedesktop.GeoClue2.Client", "DesktopId", g_variant_new_string(WTF::applicationID().data())),
+        g_variant_new("(ssv)", "org.freedesktop.GeoClue2.Client", "DesktopId", gVariantNewString(WTF::applicationID())),
         G_DBUS_CALL_FLAGS_NONE, -1, nullptr, [](GObject* manager, GAsyncResult* result, gpointer userData) {
             GUniqueOutPtr<GError> error;
             GRefPtr<GVariant> returnValue = adoptGRef(g_dbus_proxy_call_finish(G_DBUS_PROXY(manager), result, &error.outPtr()));
@@ -443,7 +444,7 @@ void GeoclueGeolocationProvider::startGeoclueClient()
 
             auto& provider = *static_cast<GeoclueGeolocationProvider*>(userData);
             if (error) {
-                provider.didFail(_("Failed to determine position from geolocation service"));
+                provider.didFail(UTF8CString::unsafeFromUTF8(_("Failed to determine position from geolocation service")));
                 return;
             }
         }, this);
@@ -525,7 +526,7 @@ void GeoclueGeolocationProvider::createLocation(const char* locationPath)
 
             auto& provider = *static_cast<GeoclueGeolocationProvider*>(userData);
             if (error) {
-                provider.didFail(_("Failed to determine position from geolocation service"));
+                provider.didFail(UTF8CString::unsafeFromUTF8(_("Failed to determine position from geolocation service")));
                 return;
             }
             provider.locationUpdated(WTF::move(proxy));
@@ -554,10 +555,10 @@ void GeoclueGeolocationProvider::locationUpdated(GRefPtr<GDBusProxy>&& proxy)
     m_updateNotifyFunction(WTF::move(position), std::nullopt);
 }
 
-void GeoclueGeolocationProvider::didFail(CString errorMessage)
+void GeoclueGeolocationProvider::didFail(UTF8CString&& errorMessage)
 {
     if (m_updateNotifyFunction)
-        m_updateNotifyFunction({ }, errorMessage);
+        m_updateNotifyFunction({ }, WTF::move(errorMessage));
 }
 
 } // namespace WebKit

@@ -1,0 +1,119 @@
+# A builder operation between the definition of a builder cursor and its use makes the cursor stale: a state that is read there is made a string in front of the cursor, and nothing else of a web happens there
+# FORM: Prepared
+# RUN: pass CreateStringBuilders
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="stateReadAfterReservation" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v4, v0
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    v11 = StringBuilderBegin
+    v12 = StringBuilderReserve v11 size=128
+    v13 = JSONAppendString v11, v12, v4
+    StringBuilderCommit v11, v13
+    v15 = StringBuilderFinish v11
+    Return v15
+}
+# CHECK-LABEL: name="stateReadAfterReservation"
+# CHECK: b1(v4: stringbuilder, v5: int|whole):
+# CHECK: [[text0]]: string = StringBuilderFinish v4
+# CHECK-NEXT: v12: buildercursor = StringBuilderReserve v11 size=128
+# CHECK-NEXT: v13: buildercursor = JSONAppendString v11, v12, [[text0]]
+
+function f1 name="secondStringAfterFirst" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v4, v0
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    v11 = StringBuilderBegin
+    v12 = StringBuilderReserve v11 size=128
+    v13 = JSONAppendString v11, v12, v0
+    v14 = JSONAppendString v11, v13, v4
+    StringBuilderCommit v11, v14
+    v16 = StringBuilderFinish v11
+    Return v16
+}
+# CHECK-LABEL: name="secondStringAfterFirst"
+# CHECK: [[text1]]: string = StringBuilderFinish v4
+# CHECK-NEXT: v12: buildercursor = StringBuilderReserve v11 size=128
+# CHECK-NEXT: v13: buildercursor = JSONAppendString v11, v12, v0
+# CHECK-NEXT: v14: buildercursor = JSONAppendString v11, v13, [[text1]]
+
+function f2 name="stateAppendedAfterReservation" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v4, v0
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    v11 = StringBuilderBegin
+    v12 = StringBuilderReserve v11 size=128
+    v13 = Add v4, v0
+    v14 = JSONAppendString v11, v12, v13
+    StringBuilderCommit v11, v14
+    v16 = StringBuilderFinish v11
+    Return v16
+}
+# CHECK-LABEL: name="stateAppendedAfterReservation"
+# CHECK: [[text2]]: string = StringBuilderFinish v4
+# CHECK-NEXT: v12: buildercursor = StringBuilderReserve v11 size=128
+# CHECK-NEXT: v13: string = Add [[text2]], v0
+# CHECK-NEXT: v14: buildercursor = JSONAppendString v11, v12, v13
+
+function f3 name="cursorEntersBlock" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Add v5, v0
+    v10 = Integer integer=1
+    v11 = Add v6, v10
+    Jump -> next b1(v9, v11)
+  b3():
+    v12 = StringBuilderBegin
+    v13 = StringBuilderReserve v12 size=128
+    Branch v2 -> taken b4(), notTaken b5(v13)
+  b4():
+    v14 = JSONAppendString v12, v13, v0
+    Jump -> next b5(v14)
+  b5(v15):
+    v16 = JSONAppendString v12, v15, v5
+    StringBuilderCommit v12, v16
+    v18 = StringBuilderFinish v12
+    Return v18
+}
+# CHECK-LABEL: name="cursorEntersBlock"
+# CHECK: b1(v5: string, v6: int|whole):
+# CHECK: v9: string = Add v5, v0
+# CHECK: v16: buildercursor = JSONAppendString v12, v15, v5

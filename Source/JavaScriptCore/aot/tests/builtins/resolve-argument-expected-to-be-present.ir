@@ -1,0 +1,41 @@
+# A built-in none of whose overloads accepts or converts undefined or null as an argument throws for them. An argument that may be either, and of which nothing else is expected, is tested for the rest of
+# its type: `Object.values(list[i])`, where the element may lie past the end. An argument that is converted, or that may be left out, expects nothing
+# FORM: Prepared
+# RUN: pass ResolveBuiltins PlaceTypeTests ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="objectMayBeMissing" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+    v1 = Builtin builtin=ObjectValues
+    v2 = Call v1, -, v0
+    Return v2
+# CHECK: TypeTest v0 testedType=L0
+# CHECK: ([[object0]]: L0):
+# CHECK: = CallBuiltin -, [[object0]] overload=ObjectValues/0
+# CHECK-NEXT: Return
+# CHECK: CallBuiltin {{*}}, [[missing0]] overload=ObjectValues/0 builtinCallForm=AnyReceiver
+# CHECK: ([[missing0]]: undefined) frequency=Unlikely:
+}
+
+function f1 name="countIsConverted" parameters=[{type=string}, {type=null|number}] results=[{type=anything}] {
+    v2 = Builtin builtin=StringPrototypePadStart
+    v3 = Call v2, v0, v1
+    Return v3
+# CHECK-NOT: TypeTest
+}
+
+function f2 name="objectIsConverted" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+    v1 = Builtin builtin=ObjectEntries
+    v2 = Call v1, -, v0
+    Return v2
+# CHECK-NOT: TypeTest
+}
+
+function f3 name="onlyMissing" parameters=[{type=undefined|null}] results=[{type=anything}] {
+    v1 = Builtin builtin=ObjectValues
+    v2 = Call v1, -, v0
+    Return v2
+# CHECK-NOT: TypeTest
+}

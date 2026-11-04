@@ -1,0 +1,130 @@
+# A spread of a pristine array appends its elements at once. A loop that needs no arm for the protocol is expanded by the same run, and what may follow the protocol goes to one function of the program
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 2
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="provenArray" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="provenArray"
+# CHECK: b0(v0: Array<number, pristine[Storage, Names]>):
+# CHECK-NEXT: v1: Array = NewArray contents=anything
+# CHECK-NEXT: AppendElements v1, v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# ABSENT-LABEL: function f0 name="provenArray"
+
+function f1 name="namesAloneAreProven" parameters=[{type=Array<number, pristine[Names]>}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+# Appending at once reads the storage, so it needs both proofs. The loop side needs the names alone, which the type has.
+# CHECK: [[isPristine1]]: boolean = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch [[isPristine1]] -> taken [[pristine1]](| 0), notTaken
+# CHECK: [[pristine1]]([[guard1]]: guard):
+# CHECK-NEXT: AppendElements v1, v0, [[guard1]]
+# CHECK: = ElemGet
+# ABSENT-NOT: aspects=[Names]
+# ABSENT-NOT: @@iterator
+}
+
+function f2 name="unknown" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: v1: Array = NewArray contents=anything
+# CHECK-NEXT: [[isArray2]]: boolean = TypeTest v0 testedType=Array
+# CHECK-NEXT: Branch [[isArray2]] -> taken [[array2]](| 0), notTaken [[other2]](| 0)
+# CHECK-NEXT: [[after2]]():
+# CHECK-NEXT: Return v1
+# Undefined and null throw here, in front of the call: on that path nobody needs the array.
+# CHECK-NEXT: [[rest2]]([[source2]]: anything) frequency=Unlikely:
+# CHECK-NEXT: [[isNullish2]]: boolean = TypeTest [[source2]] testedType=undefined|null
+# CHECK-NEXT: Branch [[isNullish2]] -> taken [[nullish2]](| 0), notTaken [[iterable2]](| 0)
+# CHECK-NEXT: [[array2]]([[subject2]]: Array):
+# CHECK-NEXT: [[isPristine2]]: boolean = IsPristine [[subject2]] builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch [[isPristine2]] -> taken [[pristine2]](| 0), notTaken [[changed2]]()
+# CHECK-NEXT: [[other2]]([[notArray2]]: anything) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[rest2]]([[notArray2]])
+# CHECK-NEXT: [[pristine2]]([[guard2]]: guard):
+# CHECK-NEXT: AppendElements v1, [[subject2]], [[guard2]]
+# CHECK-NEXT: Jump -> next [[after2]]()
+# CHECK-NEXT: [[changed2]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[rest2]]([[subject2]])
+# CHECK: [[nullish2]]([[absent2]]: undefined|null) frequency=Rare:
+# CHECK-NEXT: never = RequireObjectCoercible [[absent2]] nullishAccess=Spread
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: [[iterable2]]([[walked2]]: boolean|number|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: undefined = CallDirect v1, [[walked2]] function=f6 [isNeverInlined]
+# CHECK-NEXT: Jump -> next [[after2]]()
+# ABSENT-NOT: LoopHint
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: handler=
+# ABSENT-COUNT-1: AppendElements
+# ABSENT-NOT: AppendElements
+}
+
+function f3 name="set" parameters=[{type=Set<number, pristine[Names]>}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+# CHECK: LoopHint
+# CHECK-NEXT: [[step3]]: undefined = SetNext
+# CHECK: [[element3]]: {{*}} = ResultAt [[step3]] index=2
+# CHECK: AppendElement v1, [[value3]]
+# CHECK: ({{*}}: boolean, [[value3]]: anything,
+# CHECK: Jump -> next {{*}}, [[element3]],
+# ABSENT-NOT: AppendElements
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+}
+
+function f4 name="arrayNotPristine" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+# CHECK: [[isPristine4]]: boolean = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch [[isPristine4]] -> taken [[pristine4]](| 0), notTaken [[changed4]]()
+# CHECK: [[rest4]]([[source4]]: Array<number>) frequency=Unlikely:
+# CHECK-NEXT: undefined = CallDirect v1, [[source4]] function=f6 [isNeverInlined]
+# CHECK: [[pristine4]]([[guard4]]: guard):
+# CHECK-NEXT: AppendElements v1, v0, [[guard4]]
+# CHECK: [[changed4]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[rest4]](v0)
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: LoopHint
+}
+
+function f5 name="number" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+# CHECK: never = ThrowNotIterable {{*}} [isSpread]
+# CHECK-NEXT: Unreachable
+# ABSENT-NOT: AppendElements
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: CallDirect
+}
+
+# The function is made as one spread. Its own run of the pass expands it: expand-iteration-spread-shared-function.ir.
+# CHECK-LABEL: function f6 name="appendIterable"
+# CHECK: b0([[array6]]: Array, [[iterable6]]: anything ~ Array|Generator|Map|Set):
+# CHECK-NEXT: AppendSpread [[array6]], [[iterable6]]
+# CHECK-NEXT: [[result6]]: undefined = Undefined
+# CHECK-NEXT: Return [[result6]]
+# CHECK-NEXT: }
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread
+# LEFT: function f6 name="appendIterable"

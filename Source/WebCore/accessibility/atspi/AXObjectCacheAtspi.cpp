@@ -107,7 +107,7 @@ void AXObjectCache::postPlatformNotification(AccessibilityObject& coreObject, AX
             wrapper->valueChanged(coreObject.valueForRange());
         break;
     case AXNotification::InvalidStatusChanged:
-        wrapper->stateChanged("invalid-entry", coreObject.invalidStatus() != "false"_s);
+        wrapper->stateChanged("invalid-entry", coreObject.invalidStatusIncludingInferred() != "false"_s);
         break;
     case AXNotification::ElementBusyChanged:
         wrapper->stateChanged("busy", coreObject.isBusy());
@@ -258,15 +258,15 @@ void AXObjectCache::frameLoadingEventPlatformNotification(RenderView* renderView
         break;
     case AXLoadingEvent::Reloaded:
         wrapper->stateChanged("busy", true);
-        wrapper->loadEvent("Reload");
+        wrapper->loadEvent("Reload"_s);
         break;
     case AXLoadingEvent::Failed:
         wrapper->stateChanged("busy", false);
-        wrapper->loadEvent("LoadStopped");
+        wrapper->loadEvent("LoadStopped"_s);
         break;
     case AXLoadingEvent::Finished:
         wrapper->stateChanged("busy", false);
-        wrapper->loadEvent("LoadComplete");
+        wrapper->loadEvent("LoadComplete"_s);
         break;
     }
 }

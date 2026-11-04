@@ -1,0 +1,75 @@
+# A loop walks an array from its end and reads nothing but its elements. Nobody proved the kind of the storage, so the loop has a copy for each kind, and one load of the storage in front of them serves them all.
+# The copy that reads values reads the array behind each poll. The copy that reads fractions reads the storage alone: the scan of the stack keeps the storage by its address, and a fraction names no cell.
+# FORM: Placed
+# OPTIONS: check=validate-back-end,validate-references
+# RUN: generate-code
+# CHECK: : size=
+# CHECK-NOT: no code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lastTruthyElement" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToObject v0 message="not an object"
+    v2 = TypeTest v1 testedType=Array
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = CallInline v3 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
+    v5 = Integer integer=1
+    v6 = Sub v4, v5 form=Integers
+    Jump -> next b10(v6, v3)
+  b2() frequency=Unlikely:
+    v7 = PropGet v1 key="length"
+    v8 = ToLength v7
+    v9 = Integer integer=1
+    v10 = Sub v8, v9 form=Integers
+    Jump -> next b3(v10)
+  b3(v11) frequency=Unlikely:
+    LoopHint
+    v13 = Integer
+    v14 = GreaterEq v11, v13 form=Integers
+    TestAndBranch v14 -> taken b4(| 0), notTaken b19()
+  b4(v15) frequency=Unlikely:
+    Jump -> next b5(v15)
+  b5(v16) frequency=Unlikely:
+    v17 = ElemGet v1, v16 [keyIsIntegral]
+    v18 = ToBoolean v17 form=Generic
+    TestAndBranch v18 -> taken b6(), notTaken b7()
+  b6() frequency=Unlikely:
+    Return v17
+  b7() frequency=Unlikely:
+    v19 = Decrement v16 form=Integers
+    v20 = TypeTest v19 testedType=int[-1, 4294967293]
+    TestAndBranch v20 -> taken b8(| 0), notTaken b17()
+  b8(v21) frequency=Unlikely:
+    v22 = TypeTest v1 testedType=Array
+    TestAndBranch v22 -> taken b9(| 0), notTaken b16()
+  b9(v23) frequency=Unlikely:
+    Jump -> next b10(v21, v23)
+  b10(v24, v25):
+    Jump -> next b11(v24)
+  b11(v26):
+    LoopHint
+    v28 = Integer
+    v29 = GreaterEq v26, v28 form=Integers
+    TestAndBranch v29 -> taken b12(| 0), notTaken b19()
+  b12(v30):
+    v31 = IsPristine v25 builtinClass=Array aspects=[Storage, Names]
+    TestAndBranch v31 -> taken b13(| 0), notTaken b5(v30)
+  b13(v32):
+    v33 = GetArrayElement v25, v30, v32 level=Expected [keyIsIntegral]
+    v34 = ToBoolean v33 form=Generic
+    TestAndBranch v34 -> taken b14(), notTaken b15()
+  b14():
+    Return v33
+  b15():
+    v35 = Decrement v30 form=Integers
+    Jump -> next b11(v35)
+  b16() frequency=Unlikely:
+    Jump -> next b18()
+  b17() frequency=Unlikely:
+    Jump -> next b18()
+  b18() frequency=Unlikely:
+    Jump -> next b3(v19)
+  b19():
+    v36 = Undefined
+    Return v36
+}

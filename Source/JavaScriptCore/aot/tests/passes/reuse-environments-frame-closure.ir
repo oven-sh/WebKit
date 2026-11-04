@@ -1,0 +1,52 @@
+# A heap environment captured by a frame closure is released after the last use of the closure
+# FORM: AsRead
+# RUN: pipeline ReuseEnvironments
+# OPTIONS: check=VerifyEachPass
+# OPTIONS: only-passes=ComputeEffectSummaries,AllocateInFrames,ReuseEnvironments
+# OPTIONS: limit=MaxFrameEnvironmentFields:0
+# LOSS: MaxFrameEnvironmentFields f1 v3
+# STATISTIC: EnvironmentsReused = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="capturedByFrameClosure" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = CallDirect v1, v2 function=f1
+    Return
+}
+
+function f1 name="capturedByFrameClosure" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewClosure v3 function=f3
+    v5 = GetEnvironmentField v3 layout=L0 field=0
+    v6 = CallDirect v4 function=f2
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+# CHECK: [[heapCell]]:{{*}}= NewObject
+# CHECK-NOT: storage=
+# CHECK: = NewClosure [[heapCell]] function=f3{{*}}storage=Frame
+# CHECK-NOT: ReleaseEnvironment
+# CHECK: CallDirect
+# CHECK-NEXT: ReleaseEnvironment [[heapCell]]
+# CHECK-NOT: ReleaseEnvironment
+}
+
+function f2 name="callsParameter" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f2 name="callsParameter"
+
+function f3 name="callback" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}

@@ -1,0 +1,59 @@
+# function tag(message) { message.tag = 1 }   unknown(tag)   for each of new First(), new Second(), new Third() and a list: unknown(it); tag(it)
+# Code that nobody sees may call the function with anything. The program is seen to hand it objects of three classes, and a list, which has no layout. The name is a field that is added late
+# of each of the three classes: what else is seen to arrive takes nothing from them.
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}name="First" {{*}}key="tag" {{*}}IsAddedLate
+# CHECK: layout L1 {{*}}name="Second" {{*}}key="tag" {{*}}IsAddedLate
+# CHECK: layout L2 {{*}}name="Third" {{*}}key="tag" {{*}}IsAddedLate
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="First" constructor=f2 fields=[{key="first" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Second" constructor=f3 fields=[{key="second" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Third" constructor=f4 fields=[{key="third" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Construct v4
+    v6 = Call v1, -, v5
+    v7 = Call v2, -, v5
+    v8 = NewClosure function=f3
+    v9 = Construct v8
+    v10 = Call v1, -, v9
+    v11 = Call v2, -, v9
+    v12 = NewClosure function=f4
+    v13 = Construct v12
+    v14 = Call v1, -, v13
+    v15 = Call v2, -, v13
+    v16 = NewArray contents=anything
+    v17 = Call v1, -, v16
+    v18 = Call v2, -, v16
+    Return
+}
+function f1 name="tag" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="tag" mode=Strict
+    Return
+}
+function f2 name="First" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="first" mode=Strict
+    Return
+}
+function f3 name="Second" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="second" mode=Strict
+    Return
+}
+function f4 name="Third" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    PropSet v0, v1 key="third" mode=Strict
+    Return
+}

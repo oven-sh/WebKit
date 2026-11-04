@@ -1,0 +1,9 @@
+# class AtTop {}  function defineOnce() { class InFunctionCalledOnce {} }  function defineTwice() { class InFunctionCalledTwice {} }  defineOnce(); defineTwice(); defineTwice();  do { class InLoop {} } while (more)
+# A class definition is evaluated at most once at the top of an ES module and in a function that runs at most once. In a loop, and in a function that two operations enter, it may be evaluated again,
+# and every evaluation makes another class object and another prototype object: nothing is said there
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}classFlow={evaluations=AtMostOnce prototypeLink=Fixed
+# CHECK: layout L1 {{*}}classFlow={evaluations=AtMostOnce prototypeLink=Fixed
+# CHECK: layout L2 {{*}}classFlow={prototypeLink=Fixed
+# CHECK: layout L3 {{*}}classFlow={prototypeLink=Fixed
+# PROGRAM-OF: class-evaluations-disabled.ir

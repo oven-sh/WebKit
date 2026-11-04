@@ -1,0 +1,116 @@
+# Appends that follow a literal in its block, before anything else uses the list, become elements of the literal
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoAppends" parameters=[{type=anything}, {type=anything}] results=[{type=Array<anything>}] {
+    v2 = NewArray contents=anything
+    v3 = CallBuiltin v2, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v4 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallBuiltin
+# CHECK: [[list0]]: {{*}} = NewArray v0, v1 contents=anything
+# CHECK-NOT: NewArray
+# CHECK: Return [[list0]]
+
+function f1 name="elementsMadeBetween" parameters=[{type=i32}] results=[{type=Array<i32>}] {
+    v1 = Integer integer=7
+    v2 = NewArray v1 contents=i32
+    v3 = Integer integer=255
+    v4 = BitAnd v0, v3
+    v5 = CallBuiltin v2, v4, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK: [[masked1]]: {{*}} = BitAnd v0,
+# CHECK-NOT: CallBuiltin
+# CHECK: [[list1]]: {{*}} = NewArray v1, [[masked1]], v0 contents=i32
+# CHECK: Return [[list1]]
+
+function f2 name="lengthsAreRead" parameters=[{type=anything}] results=[{type=number}] {
+    v1 = NewArray contents=anything
+    v2 = CallBuiltin v1, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v3 = CallBuiltin v1, v0, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v4 = Add v2, v3
+    v5 = CallBuiltin v1, v4 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Return v5
+}
+# CHECK-LABEL: function f2
+# CHECK: v2: {{*}} = Integer integer=1
+# CHECK: v3: {{*}} = Integer integer=3
+# CHECK: = NewArray v0, v0, v0, v4 contents=anything
+# CHECK: v5: {{*}} = Integer integer=4
+
+function f3 name="usedBetween" parameters=[{type=anything}, {type=anything}] results=[{type=Array<anything>}] {
+    v2 = NewArray contents=anything
+    v3 = CallBuiltin v2, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v4 = Call v1, -, v2
+    v5 = CallBuiltin v2, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Return v2
+}
+# A list that goes on growing stays an empty literal.
+# CHECK-LABEL: function f3
+# CHECK: v2: {{*}} = NewArray contents=anything
+# CHECK: CallBuiltin v2, v0 overload=ArrayPrototypePush/0
+# CHECK: Call v1, -, v2
+# CHECK: CallBuiltin v2, v0 overload=ArrayPrototypePush/0
+
+function f4 name="appendsItself" parameters=[{type=anything}] results=[{type=Array<anything>}] {
+    v1 = NewArray contents=anything
+    v2 = CallBuiltin v1, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f4
+# CHECK: v1: {{*}} = NewArray contents=anything
+# CHECK: CallBuiltin v1, v1 overload=ArrayPrototypePush/0
+
+function f5 name="doesNotFit" parameters=[{type=number}] results=[{type=Array<i32>}] {
+    v1 = NewArray contents=i32
+    v2 = CallBuiltin v1, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f5
+# CHECK: v1: {{*}} = NewArray contents=i32
+# CHECK: CallBuiltin v1, v0 overload=ArrayPrototypePush/0
+
+function f6 name="inAnotherBlock" parameters=[{type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v2 = NewArray contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v2, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b2()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f6
+# CHECK: v2: {{*}} = NewArray contents=anything
+# CHECK: CallBuiltin v2, v0 overload=ArrayPrototypePush/0
+
+function f7 name="tooMany" parameters=[{type=anything}] results=[{type=Array<anything>}] {
+    v1 = NewArray contents=anything
+    v2 = CallBuiltin v1, v0, v0, v0, v0, v0, v0, v0, v0, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v3 = CallBuiltin v1, v0, v0, v0, v0, v0, v0, v0, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f7
+# CHECK: v1: {{*}} = NewArray contents=anything capacity=
+# CHECK: CallBuiltin v1,
+# CHECK: CallBuiltin v1,
+
+function f8 name="grownInALoop" parameters=[{type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v2 = NewArray contents=anything
+    v3 = CallBuiltin v2, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = CallBuiltin v2, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f8
+# CHECK: v2: {{*}} = NewArray contents=anything
+# CHECK: CallBuiltin v2, v0 overload=ArrayPrototypePush/0
+# CHECK: CallBuiltin v2, v0 overload=ArrayPrototypePush/0

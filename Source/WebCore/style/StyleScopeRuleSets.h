@@ -88,7 +88,7 @@ public:
 
     bool isAuthorStyleDefined() const { return m_isAuthorStyleDefined; }
     RuleSet* userAgentMediaQueryStyle() const;
-    RuleSet* NODELETE dynamicViewTransitionsStyle() const;
+    RuleSet* LEGACY_NODELETE dynamicViewTransitionsStyle() const;
     RuleSet& authorStyle() const { return *m_authorStyle; }
     RuleSet* userStyle() const;
     RuleSet* styleForDeclarationOrigin(DeclarationOrigin);
@@ -113,11 +113,11 @@ public:
 
     void resetUserAgentMediaQueryStyle();
 
-    bool NODELETE hasViewportDependentMediaQueries() const;
-    bool NODELETE hasContainerQueries() const;
-    bool NODELETE hasScopeRules() const;
+    bool LEGACY_NODELETE hasViewportDependentMediaQueries() const;
+    bool LEGACY_NODELETE hasContainerQueries() const;
+    bool LEGACY_NODELETE hasScopeRules() const;
 
-    RefPtr<StyleRuleViewTransition> NODELETE viewTransitionRule() const;
+    RefPtr<StyleRuleViewTransition> viewTransitionRule() const;
 
     std::optional<DynamicMediaQueryEvaluationChanges> evaluateDynamicMediaQueryRules(const MQ::MediaQueryEvaluator&);
 

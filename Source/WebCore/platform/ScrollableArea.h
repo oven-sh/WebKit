@@ -107,11 +107,11 @@ public:
     WEBCORE_EXPORT virtual bool handleWheelEventForScrolling(const PlatformWheelEvent&, std::optional<WheelScrollGestureState>);
 
     virtual void updateSnapOffsets() { };
-    WEBCORE_EXPORT const LayoutScrollSnapOffsetsInfo* snapOffsetsInfo() const;
+    WEBCORE_EXPORT const LayoutScrollSnapOffsetsInfo* LEGACY_NODELETE snapOffsetsInfo() const;
     WEBCORE_EXPORT void setScrollSnapOffsetInfo(const LayoutScrollSnapOffsetsInfo&);
     WEBCORE_EXPORT void clearSnapOffsets();
-    WEBCORE_EXPORT std::optional<unsigned> currentHorizontalSnapPointIndex() const;
-    WEBCORE_EXPORT std::optional<unsigned> currentVerticalSnapPointIndex() const;
+    WEBCORE_EXPORT std::optional<unsigned> LEGACY_NODELETE currentHorizontalSnapPointIndex() const;
+    WEBCORE_EXPORT std::optional<unsigned> LEGACY_NODELETE currentVerticalSnapPointIndex() const;
     WEBCORE_EXPORT void setCurrentHorizontalSnapPointIndex(std::optional<unsigned>);
     WEBCORE_EXPORT void setCurrentVerticalSnapPointIndex(std::optional<unsigned>);
 
@@ -291,8 +291,8 @@ public:
     ScrollOffset minimumScrollOffset() const { return { }; }
     ScrollOffset maximumScrollOffset() const;
 
-    WEBCORE_EXPORT ScrollPosition NODELETE scrollPositionFromOffset(ScrollOffset) const;
-    WEBCORE_EXPORT ScrollOffset NODELETE scrollOffsetFromPosition(ScrollPosition) const;
+    WEBCORE_EXPORT ScrollPosition LEGACY_NODELETE scrollPositionFromOffset(ScrollOffset) const;
+    WEBCORE_EXPORT ScrollOffset LEGACY_NODELETE scrollOffsetFromPosition(ScrollPosition) const;
 
     template<typename PositionType, typename SizeType>
     static PositionType scrollPositionFromOffset(PositionType offset, SizeType scrollOrigin)
@@ -342,6 +342,10 @@ public:
     int visibleHeight() const { return visibleSize().height(); }
     virtual IntSize visibleSize() const = 0;
 
+    // The snapport, in the coordinates the snap offsets and areas were computed in. Same as visibleSize()
+    // unless a subclass scales the two differently.
+    virtual IntSize snapportSize() const { return visibleSize(); }
+
     virtual IntSize contentsSize() const = 0;
     virtual IntSize overhangAmount() const { return IntSize(); }
     virtual IntPoint lastKnownMousePositionInView() const { return IntPoint(); }
@@ -387,14 +391,14 @@ public:
     // NOTE: Only called from Internals for testing.
     WEBCORE_EXPORT void setScrollOffsetFromInternals(const ScrollOffset&);
 
-    WEBCORE_EXPORT static LayoutPoint constrainScrollPositionForOverhang(const LayoutRect& visibleContentRect, const LayoutSize& totalContentsSize, const LayoutPoint& scrollPosition, const LayoutPoint& scrollOrigin, int headerHeight, int footetHeight);
+    WEBCORE_EXPORT static LayoutPoint LEGACY_NODELETE constrainScrollPositionForOverhang(const LayoutRect& visibleContentRect, const LayoutSize& totalContentsSize, const LayoutPoint& scrollPosition, const LayoutPoint& scrollOrigin, int headerHeight, int footetHeight);
     LayoutPoint constrainScrollPositionForOverhang(const LayoutPoint& scrollPosition);
 
     // Computes the double value for the scrollbar's current position and the current overhang amount.
     // This function is static so that it can be called from the main thread or the scrolling thread.
-    WEBCORE_EXPORT static void NODELETE computeScrollbarValueAndOverhang(float currentPosition, float totalSize, float visibleSize, float& scrollbarValue, float& overhangAmount);
+    WEBCORE_EXPORT static void LEGACY_NODELETE computeScrollbarValueAndOverhang(float currentPosition, float totalSize, float visibleSize, float& scrollbarValue, float& overhangAmount);
 
-    WEBCORE_EXPORT static std::optional<BoxSide> NODELETE targetSideForScrollDelta(FloatSize, ScrollEventAxis);
+    WEBCORE_EXPORT static std::optional<BoxSide> LEGACY_NODELETE targetSideForScrollDelta(FloatSize, ScrollEventAxis);
 
     // "Pinned" means scrolled at or beyond the edge.
     WEBCORE_EXPORT bool isPinnedOnSide(BoxSide) const;
@@ -489,7 +493,7 @@ protected:
 
     bool hasLayerForScrollCorner() const;
 
-    WEBCORE_EXPORT LayoutRect getRectToExposeForScrollIntoView(const LayoutRect& visibleBounds, const LayoutRect& exposeRect, const ScrollAlignment& alignX, const ScrollAlignment& alignY, const std::optional<LayoutRect> = std::nullopt) const;
+    WEBCORE_EXPORT LayoutRect LEGACY_NODELETE getRectToExposeForScrollIntoView(const LayoutRect& visibleBounds, const LayoutRect& exposeRect, const ScrollAlignment& alignX, const ScrollAlignment& alignY, const std::optional<LayoutRect> = std::nullopt) const;
     bool isAwaitingScrollend() const { return m_isAwaitingScrollend; }
     void setIsAwaitingScrollend(bool isAwaitingScrollend) { m_isAwaitingScrollend = isAwaitingScrollend; }
 
@@ -566,7 +570,7 @@ public:
     WEBCORE_EXPORT ScrollTypeScope(ScrollableArea&, ScrollType);
     WEBCORE_EXPORT ~ScrollTypeScope();
 
-    void NODELETE restore();
+    void LEGACY_NODELETE restore();
 
 private:
     WeakRef<ScrollableArea> m_scrollableArea;

@@ -1,0 +1,27 @@
+# const kept = { x: 1 }; globalThis.handler?.({ y: 2 }); throw kept
+# No text is evaluated and no module is loaded from outside, so every function that runs is one of the program, which is followed, or native code.
+# The first record is thrown to the host, which is native code. The call is handed the second record alone.
+# Without the call the field of the first record is always filled.
+# TODO: nobody: one call of a value nobody knows lets anything happen to all that has escaped
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Kept" {{*}}occupancy=AlwaysFilled
+
+layout L0 name="Kept" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Handed" fields=[{key="y" declared={type=number} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = PropGet v0 key="handler" [isFreeName]
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=2
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = Call v3, -, v6
+    Jump -> next b2()
+  b2():
+    Throw v2
+}

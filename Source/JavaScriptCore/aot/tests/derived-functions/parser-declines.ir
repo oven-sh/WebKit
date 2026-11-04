@@ -1,0 +1,21 @@
+# A part of a type whose values go to the generic parser is reported once, with its cause and at the declaration of its type; a part that is compiled is not reported
+# FORM: Prepared optimizing
+# OPTIONS: report=Declines
+# RUN: derived-functions Parser:g0 Parser:g1 Parser:g2 Parser:g3 Parser:g0
+# CHECK: decline ResultNodeInterpreted - - None [0] reason=RepeatedRecursion
+# CHECK-NEXT: decline ResultNodeInterpreted - - None [0] reason=LayoutIsNotModeled
+# CHECK-NEXT: decline ResultNodeInterpreted - - None [0] reason=FieldTypeIsNotTestable
+# CHECK-NOT: decline
+# CHECK-NOT: AssumeType
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Holder" module=m0 position=10 fields=[{key="tree" declared={type=L1|L2}}]
+layout L1 name="LeftNode" module=m0 position=20 fields=[{key="left" declared={type=undefined|L1|L2}}]
+layout L2 name="RightNode" module=m0 position=25 fields=[{key="right" declared={type=undefined|L1|L2}}]
+layout L3 name="NeverMade" module=m0 position=40 fields=[{key="x" declared={type=number}}] flow={allocation=NeverAllocated}
+layout L4 name="ContentsProvenNarrowerThanPlainData" module=m0 position=65 fields=[{key="items" declared={type=Array<number, proven>}}]
+layout L5 name="Compiled" module=m0 position=70 fields=[{key="x" declared={type=number}}]
+variable g0 name="t0" declared={type=L0} initialization=Undefined
+variable g1 name="t1" declared={type=L3} initialization=Undefined
+variable g2 name="t2" declared={type=L4} initialization=Undefined
+variable g3 name="t3" declared={type=L5} initialization=Undefined

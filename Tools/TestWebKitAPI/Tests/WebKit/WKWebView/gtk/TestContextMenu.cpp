@@ -22,6 +22,7 @@
 #include "WebKitTestServer.h"
 #include "WebViewTest.h"
 #include <wtf/Vector.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 
 #if !USE(GTK4)
@@ -497,7 +498,7 @@ public:
 #if !USE(GTK4)
 static void prepareContextMenuTestView(ContextMenuDefaultTest* test)
 {
-    GUniquePtr<char> baseDir(g_strdup_printf("file://%s/", Test::getResourcesDir().data()));
+    GUniquePtr<char> baseDir(SAFE_G_STRDUP_PRINTF("file://%s/", Test::getResourcesDir()));
     const char* linksHTML =
         "<html><body>"
         " <a style='position:absolute; left:1; top:1' href='http://www.webkitgtk.org' title='WebKitGTK Title'>WebKitGTK Website</a>"
@@ -597,7 +598,7 @@ public:
         if (m_action)
             webkit_context_menu_append(contextMenu, webkit_context_menu_item_new(m_action.get()));
         else if (m_gAction)
-            webkit_context_menu_append(contextMenu, webkit_context_menu_item_new_from_gaction(m_gAction.get(), m_gActionTitle.data(), m_expectedTarget.get()));
+            webkit_context_menu_append(contextMenu, webkit_context_menu_item_new_from_gaction(m_gAction.get(), m_gActionTitle.legacyCStringPointer(), m_expectedTarget.get()));
         G_GNUC_END_IGNORE_DEPRECATIONS;
 #endif
         quitMainLoop();
@@ -698,7 +699,7 @@ public:
     void setAction(GAction* action, const char* title, GVariant* target = nullptr)
     {
         m_gAction = action;
-        m_gActionTitle = title;
+        m_gActionTitle = UTF8CString::unsafeFromUTF8(title);
         m_action = nullptr;
         m_expectedTarget = target;
         g_signal_connect_swapped(action, "activate", G_CALLBACK(actionActivatedCallback), this);
@@ -708,7 +709,7 @@ public:
 
     GRefPtr<GtkAction> m_action;
     GRefPtr<GAction> m_gAction;
-    CString m_gActionTitle;
+    UTF8CString m_gActionTitle;
     GRefPtr<GVariant> m_expectedTarget;
     const char* m_itemToActivateLabel { nullptr };
     bool m_activated { false };
@@ -1041,10 +1042,10 @@ public:
         };
         typedef unsigned Type;
 
-        CString name;
+        UTF8CString name;
         Type type;
-        CString contents;
-        CString parentName;
+        UTF8CString contents;
+        UTF8CString parentName;
     };
 
     void deserializeNodeFromUserData(GVariant* userData)
@@ -1056,13 +1057,13 @@ public:
         GVariant* value;
         while (g_variant_iter_next(&iter, "{&sv}", &key, &value)) {
             if (!strcmp(key, "Name") && g_variant_classify(value) == G_VARIANT_CLASS_STRING)
-                m_node.name = g_variant_get_string(value, nullptr);
+                m_node.name = UTF8CString::unsafeFromUTF8(g_variant_get_string(value, nullptr));
             else if (!strcmp(key, "Type") && g_variant_classify(value) == G_VARIANT_CLASS_UINT32)
                 m_node.type = g_variant_get_uint32(value);
             else if (!strcmp(key, "Contents") && g_variant_classify(value) == G_VARIANT_CLASS_STRING)
-                m_node.contents = g_variant_get_string(value, nullptr);
+                m_node.contents = UTF8CString::unsafeFromUTF8(g_variant_get_string(value, nullptr));
             else if (!strcmp(key, "Parent") && g_variant_classify(value) == G_VARIANT_CLASS_STRING)
-                m_node.parentName = g_variant_get_string(value, nullptr);
+                m_node.parentName = UTF8CString::unsafeFromUTF8(g_variant_get_string(value, nullptr));
             g_variant_unref(value);
         }
     }
@@ -1088,32 +1089,32 @@ static void testContextMenuWebExtensionNode(ContextMenuWebExtensionNodeTest* tes
     test->waitUntilLoadFinished();
 
     test->showContextMenuAtPositionAndWaitUntilFinished(0, 0);
-    g_assert_cmpstr(test->m_node.name.data(), ==, "HTML");
+    ASSERT_CMP_CSTRING(test->m_node.name, ==, "HTML");
     g_assert_cmpuint(test->m_node.type, ==, ContextMenuWebExtensionNodeTest::Node::NodeElement);
-    g_assert_cmpstr(test->m_node.contents.data(), ==, "WebKitGTK Context menu testsWebKitGTK Website");
-    g_assert_cmpstr(test->m_node.parentName.data(), ==, "#document");
+    ASSERT_CMP_CSTRING(test->m_node.contents, ==, "WebKitGTK Context menu testsWebKitGTK Website");
+    ASSERT_CMP_CSTRING(test->m_node.parentName, ==, "#document");
 
     test->showContextMenuAtPositionAndWaitUntilFinished(1, 20);
-    g_assert_cmpstr(test->m_node.name.data(), ==, "#text");
+    ASSERT_CMP_CSTRING(test->m_node.name, ==, "#text");
     g_assert_cmpuint(test->m_node.type, ==, ContextMenuWebExtensionNodeTest::Node::NodeText);
-    g_assert_cmpstr(test->m_node.contents.data(), ==, "WebKitGTK Context menu tests");
-    g_assert_cmpstr(test->m_node.parentName.data(), ==, "P");
+    ASSERT_CMP_CSTRING(test->m_node.contents, ==, "WebKitGTK Context menu tests");
+    ASSERT_CMP_CSTRING(test->m_node.parentName, ==, "P");
 
     // Link menu.
     test->showContextMenuAtPositionAndWaitUntilFinished(1, 101);
-    g_assert_cmpstr(test->m_node.name.data(), ==, "#text");
+    ASSERT_CMP_CSTRING(test->m_node.name, ==, "#text");
     g_assert_cmpuint(test->m_node.type, ==, ContextMenuWebExtensionNodeTest::Node::NodeText);
-    g_assert_cmpstr(test->m_node.contents.data(), ==, "WebKitGTK Website");
-    g_assert_cmpstr(test->m_node.parentName.data(), ==, "A");
+    ASSERT_CMP_CSTRING(test->m_node.contents, ==, "WebKitGTK Website");
+    ASSERT_CMP_CSTRING(test->m_node.parentName, ==, "A");
 }
 
 static void writeNextChunk(SoupServerMessage* message)
 {
     auto* responseBody = soup_server_message_get_response_body(message);
-    GUniquePtr<char> filePath(g_build_filename(Test::getResourcesDir().data(), "silence.webm", nullptr));
+    auto filePath = gBuildFilename(Test::getResourcesDir(), "silence.webm");
     char* contents;
     gsize contentsLength;
-    if (!g_file_get_contents(filePath.get(), &contents, &contentsLength, nullptr)) {
+    if (!g_file_get_contents(filePath.utf8(), &contents, &contentsLength, nullptr)) {
         soup_server_message_set_status(message, SOUP_STATUS_NOT_FOUND, nullptr);
         soup_message_body_complete(responseBody);
         return;
@@ -1153,7 +1154,7 @@ static void serverCallback(SoupServer* server, SoupServerMessage* message, const
 static void testContextMenuLiveStream(ContextMenuDefaultTest* test, gconstpointer)
 {
     test->showInWindow();
-    test->loadURI(kServer->getURIForPath("/live-stream").data());
+    test->loadURI(kServer->getURIForPath("/live-stream"));
     test->waitUntilLoadFinished();
 
     test->m_expectedMenuType = ContextMenuDefaultTest::VideoLive;

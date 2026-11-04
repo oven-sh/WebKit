@@ -1,0 +1,8 @@
+# Every access by name and by key on an untyped receiver passes the back-end checks in compact code. No site has a cache, so reads and stores go to the lookup tables
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end limit=MaxSiteCaches:0
+# STATISTIC: SiteCachesPlaced = 0
+# STATISTIC: SitesWithoutSiteCache >= 2
+# LOSS: MaxSiteCaches
+# CHECK: image not empty
+# PROGRAM-OF: fast.ir

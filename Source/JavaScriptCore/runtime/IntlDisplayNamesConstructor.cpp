@@ -66,7 +66,7 @@ static JSC_DECLARE_HOST_FUNCTION(callIntlDisplayNames);
 static JSC_DECLARE_HOST_FUNCTION(constructIntlDisplayNames);
 
 IntlDisplayNamesConstructor::IntlDisplayNamesConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callIntlDisplayNames, constructIntlDisplayNames)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callIntlDisplayNames), JSC_REGISTERED_HOST_FUNCTION(constructIntlDisplayNames))
 {
 }
 

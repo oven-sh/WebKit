@@ -1,0 +1,39 @@
+# A value that a test has narrowed to a type without references is none of the objects that the tested value may name: what is done with it is done to none of them
+# FORM: Prepared
+# RUN: analyses escape
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="booleanIsReturned" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=boolean
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v2
+  b2():
+    v3 = Undefined
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 1
+# CHECK: o0 definition: v0
+# CHECK-NEXT: o0 kind: EntryParameter
+# CHECK: o0 uses: [Inspects]
+# CHECK: o0 aliases: [v0]
+# CHECK-NEXT: o0 object uses: [v1(0)]
+function f1 name="objectIsReturned" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=object
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v2
+  b2():
+    v3 = Undefined
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 1
+# CHECK: o0 definition: v0
+# CHECK-NEXT: o0 kind: EntryParameter
+# CHECK: o0 uses: [Inspects Returns]
+# CHECK: o0 aliases: [v0 v2]
+# CHECK-NEXT: o0 object uses: [v1(0) b1.terminator(0)]

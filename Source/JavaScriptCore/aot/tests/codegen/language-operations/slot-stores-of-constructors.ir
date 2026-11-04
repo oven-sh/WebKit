@@ -1,0 +1,27 @@
+# A store that may create a field records the key when it found the slot absent, also where every read finds the field filled: the constructor is what fills it
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Counter" constructor=f0 fields=[{key="a" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="one-store" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PutSlotOrAdd v0, -, v1 key="a" receivers=[L0] level=Proven
+    Return
+}
+function f2 name="run-of-stores" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PutSlots v0, -, v1, v1 placedKeys=[{key="a" level=Proven mayAdd=true}, {key="b" level=Proven mayAdd=true}] receivers=[L0]
+    Return
+}
+function f3 name="plain-stores" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PutSlot v0, -, v1 key="a" receivers=[L0] level=Proven
+    PutSlots v0, -, v1, v1 placedKeys=[{key="a" level=Proven}, {key="b" level=Proven}] receivers=[L0]
+    Return
+}
+# CHECK: f1: size=
+# CHECK-NEXT: stub DidCreateFieldAtPlace.One x1
+# CHECK-NEXT: f2: size=
+# CHECK-NEXT: stub DidCreateFieldAtPlace.Run x1
+# CHECK-NEXT: f3: size={{*}} frame=none
+# CHECK-NOT: stub

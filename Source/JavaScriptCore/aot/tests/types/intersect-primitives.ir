@@ -1,0 +1,28 @@
+# Ranges, literals and primitive kinds meet and differ part by part. A range loses only what is cut off at one end.
+# RUN: intersect
+# CHECK: t0 & t1 = int[5, 9]
+# CHECK: t0 - t1 = int[0, 4]|string
+# CHECK: t0 & t2 = string
+# CHECK: t0 - t2 = int[0, 9]
+# CHECK: t0 & t3 = "a"
+# CHECK: t0 - t3 = int[0, 9]|string
+# CHECK: t1 & t0 = int[5, 9]
+# CHECK: t1 - t0 = int[10, 20]
+# CHECK: t1 & t7 = int[5, 20]
+# CHECK: t1 - t7 = never
+# CHECK: t2 - t0 = never
+# CHECK: t2 & t4 = "a"|"b"
+# CHECK: t2 - t4 = string
+# CHECK: t3 & t4 = "a"
+# CHECK: t3 - t4 = never
+# CHECK: t4 & t3 = "a"
+# CHECK: t4 - t3 = "b"
+# CHECK: t5 & t6 = boolean
+# CHECK: t5 - t6 = undefined|null
+# CHECK: t6 - t5 = never
+# CHECK: t7 & t1 = int[5, 20]
+# CHECK: t7 - t1 = number
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=int[0, 9]|string}, {type=int[5, 20]}, {type=string}, {type="a"}, {type="a"|"b"}, {type=undefined|null|boolean}, {type=boolean}, {type=number}] results=[{type=undefined}]

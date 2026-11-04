@@ -1,0 +1,10 @@
+# An integer that does not fit 64 bits
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" results=[{type=undefined}] {
+  b0():
+    v0 = Integer integer=9223372036854775808
+    Return
+}

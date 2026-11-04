@@ -1,0 +1,173 @@
+# `for (let n = first; n > 0; n = next(sum)) for (let i = 0; i < n; i++) ..`: the loop inside stands there twice, for an int32 and, rare, for any other number, behind one test of `n`.
+# Where the rare form is all that would leave, the loop around them stays as it is. In these three it is copied as ever, because the likely form gains by it
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+# A rare path of the likely form calls unknown code. It leaves with the rest, and the likely form is left with nothing that writes.
+function f0 name="likelyFormHasRarePath" parameters=[{type=number}, {type=anything}] results=[{type=i32}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v0, v2)
+  b1(v3: number, v4: i32):
+    LoopHint
+    v6 = Greater v3, v2
+    Branch v6 -> taken b2(), notTaken b14()
+  b2():
+    v7 = TypeTest v3 testedType=i32
+    Branch v7 -> taken b3(| 0), notTaken b9()
+  b3(v8):
+    Jump -> next b4(v2, v4)
+  b4(v9, v10):
+    LoopHint
+    v12 = Less v9, v8
+    Branch v12 -> taken b5(), notTaken b8()
+  b5():
+    v13 = BitXor v10, v9
+    v14 = StrictEq v13, v8
+    Branch v14 -> taken b6(), notTaken b7()
+  b6() frequency=Rare:
+    v15 = Call v1, -, v13
+    Jump -> next b7()
+  b7():
+    v16 = Increment v9
+    Jump -> next b4(v16, v13)
+  b8():
+    Jump -> next b13(v10)
+  b9() frequency=Rare:
+    Jump -> next b10(v2, v4)
+  b10(v17, v18) frequency=Rare:
+    LoopHint
+    v20 = Less v17, v3
+    Branch v20 -> taken b11(), notTaken b12()
+  b11() frequency=Rare:
+    v21 = BitXor v18, v17
+    v22 = Increment v17
+    Jump -> next b10(v22, v21)
+  b12() frequency=Rare:
+    Jump -> next b13(v18)
+  b13(v23):
+    v24 = Call v1, -, v23
+    v25 = ToNumber v24
+    Jump -> next b1(v25, v23)
+  b14():
+    Return v4
+# CHECK: b1(v3: i32, v4: i32):
+}
+
+# The rare form comes back in front of the likely one, with a counter out of the middle of a run. Without it the likely form counts from 0.
+function f1 name="rareFormComesBack" parameters=[{type=number}, {type=anything}] results=[{type=i32}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v0, v2)
+  b1(v3: number, v4: i32):
+    LoopHint
+    v6 = Greater v3, v2
+    Branch v6 -> taken b2(), notTaken b15()
+  b2():
+    Jump -> next b3(v2, v4)
+  b3(v7, v8):
+    v9 = TypeTest v3 testedType=i32
+    Branch v9 -> taken b4(| 0), notTaken b8()
+  b4(v10):
+    Jump -> next b5(v7, v8)
+  b5(v11, v12):
+    LoopHint
+    v14 = Less v11, v10
+    Branch v14 -> taken b6(), notTaken b7()
+  b6():
+    v15 = BitXor v12, v11
+    v16 = Increment v11
+    Jump -> next b5(v16, v15)
+  b7():
+    Jump -> next b14(v12)
+  b8() frequency=Rare:
+    Jump -> next b9(v7, v8)
+  b9(v17, v18) frequency=Rare:
+    LoopHint
+    v20 = TypeTest v3 testedType=i32
+    Branch v20 -> taken b10(| 0), notTaken b11()
+  b10(v21) frequency=Rare:
+    Jump -> next b3(v17, v18)
+  b11() frequency=Rare:
+    v22 = Less v17, v3
+    Branch v22 -> taken b12(), notTaken b13()
+  b12() frequency=Rare:
+    v23 = BitXor v18, v17
+    v24 = Increment v17
+    Jump -> next b9(v24, v23)
+  b13() frequency=Rare:
+    Jump -> next b14(v18)
+  b14(v25):
+    v26 = Call v1, -, v25
+    v27 = ToNumber v26
+    Jump -> next b1(v27, v25)
+  b15():
+    Return v4
+# CHECK: b1(v3: i32, v4: i32):
+}
+
+# `const pair = { a: i, b: sum }; for (..) ..; if (rarely) log(pair); sum ^= pair.a`
+function f2 name="onlyRarePathNeedsObjectInMemory" parameters=[{type=number}, {type=anything}] results=[{type=i32}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v0, v2)
+  b1(v3: number, v4: i32):
+    LoopHint
+    v6 = Greater v3, v2
+    Branch v6 -> taken b2(), notTaken b17()
+  b2():
+    v7 = TypeTest v3 testedType=i32
+    Branch v7 -> taken b3(| 0), notTaken b12()
+  b3(v8):
+    Jump -> next b4(v2, v4)
+  b4(v9, v10):
+    LoopHint
+    v12 = Less v9, v8
+    Branch v12 -> taken b5(), notTaken b11()
+  b5():
+    v13 = NewObject -, v9, v10 layout=L0 fields=[0, 1]
+    Jump -> next b6(v9, v10)
+  b6(v14, v15):
+    LoopHint
+    v17 = Greater v14, v2
+    Branch v17 -> taken b7(), notTaken b8()
+  b7():
+    v18 = Integer integer=1
+    v19 = RShift v14, v18
+    v20 = BitXor v15, v19
+    Jump -> next b6(v19, v20)
+  b8():
+    v21 = StrictEq v15, v8
+    Branch v21 -> taken b9(), notTaken b10()
+  b9() frequency=Rare:
+    v22 = Call v1, -, v13
+    Jump -> next b10()
+  b10():
+    v23 = GetSlot v13 key="a" receivers=[L0] level=Proven
+    v24 = BitXor v15, v23
+    v25 = Increment v9
+    Jump -> next b4(v25, v24)
+  b11():
+    Jump -> next b16(v10)
+  b12() frequency=Rare:
+    Jump -> next b13(v2, v4)
+  b13(v26, v27) frequency=Rare:
+    LoopHint
+    v29 = Less v26, v3
+    Branch v29 -> taken b14(), notTaken b15()
+  b14() frequency=Rare:
+    v30 = BitXor v27, v26
+    v31 = Increment v26
+    Jump -> next b13(v31, v30)
+  b15() frequency=Rare:
+    Jump -> next b16(v27)
+  b16(v32):
+    v33 = Call v1, -, v32
+    v34 = ToNumber v33
+    Jump -> next b1(v34, v32)
+  b17():
+    Return v4
+# CHECK: b1(v3: i32, v4: i32):
+}

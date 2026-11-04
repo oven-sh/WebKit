@@ -13,7 +13,6 @@
 
 #include <string>
 
-#include "absl/base/attributes.h"
 #include "absl/strings/string_view.h"
 #include "rtc_base/checks.h"
 
@@ -92,11 +91,11 @@ class RtcEventLogParseStatus {
   }
 
   bool ok() const { return error_.empty(); }
-  ABSL_DEPRECATED("Use ok() instead") explicit operator bool() const {
+  [[deprecated("Use ok() instead")]] explicit operator bool() const {
     return ok();
   }
 
-  std::string message() const { return error_; }
+  const std::string& message() const { return error_; }
 
  private:
   RtcEventLogParseStatus() : error_() {}
@@ -119,7 +118,7 @@ class RtcEventLogParseStatusOr {
 
   bool ok() const { return status_.ok(); }
 
-  std::string message() const { return status_.message(); }
+  const std::string& message() const { return status_.message(); }
 
   RtcEventLogParseStatus status() const { return status_; }
 

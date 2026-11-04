@@ -1,0 +1,25 @@
+# globalThis["a" + text] = { run }; Date.now()
+# A text nobody knows may be "Date": the member of the global object counts as written, and nothing takes what is read there for the object of the table
+# RUN: valueflow-results
+# CHECK: builtin-location GlobalThis."Date" Unknown
+
+layout L0 fields=[{key="run" declared={type=anything}}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="a"
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="text" [isFreeName]
+    v3 = Add v0, v2
+    v4 = ToString v3
+    v5 = NewClosure function=f1
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    ElemSet v1, v4, v6
+    v8 = PropGet v1 key="Date" [isFreeName]
+    v9 = PropGet v8 key="now"
+    v10 = Call v9, v8
+    Return
+}
+function f1 name="run" results=[{type=anything}] {
+    Return
+}

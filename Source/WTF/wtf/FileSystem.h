@@ -41,6 +41,7 @@
 #include <wtf/OptionSet.h>
 #include <wtf/Vector.h>
 #include <wtf/WallTime.h>
+#include <wtf/text/UTF8CStringView.h>
 #include <wtf/text/WTFString.h>
 
 #if OS(WINDOWS)
@@ -105,7 +106,7 @@ WTF_EXPORT_PRIVATE bool moveFile(const String& oldPath, const String& newPath);
 WTF_EXPORT_PRIVATE std::optional<uint64_t> fileSize(const String&); // Follows symlinks.
 WTF_EXPORT_PRIVATE std::optional<uint64_t> directorySize(const String&);
 WTF_EXPORT_PRIVATE std::optional<WallTime> fileModificationTime(const String&);
-WTF_EXPORT_PRIVATE bool NODELETE fileIDsAreEqual(std::optional<PlatformFileID>, std::optional<PlatformFileID>);
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE fileIDsAreEqual(std::optional<PlatformFileID>, std::optional<PlatformFileID>);
 WTF_EXPORT_PRIVATE bool updateFileModificationTime(const String& path); // Sets modification time to now.
 WTF_EXPORT_PRIVATE std::optional<WallTime> fileCreationTime(const String&); // Not all platforms store file creation time.
 WTF_EXPORT_PRIVATE bool isHiddenFile(const String&);
@@ -140,7 +141,8 @@ WTF_EXPORT_PRIVATE void traverseDirectory(const String& path, NOESCAPE const Fun
 
 WTF_EXPORT_PRIVATE UTF8CString fileSystemRepresentation(const String&);
 #if !PLATFORM(WIN)
-WTF_EXPORT_PRIVATE String stringFromFileSystemRepresentation(const char*);
+WTF_EXPORT_PRIVATE String stringFromFileSystemRepresentation(UTF8CStringView);
+inline String stringFromFileSystemRepresentation(const char* path) { return stringFromFileSystemRepresentation(UTF8CStringView::unsafeFromUTF8(path)); }
 #endif
 
 // stat() needs a null-terminated path, so these take the span including the terminator and check for it.

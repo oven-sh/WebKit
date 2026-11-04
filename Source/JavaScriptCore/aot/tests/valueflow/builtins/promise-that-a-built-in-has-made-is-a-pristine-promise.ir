@@ -1,0 +1,44 @@
+# Promise.resolve(held).then(same).then(same);  changed = Promise.resolve(other); changed.constructor = 1; changed.then(alike)
+# The promise that Promise.resolve answers, and the one that `then` answers, are promises that a built-in has allocated, with Promise.prototype above them. Each passes the test for a pristine promise,
+# so `then` takes the overload for those alone: what the promise holds goes to the reaction and what the reaction answers into the next promise. Nothing escapes, and nobody calls `held`.
+# With a property of its own such a promise may fail the test: the overload for any promise is applied too, which keeps the promise, and native code has `other`.
+# RUN: valueflow-solve calls
+# CHECK: f0 v3 -> PromiseResolve
+# CHECK-NEXT: f0 v6 -> PromisePrototypeThen
+# CHECK-NEXT: f0 v7 -> PromisePrototypeThen
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Promise
+    v2 = Builtin builtin=PromiseResolve
+    v3 = Call v2, v1, v0
+    v4 = Builtin builtin=PromisePrototypeThen
+    v5 = NewClosure function=f2
+    v6 = Call v4, v3, v5
+    v7 = Call v4, v6, v5
+    v8 = NewClosure function=f3
+    v9 = Call v2, v1, v8
+    v10 = Integer integer=1
+    PropSet v9, v10 key="constructor" mode=Strict
+    v12 = NewClosure function=f4
+    v13 = Call v4, v9, v12
+    Return
+}
+function f1 name="held" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="same" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="other" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f4 name="alike" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

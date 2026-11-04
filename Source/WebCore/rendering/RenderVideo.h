@@ -40,10 +40,10 @@ public:
     RenderVideo(HTMLVideoElement&, Style::ComputedStyle&&);
     virtual ~RenderVideo();
 
-    WEBCORE_EXPORT HTMLVideoElement& NODELETE videoElement() const;
+    WEBCORE_EXPORT HTMLVideoElement& LEGACY_NODELETE videoElement() const;
 
     IntRect videoBox() const;
-    WEBCORE_EXPORT IntRect videoBoxInRootView() const;
+    WEBCORE_EXPORT IntRect videoBoxInMainFrameView() const;
     LayoutRect croppedVideoBoxForCompositing() const;
     LayoutRect inlineVideoBox() const;
 
@@ -54,7 +54,7 @@ public:
     // bypass is active.
     bool isBypassingObjectViewBoxForPictureInPicture() const;
 
-    static IntSize NODELETE defaultSize();
+    static IntSize LEGACY_NODELETE defaultSize();
 
     bool supportsAcceleratedRendering() const;
     void acceleratedRenderingStateChanged();
@@ -65,6 +65,7 @@ public:
     bool failedToLoadPosterImage() const;
 
     void updateFromElement() final;
+
     bool hasVideoMetadata() const;
     bool hasPosterFrameSize() const;
     bool hasDefaultObjectSize() const;
@@ -72,6 +73,8 @@ public:
 private:
     void willBeDestroyed() override;
     void mediaElement() const = delete;
+
+    NaturalDimensions zoomedNaturalDimensions() const final;
 
     void intrinsicSizeChanged() final;
     LayoutSize calculateIntrinsicSizeInternal();
@@ -101,6 +104,9 @@ private:
 
     bool foregroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect, unsigned maxDepthToTest) const final;
     void invalidateLineLayout();
+
+    RefPtr<ShareableBitmap> createShareableBitmap(const CreateShareableBitmapFromImageOptions& = { }) const final;
+    Ref<NativePromise<Ref<ShareableBitmap>, void>> createShareableBitmapAsync(const CreateShareableBitmapFromImageOptions& = { }) const final;
 
     LayoutSize m_cachedImageSize;
 };

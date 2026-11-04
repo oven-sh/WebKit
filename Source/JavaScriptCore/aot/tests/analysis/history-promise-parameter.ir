@@ -1,0 +1,77 @@
+# The promise of an async function has no history at the entry of its body, and a suspension gives it one
+# FORM: Prepared
+# RUN: analyses history-points function=f1 history-uses=WritesContents
+# RUN(SUSPENDED): analyses history-points function=f3 history-uses=WritesContents
+# RUN(ESCAPED): analyses history-points function=f5
+# RUN(ORDINARY): analyses history-points function=f6 history-uses=WritesContents
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="settledOnOnePath" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f1
+    Return v1
+}
+function f1 name="settledOnOnePath" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 promiseType=Promise promiseParameter=1} {
+    v2 = Integer integer=7
+    v3 = ToBoolean v0
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    ResolvePromise v1, v2
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v5 = ReturnAsyncResult v1, v2
+    Return v5
+}
+function f2 name="suspendedWithoutPromiseOperand" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f3
+    Return v1
+}
+function f3 name="suspendedWithoutPromiseOperand" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 promiseType=Promise promiseParameter=1} {
+    v2 = Undefined
+    v3 = AwaitBySavingFrame v0, v2
+    v4 = ReturnAsyncResult v1, v3
+    Return v4
+}
+function f4 name="escaped" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f5
+    Return v1
+}
+function f5 name="escaped" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 promiseType=Promise promiseParameter=1} {
+    v2 = Call v0, -, v1
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+function f6 name="ordinaryParameter" parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] {
+    v2 = Integer integer=7
+    ResolvePromise v1, v2
+    Return v0
+}
+# CHECK: function f1
+# CHECK: history-points:
+# CHECK: b0:0 occurred: [o0]
+# CHECK: b0:0 unknown: []
+# CHECK: b0:2 occurred: [o0]
+# CHECK: b1:0 occurred: [o0]
+# CHECK: b1:1 occurred: [o0 o1]
+# CHECK: b2:0 occurred: [o0]
+# CHECK: b3:0 occurred: [o0 o1]
+# CHECK: b3:0 unknown: []
+# SUSPENDED: function f3
+# SUSPENDED: history-points:
+# SUSPENDED: b0:0 occurred: [o0]
+# SUSPENDED: b0:1 occurred: [o0]
+# SUSPENDED: b0:2 occurred: [o0 o1]
+# SUSPENDED: b0:2 unknown: []
+# ESCAPED: function f5
+# ESCAPED: history-points:
+# ESCAPED: b0:0 occurred: [o0]
+# ESCAPED: b0:1 occurred: [o0 o1]
+# ESCAPED: b0:1 unknown: []
+# ORDINARY: function f6
+# ORDINARY: history-points:
+# ORDINARY: b0:0 occurred: [o0 o1]
+# ORDINARY: b0:0 unknown: []

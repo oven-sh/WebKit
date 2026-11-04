@@ -1,0 +1,30 @@
+# each of the two lists is sorted by location, ids, kind, limit, count and pass, without repeats, whatever the threads and the order of adding
+# RUN: diagnostics no-program LimitExceeded,f1,at=0:10 LimitExceeded,f1,at=0:5 LimitExceeded,f1,at=1:0 LimitExceeded,f0,at=0:10 LimitExceeded,f1,b0,at=0:10 LimitExceeded,f1,b0,v2,at=0:10 LimitExceeded,f1,L3,at=0:10 LimitExceeded,f1,limit=MaxLayoutsInType,at=0:10 LimitExceeded,f1,count=7,at=0:10 RegExpWithoutCode,f1,at=0:10 LimitExceeded,count=3 OperandTypeMismatch,f1,at=0:10 OperandTypeMismatch,f1,at=0:10,pass=VerifyProgram TypeOutOfDate,f1,at=0:10 InvalidCompileOptions,count=144 LimitExceeded,f1,at=0:10 LimitExceeded,f1,b0,v2,at=0:10 OperandTypeMismatch,f1,at=0:10,pass=VerifyProgram
+# RUN: diagnostics no-program LimitExceeded,f1,at=0:10 LimitExceeded,f1,at=0:5 LimitExceeded,f1,at=1:0 LimitExceeded,f0,at=0:10 LimitExceeded,f1,b0,at=0:10 LimitExceeded,f1,b0,v2,at=0:10 LimitExceeded,f1,L3,at=0:10 LimitExceeded,f1,limit=MaxLayoutsInType,at=0:10 LimitExceeded,f1,count=7,at=0:10 RegExpWithoutCode,f1,at=0:10 LimitExceeded,count=3 OperandTypeMismatch,f1,at=0:10 OperandTypeMismatch,f1,at=0:10,pass=VerifyProgram TypeOutOfDate,f1,at=0:10 InvalidCompileOptions,count=144 LimitExceeded,f1,at=0:10 LimitExceeded,f1,b0,v2,at=0:10 OperandTypeMismatch,f1,at=0:10,pass=VerifyProgram threads=2 seed=1
+# RUN: diagnostics no-program LimitExceeded,f1,at=0:10 LimitExceeded,f1,at=0:5 LimitExceeded,f1,at=1:0 LimitExceeded,f0,at=0:10 LimitExceeded,f1,b0,at=0:10 LimitExceeded,f1,b0,v2,at=0:10 LimitExceeded,f1,L3,at=0:10 LimitExceeded,f1,limit=MaxLayoutsInType,at=0:10 LimitExceeded,f1,count=7,at=0:10 RegExpWithoutCode,f1,at=0:10 LimitExceeded,count=3 OperandTypeMismatch,f1,at=0:10 OperandTypeMismatch,f1,at=0:10,pass=VerifyProgram TypeOutOfDate,f1,at=0:10 InvalidCompileOptions,count=144 LimitExceeded,f1,at=0:10 LimitExceeded,f1,b0,v2,at=0:10 OperandTypeMismatch,f1,at=0:10,pass=VerifyProgram threads=16 seed=2
+# RUN: diagnostics no-program LimitExceeded,f1,at=0:10 LimitExceeded,f1,at=0:5 LimitExceeded,f1,at=1:0 LimitExceeded,f0,at=0:10 LimitExceeded,f1,b0,at=0:10 LimitExceeded,f1,b0,v2,at=0:10 LimitExceeded,f1,L3,at=0:10 LimitExceeded,f1,limit=MaxLayoutsInType,at=0:10 LimitExceeded,f1,count=7,at=0:10 RegExpWithoutCode,f1,at=0:10 LimitExceeded,count=3 OperandTypeMismatch,f1,at=0:10 OperandTypeMismatch,f1,at=0:10,pass=VerifyProgram TypeOutOfDate,f1,at=0:10 InvalidCompileOptions,count=144 LimitExceeded,f1,at=0:10 LimitExceeded,f1,b0,v2,at=0:10 OperandTypeMismatch,f1,at=0:10,pass=VerifyProgram threads=16 seed=3
+# CHECK: has errors: yes
+# CHECK-NEXT: user records 11
+# CHECK-NEXT: LimitExceeded f1 - - - None 0 0:5 Error |
+# CHECK-NEXT: LimitExceeded f0 - - - None 0 0:10 Error |
+# CHECK-NEXT: LimitExceeded f1 b0 v2 - None 0 0:10 Error |
+# CHECK-NEXT: LimitExceeded f1 b0 - - None 0 0:10 Error |
+# CHECK-NEXT: LimitExceeded f1 - - L3 None 0 0:10 Error |
+# CHECK-NEXT: LimitExceeded f1 - - - None 0 0:10 Error |
+# CHECK-NEXT: LimitExceeded f1 - - - None 7 0:10 Error |
+# CHECK-NEXT: LimitExceeded f1 - - - MaxLayoutsInType 0 0:10 Error |
+# CHECK-NEXT: RegExpWithoutCode f1 - - - None 0 0:10 Warning |
+# CHECK-NEXT: LimitExceeded f1 - - - None 0 1:0 Error |
+# CHECK-NEXT: LimitExceeded - - - - None 3 - Error |
+# CHECK-NEXT: internal records 4
+# CHECK-NEXT: TypeOutOfDate f1 - - - None 0 0:10 - |
+# CHECK-NEXT: OperandTypeMismatch f1 - - - None 0 0:10 - |
+# CHECK-NEXT: OperandTypeMismatch f1 - - - None 0 0:10 VerifyProgram |
+# CHECK-NEXT: InvalidCompileOptions - - - - None 144 - - |
+# CHECK-NEXT: of 18 added
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="main" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}

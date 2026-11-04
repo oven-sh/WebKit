@@ -665,7 +665,7 @@ CachedPage* BackForwardCache::get(HistoryItem& item, Page* page)
         if (page && &cachedPage->page() != page)
             return nullptr;
         if (cachedPage->hasExpired() || (page && page->isResourceCachingDisabledByWebInspector())) {
-            LOG(BackForwardCache, "Not restoring page for %s from back/forward cache because cache entry has expired", item.url().string().ascii().data());
+            LOG(BackForwardCache, "Not restoring page for %s from back/forward cache because cache entry has expired", item.url().string().utf8());
             logBackForwardCacheFailureDiagnosticMessage(page, DiagnosticLoggingKeys::expiredKey());
             remove(item);
             return nullptr;
@@ -767,16 +767,6 @@ bool BackForwardCache::hasCachedPageExpired(BackForwardFrameItemIdentifier ident
     if (!cachedPage)
         return false;
     return (*cachedPage)->hasExpired();
-}
-
-void BackForwardCache::setDetachedRootFramesForFrameItem(BackForwardFrameItemIdentifier identifier, HashSet<WeakRef<LocalFrame>>&& frames)
-{
-    auto it = m_cachedPageMap.find(identifier);
-    if (it == m_cachedPageMap.end())
-        return;
-
-    if (auto* cachedPage = std::get_if<UniqueRef<CachedPage>>(&it->value))
-        (*cachedPage)->setDetachedRootFrames(WTF::move(frames));
 }
 
 } // namespace WebCore

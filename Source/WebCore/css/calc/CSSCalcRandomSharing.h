@@ -34,7 +34,7 @@
 
 namespace WebCore {
 
-enum CSSPropertyID : uint16_t;
+enum class CSSPropertyID : uint16_t;
 
 namespace CSSCalc {
 
@@ -44,11 +44,11 @@ namespace CSSCalc {
 // https://github.com/w3c/csswg-drafts/issues/14330
 enum class RandomFunction : bool { Random, RandomItem };
 
-// The property a random key is scoped to. Every custom property shares CSSPropertyCustom, so the name
+// The property a random key is scoped to. Every custom property shares CSSPropertyID::Custom, so the name
 // is what tells them apart and is empty for everything else.
 // FIXME: Same concept as AssociatedProperty and AnimatableCSSProperty.
 struct RandomScopedProperty {
-    CSSPropertyID property { CSSPropertyInvalid };
+    CSSPropertyID property { CSSPropertyID::Invalid };
     AtomString customPropertyName { };
     RandomFunction function { RandomFunction::Random };
 

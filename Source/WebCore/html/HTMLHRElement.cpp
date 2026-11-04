@@ -32,7 +32,6 @@
 #include "HTMLSelectElement.h"
 #include "MutableStyleProperties.h"
 #include "NodeName.h"
-#include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -61,7 +60,7 @@ auto HTMLHRElement::insertionSteps(InsertionType insertionType, ContainerNode& p
 {
     auto result = HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
 
-    if (!document().settings().htmlEnhancedSelectParsingEnabled() || m_ownerSelect)
+    if (m_ownerSelect)
         return result;
 
     if (RefPtr select = HTMLSelectElement::findOwnerSelect(parentNode(), HTMLSelectElement::ExcludeOptGroup::Yes)) {
@@ -76,7 +75,7 @@ void HTMLHRElement::removingSteps(RemovalType removalType, ContainerNode& oldPar
 {
     HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
 
-    if (!document().settings().htmlEnhancedSelectParsingEnabled() || !m_ownerSelect)
+    if (!m_ownerSelect)
         return;
 
     if (auto* select = HTMLSelectElement::findOwnerSelect(parentNode(), HTMLSelectElement::ExcludeOptGroup::Yes)) {
@@ -86,6 +85,26 @@ void HTMLHRElement::removingSteps(RemovalType removalType, ContainerNode& oldPar
 
     if (RefPtr select = std::exchange(m_ownerSelect, nullptr).get())
         select->setRecalcListItems();
+}
+
+void HTMLHRElement::movingSteps(MovingType movingType, ContainerNode& oldParent)
+{
+    HTMLElement::movingSteps(movingType, oldParent);
+
+    RefPtr oldSelect = m_ownerSelect;
+    RefPtr newSelect = HTMLSelectElement::findOwnerSelect(parentNode(), HTMLSelectElement::ExcludeOptGroup::Yes);
+    if (oldSelect == newSelect) {
+        if (newSelect)
+            newSelect->setRecalcListItems();
+        return;
+    }
+
+    m_ownerSelect = newSelect.get();
+
+    if (oldSelect)
+        oldSelect->setRecalcListItems();
+    if (newSelect)
+        newSelect->setRecalcListItems();
 }
 
 bool HTMLHRElement::hasPresentationalHintsForAttribute(const QualifiedName& name) const
@@ -107,37 +126,37 @@ void HTMLHRElement::collectPresentationalHintsForAttribute(const QualifiedName& 
     switch (name.nodeName()) {
     case AttributeNames::alignAttr:
         if (equalLettersIgnoringASCIICase(value, "left"_s)) {
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMarginLeft, 0, CSSUnitType::Px);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMarginRight, CSSValueAuto);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MarginLeft, 0, CSSUnitType::Px);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MarginRight, CSSValueID::Auto);
         } else if (equalLettersIgnoringASCIICase(value, "right"_s)) {
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMarginLeft, CSSValueAuto);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMarginRight, 0, CSSUnitType::Px);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MarginLeft, CSSValueID::Auto);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MarginRight, 0, CSSUnitType::Px);
         } else {
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMarginLeft, CSSValueAuto);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMarginRight, CSSValueAuto);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MarginLeft, CSSValueID::Auto);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MarginRight, CSSValueID::Auto);
         }
         break;
     case AttributeNames::widthAttr:
-        addHTMLLengthToStyle(style, CSSPropertyWidth, value);
+        addHTMLLengthToStyle(style, CSSPropertyID::Width, value);
         break;
     case AttributeNames::colorAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyBorderStyle, CSSValueSolid);
-        addHTMLColorToStyle(style, CSSPropertyBorderColor, value);
-        addHTMLColorToStyle(style, CSSPropertyBackgroundColor, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::BorderStyle, CSSValueID::Solid);
+        addHTMLColorToStyle(style, CSSPropertyID::BorderColor, value);
+        addHTMLColorToStyle(style, CSSPropertyID::BackgroundColor, value);
         break;
     case AttributeNames::noshadeAttr:
         if (!hasAttributeWithoutSynchronization(colorAttr)) {
-            addPropertyToPresentationalHintStyle(style, CSSPropertyBorderStyle, CSSValueSolid);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::BorderStyle, CSSValueID::Solid);
             auto darkGrayValue = CSSValuePool::singleton().createColorValue(Color::darkGray);
-            style.setProperty(CSSPropertyBorderColor, darkGrayValue);
-            style.setProperty(CSSPropertyBackgroundColor, WTF::move(darkGrayValue));
+            style.setProperty(CSSPropertyID::BorderColor, darkGrayValue);
+            style.setProperty(CSSPropertyID::BackgroundColor, WTF::move(darkGrayValue));
         }
         break;
     case AttributeNames::sizeAttr:
         if (int size = parseHTMLInteger(value).value_or(0); size > 1)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyHeight, size - 2, CSSUnitType::Px);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::Height, size - 2, CSSUnitType::Px);
         else
-            addPropertyToPresentationalHintStyle(style, CSSPropertyBorderBottomWidth, 0, CSSUnitType::Px);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::BorderBottomWidth, 0, CSSUnitType::Px);
         break;
     default:
         HTMLElement::collectPresentationalHintsForAttribute(name, value, style);

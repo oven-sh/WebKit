@@ -67,8 +67,8 @@ void PageOverlayController::createRootLayersIfNeeded()
     ASSERT(!m_documentOverlayRootLayer);
     ASSERT(!m_viewOverlayRootLayer);
 
-    m_documentOverlayRootLayer = GraphicsLayer::create(m_page->chrome().client().graphicsLayerFactory(), *this);
-    m_viewOverlayRootLayer = GraphicsLayer::create(m_page->chrome().client().graphicsLayerFactory(), *this);
+    lazyInitialize(m_documentOverlayRootLayer, GraphicsLayer::create(m_page->chrome().client().graphicsLayerFactory(), *this));
+    lazyInitialize(m_viewOverlayRootLayer, GraphicsLayer::create(m_page->chrome().client().graphicsLayerFactory(), *this));
     protect(documentOverlayRootLayer())->setName(MAKE_STATIC_STRING_IMPL("Document overlay Container"));
     protect(viewOverlayRootLayer())->setName(MAKE_STATIC_STRING_IMPL("View overlay container"));
 }
@@ -115,6 +115,12 @@ bool PageOverlayController::hasViewOverlays() const
             return true;
     }
     return false;
+}
+
+void PageOverlayController::mainFrameDidBecomeLocal()
+{
+    // View overlays installed while the main frame was remote could not be attached, so attach them now.
+    attachViewOverlayLayers();
 }
 
 void PageOverlayController::attachViewOverlayLayers()
@@ -409,12 +415,15 @@ void PageOverlayController::updateSettingsForLayer(GraphicsLayer& layer)
     layer.setShowRepaintCounter(settings->showRepaintCounter());
 }
 
-bool PageOverlayController::handleMouseEvent(const PlatformMouseEvent& mouseEvent)
+bool PageOverlayController::handleMouseEvent(const PlatformMouseEvent& mouseEvent, LocalFrame& handlingFrame)
 {
     if (m_pageOverlays.isEmpty())
         return false;
 
+    Ref rootFrame { handlingFrame.rootFrame() };
     for (Ref overlay : borrow(m_pageOverlays).get() | std::views::reverse) {
+        if (RefPtr associatedFrame { overlay->associatedFrame() }; associatedFrame && associatedFrame != rootFrame.ptr())
+            continue;
         if (overlay->mouseEvent(mouseEvent))
             return true;
     }

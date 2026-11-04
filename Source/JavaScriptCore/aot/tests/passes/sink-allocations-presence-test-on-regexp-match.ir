@@ -1,0 +1,61 @@
+# const match = pattern.exec(text); return match && match[1];
+# The element read is guarded by a storage test and a presence test. A match has no holes, so the presence test becomes `index < length` and the array is never allocated.
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="guardedRead" parameters=[{type=RegExp}, {type=string}] results=[{type=undefined|null|string}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = AssumeType v2 provenType=null|Array<undefined|string, proven, pristine[Storage, Names]>
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(| 0), notTaken b5()
+  b1(v5: Array<undefined|string, proven, pristine[Storage, Names]>):
+    v6 = Integer integer=1
+    v7 = HasArrayStorage v5 arrayStorage=Contiguous
+    Branch v7 -> taken b2(| 0), notTaken b4()
+  b2(v8: guard):
+    v9 = IsElementPresent v5, v6, v8 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v9 -> taken b3(| 0), notTaken b4()
+  b3(v10: guard):
+    v11 = AllGuards v8, v10
+    v12 = GetArrayElement v5, v6, v11 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    Jump -> next b6(v12)
+  b4() frequency=Unlikely:
+    v13 = ElemGet v5, v6 [keyIsIntegral]
+    Jump -> next b6(v13)
+  b5():
+    v14 = Null
+    Jump -> next b6(v14)
+  b6(v15: undefined|null|string):
+    Return v15
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=2
+# CHECK: [[length0]]:{{*}}= ResultAt v2 index=1
+# CHECK-NOT: IsElementPresent
+# CHECK: = Less {{*}}, [[length0]]
+# CHECK-NOT: GetArrayElement
+# CHECK-NOT: ElemGet
+}
+
+# return match ? 3 in match : false;
+# The program sees the answer, so it has to be the real one.
+function f1 name="answerIsReturned" parameters=[{type=RegExp}, {type=string}] results=[{type=boolean}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = AssumeType v2 provenType=null|Array<undefined|string, proven, pristine[Storage, Names]>
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(| 0), notTaken b3()
+  b1(v5: Array<undefined|string, proven, pristine[Storage, Names]>):
+    v6 = Integer integer=3
+    v7 = HasArrayStorage v5 arrayStorage=Contiguous
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8: guard):
+    v9 = IsElementPresent v5, v6, v8 arrayStorage=Contiguous [keyIsIntegral]
+    Return v9
+  b3():
+    v10 = Boolean
+    Return v10
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix
+# CHECK: [[length1]]:{{*}}= ResultAt v2 index=1
+# CHECK: [[answer1]]:{{*}}= Less {{*}}, [[length1]]
+# CHECK: Return
+}

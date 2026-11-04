@@ -75,7 +75,7 @@ void WebInspectorUIProxy::setClient(std::unique_ptr<WebInspectorUIProxyClient>&&
 void WebInspectorUIProxy::updateInspectorWindowTitle() const
 {
     ASSERT(m_inspectorWindow);
-    webkitInspectorWindowSetSubtitle(WEBKIT_INSPECTOR_WINDOW(m_inspectorWindow.get()), !m_inspectedURLString.isEmpty() ? m_inspectedURLString.utf8().legacyCStringPointer() : nullptr);
+    webkitInspectorWindowSetSubtitle(WEBKIT_INSPECTOR_WINDOW(m_inspectorWindow.get()), !m_inspectedURLString.isEmpty() ? UTF8CStringView { m_inspectedURLString.utf8() } : UTF8CStringView { });
 }
 
 static unsigned long long exceededDatabaseQuota(WKPageRef, WKFrameRef, WKSecurityOriginRef, WKStringRef, WKStringRef, unsigned long long, unsigned long long, unsigned long long currentDatabaseUsage, unsigned long long expectedUsage, const void*)
@@ -187,11 +187,12 @@ RefPtr<WebPageProxy> WebInspectorUIProxy::platformCreateFrontendPage()
     preferences->setDeveloperExtrasEnabled(true);
     preferences->setLogsPageMessagesToSystemConsoleEnabled(true);
 #endif
+    // The Find banner and Search sidebar use the legacy results=N attribute for recent searches.
+    preferences->setSearchInputResultsAttributeEnabled(true);
     preferences->setAllowTopNavigationToDataURLs(true);
     preferences->setJavaScriptRuntimeFlags({
     });
-    if (m_underTest)
-        preferences->setHiddenPageDOMTimerThrottlingEnabled(false);
+    preferences->setHiddenPageDOMTimerThrottlingEnabled(false);
     Ref inspectedPagePreferences = protect(inspectedPage())->preferences();
     preferences->setAcceleratedCompositingEnabled(inspectedPagePreferences->acceleratedCompositingEnabled());
     preferences->setForceCompositingMode(inspectedPagePreferences->forceCompositingMode());
@@ -207,6 +208,15 @@ RefPtr<WebPageProxy> WebInspectorUIProxy::platformCreateFrontendPage()
     pageConfiguration->setWebsiteDataStore(websiteDataStore.ptr());
     m_inspectorView.reset(GTK_WIDGET(webkitWebViewBaseCreate(*pageConfiguration.ptr())));
     g_signal_connect(m_inspectorView.get(), "destroy", G_CALLBACK(inspectorViewDestroyed), this);
+
+    if (m_underTest) {
+        GtkAllocation allocation = { 0, 0, static_cast<int>(initialWindowWidth), static_cast<int>(initialWindowHeight) };
+#if USE(GTK4)
+        gtk_widget_size_allocate(m_inspectorView.get(), &allocation, -1);
+#else
+        gtk_widget_size_allocate(m_inspectorView.get(), &allocation);
+#endif
+    }
 
     WKPageUIClientV2 uiClient = {
         { 2, this },

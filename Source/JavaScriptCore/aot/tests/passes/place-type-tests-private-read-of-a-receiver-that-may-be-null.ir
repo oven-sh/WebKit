@@ -1,0 +1,17 @@
+# A read of undefined or of null throws. So the copy of the read on the side where the receiver is no object gives nothing, and the function returns the number that the field holds and nothing else.
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Safe" constructor=f0 fields=[{key=#"#code"@L0 declared={type=number} flags=[IsPrivate] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction} classFlow={evaluations=AtMostOnce}
+
+function f0 name="Safe" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+
+function f1 name="codeOf" parameters=[{type=undefined|null|L0}] results=[{type=number}] {
+    v1 = NewClassToken layout=L0
+    v2 = PrivateGet v0, v1 layout=L0 field=0
+    Return v2
+# CHECK: = TypeTest v0 testedType=object
+# CHECK: : number = GetSlot {{*}} key=#"#code"@L0
+# CHECK: : never = PrivateGet
+}

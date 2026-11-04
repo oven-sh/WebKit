@@ -1,0 +1,50 @@
+# first = { __proto__: somethingNoTableLists, a: 0 }; second = { __proto__: somethingNoTableLists, b: 0 }; somethingNoTableLists(first, second)
+# function read(o) { return o.x }  function late(o) { return read(o) }  function later(o) { return late(o) }  later(first); later(second)
+# Above both objects lies something nobody knows, so a getter nobody knows may answer `o.x`, with the receiver as `this`: a receiver of such a read escapes. That is all that happens to it,
+# and these two have escaped before the read is reached. So the read asks what lies above its receivers together, to find what it reads, and nothing about either of them alone.
+# In a large program the receivers of most reads are thousands of objects that have escaped, and a question about each of them was a third of the whole solve.
+# RUN: valueflow-why asks=f1:v1
+# CHECK: asks=f1:v1
+# CHECK-NEXT: lookup {{*}} "x" set of 2
+# CHECK-NOT: set of 1 {{*}} of object
+# RUN(ANSWERS): valueflow-why values=f1:v1 escaped-layout=L0 escaped-layout=L1
+# ANSWERS: values=f1:v1
+# ANSWERS: operand 0 {{*}} 2 members
+# ANSWERS: result {{*}} unknown
+# ANSWERS: escaped-layout=L0
+# ANSWERS: n0 escaped
+# ANSWERS: escaped-layout=L1
+# ANSWERS: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = Integer
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    SetLiteralPrototype v3, v1
+    v5 = NewObject -, v2 layout=L1 fields=[0]
+    SetLiteralPrototype v5, v1
+    v7 = Call v1, -, v3, v5
+    v8 = NewClosure function=f3
+    v9 = Call v8, -, v3
+    v10 = Call v8, -, v5
+    Return
+}
+function f1 name="read" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="late" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f3 name="later" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f2
+    v2 = Call v1, -, v0
+    Return v2
+}

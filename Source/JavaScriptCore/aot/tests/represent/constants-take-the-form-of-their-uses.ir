@@ -1,0 +1,94 @@
+# A constant is made in the form its uses want: no conversion follows it. One with uses that want different forms takes the form of the use that runs most often, the code generator makes it again for the others, and a constant does not vote
+# on the form of the block parameter it is passed to. A constant that a cast without a register hands on stays without a register
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="returnsUndefined" results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+# CHECK: v0: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v0
+}
+
+function f1 name="returnsEachKind" parameters=[{type=i32}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+  b1():
+    v1 = Null
+    Return v1
+  b2():
+    v2 = Boolean boolean=true
+    Return v2
+  b3():
+    v3 = Integer integer=7
+    Return v3
+  b4():
+    v4 = Double number=1.5
+    Return v4
+  b5():
+    v5 = String string="text"
+    Return v5
+# CHECK: null @JSValue = Null
+# CHECK-NEXT: Return v1
+# CHECK: true @JSValue = Boolean boolean=true
+# CHECK-NEXT: Return v2
+# CHECK: 7 @JSValue = Integer integer=7
+# CHECK-NEXT: Return v3
+# CHECK: @JSValue = Double number=1.5
+# CHECK-NEXT: Return v4
+# CHECK: "text" @JSValue = String string="text"
+# CHECK-NEXT: Return v5
+}
+
+function f2 name="integerAddedToNumber" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Integer integer=1
+    v2 = Add v0, v1 form=Numbers
+    Return v2
+# CHECK: 1 @Double = Integer integer=1
+# CHECK-NEXT: number @Double = Add v0, v1 form=Numbers
+}
+
+function f3 name="sumStartsAtInteger" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3: number):
+    LoopHint
+    v5 = Add v3, v0 form=Numbers
+    Branch v1 -> taken b1(v5), notTaken b2()
+  b2():
+    Return v5
+# CHECK: 0 @Double = Integer
+# CHECK-NEXT: Jump -> next b1(v2)
+# CHECK: b1(v3: number @Double):
+}
+
+function f4 name="usedMoreOftenUnboxed" parameters=[{type=i32}, {type=boolean}] results=[{type=anything}] {
+    v2 = Integer integer=3
+    v3 = BitAnd v0, v2 form=Integers
+    v4 = BitOr v3, v2 form=Integers
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v4
+  b2() frequency=Rare:
+    Return v2
+# CHECK: 3 @Int32 = Integer integer=3
+# CHECK: b2() frequency=Rare:
+# CHECK-NEXT: Return v2
+}
+
+function f5 name="handedOnByCastWithoutRegister" parameters=[{type=boolean}] results=[{type=anything}] {
+    v1 = Undefined
+    Branch v0 -> taken b1(), notTaken b2(v1)
+  b1():
+    v2 = RequireObjectCoercible v1 nullishAccess=Read name="x"
+    Unreachable
+  b2(v3: anything):
+    Return v3
+}
+# CHECK-LABEL: function f5 name="handedOnByCastWithoutRegister"
+# CHECK: v1: undefined @Void = Undefined
+# CHECK: never @Void = RequireObjectCoercible v1
+# CHECK: b2(v3: anything @JSValue):
+# CODE-NOT: diagnostic

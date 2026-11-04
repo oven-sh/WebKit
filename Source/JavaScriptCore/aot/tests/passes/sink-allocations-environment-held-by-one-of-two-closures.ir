@@ -1,0 +1,70 @@
+# Only the second of two closures holds the environment. Where the two calls meet again the environment is a cell on one way and does not exist on the other, so nothing is read out of it there
+# FORM: Prepared
+# RUN: pass ComputeEffectSummaries SinkAllocations
+# OPTIONS: check=VerifyEachPass
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="caught" declared={type=anything}}]
+
+function f0 name="none" kind=Arrow results=[{type=string}] {
+    v0 = String string="none"
+    Return v0
+}
+function f1 name="read" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+function f2 name="mayThrow" parameters=[{type=boolean}] results=[{type=boolean}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Throw v0
+  b2():
+    Return v0
+}
+
+function f3 name="closureReplacedInCoveredBlock" parameters=[{type=boolean}, {type=string}] results=[{type=anything}] {
+    v2 = NewObject layout=L0
+    PutEnvironmentField v2, v1 layout=L0 field=0
+    v4 = NewClosure function=f0
+    Jump -> next b1()
+  b1() handler=b3(v4):
+    v5 = CallDirect v0 function=f2
+    v6 = NewClosure v2 function=f1
+    Jump -> next b2()
+  b2() handler=b3(v6):
+    v7 = CallDirect v0 function=f2
+    Jump -> next b4(v6)
+  b3(v8: f0|f1) role=CatchHandler:
+    v9 = String string="text"
+    v10 = TypeTest v8 testedType=f0
+    Branch v10 -> taken b8(| 0), notTaken b9(| 0)
+  b4(v11: f0|f1):
+    v12 = String string="text"
+    v13 = TypeTest v11 testedType=f0
+    Branch v13 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v14: f0):
+    v15 = CallDirect function=f0
+    Jump -> next b7(v15)
+  b6(v16: f1):
+    v17 = GetCapture v16 function=f1
+    v18 = CallDirect v17 function=f1
+    Jump -> next b7(v18)
+  b7(v19: anything):
+    v20 = NewArray v12, v19 contents=anything
+    Return v20
+  b8(v21: f0):
+    v22 = CallDirect function=f0
+    Jump -> next b10(v22)
+  b9(v23: f1):
+    v24 = GetCapture v23 function=f1
+    v25 = CallDirect v24 function=f1
+    Jump -> next b10(v25)
+  b10(v26: anything):
+    v27 = NewArray v9, v26 contents=anything
+    Jump -> next b4(v8)
+# CHECK: role=CatchHandler
+# CHECK: = Unspecified valueType=env L0
+# CHECK: = NewObject -, {{*}} layout=L0 fields=[0]
+# CHECK-NOT: GetEnvironmentField
+# CHECK: Jump -> next b4(
+}

@@ -29,7 +29,7 @@
 
 namespace WebCore {
 
-enum CSSValueID : uint16_t;
+enum class CSSValueID : uint16_t;
 
 class CSSFunctionValue final : public CSSValueContainingVector {
 public:

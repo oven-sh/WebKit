@@ -114,7 +114,7 @@ WI.SourceMapResource = class SourceMapResource extends WI.Resource
             // Force inline content to be asynchronous to match the expected load pattern.
             // FIXME: We don't know the MIME-type for inline content. Guess by analyzing the content?
             // Returns a promise.
-            return Promise.resolve().then(sourceMapResourceLoaded.bind(this, {content: this._inlineContent, mimeType: this.mimeType, statusCode: 200}));
+            return Promise.resolve().then(sourceMapResourceLoaded.bind(this, {content: this._inlineContent, mimeType: this.mimeType, status: 200}));
         }
 
         function sourceMapResourceNotAvailable(error, content, mimeType, statusCode)
@@ -137,12 +137,12 @@ WI.SourceMapResource = class SourceMapResource extends WI.Resource
 
         function sourceMapResourceLoaded(parameters)
         {
-            var {error, content, mimeType, statusCode} = parameters;
+            let {error, content, mimeType, status: statusCode} = parameters;
 
             var base64encoded = false;
 
             if (statusCode >= 400 || error)
-                return sourceMapResourceNotAvailable(error, content, mimeType, statusCode);
+                return sourceMapResourceNotAvailable.call(this, error, content, mimeType, statusCode);
 
             // FIXME: Add support for picking the best MIME-type. Right now the file extension is the best bet.
             // The constructor set MIME-type based on the file extension and we ignore mimeType here.
@@ -183,7 +183,7 @@ WI.SourceMapResource = class SourceMapResource extends WI.Resource
         // SourceCodeLocations are always constructed with raw resources and raw locations. Lookup the raw location.
         let [generatedLine, generatedColumn] = this._sourceMap.findGeneratedPosition(this.url, lineNumber);
 
-        // If the raw location is an inline script we need to include that offset.
+        // Keep in sync with `WI.SourceCodeLocation.prototype.resolveMappedLocation`.
         var originalSourceCode = this._sourceMap.originalSourceCode;
         if (originalSourceCode instanceof WI.Script) {
             if (!generatedLine)

@@ -1,0 +1,27 @@
+# Parts of one class meet: proven contents meet per slot and are never replaced by declared ones, declared contents meet where both are known
+# RUN: intersect
+# CHECK: t0 & t1 = Array<int, proven>
+# CHECK-NEXT: t0 - t1 = never
+# CHECK-NEXT: t0 & t2 = Array<int, proven>
+# CHECK-NEXT: t0 - t2 = never
+# CHECK-NEXT: t0 & t3 = Array<int, proven>
+# CHECK-NEXT: t0 - t3 = never
+# CHECK: t0 & t5 = Array<int, proven, Int32>
+# CHECK-NEXT: t0 - t5 = Array<int, proven>
+# CHECK: t1 & t0 = Array<int, proven>
+# CHECK-NEXT: t1 - t0 = Array<number, proven>
+# CHECK: t2 & t0 = Array<int, proven>
+# CHECK-NEXT: t2 - t0 = Array<string>
+# CHECK: t2 & t4 = Array<string>
+# CHECK-NEXT: t2 - t4 = never
+# CHECK: t2 & t6 = Array<never>
+# CHECK-NEXT: t2 - t6 = never
+# CHECK: t3 & t0 = Array<int, proven>
+# CHECK-NEXT: t3 - t0 = object
+# CHECK: t4 & t2 = Array<string>
+# CHECK: t5 & t0 = Array<int, proven, Int32>
+# CHECK-NEXT: t5 - t0 = never
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=Array<int, proven>}, {type=Array<number, proven>}, {type=Array<string>}, {type=object}, {type=Array}, {type=Array<int, proven, Int32>}, {type=Array<number>}] results=[{type=undefined}]

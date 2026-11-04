@@ -1,0 +1,95 @@
+# A CommonJS module of the image runs at most once, like an ES module: the module that threw keeps its error, and the next load throws it again.
+# So it does not count who outlives a failure. main.js imports first.cjs, whose body requires second.cjs. The handler in main.js outlives what third.cjs throws, and with it what fourth.cjs throws,
+# which the body of third.cjs requires. A function may run after the body that made it has failed, and finds that fifth.cjs has failed before.
+# The body of a module that awaits goes on although the evaluation that asked for it has failed: where sixth.cjs throws at waits.js, alsoWaits.js requires it once more
+# RUN: valueflow-results
+# CHECK: function f0 {{*}}executions=AtMostOnce
+# CHECK: function f1 {{*}}executions=AtMostOnce
+# CHECK: function f2 {{*}}executions=AtMostOnce
+# CHECK: function f3 {{*}}executions=AtMostOnce
+# CHECK: function f4 {{*}}executions=AtMostOnce
+# CHECK: function f5 {{*}}executions=AtMostOnce
+# CHECK: function f9 {{*}}executions=AtMostOnce
+
+module m0 path="/app/main.js" displayPath="main.js" flags=[KeepsError] body=f0 requests=[{target=m1 completes=true}, {target=m6 completes=true}, {target=m7 completes=true}, {target=m3 kind=Require completes=true}, {target=m5 kind=Require completes=true}]
+module m1 path="/app/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[KeepsError] body=f1 requests=[{target=m2 kind=Require completes=true}]
+module m2 path="/app/second.cjs" displayPath="second.cjs" kind=CommonJs flags=[KeepsError] body=f2
+module m3 path="/app/third.cjs" displayPath="third.cjs" kind=CommonJs flags=[KeepsError] body=f3 requests=[{target=m4 kind=Require completes=true}]
+module m4 path="/app/fourth.cjs" displayPath="fourth.cjs" kind=CommonJs flags=[KeepsError] body=f4
+module m5 path="/app/fifth.cjs" displayPath="fifth.cjs" kind=CommonJs flags=[KeepsError] body=f5
+module m6 path="/app/waits.js" displayPath="waits.js" flags=[HasTopLevelAwait, KeepsError] body=f7 requests=[{target=m8 kind=Require completes=true}]
+module m7 path="/app/alsoWaits.js" displayPath="alsoWaits.js" flags=[HasTopLevelAwait, KeepsError] body=f8 requests=[{target=m8 kind=Require completes=true}]
+module m8 path="/app/sixth.cjs" displayPath="sixth.cjs" kind=CommonJs flags=[KeepsError] body=f9
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Call v1
+    Jump -> next b1()
+  b1() handler=b2():
+    EvaluateModule module=m3 referrer=m0
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Jump -> next b3()
+  b3():
+    v5 = NewClosure function=f6
+    v6 = Call v5
+    Return
+}
+function f1 name="first" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Call v1
+    EvaluateModule module=m2 referrer=m1 [isBare]
+    Return
+}
+function f2 name="second" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Call v1
+    Return
+}
+function f3 name="third" module=m3 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Call v1
+    EvaluateModule module=m4 referrer=m3 [isBare]
+    Return
+}
+function f4 name="fourth" module=m4 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Call v1
+    Return
+}
+function f5 name="fifth" module=m5 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Call v1
+    Return
+}
+function f6 name="later" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m5 referrer=m0
+    Return
+}
+function f7 name="waits" module=m6 kind=Module flags=[IsAsync] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="ready" [isFreeName]
+    v2 = Await v1
+    EvaluateModule module=m8 referrer=m6
+    Return
+}
+function f8 name="alsoWaits" module=m7 kind=Module flags=[IsAsync] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="ready" [isFreeName]
+    v2 = Await v1
+    EvaluateModule module=m8 referrer=m7
+    Return
+}
+function f9 name="sixth" module=m8 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Call v1
+    Return
+}

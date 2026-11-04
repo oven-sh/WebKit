@@ -1,0 +1,52 @@
+# The baseline of the pair with instances-in-array.ir: instances that point at each other and are read through their fields, in a program that evaluates text at run time
+# FORM: AsRead
+# OPTIONS: references=narrow
+# RUN: plan-slots layouts
+# RUN(ACCESSES): pipeline ResolveAccesses
+# STATISTIC: HiddenWordsPlaced = 0
+# CHECK: L0 CompiledObject size=32
+# CHECK-NOT: extra-properties
+# ACCESSES-LABEL: function f1 name="Node"
+# ACCESSES: PutSlot [[node]], -, [[node]] key="next" receivers=[L0] level=Proven
+# ACCESSES-NEXT: PutSlot [[node]], -, v1 key="weight" receivers=[L0] level=Proven
+# ACCESSES-LABEL: function f2 name="follow"
+# ACCESSES-COUNT-2: : L0 = GetSlot {{*}} key="next" receivers=[L0] level=Proven
+# ACCESSES: : number = GetSlot {{*}} key="weight" receivers=[L0] level=Proven
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Node" module=m0 constructor=f1 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}]
+variable g0 name="first" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=MathRandom
+    v4 = Call v3
+    v5 = ToNumber v4
+    v6 = Construct v2, -, v5
+    v7 = Construct v2, -, v5
+    PropSet v6, v7 key="next" mode=Strict
+    PropSet v7, v6 key="next" mode=Strict
+    PutModuleVariable v6 variable=g0
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="text" [isFreeName]
+    v13 = PropGet v11 key="Function" [isFreeName]
+    v14 = Construct v13, -, v12
+    v15 = CallDirect function=f2
+    Return v15
+}
+function f1 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0 fields=[]
+    PropSet v3, v3 key="next" mode=Strict
+    PropSet v3, v1 key="weight" mode=Strict
+    Return v3
+}
+function f2 name="follow" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="next"
+    v2 = PropGet v1 key="next"
+    v3 = PropGet v2 key="weight"
+    Return v3
+}

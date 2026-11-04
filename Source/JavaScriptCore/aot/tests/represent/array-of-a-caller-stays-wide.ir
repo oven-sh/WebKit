@@ -1,0 +1,59 @@
+# A block parameter that takes narrow references stays narrow as long as the collector cannot run. Where it also takes a parameter of the function it does not: the caller may have handed in an array that lies in its frame,
+# outside of the cage that a narrow reference counts from
+# OPTIONS: references=narrow
+# RUN: pipeline ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="first" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="second" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewArray v1 contents=anything
+    PutModuleVariable v2 variable=g0
+    v4 = NewArray v1, v1 contents=anything
+    PutModuleVariable v4 variable=g1
+    v6 = NewArray v1 contents=anything
+    v7 = CallDirect v6, v1 function=f1 [isNeverInlined]
+    v8 = CallDirect v1 function=f2 [isNeverInlined]
+    v9 = PropGet v0 key="keep" [isFreeName]
+    v10 = Call v9, -, v7, v8
+    Return
+}
+function f1 name="parameterOrVariable" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
+    v2 = Null
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b5(v0)
+  b2():
+    v4 = ToBoolean v1
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    v5 = GetModuleVariable variable=g0
+    Jump -> next b5(v5)
+  b4():
+    v6 = GetModuleVariable variable=g1
+    Jump -> next b5(v6)
+  b5(v7: Array):
+    PutModuleVariable v7 variable=g0
+    Return v1
+# CHECK-NOT: Compress v0
+# CHECK-NOT: (v7: {{*}} @Cell32)
+}
+
+function f2 name="variableOrVariable" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = GetModuleVariable variable=g0
+    Jump -> next b3(v2)
+  b2():
+    v3 = GetModuleVariable variable=g1
+    Jump -> next b3(v3)
+  b3(v4: Array):
+    PutModuleVariable v4 variable=g0
+    Return v0
+# CHECK: b{{*}}(v4: {{*}} @Cell32):
+}

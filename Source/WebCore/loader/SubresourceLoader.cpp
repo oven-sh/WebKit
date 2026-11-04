@@ -308,7 +308,7 @@ void SubresourceLoader::willSendRequestInternal(ResourceRequest&& newRequest, co
             newRequest.makeUnconditional();
             MemoryCache::singleton().revalidationFailed(*resource);
             if (frame && frame->page())
-                protect(frame->page())->diagnosticLoggingClient().logDiagnosticMessageWithResult(DiagnosticLoggingKeys::cachedResourceRevalidationKey(), emptyString(), DiagnosticLoggingResultFail, ShouldSample::Yes);
+                protect(protect(frame->page())->diagnosticLoggingClient())->logDiagnosticMessageWithResult(DiagnosticLoggingKeys::cachedResourceRevalidationKey(), emptyString(), DiagnosticLoggingResultFail, ShouldSample::Yes);
         }
 
         RefPtr documentLoader = this->documentLoader();
@@ -433,7 +433,7 @@ void SubresourceLoader::didReceiveResponse(ResourceResponse&& response, Completi
     // redirection with no or empty Location headers and fetch in manual redirect mode. Or in rare circumstances,
     // cases of too many redirects from CFNetwork (<rdar://problem/30610988>).
 #if !PLATFORM(COCOA)
-    ASSERT(response.httpStatusCode() < httpStatus300MultipleChoices || response.httpStatusCode() >= httpStatus400BadRequest || response.httpStatusCode() == httpStatus304NotModified || response.httpHeaderField(HTTPHeaderName::Location).isEmpty() || response.type() == ResourceResponse::Type::Opaqueredirect);
+    ASSERT(!response.isRedirection() || response.httpHeaderField(HTTPHeaderName::Location).isEmpty() || response.type() == ResourceResponse::Type::Opaqueredirect);
 #endif
 
     // Reference the object in this method since the additional processing can do
@@ -458,7 +458,7 @@ void SubresourceLoader::didReceiveResponse(ResourceResponse&& response, Completi
             resource->setResponse(ResourceResponse { revalidationResponse });
             MemoryCache::singleton().revalidationSucceeded(*resource, resource->response());
             if (frame && frame->page())
-                protect(frame->page())->diagnosticLoggingClient().logDiagnosticMessageWithResult(DiagnosticLoggingKeys::cachedResourceRevalidationKey(), emptyString(), DiagnosticLoggingResultPass, ShouldSample::Yes);
+                protect(protect(frame->page())->diagnosticLoggingClient())->logDiagnosticMessageWithResult(DiagnosticLoggingKeys::cachedResourceRevalidationKey(), emptyString(), DiagnosticLoggingResultPass, ShouldSample::Yes);
             if (!reachedTerminalState())
                 ResourceLoader::didReceiveResponse(WTF::move(revalidationResponse), [completionHandlerCaller = WTF::move(completionHandlerCaller)] { });
             return;
@@ -466,7 +466,7 @@ void SubresourceLoader::didReceiveResponse(ResourceResponse&& response, Completi
         // Did not get 304 response, continue as a regular resource load.
         MemoryCache::singleton().revalidationFailed(*resource);
         if (frame && frame->page())
-            protect(frame->page())->diagnosticLoggingClient().logDiagnosticMessageWithResult(DiagnosticLoggingKeys::cachedResourceRevalidationKey(), emptyString(), DiagnosticLoggingResultFail, ShouldSample::Yes);
+            protect(protect(frame->page())->diagnosticLoggingClient())->logDiagnosticMessageWithResult(DiagnosticLoggingKeys::cachedResourceRevalidationKey(), emptyString(), DiagnosticLoggingResultFail, ShouldSample::Yes);
     }
 
     auto accessControlCheckResult = checkResponseCrossOriginAccessControl(response);
@@ -665,7 +665,7 @@ static void logResourceLoaded(LocalFrame* frame, CachedResource::Type type)
         break;
     }
     
-    protect(frame->page())->diagnosticLoggingClient().logDiagnosticMessage(DiagnosticLoggingKeys::resourceLoadedKey(), resourceType, ShouldSample::Yes);
+    protect(protect(frame->page())->diagnosticLoggingClient())->logDiagnosticMessage(DiagnosticLoggingKeys::resourceLoadedKey(), resourceType, ShouldSample::Yes);
 }
 
 std::expected<void, String> SubresourceLoader::checkResponseCrossOriginAccessControl(const ResourceResponse& response)

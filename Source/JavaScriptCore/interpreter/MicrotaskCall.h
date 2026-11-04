@@ -87,11 +87,14 @@ public:
     static constexpr unsigned cacheSize = 8;
     static_assert(hasOneBitSet(cacheSize));
 
+    enum class Owner : uint8_t { SynchronousCaller, JobLoop };
+
     // The cache lives on the stack, where the conservative scan reads whole words. A MicrotaskCall has
     // padding (after CallLinkInfoBase's one-byte type) that its constructor does not write, so an entry
     // built over a slot an earlier frame left a cell pointer in would keep all but the low byte of it,
     // and the scan takes that for a pointer into the cell. The entries are built over zeroed storage.
-    MicrotaskCallCache()
+    explicit MicrotaskCallCache(Owner owner = Owner::SynchronousCaller)
+        : m_owner(owner)
     {
         zeroBytes(m_storage);
         for (unsigned i = 0; i < cacheSize; ++i)
@@ -132,6 +135,8 @@ public:
             entry.clear();
     }
 
+    bool isOwnedByJobLoop() const { return m_owner == Owner::JobLoop; }
+
     void reconcileWeakReferencesAtGCEnd(VM& vm)
     {
         for (auto& entry : entries())
@@ -143,6 +148,7 @@ private:
 
     alignas(MicrotaskCall) std::array<uint8_t, sizeof(MicrotaskCall) * cacheSize> m_storage;
     unsigned m_nextEntryIndex { 0 };
+    const Owner m_owner;
 };
 
 } // namespace JSC

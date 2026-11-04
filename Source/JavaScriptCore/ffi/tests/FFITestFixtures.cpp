@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFITestFixtures.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include <bit>
 #include <cstddef>
@@ -800,4 +800,4 @@ const FFIFixtureEntry* ffiTestFixtureNamed(const char* name)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

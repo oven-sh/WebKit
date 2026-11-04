@@ -1,0 +1,52 @@
+# What `Reflect.get(made, "alpha", other)`, `Reflect.get(made, "beta", made)` and `Reflect.get(kept, "alpha", other)` are once the function of the library is pasted in: reads by a constant key with a `this` of their own.
+# A value that lies in the object's own slot is the answer whoever the receiver is.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN: pipeline CheckPlacement
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="alpha" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="beta" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 fields=[{key="gamma" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 fields=[{key="alpha" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject layout=L0
+    PropDefine v3, v2 key="alpha"
+    v5 = Integer integer=2
+    PropDefine v3, v5 key="beta"
+    v7 = FinishObject v3
+    v8 = NewObject layout=L1
+    PropDefine v8, v5 key="gamma"
+    v10 = FinishObject v8
+    v11 = NewObject layout=L2
+    PropDefine v11, v2 key="alpha"
+    v13 = FinishObject v11
+    PropSet v0, v13 key="handedOut"
+    v15 = String string="alpha"
+    v16 = String string="beta"
+    v17 = CallDirect v7, v10, v15 function=f1
+    v18 = CallDirect v7, v7, v16 function=f1
+    v19 = CallDirect v13, v10, v15 function=f1
+    v20 = NewArray v17, v18, v19 contents=anything
+    PropSet v0, v20 key="answer"
+    v22 = Undefined
+    Return v22
+}
+function f1 name="get" module=m0 role=Library thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = GetByValWithThis v0, v1, v2
+    Return v3
+}
+
+# No read is left that names a receiver: the first two answers are what was stored, the third is the slot.
+# CHECK-LABEL: function f0
+# CHECK-NOT: GetByValWithThis
+# CHECK: [[third]]: number = GetSlot {{*}} key="alpha"
+# CHECK-NOT: GetByValWithThis
+# CHECK: = NewArray {{*}}, {{*}}, [[third]]
+# CHECK-NOT: GetByValWithThis
+# CHECK-LABEL: function f1

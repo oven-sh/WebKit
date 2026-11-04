@@ -58,31 +58,28 @@ public:
         dataLogIf(DFGMovHintRemovalPhaseInternal::verbose, "Graph before MovHint removal:\n", m_graph);
 
         // First figure out where various locals are live across the whole
-        // graph. This is a backward "bytecode liveness restricted to OSR exit
-        // sites" analysis:
-        //   Use:  any node which may exit. The locals that are live in
-        //         bytecode at the node's exit origin are use-d here. For
-        //         exception-only exits we use the matching catch handler's
-        //         origin.
-        //         Additionally, the bytecode-live set at every block's
-        //         terminal is treated as a use even when the terminal
-        //         itself doesn't exit. MovHints anchor phantom allocations
-        //         to bytecode locals in the OSR availability map; the
-        //         availability map is used by FTL's exit emission and
-        //         ObjectAllocationSinking, both walk from bytecode-live locals
-        //         through the heap closure to pick up heap promotions for sunk
-        //         allocations. If we kill a MovHint that anchors a phantom to
-        //         a bytecode-live local just because the next FTL-exit-OK node
-        //         has it bytecode-dead, the closure can no longer reach the
-        //         phantom, and the heap promotion (e.g. StructurePLoc) is
-        //         pruned at the use site.
-        //   Def:  MovHint kills its destination local.
-        IndexMap<BasicBlock*, Operands<bool>> liveAtHead(m_graph.numBlocks());
-        IndexMap<BasicBlock*, Operands<bool>> liveAtTail(m_graph.numBlocks());
+        // graph. This is a backward bytecode liveness analysis restricted to
+        // the places that can read a local's availability:
+        //   Observed: any node which may exit uses the locals that are live in
+        //     bytecode at its exit origin. For exception-only exits we use the
+        //     matching catch handler's origin.
+        //   Anchored: every block terminal uses its bytecode-live locals, even
+        //     when it doesn't exit. OSR availability analysis prunes, at each
+        //     block head, the heap entries of phantom allocations that no
+        //     bytecode-live local reaches. Killing a MovHint of a phantom
+        //     allocation can thus drop its heap state (e.g. StructurePLoc)
+        //     before a later exit that sees the allocation through another
+        //     local. Only MovHints of phantom allocations need this; an
+        //     ordinary value is fully described by its node.
+        //   Def: MovHint kills its destination local.
+        // Every exit-live local is also live at the terminals before it, so
+        // both facts fit in one chain: Dead < Anchored < Observed.
+        IndexMap<BasicBlock*, Operands<Liveness>> liveAtHead(m_graph.numBlocks());
+        IndexMap<BasicBlock*, Operands<Liveness>> liveAtTail(m_graph.numBlocks());
 
         for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
-            liveAtHead[block] = Operands<bool>(OperandsLike, block->variablesAtHead, false);
-            liveAtTail[block] = Operands<bool>(OperandsLike, block->variablesAtHead, false);
+            liveAtHead[block] = Operands<Liveness>(OperandsLike, block->variablesAtHead, Liveness::Dead);
+            liveAtTail[block] = Operands<Liveness>(OperandsLike, block->variablesAtHead, Liveness::Dead);
         }
 
         bool changed;
@@ -93,17 +90,13 @@ public:
                 if (!block)
                     continue;
 
-                Operands<bool> live = liveAtTail[block];
-                m_graph.forAllLiveInBytecode(
-                    block->terminal()->origin.forExit,
-                    [&](Operand operand) {
-                        live.operand(operand) = true;
-                    });
+                Operands<Liveness> live = liveAtTail[block];
+                useTerminalOperands(block, live);
                 for (unsigned nodeIndex = block->size(); nodeIndex--;) {
                     Node* node = block->at(nodeIndex);
                     if (node->op() == MovHint)
-                        live.operand(node->unlinkedOperand()) = false;
-                    defineLiveOperands(node, live);
+                        live.operand(node->unlinkedOperand()) = Liveness::Dead;
+                    useExitOperands(node, live);
                 }
 
                 if (live == liveAtHead[block])
@@ -114,7 +107,7 @@ public:
 
                 for (BasicBlock* predecessor : block->predecessors) {
                     for (size_t i = live.size(); i--;)
-                        liveAtTail[predecessor][i] |= live[i];
+                        liveAtTail[predecessor][i] = std::max(liveAtTail[predecessor][i], live[i]);
                 }
             }
         } while (changed);
@@ -128,7 +121,22 @@ public:
     }
 
 private:
-    void defineLiveOperands(Node* node, Operands<bool>& live)
+    enum class Liveness : uint8_t {
+        Dead,
+        Anchored,
+        Observed,
+    };
+
+    void useTerminalOperands(BasicBlock* block, Operands<Liveness>& live)
+    {
+        m_graph.forAllLiveInBytecode(
+            block->terminal()->origin.forExit,
+            [&](Operand operand) {
+                live.operand(operand) = std::max(live.operand(operand), Liveness::Anchored);
+            });
+    }
+
+    void useExitOperands(Node* node, Operands<Liveness>& live)
     {
         switch (mayExit(m_graph, node)) {
         case DoesNotExit:
@@ -138,7 +146,7 @@ private:
             m_graph.forAllLiveInBytecode(
                 node->origin.forExit,
                 [&](Operand operand) {
-                    live.operand(operand) = true;
+                    live.operand(operand) = Liveness::Observed;
                 });
             return;
         }
@@ -156,7 +164,7 @@ private:
                 m_graph.forAllLiveInBytecode(
                     catchOrigin,
                     [&](Operand operand) {
-                        live.operand(operand) = true;
+                        live.operand(operand) = Liveness::Observed;
                     });
             }
             return;
@@ -164,24 +172,19 @@ private:
         }
     }
 
-    void handleBlock(BasicBlock* block, const Operands<bool>& liveAtTail)
+    void handleBlock(BasicBlock* block, const Operands<Liveness>& liveAtTail)
     {
         dataLogLnIf(DFGMovHintRemovalPhaseInternal::verbose, "Handing block ", pointerDump(block));
 
-        Operands<bool> live = liveAtTail;
-        m_graph.forAllLiveInBytecode(
-            block->terminal()->origin.forExit,
-            [&](Operand operand) {
-                live.operand(operand) = true;
-            });
-
-        dataLogLnIf(DFGMovHintRemovalPhaseInternal::verbose, "    Locals at ", block->terminal()->origin.forExit, ": ", live);
+        Operands<Liveness> live = liveAtTail;
+        useTerminalOperands(block, live);
 
         for (unsigned nodeIndex = block->size(); nodeIndex--;) {
             Node* node = block->at(nodeIndex);
 
             if (node->op() == MovHint) {
-                bool isAlive = live.operand(node->unlinkedOperand());
+                Liveness required = node->child1()->isPhantomAllocation() ? Liveness::Anchored : Liveness::Observed;
+                bool isAlive = live.operand(node->unlinkedOperand()) >= required;
                 dataLogLnIf(DFGMovHintRemovalPhaseInternal::verbose, "    At ", node, " (", node->unlinkedOperand(), "): live: ", isAlive);
                 if (!isAlive) {
                     // Now, MovHint will put bottom value to dead locals. This means that if you insert a new DFG node which introduce
@@ -196,9 +199,9 @@ private:
                     node->child1() = Edge(constant, useKind);
                     m_changed = true;
                 }
-                live.operand(node->unlinkedOperand()) = false;
+                live.operand(node->unlinkedOperand()) = Liveness::Dead;
             }
-            defineLiveOperands(node, live);
+            useExitOperands(node, live);
         }
     }
 

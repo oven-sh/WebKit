@@ -14,7 +14,7 @@
 
 //! X.509 certificate verification errors.
 
-use core::ffi::{c_char, CStr};
+use core::ffi::{CStr, c_char};
 use core::fmt::{self, Debug, Display};
 
 use bssl_macros::bssl_enum;
@@ -23,6 +23,7 @@ use bssl_sys::LibCode;
 bssl_enum! {
     /// X.509 certificate verification result code.
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
     pub enum X509VerifyResult: i32 {
         /// The operation was successful.
         Ok = bssl_sys::X509_V_OK as i32,
@@ -152,6 +153,7 @@ bssl_enum! {
 bssl_enum! {
     /// X.509 reason codes.
     #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
     pub enum X509Reason: i32 {
         /// `X509_R_AKID_MISMATCH`
         AkidMismatch = bssl_sys::X509_R_AKID_MISMATCH as i32,
@@ -289,6 +291,7 @@ bssl_enum! {
 
 /// X.509 related errors
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum X509Error {
     /// PEM string is too long.
     PemTooLong,
@@ -324,6 +327,7 @@ impl Display for X509Error {
 
 /// Main PKI errors
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum PkiError {
     /// X.509 errors
     X509(X509Error),

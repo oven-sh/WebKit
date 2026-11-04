@@ -1,0 +1,127 @@
+# const parts = text.split(separator); return parts[1];
+# The call says how long its list is. A bounds test at a known position is `position < length`, however many elements are kept apart, and the list is not allocated.
+# At a position that is not known the elements are wanted, and the list is allocated.
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: ListsOfBuiltinsNeverBuilt = 6
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="second" parameters=[{type=string}, {type=string}] results=[{type=undefined|string}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 provenType=Array<string, proven, pristine[Storage, Names]>
+    v4 = Integer integer=1
+    v5 = HasArrayStorage v3 arrayStorage=Contiguous
+    Branch v5 -> taken b1(| 0), notTaken b3()
+  b1(v6: guard):
+    v7 = IsInBounds v3, v4
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8: guard):
+    v9 = AllGuards v6, v8
+    v10 = GetArrayElement v3, v4, v9 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+    Jump -> next b4(v10)
+  b3() frequency=Unlikely:
+    v11 = ElemGet v3, v4 [keyIsIntegral]
+    Jump -> next b4(v11)
+  b4(v12: undefined|string):
+    Return v12
+# CHECK: builtinCallForm=Prefix prefixLength=2
+# CHECK-NOT: IsInBounds
+# CHECK: = Less
+}
+
+function f1 name="askedInsideWhatIsKept" parameters=[{type=string}, {type=string}] results=[{type=undefined|string}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 provenType=Array<string, proven, pristine[Storage, Names]>
+    v4 = Integer integer=1
+    v5 = IsInBounds v3, v4 [isFromProgram]
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Integer integer=2
+    v7 = ElemGet v3, v6 [keyIsIntegral]
+    Return v7
+  b2():
+    v8 = String string="short"
+    Return v8
+# CHECK: builtinCallForm=Prefix prefixLength=3
+# CHECK-NOT: IsInBounds
+# CHECK: = Less
+# CHECK: Branch
+# CHECK: string="short"
+}
+
+function f2 name="askedBehindWhatIsKept" parameters=[{type=string}, {type=string}] results=[{type=boolean}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 provenType=Array<string, proven, pristine[Storage, Names]>
+    v4 = Integer integer=1
+    v5 = IsInBounds v3, v4 [isFromProgram]
+    Return v5
+# CHECK: builtinCallForm=Prefix prefixLength=0
+# CHECK-NOT: IsInBounds
+# CHECK: = Less
+}
+
+function f3 name="askedSomewhere" parameters=[{type=string}, {type=string}, {type=int[0, 9]}] results=[{type=boolean}] {
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v4 = AssumeType v3 provenType=Array<string, proven, pristine[Storage, Names]>
+    v5 = IsInBounds v4, v2 [isFromProgram]
+    Return v5
+# CHECK-NOT: builtinCallForm=Prefix
+# CHECK: = IsInBounds v4, v2
+}
+
+function f4 name="askedOfMatch" parameters=[{type=RegExp}, {type=string}] results=[{type=string}] {
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
+    v3 = AssumeType v2 provenType=null|Array<undefined|string, proven, pristine[Storage, Names]>
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(| 0), notTaken b4()
+  b1(v5: Array<undefined|string, proven, pristine[Storage, Names]>):
+    v6 = Integer integer=1
+    v7 = IsInBounds v5, v6 [isFromProgram]
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = String string="in"
+    Return v8
+  b3():
+    v9 = String string="out"
+    Return v9
+  b4():
+    v10 = String string="none"
+    Return v10
+# CHECK: builtinCallForm=Prefix
+# CHECK-NOT: IsInBounds
+# CHECK: = Less
+# CHECK: string="in"
+# CHECK: string="out"
+}
+
+# Two calls whose lists meet: the length comes along with whichever list it is.
+function f5 name="secondOfEither" parameters=[{type=string}, {type=string}, {type=boolean}] results=[{type=undefined|string}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v4 = AssumeType v3 provenType=Array<string, proven, pristine[Storage, Names]>
+    Jump -> next b3(v4)
+  b2():
+    v5 = CallBuiltin v1, v0 overload=StringPrototypeSplit/0
+    v6 = AssumeType v5 provenType=Array<string, proven, pristine[Storage, Names]>
+    Jump -> next b3(v6)
+  b3(v7: Array<string, proven, pristine[Storage, Names]>):
+    v8 = Integer integer=1
+    v9 = HasArrayStorage v7 arrayStorage=Contiguous
+    Branch v9 -> taken b4(| 0), notTaken b6()
+  b4(v10: guard):
+    v11 = IsInBounds v7, v8
+    Branch v11 -> taken b5(| 0), notTaken b6()
+  b5(v12: guard):
+    v13 = AllGuards v10, v12
+    v14 = GetArrayElement v7, v8, v13 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+    Return v14
+  b6() frequency=Unlikely:
+    v15 = ElemGet v7, v8 [keyIsIntegral]
+    Return v15
+# CHECK: builtinCallForm=Prefix prefixLength=2
+# CHECK: builtinCallForm=Prefix prefixLength=2
+# CHECK-NOT: IsInBounds
+# CHECK: = Less
+}

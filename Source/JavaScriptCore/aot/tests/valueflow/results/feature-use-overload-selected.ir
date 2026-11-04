@@ -1,0 +1,18 @@
+# split() with an unknown separator may select the generic overload, which uses the RegExp features
+# RUN: valueflow-results
+# CHECK: builtin-use StringPrototypeSplit [Read, Called]
+# CHECK: feature 7 StringPrototypeSplit
+# CHECK: feature 8 StringPrototypeSplit
+# CHECK: feature 53 StringPrototypeSplit
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="a,b"
+    v1 = PropGet v0 key="split"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="separator" [isFreeName]
+    v4 = Call v1, v0, v3 calleeKey="split"
+    Return
+}

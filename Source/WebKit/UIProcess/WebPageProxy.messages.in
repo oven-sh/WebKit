@@ -41,7 +41,6 @@ messages -> WebPageProxy {
     SetFocus(bool focused, std::optional<WebCore::UserGestureTokenIdentifier> userGestureTokenIdentifier)
     TakeFocus(enum:uint8_t WebCore::FocusDirection direction)
     FocusFromServiceWorker() -> ()
-    FocusedElementChanged(std::optional<WebCore::FrameIdentifier> frameID, struct WebCore::FocusOptions options)
     FocusedFrameChanged(std::optional<WebCore::FrameIdentifier> frameID)
     SetRenderTreeSize(uint64_t treeSize)
     SetIsResizable(bool isResizable)
@@ -60,6 +59,7 @@ messages -> WebPageProxy {
     RelayAccessibilityNotification(String notificationName, std::span<const uint8_t> notificationData)
     RelayAriaNotifyNotification(struct WebCore::AriaNotifyData notificationData)
     RelayLiveRegionNotification(struct WebCore::LiveRegionAnnouncementData notificationData)
+    DidDisplayCaptions(Vector<String> captions)
 #endif
     TranslateAccessibilityAnnouncementStrings(Vector<String> strings, String targetLocaleIdentifier) -> (Vector<String> translatedStrings)
 
@@ -83,7 +83,7 @@ messages -> WebPageProxy {
     [EnabledBy=ContactPickerAPIEnabled] ShowContactPicker(struct WebCore::ContactsRequestData requestData) -> (std::optional<Vector<WebCore::ContactInfo>> info)
 
 #if ENABLE(WEB_AUTHN)
-    [EnabledBy=DigitalCredentialsEnabled] ShowDigitalCredentialsChooser(std::optional<WebCore::FrameIdentifier> frameID, Variant<WebCore::DigitalCredentialsMobileDocumentRequestData> requestData) -> (std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData> response)
+    [EnabledBy=DigitalCredentialsEnabled] ShowDigitalCredentialsChooser(std::optional<WebCore::FrameIdentifier> frameID, Variant<WebCore::DigitalCredentialsMobileDocumentRequestData, WebCore::DigitalCredentialsOpenID4VPRequestData> requestData) -> (std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData> response)
     [EnabledBy=DigitalCredentialsEnabled] DismissDigitalCredentialsChooser() -> (bool didDismiss)
 #endif
 
@@ -170,6 +170,7 @@ messages -> WebPageProxy {
 #if PLATFORM(MAC)
     [EnabledBy=SiteIsolationEnabled] PerformAccessibilitySearchInRemoteFrame(WebCore::FrameIdentifier frameID, struct WebCore::AccessibilitySearchCriteriaIPC criteria) -> (Vector<WebCore::AccessibilityRemoteToken> results)
     [EnabledBy=SiteIsolationEnabled] ContinueAccessibilitySearchFromChildFrame(WebCore::FrameIdentifier childFrameID, struct WebCore::AccessibilitySearchCriteriaIPC criteria) -> (Vector<WebCore::AccessibilityRemoteToken> results)
+    [EnabledBy=SiteIsolationEnabled] RelayAccessibilitySelectedTextChangeToMainFrame(WebCore::FrameIdentifier frameID, struct WebCore::AXRemoteFrameSelectedTextChange change)
 #endif
 
     MainFramePluginHandlesPageScaleGestureDidChange(bool mainFramePluginHandlesPageScaleGesture, double minScale, double maxScale)
@@ -235,6 +236,7 @@ messages -> WebPageProxy {
     ShouldGoToBackForwardListItemSync(WebCore::BackForwardItemIdentifier itemID) -> (enum:uint8_t WebCore::ShouldGoToHistoryItem shouldGoToHistoryItem) Synchronous
     GoToBackForwardItemAtIndex(int32_t steps)
     EnqueueHistoryTraversalDelta(int32_t delta)
+    EnqueueHistoryTraversalToItem(WebCore::BackForwardFrameItemIdentifier frameItemID) -> (bool didTakeTraversal)
 
     # Undo/Redo messages
     RegisterEditCommandForUndo(WebKit::WebUndoStepID commandID, String label) AllowedWhenWaitingForSyncReply
@@ -299,10 +301,9 @@ messages -> WebPageProxy {
     SetTextIndicatorFromFrame(WebCore::FrameIdentifier frameID, RefPtr<WebCore::TextIndicator> textIndicator, enum:uint8_t WebCore::TextIndicatorLifetime lifetime)
     UpdateTextIndicatorFromFrame(WebCore::FrameIdentifier frameID, RefPtr<WebCore::TextIndicator> textIndicator)
     ClearTextIndicator()
-    DidGetImageForFindMatch(struct WebCore::ImageBufferParameters parameters, WebCore::ShareableBitmapHandle contentImageHandle, uint32_t matchIndex)
 
     # PopupMenu messages
-    ShowPopupMenuFromFrame(WebCore::FrameIdentifier frameID, WebCore::IntRect rect, uint64_t textDirection, Vector<WebKit::WebPopupItem> items, int32_t selectedIndex, struct WebKit::PlatformPopupMenuData data)
+    ShowPopupMenuFromFrame(WebCore::FrameIdentifier frameID, WebCore::IntRect rectInMainFrameView, uint64_t textDirection, Vector<WebKit::WebPopupItem> items, int32_t selectedIndex, struct WebKit::PlatformPopupMenuData data)
     HidePopupMenu()
 
 #if ENABLE(CONTEXT_MENUS)
@@ -368,6 +369,13 @@ messages -> WebPageProxy {
     DidReceiveInteractiveModelElement(std::optional<WebCore::NodeIdentifier> nodeID)
 #endif
 
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    [EnabledBy=SpatialPortalEnabled] PresentVolumetricScene(WebCore::NodeIdentifier nodeID, struct WebKit::VolumetricSceneContentContext contentContext) -> (bool success)
+    [EnabledBy=SpatialPortalEnabled] ReconnectVolumetricSceneToContentContext(WebCore::NodeIdentifier nodeID, struct WebKit::VolumetricSceneContentContext contentContext)
+    [EnabledBy=SpatialPortalEnabled] DismissVolumetricScene(WebCore::NodeIdentifier nodeID)
+    [EnabledBy=SpatialPortalEnabled] UpdateVolumetricSceneHitSphere(WebCore::NodeIdentifier nodeID, WebCore::FloatPoint3D center, float radius)
+#endif
+
 #if PLATFORM(COCOA)
     # Dictionary support.
     DidPerformDictionaryLookup(struct WebCore::DictionaryPopupInfo dictionaryPopupInfo)
@@ -400,14 +408,14 @@ messages -> WebPageProxy {
 #endif
 #if PLATFORM(MAC)
     # Autocorrection messages
-    ShowCorrectionPanel(enum:uint8_t WebCore::AlternativeTextType panelType, WebCore::FloatRect boundingBoxOfReplacedString, String replacedString, String replacementString, Vector<String> alternativeReplacementStrings, WebCore::FrameIdentifier rootFrameID)
+    ShowCorrectionPanel(enum:uint8_t WebCore::AlternativeTextType panelType, WebCore::FloatRect boundingBoxOfReplacedString, String replacedString, String replacementString, Vector<String> alternativeReplacementStrings)
     DismissCorrectionPanel(enum:uint8_t WebCore::ReasonForDismissingAlternativeText reason)
     DismissCorrectionPanelSoon(enum:uint8_t WebCore::ReasonForDismissingAlternativeText reason) -> (String result) Synchronous
     RecordAutocorrectionResponse(enum:uint8_t WebCore::AutocorrectionResponse response, String replacedString, String replacementString);
 
     SetFocusedElementInputType(enum:uint8_t WebKit::InputType inputType)
 
-    HandleAcceptsFirstMouse(bool acceptsFirstMouse) CanDispatchOutOfOrder
+    HandleAcceptsFirstMouse(Variant<bool, WebCore::RemoteUserInputEventData> result) CanDispatchOutOfOrder
 #endif
 
     DidUpdateRenderingAfterCommittingLoad()
@@ -429,7 +437,7 @@ messages -> WebPageProxy {
     RestorePageCenterAndScale(std::optional<WebCore::FloatPoint> unobscuredCenter, double scale)
 #endif
 #if ENABLE(TWO_PHASE_CLICKS)
-    DidGetTapHighlightGeometries(WebKit::TapIdentifier requestID, WebCore::Color color, Vector<WebCore::FloatQuad> geometries, WebCore::IntSize topLeftRadius, WebCore::IntSize topRightRadius, WebCore::IntSize bottomLeftRadius, WebCore::IntSize bottomRightRadius, bool nodeHasBuiltInClickHandling)
+    DidGetTapHighlightGeometries(WebKit::TapIdentifier requestID, WebCore::Color color, Vector<WebCore::FloatQuad> geometries, WebCore::CornerRadii cornerRadii, bool nodeHasBuiltInClickHandling)
 #endif
 #if PLATFORM(IOS_FAMILY)
     ElementDidFocus(struct WebKit::FocusedElementInformation information, bool userIsInteracting, bool blurPreviousNode, OptionSet<WebCore::ActivityState> activityStateChanges, WebKit::UserData userData)
@@ -457,6 +465,8 @@ messages -> WebPageProxy {
 
     DidChangeInspectorFrontendCount(uint32_t count)
     SendMessageToInspectorFrontend(String targetId, String message)
+    FrameDidPauseForDebugger(WebCore::FrameIdentifier frameID)
+    FrameDidContinueForDebugger(WebCore::FrameIdentifier frameID)
 
     # Search popup menus
     SaveRecentSearches(String name, Vector<WebCore::RecentSearch> searchItems)
@@ -489,9 +499,6 @@ messages -> WebPageProxy {
     IsPlayingMediaDidChange(OptionSet<WebCore::MediaProducerMediaState> state)
     HandleAutoplayEvent(enum:uint8_t WebCore::AutoplayEvent event, OptionSet<WebCore::AutoplayEventFlags> flags)
 
-#if PLATFORM(MAC)
-    DidPerformImmediateActionHitTest(struct WebKit::WebHitTestResultData result, bool contentPreventsDefault, WebKit::UserData userData) CanDispatchOutOfOrder
-#endif
     HandleMessage(String messageName, WebKit::UserData messageBody) AllowedWhenWaitingForSyncReply
     HandleSynchronousMessage(String messageName, WebKit::UserData messageBody) -> (WebKit::UserData returnData) Synchronous
 
@@ -515,7 +522,7 @@ messages -> WebPageProxy {
 #if ENABLE(WIRELESS_PLAYBACK_TARGET) && !PLATFORM(IOS_FAMILY)
     AddPlaybackTargetPickerClient(WebCore::PlaybackTargetClientContextIdentifier contextId)
     RemovePlaybackTargetPickerClient(WebCore::PlaybackTargetClientContextIdentifier contextId)
-    ShowPlaybackTargetPicker(WebCore::PlaybackTargetClientContextIdentifier contextId, WebCore::FrameIdentifier frameID, WebCore::FloatRect pickerLocation, bool hasVideo)
+    ShowPlaybackTargetPicker(WebCore::PlaybackTargetClientContextIdentifier contextId, WebCore::FloatRect rectInMainFrameView, bool hasVideo)
     PlaybackTargetPickerClientStateDidChange(WebCore::PlaybackTargetClientContextIdentifier contextId, OptionSet<WebCore::MediaProducerMediaState> mediaState)
     SetMockMediaPlaybackTargetPickerEnabled(bool enabled)
     SetMockMediaPlaybackTargetPickerState(String name, enum:uint8_t WebCore::MediaPlaybackTargetMockState pickerState)
@@ -655,16 +662,20 @@ messages -> WebPageProxy {
     [EnabledBy=SiteIsolationEnabled] BroadcastAllDocumentSyncData(Ref<WebCore::DocumentSyncData> documentSyncData)
 
     [EnabledBy=SiteIsolationEnabled] BroadcastFrameTreeSyncData(WebCore::FrameIdentifier frameID, struct WebCore::FrameTreeSyncSerializationData frameTreeSyncData)
-    [EnabledBy=SiteIsolationEnabled] BroadcastAllFrameTreeSyncData(WebCore::FrameIdentifier frameID, Ref<WebCore::FrameTreeSyncData> frameTreeSyncData)
+    [EnabledBy=SiteIsolationEnabled] HandleFrameGeometryUpdates(Vector<WebCore::FrameGeometryUpdate> updates)
 
-    [EnabledBy=SiteIsolationEnabled] DidNotifyUserActivation(WebCore::FrameIdentifier sourceFrameID, MonotonicTime activationTime)
+    [EnabledBy=SiteIsolationEnabled] DidNotifyUserActivation(WebCore::FrameIdentifier sourceFrameID, MonotonicTime activationTime, std::optional<WebCore::UserGestureTokenIdentifier> forcedActivationToken)
     [EnabledBy=SiteIsolationEnabled] DidConsumeUserActivation(WebCore::FrameIdentifier sourceFrameID)
+    [EnabledBy=SiteIsolationEnabled] DidRevokeForcedUserActivation(WebCore::FrameIdentifier sourceFrameID, WebCore::UserGestureTokenIdentifier forcedActivationToken)
     [EnabledBy=SiteIsolationEnabled] DidHandleFirstUserGesture(WebCore::FrameIdentifier sourceFrameID, MonotonicTime gestureTime)
 
     [EnabledBy=SiteIsolationEnabled] DispatchLoadEventToFrameOwnerElement(WebCore::FrameIdentifier frameID)
     [EnabledBy=SiteIsolationEnabled] AddResourceTimingFromSubframe(WebCore::FrameIdentifier parentFrameID, WebCore::ResourceTiming resourceTiming)
 
     [EnabledBy=SiteIsolationEnabled] FocusRemoteFrame(WebCore::FrameIdentifier frameID, std::optional<WebCore::UserGestureTokenIdentifier> userGestureTokenIdentifier)
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+    SetOffscreenCanvasPlaceholderLayer(WebCore::PlaceholderRenderingContextIdentifier identifier, std::optional<WebCore::PlatformLayerIdentifier> layerID)
+#endif
     [EnabledBy=SiteIsolationEnabled] PostMessageToRemote(WebCore::FrameIdentifier source, IPC::Untrusted<WebCore::SecurityOriginData> sourceOrigin, WebCore::FrameIdentifier target, IPC::Untrusted<std::optional<WebCore::SecurityOriginData>> targetOrigin, struct WebCore::MessageWithMessagePorts message, struct std::optional<WebCore::UserGestureTokenData> userGestureToken)
     [EnabledBy=SiteIsolationEnabled] RenderTreeAsTextForTesting(WebCore::FrameIdentifier identifier, uint64_t baseIndent, OptionSet<WebCore::RenderAsTextFlag> behavior) -> (String renderTreeDump) Synchronous
     [EnabledBy=SiteIsolationEnabled] FrameTextForTesting(WebCore::FrameIdentifier frameID) -> (String text) Synchronous
@@ -677,7 +688,6 @@ messages -> WebPageProxy {
     [EnabledBy=SiteIsolationEnabled] UpdateRemoteFrameAccessibilityInheritedState(WebCore::FrameIdentifier frameID, struct WebCore::InheritedFrameState state)
 #endif
     [EnabledBy=SiteIsolationEnabled] ReportMixedContentViolation(WebCore::FrameIdentifier frameID, bool blocked, URL target)
-    [EnabledBy=SiteIsolationEnabled] DrawFrameToSnapshot(WebCore::FrameIdentifier frameID, WebCore::IntRect rect, WebKit::RemoteSnapshotIdentifier snapshotIdentifier) -> (bool success)
 
     NowPlayingMetadataChanged(struct WebCore::NowPlayingMetadata metadata)
 

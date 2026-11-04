@@ -1,4 +1,4 @@
-<!-- webkit-test-runner [ SiteIsolationEnabled=true ] -->
+<!-- webkit-test-runner [ SiteIsolationEnabled=true useHardwareKeyboardMode=true ] -->
 <script src="/js-test-resources/js-test.js"></script>
 <script src="/js-test-resources/ui-helper.js"></script>
 <script>
@@ -13,7 +13,6 @@ window.addEventListener("message", async function (event) {
 async function test() {
     document.getElementById("iframe").focus();
     testRunner?.dumpAsText();
-    await UIHelper.setHardwareKeyboardAttached(true);
     await UIHelper.keyDown("x");
 }
 

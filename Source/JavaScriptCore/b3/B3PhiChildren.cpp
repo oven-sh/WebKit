@@ -36,16 +36,28 @@ namespace JSC { namespace B3 {
 WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(PhiChildren);
 
 PhiChildren::PhiChildren(Procedure& proc)
-    : m_upsilons(proc.values().size())
 {
+    if (!proc.hasEverAdded(Upsilon))
+        return;
+    m_ranges.grow(proc.values().size());
+    Vector<UpsilonValue*, 64> upsilons;
     for (Value* value : proc.values()) {
         if (UpsilonValue* upsilon = value->as<UpsilonValue>()) {
-            Value* phi = upsilon->phi();
-            Vector<UpsilonValue*>& vector = m_upsilons[phi];
-            if (vector.isEmpty())
-                m_phis.append(phi);
-            vector.append(upsilon);
+            upsilons.append(upsilon);
+            if (!m_ranges[upsilon->phi()->index()].size++)
+                m_phis.append(upsilon->phi());
         }
+    }
+    unsigned begin = 0;
+    for (Value* phi : m_phis) {
+        Range& range = m_ranges[phi->index()];
+        range.begin = begin;
+        begin += std::exchange(range.size, 0);
+    }
+    m_upsilons.grow(upsilons.size());
+    for (UpsilonValue* upsilon : upsilons) {
+        Range& range = m_ranges[upsilon->phi()->index()];
+        m_upsilons[range.begin + range.size++] = upsilon;
     }
 }
 

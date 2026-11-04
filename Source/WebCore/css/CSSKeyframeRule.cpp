@@ -31,6 +31,7 @@
 #include "CSSPropertyParserConsumer+Animations.h"
 #include "CSSSerializationContext.h"
 #include "CSSStyleProperties.h"
+#include "CSSStyleSheet.h"
 #include "MutableStyleProperties.h"
 #include "StyleProperties.h"
 #include "StylePropertiesInlines.h"
@@ -41,19 +42,19 @@ namespace WebCore {
 
 void StyleRuleKeyframe::Key::writeToString(StringBuilder& builder) const
 {
-    if (rangeName == CSSValueContain)
+    if (rangeName == CSSValueID::Contain)
         builder.append("contain "_s);
-    else if (rangeName == CSSValueCover)
+    else if (rangeName == CSSValueID::Cover)
         builder.append("cover "_s);
-    else if (rangeName == CSSValueEntry)
+    else if (rangeName == CSSValueID::Entry)
         builder.append("entry "_s);
-    else if (rangeName == CSSValueEntryCrossing)
+    else if (rangeName == CSSValueID::EntryCrossing)
         builder.append("entry-crossing "_s);
-    else if (rangeName == CSSValueExit)
+    else if (rangeName == CSSValueID::Exit)
         builder.append("exit "_s);
-    else if (rangeName == CSSValueExitCrossing)
+    else if (rangeName == CSSValueID::ExitCrossing)
         builder.append("exit-crossing "_s);
-    else if (rangeName == CSSValueScroll)
+    else if (rangeName == CSSValueID::Scroll)
         builder.append("scroll "_s);
     CSS::serializationForCSS(builder, CSS::defaultSerializationContext(), offset);
 }
@@ -147,6 +148,13 @@ void CSSKeyframeRule::reattach(StyleRuleBase&)
 {
     // No need to reattach, the underlying data is shareable on mutation.
     ASSERT_NOT_REACHED();
+}
+
+void CSSKeyframeRule::setKeyText(const String& text)
+{
+    CSSStyleSheet::RuleMutationScope mutationScope(this);
+
+    protect(m_keyframe)->setKeyText(text);
 }
 
 } // namespace WebCore

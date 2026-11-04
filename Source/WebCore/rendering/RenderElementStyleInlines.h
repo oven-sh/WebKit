@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/ElementInlines.h>
 #include <WebCore/RenderElementInlines.h>
 #include <WebCore/StyleComputedStyle+GettersInlines.h>
 #include <WebCore/StyleContainmentCheckerInlines.h>
@@ -33,7 +34,7 @@ namespace WebCore {
 
 inline bool RenderElement::hasBackdropFilter() const { return !style().backdropFilter().isNone(); }
 inline bool RenderElement::hasBackground() const { return style().hasBackground(); }
-inline bool RenderElement::hasBlendMode() const { return style().blendMode() != BlendMode::Normal; }
+inline bool RenderElement::hasBlendMode() const { return style().usedBlendMode() != BlendMode::Normal; }
 inline bool RenderElement::hasClip() const { return isOutOfFlowPositioned() && !style().clip().isAuto(); }
 inline bool RenderElement::hasClipOrNonVisibleOverflow() const { return hasClip() || hasNonVisibleOverflow(); }
 inline bool RenderElement::hasClipPath() const { return !style().clipPath().isNone(); }
@@ -51,6 +52,18 @@ inline FloatRect RenderElement::transformReferenceBoxRect(const Style::ComputedS
 inline bool RenderElement::hasAppleVisualEffect() const { return style().appleVisualEffect() != AppleVisualEffect::None; }
 inline bool RenderElement::hasAppleVisualEffectRequiringBackdropFilter() const { return appleVisualEffectNeedsBackdrop(style().appleVisualEffect()); }
 #endif
+
+inline bool RenderElement::isCanvasDrawable() const
+{
+    RefPtr element = this->element();
+    return element && element->isCanvasDrawable();
+}
+
+inline bool RenderElement::isInsideDrawableCanvas() const
+{
+    RefPtr element = this->element();
+    return element && element->isInsideDrawableCanvas();
+}
 
 inline bool RenderElement::mayContainOutOfFlowPositionedObjects(const Style::ComputedStyle* styleToUse) const
 {
@@ -101,7 +114,7 @@ inline bool RenderElement::createsGroupForStyleExcludingClipPathAndMask(const St
 #if HAVE(CORE_MATERIAL)
         || style.appleVisualEffect() != AppleVisualEffect::None
 #endif
-        || style.blendMode() != BlendMode::Normal;
+        || style.usedBlendMode() != BlendMode::Normal;
 }
 
 inline bool RenderElement::createsGroupForStyle(const Style::ComputedStyle& style)
@@ -109,6 +122,11 @@ inline bool RenderElement::createsGroupForStyle(const Style::ComputedStyle& styl
     return createsGroupForStyleExcludingClipPathAndMask(style)
         || style.hasMask()
         || !style.clipPath().isNone();
+}
+
+inline bool RenderElement::createsGroup() const
+{
+    return createsGroupForStyle(style());
 }
 
 inline bool RenderElement::shouldApplyAnyContainment() const
@@ -165,8 +183,8 @@ inline bool RenderElement::shouldApplyPaintContainment() const
 
 inline bool RenderElement::visibleToHitTesting(const std::optional<HitTestRequest>& request) const
 {
-    auto visibility = !request || request->userTriggered() ? style().usedVisibility() : style().visibility();
-    return visibility == Visibility::Visible
+    auto isVisible = !request || request->userTriggered() ? usedStyle().visibility() == UsedVisibility::Visible : style().visibility() == Visibility::Visible;
+    return isVisible
         && !isSkippedContent()
         && ((request && request->ignoreCSSPointerEventsProperty()) || usedPointerEvents() != PointerEvents::None);
 }

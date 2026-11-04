@@ -24,6 +24,7 @@
 
 #include "ConstructData.h"
 #include "JSCast.h"
+#include <JavaScriptCore/CellVisitKind.h>
 #include <wtf/CompactPtr.h>
 #include <wtf/PtrTag.h>
 
@@ -161,6 +162,7 @@ struct MethodTable {
     }, \
     sizeof(ClassName), \
     ClassName::isResizableOrGrowableSharedTypedArray, \
+    ::JSC::cellVisitKindFor<ClassName>, \
 
 struct CLASS_INFO_ALIGNMENT ClassInfo {
     WTF_ALLOW_STRUCT_COMPACT_POINTERS;
@@ -178,6 +180,7 @@ struct CLASS_INFO_ALIGNMENT ClassInfo {
     MethodTable methodTable;
     const unsigned staticClassSize;
     const bool isResizableOrGrowableSharedTypedArray;
+    const CellVisitKind cellVisitKind;
 
     static constexpr ptrdiff_t offsetOfParentClass()
     {
@@ -195,7 +198,7 @@ struct CLASS_INFO_ALIGNMENT ClassInfo {
 
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
-    JS_EXPORT_PRIVATE bool NODELETE hasStaticPropertyWithAnyOfAttributes(uint8_t attributes) const;
+    JS_EXPORT_PRIVATE bool LEGACY_NODELETE hasStaticPropertyWithAnyOfAttributes(uint8_t attributes) const;
     JS_EXPORT_PRIVATE bool hasStaticProperty(PropertyName) const;
 };
 

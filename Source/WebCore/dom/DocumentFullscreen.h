@@ -49,8 +49,7 @@ public:
 
     // Document+Fullscreen.idl methods.
     static void exitFullscreen(Document&, Ref<DeferredPromise>&&);
-    static bool fullscreenEnabled(Document&);
-    static bool webkitFullscreenEnabled(Document& document) { return protect(document.fullscreen())->enabledByPermissionsPolicy(); }
+    WEBCORE_EXPORT static bool fullscreenEnabled(Document&);
     static Element* webkitFullscreenElement(Document& document) { return document.ancestorElementInThisScope(protect(document.fullscreen())->fullscreenElement()); };
     WEBCORE_EXPORT static void webkitExitFullscreen(Document&);
     static bool webkitIsFullScreen(Document& document) { return protect(document.fullscreen())->isFullscreen(); };
@@ -60,9 +59,9 @@ public:
     // Helpers.
     Document& document() { return m_document; }
     const Document& document() const { return m_document; }
-    LocalFrame* NODELETE frame() const;
+    LocalFrame* LEGACY_NODELETE frame() const;
     Element* documentElement() const { return document().documentElement(); }
-    bool NODELETE isSimpleFullscreenDocument() const;
+    bool LEGACY_NODELETE isSimpleFullscreenDocument() const;
     Document::BackForwardCacheState backForwardCacheState() const { return document().backForwardCacheState(); }
 
     // WHATWG Fullscreen API.
@@ -79,7 +78,7 @@ public:
     void setKeyboardLockMode(FullscreenOptions::KeyboardLock mode) { m_keyboardLockMode = mode; }
     bool isBrowserKeyboardLockEnabled() const { return m_keyboardLockMode == FullscreenOptions::KeyboardLock::Browser; }
 
-    enum FullscreenCheckType {
+    enum class FullscreenCheckType : bool {
         EnforceIFrameAllowFullscreenRequirement,
         ExemptIFrameAllowFullscreenRequirement,
     };
@@ -97,7 +96,7 @@ public:
 
     void exitRemovedFullscreenElement(Element&);
 
-    WEBCORE_EXPORT bool NODELETE isAnimatingFullscreen() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE isAnimatingFullscreen() const;
     WEBCORE_EXPORT void setAnimatingFullscreen(bool);
 
     void clear();
@@ -114,10 +113,10 @@ private:
     const Logger& logger() const { return protect(document())->logger(); }
     uint64_t logIdentifier() const { return m_logIdentifier; }
     ASCIILiteral logClassName() const { return "DocumentFullscreen"_s; }
-    WTFLogChannel& NODELETE logChannel() const;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const;
 #endif
 
-    Page* NODELETE page() const;
+    Page* LEGACY_NODELETE page() const;
     Document* mainFrameDocument() { return protect(document())->mainFrameDocument(); }
 
     RefPtr<Element> fullscreenOrPendingElement() const { return m_fullscreenElement ? m_fullscreenElement : m_pendingFullscreenElement; }

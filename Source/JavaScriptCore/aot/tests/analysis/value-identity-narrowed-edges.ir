@@ -1,0 +1,146 @@
+# A copy that an edge passes on narrowed has the identity of the tested value, and a parameter that every edge fills with one value has its identity
+# FORM: Prepared
+# RUN: analyses value-identity identities
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="bothEdgesOfTest" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3):
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: identities:
+# CHECK-NEXT: v2 identity: v0
+# CHECK-NEXT: v3 identity: v0
+# CHECK-NEXT: value-identity:
+# CHECK: v2 same object: v2
+# CHECK: v3 same object: v3
+
+function f1 name="chainOfThreeTests" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=undefined|number|string
+    Branch v1 -> taken b1(| 0), notTaken b4()
+  b1(v2):
+    v3 = TypeTest v2 testedType=number|string
+    Branch v3 -> taken b2(| 0), notTaken b4()
+  b2(v4):
+    v5 = TypeTest v4 testedType=string
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    Return v6
+  b4():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: identities:
+# CHECK-NEXT: v2 identity: v0
+# CHECK-NEXT: v4 identity: v0
+# CHECK-NEXT: v6 identity: v0
+# CHECK-NEXT: value-identity:
+
+function f2 name="mergeOfTwoNarrowedCopies" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Jump -> next b3(v2)
+  b2(v3):
+    v4 = Upcast v3 castType=anything
+    Jump -> next b3(v4)
+  b3(v5):
+    Return v5
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: identities:
+# CHECK-NEXT: v2 identity: v0
+# CHECK-NEXT: v3 identity: v0
+# CHECK-NEXT: v4 identity: v0
+# CHECK-NEXT: v5 identity: v0
+# CHECK-NEXT: value-identity:
+# CHECK: v4 same object: v3
+# CHECK: v5 same object: v5
+
+function f3 name="mergeOfTwoDifferentValues" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v1)
+  b3(v4):
+    Return v4
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: identities:
+# CHECK-NEXT: v3 identity: v0
+# CHECK-NEXT: value-identity:
+# CHECK: v4 identity: v4
+
+function f4 name="carriedAroundLoopUnchanged" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    Branch v1 -> taken b1(v2), notTaken b2()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: identities:
+# CHECK-NEXT: v2 identity: v0
+# CHECK-NEXT: value-identity:
+
+function f5 name="narrowedCopyCarriedAroundLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1(v0)
+  b1(v1):
+    LoopHint
+    v3 = TypeTest v1 testedType=string
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    Jump -> next b1(v4)
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: identities:
+# CHECK-NEXT: v1 identity: v0
+# CHECK-NEXT: v4 identity: v0
+# CHECK-NEXT: value-identity:
+# CHECK: v1 identity: v0
+
+function f6 name="guardParameter" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlotOrUndefined v0, v2 key="x" receivers=[L0] level=Proven
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: identities:
+# CHECK-NEXT: value-identity:
+# CHECK: v2 identity: v2
+
+function f7 name="twoParametersFilledAlike" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Upcast v0 castType=anything
+    Jump -> next b3(v0, v3, v0)
+  b2():
+    v4 = Upcast v1 castType=anything
+    Jump -> next b3(v1, v4, v0)
+  b3(v5, v6, v7):
+    v8 = StrictEq v5, v6
+    Return v7
+}
+# CHECK-LABEL: function f7
+# CHECK-NEXT: identities:
+# CHECK-NEXT: v3 identity: v0
+# CHECK-NEXT: v4 identity: v1
+# CHECK-NEXT: v6 identity: v5
+# CHECK-NEXT: v7 identity: v0
+# CHECK-NEXT: value-identity:
+# CHECK: v5 identity: v5

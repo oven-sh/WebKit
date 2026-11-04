@@ -12,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstring>
+
+#include <benchmark/benchmark.h>
+
 #include <openssl/base.h>
 #include <openssl/bn.h>
 #include <openssl/ec.h>
@@ -20,68 +24,92 @@
 #include <openssl/evp.h>
 #include <openssl/mem.h>
 
-#include <benchmark/benchmark.h>
-
 #include "../crypto/internal.h"
 #include "./internal.h"
 
-
 BSSL_NAMESPACE_BEGIN
 namespace {
+
+static constexpr size_t kMaxSignature = 256;
+static constexpr size_t kMaxDigestSize = 66;  // ceil(521 / 8) for P-521
 
 void BM_SpeedECDSASign(benchmark::State &state, const EC_GROUP *group) {
   UniquePtr<EC_KEY> key(EC_KEY_new());
   if (!key || !EC_KEY_set_group(key.get(), group) ||
       !EC_KEY_generate_key(key.get())) {
-    state.SkipWithError("keygen failed");
+    state.SkipWithError("keygen failed.");
     return;
   }
 
-  static constexpr size_t kMaxSignature = 256;
-  if (ECDSA_size(key.get()) > kMaxSignature) {
-    state.SkipWithError("key is too large.");
+  const size_t digest_len = BN_num_bytes(EC_GROUP_get0_order(group));
+  if (digest_len > kMaxDigestSize || ECDSA_size(key.get()) > kMaxSignature) {
+    state.SkipWithError("key or digest is too large.");
     return;
   }
-  uint8_t digest[20];
-  OPENSSL_memset(digest, 42, sizeof(digest));
 
+  uint8_t digest[kMaxDigestSize];
+  OPENSSL_memset(digest, 42, digest_len);
   uint8_t out[kMaxSignature];
+
   for (auto _ : state) {
-    unsigned out_len;
-    if (!ECDSA_sign(0, digest, sizeof(digest), out, &out_len, key.get())) {
+    unsigned out_len = 0;
+    benchmark::ClobberMemory();
+    benchmark::DoNotOptimize(digest);
+
+
+    if (!ECDSA_sign(0, digest, digest_len, out, &out_len, key.get())) {
       state.SkipWithError("signing failed.");
       return;
     }
+
+    benchmark::DoNotOptimize(out);
+    benchmark::DoNotOptimize(out_len);
   }
 }
 
-
 void BM_SpeedECDSAVerify(benchmark::State &state, const EC_GROUP *group) {
-  UniquePtr<EC_KEY> key(EC_KEY_new());
-  if (!key || !EC_KEY_set_group(key.get(), group) ||
-      !EC_KEY_generate_key(key.get())) {
-    state.SkipWithError("keygen failed");
+  uint8_t digest[kMaxDigestSize];
+  const size_t digest_len = BN_num_bytes(EC_GROUP_get0_order(group));
+  if (digest_len > kMaxDigestSize) {
+    state.SkipWithError("digest is too large.");
     return;
   }
 
-  static constexpr size_t kMaxSignature = 256;
-  if (ECDSA_size(key.get()) > kMaxSignature) {
-    state.SkipWithError("key is too large.");
-    return;
-  }
-  uint8_t digest[20];
-  OPENSSL_memset(digest, 42, sizeof(digest));
+  OPENSSL_memset(digest, 42, digest_len);
 
+  // Declared outside of the loop to avoid running object destructor while
+  // timing.
+  UniquePtr<EC_KEY> key;
   uint8_t signature[kMaxSignature];
   unsigned sig_len;
-  if (!ECDSA_sign(0, digest, sizeof(digest), signature, &sig_len, key.get())) {
-    state.SkipWithError("signing failed");
-    return;
-  }
 
   for (auto _ : state) {
-    if (!ECDSA_verify(0, digest, sizeof(digest), signature, sig_len,
-                      key.get())) {
+    state.PauseTiming();
+
+    key = UniquePtr<EC_KEY>(EC_KEY_new());
+    if (!key || !EC_KEY_set_group(key.get(), group) ||
+        !EC_KEY_generate_key(key.get())) {
+      state.SkipWithError("keygen failed.");
+      return;
+    }
+
+    if (ECDSA_size(key.get()) > kMaxSignature) {
+      state.SkipWithError("key is too large.");
+      return;
+    }
+
+    if (!ECDSA_sign(0, digest, digest_len, signature, &sig_len, key.get())) {
+      state.SkipWithError("signing failed.");
+      return;
+    }
+
+    benchmark::DoNotOptimize(signature);
+    benchmark::DoNotOptimize(sig_len);
+    benchmark::ClobberMemory();
+
+    state.ResumeTiming();
+
+    if (!ECDSA_verify(0, digest, digest_len, signature, sig_len, key.get())) {
       state.SkipWithError("verification failed.");
       return;
     }

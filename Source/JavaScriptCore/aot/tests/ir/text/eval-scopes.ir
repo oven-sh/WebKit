@@ -1,0 +1,27 @@
+# Eval scope lines with every field, every flag and every kind of binding
+# RUN: round-trip
+# CHECK: layout L0 kind=Environment module=m0 fields=[{key="c" declared={type=anything}}, {key="k" declared={type=anything} flags=[IsImmutable]}]
+# CHECK-NEXT: layout L1 kind=Instance name="C" module=m0 fields=[{key=#"p"@L1 declared={type=anything} flags=[IsPrivate]}]
+# CHECK-NEXT: variable g0 name="x" module=m0 declared={type=anything}
+# CHECK-NEXT: module m0 path="/a.js" displayPath="a.js" body=f0
+# CHECK-NEXT: evalscope e0
+# CHECK-NEXT: evalscope e1 mode=Sloppy flags=[IsInFunction, IsInArrowFunction, IsInFieldInitializer, IsInDerivedConstructor, AllowsSuperProperty, AllowsSuperCall, AllowsNewTarget] bindings=[{name="x" variable=g0}, {name="k" kind=Constant depth=1 layout=L0 field=1 operand=0}, {name="f" kind=FunctionName depth=1 operand=1}, {kind=This operand=2}, {kind=NewTarget operand=3}, {kind=HomeObject operand=4}, {kind=ClassObject operand=5}, {kind=Arguments operand=6}, {name="#p" kind=PrivateName depth=2 layout=L1 field=0 operand=7}, {name="#m" kind=PrivateMethod depth=2 operand=7 function=8}, {name="#a" kind=PrivateAccessor depth=2 operand=7 function=8 setter=9}, {kind=WithObject depth=3 operand=10}, {kind=EvalVariables depth=3 operand=11}, {name="p" kind=MappedArgument depth=3 field=1 operand=6}, {name="e" kind=SimpleCatchParameter depth=4 layout=L0 field=0 operand=0}]
+# CHECK-NEXT: function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: round trip: same
+# RUN(V): verify
+# V: valid
+
+layout L0 kind=Environment module=m0 fields=[{key="c" declared={type=anything}}, {key="k" declared={type=anything} flags=[IsImmutable]}]
+layout L1 kind=Instance name="C" module=m0 fields=[{key=#"p"@L1 declared={type=anything} flags=[IsPrivate]}]
+variable g0 name="x" module=m0 declared={type=anything}
+module m0 path="/a.js" displayPath="a.js" body=f0
+evalscope e0
+evalscope e1 mode=Sloppy flags=[IsInFunction, IsInArrowFunction, IsInFieldInitializer, IsInDerivedConstructor, AllowsSuperProperty, AllowsSuperCall, AllowsNewTarget] bindings=[{name="x" variable=g0}, {name="k" kind=Constant depth=1 layout=L0 field=1 operand=0}, {name="f" kind=FunctionName depth=1 operand=1}, {kind=This operand=2}, {kind=NewTarget operand=3}, {kind=HomeObject operand=4}, {kind=ClassObject operand=5}, {kind=Arguments operand=6}, {name="#p" kind=PrivateName depth=2 layout=L1 field=0 operand=7}, {name="#m" kind=PrivateMethod depth=2 operand=7 function=8}, {name="#a" kind=PrivateAccessor depth=2 operand=7 function=8 setter=9}, {kind=WithObject depth=3 operand=10}, {kind=EvalVariables depth=3 operand=11}, {name="p" kind=MappedArgument depth=3 field=1 operand=6}, {name="e" kind=SimpleCatchParameter depth=4 layout=L0 field=0 operand=0}]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+entry module=m0

@@ -36,7 +36,6 @@ struct pas_basic_heap_page_caches;
 typedef struct pas_basic_heap_page_caches pas_basic_heap_page_caches;
 
 struct pas_basic_heap_page_caches {
-    pas_large_heap_physical_page_sharing_cache megapage_large_heap_cache;
     pas_large_heap_physical_page_sharing_cache large_heap_cache;
     pas_megapage_cache small_exclusive_segregated_megapage_cache;
     pas_megapage_cache small_other_megapage_cache;
@@ -45,21 +44,17 @@ struct pas_basic_heap_page_caches {
                                                  allocated one-at-a-time from bootstrap, since that
                                                  would create unnecessary fragmentation in the large
                                                  heap. */
-    pas_megapage_cache small_compact_exclusive_segregated_megapage_cache;
-    pas_megapage_cache small_compact_other_megapage_cache;
-    pas_megapage_cache medium_compact_megapage_cache;
 };
 
-#define PAS_BASIC_HEAP_PAGE_CACHES_INITIALIZER(small_log_shift, medium_log_shift) \
+/* flavor is the heap config's flavor; every cache of the heap config gets its pages from the
+   bootstrap page provider of that flavor. It must be a constant expression so the static initializer
+   stays one. */
+#define PAS_BASIC_HEAP_PAGE_CACHES_INITIALIZER(flavor) \
     ((pas_basic_heap_page_caches){ \
-        .megapage_large_heap_cache = PAS_MEGAPAGE_LARGE_FREE_HEAP_PHYSICAL_PAGE_SHARING_CACHE_INITIALIZER, \
-        .large_heap_cache = PAS_LARGE_FREE_HEAP_PHYSICAL_PAGE_SHARING_CACHE_INITIALIZER, \
-        .small_exclusive_segregated_megapage_cache = PAS_MEGAPAGE_CACHE_INITIALIZER(pas_megapage_cache_size_small), \
-        .small_other_megapage_cache = PAS_MEGAPAGE_CACHE_INITIALIZER(pas_megapage_cache_size_small), \
-        .medium_megapage_cache = PAS_MEGAPAGE_CACHE_INITIALIZER(pas_megapage_cache_size_medium), \
-        .small_compact_exclusive_segregated_megapage_cache = PAS_MEGAPAGE_CACHE_INITIALIZER(pas_megapage_cache_size_small_compact), \
-        .small_compact_other_megapage_cache = PAS_MEGAPAGE_CACHE_INITIALIZER(pas_megapage_cache_size_small_compact), \
-        .medium_compact_megapage_cache = PAS_MEGAPAGE_CACHE_INITIALIZER(pas_megapage_cache_size_medium_compact) \
+        .large_heap_cache = PAS_LARGE_FREE_HEAP_PHYSICAL_PAGE_SHARING_CACHE_INITIALIZER(flavor), \
+        .small_exclusive_segregated_megapage_cache = PAS_MEGAPAGE_CACHE_INITIALIZER(pas_megapage_cache_size_small, flavor), \
+        .small_other_megapage_cache = PAS_MEGAPAGE_CACHE_INITIALIZER(pas_megapage_cache_size_small, flavor), \
+        .medium_megapage_cache = PAS_MEGAPAGE_CACHE_INITIALIZER(pas_megapage_cache_size_medium, flavor) \
     })
 
 PAS_END_EXTERN_C;

@@ -1,0 +1,22 @@
+# An operation that converts an object calls valueOf of that object. The object does not escape: another function that it holds is not entered.
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Convertible" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    Return
+}
+function f1 name="valueOf" flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f2 name="notCalledByAConversion" kind=Arrow results=[{type=anything}] {
+    Return
+}

@@ -1,0 +1,264 @@
+# Each conversion operation has code for each pair of representations that the choice of representations can ask of it
+# FORM: Placed
+# RUN: generate-code
+# OPTIONS: check=validate-back-end validate
+# CHECK-COUNT-41: : size=
+# CHECK-NOT: no code
+# RUN(RULES): representation-rules check
+# RULES-COUNT-41: valid
+# RULES-NOT: error
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="boxVoidToJSValue" results=[{type=anything}] {
+    v0 @Void = Undefined
+    v1 @JSValue = Box v0
+    Return v1
+}
+function f1 name="boxBooleanToJSValue" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean @Boolean):
+    v1 @JSValue = Box v0
+    Return v1
+}
+function f2 name="boxInt32ToJSValue" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32 @Int32):
+    v1 @JSValue = Box v0
+    Return v1
+}
+function f3 name="boxInt64ToJSValue" parameters=[{type=int}] results=[{type=anything}] {
+  b0(v0: int @Int64):
+    v1 @JSValue = Box v0
+    Return v1
+}
+function f4 name="boxDoubleToJSValue" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number @Double):
+    v1 @JSValue = Box v0
+    Return v1
+}
+function f5 name="boxCellToJSValue" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string @Cell):
+    v1 @JSValue = Box v0
+    Return v1
+}
+function f6 name="boxOptionalInt64ToJSValue" parameters=[{type=undefined|int}] results=[{type=anything}] {
+  b0(v0: undefined|int @OptionalInt64):
+    v1 @JSValue = Box v0
+    Return v1
+}
+function f7 name="boxOptionalDoubleToJSValue" parameters=[{type=undefined|number}] results=[{type=anything}] {
+  b0(v0: undefined|number @OptionalDouble):
+    v1 @JSValue = Box v0
+    Return v1
+}
+function f8 name="boxVoidToOptionalInt64" results=[{type=anything}] {
+    v0 @Void = Undefined
+    v1 @OptionalInt64 = Box v0
+    v2 @JSValue = Box v1
+    Return v2
+}
+function f9 name="boxInt32ToOptionalInt64" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32 @Int32):
+    v1 @OptionalInt64 = Box v0
+    v2 @JSValue = Box v1
+    Return v2
+}
+function f10 name="boxInt64ToOptionalInt64" parameters=[{type=int}] results=[{type=anything}] {
+  b0(v0: int @Int64):
+    v1 @OptionalInt64 = Box v0
+    v2 @JSValue = Box v1
+    Return v2
+}
+function f11 name="boxVoidToOptionalDouble" results=[{type=anything}] {
+    v0 @Void = Undefined
+    v1 @OptionalDouble = Box v0
+    v2 @JSValue = Box v1
+    Return v2
+}
+function f12 name="boxDoubleToOptionalDouble" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number @Double):
+    v1 @OptionalDouble = Box v0
+    v2 @JSValue = Box v1
+    Return v2
+}
+function f13 name="boxOptionalInt64ToOptionalDouble" parameters=[{type=undefined|int}] results=[{type=anything}] {
+  b0(v0: undefined|int @OptionalInt64):
+    v1 @OptionalDouble = Box v0
+    v2 @JSValue = Box v1
+    Return v2
+}
+function f14 name="unboxJSValueToBoolean" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything @JSValue):
+    v1 @JSValue = AssumeType v0 provenType=boolean
+    v2 @Boolean = Unbox v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f15 name="unboxJSValueToInt32" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything @JSValue):
+    v1 @JSValue = AssumeType v0 provenType=i32
+    v2 @Int32 = Unbox v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f16 name="unboxJSValueToInt64" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything @JSValue):
+    v1 @JSValue = AssumeType v0 provenType=int
+    v2 @Int64 = Unbox v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f17 name="unboxJSValueToDouble" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything @JSValue):
+    v1 @JSValue = AssumeType v0 provenType=number
+    v2 @Double = Unbox v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f18 name="unboxJSValueToCell" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything @JSValue):
+    v1 @JSValue = AssumeType v0 provenType=string
+    v2 @Cell = Unbox v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f19 name="unboxJSValueToOptionalInt64" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything @JSValue):
+    v1 @JSValue = AssumeType v0 provenType=undefined|int
+    v2 @OptionalInt64 = Unbox v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f20 name="unboxJSValueToOptionalDouble" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything @JSValue):
+    v1 @JSValue = AssumeType v0 provenType=undefined|number
+    v2 @OptionalDouble = Unbox v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f21 name="unboxOptionalInt64ToInt32" parameters=[{type=undefined|int}] results=[{type=anything}] {
+  b0(v0: undefined|int @OptionalInt64):
+    v1 @OptionalInt64 = AssumeType v0 provenType=i32
+    v2 @Int32 = Unbox v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f22 name="unboxOptionalInt64ToInt64" parameters=[{type=undefined|int}] results=[{type=anything}] {
+  b0(v0: undefined|int @OptionalInt64):
+    v1 @OptionalInt64 = AssumeType v0 provenType=int
+    v2 @Int64 = Unbox v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f23 name="unboxOptionalDoubleToDouble" parameters=[{type=undefined|number}] results=[{type=anything}] {
+  b0(v0: undefined|number @OptionalDouble):
+    v1 @OptionalDouble = AssumeType v0 provenType=number
+    v2 @Double = Unbox v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f24 name="unboxOptionalDoubleToOptionalInt64" parameters=[{type=undefined|number}] results=[{type=anything}] {
+  b0(v0: undefined|number @OptionalDouble):
+    v1 @OptionalDouble = AssumeType v0 provenType=undefined|int
+    v2 @OptionalInt64 = Unbox v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f25 name="integerToNumberInt32ToDouble" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32 @Int32):
+    v1 @Double = IntegerToNumber v0
+    v2 @JSValue = Box v1
+    Return v2
+}
+function f26 name="integerToNumberInt64ToDouble" parameters=[{type=int}] results=[{type=anything}] {
+  b0(v0: int @Int64):
+    v1 @Double = IntegerToNumber v0
+    v2 @JSValue = Box v1
+    Return v2
+}
+function f27 name="numberToIntegerDoubleToInt32" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number @Double):
+    v1 @Double = AssumeType v0 provenType=i32
+    v2 @Int32 = NumberToInteger v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f28 name="numberToIntegerDoubleToInt64" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number @Double):
+    v1 @Double = AssumeType v0 provenType=int
+    v2 @Int64 = NumberToInteger v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f29 name="widenIntegerInt32ToInt64" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32 @Int32):
+    v1 @Int64 = WidenInteger v0
+    v2 @JSValue = Box v1
+    Return v2
+}
+function f30 name="narrowIntegerInt64ToInt32" parameters=[{type=int}] results=[{type=anything}] {
+  b0(v0: int @Int64):
+    v1 @Int64 = AssumeType v0 provenType=i32
+    v2 @Int32 = NarrowInteger v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f31 name="decodeCell32ToCell" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string @Cell):
+    v1 @Cell32 = Compress v0
+    v2 @Cell = Decode v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f32 name="decodeCell32ToJSValue" parameters=[{type=undefined|string}] results=[{type=anything}] {
+  b0(v0: undefined|string @JSValue):
+    v1 @Cell32 = Compress v0
+    v2 @JSValue = Decode v1
+    Return v2
+}
+function f33 name="decodeLiteralStringToCell" parameters=[{type=undefined|"a"|"b"}] results=[{type=anything}] {
+  b0(v0: undefined|"a"|"b" @LiteralString):
+    v1 @LiteralString = AssumeType v0 provenType="a"|"b"
+    v2 @Cell = Decode v1
+    v3 @JSValue = Box v2
+    Return v3
+}
+function f34 name="decodeLiteralStringToJSValue" parameters=[{type=undefined|"a"|"b"}] results=[{type=anything}] {
+  b0(v0: undefined|"a"|"b" @LiteralString):
+    v1 @JSValue = Decode v0
+    Return v1
+}
+function f35 name="compressCellToCell32" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string @Cell):
+    v1 @Cell32 = Compress v0
+    v2 @JSValue = Decode v1
+    Return v2
+}
+function f36 name="compressJSValueToCell32" parameters=[{type=undefined|string}] results=[{type=anything}] {
+  b0(v0: undefined|string @JSValue):
+    v1 @Cell32 = Compress v0
+    v2 @JSValue = Decode v1
+    Return v2
+}
+function f37 name="compressVoidToCell32" results=[{type=anything}] {
+    v0 @Void = Undefined
+    v1 @Cell32 = Compress v0
+    v2 @JSValue = Decode v1
+    Return v2
+}
+function f38 name="compressCellToLiteralString" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string @Cell):
+    v1 @LiteralString = Compress v0
+    v2 @JSValue = Decode v1
+    Return v2
+}
+function f39 name="compressJSValueToLiteralString" parameters=[{type=undefined|string}] results=[{type=anything}] {
+  b0(v0: undefined|string @JSValue):
+    v1 @LiteralString = Compress v0
+    v2 @JSValue = Decode v1
+    Return v2
+}
+function f40 name="compressVoidToLiteralString" results=[{type=anything}] {
+    v0 @Void = Undefined
+    v1 @LiteralString = Compress v0
+    v2 @JSValue = Decode v1
+    Return v2
+}

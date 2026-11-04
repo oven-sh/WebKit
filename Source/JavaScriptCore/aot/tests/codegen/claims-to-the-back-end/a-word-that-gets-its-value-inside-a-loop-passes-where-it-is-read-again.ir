@@ -1,0 +1,12 @@
+# function Base() { this.events = 0; }
+# Base.prototype.on = function () { this.events++; return this; };
+# function Stream(size) { Base.call(this); this.size = size; }
+# Object.setPrototypeOf(Stream.prototype, Base.prototype);
+# function run(n) { let total = 0; for (let i = 0; i < n; i++) { const s = new Stream(i); total += s.events + s.size; } return total; }
+# register(run, Stream, Base);
+# FORM: AsRead
+# OPTIONS: check=ClaimsToBackEnd
+# RUN: run-in-shell globalThis.register = (run) => { run(300); print("ran"); };
+# CHECK: ran
+# CHECK-NEXT: exited with 0
+# PROGRAM-OF: a-word-that-gets-its-value-inside-a-loop-passes-where-loads-have-moved.ir

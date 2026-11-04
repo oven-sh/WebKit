@@ -26,17 +26,19 @@
 #include "config.h"
 #include "FFICallbackThunk.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "ArgList.h"
 #include "CCallHelpers.h"
 #include "CallData.h"
 #include "Error.h"
 #include "ExceptionHelpers.h"
+#include "FFICallbackEntryPool.h"
 #include "FFICallingConvention.h"
 #include "FFIContext.h"
 #include "FFIConversions.h"
 #include "FFISignature.h"
+#include "FFIStubEmitters.h"
 #include "FFIType.h"
 #include "JSCJSValueInlines.h"
 #include "JSFFICallback.h"
@@ -308,6 +310,66 @@ MacroAssemblerCodeRef<JITThunkPtrTag> generateCallbackThunk(VM&, JSFFICallback& 
     return FINALIZE_CODE_IF(Options::dumpDisassembly() || Options::dumpFFIDisassembly(), patchBuffer, JITThunkPtrTag, "FFICallbackThunk"_s, "FFI callback %s", signature.toString().ascii().data());
 }
 
+#if FFI_STUBS_SUPPORTED
+
+Vector<CCallHelpers::Label> emitCallbackEntries(CCallHelpers& jit, unsigned numberOfEntries, const ContextAddressEmitter& moveContextAddress)
+{
+    constexpr NativeCC cc = hostNativeCC();
+    const auto integerArgumentGPRs = integerArgumentRegisters(cc);
+    const auto floatArgumentFPRs = floatArgumentRegisters(cc);
+
+    constexpr unsigned frameBytes = win64SaveAreaBytes + static_cast<unsigned>(WTF::roundUpToMultipleOf<16>(sizeof(CallbackRegisters)));
+    constexpr int registersOffsetFromFP = -static_cast<int>(frameBytes);
+#if OS(WINDOWS) && CPU(X86_64)
+    constexpr int saveAreaOffsetFromFP = -static_cast<int>(win64SaveAreaBytes);
+#endif
+
+    Vector<CCallHelpers::Label> entries;
+    entries.reserveInitialCapacity(numberOfEntries);
+    CCallHelpers::JumpList toBody;
+    for (unsigned i = 0; i < numberOfEntries; ++i) {
+        entries.append(jit.label());
+        jit.move(CCallHelpers::TrustedImm32(i), thunkScratchGPR);
+        toBody.append(jit.jump());
+    }
+
+    toBody.link(&jit);
+    jit.emitFunctionPrologue();
+
+    jit.subPtr(CCallHelpers::TrustedImm32(frameBytes), CCallHelpers::stackPointerRegister);
+
+#if OS(WINDOWS) && CPU(X86_64)
+    emitSaveWin64Nonvolatiles(jit, saveAreaOffsetFromFP);
+#endif
+
+    for (unsigned i = 0; i < integerArgumentGPRs.size(); ++i)
+        jit.store64(integerArgumentGPRs[i], CCallHelpers::Address(GPRInfo::callFrameRegister, registersOffsetFromFP + static_cast<int>(CallbackRegisters::offsetOfGPR(i))));
+    for (unsigned i = 0; i < floatArgumentFPRs.size(); ++i)
+        jit.storeDouble(floatArgumentFPRs[i], CCallHelpers::Address(GPRInfo::callFrameRegister, registersOffsetFromFP + static_cast<int>(CallbackRegisters::offsetOfFPR(i))));
+
+    jit.move(thunkScratchGPR, GPRInfo::argumentGPR0);
+    jit.addPtr(CCallHelpers::TrustedImm32(registersOffsetFromFP), GPRInfo::callFrameRegister, GPRInfo::argumentGPR1);
+    jit.move(GPRInfo::callFrameRegister, GPRInfo::argumentGPR2);
+    moveContextAddress(jit, thunkScratchGPR);
+    jit.loadPtr(CCallHelpers::Address(thunkScratchGPR, CallbackEntryContext::offsetOfEnter()), thunkScratchGPR);
+    jit.call(thunkScratchGPR, OperationPtrTag);
+
+    // The body serves every signature: the caller reads the return register its signature names.
+    const CCallHelpers::Address returnValue(GPRInfo::callFrameRegister, registersOffsetFromFP + static_cast<int>(CallbackRegisters::offsetOfReturnValue()));
+    jit.load64(returnValue, GPRInfo::returnValueGPR);
+    jit.loadDouble(returnValue, FPRInfo::returnValueFPR);
+
+#if OS(WINDOWS) && CPU(X86_64)
+    emitRestoreWin64Nonvolatiles(jit, saveAreaOffsetFromFP);
+#endif
+    jit.emitFunctionEpilogue();
+    jit.ret();
+
+    return entries;
+}
+
+#endif // FFI_STUBS_SUPPORTED
+
 } // namespace FFI
 
 namespace FFI {
@@ -438,6 +500,46 @@ JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback* ca
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
+static uint64_t readIncomingArgument(const FFI::CallLayout& layout, unsigned index, const FFI::CallbackRegisters& registers, const void* frame)
+{
+    const FFI::ArgLocation& location = layout.arguments[index];
+    switch (location.kind) {
+    case FFI::ArgLocation::Kind::GPR:
+        return registers.gprs[location.regIndex];
+    case FFI::ArgLocation::Kind::FPR:
+        return registers.fprs[location.regIndex];
+    case FFI::ArgLocation::Kind::Stack: {
+        uint64_t raw = 0;
+        memcpy(&raw, static_cast<const uint8_t*>(frame) + FFI::incomingStackOffset(layout, index), layout.packing == FFI::StackPacking::Natural ? FFI::nativeSizeInBytes(location.type) : 8);
+        return raw;
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return 0;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(ffiCallbackEnter, void, (uint32_t entry, FFI::CallbackRegisters* registers, const void* frame))
+{
+    JSFFICallback* callback = FFI::CallbackEntryPool::singleton().callbackAt(entry);
+    RELEASE_ASSERT(callback);
+
+    FFI::Signature& signature = callback->signature();
+    const FFI::CallLayout& layout = signature.callLayout();
+    const unsigned argumentCount = signature.argumentCount();
+    ASSERT(argumentCount <= FFI::Signature::maxArguments);
+    uint64_t slots[FFI::Signature::maxArguments + 1];
+    for (unsigned i = 0; i < argumentCount; ++i)
+        slots[i] = FFI::normalizeSlot(signature.argumentType(i), readIncomingArgument(layout, i, *registers, frame));
+    slots[argumentCount] = 0;
+
+    if (callback->isThreadsafe())
+        ffiCallbackDispatchThreadsafe(callback, slots);
+    else
+        ffiCallbackDispatch(callback, slots);
+
+    registers->returnValue = slots[argumentCount];
+}
+
 namespace FFI {
 
 void runThreadsafeInvocation(ThreadsafeInvocation& invocation)
@@ -497,4 +599,4 @@ void runThreadsafeInvocation(ThreadsafeInvocation&)
 
 } // namespace JSC
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

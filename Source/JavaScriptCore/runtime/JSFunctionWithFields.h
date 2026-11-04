@@ -60,6 +60,8 @@ public:
         PromiseAnyContext = 0,
         PromiseAnyReject = 1,
 
+        RevocableProxy = 0,
+
 #if ENABLE(WEBASSEMBLY)
         WebAssemblySuspendingWrappedCallable = 0,
         WebAssemblyPromisingWrappedFunction = 0,
@@ -70,6 +72,11 @@ public:
     DECLARE_INFO;
 
     DECLARE_VISIT_CHILDREN;
+
+    template<typename Visitor> ALWAYS_INLINE static void visitFields(JSFunctionWithFields* thisObject, Visitor& visitor)
+    {
+        visitor.appendValues(thisObject->m_internalFields, numberOfInternalFields);
+    }
 
     static JSFunctionWithFields* create(VM&, JSGlobalObject*, NativeExecutable*);
 

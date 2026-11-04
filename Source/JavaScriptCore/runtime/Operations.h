@@ -66,7 +66,6 @@ JSValue jsStringFromRegisterArray(JSGlobalObject*, Register*, unsigned count);
 
 JSBigIntComparisonResult compareBigInt(JSValue, JSValue);
 JSBigIntComparisonResult compareBigIntToOtherPrimitive(JSGlobalObject*, JSBigInt*, JSValue);
-JSBigIntComparisonResult compareBigInt32ToOtherPrimitive(JSGlobalObject*, int32_t, JSValue);
 bool bigIntCompareResult(JSBigIntComparisonResult, JSBigIntComparisonMode);
 bool bigIntCompare(JSGlobalObject*, JSValue, JSValue, JSBigIntComparisonMode);
 bool toPrimitiveNumeric(JSGlobalObject*, JSValue, JSValue&, double&);
@@ -80,7 +79,7 @@ JSValue jsAddNonNumber(JSGlobalObject*, JSValue, JSValue);
 JSValue jsAdd(JSGlobalObject*, JSValue, JSValue);
 
 template<typename DoubleOperation, typename BigIntOp>
-JSValue arithmeticBinaryOp(JSGlobalObject*, JSValue, JSValue, DoubleOperation&&, BigIntOp&&, ASCIILiteral);
+JSValue arithmeticBinaryOp(JSGlobalObject*, JSValue, JSValue, NOESCAPE const DoubleOperation&, NOESCAPE const BigIntOp&, ASCIILiteral);
 
 JSValue jsSub(JSGlobalObject*, JSValue, JSValue);
 JSValue jsMul(JSGlobalObject*, JSValue, JSValue);
@@ -98,7 +97,7 @@ JSValue jsRShift(JSGlobalObject*, JSValue, JSValue);
 JSValue jsURShift(JSGlobalObject*, JSValue, JSValue);
 
 template<typename Int32Operation, typename BigIntOp>
-JSValue bitwiseBinaryOp(JSGlobalObject*, JSValue, JSValue, Int32Operation&&, BigIntOp&&, ASCIILiteral);
+JSValue bitwiseBinaryOp(JSGlobalObject*, JSValue, JSValue, NOESCAPE const Int32Operation&, NOESCAPE const BigIntOp&, ASCIILiteral);
 JSValue jsBitwiseAnd(JSGlobalObject*, JSValue, JSValue);
 JSValue jsBitwiseOr(JSGlobalObject*, JSValue, JSValue);
 JSValue jsBitwiseXor(JSGlobalObject*, JSValue, JSValue);

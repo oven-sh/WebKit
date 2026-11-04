@@ -1,0 +1,21 @@
+# The code that is written down for an entrypoint that only hands on what it was given is, byte for byte and record for record, what the back end makes of the same function
+# FORM: AsRead
+# RUN: generate-code calls FunctionsWithoutFrame
+# RUN(PLACED): pipeline CheckPlacement
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations
+# PLACED: function f{{*}} name="takesArguments" {{*}}role=GenericEntrypoint
+# PLACED: ReturnCall
+# PLACED: function f{{*}} name="takesThis" {{*}}role=GenericEntrypoint
+# PLACED: ReturnCall
+# PLACED: function f{{*}} name="takesCaptures" {{*}}role=GenericEntrypoint
+# PLACED: GetCapture
+# PLACED: GetCapture
+# PLACED: ReturnCall
+# CHECK: f7: size={{*}} frame=none entries=1 sites=0 {{*}} prologueChecks=0 enteredWithoutStackCheck
+# CHECK: function f1 x1
+# CHECK: f8: size={{*}} frame=none entries=1 sites=0 {{*}} prologueChecks=0 enteredWithoutStackCheck
+# CHECK: function f2 x1
+# CHECK: f9: size={{*}} frame=none entries=1 sites=0 {{*}} prologueChecks=0 enteredWithoutStackCheck
+# CHECK: function f3 x1
+# CHECK: statistic FunctionsWithoutFrame 5
+# PROGRAM-OF: entrypoints-that-hand-on-what-they-were-given.ir

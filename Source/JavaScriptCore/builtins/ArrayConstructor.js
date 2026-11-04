@@ -52,24 +52,26 @@ function from(items /*, mapFn, thisArg */)
             @throwTypeError("Array.from requires that the property of the first argument, items[Symbol.iterator], when exists, be a function");
 
         var result = this !== @Array && @isConstructor(this) ? new this() : [];
+        if (!@isObject(result))
+            @throwTypeError("Array.from requires that |this| constructs an object");
 
         var k = 0;
         var iterator = iteratorMethod.@call(items);
+        if (!@isObject(iterator))
+            @throwTypeError("Iterator result interface is not an object.");
+        var nextMethod = iterator.next;
 
-        // Since for-of loop once more looks up the @@iterator property of a given iterable,
-        // it could be observable if the user defines a getter for @@iterator.
-        // To avoid this situation, we define a wrapper object that @@iterator just returns a given iterator.
-        var wrapper = {
-            @@iterator: function () { return iterator; }
-        };
-
-        for (var value of wrapper) {
+        for (;;) {
+            var next = @iteratorGenericNext(nextMethod, iterator);
+            if (next.done)
+                break;
+            var value = next.value;
             if (k >= @MAX_SAFE_INTEGER)
-                @throwTypeError("Length exceeded the maximum array length");
+                @ifAbruptCloseIterator(iterator, @throwTypeError("Length exceeded the maximum array length"));
             if (mapFn === @undefined)
-                @putByValDirect(result, k, value);
+                @ifAbruptCloseIterator(iterator, @putByValDirect(result, k, value));
             else
-                @putByValDirect(result, k, thisArg === @undefined ? mapFn(value, k) : mapFn.@call(thisArg, value, k));
+                @ifAbruptCloseIterator(iterator, @putByValDirect(result, k, thisArg === @undefined ? mapFn(value, k) : mapFn.@call(thisArg, value, k)));
             k += 1;
         }
 
@@ -80,6 +82,8 @@ function from(items /*, mapFn, thisArg */)
     var arrayLikeLength = @toLength(arrayLike.length);
 
     var result = this !== @Array && @isConstructor(this) ? new this(arrayLikeLength) : @newArrayWithSize(arrayLikeLength);
+    if (!@isObject(result))
+        @throwTypeError("Array.from requires that |this| constructs an object");
 
     var k = 0;
     while (k < arrayLikeLength) {
@@ -101,24 +105,42 @@ async function defaultAsyncFromAsyncIterator(iterator, mapFn, thisArg)
 {
     "use strict";
 
+    if (!@isObject(iterator))
+        @throwTypeError("Iterator result interface is not an object.");
+
+    var nextMethod = iterator.next;
+
     var result = this !== @Array && @isConstructor(this) ? new this() : [];
+    if (!@isObject(result))
+        @throwTypeError("Array.fromAsync requires that |this| constructs an object");
 
     var k = 0;
+    for (;;) {
+        var nextResult = await nextMethod.@call(iterator);
+        if (!@isObject(nextResult))
+            @throwTypeError("Iterator result interface is not an object.");
+        if (nextResult.done)
+            break;
 
-    // Since for-of loop once more looks up the @@iterator property of a given iterable,
-    // it could be observable if the user defines a getter for @@iterator.
-    // To avoid this situation, we define a wrapper object that @@iterator just returns a given iterator.
-    var wrapper = {
-        @@asyncIterator: function () { return iterator; }
-    };
-
-    for await (var value of wrapper) {
-        if (k >= @MAX_SAFE_INTEGER)
-            @throwTypeError("Length exceeded the maximum array length");
-        if (mapFn === @undefined)
-            @putByValDirect(result, k, value);
-        else
-            @putByValDirect(result, k, await (thisArg === @undefined ? mapFn(value, k) : mapFn.@call(thisArg, value, k)));
+        var value = nextResult.value;
+        try {
+            if (k >= @MAX_SAFE_INTEGER)
+                @throwTypeError("Length exceeded the maximum array length");
+            if (mapFn === @undefined)
+                @putByValDirect(result, k, value);
+            else
+                @putByValDirect(result, k, await (thisArg === @undefined ? mapFn(value, k) : mapFn.@call(thisArg, value, k)));
+        } catch (error) {
+            try {
+                var returnMethod = iterator.return;
+                if (!@isUndefinedOrNull(returnMethod)) {
+                    var returnResult = await returnMethod.@call(iterator);
+                    if (!@isObject(returnResult))
+                        @throwTypeError("Iterator result interface is not an object.");
+                }
+            } catch { }
+            throw error;
+        }
         k += 1;
     }
 
@@ -137,6 +159,8 @@ async function defaultAsyncFromAsyncArrayLike(asyncItems, mapFn, thisArg)
     var arrayLikeLength = @toLength(arrayLike.length);
 
     var result = this !== @Array && @isConstructor(this) ? new this(arrayLikeLength) : @newArrayWithSize(arrayLikeLength);
+    if (!@isObject(result))
+        @throwTypeError("Array.fromAsync requires that |this| constructs an object");
 
     var k = 0;
     while (k < arrayLikeLength) {
@@ -181,8 +205,10 @@ function fromAsync(asyncItems  /*, mapFn, thisArg */)
             }
         }
 
-        if (!@isUndefinedOrNull(usingAsyncIterator))
-            return @defaultAsyncFromAsyncIterator.@call(this, usingAsyncIterator.@call(asyncItems), mapFn, thisArg);
+        if (!@isUndefinedOrNull(usingAsyncIterator)) {
+            var iterator = usingAsyncIterator.@call(asyncItems);
+            return @defaultAsyncFromAsyncIterator.@call(this, iterator, mapFn, thisArg);
+        }
 
         if (!@isUndefinedOrNull(usingSyncIterator)) {
             var iterator = usingSyncIterator.@call(asyncItems);

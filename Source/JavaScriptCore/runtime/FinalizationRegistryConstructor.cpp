@@ -50,7 +50,7 @@ static JSC_DECLARE_HOST_FUNCTION(callFinalizationRegistry);
 static JSC_DECLARE_HOST_FUNCTION(constructFinalizationRegistry);
 
 FinalizationRegistryConstructor::FinalizationRegistryConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callFinalizationRegistry, constructFinalizationRegistry)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callFinalizationRegistry), JSC_REGISTERED_HOST_FUNCTION(constructFinalizationRegistry))
 {
 }
 

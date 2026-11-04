@@ -130,6 +130,10 @@ public:
         : CheckedPtr(o.get())
     { }
 
+    template<typename X, typename Deleter> CheckedPtr(const std::unique_ptr<X, Deleter>& o) requires std::is_convertible_v<X*, T*>
+        : CheckedPtr(o.get())
+    { }
+
     CheckedPtr(HashTableDeletedValueType)
         : m_ptr(PtrTraits::hashTableDeletedValue())
     { }
@@ -203,6 +207,7 @@ public:
 
 private:
     template<typename OtherType, typename OtherPtrTraits> friend class CheckedPtr;
+    template<typename ExpectedType, typename ArgType, typename ArgPtrTraits> friend CheckedPtr<match_constness_t<ArgType, ExpectedType>> dynamicDowncast(CheckedPtr<ArgType, ArgPtrTraits>&&);
 
     ALWAYS_INLINE void refIfNotNull()
     {
@@ -221,6 +226,8 @@ private:
 
 template<typename X, typename Y, typename Z> CheckedPtr(WeakPtr<X, Y, Z>&) -> CheckedPtr<X>;
 template<typename X, typename Y, typename Z> CheckedPtr(const WeakPtr<X, Y, Z>&) -> CheckedPtr<X>;
+template<typename X, typename Deleter> CheckedPtr(std::unique_ptr<X, Deleter>&) -> CheckedPtr<X>;
+template<typename X, typename Deleter> CheckedPtr(const std::unique_ptr<X, Deleter>&) -> CheckedPtr<X>;
 
 template <typename T, typename PtrTraits>
 struct GetPtrHelper<CheckedPtr<T, PtrTraits>> {
@@ -254,13 +261,6 @@ CheckedPtr<T, PtrTraits> protect(CheckedPtr<T, PtrTraits>&&)
     static_assert(WTF::unreachableForType<T>, "Calling protect() on an rvalue is unnecessary; the caller already owns the value.");
 }
 
-template<typename T, typename Deleter, typename PtrTraits = RawPtrTraits<T>>
-    requires (HasCheckedPtrMemberFunctions<T> && !HasRefPtrMemberFunctions<T>)
-ALWAYS_INLINE CLANG_POINTER_CONVERSION CheckedPtr<T, PtrTraits> protect(const std::unique_ptr<T, Deleter>& ptr)
-{
-    return CheckedPtr<T, PtrTraits>(ptr.get());
-}
-
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
 inline bool is(CheckedPtr<ArgType, ArgPtrTraits>& source)
 {
@@ -286,39 +286,43 @@ inline bool isAnyOf(const CheckedPtr<ArgType, ArgPtrTraits>& source)
 }
 
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
-inline ExpectedType& downcast(CheckedPtr<ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
+inline match_constness_t<ArgType, ExpectedType>* downcast(CheckedPtr<ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
 {
     return downcast<ExpectedType>(source.get());
 }
 
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
-inline ExpectedType& downcast(const CheckedPtr<ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
+inline match_constness_t<ArgType, ExpectedType>* downcast(const CheckedPtr<ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
 {
     return downcast<ExpectedType>(source.get());
 }
 
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
-inline const ExpectedType& downcast(CheckedPtr<const ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
+inline CheckedPtr<match_constness_t<ArgType, ExpectedType>> downcast(CheckedPtr<ArgType, ArgPtrTraits>&& source)
 {
-    return downcast<ExpectedType>(source.get());
+    if (!source)
+        return nullptr;
+    return downcast<ExpectedType>(source.releaseNonNull());
 }
 
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
-inline CheckedPtr<match_constness_t<ArgType, ExpectedType>> dynamicDowncast(CheckedPtr<ArgType, ArgPtrTraits>& source)
+inline match_constness_t<ArgType, ExpectedType>* dynamicDowncast(CheckedPtr<ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
 {
     return dynamicDowncast<ExpectedType>(source.get());
 }
 
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
-inline CheckedPtr<match_constness_t<ArgType, ExpectedType>> dynamicDowncast(const CheckedPtr<ArgType, ArgPtrTraits>& source)
+inline match_constness_t<ArgType, ExpectedType>* dynamicDowncast(const CheckedPtr<ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
 {
     return dynamicDowncast<ExpectedType>(source.get());
 }
 
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
-inline const CheckedPtr<match_constness_t<ArgType, ExpectedType>> dynamicDowncast(CheckedPtr<const ArgType, ArgPtrTraits>& source)
+inline CheckedPtr<match_constness_t<ArgType, ExpectedType>> dynamicDowncast(CheckedPtr<ArgType, ArgPtrTraits>&& source)
 {
-    return dynamicDowncast<ExpectedType>(source.get());
+    if (!is<ExpectedType>(source))
+        return nullptr;
+    return CheckedRef { uncheckedDowncast<ExpectedType>(*ArgPtrTraits::exchange(source.m_ptr, nullptr)), CheckedRef<match_constness_t<ArgType, ExpectedType>>::Adopt };
 }
 
 template<typename P> struct HashTraits<CheckedPtr<P>> : SimpleClassHashTraits<CheckedPtr<P>> {

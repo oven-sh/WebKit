@@ -29,6 +29,7 @@
 #if ENABLE(B3_JIT)
 
 #include "AirBasicBlock.h"
+#include "AirFormTable.h"
 #include "AirCode.h"
 #include "AirInsertionSet.h"
 #include "AirInst.h"
@@ -45,7 +46,7 @@ namespace JSC { namespace B3 { namespace Air {
 
 namespace {
 
-bool NODELETE hasPartialXmmRegUpdate(const Inst& inst)
+bool LEGACY_NODELETE hasPartialXmmRegUpdate(const Inst& inst)
 {
     switch (inst.kind.opcode) {
     case ConvertDoubleToFloat:
@@ -69,7 +70,7 @@ bool NODELETE hasPartialXmmRegUpdate(const Inst& inst)
     return false;
 }
 
-bool NODELETE isDependencyBreaking(const Inst& inst)
+bool LEGACY_NODELETE isDependencyBreaking(const Inst& inst)
 {
     // "xorps reg, reg" is used by the frontend to remove the dependency on its argument.
     switch (inst.kind.opcode) {
@@ -93,21 +94,35 @@ struct FPDefDistance {
             distance[i] = 255;
     }
 
-    void NODELETE reset(FPRReg reg)
+    void LEGACY_NODELETE reset(FPRReg reg)
     {
         unsigned index = MacroAssembler::fpRegisterIndex(reg);
         distance[index] = 255;
     }
 
-    void NODELETE add(FPRReg reg, unsigned registerDistance)
+    void LEGACY_NODELETE add(FPRReg reg, unsigned registerDistance)
     {
         unsigned index = MacroAssembler::fpRegisterIndex(reg);
         if (registerDistance < distance[index])
             distance[index] = static_cast<unsigned char>(registerDistance);
     }
 
-    bool NODELETE updateFromPrecessor(FPDefDistance& precessorDistance, unsigned constantOffset = 0)
+    bool LEGACY_NODELETE hasNoInformation() const
     {
+        static_assert(!(sizeof(distance) % sizeof(uint64_t)));
+        for (unsigned i = 0; i < sizeof(distance); i += sizeof(uint64_t)) {
+            uint64_t word;
+            memcpy(&word, distance + i, sizeof(uint64_t));
+            if (~word)
+                return false;
+        }
+        return true;
+    }
+
+    bool LEGACY_NODELETE updateFromPrecessor(FPDefDistance& precessorDistance, unsigned constantOffset = 0)
+    {
+        if (precessorDistance.hasNoInformation())
+            return false;
         bool changed = false;
         for (unsigned i = 0; i < MacroAssembler::numberOfFPRegisters(); ++i) {
             unsigned regDistance = precessorDistance.distance[i] + constantOffset;
@@ -129,6 +144,17 @@ void updateDistances(Inst& inst, FPDefDistance& localDistance, unsigned& distanc
     if (isDependencyBreaking(inst)) {
         // MoveFloat/MoveDouble/MoveVector with FPImm zero: fpImm is args[0], dest tmp is args[1]
         localDistance.reset(inst.args()[1].tmp().fpr());
+        return;
+    }
+
+    unsigned argIndex = 0;
+    if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
+        Arg* args = inst.args().data();
+        for (unsigned numberOfArgs = inst.args().size(); argIndex < numberOfArgs; ++argIndex) {
+            Arg& arg = args[argIndex];
+            if (arg.isTmp() && arg.tmp().isFPR() && Arg::isAnyDef(decodeFormRole(forms[argIndex])))
+                localDistance.add(arg.tmp().fpr(), distanceToBlockEnd);
+        }
         return;
     }
 

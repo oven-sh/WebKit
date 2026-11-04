@@ -175,9 +175,12 @@ void CanvasRenderingContext2D::drawFocusIfNeededInternal(const Path& path, Eleme
     CheckedPtr canvasStyle = canvas->computedStyle();
     auto zoomFactor = canvasStyle ? canvasStyle->usedZoom() : 1.f;
     willUpdateEntireContents();
-    context->drawFocusRing(path, 1, RenderTheme::singleton().focusRingColor(protect(element.document())->styleColorOptions(canvasStyle)), zoomFactor);
+    Ref document = element.document();
+    // FIXME: <rdar://190977456> If AXCustomColorMode is forcing a dark appearance due to dark active custom colors,
+    // this focus ring will still be light.
+    context->drawFocusRing(path, 1, RenderTheme::singleton().focusRingColor(document->styleColorOptions(canvasStyle, StyleColorOptionsPurpose::ComputedStyle)), zoomFactor);
 
-    if (CheckedPtr cache = element.document().existingAXObjectCache()) {
+    if (CheckedPtr cache = document->existingAXObjectCache()) {
         auto pathBounds = path.boundingRect();
         auto canvasBounds = state().transform.mapRect(pathBounds);
 
@@ -250,7 +253,10 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
 
     // Map the <canvas> font into the text style. If the font uses keywords like larger/smaller, these will work
     // relative to the canvas.
-    auto fontCascade = Style::resolveForUnresolvedFont(*unresolvedFont, FontCascadeDescription { fontDescription }, document.get());
+    FontCascadeDescription resolutionDescription { fontDescription };
+    carryOverKerningAndTextRendering(resolutionDescription);
+    resolutionDescription.setComputedLocale(effectiveLanguage());
+    auto fontCascade = Style::resolveForUnresolvedFont(*unresolvedFont, WTF::move(resolutionDescription), document.get());
     if (!fontCascade)
         return;
 
@@ -259,7 +265,7 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
     modifiableState().unparsedFont = newFontSafeCopy;
     modifiableState().fontResolutionBase = WTF::move(fontDescription);
 
-    modifiableState().font.initialize(protect(document->fontSelector()), *fontCascade);
+    modifiableState().font.initialize(protect(document->fontSelector()), protect(*fontCascade));
     ASSERT(state().font.realized());
     ASSERT(state().font.isPopulated());
 
@@ -270,7 +276,7 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
     setWordSpacing(std::exchange(modifiableState().wordSpacing, wordSpacing));
 }
 
-inline TextDirection CanvasRenderingContext2D::toTextDirection(Direction direction, const Style::ComputedStyle** computedStyle) const
+inline TextDirection CanvasRenderingContext2D::toTextDirection(Direction direction, CheckedPtr<const Style::ComputedStyle>* computedStyle) const
 {
     CheckedPtr style = computedStyle || direction == Direction::Inherit ? protect(canvas())->existingComputedStyle() : nullptr;
     if (computedStyle)
@@ -287,11 +293,9 @@ inline TextDirection CanvasRenderingContext2D::toTextDirection(Direction directi
     return TextDirection::LTR;
 }
 
-CanvasDirection CanvasRenderingContext2D::direction() const
+AtomString CanvasRenderingContext2D::inheritedLanguage() const
 {
-    if (state().direction == Direction::Inherit)
-        protect(canvas().document())->updateStyleIfNeeded();
-    return toTextDirection(state().direction) == TextDirection::RTL ? CanvasDirection::Rtl : CanvasDirection::Ltr;
+    return protect(canvas())->effectiveLang();
 }
 
 void CanvasRenderingContext2D::fillText(const String& text, double x, double y, std::optional<double> maxWidth)
@@ -318,7 +322,7 @@ Ref<TextMetrics> CanvasRenderingContext2D::measureText(const String& text)
     }
 
     String normalizedText = normalizeSpaces(text);
-    const Style::ComputedStyle* computedStyle;
+    CheckedPtr<const Style::ComputedStyle> computedStyle;
     auto direction = toTextDirection(state().direction, &computedStyle);
     bool override = computedStyle && isOverride(computedStyle->unicodeBidi());
     TextRun textRun(normalizedText, 0, 0, ExpansionBehavior::allowRightOnly(), direction, override, true);
@@ -335,6 +339,12 @@ auto CanvasRenderingContext2D::fontProxy() -> const FontProxy*
 
     if (!state().font.realized())
         setFontWithoutUpdatingStyle(state().unparsedFont);
+    else if (state().lang == "inherit"_s && state().font.fontDescription().computedLocale() != inheritedLanguage()) {
+        realizeSaves();
+        modifiableState().font.update([language = effectiveLanguage()](FontCascadeDescription& description) {
+            description.setComputedLocale(language);
+        });
+    }
     return &state().font;
 }
 
@@ -352,7 +362,7 @@ void CanvasRenderingContext2D::drawTextInternal(const String& text, double x, do
         return;
 
     String normalizedText = normalizeSpaces(text);
-    const Style::ComputedStyle* computedStyle;
+    CheckedPtr<const Style::ComputedStyle> computedStyle;
     auto direction = toTextDirection(state().direction, &computedStyle);
     bool override = computedStyle && isOverride(computedStyle->unicodeBidi());
     TextRun textRun(normalizedText, 0, 0, ExpansionBehavior::allowRightOnly(), direction, override, true);

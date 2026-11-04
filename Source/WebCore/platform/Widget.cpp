@@ -61,8 +61,9 @@ FrameView* Widget::root() const
     const Widget* top = this;
     while (top->parent())
         top = top->parent();
-    if (auto* frameView = dynamicDowncast<FrameView>(top))
+    if (auto* frameView = dynamicDowncast<FrameView>(top)) {
         return const_cast<FrameView*>(frameView);
+    }
     return nullptr;
 }
     

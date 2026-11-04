@@ -74,19 +74,19 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CaptionUserPreferencesMediaAF);
 
-static std::unique_ptr<CaptionPreferencesDelegate>& captionPreferencesDelegate()
+static std::unique_ptr<CaptionPreferencesDelegate>& LEGACY_NODELETE captionPreferencesDelegate()
 {
     static NeverDestroyed<std::unique_ptr<CaptionPreferencesDelegate>> delegate;
     return delegate.get();
 }
 
-static std::optional<CaptionUserPreferencesMediaAF::CaptionDisplayMode>& NODELETE cachedCaptionDisplayMode()
+static std::optional<CaptionUserPreferencesMediaAF::CaptionDisplayMode>& LEGACY_NODELETE cachedCaptionDisplayMode()
 {
     static NeverDestroyed<std::optional<CaptionUserPreferencesMediaAF::CaptionDisplayMode>> captionDisplayMode;
     return captionDisplayMode;
 }
 
-static std::optional<Vector<String>>& NODELETE cachedPreferredLanguages()
+static std::optional<Vector<String>>& LEGACY_NODELETE cachedPreferredLanguages()
 {
     static NeverDestroyed<std::optional<Vector<String>>> preferredLanguages;
     return preferredLanguages;
@@ -348,7 +348,7 @@ String CaptionUserPreferencesMediaAF::captionsWindowCSS() const
         CGFloat opacity = MACaptionAppearanceGetWindowOpacity(kMACaptionAppearanceDomainUser, &behavior);
         if (!important)
             important = behaviorShouldNotBeOverriden(behavior);
-        return colorPropertyCSS(CSSPropertyBackgroundColor, windowColor.colorWithAlpha(opacity), important);
+        return colorPropertyCSS(CSSPropertyID::BackgroundColor, windowColor.colorWithAlpha(opacity), important);
     });
 }
 
@@ -369,7 +369,7 @@ String CaptionUserPreferencesMediaAF::captionsBackgroundCSS() const
         CGFloat opacity = MACaptionAppearanceGetBackgroundOpacity(kMACaptionAppearanceDomainUser, &behavior);
         if (!important)
             important = behaviorShouldNotBeOverriden(behavior);
-        return colorPropertyCSS(CSSPropertyBackgroundColor, backgroundColor.colorWithAlpha(opacity), important);
+        return colorPropertyCSS(CSSPropertyID::BackgroundColor, backgroundColor.colorWithAlpha(opacity), important);
     });
 }
 
@@ -397,7 +397,7 @@ String CaptionUserPreferencesMediaAF::captionsTextColorCSS() const
     auto textColor = captionsTextColor(important);
     if (!textColor.isValid())
         return emptyString();
-    return colorPropertyCSS(CSSPropertyColor, textColor, important);
+    return colorPropertyCSS(CSSPropertyID::Color, textColor, important);
 }
 
 String CaptionUserPreferencesMediaAF::windowRoundedCornerRadiusCSS() const
@@ -409,8 +409,8 @@ String CaptionUserPreferencesMediaAF::windowRoundedCornerRadiusCSS() const
             return emptyString();
 
         StringBuilder builder;
-        appendCSS(builder, CSSPropertyBorderRadius, behaviorShouldNotBeOverriden(behavior), radius, "px"_s);
-        appendCSS(builder, CSSPropertyPadding, behaviorShouldNotBeOverriden(behavior), radius / 4, "px"_s);
+        appendCSS(builder, CSSPropertyID::BorderRadius, behaviorShouldNotBeOverriden(behavior), radius, "px"_s);
+        appendCSS(builder, CSSPropertyID::Padding, behaviorShouldNotBeOverriden(behavior), radius / 4, "px"_s);
         return builder.toString();
     });
 }
@@ -454,17 +454,17 @@ String CaptionUserPreferencesMediaAF::captionsTextEdgeCSS() const
         StringBuilder builder;
         bool important = behaviorShouldNotBeOverriden(behavior);
         if (textEdgeStyle == kMACaptionAppearanceTextEdgeStyleRaised)
-            appendCSS(builder, CSSPropertyTextShadow, important, "-.1em -.1em .16em black"_s);
+            appendCSS(builder, CSSPropertyID::TextShadow, important, "-.1em -.1em .16em black"_s);
         else if (textEdgeStyle == kMACaptionAppearanceTextEdgeStyleDepressed)
-            appendCSS(builder, CSSPropertyTextShadow, important, ".1em .1em .16em black"_s);
+            appendCSS(builder, CSSPropertyID::TextShadow, important, ".1em .1em .16em black"_s);
         else if (textEdgeStyle == kMACaptionAppearanceTextEdgeStyleDropShadow)
-            appendCSS(builder, CSSPropertyTextShadow, important, "0 .1em .16em black"_s);
+            appendCSS(builder, CSSPropertyID::TextShadow, important, "0 .1em .16em black"_s);
 
         if (textEdgeStyle == kMACaptionAppearanceTextEdgeStyleDropShadow || textEdgeStyle == kMACaptionAppearanceTextEdgeStyleUniform) {
-            appendCSS(builder, CSSPropertyStrokeColor, important, "black"_s);
-            appendCSS(builder, CSSPropertyPaintOrder, important, nameLiteral(CSSValueStroke));
-            appendCSS(builder, CSSPropertyStrokeLinejoin, important, nameLiteral(CSSValueRound));
-            appendCSS(builder, CSSPropertyStrokeLinecap, important, nameLiteral(CSSValueRound));
+            appendCSS(builder, CSSPropertyID::StrokeColor, important, "black"_s);
+            appendCSS(builder, CSSPropertyID::PaintOrder, important, nameLiteral(CSSValueID::Stroke));
+            appendCSS(builder, CSSPropertyID::StrokeLinejoin, important, nameLiteral(CSSValueID::Round));
+            appendCSS(builder, CSSPropertyID::StrokeLinecap, important, nameLiteral(CSSValueID::Round));
         }
 
         return builder.toString();

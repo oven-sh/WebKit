@@ -44,6 +44,7 @@
 #include <WebCore/ScrollingTreeOverflowScrollProxyNode.h>
 #include <WebCore/ScrollingTreeOverflowScrollingNode.h>
 #include <WebCore/ScrollingTreePositionedNode.h>
+#include <wtf/Borrow.h>
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -65,6 +66,12 @@ RemoteScrollingCoordinatorProxy::~RemoteScrollingCoordinatorProxy()
     m_scrollingTree->invalidate();
 }
 
+void RemoteScrollingCoordinatorProxy::invalidate()
+{
+    m_isInvalidated = true;
+    m_scrollingTree->invalidate();
+}
+
 WebPageProxy& RemoteScrollingCoordinatorProxy::webPageProxy() const
 {
     return m_webPageProxy.get();
@@ -72,11 +79,16 @@ WebPageProxy& RemoteScrollingCoordinatorProxy::webPageProxy() const
 
 std::optional<ScrollingNodeID> RemoteScrollingCoordinatorProxy::rootScrollingNodeID() const
 {
-    // FIXME: Locking
-    if (!m_scrollingTree->rootNode())
+    // FIXME: Locking.
+    // The scrolling thread replaces the root in commitTreeState(), so read it once. Calling
+    // rootNode() twice can see a node on the first read and nothing on the second. Taking
+    // the tree lock here isn't an option, since scrollingTreeNodeRequestsScroll() calls
+    // this with it already held.
+    RefPtr rootNode = m_scrollingTree->rootNode();
+    if (!rootNode)
         return std::nullopt;
 
-    return m_scrollingTree->rootNode()->scrollingNodeID();
+    return rootNode->scrollingNodeID();
 }
 
 const RemoteLayerTreeHost* RemoteScrollingCoordinatorProxy::layerTreeHost() const
@@ -140,7 +152,9 @@ void RemoteScrollingCoordinatorProxy::establishLayerTreeScrollingRelations(IPC::
         for (auto overflowNodeID : positionedNode->relatedOverflowScrollingNodes()) {
             RefPtr node = scrollingTree().nodeForID(overflowNodeID);
             RefPtr overflowNode = dynamicDowncast<ScrollingTreeOverflowScrollingNode>(node.get());
-            MESSAGE_CHECK_BASE(overflowNode, connection);
+            ASSERT(overflowNode);
+            if (!overflowNode)
+                continue;
             SUPPRESS_FORWARD_DECL_ARG RetainPtr scrollContainerLayer = static_cast<CALayer*>(overflowNode->scrollContainerLayer());
             SUPPRESS_FORWARD_DECL_ARG auto layerID = RemoteLayerTreeNode::layerID(scrollContainerLayer.get());
             MESSAGE_CHECK_BASE(layerID, connection);
@@ -157,7 +171,9 @@ void RemoteScrollingCoordinatorProxy::establishLayerTreeScrollingRelations(IPC::
     for (auto& scrollProxyNode : scrollingTree().activeOverflowScrollProxyNodes()) {
         RefPtr node = scrollingTree().nodeForID(scrollProxyNode->overflowScrollingNodeID());
         RefPtr overflowNode = dynamicDowncast<ScrollingTreeOverflowScrollingNode>(node.get());
-        MESSAGE_CHECK_BASE(overflowNode, connection);
+        ASSERT(overflowNode);
+        if (!overflowNode)
+            continue;
 
         SUPPRESS_FORWARD_DECL_ARG RetainPtr scrollProxyLayer = scrollProxyNode->layer();
         SUPPRESS_FORWARD_DECL_ARG if (RefPtr layerNode = RemoteLayerTreeNode::forCALayer(scrollProxyLayer.get())) {
@@ -210,7 +226,7 @@ void RemoteScrollingCoordinatorProxy::adjustMainFrameDelegatedScrollPosition(Scr
         }
     };
 
-    for (auto& request : requestData)
+    for (auto& request : borrow(requestData))
         handleOneRequest(request);
 }
 
@@ -280,7 +296,7 @@ void RemoteScrollingCoordinatorProxy::applyScrollingTreeLayerPositionsAfterCommi
 
 void RemoteScrollingCoordinatorProxy::currentSnapPointIndicesDidChange(WebCore::ScrollingNodeID nodeID, std::optional<unsigned> horizontal, std::optional<unsigned> vertical)
 {
-    protect(protect(webPageProxy())->legacyMainFrameProcess())->send(Messages::RemoteScrollingCoordinator::CurrentSnapPointIndicesChangedForNode(nodeID, horizontal, vertical), m_webPageProxy->webPageIDInMainFrameProcess());
+    protect(webPageProxy())->sendToProcessContainingFrame(m_scrollingTree->frameIDForScrollingNodeID(nodeID), Messages::RemoteScrollingCoordinator::CurrentSnapPointIndicesChangedForNode(nodeID, horizontal, vertical));
 }
 
 void RemoteScrollingCoordinatorProxy::sendScrollingTreeNodeUpdate()
@@ -289,7 +305,13 @@ void RemoteScrollingCoordinatorProxy::sendScrollingTreeNodeUpdate()
     if (webPageProxy->scrollingUpdatesDisabledForTesting())
         return;
 
-    auto scrollUpdates = m_scrollingTree->takePendingScrollUpdates();
+    if (m_isInvalidated)
+        return;
+
+    bool mainFrameScrollPositionChanged = false;
+    auto rootNodeID = rootScrollingNodeID();
+
+    const Vector scrollUpdates = m_scrollingTree->takePendingScrollUpdates();
     for (unsigned i = 0; i < scrollUpdates.size(); ++i) {
         const auto& update = scrollUpdates[i];
         bool isLastUpdate = i == scrollUpdates.size() - 1;
@@ -298,6 +320,8 @@ void RemoteScrollingCoordinatorProxy::sendScrollingTreeNodeUpdate()
             const auto& updateData = std::get<ScrollUpdateData>(update.data);
             if (updateData.updateType == ScrollUpdateType::PositionUpdate) {
                 webPageProxy->scrollingNodeScrollViewDidScroll(update.nodeID);
+                if (rootNodeID && update.nodeID == *rootNodeID)
+                    mainFrameScrollPositionChanged = true;
                 auto* scrollPerfData = webPageProxy->scrollingPerformanceData();
 
                 if (scrollPerfData && updateData.layoutViewportOriginOrOverrideRect) {
@@ -319,6 +343,9 @@ void RemoteScrollingCoordinatorProxy::sendScrollingTreeNodeUpdate()
         webPageProxy->sendScrollUpdateForNode(m_scrollingTree->frameIDForScrollingNodeID(update.nodeID), update, isLastUpdate);
         m_waitingForDidScrollReply = true;
     }
+
+    if (mainFrameScrollPositionChanged)
+        mainFrameScrollPositionDidChange();
 
 #if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
     if (!scrollUpdates.isEmpty())
@@ -345,8 +372,8 @@ void RemoteScrollingCoordinatorProxy::receivedLastScrollingTreeNodeUpdateReply()
         return;
 
     RunLoop::mainSingleton().dispatch([weakThis = WeakPtr { *this }]() {
-        if (CheckedPtr checkedThis = weakThis)
-            checkedThis->sendScrollingTreeNodeUpdate();
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->sendScrollingTreeNodeUpdate();
     });
 }
 
@@ -421,6 +448,11 @@ WebCore::FloatBoxExtent RemoteScrollingCoordinatorProxy::obscuredContentInsets()
     return m_scrollingTree->mainFrameObscuredContentInsets();
 }
 
+bool RemoteScrollingCoordinatorProxy::isCommittingScrollingTreeState() const
+{
+    return m_scrollingTree->inCommitTreeState();
+}
+
 #if HAVE(NSREFRESHCONTROLLER)
 
 void RemoteScrollingCoordinatorProxy::setTopScrollStretchForRefreshController(float offset)
@@ -471,9 +503,19 @@ float RemoteScrollingCoordinatorProxy::mainFrameScaleFactor() const
     return m_scrollingTree->mainFrameScaleFactor();
 }
 
+void RemoteScrollingCoordinatorProxy::setDelegatedPageScaleFactor(float scale)
+{
+    m_scrollingTree->setMainFrameDelegatedPageScaleFactor(scale);
+}
+
 FloatSize RemoteScrollingCoordinatorProxy::totalContentsSize() const
 {
     return m_scrollingTree->totalContentsSize();
+}
+
+FloatSize RemoteScrollingCoordinatorProxy::sizeForVisibleContent() const
+{
+    return m_scrollingTree->mainFrameSizeForVisibleContent();
 }
 
 void RemoteScrollingCoordinatorProxy::displayDidRefresh(PlatformDisplayID displayID)
@@ -496,7 +538,9 @@ void RemoteScrollingCoordinatorProxy::sendUIStateChangedIfNecessary()
     if (!m_uiState.changes())
         return;
 
-    protect(protect(webPageProxy())->legacyMainFrameProcess())->send(Messages::RemoteScrollingCoordinator::ScrollingStateInUIProcessChanged(m_uiState), m_webPageProxy->webPageIDInMainFrameProcess());
+    protect(webPageProxy())->forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::RemoteScrollingCoordinator::ScrollingStateInUIProcessChanged(m_uiState), pageID);
+    });
     m_uiState.clearChanges();
 }
 

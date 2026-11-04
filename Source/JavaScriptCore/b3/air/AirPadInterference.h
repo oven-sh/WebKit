@@ -40,7 +40,7 @@ class Code;
 //
 // See https://bugs.webkit.org/show_bug.cgi?id=163548#c2 for more info.
 
-void padInterference(Code&);
+JS_EXPORT_PRIVATE void padInterference(Code&);
 
 } } } // namespace JSC::B3::Air
 

@@ -39,6 +39,7 @@ WI.CSSManager = class CSSManager extends WI.Object
         WI.DOMNode.addEventListener(WI.DOMNode.Event.EnabledPseudoClassesChanged, this._nodePseudoClassesDidChange, this);
 
         WI.targetManager.addEventListener(WI.TargetManager.Event.TargetRemoved, this._handleTargetRemoved, this);
+        WI.domManager.addEventListener(WI.DOMManager.Event.DocumentUpdated, this._handleDocumentUpdated, this);
 
         this._colorFormatSetting = new WI.Setting("default-color-format", WI.Color.Format.Original);
 
@@ -49,14 +50,20 @@ WI.CSSManager = class CSSManager extends WI.Object
         this._defaultUserPreferences = new Map;
         this._overriddenUserPreferences = new Map;
         this._propertyNameCompletions = null;
+        this._layoutContextTypeChangedMode = WI.CSSManager.LayoutContextTypeChangedMode.Observed;
     }
 
     // Target
 
     initializeTarget(target)
     {
-        if (target.hasDomain("CSS"))
+        if (target.hasDomain("CSS")) {
             target.CSSAgent.enable();
+
+            // Page targets get the mode once their document arrives, in `_handleDocumentUpdated`.
+            if (target instanceof WI.FrameTarget && this._layoutContextTypeChangedMode !== WI.CSSManager.LayoutContextTypeChangedMode.Observed)
+                this._setLayoutContextTypeChangedModeForTarget(target, this._layoutContextTypeChangedMode);
+        }
     }
 
     initializeCSSPropertyNameCompletions(target)
@@ -222,6 +229,10 @@ WI.CSSManager = class CSSManager extends WI.Object
             return WI.unlocalizedString("::slider-thumb");
         case CSSManager.PseudoSelectorNames.SliderTrack:
             return WI.unlocalizedString("::slider-track");
+        case CSSManager.PseudoSelectorNames.Placeholder:
+            return WI.unlocalizedString("::placeholder");
+        case CSSManager.PseudoSelectorNames.FileSelectorButton:
+            return WI.unlocalizedString("::file-selector-button");
         case CSSManager.PseudoSelectorNames.ViewTransition:
             return WI.unlocalizedString("::view-transition");
         case CSSManager.PseudoSelectorNames.ViewTransitionGroup:
@@ -349,15 +360,10 @@ WI.CSSManager = class CSSManager extends WI.Object
 
     set layoutContextTypeChangedMode(layoutContextTypeChangedMode)
     {
-        for (let target of WI.targets) {
-            // FIXME <https://webkit.org/b/314148> Use FrameCSSAgent in the frontend.
-            if (target instanceof WI.FrameTarget)
-                continue;
+        this._layoutContextTypeChangedMode = layoutContextTypeChangedMode;
 
-            // COMPATIBILITY (iOS 14.5): CSS.setLayoutContextTypeChangedMode did not exist.
-            if (target.hasCommand("CSS.setLayoutContextTypeChangedMode"))
-                target.CSSAgent.setLayoutContextTypeChangedMode(layoutContextTypeChangedMode);
-        }
+        for (let target of WI.targets)
+            this._setLayoutContextTypeChangedModeForTarget(target, layoutContextTypeChangedMode);
     }
 
     canForcePseudoClass(pseudoClass)
@@ -566,6 +572,16 @@ WI.CSSManager = class CSSManager extends WI.Object
 
     // CSSObserver
 
+    fontDataChanged(target)
+    {
+        for (let key in this._nodeStylesMap) {
+            let nodeStyles = this._nodeStylesMap[key];
+            if ((nodeStyles.node.owningTarget || WI.assumingMainTarget()) !== target)
+                continue;
+            nodeStyles.fontDataChanged();
+        }
+    }
+
     mediaQueryResultChanged()
     {
         for (var key in this._nodeStylesMap)
@@ -621,6 +637,22 @@ WI.CSSManager = class CSSManager extends WI.Object
         if (target instanceof WI.FrameTarget)
             return `${target.identifier}:${rawId}`;
         return rawId;
+    }
+
+    _setLayoutContextTypeChangedModeForTarget(target, mode)
+    {
+        // COMPATIBILITY (iOS 14.5): CSS.setLayoutContextTypeChangedMode did not exist.
+        if (target.hasCommand("CSS.setLayoutContextTypeChangedMode"))
+            target.CSSAgent.setLayoutContextTypeChangedMode(mode);
+    }
+
+    _handleDocumentUpdated(event)
+    {
+        // A main-frame load resets the mode in InspectorCSSAgent, which can push nodes only after the frontend has the new document.
+        if (!event.data.document || this._layoutContextTypeChangedMode === WI.CSSManager.LayoutContextTypeChangedMode.Observed)
+            return;
+
+        this._setLayoutContextTypeChangedModeForTarget(WI.pageTarget, this._layoutContextTypeChangedMode);
     }
 
     _handleTargetRemoved(event)
@@ -900,12 +932,14 @@ WI.CSSManager.PseudoSelectorNames = {
     Before: "before",
     Backdrop: "backdrop",
     Checkmark: "checkmark",
+    FileSelectorButton: "file-selector-button",
     FirstLetter: "first-letter",
     FirstLine: "first-line",
     Highlight: "highlight",
     GrammarError: "grammar-error",
     Marker: "marker",
     PickerIcon: "picker-icon",
+    Placeholder: "placeholder",
     Selection: "selection",
     SpellingError: "spelling-error",
     TargetText: "target-text",

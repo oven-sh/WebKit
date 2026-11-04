@@ -157,18 +157,10 @@ WebKitDOMDocument* webkit_dom_dom_implementation_create_document(WebKitDOMDOMImp
     return WebKit::kit(result.releaseReturnValue().ptr());
 }
 
-WebKitDOMCSSStyleSheet* webkit_dom_dom_implementation_create_css_style_sheet(WebKitDOMDOMImplementation* self, const gchar* title, const gchar* media, GError** error)
+WebKitDOMCSSStyleSheet* webkit_dom_dom_implementation_create_css_style_sheet(WebKitDOMDOMImplementation*, const gchar*, const gchar*, GError**)
 {
-    WebCore::JSMainThreadNullState state;
-    g_return_val_if_fail(WEBKIT_DOM_IS_DOM_IMPLEMENTATION(self), 0);
-    g_return_val_if_fail(title, 0);
-    g_return_val_if_fail(media, 0);
-    g_return_val_if_fail(!error || !*error, 0);
-    WebCore::DOMImplementation* item = WebKit::core(self);
-    WTF::String convertedTitle = WTF::String::fromUTF8(title);
-    WTF::String convertedMedia = WTF::String::fromUTF8(media);
-    RefPtr<WebCore::CSSStyleSheet> gobjectResult = WTF::getPtr(item->createCSSStyleSheet(convertedTitle, convertedMedia));
-    return WebKit::kit(gobjectResult.get());
+    g_warning("%s: DOMImplementation.createCSSStyleSheet has been removed from DOM spec, this function does nothing.", __func__);
+    return nullptr;
 }
 
 WebKitDOMHTMLDocument* webkit_dom_dom_implementation_create_html_document(WebKitDOMDOMImplementation* self, const gchar* title)

@@ -1,0 +1,101 @@
+# In the cold code of a cold function of a very large program a read gets no test where the plan would ask for the shape and at most that the slot is filled: it stays by name.
+# A read of a field with a declared type keeps its test, and so do a read in a small function and a read in a loop.
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls limit=MaxWarmCodeValues:1
+# RUN: pipeline RemoveDeadCountedLoops
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" module=m0 fields=[{key="x" declared={type=anything}}]
+layout L1 name="Point" module=m0 fields=[{key="y" declared={type=number}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = PropGet v0 key="something" [isFreeName]
+    v5 = NewObject layout=L0 fields=[]
+    PropSet v5, v4 key="x"
+    v7 = Integer integer=1
+    v8 = NewObject -, v7 layout=L1 fields=[0]
+    v9 = Call v1, -, v2, v3, v5, v8
+    Return
+}
+
+function f1 name="oneCaller" parameters=[{type=L0 flags=[IsExpected]}, {type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything ~ L1):
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect v1 function=f4
+    v4 = CallDirect v0 function=f5
+    v5 = CallDirect v0 function=f6
+    Return v2
+}
+
+function f2 name="anotherCaller" parameters=[{type=L0 flags=[IsExpected]}, {type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything ~ L1):
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect v1 function=f4
+    v4 = CallDirect v0 function=f5
+    v5 = CallDirect v0 function=f6
+    Return v3
+}
+
+function f3 name="readsUntypedField" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="x"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="log" [isFreeName]
+# REPEAT: i = 4..35
+    v%(i) = Call v3, -
+# END REPEAT
+    Return v1
+}
+# CHECK-LABEL: function f3 name="readsUntypedField"
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NOT: TypeTest
+
+function f4 name="readsTypedField" flags=[IsChecked] parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L1):
+    v1 = PropGet v0 key="y"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="log" [isFreeName]
+# REPEAT: i = 4..35
+    v%(i) = Call v3, -
+# END REPEAT
+    Return v1
+}
+# CHECK-LABEL: function f4 name="readsTypedField"
+# CHECK: = TypeTest v0 testedType=L1
+# CHECK: = GetSlot
+
+function f5 name="smallFunction" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f5 name="smallFunction"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = GetSlot
+
+function f6 name="readsInLoop" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="log" [isFreeName]
+# REPEAT: i = 3..34
+    v%(i) = Call v2, -
+# END REPEAT
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v36 = PropGet v0 key="x"
+    v37 = Call v2, -, v36
+    v38 = ToBoolean v37
+    Branch v38 -> taken b1(), notTaken b2()
+  b2():
+    Return v37
+}
+# CHECK-LABEL: function f6 name="readsInLoop"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = GetSlot

@@ -45,7 +45,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioParam);
 
-static void NODELETE replaceNaNValues(std::span<float> values, float defaultValue)
+static void LEGACY_NODELETE replaceNaNValues(std::span<float> values, float defaultValue)
 {
     for (auto& value : values) {
         if (std::isnan(value))
@@ -71,6 +71,8 @@ AudioParam::AudioParam(BaseAudioContext& context, const String& name, float defa
 {
     ALWAYS_LOG(LOGIDENTIFIER, "name = ", m_name, ", value = ", m_value, ", default = ", m_defaultValue, ", min = ", m_minValue, ", max = ", m_maxValue);
 }
+
+AudioParam::~AudioParam() = default;
 
 float AudioParam::value()
 {

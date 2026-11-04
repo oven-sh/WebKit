@@ -52,14 +52,14 @@ private:
     void invalidateForChangedElement(Element&, MatchingHasSelectors&, ChangedElementRelation);
     void invalidateForHasSiblings(MatchingHasSelectors&, MutationPhase);
 
-    bool emptyStateMayChange() const;
+    bool LEGACY_NODELETE emptyStateMayChange() const;
 
-    template<typename Function> void traverseRemovedElements(Function&&);
-    template<typename Function> void traverseAddedElements(Function&&);
+    template<typename Function> void traverseRemovedElements(NOESCAPE const Function&);
+    template<typename Function> void traverseAddedElements(NOESCAPE const Function&);
 
     Element& parentElement() { return *m_parentElement; }
 
-    RefPtr<Element> m_parentElement;
+    const RefPtr<Element> m_parentElement;
     const ContainerNode::ChildChange& m_childChange;
 
     const bool m_isEnabled;

@@ -1,0 +1,22 @@
+# handedIn(Error.prototype); handedIn[globalThis.name] = mine; Error.prototype.toString
+# `handedIn` may be whatever the program has handed out, and no listing names a prototype object of the language. The key may be any name, so each member of Error.prototype that
+# can be replaced counts as written by the program and start-up does not lock it.
+# RUN: valueflow-results
+# CHECK: builtin-location ErrorPrototype."toString" Unknown
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = PropGet v0 key="name" [isFreeName]
+    v3 = Builtin builtin=ErrorPrototype
+    v4 = Call v1, -, v3
+    v5 = NewClosure function=f1
+    ElemSet v1, v2, v5
+    v7 = PropGet v3 key="toString"
+    Return v7
+}
+function f1 name="mine" module=m0 results=[{type=anything}] {
+    Return
+}

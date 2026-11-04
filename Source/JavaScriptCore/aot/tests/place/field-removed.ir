@@ -1,0 +1,40 @@
+# A field that RemoveUnreadFields removed has no slot, although the source stores it
+# FORM: AsRead
+# OPTIONS: only-passes=RemoveUnreadFields
+# RUN: plan-slots layouts
+# STATISTIC: UnreadFieldsRemoved = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="partlyRead" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="fullyRead" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="PartlyRead" fields=[{key="unread" declared={type=anything} flags=[IsRequired]}, {key="count" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="FullyRead" fields=[{key="observed" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2, v1 layout=L0 fields=[0, 1]
+    PutModuleVariable v3 variable=g0
+    v5 = NewObject -, v1 layout=L1 fields=[0]
+    PutModuleVariable v5 variable=g1
+    v7 = CallDirect function=f1
+    v8 = CallDirect function=f2
+    Return
+}
+function f1 name="readCount" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+function f2 name="readObserved" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = PropGet v0 key="observed"
+    Return v1
+}
+
+# CHECK: L0 CompiledObject
+# CHECK-NOT: "unread"
+# CHECK: .1 "count"
+# CHECK-NEXT: L1 CompiledObject
+# CHECK-NEXT: .0 "observed"

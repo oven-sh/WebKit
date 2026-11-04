@@ -1,18 +1,12 @@
-[ iOS ] accessibility/ios/WebAccessibilityObjectWrapperIOS.h
-bindings/js/JSLazyEventListener.cpp
-css/CSSToLengthConversionData.h
-css/SelectorChecker.h
-css/SelectorFilter.h
 dom/CollectionIndexCache.h
 dom/Node.cpp
 dom/Node.h
-inspector/agents/WebHeapAgent.cpp
 layout/formattingContexts/inline/AbstractLineBuilder.h
 layout/formattingContexts/inline/InlineContentBreaker.h
 layout/formattingContexts/inline/InlineFormattingContext.h
 layout/formattingContexts/inline/InlineFormattingUtils.cpp
 layout/formattingContexts/inline/InlineItemsBuilder.h
-layout/formattingContexts/inline/InlineLine.h
+layout/formattingContexts/inline/InlineLineRun.h
 layout/formattingContexts/inline/invalidation/InlineInvalidation.cpp
 layout/integration/LayoutIntegrationBoxTreeUpdater.h
 layout/integration/inline/LayoutIntegrationInlineContentBuilder.h
@@ -21,19 +15,12 @@ layout/layouttree/LayoutChildIterator.h
 layout/layouttree/LayoutContainingBlockChainIterator.h
 layout/layouttree/LayoutDescendantIterator.h
 layout/layouttree/LayoutIterator.h
-[ iOS ] page/cocoa/ContentChangeObserver.h
-platform/graphics/TextRunIterator.h
-[ iOS ] platform/ios/DeviceMotionClientIOS.h
-[ iOS ] platform/ios/DeviceOrientationClientIOS.h
 rendering/BackgroundPainter.h
 rendering/GlyphDisplayListCache.cpp
 rendering/GridTrackSizingAlgorithm.h
 rendering/InlineBoxPainter.h
 rendering/LayoutRepainter.h
-rendering/LegacyInlineIterator.h
-rendering/LegacyLineLayout.h
 rendering/LogicalSelectionOffsetCaches.h
-rendering/OrderIterator.h
 rendering/PaintInfo.h
 rendering/PositionedLayoutConstraints.h
 rendering/RenderAncestorIterator.h
@@ -55,8 +42,7 @@ rendering/RenderTableSection.h
 rendering/RenderText.cpp
 rendering/TextDecorationPainter.h
 [ iOS ] rendering/cocoa/RenderThemeCocoa.mm
-rendering/line/BreakingContext.h
-rendering/mathml/RenderMathMLScripts.h
+[ iOS ] rendering/ios/RenderThemeIOS.mm
 rendering/shapes/ShapeOutsideInfo.h
 rendering/svg/SVGRenderingContext.h
 rendering/svg/SVGTextBoxPainter.h
@@ -77,4 +63,3 @@ style/StyleScope.h
 style/StyleTreeResolver.h
 style/Styleable.h
 style/values/primitives/StyleLengthResolution.cpp
-svg/properties/SVGPropertyOwnerRegistry.h

@@ -34,6 +34,7 @@
 #import "WKInspectorResourceURLSchemeHandler.h"
 #import "WKInspectorWKWebView.h"
 #import "WKOpenPanelParameters.h"
+#import "WKPreferencesInternal.h"
 #import "WKProcessPoolInternal.h"
 #import "WKWebViewInternal.h"
 #import "WKWebsiteDataStoreInternal.h"
@@ -173,12 +174,16 @@ static void* const safeAreaInsetsKVOContext = (void*)&safeAreaInsetsKVOContext;
     // Disable Site Isolation for Web Inspector View.
     preferences.get()._siteIsolationEnabled = NO;
 
+    // The Find banner and Search sidebar use the legacy results=N attribute for recent searches.
+    protect(*preferences.get()->_preferences)->setSearchInputResultsAttributeEnabled(true);
+
+    preferences.get()._hiddenPageDOMTimerThrottlingEnabled = NO;
+
     [_configuration applyToWebViewConfiguration:configuration.get()];
 
     RetainPtr delegate = _delegate.get();
     if (!!delegate && [delegate respondsToSelector:@selector(inspectorViewControllerInspectorIsUnderTest:)]) {
         if ([delegate inspectorViewControllerInspectorIsUnderTest:self]) {
-            preferences.get()._hiddenPageDOMTimerThrottlingEnabled = NO;
             preferences.get()._pageVisibilityBasedProcessSuppressionEnabled = NO;
             preferences.get().inactiveSchedulingPolicy = WKInactiveSchedulingPolicyNone;
         }

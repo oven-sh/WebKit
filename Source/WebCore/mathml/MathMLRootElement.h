@@ -37,7 +37,7 @@ class MathMLRootElement final : public MathMLRowElement {
     WTF_MAKE_TZONE_ALLOCATED(MathMLRootElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MathMLRootElement);
 public:
-    static Ref<MathMLRootElement> create(const QualifiedName& tagName, Document&);
+    static Ref<MathMLRootElement> LEGACY_NODELETE create(const QualifiedName& tagName, Document&);
     RootType rootType() const { return m_rootType; }
 
 private:
@@ -50,5 +50,14 @@ private:
 };
 
 }
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::MathMLRootElement)
+    static bool isType(const WebCore::MathMLElement& element) { return element.hasTagName(WebCore::MathMLNames::msqrtTag) || element.hasTagName(WebCore::MathMLNames::mrootTag); }
+    static bool isType(const WebCore::Node& node)
+    {
+        auto* mathMLElement = dynamicDowncast<WebCore::MathMLElement>(node);
+        return mathMLElement && isType(*mathMLElement);
+    }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(MATHML)

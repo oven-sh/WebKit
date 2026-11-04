@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 #include "FTLAbbreviatedTypes.h"
 
@@ -50,7 +50,7 @@ public:
     LValue begin() const { return m_begin; }
     LValue end() const { return m_end; }
     
-    void NODELETE decorateInstruction(LValue loadInstruction, unsigned rangeKind) const;
+    void LEGACY_NODELETE decorateInstruction(LValue loadInstruction, unsigned rangeKind) const;
     
 private:
     LValue m_begin;
@@ -59,4 +59,4 @@ private:
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)

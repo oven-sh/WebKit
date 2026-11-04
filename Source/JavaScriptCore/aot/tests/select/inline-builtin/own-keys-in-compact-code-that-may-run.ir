@@ -1,0 +1,24 @@
+# The own keys of an object are the list remembered for its shape, found in line. Compact code that may well run finds it so too: the call of the run time is for blocks that are not expected to run
+# FORM: Prepared
+# OPTIONS: heat=everything-is-cold
+# RUN: pass Select
+# RUN(FORMS): inline-forms
+# RUN(SHAPES): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="keysOf" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Return v3
+  b2():
+    Return v2
+}
+# SHAPES: f0 b0 Compact
+# SHAPES: f0 b1 Compact
+# FORMS: function f0
+# FORMS-NEXT: v2 {{*}} OwnPropertyKeys {{*}} TwoWay
+# FORMS-NEXT: v3 {{*}} OwnPropertyKeys {{*}} Whole
+# CHECK-LABEL: function f0 name="keysOf"
+# CHECK: TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys

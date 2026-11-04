@@ -1,0 +1,45 @@
+# No string is too long to be made of numbers, booleans and constants, so such a concatenation may run behind a call that stands between it and its reader, in one block as across blocks.
+# FORM: Prepared
+# RUN: pass FuseConcatenations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callBetweenShortParts" parameters=[{type=number}, {type=function}, {type=boolean}] results=[{type=anything}] {
+    v3 = String string=":"
+    v4 = Add v0, v3
+    v5 = Call v1
+    v6 = Add v4, v2
+    Return v6
+# CHECK-NOT: = Add
+# CHECK: string = Strcat v0, v3, v2
+}
+
+function f1 name="callBetweenLongParts" parameters=[{type=string}, {type=function}, {type=string}] results=[{type=anything}] {
+    v3 = Add v0, v2
+    v4 = Call v1
+    v5 = Add v3, v2
+    Return v5
+# CHECK-COUNT-2: = Add
+# CHECK-NOT: Strcat
+}
+
+function f2 name="aLongOneInFrontOfTheCallAndAShortOneBehindIt" parameters=[{type=string}, {type=function}, {type=number}] results=[{type=anything}] {
+    v3 = Add v0, v0
+    v4 = Call v1
+    v5 = String string=":"
+    v6 = Add v2, v5
+    v7 = Add v3, v6
+    Return v7
+# CHECK: v3: string = Add v0, v0
+# CHECK: string = Strcat v3, v2, v5
+}
+
+function f3 name="aShortOneInFrontOfTheCallAndALongOneInFrontOfThat" parameters=[{type=string}, {type=function}, {type=number}] results=[{type=anything}] {
+    v3 = Add v0, v0
+    v4 = String string=":"
+    v5 = Add v2, v4
+    v6 = Call v1
+    v7 = Strcat v3, v5
+    Return v7
+# CHECK: v3: string = Add v0, v0
+# CHECK: string = Strcat v3, v2, v4
+}

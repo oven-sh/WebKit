@@ -1,0 +1,72 @@
+# function add(n) { return n + 1 }   function twice(n) { return n * 2 }   prepare(add, twice)
+# const boundAdd = add.bind(null), boundTwice = twice.bind(null)   function runAdd(n) { return boundAdd(n) }   function runTwice(n) { return boundTwice(n) }
+# `prepare` is code that nobody sees, so nothing proves that the two functions still inherit the built-in `bind`. The module body runs once, so nothing tests the functions for it either.
+# The calls in `runAdd` and `runTwice` expect closures of the compiled bound functions. So each call of `bind` tests its callee, and creates such a closure where the callee is the built-in.
+# `prepare` gives `twice` a `bind` of its own: that one is called.
+# FORM: AsRead
+# RUN(IR): pipeline Select
+# RUN: run-in-shell globalThis.prepare = (add, twice) => { twice.bind = () => n => n * 3; }; globalThis.register = (runAdd, runTwice, read) => { print(runAdd(1), read().name, read().length); print(runTwice(2)); };
+# IR: name="main"
+# IR: = TypeTest {{*}}testedType=builtin(FunctionPrototypeBind)
+# IR: = NewClosure {{*}}function=[[boundAdd]]
+# IR: name="runAdd"
+# IR: = IsClosureOf {{*}}function=[[boundAdd]]
+# IR: = CallDirect {{*}}function=f1
+# CHECK: 2 bound add 1
+# CHECK-NEXT: 6
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="boundAdd" module=m0 declared={type=anything}
+variable g1 name="boundTwice" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="prepare" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    v5 = Null
+    v6 = PropGet v0 key="bind"
+    v7 = Call v6, v0, v5 calleeKey="bind"
+    PutModuleVariable v7 variable=g0
+    v9 = PropGet v1 key="bind"
+    v10 = Call v9, v1, v5 calleeKey="bind"
+    PutModuleVariable v10 variable=g1
+    v12 = NewClosure function=f3
+    v13 = NewClosure function=f4
+    v14 = NewClosure function=f5
+    v15 = PropGet v2 key="register" [isFreeName]
+    v16 = Call v15, -, v12, v13, v14
+    Return
+}
+function f1 name="add" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="twice" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    Return v2
+}
+function f3 name="runAdd" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f4 name="runTwice" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f5 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

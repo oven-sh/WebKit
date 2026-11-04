@@ -28,8 +28,6 @@
 
 #if PLATFORM(IOS_FAMILY)
 
-#import "Document.h"
-#import "Element.h"
 #import "FloatRoundedRect.h"
 #import "FontCascade.h"
 #import "FontPlatformData.h"
@@ -39,14 +37,9 @@
 #import "GraphicsContextCG.h"
 #import "Image.h"
 #import "ImageBuffer.h"
-#import "LocalFrameInlines.h"
 #import "NativeImage.h"
 #import "NotImplemented.h"
-#import "Page.h"
-#import "Range.h"
-#import "SimpleRange.h"
 #import "StringTruncator.h"
-#import "TextIndicator.h"
 #import "TextRun.h"
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreText/CoreText.h>
@@ -61,26 +54,33 @@ namespace WebCore {
 
 #if ENABLE(DRAG_SUPPORT)
 
-IntSize dragImageSize(DragImageRef image)
+static IntSize dragImageSize(PlatformDragImage image)
 {
     return IntSize(CGImageGetWidth(image.get()), CGImageGetHeight(image.get()));
 }
 
-DragImageRef scaleDragImage(DragImageRef image, FloatSize)
+IntSize DragImage::size() const
+{
+    return dragImageSize(m_platformImage);
+}
+
+static PlatformDragImage scaleDragImage(PlatformDragImage image, FloatSize)
 {
     // It's unnecessary to apply additional scaling to the drag image on iOS, since the drag image will always perform lift and cancel animations
     // using targeted previews which will scale to fit the bounds of the dragged element anyways.
     return image;
 }
 
+void DragImage::scale(FloatSize scale)
+{
+    m_platformImage = scaleDragImage(takePlatformImage(), scale);
+}
+
 static float maximumAllowedDragImageArea = 600 * 1024;
 
-DragImageRef createDragImageFromImage(Image* image, ImageOrientation orientation, GraphicsClient* client, float scale)
+static PlatformDragImage createDragImageFromImage(NativeImage& image, GraphicsClient* client, float scale)
 {
-    if (!image)
-        return nil;
-
-    auto imageSize = image->size();
+    auto imageSize = FloatSize(image.size());
     if (imageSize.isEmpty())
         return nil;
 
@@ -97,7 +97,7 @@ DragImageRef createDragImageFromImage(Image* image, ImageOrientation orientation
 
     buffer->context().translate(0, imageSize.height());
     buffer->context().scale({ adjustedImageScale, -adjustedImageScale });
-    buffer->context().drawImage(*image, FloatPoint { }, { orientation });
+    buffer->context().drawNativeImage(image, FloatRect { { }, image.size() }, FloatRect { { }, image.size() });
 
     RefPtr nativeImage = ImageBuffer::sinkIntoNativeImage(WTF::move(buffer));
     if (!nativeImage)
@@ -106,114 +106,60 @@ DragImageRef createDragImageFromImage(Image* image, ImageOrientation orientation
     return RetainPtr { nativeImage->platformImage() }.autorelease();
 }
 
-void deleteDragImage(DragImageRef)
+DragImage DragImage::create(NativeImage& image, GraphicsClient* client, float deviceScaleFactor)
+{
+    return DragImage { createDragImageFromImage(image, client, deviceScaleFactor) };
+}
+
+static void deleteDragImage(PlatformDragImage)
 {
 }
 
-static RetainPtr<CGImageRef> cgImageFromTextIndicator(const TextIndicator& textIndicator)
+void DragImage::deletePlatformImage(PlatformDragImage image)
 {
-    RefPtr image = textIndicator.contentImage();
-    if (!image)
-        return { };
-
-    RefPtr nativeImage = image->nativeImage();
-    if (!nativeImage)
-        return { };
-
-    return nativeImage->platformImage();
+    deleteDragImage(WTF::move(image));
 }
 
-DragImageData createDragImageForLink(Element& linkElement, URL&, const String&, float)
-{
-    constexpr OptionSet<TextIndicatorOption> defaultLinkIndicatorOptions {
-        TextIndicatorOption::TightlyFitContent,
-        TextIndicatorOption::RespectTextColor,
-        TextIndicatorOption::UseBoundingRectAndPaintAllContentForComplexRanges,
-        TextIndicatorOption::ExpandClipBeyondVisibleRect,
-        TextIndicatorOption::ComputeEstimatedBackgroundColor
-    };
-
-    RefPtr textIndicator = TextIndicator::createWithRange(makeRangeSelectingNodeContents(linkElement), defaultLinkIndicatorOptions, TextIndicatorPresentationTransition::None, { });
-    if (!textIndicator)
-        return  { nullptr, nullptr };
-
-    return  { cgImageFromTextIndicator(*textIndicator).autorelease(), textIndicator };
-}
-
-DragImageRef createDragImageIconForCachedImageFilename(const String&)
+static PlatformDragImage createDragImageIconForCachedImageFilename(const String&)
 {
     notImplemented();
     return nullptr;
 }
 
-DragImageRef platformAdjustDragImageForDeviceScaleFactor(DragImageRef image, float)
+DragImage DragImage::createIconForCachedImageFilename(const String& filename)
+{
+    return DragImage { createDragImageIconForCachedImageFilename(filename) };
+}
+
+static PlatformDragImage platformAdjustDragImageForDeviceScaleFactor(PlatformDragImage image, float)
 {
     // On iOS, we just create the drag image at the right device scale factor, so we don't need to scale it by 1 / deviceScaleFactor later.
     return image;
 }
 
-constexpr OptionSet<TextIndicatorOption> defaultSelectionDragImageTextIndicatorOptions {
-    TextIndicatorOption::ExpandClipBeyondVisibleRect,
-    TextIndicatorOption::PaintAllContent,
-    TextIndicatorOption::UseSelectionRectForSizing,
-    TextIndicatorOption::ComputeEstimatedBackgroundColor
-};
-
-DragImageData createDragImageForSelection(LocalFrame& frame, bool forceBlackText)
+void DragImage::adjustForDeviceScaleFactor(float deviceScaleFactor)
 {
-    if (RefPtr document = frame.document())
-        document->updateLayout();
-
-    auto options = defaultSelectionDragImageTextIndicatorOptions;
-    if (!forceBlackText)
-        options.add(TextIndicatorOption::RespectTextColor);
-
-    RefPtr textIndicator = TextIndicator::createWithSelectionInFrame(frame, options, TextIndicatorPresentationTransition::None, FloatSize());
-    if (!textIndicator)
-        return { nullptr, nullptr };
-
-    return { cgImageFromTextIndicator(*textIndicator).autorelease(), textIndicator };
+    m_platformImage = platformAdjustDragImageForDeviceScaleFactor(takePlatformImage(), deviceScaleFactor);
 }
 
-DragImageRef dissolveDragImageToFraction(DragImageRef image, float)
+static PlatformDragImage dissolveDragImageToFraction(PlatformDragImage image, float)
 {
     notImplemented();
     return image;
 }
 
-DragImageRef createDragImageForRange(LocalFrame& frame, const SimpleRange& range, bool forceBlackText)
+void DragImage::dissolveToFraction(float delta)
 {
-    if (RefPtr document = frame.document())
-        document->updateLayout();
-
-    if (range.collapsed())
-        return nil;
-
-    auto options = defaultSelectionDragImageTextIndicatorOptions;
-    if (!forceBlackText)
-        options.add(TextIndicatorOption::RespectTextColor);
-
-    auto textIndicator = TextIndicator::createWithRange(range, options, TextIndicatorPresentationTransition::None);
-    if (!textIndicator || !textIndicator->contentImage())
-        return nil;
-
-    Ref image = *textIndicator->contentImage();
-    RetainPtr render = adoptNS([PAL::allocUIGraphicsImageRendererInstance() initWithSize:image->size()]);
-    UIImage *finalImage = [render imageWithActions:[&image](UIGraphicsImageRendererContext *rendererContext) {
-        GraphicsContextCG context(rendererContext.CGContext);
-        context.drawImage(image, FloatPoint());
-    }];
-
-    return finalImage.CGImage;
+    m_platformImage = dissolveDragImageToFraction(takePlatformImage(), delta);
 }
 
-DragImageRef createDragImageForColor(const Color& color, const FloatRect& elementRect, float pageScaleFactor, Path& visiblePath)
+static PlatformDragImage createDragImageForColor(const Color& color, const FloatRect& elementRect, float pageScaleFactor, Path& visiblePath)
 {
     FloatRect imageRect { 0, 0, elementRect.width() * pageScaleFactor, elementRect.height() * pageScaleFactor };
     FloatRoundedRect swatch { imageRect, CornerRadii(ColorSwatchCornerRadius * pageScaleFactor) };
 
     auto render = adoptNS([PAL::allocUIGraphicsImageRendererInstance() initWithSize:imageRect.size()]);
-    UIImage *image = [render imageWithActions:^(UIGraphicsImageRendererContext *rendererContext) {
+    RetainPtr image = [render imageWithActions:^(UIGraphicsImageRendererContext *rendererContext) {
         GraphicsContextCG context { rendererContext.CGContext };
         context.translate(0, CGRectGetHeight(imageRect));
         context.scale({ 1, -1 });
@@ -221,36 +167,56 @@ DragImageRef createDragImageForColor(const Color& color, const FloatRect& elemen
     }];
 
     visiblePath.addRoundedRect(swatch);
-    return image.CGImage;
+    return [image CGImage];
+}
+
+DragImage DragImage::createForColor(const Color& color, const FloatRect& elementRect, float pageScaleFactor, Path& visiblePath)
+{
+    return DragImage { createDragImageForColor(color, elementRect, pageScaleFactor, visiblePath) };
 }
 
 #else
 
-void deleteDragImage(RetainPtr<CGImageRef>)
+static void deleteDragImage(RetainPtr<CGImageRef>)
 {
     // Since this is a RetainPtr, there's nothing additional we need to do to
     // delete it. It will be released when it falls out of scope.
 }
 
+void DragImage::deletePlatformImage(PlatformDragImage image)
+{
+    deleteDragImage(WTF::move(image));
+}
+
 // FIXME: fix signature of dragImageSize() to avoid copying the argument.
-IntSize dragImageSize(RetainPtr<CGImageRef> image)
+static IntSize dragImageSize(RetainPtr<CGImageRef> image)
 {
     return IntSize(CGImageGetWidth(image.get()), CGImageGetHeight(image.get()));
 }
 
-RetainPtr<CGImageRef> scaleDragImage(RetainPtr<CGImageRef>, FloatSize)
+IntSize DragImage::size() const
+{
+    return dragImageSize(m_platformImage);
+}
+
+static RetainPtr<CGImageRef> scaleDragImage(RetainPtr<CGImageRef>, FloatSize)
 {
     return nullptr;
 }
 
-RetainPtr<CGImageRef> createDragImageFromImage(Image*, ImageOrientation, GraphicsClient*, float)
+void DragImage::scale(FloatSize scale)
+{
+    m_platformImage = scaleDragImage(takePlatformImage(), scale);
+}
+
+static RetainPtr<CGImageRef> createDragImageFromImage(NativeImage&, GraphicsClient*, float)
 {
     return nullptr;
 }
 
-DragImageRef createDragImageForRange(LocalFrame&, const SimpleRange&, bool)
+DragImage DragImage::create(NativeImage& image, GraphicsClient* client, float deviceScaleFactor)
 {
-    return nullptr;
+    return DragImage { createDragImageFromImage(image, client, deviceScaleFactor) };
 }
 
 #endif

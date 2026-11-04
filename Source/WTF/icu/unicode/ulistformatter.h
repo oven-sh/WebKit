@@ -10,6 +10,9 @@
 #ifndef ULISTFORMATTER_H
 #define ULISTFORMATTER_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/utypes.h"
 
 #if !UCONFIG_NO_FORMATTING

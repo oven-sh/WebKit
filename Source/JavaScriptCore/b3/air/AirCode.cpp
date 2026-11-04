@@ -49,8 +49,11 @@ WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(Code);
 WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(Dominators);
 WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(NaturalLoops);
 
-static void defaultPrologueGenerator(CCallHelpers& jit, Code& code)
+static void defaultPrologueGenerator(CCallHelpers& jit, Code& code, GenerationContext&)
 {
+    if (code.policy().frame.emitsFrame)
+        return;
+
     jit.emitFunctionPrologue();
 
     // NOTE: on ARM64, if the callee saves have bigger offsets due to a potential tail call,
@@ -66,14 +69,17 @@ static void defaultPrologueGenerator(CCallHelpers& jit, Code& code)
 
 Code::Code(Procedure& proc)
     : m_proc(proc)
+    , m_policy(proc.policy().air)
+    , m_targetFeatures(proc.policy().targetFeatures)
     , m_cfg(new CFG(*this))
+    , m_optLevel(proc.policy().upstream.optLevel)
     , m_preserveB3Origins(Options::dumpAirGraphAtEachPhase() || Options::dumpFTLDisassembly())
     , m_lastPhaseName("initial")
     , m_defaultPrologueGenerator(createSharedTask<PrologueGeneratorFunction>(&defaultPrologueGenerator))
 {
     // Come up with initial orderings of registers. The user may replace this with something else.
     std::optional<WeakRandom> weakRandom;
-    if (Options::airRandomizeRegs())
+    if (m_policy.registers.randomizesRegisterOrder)
         weakRandom.emplace();
     forEachBank(
         [&](Bank bank) {
@@ -84,6 +90,7 @@ Code::Code(Procedure& proc)
             all.exclude(RegisterSet::stackRegisters());
             all.exclude(RegisterSet::reservedHardwareRegisters());
             auto calleeSave = RegisterSet::calleeSaveRegisters();
+            calleeSave.merge(m_policy.registers.savedByCallee);
             all.forEach(
                 [&] (Reg reg) {
                     if (!calleeSave.contains(reg, IgnoreVectors))
@@ -97,25 +104,28 @@ Code::Code(Procedure& proc)
             result.appendVector(volatileRegs);
             result.appendVector(fullCalleeSaveRegs);
             result.appendVector(calleeSaveRegs);
-            if (Options::airRandomizeRegs()) {
-                WeakRandom random(Options::airRandomizeRegsSeed() ? Options::airRandomizeRegsSeed() : weakRandom->getUint32());
+            if (m_policy.registers.randomizesRegisterOrder) {
+                std::optional<unsigned> seed = m_policy.registers.registerOrderSeed;
+                WeakRandom random(seed ? *seed : weakRandom->getUint32());
                 shuffleVector(result, [&] (unsigned limit) { return random.getUint32(limit); });
             }
             setRegsInPriorityOrder(bank, result);
         });
 
     m_pinnedRegs.add(MacroAssembler::framePointerRegister, IgnoreVectors);
+    orderRegistersClobberedAtSuspensionsLast();
 }
 
 Code::~Code() = default;
 
-void Code::emitDefaultPrologue(CCallHelpers& jit)
+void Code::emitDefaultPrologue(CCallHelpers& jit, GenerationContext& context)
 {
-    defaultPrologueGenerator(jit, *this);
+    defaultPrologueGenerator(jit, *this, context);
 }
 
 void Code::emitEpilogue(CCallHelpers& jit)
 {
+    RELEASE_ASSERT(!m_policy.frame.emitsFrame);
     if (frameSize()) {
         // NOTE: on ARM64, if the callee saves have bigger offsets due to a potential tail call,
         // the macro assembler might assert scratch register usage on load operations emitted by emitRestore.
@@ -136,6 +146,20 @@ void Code::setRegsInPriorityOrder(Bank bank, const Vector<Reg>& regs)
             for (Reg reg : regsInPriorityOrder(bank))
                 m_mutableRegs.add(reg, IgnoreVectors);
         });
+}
+
+void Code::orderRegistersClobberedAtSuspensionsLast()
+{
+    const RegisterSet& registers = m_policy.registers.calleeSavesClobberedAtSuspensions;
+    if (registers.isEmpty())
+        return;
+    Vector<Reg> order;
+    Vector<Reg> clobbered;
+    for (Reg reg : regsInPriorityOrder(GP))
+        (registers.contains(reg, IgnoreVectors) ? clobbered : order).append(reg);
+    std::ranges::sort(clobbered, std::ranges::greater { }, &Reg::index);
+    order.appendVector(clobbered);
+    setRegsInPriorityOrder(GP, order);
 }
 
 void Code::pinRegister(Reg reg)
@@ -162,7 +186,9 @@ bool Code::needsUsedRegisters() const
 
 BasicBlock* Code::addBlock(double frequency)
 {
-    std::unique_ptr<BasicBlock> block(new BasicBlock(m_blocks.size(), frequency));
+    Arena* arena = m_proc.arenaOrNull();
+    std::unique_ptr<BasicBlock> block(new (arena) BasicBlock(m_blocks.size(), frequency));
+    block->m_isInArena = !!arena;
     BasicBlock* result = block.get();
     m_blocks.append(WTF::move(block));
     return result;
@@ -172,6 +198,7 @@ StackSlot* Code::addStackSlot(uint64_t byteSize, StackSlotKind kind)
 {
     StackSlot* result = m_stackSlots.addNew(byteSize, kind);
     if (m_stackIsAllocated) {
+        RELEASE_ASSERT(!m_frameLayout.isPlanned);
         // FIXME: This is unnecessarily awful. Fortunately, it doesn't run often.
         unsigned extent = WTF::roundUpToMultipleOf(result->alignment(), frameSize() - stackAdjustmentForAlignment() + byteSize);
         result->setOffsetFromFP(-static_cast<ptrdiff_t>(extent));
@@ -240,17 +267,32 @@ RegisterAtOffsetList Code::calleeSaveRegisterAtOffsetList() const
 
 void Code::resetReachability()
 {
-    clearPredecessors(m_blocks);
-    if (m_entrypoints.isEmpty())
-        updatePredecessorsAfter(m_blocks[0].get());
-    else {
+    recomputePredecessorsFromRoots(m_blocks, [&](auto&& visit) {
+        if (m_entrypoints.isEmpty()) {
+            visit(m_blocks[0].get());
+            return;
+        }
         for (const FrequentedBlock& entrypoint : m_entrypoints)
-            updatePredecessorsAfter(entrypoint.block());
-    }
+            visit(entrypoint.block());
+    });
     
     for (auto& block : m_blocks) {
         if (isBlockDead(block.get()) && !isEntrypoint(block.get()))
             block = nullptr;
+    }
+}
+
+void Code::adoptBlockOrder(const Vector<BasicBlock*>& order)
+{
+    // This leaks all of the blocks and then readopts them.
+    for (auto& entry : m_blocks)
+        entry.release();
+
+    m_blocks.shrink(0);
+
+    for (unsigned i = 0; i < order.size(); ++i) {
+        order[i]->setIndex(i);
+        m_blocks.append(std::unique_ptr<BasicBlock>(order[i]));
     }
 }
 
@@ -272,18 +314,13 @@ void Code::dump(PrintStream& out) const
     }
     if (m_frameSize || m_stackIsAllocated)
         out.print(tierName, "Frame size: ", m_frameSize, m_stackIsAllocated ? " (Allocated)" : "", "\n");
+    if (m_frameLayout.isPlanned)
+        out.print(tierName, "Frame layout: ", m_frameLayout, "\n");
     if (m_callArgAreaSize)
         out.print(tierName, "Call arg area size: ", m_callArgAreaSize, "\n");
     RegisterAtOffsetList calleeSaveRegisters = this->calleeSaveRegisterAtOffsetList();
     if (calleeSaveRegisters.registerCount())
         out.print(tierName, "Callee saves: ", calleeSaveRegisters, "\n");
-}
-
-unsigned Code::findFirstBlockIndex(unsigned index) const
-{
-    while (index < size() && !at(index))
-        index++;
-    return index;
 }
 
 unsigned Code::findNextBlockIndex(unsigned index) const
@@ -412,7 +449,6 @@ void Code::appendIonGraphPass(ASCIILiteral passName)
     }
     RefPtr { m_ionGraphPasses }->pushObject(pass);
 }
-
 
 } } } // namespace JSC::B3::Air
 

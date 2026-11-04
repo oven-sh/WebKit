@@ -26,10 +26,11 @@
 #include "config.h"
 #include "FTLOutput.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 #include "B3AtomicValue.h"
 #include "B3BasicBlockInlines.h"
+#include "B3BulkMemoryValue.h"
 #include "B3Const32Value.h"
 #include "B3FenceValue.h"
 #include "B3MathExtras.h"
@@ -45,8 +46,16 @@ namespace JSC { namespace FTL {
 
 using namespace B3;
 
+#if ENABLE(FTL_JIT)
 Output::Output(State& state)
     : m_proc(*state.proc)
+{
+}
+#endif
+
+Output::Output(B3::Procedure& proc)
+    : m_proc(proc)
+    , m_blockLinks { BlockLink { } }
 {
 }
 
@@ -61,6 +70,18 @@ LBasicBlock Output::newBlock()
 {
     LBasicBlock result = m_proc.addBlock(m_frequency);
 
+    if (ordersBlocksByIndex()) {
+        unsigned link = result->index() + 1;
+        unsigned next = m_nextBlock ? m_nextBlock->index() + 1 : 0;
+        if (m_blockLinks.size() <= link)
+            m_blockLinks.grow(link + 1);
+        unsigned previous = m_blockLinks[next].previous;
+        m_blockLinks[link] = { result, previous, next };
+        m_blockLinks[previous].next = link;
+        m_blockLinks[next].previous = link;
+        return result;
+    }
+
     if (!m_nextBlock)
         m_blockOrder.append(result);
     else
@@ -71,6 +92,15 @@ LBasicBlock Output::newBlock()
 
 void Output::applyBlockOrder()
 {
+    if (ordersBlocksByIndex()) {
+        Vector<LBasicBlock, 32> blocks;
+        blocks.reserveInitialCapacity(m_blockLinks.size() - 1);
+        for (unsigned link = m_blockLinks[0].next; link; link = m_blockLinks[link].next)
+            blocks.append(m_blockLinks[link].block);
+        m_proc.setBlockOrder(blocks);
+        return;
+    }
+
     m_proc.setBlockOrder(m_blockOrder);
 }
 
@@ -307,10 +337,12 @@ LValue Output::doubleTrunc(LValue operand)
     return m_block->appendNew<B3::Value>(m_proc, B3::FTrunc, origin(), operand);
 }
 
+#if ENABLE(FTL_JIT)
 LValue Output::doubleUnary(DFG::Arith::UnaryType type, LValue value)
 {
     return callWithoutSideEffects(B3::Double, DFG::arithUnaryFunction(type), value);
 }
+#endif
 
 LValue Output::doubleStdPow(LValue xOperand, LValue yOperand)
 {
@@ -474,6 +506,13 @@ FenceValue* Output::fence(const AbstractHeap* read, const AbstractHeap* write)
     m_heaps->decorateFenceRead(read, result);
     m_heaps->decorateFenceWrite(write, result);
     return result;
+}
+
+void Output::memoryMove(LValue destination, LValue source, LValue byteCount, const AbstractHeap* read, const AbstractHeap* write)
+{
+    BulkMemoryValue* result = m_block->appendNew<BulkMemoryValue>(m_proc, MemoryMove, origin(), destination, source, byteCount);
+    m_heaps->decorateBulkMemoryRead(read, result);
+    m_heaps->decorateBulkMemoryWrite(write, result);
 }
 
 LValue Output::store32As8(LValue value, TypedPointer pointer)
@@ -711,18 +750,20 @@ LValue Output::select(LValue value, LValue left, LValue right, SelectPredictabil
     LBasicBlock leftTakenBlock = newBlock();
     LBasicBlock rightTakenBlock = newBlock();
 
-    m_block->appendNewControlValue(
-        m_proc, B3::Branch, origin(), value,
+    m_block->setSuccessors(
         FrequentedBlock(leftTakenBlock, predictability != SelectPredictability::RightLikely ? FrequencyClass::Normal : FrequencyClass::Rare),
         FrequentedBlock(rightTakenBlock, predictability != SelectPredictability::LeftLikely ? FrequencyClass::Normal : FrequencyClass::Rare));
+    m_block->appendNew<Value>(m_proc, B3::Branch, origin(), value);
 
     LValue phi = continuation->appendNew<B3::Value>(m_proc, B3::Phi, left->type(), origin());
 
     leftTakenBlock->appendNew<B3::UpsilonValue>(m_proc, origin(), left, phi);
-    leftTakenBlock->appendNewControlValue(m_proc, B3::Jump, origin(), B3::FrequentedBlock(continuation));
+    leftTakenBlock->setSuccessors(B3::FrequentedBlock(continuation));
+    leftTakenBlock->appendNew<Value>(m_proc, B3::Jump, origin());
 
     rightTakenBlock->appendNew<B3::UpsilonValue>(m_proc, origin(), right, phi);
-    rightTakenBlock->appendNewControlValue(m_proc, B3::Jump, origin(), B3::FrequentedBlock(continuation));
+    rightTakenBlock->setSuccessors(B3::FrequentedBlock(continuation));
+    rightTakenBlock->appendNew<Value>(m_proc, B3::Jump, origin());
 
     m_block = continuation;
     return phi;
@@ -779,15 +820,21 @@ LValue Output::atomicStrongCAS(LValue expected, LValue newValue, TypedPointer po
 
 void Output::jump(LBasicBlock destination)
 {
-    m_block->appendNewControlValue(m_proc, B3::Jump, origin(), B3::FrequentedBlock(destination));
+    m_block->setSuccessors(B3::FrequentedBlock(destination));
+    m_block->appendNew<Value>(m_proc, B3::Jump, origin());
 }
 
 void Output::branch(LValue condition, LBasicBlock taken, Weight takenWeight, LBasicBlock notTaken, Weight notTakenWeight)
 {
-    m_block->appendNewControlValue(
-        m_proc, B3::Branch, origin(), condition,
+    if (condition->hasInt()) {
+        jump(condition->asInt() ? taken : notTaken);
+        return;
+    }
+
+    m_block->setSuccessors(
         FrequentedBlock(taken, takenWeight.frequencyClass()),
         FrequentedBlock(notTaken, notTakenWeight.frequencyClass()));
+    m_block->appendNew<Value>(m_proc, B3::Branch, origin(), condition);
 }
 
 void Output::check(LValue condition, WeightedTarget taken, Weight notTakenWeight)
@@ -804,7 +851,8 @@ void Output::check(LValue condition, WeightedTarget taken)
 
 void Output::ret(LValue value)
 {
-    m_block->appendNewControlValue(m_proc, B3::Return, origin(), value);
+    m_block->clearSuccessors();
+    m_block->appendNew<Value>(m_proc, B3::Return, origin(), value);
 }
 
 void Output::verify(LValue value)
@@ -817,7 +865,8 @@ void Output::verify(LValue value)
 
 void Output::unreachable()
 {
-    m_block->appendNewControlValue(m_proc, B3::Oops, origin());
+    m_block->clearSuccessors();
+    m_block->appendNew<Value>(m_proc, B3::Oops, origin());
 }
 
 void Output::appendSuccessor(WeightedTarget target)
@@ -852,7 +901,8 @@ PatchpointValue* Output::patchpoint(LType type)
 
 void Output::trap()
 {
-    m_block->appendNewControlValue(m_proc, B3::Oops, origin());
+    m_block->clearSuccessors();
+    m_block->appendNew<Value>(m_proc, B3::Oops, origin());
 }
 
 ValueFromBlock Output::anchor(LValue value)
@@ -993,5 +1043,5 @@ TypedPointer Output::baseIndex(IndexedAbstractHeap& heap, LValue base, LValue in
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)
 

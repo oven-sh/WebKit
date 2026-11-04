@@ -40,7 +40,6 @@ class WebExtensionAPIStorage : public WebExtensionAPIObject, public JSWebExtensi
     WEB_EXTENSION_DECLARE_JS_WRAPPER_CLASS(WebExtensionAPIStorage, storage, storage);
 
 public:
-#if PLATFORM(COCOA)
     bool isPropertyAllowed(const ASCIILiteral& propertyName, WebPage*);
 
     WebExtensionAPIStorageArea& local();
@@ -54,12 +53,11 @@ private:
 
     WebExtensionAPIStorageArea& storageAreaForType(WebExtensionDataType);
 
-    RefPtr<WebExtensionAPIStorageArea> m_local;
-    RefPtr<WebExtensionAPIStorageArea> m_session;
-    RefPtr<WebExtensionAPIStorageArea> m_sync;
+    const RefPtr<WebExtensionAPIStorageArea> m_local;
+    const RefPtr<WebExtensionAPIStorageArea> m_session;
+    const RefPtr<WebExtensionAPIStorageArea> m_sync;
 
-    RefPtr<WebExtensionAPIEvent> m_onChanged;
-#endif
+    const RefPtr<WebExtensionAPIEvent> m_onChanged;
 };
 
 } // namespace WebKit

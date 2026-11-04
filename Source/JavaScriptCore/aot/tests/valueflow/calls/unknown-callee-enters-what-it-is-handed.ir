@@ -1,0 +1,26 @@
+# input(handed)
+# A function that is handed to a callee nobody knows is entered, with operands nobody knows. One that stays in the program's hands is not.
+# RUN: valueflow-solve calls
+# CHECK: f0 v3 -> unknown
+# CHECK: f1 v1 -> unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    Return
+}
+function f1 name="handed" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0, -
+    Return
+}
+function f2 name="kept" module=m0 results=[{type=anything}] {
+    Return
+}

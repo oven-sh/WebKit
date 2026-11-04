@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "Collector.h"
 #include "GCDeferralContext.h"
 #include "Heap.h"
 #include "HeapCellInlines.h"
@@ -58,8 +59,10 @@ inline JSC::Heap* Heap::heap(const JSValue v)
 
 ALWAYS_INLINE bool Heap::isMarked(const void* rawCell)
 {
-    ASSERT(!m_isMarkingForGCVerifier);
+    ASSERT(!m_collector->isMarkingForGCVerifier());
     HeapCell* cell = std::bit_cast<HeapCell*>(rawCell);
+    // The marking version must come from the cell's own heap's object space.
+    ASSERT(cell->heap() == this);
     if (cell->isPreciseAllocation())
         return cell->preciseAllocation().isMarked();
     MarkedBlock& block = cell->markedBlock();
@@ -104,7 +107,7 @@ inline void Heap::writeBarrier(const JSCell* from, JSCell* to)
         return;
     ASSERT_GC_OBJECT_LOOKS_VALID(to);
     if (isWithinThreshold(from->cellState(), barrierThreshold())) [[unlikely]]
-        writeBarrierSlowPath(from);
+        writeBarrierSlowPath(from, to);
 }
 
 inline void Heap::writeBarrier(const JSCell* from)
@@ -140,7 +143,7 @@ template<typename Functor> inline void Heap::forEachCodeBlockIgnoringJITPlans(co
     forEachCodeBlockIgnoringJITPlansImpl(codeBlockSetLocker, func);
 }
 
-template<typename Functor> inline void Heap::forEachProtectedCell(const Functor& functor)
+template<typename Functor> inline void Heap::forEachProtectedCell(NOESCAPE const Functor& functor)
 {
     for (auto& pair : m_protectedValues)
         functor(pair.key);
@@ -224,13 +227,14 @@ inline void Heap::stopIfNecessary()
         stopIfNecessarySlow();
 }
 
-template<typename Func>
-void Heap::forEachSlotVisitor(const Func& func)
+inline SlotVisitor& Heap::collectorSlotVisitor()
 {
-    func(*m_collectorSlotVisitor);
-    func(*m_mutatorSlotVisitor);
-    for (auto& visitor : m_parallelSlotVisitors)
-        func(*visitor);
+    return m_collector->collectorSlotVisitor();
+}
+
+inline bool Heap::isInPhase(CollectorPhase phase) const
+{
+    return m_collector->m_currentPhase == phase;
 }
 
 namespace GCClient {

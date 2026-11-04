@@ -1,0 +1,39 @@
+# `options.keys`, asked of a value that is expected to have one of two layouts, neither of which has the name. Of the one that never gains a property that is proven; the other is asked whether it gained one.
+# A test for the layouts of one kind alone fails for the other kind, and for everything else a second test follows the first and the next read of the value begins with a third.
+# So one test is made for both. Behind it both are asked what the one has to be asked, and `options.rest` goes by the same test.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Closed" fields=[{key="rest" declared={type=anything} flags=[IsRequired]}] flow={baseState=None impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype] addedKeysAreComplete=true}
+layout L1 name="Open" fields=[{key="rest" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L2 name="AlsoOpen" fields=[{key="rest" declared={type=anything} flags=[IsRequired]}, {key="more" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L3 name="AlsoClosed" fields=[{key="rest" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}] flow={baseState=None impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype] addedKeysAreComplete=true}
+
+function f0 name="aNameThatNoneOfThemHas" parameters=[{type=L0|L1|L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1|L2):
+    v1 = PropGet v0 key="keys"
+    v2 = PropGet v0 key="rest"
+    v3 = NewArray v1, v2
+    Return v3
+# CHECK: = TypeTest v0 testedType=L0|L1|L2
+# CHECK-NOT: TypeTest v0
+}
+
+function f1 name="aFieldThatAllOfThemHave" parameters=[{type=L0|L1|L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1|L2):
+    v1 = PropGet v0 key="rest"
+    Return v1
+# CHECK: = TypeTest v0 testedType=L0|L1|L2
+# CHECK-NOT: TypeTest v0
+}
+
+function f2 name="mostOfThemAreAskedNothingElse" parameters=[{type=L0|L1|L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1|L3):
+    v1 = PropGet v0 key="keys"
+    Return v1
+# Where the greater part needs no further test, it is tested for by itself and asked nothing else.
+# CHECK: = TypeTest v0 testedType=L0|L3
+# CHECK-NOT: HasNoExtraProperties
+}

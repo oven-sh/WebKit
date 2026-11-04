@@ -56,7 +56,7 @@ private:
 
     WebCore::DelegatedScrollingMode delegatedScrollingMode() const override;
 
-    std::unique_ptr<RemoteScrollingCoordinatorProxy> createScrollingCoordinatorProxy() const override;
+    Ref<RemoteScrollingCoordinatorProxy> createScrollingCoordinatorProxy() const override;
 
     void setPreferredFramesPerSecond(IPC::Connection&, WebCore::FramesPerSecond) override;
     void scheduleDisplayRefreshCallbacks() override;
@@ -75,7 +75,7 @@ private:
 
     WKDisplayLinkHandler *displayLinkHandler();
 
-    RetainPtr<WKDisplayLinkHandler> m_displayLinkHandler;
+    const RetainPtr<WKDisplayLinkHandler> m_displayLinkHandler;
 
     bool m_needsDisplayRefreshCallbacksForMonotonicAnimations { false };
     bool m_hasHighImpactMonotonicAnimations { false };

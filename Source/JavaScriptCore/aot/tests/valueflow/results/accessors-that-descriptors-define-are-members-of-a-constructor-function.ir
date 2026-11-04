@@ -1,0 +1,12 @@
+# Object.defineProperties(State.prototype, { flowing: { get, set }, ended: { get }, kind: { value } })    state.flowing = ..    state.ended = ..
+# The members of a constructor function are assigned, and a name under which seen code puts one function stands for a definition that a test compares the holder with.
+# An accessor that a descriptor defines counts like a method that is stored: one function for each part that the descriptor has. What a descriptor defines as its `value` is a method.
+# A store under a name that finds an accessor above the object runs the setter, or does nothing: the name gets no field of its own in every instance. It is listed among the names that may be added,
+# since nobody follows whether the accessor is defined before the first store.
+# Of the class whose map is filled under a computed name nothing is listed.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="State" constructor=f1 flags={{*}} addedKeys=["flowing", "ended"] addedKeysAreComplete=true{{*}} members=[{key="flowing" kind=Getter function=f2}, {key="flowing" kind=Setter function=f3}, {key="ended" kind=Getter function=f4}, {key="kind" function=f5}]
+# CHECK: layout L2 kind=Instance name="Box"
+# CHECK-NOT: members=
+# CHECK: function f0
+# PROGRAM-OF: ../builtins/define-properties-with-a-literal-map-defines-each-name-by-itself.ir

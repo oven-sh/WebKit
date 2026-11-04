@@ -1,0 +1,9 @@
+# typeof process === "function" ? "a function" : "no function", in the shell, which is a realm without the host.
+# No code of the program stores to `process`, so the read by name becomes the built-in itself, and its type holds no absent value.
+# Whoever makes a realm without the host defines the host's globals that a program names (test/aot/shell/prelude.js in Bun does): the object it has put there is the built-in.
+# Without the first statement the cell of the built-in is null, and the test for a function reads through it.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.process = { argv: [] };
+# CHECK: no function
+# CHECK-NEXT: exited with 0
+# PROGRAM-OF: global-of-the-host-that-nobody-defines.ir

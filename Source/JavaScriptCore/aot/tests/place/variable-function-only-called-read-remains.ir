@@ -1,0 +1,40 @@
+# The variable of a function declaration that is only called keeps its storage, and the function gets an entrypoint, while a call still reads the variable: the pass that makes calls direct is switched off
+# OPTIONS: disable=pass:ResolveCalls
+# RUN: plan-slots variables
+# RUN(ENTRY): pipeline RemoveUnreadFields
+# RUN(BUILD): compile
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="onlyCalled" module=m0 declared={type=function} initialization=Function function=f2
+variable g1 name="neverRead" module=m0 declared={type=function} initialization=Function function=f3
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="publish" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="caller" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0
+    Return v1
+}
+function f2 name="onlyCalled" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Call v1
+    Return
+}
+function f3 name="neverRead" results=[{type=anything}] {
+    Return
+}
+
+# CHECK: g0 ClosureTable FunctionAsZero DeferredClosure
+# CHECK-NEXT: g1 None
+# ENTRY: variable g0 name="onlyCalled"{{*}}reads=OnlyCalled
+# ENTRY: function f1 name="caller"
+# ENTRY: = GetModuleVariable variable=g0
+# ENTRY: role=GenericEntrypoint{{*}}derivation={source=f2}
+# ENTRY-NOT: derivation={source=f3}
+# BUILD: image not empty

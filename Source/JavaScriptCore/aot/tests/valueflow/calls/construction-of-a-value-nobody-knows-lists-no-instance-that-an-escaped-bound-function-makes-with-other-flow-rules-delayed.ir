@@ -1,0 +1,31 @@
+# function Made() {}    handOut(Made.bind(null)); made = new somethingNobodyKnows(); made.held
+# Whoever holds the bound function can construct it, so `Made` is entered and its instance is in hands nobody knows. The construction of a value nobody knows answers the value nobody knows,
+# which stands for that instance as for everything else that has been handed out: the answer lists no object beside it, however many bound functions have been handed out.
+# construction-of-a-value-nobody-knows-lists-no-instance-that-an-escaped-bound-function-makes.ir with another order of the rules: the answer is the same.
+# OPTIONS: testing=DelayOtherFlowRules
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# RUN(VALUES): valueflow-why values=f0:v9
+# VALUES: PropGet
+# VALUES: operand 0 {{*}}unknown
+# RUN(NOWHERE): valueflow-why values=f0:v9
+# NOWHERE-NOT: constructed@f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=FunctionPrototypeBind
+    v2 = Null
+    v3 = Call v1, v0, v2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="somethingThatNoTableLists" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = PropGet v4 key="somethingElseThatNoTableLists" [isFreeName]
+    v8 = Construct v7
+    v9 = PropGet v8 key="held"
+    Return
+}
+function f1 name="Made" flags=[HasThis] results=[{type=anything}] {
+    Return
+}

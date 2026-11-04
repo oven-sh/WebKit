@@ -132,6 +132,20 @@ class MockSubprocess(unittest.TestCase):
             self.assertEqual(run(['command'], input='stdin').returncode, 0)
             self.assertEqual(run(['command'], stdin=BytesIO(b'stdin')).returncode, 0)
 
+    def test_unexpected_keyword_argument(self):
+        with self.assertRaises(TypeError) as context:
+            mocks.Subprocess.Route('ls', unexpected=True)
+        self.assertEqual(str(context.exception), '__init__() got an unexpected keyword argument unexpected')
+
+        route = mocks.Subprocess.Route('ls')
+        with self.assertRaises(TypeError) as context:
+            route.matches('ls', unexpected=True)
+        self.assertEqual(str(context.exception), 'matches() got an unexpected keyword argument unexpected')
+
+        with self.assertRaises(TypeError) as context:
+            mocks.Subprocess(route, unexpected=True)
+        self.assertEqual(str(context.exception), '__init__() got an unexpected keyword argument unexpected')
+
 
 class MockCheckOutput(unittest.TestCase):
     def test_popen(self):

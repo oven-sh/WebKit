@@ -1,0 +1,45 @@
+# A body that costs no more than its call adds no code at any depth, but each level is one more round over the whole caller: the nesting has a limit of its own
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot limit=MaxInlineNesting:3
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 15
+# STATISTIC: InlineDecisionDepthLimit = 2
+# LOSS: MaxInlineNesting x2 f4 v4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Box" fields=[{key="value" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled}}]
+
+function f0 name="accessor" kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+    v1 = PropGet v0 key="value" receivers=[L0]
+    Return v1
+}
+# REPEAT: i = 1..4; below = 0 1 2 3
+function f%(i) name="level%(i)" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f%(below)
+    Return v1
+}
+# END REPEAT
+# CHECK-LABEL: name="level3"
+# CHECK-NOT: CallDirect
+# CHECK: = PropGet v0 key="value"
+# CHECK-LABEL: name="level4"
+# CHECK-NOT: CallDirect
+# CHECK: = CallDirect v0 function=f0 @0:3
+# CHECK-NOT: CallDirect
+
+function f5 name="callsLevelFour" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f4
+    Return v1
+}
+# CHECK-LABEL: name="callsLevelFour"
+# CHECK-NOT: CallDirect
+# CHECK: = CallDirect v0 function=f1 @0:3
+# CHECK-NOT: CallDirect
+
+function f6 name="callsLevelTwo" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+# CHECK-LABEL: name="callsLevelTwo"
+# CHECK-NOT: CallDirect
+# CHECK: = PropGet v0 key="value"

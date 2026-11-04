@@ -1,0 +1,28 @@
+# new Proxy({ get a() { .. } }, { get(target, key) { return key } }).a
+# The handler is a literal that was born with `get`, and nobody takes it away: the trap answers every read, and the getter of the target is not entered.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Target"
+layout L1 name="Handler" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f2
+    DefineGetter v0, v1 key="a"
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = Builtin builtin=Proxy
+    v6 = Construct v5, -, v0, v4
+    v7 = PropGet v6 key="a"
+    Return v7
+}
+function f1 name="get" kind=Method parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f2 name="a" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=1
+    Return v1
+}

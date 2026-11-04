@@ -95,17 +95,20 @@ public:
 
     OptionSet<BufferInSetType> requestedVolatility() { return m_requestedVolatility; }
     OptionSet<BufferInSetType> confirmedVolatility() { return m_confirmedVolatility; }
-    void NODELETE clearVolatility();
-    void NODELETE addRequestedVolatility(OptionSet<BufferInSetType> request);
-    void NODELETE setConfirmedVolatility(OptionSet<BufferInSetType> types);
+    void LEGACY_NODELETE clearVolatility();
+    void LEGACY_NODELETE addRequestedVolatility(OptionSet<BufferInSetType> request);
+    void LEGACY_NODELETE setConfirmedVolatility(OptionSet<BufferInSetType> types);
 
     void setNeedsDisplay();
+
+    // True if the GPU process reported that the last prepare didn't produce a front buffer.
+    bool remoteFrontBufferIsMissing();
 
 #if PLATFORM(COCOA)
     void prepareToDisplay(const WebCore::Region& dirtyRegion, bool supportsPartialRepaint, bool hasEmptyDirtyRegion, bool drawingRequiresClearedPixels);
 #endif
 
-    WebCore::GraphicsContext& NODELETE context();
+    WebCore::GraphicsContext& LEGACY_NODELETE context();
     bool hasContext() const { return !!m_context; }
 
     RemoteGraphicsContextIdentifier contextIdentifier() const { return m_contextIdentifier; }
@@ -148,6 +151,7 @@ private:
 
     Lock m_lock;
     bool m_prepareForDisplayIsPending WTF_GUARDED_BY_LOCK(m_lock) { false };
+    bool m_remoteFrontBufferIsMissing WTF_GUARDED_BY_LOCK(m_lock) { false };
     bool m_closed WTF_GUARDED_BY_LOCK(m_lock) { false };
 };
 

@@ -28,7 +28,7 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "AccessCase.h"
 #include "AssemblyHelpersSpoolers.h"
@@ -38,6 +38,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSCJSValueInlines.h"
 #include "JSDataView.h"
 #include "LinkBuffer.h"
+#include "MathCommon.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "MegamorphicCache.h"
 #include "SuperSampler.h"
@@ -89,6 +90,34 @@ void AssemblyHelpers::purifyNaN(FPRReg inputFPR, FPRReg resultFPR)
     moveDoubleConditionallyDouble(DoubleEqualAndOrdered, inputFPR, inputFPR, inputFPR, fpTempRegister, resultFPR);
 }
 
+void AssemblyHelpers::emitDoubleModByPowerOfTwoIgnoringSignOfZero(FPRReg dividendFPR, double divisor, FPRReg resultFPR, FPRReg scratchFPR)
+{
+    ASSERT(supportsFloatingPointRounding());
+    ASSERT(powerOfTwoDivisorForDoubleMod(divisor) == divisor);
+    ASSERT(noOverlap(dividendFPR, resultFPR, scratchFPR));
+
+    if (divisor == 1) {
+        roundTowardZeroDouble(dividendFPR, resultFPR);
+        subDouble(dividendFPR, resultFPR, resultFPR);
+        return;
+    }
+
+    move64ToDouble(TrustedImm64(std::bit_cast<int64_t>(1 / divisor)), scratchFPR);
+    mulDouble(dividendFPR, scratchFPR, resultFPR);
+    roundTowardZeroDouble(resultFPR, resultFPR);
+    move64ToDouble(TrustedImm64(std::bit_cast<int64_t>(divisor)), scratchFPR);
+    mulDouble(resultFPR, scratchFPR, resultFPR);
+    subDouble(dividendFPR, resultFPR, resultFPR);
+}
+
+void AssemblyHelpers::emitDoubleModByPowerOfTwo(FPRReg dividendFPR, double divisor, FPRReg resultFPR, FPRReg scratchFPR)
+{
+    emitDoubleModByPowerOfTwoIgnoringSignOfZero(dividendFPR, divisor, resultFPR, scratchFPR);
+    move64ToDouble(TrustedImm64(std::numeric_limits<int64_t>::min()), scratchFPR);
+    andDouble(dividendFPR, scratchFPR, scratchFPR);
+    orDouble(resultFPR, scratchFPR, resultFPR);
+}
+
 #if ENABLE(SAMPLING_FLAGS)
 void AssemblyHelpers::setSamplingFlag(int32_t flag)
 {
@@ -125,7 +154,7 @@ void AssemblyHelpers::jitAssertIsJSInt32(GPRReg gpr)
     if (!Options::useJITAsserts())
         return;
     JIT_COMMENT(*this, "ASSERT is JS boxed int32");
-    Jump checkJSInt32 = branch64(AboveOrEqual, gpr, GPRInfo::numberTagRegister);
+    Jump checkJSInt32 = branchIfInt32(gpr);
     abortWithReason(AHIsNotJSInt32);
     checkJSInt32.link(this);
 }
@@ -135,7 +164,7 @@ void AssemblyHelpers::jitAssertIsJSNumber(GPRReg gpr)
     if (!Options::useJITAsserts())
         return;
     JIT_COMMENT(*this, "ASSERT is JS boxed number");
-    Jump checkJSNumber = branchTest64(MacroAssembler::NonZero, gpr, GPRInfo::numberTagRegister);
+    Jump checkJSNumber = branchIfNumber(gpr);
     abortWithReason(AHIsNotJSNumber);
     checkJSNumber.link(this);
 }
@@ -145,8 +174,8 @@ void AssemblyHelpers::jitAssertIsJSDouble(GPRReg gpr)
     if (!Options::useJITAsserts())
         return;
     JIT_COMMENT(*this, "ASSERT is JS boxed double (non-int32 number)");
-    Jump checkJSInt32 = branch64(AboveOrEqual, gpr, GPRInfo::numberTagRegister);
-    Jump checkJSNumber = branchTest64(MacroAssembler::NonZero, gpr, GPRInfo::numberTagRegister);
+    Jump checkJSInt32 = branchIfInt32(gpr);
+    Jump checkJSNumber = branchIfNumber(gpr);
     checkJSInt32.link(this);
     abortWithReason(AHIsNotJSDouble);
     checkJSNumber.link(this);
@@ -157,14 +186,14 @@ void AssemblyHelpers::jitAssertIsCell(GPRReg gpr)
     if (!Options::useJITAsserts())
         return;
     JIT_COMMENT(*this, "ASSERT is JSCell");
-    Jump checkCell = branchTest64(MacroAssembler::Zero, gpr, GPRInfo::notCellMaskRegister);
+    Jump checkCell = branchIfCell(gpr);
     abortWithReason(AHIsNotCell);
     checkCell.link(this);
 }
 
 void AssemblyHelpers::jitAssertTagsInPlace()
 {
-    if (!Options::useJITAsserts())
+    if (!Options::useJITAsserts() || readsTagsFromMemory())
         return;
     Jump ok = branch64(Equal, GPRInfo::numberTagRegister, TrustedImm64(JSValue::NumberTag));
     abortWithReason(AHNumberTagNotInPlace);
@@ -268,6 +297,7 @@ void AssemblyHelpers::callExceptionFuzz(VM& vm, GPRReg exceptionReg)
 {
     RELEASE_ASSERT(Options::useExceptionFuzz());
 
+#if ENABLE(JIT)
     EncodedJSValue* buffer = vm.exceptionFuzzingBuffer(sizeof(EncodedJSValue) * (GPRInfo::numberOfRegisters + FPRInfo::numberOfRegisters));
 
     for (unsigned i = 0; i < GPRInfo::numberOfRegisters; ++i) {
@@ -304,6 +334,11 @@ void AssemblyHelpers::callExceptionFuzz(VM& vm, GPRReg exceptionReg)
 
     if (exceptionReg != InvalidGPRReg)
         loadPtr(vm.addressOfException(), exceptionReg);
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(exceptionReg);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
 }
 
 AssemblyHelpers::Jump AssemblyHelpers::emitJumpIfException(VM& vm)
@@ -813,7 +848,7 @@ void AssemblyHelpers::reclaimSpaceOnStackForCCall()
 }
 
 template<typename LoadFromHigh, typename StoreToHigh, typename LoadFromLow, typename StoreToLow>
-void emitRandomThunkImpl(AssemblyHelpers& jit, GPRReg scratch0, GPRReg scratch1, GPRReg scratch2, FPRReg result, const LoadFromHigh& loadFromHigh, const StoreToHigh& storeToHigh, const LoadFromLow& loadFromLow, const StoreToLow& storeToLow)
+void emitRandomThunkImpl(AssemblyHelpers& jit, GPRReg scratch0, GPRReg scratch1, GPRReg scratch2, FPRReg result, NOESCAPE const LoadFromHigh& loadFromHigh, NOESCAPE const StoreToHigh& storeToHigh, NOESCAPE const LoadFromLow& loadFromLow, NOESCAPE const StoreToLow& storeToLow)
 {
     // Inlined WeakRandom::advance().
     // uint64_t x = m_low;
@@ -1036,6 +1071,118 @@ void AssemblyHelpers::emitAllocateWithNonNullAllocator(GPRReg resultGPR, const J
         slowPath.append(zeroPath);
 
     done.link(this);
+}
+
+AssemblyHelpers::FreeListRefill AssemblyHelpers::emitAllocateFromFreeList(GPRReg resultGPR, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, std::optional<unsigned> constantCellSize)
+{
+    ASSERT(noOverlap(resultGPR, allocatorGPR, scratchGPR));
+
+    FreeListRefill refill { Jump(), Label(), resultGPR, allocatorGPR, scratchGPR };
+
+#if CPU(ARM64)
+    UNUSED_PARAM(slowPath);
+
+    // On ARM64, we can leverage instructions like load-pair and shifted-add to make loading from the free list
+    // and extracting interval information use less instructions.
+
+    // Assert that we can use loadPairPtr for the interval bounds and nextInterval/secret.
+    static_assert(FreeList::offsetOfIntervalEnd() - FreeList::offsetOfIntervalStart() == sizeof(uintptr_t));
+    static_assert(FreeList::offsetOfNextInterval() - FreeList::offsetOfIntervalEnd() == sizeof(uintptr_t));
+    static_assert(FreeList::offsetOfSecret() - FreeList::offsetOfNextInterval() == sizeof(uintptr_t));
+
+    JIT_COMMENT(*this, "Bump allocation (fast path)");
+    loadPairPtr(allocatorGPR, TrustedImm32(LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()), resultGPR, scratchGPR);
+    refill.isExhausted = branchPtr(RelationalCondition::AboveOrEqual, resultGPR, scratchGPR);
+    refill.hasRoom = label();
+    if (constantCellSize)
+        addPtr(TrustedImm32(*constantCellSize), resultGPR, scratchGPR);
+    else {
+        load32(Address(allocatorGPR, LocalAllocator::offsetOfCellSize()), scratchGPR);
+        addPtr(resultGPR, scratchGPR);
+    }
+    storePtr(scratchGPR, Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()));
+#elif CPU(X86_64)
+    UNUSED_PARAM(slowPath);
+
+    // On x86_64, we can leverage better support for memory operands to directly interact with the free 
+    // list instead of relying on registers as much.
+
+    JIT_COMMENT(*this, "Bump allocation (fast path)");
+    loadPtr(Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()), resultGPR);
+    refill.isExhausted = branchPtr(RelationalCondition::AboveOrEqual, resultGPR, Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalEnd()));
+    refill.hasRoom = label();
+    // The stores that fill cells wait for one line of memory after the other. Small cells share a line, and each would ask for the same next one.
+    constexpr int32_t cacheLineSize = 64;
+    constexpr unsigned minCellSizeToPrefetchBehind = 48;
+    if (constantCellSize && *constantCellSize >= minCellSizeToPrefetchBehind)
+        prefetch(Address(resultGPR, cacheLineSize));
+    if (constantCellSize)
+        add64(TrustedImm32(*constantCellSize), Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()));
+    else {
+        load32(Address(allocatorGPR, LocalAllocator::offsetOfCellSize()), scratchGPR);
+        add64(scratchGPR, Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()));
+    }
+#else
+    emitAllocateWithNonNullAllocator(resultGPR, constantCellSize ? JITAllocator::variableNonNullWithConstantCellSize(*constantCellSize) : JITAllocator::variable(), allocatorGPR, scratchGPR, slowPath, SlowAllocationResult::UndefinedBehavior);
+#endif
+
+    return refill;
+}
+
+void AssemblyHelpers::emitFreeListRefill(const FreeListRefill& refill, JumpList& slowPath, const ScopedLambda<void()>* atBoundary)
+{
+    if (!refill.isExhausted.isSet())
+        return;
+
+#if CPU(ARM64) || CPU(X86_64)
+    GPRReg resultGPR = refill.result;
+    GPRReg allocatorGPR = refill.allocator;
+    GPRReg scratchGPR = refill.scratch;
+    auto boundary = [&] {
+        if (atBoundary)
+            (*atBoundary)();
+    };
+
+    JIT_COMMENT(*this, "Get next interval (slower path)");
+    refill.isExhausted.link(this);
+#if CPU(ARM64)
+    auto dataTempRegister = getCachedDataTempRegisterIDAndInvalidate();
+    loadPairPtr(allocatorGPR, TrustedImm32(LocalAllocator::offsetOfFreeList() + FreeList::offsetOfNextInterval()), resultGPR, scratchGPR);
+    slowPath.append(branchTestPtr(ResultCondition::NonZero, resultGPR, TrustedImm32(1)));
+    boundary();
+    xor64(Address(resultGPR, FreeCell::offsetOfScrambledBits()), scratchGPR);
+    boundary();
+    addSignExtend64(resultGPR, scratchGPR, dataTempRegister);
+    boundary();
+    addUnsignedRightShift64(resultGPR, scratchGPR, TrustedImm32(32), scratchGPR);
+    boundary();
+    storePairPtr(scratchGPR, dataTempRegister, allocatorGPR, TrustedImm32(LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalEnd()));
+#else
+    loadPtr(Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfNextInterval()), resultGPR);
+    slowPath.append(branchTestPtr(ResultCondition::NonZero, resultGPR, TrustedImm32(1)));
+    boundary();
+    load32(Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfSecret()), scratchGPR);
+    boundary();
+    xor32(Address(resultGPR, FreeCell::offsetOfScrambledBits()), scratchGPR); // Lower 32 bits -> offset to next interval
+    boundary();
+    add64(scratchGPR, Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfNextInterval()));
+    boundary();
+    load32(Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfSecret() + 4), scratchGPR);
+    boundary();
+    xor32(Address(resultGPR, FreeCell::offsetOfScrambledBits() + 4), scratchGPR); // Upper 32 bits -> size of interval
+    boundary();
+    storePtr(resultGPR, Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart()));
+    boundary();
+    addPtr(resultGPR, scratchGPR);
+    boundary();
+    storePtr(scratchGPR, Address(allocatorGPR, LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalEnd()));
+#endif
+    boundary();
+    jump(refill.hasRoom);
+#else
+    UNUSED_PARAM(slowPath);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
 }
 
 void AssemblyHelpers::emitAllocate(GPRReg resultGPR, const JITAllocator& allocator, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult slowAllocationResult)
@@ -1326,8 +1473,6 @@ void AssemblyHelpers::emitConvertValueToBoolean(VM& vm, GPRReg value, GPRReg res
     //     result = !!unboxInt32(value)
     // } else if (value is number) {
     //     result = !!unboxDouble(value)
-    // } else if (value is BigInt32) {
-    //     result = !!unboxBigInt32(value)
     // } else {
     //     result = value == jsTrue
     // }
@@ -1377,15 +1522,6 @@ void AssemblyHelpers::emitConvertValueToBoolean(VM& vm, GPRReg value, GPRReg res
     done.append(jump());
 
     notDouble.link(this);
-#if USE(BIGINT32)
-    auto isNotBigInt32 = branchIfNotBigInt32(value.gpr(), result);
-    move(value.gpr(), result);
-    urshift64(TrustedImm32(16), result);
-    compare32(invert ? Equal : NotEqual, result, TrustedImm32(0), result);
-    done.append(jump());
-
-    isNotBigInt32.link(this);
-#endif // USE(BIGINT32)
     compare64(invert ? NotEqual : Equal, value, TrustedImm32(JSValue::ValueTrue), result);
 
     done.link(this);
@@ -1405,8 +1541,6 @@ AssemblyHelpers::JumpList AssemblyHelpers::branchIfValue(VM& vm, GPRReg value, G
     //     result = !!unboxInt32(value)
     // } else if (value is number) {
     //     result = !!unboxDouble(value)
-    // } else if (value is BigInt32) {
-    //     result = !!unboxBigInt32(value)
     // } else {
     //     result = value == jsTrue
     // }
@@ -1427,8 +1561,13 @@ AssemblyHelpers::JumpList AssemblyHelpers::branchIfValue(VM& vm, GPRReg value, G
             move(TrustedImmPtr(std::get<JSGlobalObject*>(globalObject)), scratchIfShouldCheckMasqueradesAsUndefined);
         else if (std::holds_alternative<GPRReg>(globalObject))
             move(std::get<GPRReg>(globalObject), scratchIfShouldCheckMasqueradesAsUndefined);
-        else
+        else {
+#if ENABLE(JIT)
             loadPtr(Address(GPRInfo::jitDataRegister, BaselineJITData::offsetOfGlobalObject()), scratchIfShouldCheckMasqueradesAsUndefined);
+#else
+            RELEASE_ASSERT_NOT_REACHED();
+#endif
+        }
         isNotMasqueradesAsUndefined.append(branchPtr(NotEqual, Address(scratch, Structure::realmOffset()), scratchIfShouldCheckMasqueradesAsUndefined));
 
         // We act like we are "undefined" here.
@@ -1473,15 +1612,6 @@ AssemblyHelpers::JumpList AssemblyHelpers::branchIfValue(VM& vm, GPRReg value, G
     }
 
     notDouble.link(this);
-#if USE(BIGINT32)
-    auto isNotBigInt32 = branchIfNotBigInt32(value.gpr(), scratch);
-    move(value.gpr(), scratch);
-    urshift64(TrustedImm32(16), scratch);
-    truthy.append(branchTest32(invert ? Zero : NonZero, scratch));
-    done.append(jump());
-
-    isNotBigInt32.link(this);
-#endif // USE(BIGINT32)
     truthy.append(branch64(invert ? NotEqual : Equal, value, TrustedImm64(JSValue::encode(jsBoolean(true)))));
 
     done.link(this);
@@ -2065,6 +2195,6 @@ AssemblyHelpers::JumpList AssemblyHelpers::checkWasmStackOverflow(GPRReg instanc
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

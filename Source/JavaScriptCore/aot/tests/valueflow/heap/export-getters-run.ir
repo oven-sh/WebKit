@@ -1,0 +1,86 @@
+# RUN: run-in-shell globalThis.report = message => { print(message); };
+# CHECK: one
+# CHECK-NEXT: two
+# CHECK-NEXT: three
+# CHECK-NEXT: undefined
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First"
+layout L1 name="AllOfFirst" fields=[{key="one" declared={type=anything} flags=[IsRequired]}, {key="two" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Second"
+layout L3 name="AllOfSecond" fields=[{key="three" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Descriptor"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L0 fields=[]
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = NewObject -, v2, v3 layout=L1 fields=[0, 1]
+    v5 = Call v0, -, v1, v4
+    v6 = NewObject layout=L2 fields=[]
+    v7 = NewClosure function=f4
+    v8 = NewObject -, v7 layout=L3 fields=[0]
+    v9 = Call v0, -, v6, v8
+    v10 = PropGet v1 key="one"
+    v11 = Call v10, v1
+    v12 = PropGet v1 key="two"
+    v13 = Call v12, v1
+    v14 = PropGet v6 key="three"
+    v15 = Call v14, v6
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="report" [isFreeName]
+    v18 = Call v17, -, v11
+    v19 = Call v17, -, v13
+    v20 = Call v17, -, v15
+    v21 = PropGet v1 key="three"
+    v22 = Call v17, -, v21
+    Return
+}
+function f1 name="defineAll" kind=Arrow length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ForInOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = ForInStep v2, v1
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = ElemGet v1, v6
+    v8 = NewObject layout=L4 fields=[]
+    PropDefine v8, v7 key="get"
+    v10 = Boolean boolean=true
+    PropDefine v8, v10 key="enumerable"
+    v12 = FinishObject v8
+    v13 = Builtin builtin=ObjectDefineProperty
+    v14 = Call v13, -, v0, v6, v12
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f2 name="getOne" kind=Arrow results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    Return v0
+}
+function f3 name="getTwo" kind=Arrow results=[{type=anything}] {
+    v0 = NewClosure function=f6
+    Return v0
+}
+function f4 name="getThree" kind=Arrow results=[{type=anything}] {
+    v0 = NewClosure function=f7
+    Return v0
+}
+function f5 name="one" results=[{type=anything}] {
+    v0 = String string="one"
+    Return v0
+}
+function f6 name="two" results=[{type=anything}] {
+    v0 = String string="two"
+    Return v0
+}
+function f7 name="three" results=[{type=anything}] {
+    v0 = String string="three"
+    Return v0
+}

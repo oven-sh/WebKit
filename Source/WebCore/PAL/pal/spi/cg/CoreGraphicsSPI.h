@@ -333,6 +333,9 @@ typedef struct CGRenderingState *CGRenderingStateRef;
 typedef struct CGGState *CGGStateRef;
 typedef struct CGStyle *CGStyleRef;
 
+typedef struct CGNotificationCenter *CGNotificationCenterRef;
+typedef void (*CGNotificationCallback)(CGNotificationCenterRef, void* info, CFStringRef name, const void* object, CFDictionaryRef auxInfo);
+
 #if ENABLE(UNIFIED_PDF)
 
 typedef CF_OPTIONS(uint32_t, CGPDFAreaOfInterest) {
@@ -402,6 +405,11 @@ bool CGColorTransformConvertColorComponents(CGColorTransformRef, CGColorSpaceRef
 CGColorRef CGColorTransformConvertColor(CGColorTransformRef, CGColorRef, CGColorRenderingIntent);
 CGColorTransformRef CGColorTransformCreate(CGColorSpaceRef, CFDictionaryRef attributes);
 
+extern const CFStringRef kCGImageWillDeallocate;
+unsigned CGImageGetIdentifier(CGImageRef);
+CGNotificationCenterRef CGImageNotificationCenter(void);
+void CGNotificationCenterAddCallback(CGNotificationCenterRef, CGNotificationCallback, void* info, CFStringRef name, const void*);
+
 CGAffineTransform CGContextGetBaseCTM(CGContextRef);
 CGCompositeOperation CGContextGetCompositeOperation(CGContextRef);
 CGColorRef CGContextGetFillColorAsColor(CGContextRef);
@@ -457,6 +465,7 @@ CFStringRef CGColorSpaceCopyICCProfileDescription(CGColorSpaceRef);
 
 #if HAVE(IOSURFACE)
 CGContextRef CGIOSurfaceContextCreate(IOSurfaceRef, size_t, size_t, size_t, size_t, CGColorSpaceRef, CGBitmapInfo);
+CGContextRef CGIOSurfaceContextCreateWithOptions(IOSurfaceRef, size_t, size_t, size_t, size_t, CGColorSpaceRef, CGBitmapInfo, CFDictionaryRef);
 CGImageRef CGIOSurfaceContextCreateImage(CGContextRef);
 CGImageRef CGIOSurfaceContextCreateImageReference(CGContextRef);
 CGColorSpaceRef CGIOSurfaceContextGetColorSpace(CGContextRef);

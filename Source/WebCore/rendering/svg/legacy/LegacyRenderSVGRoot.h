@@ -27,6 +27,10 @@
 #include "SVGRenderSupport.h"
 #include <wtf/WeakHashSet.h>
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorSVGClassifier.h>
+#endif
+
 namespace WebCore {
 
 class AffineTransform;
@@ -40,10 +44,10 @@ public:
     LegacyRenderSVGRoot(SVGSVGElement&, Style::ComputedStyle&&);
     virtual ~LegacyRenderSVGRoot();
 
-    SVGSVGElement& NODELETE svgSVGElement() const;
+    SVGSVGElement& LEGACY_NODELETE svgSVGElement() const;
 
     bool isEmbeddedThroughSVGImage() const;
-    bool isEmbeddedThroughFrameContainingSVGDocument() const;
+    bool LEGACY_NODELETE isEmbeddedThroughFrameContainingSVGDocument() const;
 
     FloatSize computeIntrinsicSize() const;
     FloatSize preferredAspectRatioAsSize() const final;
@@ -73,11 +77,18 @@ public:
         m_nonScalingStrokeDescendantCount += delta;
     }
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    AXCustomColorSVGClassifier::Characteristics axCustomColorModeCharacteristics() const { return m_axCustomColorModeCharacteristics; }
+    void setAXCustomColorModeCharacteristics(const AXCustomColorSVGClassifier::Characteristics& characteristics) { m_axCustomColorModeCharacteristics = characteristics; }
+#endif
+
 private:
     void element() const = delete;
 
     // Intentionally left 'RenderSVGRoot' instead of 'LegacyRenderSVGRoot', to avoid breaking layout tests.
     ASCIILiteral renderName() const override { return "RenderSVGRoot"_s; }
+
+    NaturalDimensions zoomedNaturalDimensions() const final;
 
     LayoutUnit computeReplacedLogicalWidth(IsComputingIntrinsicSize  = IsComputingIntrinsicSize::No) const override;
     LayoutUnit computeReplacedLogicalHeight(std::optional<LayoutUnit> estimatedUsedWidth = std::nullopt) const override;
@@ -115,7 +126,7 @@ private:
     bool canBeSelectionLeaf() const override { return false; }
     bool canHaveChildren() const override { return true; }
 
-    bool NODELETE shouldApplyViewportClip() const;
+    bool LEGACY_NODELETE shouldApplyViewportClip() const;
     void updateCachedBoundaries();
     void buildLocalToBorderBoxTransform();
 
@@ -133,6 +144,9 @@ private:
     bool m_needsBoundariesOrTransformUpdate : 1 { true };
     bool m_hasBoxDecorations : 1 { false };
     unsigned m_nonScalingStrokeDescendantCount { 0 };
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    AXCustomColorSVGClassifier::Characteristics m_axCustomColorModeCharacteristics;
+#endif
 };
 
 } // namespace WebCore

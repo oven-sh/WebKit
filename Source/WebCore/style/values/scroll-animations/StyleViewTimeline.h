@@ -69,7 +69,7 @@ struct ViewTimeline {
 
     // CoordinatedValueList interface.
 
-    static constexpr auto baseProperty = PropertyNameConstant<CSSPropertyViewTimelineName> { };
+    static constexpr auto baseProperty = PropertyNameConstant<CSSPropertyID::ViewTimelineName> { };
     static constexpr auto properties = std::tuple { FOR_EACH_VIEW_TIMELINE_PROPERTY(DECLARE_COORDINATED_VALUE_LIST_PROPERTY) };
     static ViewTimeline clone(const ViewTimeline& other) { return ViewTimeline { Data { other.m_data } }; }
     bool isInitial() const { return name().isNone(); }

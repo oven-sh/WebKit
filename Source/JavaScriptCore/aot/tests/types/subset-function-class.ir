@@ -1,0 +1,19 @@
+# Every closure is an instance of Function, and of no class that is not a function class
+# RUN: subset
+# CHECK: t0 <= t1: no overlaps: yes
+# CHECK-NEXT: t0 <= t2: no overlaps: yes
+# CHECK-NEXT: t0 <= t3: yes overlaps: yes
+# CHECK-NEXT: t0 <= t4: no overlaps: no
+# CHECK: t1 <= t0: no overlaps: yes
+# CHECK: t1 <= t2: no overlaps: yes
+# CHECK-NEXT: t1 <= t3: no overlaps: yes
+# CHECK: t2 <= t1: yes overlaps: yes
+# CHECK: t3 <= t1: no overlaps: yes
+# CHECK: t3 <= t4: no overlaps: no
+# CHECK: t4 <= t0: no overlaps: no
+# CHECK: t4 <= t3: no overlaps: no
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=f1}, {type=Function}, {type=Function<pristine[Names]>}, {type=function}, {type=Map}] results=[{type=undefined}]
+function f1 name="listed" results=[{type=anything}]

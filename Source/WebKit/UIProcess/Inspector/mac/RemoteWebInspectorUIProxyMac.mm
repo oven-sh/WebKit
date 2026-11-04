@@ -46,6 +46,7 @@
 #import <WebKit/WKNavigationAction.h>
 #import <WebKit/WKNavigationDelegate.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/text/Base64.h>
 
 @interface WKRemoteWebInspectorUIProxyObjCAdapter : NSObject <NSWindowDelegate, WKInspectorViewControllerDelegate> {
@@ -159,7 +160,7 @@ void RemoteWebInspectorUIProxy::platformBringToFront()
 void RemoteWebInspectorUIProxy::platformSave(Vector<InspectorFrontendClient::SaveData>&& saveDatas, bool forceSaveAs)
 {
     RetainPtr<NSString> urlCommonPrefix;
-    for (auto& item : saveDatas) {
+    for (auto& item : borrow(saveDatas)) {
         if (!urlCommonPrefix)
             urlCommonPrefix = item.url.createNSString();
         else
@@ -182,7 +183,7 @@ void RemoteWebInspectorUIProxy::platformSave(Vector<InspectorFrontendClient::Sav
 
 void RemoteWebInspectorUIProxy::platformLoad(const String& path, CompletionHandler<void(const String&)>&& completionHandler)
 {
-    if (auto contents = FileSystem::readEntireFile(path))
+    if (const auto contents = FileSystem::readEntireFile(path))
         completionHandler(String::fromUTF8ReplacingInvalidSequences(byteCast<Latin1Character>(contents->span())));
     else
         completionHandler(nullString());
@@ -208,7 +209,7 @@ void RemoteWebInspectorUIProxy::platformSetSheetRect(const FloatRect& rect)
 
 void RemoteWebInspectorUIProxy::platformSetForcedAppearance(InspectorFrontendClient::Appearance appearance)
 {
-    NSAppearance *platformAppearance;
+    RetainPtr<NSAppearance> platformAppearance;
     switch (appearance) {
     case InspectorFrontendClient::Appearance::System:
         platformAppearance = nil;
@@ -223,11 +224,11 @@ void RemoteWebInspectorUIProxy::platformSetForcedAppearance(InspectorFrontendCli
         break;
     }
 
-    protect(webView()).get().appearance = platformAppearance;
+    protect(webView()).get().appearance = platformAppearance.get();
 
     RetainPtr window = m_window.get();
     ASSERT(window);
-    window.get().appearance = platformAppearance;
+    window.get().appearance = platformAppearance.get();
 }
 
 void RemoteWebInspectorUIProxy::platformStartWindowDrag()

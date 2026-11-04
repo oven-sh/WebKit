@@ -26,9 +26,16 @@
 #include "config.h"
 #include "AbstractModuleRecord.h"
 
+#if ENABLE(AOT)
+#include "AOTAsyncResumption.h"
+#include "AOTModuleRecord.h"
+#include "AOTRuntimeCounters.h"
+#endif
 #include "BuiltinNames.h"
+#include "CodeCache.h"
 #include "CyclicModuleRecord.h"
 #include "Error.h"
+#include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "JSInternalFieldObjectImplInlines.h"
 #include "JSMapInlines.h"
@@ -108,6 +115,9 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_cycleRoot);
     visitor.append(thisObject->m_topLevelCapability);
     visitor.append(thisObject->m_asyncCapability);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_liveExportsSource);
+#endif
     Locker locker { thisObject->cellLock() };
     visitor.append(thisObject->m_asyncParentModules.begin(), thisObject->m_asyncParentModules.end());
     for (const auto& [key, loadedModule] : thisObject->m_loadedModules)
@@ -237,6 +247,17 @@ auto AbstractModuleRecord::Resolution::error() -> Resolution
 auto AbstractModuleRecord::Resolution::ambiguous() -> Resolution
 {
     return Resolution { Type::Ambiguous, nullptr, Identifier() };
+}
+
+bool AbstractModuleRecord::Resolution::isSameBinding(const Resolution& other) const
+{
+    if (moduleRecord == other.moduleRecord && localName == other.localName)
+        return true;
+#if ENABLE(AOT)
+    if (moduleRecord && other.moduleRecord && moduleRecord->inherits<AOT::ModuleRecord>() && other.moduleRecord->inherits<AOT::ModuleRecord>())
+        return AOT::ModuleRecord::isSameBinding(*this, other);
+#endif
+    return false;
 }
 
 AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
@@ -563,7 +584,7 @@ void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const
     m_loadedModules.set(key, LoadedModuleRequest { vm, request, record, this });
 }
 
-auto AbstractModuleRecord::resolveImport(JSGlobalObject* globalObject, const Identifier& localName) -> Resolution
+auto AbstractModuleRecord::resolveImport(JSGlobalObject* globalObject, const Identifier& localName, AbstractModuleRecord** requestedModule) -> Resolution
 {
 #if USE(BUN_JSC_ADDITIONS)
     VM& vm = globalObject->vm();
@@ -572,6 +593,9 @@ auto AbstractModuleRecord::resolveImport(JSGlobalObject* globalObject, const Ide
         std::optional<Resolution> resolution = tryResolveImportPrelinked(globalObject, localName);
         RETURN_IF_EXCEPTION(scope, Resolution::error());
         if (resolution) [[likely]] {
+            // Only resolveImportByName() reports requestedModule, and callers only need it for a live export.
+            if (requestedModule && resolution->isLiveExport(vm)) [[unlikely]]
+                RELEASE_AND_RETURN(scope, resolveImportByName(globalObject, localName, requestedModule));
             if (!Options::validatePrelinkedModuleInfo()) [[likely]]
                 return *resolution;
             Resolution expected = resolveImportByName(globalObject, localName);
@@ -580,13 +604,13 @@ auto AbstractModuleRecord::resolveImport(JSGlobalObject* globalObject, const Ide
             return expected;
         }
     }
-    RELEASE_AND_RETURN(scope, resolveImportByName(globalObject, localName));
+    RELEASE_AND_RETURN(scope, resolveImportByName(globalObject, localName, requestedModule));
 #else
-    return resolveImportByName(globalObject, localName);
+    return resolveImportByName(globalObject, localName, requestedModule);
 #endif
 }
 
-auto AbstractModuleRecord::resolveImportByName(JSGlobalObject* globalObject, const Identifier& localName) -> Resolution
+auto AbstractModuleRecord::resolveImportByName(JSGlobalObject* globalObject, const Identifier& localName, AbstractModuleRecord** requestedModule) -> Resolution
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -601,6 +625,8 @@ auto AbstractModuleRecord::resolveImportByName(JSGlobalObject* globalObject, con
 
     AbstractModuleRecord* importedModule = hostResolveImportedModule(globalObject, importEntry.moduleRequest, importEntry.moduleRequestType);
     RETURN_IF_EXCEPTION(scope, Resolution::error());
+    if (requestedModule)
+        *requestedModule = importedModule;
 
     RELEASE_AND_RETURN(scope, importedModule->resolveExport(globalObject, importEntry.importName));
 }
@@ -636,12 +662,12 @@ struct AbstractModuleRecord::ResolveQuery {
     {
     }
 
-    bool NODELETE isEmptyValue() const
+    bool LEGACY_NODELETE isEmptyValue() const
     {
         return !exportName;
     }
 
-    bool NODELETE isDeletedValue() const
+    bool LEGACY_NODELETE isDeletedValue() const
     {
         return exportName.isHashTableDeletedValue();
     }
@@ -661,12 +687,12 @@ struct AbstractModuleRecord::ResolveQuery {
     RefPtr<UniquedStringImpl> exportName;
 };
 
-inline unsigned NODELETE AbstractModuleRecord::ResolveQuery::Hash::hash(const ResolveQuery& query)
+inline unsigned LEGACY_NODELETE AbstractModuleRecord::ResolveQuery::Hash::hash(const ResolveQuery& query)
 {
     return WTF::PtrHash<AbstractModuleRecord*>::hash(query.moduleRecord) + IdentifierRepHash::hash(query.exportName);
 }
 
-inline bool NODELETE AbstractModuleRecord::ResolveQuery::Hash::equal(const ResolveQuery& lhs, const ResolveQuery& rhs)
+inline bool LEGACY_NODELETE AbstractModuleRecord::ResolveQuery::Hash::equal(const ResolveQuery& lhs, const ResolveQuery& rhs)
 {
     return lhs.moduleRecord == rhs.moduleRecord && lhs.exportName == rhs.exportName;
 }
@@ -683,6 +709,17 @@ void AbstractModuleRecord::cacheResolution(UniquedStringImpl* exportName, const 
 {
     m_resolutionCache.add(exportName, resolution);
 }
+
+#if ENABLE(AOT)
+static NEVER_INLINE bool isSettledByMock(VM& vm, bool someRecordHasLiveExports, const AbstractModuleRecord::Resolution& first, const AbstractModuleRecord::Resolution& second)
+{
+    auto isOfMock = [&](const AbstractModuleRecord::Resolution& found) {
+        auto* compiled = dynamicDowncast<AOT::ModuleRecord>(found.moduleRecord);
+        return (compiled && compiled->standsForMock()) || (someRecordHasLiveExports && found.isLiveExport(vm));
+    };
+    return (isOfMock(first) || isOfMock(second)) && !first.isSameBinding(second);
+}
+#endif
 
 auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const ResolveQuery& root) -> Resolution
 {
@@ -928,7 +965,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     //  5. Once we see star links, even if we have not yet traversed that star link path, we should disable caching.
 
     using ResolveSet = WTF::UncheckedKeyHashSet<ResolveQuery, ResolveQuery::Hash, ResolveQuery::HashTraits>;
-    enum class Type { Query, IndirectFallback, GatherStars };
+    enum class Type { Query, QueryViaStarExport, IndirectFallback, GatherStars };
     struct Task {
         ResolveQuery query;
         Type type;
@@ -938,6 +975,8 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
         switch (type) {
         case Type::Query:
             return "Query";
+        case Type::QueryViaStarExport:
+            return "QueryViaStarExport";
         case Type::IndirectFallback:
             return "IndirectFallback";
         case Type::GatherStars:
@@ -953,6 +992,11 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     Vector<Resolution, 8> frames;
 
     bool foundStarLinks = false;
+#if USE(BUN_JSC_ADDITIONS)
+    Resolution firstLiveRecordViaStarExport = Resolution::notFound();
+    // Read once: the loop below visits every module that an `export *` leads to, for every name.
+    const bool someRecordHasLiveExports = vm.codeCache()->hasModuleRecordWithLiveExports();
+#endif
 
     frames.append(Resolution::notFound());
 
@@ -979,7 +1023,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             const auto& [starModuleName, starModuleRequestType] = *iterator;
             AbstractModuleRecord* importedModuleRecord = query.moduleRecord->hostResolveImportedModule(globalObject, Identifier::fromUid(vm, starModuleName.get()), starModuleRequestType);
             RETURN_IF_EXCEPTION(scope, false);
-            pendingTasks.append(Task { ResolveQuery(importedModuleRecord, query.exportName.get()), Type::Query });
+            pendingTasks.append(Task { ResolveQuery(importedModuleRecord, query.exportName.get()), Type::QueryViaStarExport });
         }
         return true;
     };
@@ -992,6 +1036,9 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 
     // Merge the given resolution to the current resolution value of the top frame.
     // If there is ambiguity, return "false". When the "false" is returned, we should make the result "ambiguous".
+#if ENABLE(AOT)
+    bool wasSettledByMock = false;
+#endif
     auto mergeToCurrentTop = [&] (const Resolution& resolution) -> bool {
         if (resolution.type == Resolution::Type::NotFound)
             return true;
@@ -1000,6 +1047,19 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             currentTop() = resolution;
             return true;
         }
+
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && isSettledByMock(vm, someRecordHasLiveExports, currentTop(), resolution)) [[unlikely]] {
+            wasSettledByMock = true;
+            return true;
+        }
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+        // A live export never makes a name ambiguous. The first `export *` that provides the name wins, as in Vitest.
+        if (someRecordHasLiveExports && (currentTop().isLiveExport(vm) || resolution.isLiveExport(vm))) [[unlikely]]
+            return true;
+#endif
 
         return currentTop().isSameBinding(resolution);
     };
@@ -1018,11 +1078,50 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             dataLog("    ", typeString(task.type), " ", task.query, "\n");
 
         switch (task.type) {
-        case Type::Query: {
+        case Type::Query:
+        case Type::QueryViaStarExport: {
             AbstractModuleRecord* moduleRecord = query.moduleRecord;
+
+#if USE(BUN_JSC_ADDITIONS)
+            // A live record resolves any name to itself. The exception is a query that got here through `export *`: then it
+            // only claims names it declares, otherwise it would make every name from a sibling `export *` ambiguous.
+            // The result depends on the task's type, which resolveSet doesn't track, so this has to run before the resolveSet check.
+            if (someRecordHasLiveExports && moduleRecord->hasLiveExports()) [[unlikely]] {
+                Resolution resolution { Resolution::Type::Resolved, moduleRecord, Identifier::fromUid(vm, query.exportName.get()) };
+                if (task.type == Type::Query || moduleRecord->tryGetExportEntry(query.exportName.get())) {
+                    if (!mergeToCurrentTop(resolution))
+                        return Resolution::ambiguous();
+                    continue;
+                }
+                if (firstLiveRecordViaStarExport.type == Resolution::Type::NotFound)
+                    firstLiveRecordViaStarExport = resolution;
+            }
+#endif
 
             if (!resolveSet.add(task.query).isNewEntry)
                 continue;
+
+#if ENABLE(AOT)
+            if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(moduleRecord)) {
+                Vector<AbstractModuleRecord*, 8> starTargets;
+                Resolution resolution = compiled->resolveOwnExport(globalObject, Identifier::fromUid(vm, query.exportName.get()), starTargets);
+                RETURN_IF_EXCEPTION(scope, Resolution::error());
+                switch (resolution.type) {
+                case Resolution::Type::Error:
+                    return Resolution::error();
+                case Resolution::Type::Ambiguous:
+                    return Resolution::ambiguous();
+                case Resolution::Type::NotFound:
+                case Resolution::Type::Resolved:
+                    if (!mergeToCurrentTop(resolution))
+                        return Resolution::ambiguous();
+                    foundStarLinks |= !starTargets.isEmpty();
+                    while (!starTargets.isEmpty())
+                        pendingTasks.append(Task { ResolveQuery(starTargets.takeLast(), query.exportName.get()), Type::QueryViaStarExport });
+                    continue;
+                }
+            }
+#endif
 
             //  5. Once we see star links, even if we have not yet traversed that star link path, we should disable caching.
             if (!moduleRecord->starExportEntries().isEmpty())
@@ -1121,6 +1220,12 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             Resolution resolution = frames.takeLast();
             ASSERT_WITH_MESSAGE(resolution.type == Resolution::Type::Resolved || resolution.type == Resolution::Type::NotFound, "When we see Error and Ambiguous, we immediately return from this loop. So here, only Resolved and NotFound comes.");
 
+#if USE(BUN_JSC_ADDITIONS)
+            // A name a live record picks up from its own `export *` still resolves to the live record, not to the module that declares it.
+            if (someRecordHasLiveExports && resolution.type == Resolution::Type::Resolved && query.moduleRecord->hasLiveExports()) [[unlikely]]
+                resolution = Resolution { Resolution::Type::Resolved, query.moduleRecord, Identifier::fromUid(vm, query.exportName.get()) };
+#endif
+
             // Merge the star resolution to the upper frame.
             if (!mergeToCurrentTop(resolution))
                 return Resolution::ambiguous();
@@ -1130,6 +1235,18 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     }
 
     ASSERT(frames.size() == 1);
+#if USE(BUN_JSC_ADDITIONS)
+    // No module exports the name, but an `export *` led to a live record. Don't fail the link: the name reads as undefined
+    // unless the record's source has it, as in Vitest.
+    if (someRecordHasLiveExports && frames[0].type == Resolution::Type::NotFound) [[unlikely]]
+        frames[0] = firstLiveRecordViaStarExport;
+#endif
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(root.moduleRecord); compiled && frames[0].type == Resolution::Type::Resolved) {
+        if (compiled->someMockStandsInPlace() || frames[0].moduleRecord->hasLiveExports() || wasSettledByMock)
+            return frames[0];
+    }
+#endif
     //  1. The starting point is always cacheable.
     if (frames[0].type == Resolution::Type::Resolved)
         cacheResolutionForQuery(root, frames[0]);
@@ -1166,6 +1283,21 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_hasLiveExports) [[unlikely]]
+        return Resolution { Resolution::Type::Resolved, this, exportName };
+#endif
+
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
+        if (!compiled->someMockStandsInPlace()) {
+            if (std::optional<Resolution> cachedResolution = tryGetCachedResolution(exportName.impl()))
+                return *cachedResolution;
+        }
+        RELEASE_AND_RETURN(scope, resolveExportImpl(globalObject, ResolveQuery(this, exportName.impl())));
+    }
+#endif
+
     // Local / Namespace exports are trivially derivable from m_exportEntries.
     // m_resolutionCache only holds results that actually amortise costly traversals, Indirect resolutions and star-resolved results.
     if (const auto optionalExportEntry = tryGetExportEntry(exportName.impl())) {
@@ -1194,8 +1326,20 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
     RELEASE_AND_RETURN(scope, resolveExportImpl(globalObject, ResolveQuery(this, exportName.impl())));
 }
 
+JSObject* AbstractModuleRecord::moduleNamespaceObject(JSGlobalObject* globalObject, ModulePhase phase)
+{
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        return compiled->moduleNamespaceObject(globalObject, phase);
+#endif
+    return getModuleNamespace(globalObject, phase);
+}
+
 JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject* globalObject, ModulePhase phase, bool shouldPreventExtensions)
 {
+#if ENABLE(AOT)
+    RELEASE_ASSERT(!inherits<AOT::ModuleRecord>());
+#endif
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1213,8 +1357,9 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 
     Vector<std::pair<Identifier, Resolution>> resolutions;
 #if USE(BUN_JSC_ADDITIONS)
-    bool collected = false;
-    if (m_prelinked && !Options::validatePrelinkedModuleInfo()) {
+    // The namespace object of a live record forwards to liveExportsSource(), so it needs no resolutions.
+    bool collected = m_hasLiveExports;
+    if (!collected && m_prelinked && !Options::validatePrelinkedModuleInfo()) {
         collected = collectPrelinkedNamespaceResolutions(globalObject, resolutions);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
@@ -1234,12 +1379,50 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     UncheckedKeyHashSet<AbstractModuleRecord*> exportStarSet;
     Vector<AbstractModuleRecord*, 8> pendingModules;
     pendingModules.append(this);
+#if USE(BUN_JSC_ADDITIONS)
+    [[maybe_unused]] bool sawLiveExports = false;
+    Vector<AbstractModuleRecord*, 8> liveRecordsWithStarExports;
+#endif
 
     while (!pendingModules.isEmpty()) {
         AbstractModuleRecord* moduleRecord = pendingModules.takeLast();
         if (!exportStarSet.add(moduleRecord).isNewEntry)
             continue;
         bool isRoot = moduleRecord == this;
+#if USE(BUN_JSC_ADDITIONS)
+        bool hasLiveExports = moduleRecord->hasLiveExports();
+        if (hasLiveExports) [[unlikely]] {
+            sawLiveExports = true;
+            if (!moduleRecord->starExportEntries().isEmpty())
+                liveRecordsWithStarExports.append(moduleRecord);
+        }
+#endif
+
+#if ENABLE(AOT)
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(moduleRecord)) {
+            Vector<Identifier> names;
+            compiled->collectExportedNames(globalObject, names, pendingModules);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            for (const Identifier& name : names) {
+                SUPPRESS_UNCOUNTED_LOCAL auto* exportName = name.impl();
+                if (vm.propertyNames->defaultKeyword == name || rootShadowedNames.contains(exportName) || slowPathNames.contains(exportName))
+                    continue;
+                Resolution candidate = compiled->resolveExport(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                if (candidate.type != Resolution::Type::Resolved) {
+                    uniqueBindings.remove(exportName);
+                    slowPathNames.add(exportName);
+                    continue;
+                }
+                auto addResult = uniqueBindings.add(exportName, candidate);
+                if (!addResult.isNewEntry && !addResult.iterator->value.isSameBinding(candidate)) {
+                    slowPathNames.add(exportName);
+                    uniqueBindings.remove(addResult.iterator);
+                }
+            }
+            continue;
+        }
+#endif
 
         for (const auto& pair : moduleRecord->exportEntries()) {
             const ExportEntry& exportEntry = pair.value;
@@ -1260,6 +1443,12 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             }
 
             Resolution candidate;
+#if USE(BUN_JSC_ADDITIONS)
+            // Same as resolveExport(): every export of a live record resolves to (record, exportName), whatever the entry type.
+            if (hasLiveExports) [[unlikely]]
+                candidate = { Resolution::Type::Resolved, moduleRecord, exportEntry.exportName };
+            else
+#endif
             switch (exportEntry.type) {
             case ExportEntry::Type::Local:
                 candidate = { Resolution::Type::Resolved, moduleRecord, exportEntry.localName };
@@ -1298,6 +1487,43 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             pendingModules.append(requestedModuleRecord);
         }
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Names a live record re-exports with `export *` must resolve to the live record (see resolveExportImpl). The walk above
+    // visits each module once, so it can't tell whether it reached a module through a live record or around it. Move every
+    // name exported below a live record to the resolveExport() slow path. No other name is affected.
+    if (!liveRecordsWithStarExports.isEmpty()) [[unlikely]]
+        exportStarSet.clear();
+    while (!liveRecordsWithStarExports.isEmpty()) {
+        AbstractModuleRecord* moduleRecord = liveRecordsWithStarExports.takeLast();
+        if (!exportStarSet.add(moduleRecord).isNewEntry)
+            continue;
+        for (const auto& pair : moduleRecord->exportEntries()) {
+            auto iterator = uniqueBindings.find(pair.value.exportName.impl());
+            if (iterator == uniqueBindings.end())
+                continue;
+            slowPathNames.add(iterator->key);
+            uniqueBindings.remove(iterator);
+        }
+        for (const auto& [starModuleName, starModuleRequestType] : moduleRecord->starExportEntries()) {
+            AbstractModuleRecord* requestedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, Identifier::fromUid(vm, starModuleName.get()), starModuleRequestType);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            liveRecordsWithStarExports.append(requestedModuleRecord);
+        }
+    }
+#if ASSERT_ENABLED
+    if (sawLiveExports) {
+        unsigned namesToCheck = 64; // resolveExportImpl() walks the graph once per name, so only spot-check.
+        for (auto& pair : uniqueBindings) {
+            if (!namesToCheck--)
+                break;
+            Resolution expected = resolveExportImpl(globalObject, ResolveQuery(this, pair.key.get()));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            ASSERT(expected.type == Resolution::Type::Resolved && expected.isSameBinding(pair.value));
+        }
+    }
+#endif
+#endif
 
     resolutions.reserveCapacity(resolutions.size() + uniqueBindings.size() + slowPathNames.size());
     for (auto& pair : uniqueBindings) {
@@ -1359,6 +1585,10 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 // https://tc39.es/proposal-defer-import-eval/#sec-GatherAsynchronousTransitiveDependencies
 void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen)
 {
+#if ENABLE(AOT)
+    VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#endif
     // The spec text is recursive; we use an explicit work list to avoid native stack overflow on
     // deep graphs. Children are pushed in reverse to preserve the spec's pre-order discovery order.
     Vector<AbstractModuleRecord*, 8> stack;
@@ -1369,6 +1599,13 @@ void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashS
         // 4. Append module to seen.
         if (!seen.add(module).isNewEntry)
             continue;
+#if ENABLE(AOT)
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module)) {
+            compiled->gatherAsynchronousTransitiveDependencies(result, seen);
+            RETURN_IF_EXCEPTION(scope, void());
+            continue;
+        }
+#endif
         // 5. If module is not a Cyclic Module Record, return result.
         auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module);
         if (!cyclic)
@@ -1397,8 +1634,17 @@ void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashS
 // https://tc39.es/proposal-defer-import-eval/#sec-ReadyForSyncExecution
 bool AbstractModuleRecord::readyForSyncExecution()
 {
-    // The spec text is recursive; we use an explicit work list to avoid native stack overflow on deep graphs.
     UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+    return readyForSyncExecution(seen);
+}
+
+bool AbstractModuleRecord::readyForSyncExecution(UncheckedKeyHashSet<AbstractModuleRecord*>& seen)
+{
+#if ENABLE(AOT)
+    VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#endif
+    // The spec text is recursive; we use an explicit work list to avoid native stack overflow on deep graphs.
     Vector<AbstractModuleRecord*, 8> stack;
     stack.append(this);
     while (!stack.isEmpty()) {
@@ -1411,6 +1657,15 @@ bool AbstractModuleRecord::readyForSyncExecution()
         // 4. Append module to seen.
         if (!seen.add(module).isNewEntry)
             continue;
+#if ENABLE(AOT)
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module)) {
+            bool isReady = compiled->readyForSyncExecution(seen);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!isReady)
+                return false;
+            continue;
+        }
+#endif
         // 5. If IsModuleSCCEvaluated(module), return true.
         if (cyclic->isSCCEvaluated())
             continue;
@@ -1441,8 +1696,10 @@ void AbstractModuleRecord::evaluateSync(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     // 1. If ReadyForSyncExecution(module) is false, throw a TypeError exception.
-    if (!readyForSyncExecution()) {
-        throwTypeError(globalObject, scope, "Unable to synchronously evaluate deferred module"_s);
+    bool isReady = readyForSyncExecution();
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!isReady) {
+        throwTypeError(globalObject, scope, DeferredModuleNotReadyError);
         return;
     }
     // 2. Let promise be ! module.Evaluate().
@@ -1501,6 +1758,18 @@ void AbstractModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetch
         RETURN_IF_EXCEPTION(scope, void());
     }
 #endif
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
+        compiled->takeStatus();
+        // A module that is linked stays linked, however this step ends. The loader is through with the graph.
+        if (compiled->status() >= CyclicModuleRecord::Status::Linked) {
+            AOT::ModuleLinkingStack stack;
+            scope.release();
+            compiled->innerModuleLinking(globalObject, stack, 0, WTF::move(scriptFetcher));
+            return;
+        }
+    }
+#endif
     if (auto* cyclicModuleRecord = dynamicDowncast<CyclicModuleRecord>(this)) {
         cyclicModuleRecord->link(globalObject, WTF::move(scriptFetcher));
         RETURN_IF_EXCEPTION(scope, void());
@@ -1554,6 +1823,14 @@ JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
         return promise;
     };
 
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
+        compiled->takeStatus();
+        // Whoever imports a CommonJS file while it runs gets what the file has exported by then.
+        if (compiled->isRunningCommonJSFile())
+            return wrap(jsUndefined());
+    }
+#endif
     if (auto* cyclicRecord = dynamicDowncast<CyclicModuleRecord>(this))
 #if USE(BUN_JSC_ADDITIONS)
         return wrap(cyclicRecord->evaluate(globalObject, referrerAsyncOrder, dynamicImportPromise));
@@ -1592,11 +1869,11 @@ void AbstractModuleRecord::evaluateModuleSync(JSGlobalObject* globalObject)
 static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
 {
     if (!globalObject->vm().isSafeToRecurse())
-        throwRangeError(globalObject, scope, "Maximum call stack size exceeded"_s);
+        throwRangeError(globalObject, scope, ModuleGraphTooDeepError);
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency)
+bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency)
 {
     auto resumesDependency = [&](AbstractModuleRecord* module) -> bool {
         UncheckedKeyHashSet<AbstractModuleRecord*> seen;
@@ -1649,14 +1926,28 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
             follow(generator->context());
         else if (auto* module = dynamicDowncast<AbstractModuleRecord>(cell))
             found = resumesDependency(module);
+#if ENABLE(AOT)
+        else {
+            for (JSPromise* settledPromise : AOT::promisesSettledBy(cell))
+                work.append(settledPromise);
+        }
+#endif
     };
 
     auto visitReaction = [&](InternalMicrotask task, JSValue cell, JSValue context) -> bool {
         switch (task) {
         case InternalMicrotask::AsyncFunctionResume:
+#if ENABLE(AOT)
+        case InternalMicrotask::CompiledAsyncFunctionResume:
+        case InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn:
+        case InternalMicrotask::CompiledModuleBodyResume:
+#endif
         case InternalMicrotask::AsyncModuleExecutionResume:
         case InternalMicrotask::AsyncGeneratorDriverResume:
             followPromiseOrDriver(unwrapContext(context));
+            break;
+        case InternalMicrotask::AsyncModuleExecutionDone:
+            followPromiseOrDriver(cellOf(context));
             break;
         case InternalMicrotask::AsyncFromSyncIteratorContinue:
         case InternalMicrotask::AsyncFromSyncIteratorDone: {
@@ -1705,6 +1996,9 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
         case InternalMicrotask::DynamicImportEvaluateSettled:
         case InternalMicrotask::DynamicImportDeferLoadSettled:
         case InternalMicrotask::DynamicImportDeferDependencySettled:
+#if ENABLE(AOT)
+        case InternalMicrotask::CompiledModuleImportSettled:
+#endif
             follow(cell);
             break;
         default:
@@ -1714,14 +2008,21 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
     };
 
     constexpr size_t maxPromises = 4096;
+#if ENABLE(AOT)
+    static_assert(maxPromises == AOT::defaultLimitValue(AOT::LimitID::PromisesWalkedPerImport, AOT::hostArchitecture()));
+#endif
     while (!work.isEmpty() && !found) {
         JSPromise* promise = work.takeLast();
         if (promise->status() != JSPromise::Status::Pending)
             continue;
         if (!seen.add(promise).isNewEntry)
             continue;
-        if (seen.size() > maxPromises)
+        if (seen.size() > maxPromises) {
+#if ENABLE(AOT)
+            AOT::countLimitHit(importPromise->vm(), AOT::LimitID::PromisesWalkedPerImport);
+#endif
             return false;
+        }
         promise->forEachPendingReaction(visitReaction);
     }
     return found;
@@ -1742,6 +2043,10 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, compiled->innerModuleEvaluation(globalObject, stack, index, referrerAsyncOrder, dynamicImportPromise));
+#endif
     auto* module = dynamicDowncast<CyclicModuleRecord>(this);
 
     // 1. If module is not a Cyclic Module Record, then
@@ -1793,6 +2098,7 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             //   11.b.ii.1. If evaluationList does not contain additionalModule, then append additionalModule to evaluationList.
             UncheckedKeyHashSet<AbstractModuleRecord*> seen;
             requiredModule->gatherAsynchronousTransitiveDependencies(evaluationList, seen);
+            RETURN_IF_EXCEPTION(scope, invalid);
         } else {
             // 11.c. Else if evaluationList does not contain requiredModule, then
             //   11.c.i. Append requiredModule to evaluationList.
@@ -1936,6 +2242,10 @@ void AbstractModuleRecord::generateDeferredSyntheticModules(JSGlobalObject* glob
 
     if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(this))
         RELEASE_AND_RETURN(scope, synthetic->runDeferredGenerator(globalObject));
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, compiled->generateDeferredSyntheticModules(globalObject, visited));
+#endif
 
     // Everything below a record that has been linked went through this pass when that link started.
     auto* module = dynamicDowncast<CyclicModuleRecord>(this);
@@ -1964,6 +2274,10 @@ unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, 
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, compiled->innerModuleLinking(globalObject, stack, index, WTF::move(scriptFetcher)));
+#endif
     auto* module = dynamicDowncast<CyclicModuleRecord>(this);
 
     // 1. If module is not a Cyclic Module Record, then
@@ -2078,6 +2392,8 @@ ScriptFetchParameters::Type AbstractModuleRecord::moduleType() const
         return ScriptFetchParameters::Type::JavaScript;
     case SourceProviderSourceType::WebAssembly:
         return ScriptFetchParameters::Type::WebAssembly;
+    case SourceProviderSourceType::CSS:
+        return ScriptFetchParameters::Type::CSS;
     case SourceProviderSourceType::ImportMap:
         RELEASE_ASSERT_NOT_REACHED();
         return ScriptFetchParameters::Type::None;
@@ -2140,5 +2456,78 @@ void AbstractModuleRecord::dump()
     for (const auto& starExportEntry : m_starExportEntries)
         dataLog("      [Star] module(", printableName(starExportEntry.first), ")\n");
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+bool AbstractModuleRecord::Resolution::isLiveExport(VM& vm) const
+{
+    return type == Type::Resolved && moduleRecord->hasLiveExports() && localName != vm.propertyNames->starNamespacePrivateName;
+}
+
+void AbstractModuleRecord::setHasLiveExports()
+{
+    RELEASE_ASSERT(!m_prelinked);
+    m_hasLiveExports = true;
+    vm().codeCache()->didCreateModuleRecordWithLiveExports();
+}
+
+void AbstractModuleRecord::setLiveExportsSource(VM& vm, JSObject* source)
+{
+    RELEASE_ASSERT(m_hasLiveExports && source);
+    m_liveExportsSource.set(vm, this, source);
+}
+
+JSValue AbstractModuleRecord::getLiveExport(JSGlobalObject* globalObject, PropertyName exportName)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(m_hasLiveExports);
+    ASSERT(exportName != vm.propertyNames->starNamespacePrivateName);
+
+    // The source can be (or forward to) a namespace object backed by this same record, which recurses without pushing a JS frame.
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return { };
+    }
+
+    JSObject* source = m_liveExportsSource.get();
+    if (!source) [[unlikely]] {
+        RefPtr uid = exportName.uid();
+        throwVMError(globalObject, scope, createTDZError(globalObject, *uid));
+        return { };
+    }
+    RELEASE_AND_RETURN(scope, source->get(globalObject, exportName));
+}
+
+bool AbstractModuleRecord::hasLiveExport(JSGlobalObject* globalObject, PropertyName exportName)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(m_hasLiveExports);
+
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return false;
+    }
+
+    JSObject* source = m_liveExportsSource.get();
+    if (!source)
+        return false;
+    RELEASE_AND_RETURN(scope, source->hasProperty(globalObject, exportName));
+}
+
+JSValue AbstractModuleRecord::getReexportedLiveExport(JSGlobalObject* globalObject, PropertyName exportName)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_liveExportsSource) [[likely]] {
+        bool hasExport = hasLiveExport(globalObject, exportName);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!hasExport)
+            return jsUndefined();
+    }
+    RELEASE_AND_RETURN(scope, getLiveExport(globalObject, exportName));
+}
+#endif
 
 } // namespace JSC

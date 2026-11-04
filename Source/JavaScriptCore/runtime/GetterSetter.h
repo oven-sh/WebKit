@@ -83,6 +83,12 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
+    template<typename Visitor> ALWAYS_INLINE static void visitFields(GetterSetter* thisObject, Visitor& visitor)
+    {
+        visitor.append(thisObject->m_getter);
+        visitor.append(thisObject->m_setter);
+    }
+
     JSObject* getter() const LIFETIME_BOUND { return m_getter.get(); }
 
     JSObject* getterConcurrently() const

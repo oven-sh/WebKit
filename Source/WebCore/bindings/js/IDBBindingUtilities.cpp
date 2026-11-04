@@ -121,7 +121,7 @@ static bool get(JSGlobalObject& lexicalGlobalObject, JSValue object, const Strin
     return true;
 }
 
-static bool NODELETE canSet(JSValue object, const String& keyPathElement)
+static bool LEGACY_NODELETE canSet(JSValue object, const String& keyPathElement)
 {
     UNUSED_PARAM(keyPathElement);
     return object.isObject();
@@ -145,7 +145,7 @@ JSValue toJS(JSGlobalObject& lexicalGlobalObject, JSGlobalObject& globalObject, 
     }
 
     VM& vm = lexicalGlobalObject.vm();
-    Locker<JSLock> locker(vm.apiLock());
+    JSLockHolder locker(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     switch (key->type()) {
@@ -392,7 +392,7 @@ bool canInjectIDBKeyIntoScriptValue(JSGlobalObject& lexicalGlobalObject, JSValue
     return canInjectNthValueOnKeyPath(lexicalGlobalObject, scriptValue, keyPathElements, keyPathElements.size() - 1);
 }
 
-static JSValue deserializeIDBValueToJSValue(JSGlobalObject& lexicalGlobalObject, JSC::JSGlobalObject& globalObject, const IDBValue& value)
+static std::optional<JSValue> deserializeIDBValueToJSValue(JSGlobalObject& lexicalGlobalObject, JSC::JSGlobalObject& globalObject, const IDBValue& value)
 {
     // FIXME: I think it's peculiar to use undefined to mean "null data" and null to mean "empty data".
     // But I am not changing this at the moment because at least some callers are specifically checking isUndefined.
@@ -409,21 +409,24 @@ static JSValue deserializeIDBValueToJSValue(JSGlobalObject& lexicalGlobalObject,
     Ref apiLock = lexicalGlobalObject.vm().apiLock();
     apiLock->lock();
     Vector<Ref<MessagePort>> messagePorts;
-    JSValue result = serializedValue->deserialize(lexicalGlobalObject, &globalObject, messagePorts, value.blobURLs(), value.blobFilePaths(), SerializationErrorMode::NonThrowing);
+    bool didFail = false;
+    JSValue result = serializedValue->deserialize(lexicalGlobalObject, &globalObject, messagePorts, value.blobURLs(), value.blobFilePaths(), SerializationErrorMode::NonThrowing, &didFail);
     apiLock->unlock();
 
+    if (didFail)
+        return std::nullopt;
     return result;
 }
 
 JSValue deserializeIDBValueToJSValue(JSGlobalObject& lexicalGlobalObject, const IDBValue& value)
 {
-    return deserializeIDBValueToJSValue(lexicalGlobalObject, lexicalGlobalObject, value);
+    return deserializeIDBValueToJSValue(lexicalGlobalObject, lexicalGlobalObject, value).value_or(jsNull());
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, const IDBValue& value)
 {
     ASSERT(lexicalGlobalObject);
-    return deserializeIDBValueToJSValue(*lexicalGlobalObject, *globalObject, value);
+    return deserializeIDBValueToJSValue(*lexicalGlobalObject, *globalObject, value).value_or(jsNull());
 }
 
 Ref<IDBKey> scriptValueToIDBKey(JSGlobalObject& lexicalGlobalObject, JSValue scriptValue)
@@ -520,13 +523,22 @@ IndexIDToIndexKeyMap generateIndexKeyMapForValueIsolatedCopy(JSC::JSGlobalObject
 
 std::optional<JSC::JSValue> deserializeIDBValueWithKeyInjection(JSGlobalObject& lexicalGlobalObject, const IDBValue& value, const IDBKeyData& key, const std::optional<IDBKeyPath>& keyPath)
 {
-    auto jsValue = deserializeIDBValueToJSValue(lexicalGlobalObject, value);
+    JSLockHolder locker(lexicalGlobalObject.vm());
+    auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
+
+    auto deserializedValue = deserializeIDBValueToJSValue(lexicalGlobalObject, lexicalGlobalObject, value);
+    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+    if (!deserializedValue) {
+        throwDataCloneError(lexicalGlobalObject, throwScope);
+        return std::nullopt;
+    }
+    auto jsValue = *deserializedValue;
     if (jsValue.isUndefined() || !keyPath || !std::holds_alternative<String>(keyPath.value()) || !isIDBKeyPathValid(keyPath.value()))
         return jsValue;
 
-    JSLockHolder locker(lexicalGlobalObject.vm());
-    if (!injectIDBKeyIntoScriptValue(lexicalGlobalObject, key, jsValue, keyPath.value())) {
-        auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
+    bool didInjectKey = injectIDBKeyIntoScriptValue(lexicalGlobalObject, key, jsValue, keyPath.value());
+    RETURN_IF_EXCEPTION(throwScope, std::nullopt);
+    if (!didInjectKey) {
         propagateException(lexicalGlobalObject, throwScope, Exception(ExceptionCode::UnknownError, "Cannot inject key into script value"_s));
         return std::nullopt;
     }

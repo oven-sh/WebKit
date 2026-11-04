@@ -178,6 +178,10 @@ private:
     void frameDone();
     void releaseUnusedBuffersTimerFired();
 
+#if USE(WPE_RENDERER)
+    bool isLegacyWPERenderer() const { return m_swapChain.type() == SwapChain::Type::WPEBackend; }
+#endif
+
 #if ENABLE(DAMAGE_TRACKING)
     class SwapChainDamageTracker;
 #endif
@@ -335,7 +339,7 @@ private:
     private:
         bool supportsExplicitSync() const override { return true; }
 
-        Ref<WebCore::BitmapTexture> m_texture;
+        const Ref<WebCore::BitmapTexture> m_texture;
     };
 #endif // PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
 
@@ -380,13 +384,14 @@ private:
         bool resize(const WebCore::IntSize&);
         bool handleBufferFormatChangeIfNeeded();
         const WebCore::IntSize& size() const LIFETIME_BOUND { return m_size; }
+        bool isEmpty() const { return m_freeTargets.isEmpty() && m_lockedTargets.isEmpty(); }
         RenderTarget* nextTarget();
         void releaseTarget(uint64_t, UnixFileDescriptor&& releaseFence);
         void reset();
         void releaseUnusedBuffers();
 
 #if ENABLE(DAMAGE_TRACKING)
-        template<typename Functor> void forEachTarget(Functor&& functor)
+        template<typename Functor> void forEachTarget(NOESCAPE const Functor& functor)
         {
             for (auto& target : m_freeTargets)
                 functor(*target);

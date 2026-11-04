@@ -1,0 +1,33 @@
+# function make() { return { value: 5 } }  function clear(box: Box) { const was = box.value; box.value = 0; return was | 0 }  register(make, clear)
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (make, clear) => { const box = make(); print("made"); print(clear(box) + " " + clear(box)); };
+# OPTIONS: check=ClaimsToBackEnd disable=pass:InlineCalls
+# CHECK-NOT: AOT claim check
+# CHECK: made
+# CHECK-NEXT: 5 0
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Record name="Box" module=m0 fields=[{key="value" declared={type=i32} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return
+}
+function f1 name="make" module=m0 thisType={type=anything} results=[{type=anything}] {
+    v0 = Integer integer=5
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 name="clear" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="value"
+    v2 = Integer integer=0
+    PropSet v0, v2 key="value" mode=Strict
+    v4 = BitOr v1, v2
+    Return v4
+}

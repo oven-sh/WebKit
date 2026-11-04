@@ -53,7 +53,8 @@ bool NetworkIssueReporter::shouldReport(NSURLSessionTaskMetrics *metrics)
     if (!isEnabled())
         return false;
 
-    for (NSURLSessionTaskTransactionMetrics *transaction in metrics.transactionMetrics) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSURLSessionTaskTransactionMetrics *transaction in metrics.transactionMetrics) {
         if (transaction._isUnlistedTracker)
             return true;
     }

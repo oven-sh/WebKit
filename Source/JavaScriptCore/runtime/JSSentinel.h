@@ -62,6 +62,10 @@ private:
         : Base(vm, structure)
     {
     }
+
+#if ENABLE(AOT)
+    UNUSED_MEMBER_VARIABLE uint64_t m_reservedWord { 0 };
+#endif
 };
 
 } // namespace JSC

@@ -69,10 +69,14 @@ class ParallelHelperPool final : public ThreadSafeRefCounted<ParallelHelperPool>
     WTF_MAKE_TZONE_ALLOCATED(ParallelHelperPool);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ParallelHelperPool);
 public:
-    WTF_EXPORT_PRIVATE static Ref<ParallelHelperPool> create(ASCIILiteral threadName);
+    WTF_EXPORT_PRIVATE static Ref<ParallelHelperPool> LEGACY_NODELETE create(ASCIILiteral threadName);
     WTF_EXPORT_PRIVATE ~ParallelHelperPool();
 
     WTF_EXPORT_PRIVATE void ensureThreads(unsigned numThreads);
+#if ENABLE(AOT)
+    // Returns once every thread that has been started is up. It does not wait for work that they have taken.
+    WTF_EXPORT_PRIVATE void waitUntilThreadsAreUp();
+#endif
 
     unsigned numberOfThreads() const { return m_numThreads; }
     
@@ -87,8 +91,8 @@ private:
 
     void didMakeWorkAvailable(const AbstractLocker&) WTF_REQUIRES_LOCK(m_lock);
 
-    bool NODELETE hasClientWithTask() WTF_REQUIRES_LOCK(m_lock);
-    ParallelHelperClient* NODELETE getClientWithTask() WTF_REQUIRES_LOCK(m_lock);
+    bool LEGACY_NODELETE hasClientWithTask() WTF_REQUIRES_LOCK(m_lock);
+    ParallelHelperClient* LEGACY_NODELETE getClientWithTask() WTF_REQUIRES_LOCK(m_lock);
     
     Box<Lock> m_lock; // AutomaticThread wants this in a box for safety.
     const Ref<AutomaticThreadCondition> m_workAvailableCondition;
@@ -208,7 +212,7 @@ private:
     friend class ParallelHelperPool;
 
     void finishWithLock() WTF_REQUIRES_LOCK(*m_pool->m_lock);
-    RefPtr<SharedTask<void()>> NODELETE claimTask() WTF_REQUIRES_LOCK(*m_pool->m_lock);
+    RefPtr<SharedTask<void()>> LEGACY_NODELETE claimTask() WTF_REQUIRES_LOCK(*m_pool->m_lock);
     void runTask(const RefPtr<SharedTask<void ()>>&);
 
     const RefPtr<ParallelHelperPool> m_pool;

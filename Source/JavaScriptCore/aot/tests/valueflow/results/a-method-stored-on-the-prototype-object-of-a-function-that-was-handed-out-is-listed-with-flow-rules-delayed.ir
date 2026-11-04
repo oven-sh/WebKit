@@ -1,0 +1,32 @@
+# function Point() {}; somethingThatNoTableLists(Point); Point.prototype.norm = first; somethingThatNoTableLists(new Point); somethingThatNoTableLists(Point.prototype)
+# Point has escaped, so `Point.prototype` is its prototype object or a value nobody knows, and in the end its prototype object has escaped too. A receiver shows an object only until the unknown
+# object covers it. The store is seen on the prototype object all the same, whichever rule runs first: the method is listed as the member that is expected, and a test at each call checks it.
+# OPTIONS: testing=DelayFlowRules:1
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Point" {{*}}members=[{key="norm" function=f2}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1 flags=[IsConstructorFunction]
+variable g0 name="Point" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = Undefined
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v1, v2, v3
+    v5 = PropGet v3 key="prototype"
+    v6 = NewClosure function=f2
+    PropSet v5, v6 key="norm" mode=Strict
+    v8 = Construct v3
+    v9 = Call v1, v2, v8
+    v10 = Call v1, v2, v5
+    Return
+}
+function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="first" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}

@@ -30,11 +30,6 @@
 
 namespace WebCore {
 
-void removeBoxFromGlyphDisplayListCache(const LegacyInlineTextBox& run)
-{
-    GlyphDisplayListCache::singleton().remove(run);
-}
-
 void removeBoxFromGlyphDisplayListCache(const InlineDisplay::Box& run)
 {
     GlyphDisplayListCache::singleton().remove(run);

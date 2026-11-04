@@ -1,0 +1,105 @@
+# A string that grows around a loop gets a builder only if it stays in that builder all the way around
+# FORM: Prepared
+# RUN: pass CreateStringBuilders
+# STATISTIC: StringBuildersCreated = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="oldStateIsReadBehindTheAppend" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b5()
+  b2():
+    v9 = Add v5, v0
+    v10 = ToBoolean v2
+    Branch v10 -> taken b3(), notTaken b4(v9)
+  b3():
+    v11 = String string="T"
+    v12 = Add v5, v11
+    Jump -> next b4(v12)
+  b4(v13):
+    v14 = Integer integer=1
+    v15 = Add v6, v14
+    Jump -> next b1(v13, v15)
+  b5():
+    Return v5
+}
+# CHECK-LABEL: name="oldStateIsReadBehindTheAppend"
+# CHECK-NOT: StringBuilder
+# CHECK: v9: string = Add v5, v0
+# CHECK: v12: string = Add v5, v11
+# CHECK-NOT: StringBuilder
+
+function f1 name="stateIsPassedTwice" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v2, v3)
+  b1(v4, v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Add v4, v0
+    v10 = Add v9, v0
+    v11 = Add v10, v0
+    v12 = Add v11, v0
+    v13 = Integer integer=1
+    v14 = Add v6, v13
+    Jump -> next b1(v12, v12, v14)
+  b3():
+    v15 = Add v4, v5
+    Return v15
+}
+# CHECK-LABEL: name="stateIsPassedTwice"
+# CHECK-NOT: StringBuilder
+# CHECK: Return v15
+
+function f2 name="textOfEachTurnIsNew" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Add v0, v0
+    v8 = Add v7, v0
+    v9 = Add v8, v0
+    v10 = Add v9, v0
+    v11 = Call v2, -, v10
+    v12 = Integer integer=1
+    v13 = Add v4, v12
+    Jump -> next b1(v13)
+  b3():
+    Return v4
+}
+# CHECK-LABEL: name="textOfEachTurnIsNew"
+# CHECK: [[h2]]: stringbuilder = StringBuilderBegin
+# CHECK: [[s2]]: string = StringBuilderFinish [[h2]]
+# CHECK-NEXT: Call v2, -, [[s2]]
+
+function f3 name="stringIsReadInTheLoop" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Add v5, v0
+    v10 = Call v2, -, v9
+    v11 = Integer integer=1
+    v12 = Add v6, v11
+    Jump -> next b1(v9, v12)
+  b3():
+    Return v5
+}
+# CHECK-LABEL: name="stringIsReadInTheLoop"
+# CHECK: b1(v5: stringbuilder, v6: int|whole):
+# CHECK: StringBuilderAppend v5, v0
+# CHECK-NEXT: [[s3]]: string = StringBuilderToString v5
+# CHECK-NEXT: Call v2, -, [[s3]]

@@ -31,10 +31,13 @@
 #include "RemoteInspectorClient.h"
 #include <wtf/FileSystem.h>
 #include <wtf/URL.h>
+#include <wtf/glib/GLibExtras.h>
+#include <wtf/glib/GMallocString.h>
 #include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
-#include <wtf/text/CStringView.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/UTF8CStringView.h>
 
 namespace WebKit {
 
@@ -69,13 +72,9 @@ bool RemoteInspectorHTTPServer::start(GRefPtr<GSocketAddress>&& socketAddress, u
         }, this, nullptr);
 
     auto* inetAddress = g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(socketAddress.get()));
-    GUniquePtr<char> host(g_inet_address_to_string(inetAddress));
-    GUniquePtr<char> inspectorServerAddress;
-    if (g_inet_address_get_family(inetAddress) == G_SOCKET_FAMILY_IPV6)
-        inspectorServerAddress.reset(g_strdup_printf("[%s]:%u", host.get(), inspectorPort));
-    else
-        inspectorServerAddress.reset(g_strdup_printf("%s:%u", host.get(), inspectorPort));
-    m_client = makeUnique<RemoteInspectorClient>(String::fromUTF8(inspectorServerAddress.get()), *this);
+    auto host = GMallocString::unsafeAdoptFromUTF8(g_inet_address_to_string(inetAddress));
+    auto inspectorServerAddress = g_inet_address_get_family(inetAddress) == G_SOCKET_FAMILY_IPV6 ? makeString('[', host.span(), "]:"_s, inspectorPort) : makeString(host.span(), ':', inspectorPort);
+    lazyInitialize(m_client, makeUnique<RemoteInspectorClient>(WTF::move(inspectorServerAddress), *this));
 
     return true;
 }
@@ -87,10 +86,11 @@ const String& RemoteInspectorHTTPServer::inspectorServerAddress() const
 
 unsigned RemoteInspectorHTTPServer::handleRequest(const char* path, SoupMessageHeaders* responseHeaders, SoupMessageBody* responseBody) const
 {
-    if (CStringView::unsafeFromUTF8(path) == "/"_s) {
+    if (UTF8CStringView::unsafeFromUTF8(path) == "/"_s) {
         auto html = m_client->buildTargetListPage(RemoteInspectorClient::InspectorType::HTTP).toString().utf8();
         soup_message_headers_append(responseHeaders, "Content-Type", "text/html");
-        soup_message_body_append(responseBody, SOUP_MEMORY_COPY, html.legacyCStringPointer(), html.length());
+        auto htmlBytes = html.span();
+        soup_message_body_append(responseBody, SOUP_MEMORY_COPY, htmlBytes.data(), htmlBytes.size());
         return SOUP_STATUS_OK;
     }
 
@@ -142,8 +142,8 @@ void RemoteInspectorHTTPServer::sendMessageToFrontend(uint64_t connectionID, uin
         return;
 
     auto utf8 = message.utf8();
-    // Soup is going to copy the data immediately, so we can use g_bytes_new_static() here to avoid more data copies.
-    GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new_static(utf8.legacyCStringPointer(), utf8.length()));
+    // Soup is going to copy the data immediately, so we can use gBytesNewStatic() here to avoid more data copies.
+    GRefPtr bytes = gBytesNewStatic(utf8.span());
     soup_websocket_connection_send_message(webSocketConnection, SOUP_WEBSOCKET_DATA_TEXT, bytes.get());
 }
 

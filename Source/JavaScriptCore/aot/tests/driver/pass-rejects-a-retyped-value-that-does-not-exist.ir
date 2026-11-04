@@ -1,0 +1,15 @@
+# The word f0:v3 retypes a value before the passes run. When the function or the value does not exist, `pass` says how many there are and runs nothing.
+# FORM: Prepared
+# RUN: pass f0:v9 Select
+# CHECK: error: no value f0:v9: the program has 1 functions, and f0 has 2 values
+# CHECK-NOT: function f0
+# RUN(FUNCTION): pass f4:v0 Select
+# FUNCTION: error: no value f4:v0: the program has 1 functions, and f4 has 0 values
+# FUNCTION-NOT: function f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="negate" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Negate v0
+    Return v1
+}

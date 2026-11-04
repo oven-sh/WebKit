@@ -192,7 +192,7 @@ protected:
     MediaTime duration() const override;
     MediaTime currentTime() const override = 0;
     Ref<MediaTimePromise> seekToTarget(const SeekTarget&) final;
-    bool seeking() const;
+    bool LEGACY_NODELETE seeking() const;
     bool paused() const override;
     void setVolume(float) override = 0;
     bool hasClosedCaptions() const override { return m_cachedHasCaptions; }
@@ -206,7 +206,7 @@ protected:
     ColorSpace colorSpace() override = 0;
     void paintCurrentFrameInContext(GraphicsContext&, const FloatRect&) override = 0;
     void setPreload(MediaPlayer::Preload) override;
-    PlatformLayer* platformLayer() const override { return 0; }
+    PlatformLayer* platformLayer() override { return 0; }
     bool supportsAcceleratedRendering() const override = 0;
     void acceleratedRenderingStateChanged() override;
     bool shouldMaintainAspectRatio() const { return m_shouldMaintainAspectRatio; }
@@ -277,6 +277,7 @@ protected:
 
     virtual bool hasContextRenderer() const = 0;
     virtual bool hasLayerRenderer() const = 0;
+    virtual bool hasVideoInlineLayer() const = 0;
 
     virtual void updateVideoLayerGravity() = 0;
     virtual void resolvedURLChanged() = 0;
@@ -303,7 +304,7 @@ protected:
 
     bool metaDataAvailable() const { return m_readyState >= MediaPlayer::ReadyState::HaveMetadata; }
     MediaTime maxTimeLoaded() const;
-    bool NODELETE isReadyForVideoSetup() const;
+    bool LEGACY_NODELETE isReadyForVideoSetup() const;
     virtual void setUpVideoRendering();
     virtual void tearDownVideoRendering();
     virtual bool haveBeenAskedToPaint() const { return false; }
@@ -311,7 +312,7 @@ protected:
 
     void mainThreadCallback();
     
-    void NODELETE invalidateCachedDuration();
+    void LEGACY_NODELETE invalidateCachedDuration();
 
     const String& assetURL() const LIFETIME_BOUND { return m_assetURL.string(); }
 

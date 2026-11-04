@@ -1,0 +1,47 @@
+# A comparator that tests a < b and then a > b orders the two strings once and then tests an integer
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SharedStringOrderGroups = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="comparator" parameters=[{type=string}, {type=string}] results=[{type=int}] {
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=-1
+    Return v3
+  b2():
+    v4 = Greater v0, v1
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    v5 = Integer integer=1
+    Return v5
+  b4():
+    v6 = Integer integer=0
+    Return v6
+# CHECK: [[order]]: int[-1, 1] = StringOrder v0, v1
+# CHECK-NEXT: [[zero]]: 0 = Integer
+# CHECK-NEXT: [[less]]: boolean = Less [[order]], [[zero]]
+# CHECK-NEXT: Branch [[less]] -> taken b1(), notTaken b2()
+# CHECK-NOT: StringOrder
+# CHECK: [[secondZero]]: 0 = Integer
+# CHECK-NEXT: [[greater]]: boolean = Greater [[order]], [[secondZero]]
+# CHECK-NEXT: Branch [[greater]] -> taken b3(), notTaken b4()
+# CHECK-NOT: StringOrder
+}
+
+function f1 name="casts-in-one-block" parameters=[{type=string}, {type=string}] results=[{type=boolean}] {
+    v2 = LessEq v0, v1
+    v3 = Upcast v0 castType=string
+    v4 = Upcast v1 castType=string
+    v5 = GreaterEq v3, v4
+    v6 = StrictEq v2, v5
+    Return v6
+# CHECK: [[shared]]: int[-1, 1] = StringOrder v0, v1
+# CHECK-NEXT: [[thirdZero]]: 0 = Integer
+# CHECK-NEXT: [[first]]: boolean = LessEq [[shared]], [[thirdZero]]
+# CHECK-NOT: StringOrder
+# CHECK: [[fourthZero]]: 0 = Integer
+# CHECK-NEXT: [[second]]: boolean = GreaterEq [[shared]], [[fourthZero]]
+# CHECK-NEXT: boolean = StrictEq [[first]], [[second]]
+}

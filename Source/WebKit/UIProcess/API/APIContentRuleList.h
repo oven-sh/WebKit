@@ -47,14 +47,14 @@ public:
     ContentRuleList(Ref<WebKit::WebCompiledContentRuleList>&&, WebKit::NetworkCache::Data&&);
     virtual ~ContentRuleList();
 
-    const WTF::String& NODELETE name() const LIFETIME_BOUND;
+    const WTF::String& LEGACY_NODELETE name() const LIFETIME_BOUND;
     const WebKit::WebCompiledContentRuleList& compiledRuleList() const { return m_compiledRuleList.get(); }
     
     static bool supportsRegularExpression(const WTF::String&);
     static std::error_code parseRuleList(const WTF::String&, WebCore::ContentExtensions::CSSSelectorsAllowed);
 
 private:
-    Ref<WebKit::WebCompiledContentRuleList> m_compiledRuleList;
+    const Ref<WebKit::WebCompiledContentRuleList> m_compiledRuleList;
     WebKit::NetworkCache::Data m_mappedFile;
 #endif // ENABLE(CONTENT_EXTENSIONS)
 };

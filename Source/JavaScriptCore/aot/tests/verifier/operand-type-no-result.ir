@@ -1,0 +1,43 @@
+# A value of an operation without a result is no operand, terminator value, edge argument or handler argument, although its type is undefined
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: OperandTypeMismatch 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badOperand" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    PropDefine v0, v1 key="x"
+    v3 = Strcat v2
+    Return
+}
+function f1 name="badTerminatorValue" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    PropDefine v0, v1 key="x"
+    Return v2
+}
+function f2 name="badEdgeArgument" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    PropDefine v0, v1 key="x"
+    Jump -> next b1(v2)
+  b1(v3):
+    Return
+}
+function f3 name="badHandlerArgument" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    PropDefine v0, v1 key="x"
+    Jump -> next b1()
+  b1() handler=b2(v2):
+    v3 = Call v1
+    Return
+  b2(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return
+}
+function f4 name="goodUnused" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    PropDefine v0, v1 key="x"
+    Return
+}
+function f5 name="goodConstant" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    PropDefine v0, v1 key="x"
+    v3 = Undefined
+    v4 = Strcat v3
+    Jump -> next b1(v3)
+  b1(v5):
+    Return v5
+}

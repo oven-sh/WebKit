@@ -1,0 +1,55 @@
+# A read of characters resolves a rope, which writes, throws and collects; on a string that is already flat it only reads the characters
+# FORM: Selected
+# RUN: effects
+# RUN(ONLY): effects f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="flat" parameters=[{type=string}, {type=number}, {type=int[0, 10]}] results=[{type=undefined}] {
+    v3 = FlattenString v0
+    v4 = StringRangeCodeUnitOrNaN v3, -, -, v1
+    v5 = StringRangeCodePointOrUndefined v3, -, -, v1
+    v6 = StringRangeEqualsLiteral v3, v2, v2 literal="a"
+    v7 = GetStringCodeUnit v3, v2
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v3 FlattenString: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v4 StringRangeCodeUnitOrNaN: reads(StringStorage)
+# CHECK-NEXT: v5 StringRangeCodePointOrUndefined: reads(StringStorage)
+# CHECK-NEXT: v6 StringRangeEqualsLiteral: reads(StringStorage)
+# CHECK-NEXT: v7 GetStringCodeUnit: reads(StringStorage)
+# ONLY: v3 FlattenString:{{*}}collects
+# ONLY-NOT: writes
+# ONLY-NOT: throws
+# ONLY-NOT: collects
+function f1 name="mayBeRope" parameters=[{type=string}, {type=number}, {type=int[0, 10]}] results=[{type=undefined}] {
+    v3 = StringRangeCodeUnitOrNaN v0, -, -, v1
+    v4 = StringRangeCodePointOrUndefined v0, -, -, v1
+    v5 = StringRangeEqualsLiteral v0, v2, v2 literal="a"
+    v6 = GetStringCodeUnit v0, v2
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v3 StringRangeCodeUnitOrNaN: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v4 StringRangeCodePointOrUndefined: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v5 StringRangeEqualsLiteral: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v6 GetStringCodeUnit: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
+function f2 name="createsString" parameters=[{type=string}, {type=number}] results=[{type=undefined}] {
+    v2 = FlattenString v0
+    v3 = StringRangeCharacterOrEmpty v2, -, -, v1
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: v3 StringRangeCharacterOrEmpty: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+function f3 name="oneOperandMayBeRope" parameters=[{type=string}, {type=string}] results=[{type=undefined}] {
+    v2 = FlattenString v0
+    v3 = FlattenString v1
+    v4 = StringOrder v2, v1
+    v5 = StringOrder v0, v3
+    v6 = StringOrder v2, v3
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK: v4 StringOrder: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v5 StringOrder: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v6 StringOrder: reads(StringStorage)

@@ -27,12 +27,20 @@
 
 #include "Helpers/Test.h"
 #include "Helpers/WebCoreTestUtilities.h"
+#include <JavaScriptCore/InitializeThreading.h>
 #include <WebCore/ColorSpace.h>
 #include <WebCore/DisplayList.h>
 #include <WebCore/DisplayListRecorderImpl.h>
+#include <WebCore/FontCascade.h>
+#include <WebCore/FontCascadeDescription.h>
+#include <WebCore/FontCascadeInlines.h>
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/ImageBuffer.h>
+#include <WebCore/NativeImage.h>
+#include <WebCore/TextRun.h>
 #include <numbers>
+#include <wtf/HashSet.h>
+#include <wtf/MainThread.h>
 #include <wtf/MathExtras.h>
 
 #if PLATFORM(COCOA)
@@ -105,7 +113,6 @@ void forBoth(WebCore::GraphicsContext& a, WebCore::GraphicsContext& b, F&& func)
     MACRO(shouldSmoothFonts) \
     MACRO(shouldSubpixelQuantizeFonts) \
     MACRO(shadowsIgnoreTransforms) \
-    MACRO(drawLuminanceMask) \
     MACRO(isInTransparencyLayer) \
     MACRO(scaleFactor)
 
@@ -674,21 +681,6 @@ struct SetDefaultShadowsIgnoreTransforms {
     }
 };
 
-struct SetDefaultDrawLuminanceMask {
-    void operator()(WebCore::GraphicsContext& c)
-    {
-        c.setDrawLuminanceMask(false);
-    }
-
-    static String description()
-    {
-        return R"DL(
-(set-state
-  (change-flags [draw-luminance-mask])
-  (draw-luminance-mask 0)))DL"_s;
-    }
-};
-
 using AllOperations = testing::Types<NoCommands, ChangeAntialias, ChangeAntialiasBeforeSave,
     ChangeAntialiasBeforeAndAfterSave, ChangeAntialiasInEmptySaveRestore, DrawSystemImage, ChangeAntialiasBeforeClipRect,
     ChangeAntialiasBeforeClipOutRect, ChangeAntialiasBeforeClipOutPath, ChangeAntialiasBeforeClipPath,
@@ -696,7 +688,7 @@ using AllOperations = testing::Types<NoCommands, ChangeAntialias, ChangeAntialia
     SetDefaultFillBrush, SetDefaultFillRule, SetDefaultStrokeBrush, SetDefaultStrokeThickness, SetDefaultStrokeStyle,
     SetDefaultCompositeMode, SetDefaultDropShadow, SetDefaultStyle, SetDefaultAlpha, SetDefaultImageInterpolationQuality,
     SetDefaultTextDrawingMode, SetDefaultShouldAntialias, SetDefaultShouldSmoothFonts, SetDefaultShouldSubpixelQuantizeFonts,
-    SetDefaultShadowsIgnoreTransforms, SetDefaultDrawLuminanceMask>;
+    SetDefaultShadowsIgnoreTransforms>;
 
 }
 
@@ -706,14 +698,14 @@ TYPED_TEST_P(DisplayListRecorderResultStateTest, StateThroughDisplayListIsPreser
 {
     auto refTarget = createReferenceTarget();
     auto& ref = refTarget->context();
-    WebCore::DisplayList::RecorderImpl tested { { 0, 0, testContextWidth, testContextHeight } };
+    Ref tested = WebCore::DisplayList::RecorderImpl::create({ 0, 0, testContextWidth, testContextHeight });
     EXPECT_TRUE(checkEqualState(ref, tested));
 
     forBoth(ref, tested, this->operation());
 
     EXPECT_TRUE(checkEqualState(ref, tested));
 
-    Ref displayList = tested.takeDisplayList();
+    Ref displayList = tested->takeDisplayList();
 
     auto description = displayList->asText({ WebCore::DisplayList::AsTextFlag::IncludePlatformOperations }).trim(deprecatedIsSpaceOrNewline);
     auto expectedDescription = this->operationDescription().trim(deprecatedIsSpaceOrNewline);
@@ -738,5 +730,36 @@ TYPED_TEST_P(DisplayListRecorderResultStateTest, StateThroughDisplayListIsPreser
 REGISTER_TYPED_TEST_SUITE_P(DisplayListRecorderResultStateTest, StateThroughDisplayListIsPreserved);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(DisplayListRecorderTest, DisplayListRecorderResultStateTest, AllOperations);
+
+#if USE(CORE_TEXT)
+TEST(DisplayListRecorderTest, DeconstructedEmojiGlyphsShareNativeImages)
+{
+    JSC::initialize();
+    WTF::initializeMainThread();
+
+    WebCore::FontCascadeDescription description;
+    description.setOneFamily("Apple Color Emoji"_s);
+    description.setUsedSize(16);
+    WebCore::FontCascade font(WTF::move(description));
+    font.update();
+
+    HashSet<const WebCore::NativeImage*> images;
+    unsigned drawNativeImageCount = 0;
+    for (unsigned i = 0; i < 2; ++i) {
+        Ref recorder = WebCore::DisplayList::RecorderImpl::create({ }, { 0, 0, testContextWidth, testContextHeight }, { }, WebCore::ColorSpace::SRGB(), WebCore::DisplayList::Recorder::DrawGlyphsMode::Deconstruct);
+        font.drawText(recorder, WebCore::TextRun { String::fromUTF8("\u2B1B\u2B1C\u2B1B\u2B1C") }, { 0, 20 });
+        Ref displayList = recorder->takeDisplayList();
+        for (auto& item : displayList->items()) {
+            if (auto* drawNativeImage = std::get_if<WebCore::DisplayList::DrawNativeImage>(&item)) {
+                images.add(&drawNativeImage->nativeImage());
+                ++drawNativeImageCount;
+            }
+        }
+    }
+
+    EXPECT_EQ(drawNativeImageCount, 8u);
+    EXPECT_EQ(images.size(), 2u);
+}
+#endif
 
 }

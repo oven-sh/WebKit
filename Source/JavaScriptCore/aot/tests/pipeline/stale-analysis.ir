@@ -1,0 +1,25 @@
+# A pass that adds a function drops the call graph and the next user sees the added edge: RemoveUnreachableFunctions, which runs again behind the pass that outlines, keeps the outlined body
+# OPTIONS: heat=EverythingIsCold
+# RUN: pipeline ElideStackChecks
+# STATISTIC: OutlinedBodiesCreated >= 1
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="host" [isFreeName]
+    v2 = PropGet v0 key="payload" [isFreeName]
+    v3 = String string="bad"
+# REPEAT: i = 0..11
+    v%(i*2+4) = PropGet v1 key="report"
+    v%(i*2+5) = Call v%(i*2+4), v1, v3, v2 calleeKey="report"
+# END REPEAT
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: key="report"
+# CHECK: = CallDirect {{*}}function=[[body]]
+# CHECK: function [[body]] {{*}}role=OutlinedBody
+# CHECK-NEXT: b0(
+# CHECK: key="report"

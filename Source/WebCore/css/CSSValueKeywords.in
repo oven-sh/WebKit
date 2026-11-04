@@ -32,7 +32,8 @@ double
 caption
 icon
 menu
-message-box
+// Not 'MessageBox', which <windows.h> defines as a macro.
+message-box id=MessageBoxKeyword
 small-caption
 -webkit-mini-control
 -webkit-small-control
@@ -331,7 +332,6 @@ activebuttontext
 -webkit-link
 -webkit-focus-ring-color
 -internal-document-text-color
--internal-current-background-color
 
 //
 // CSS_PROP_BACKGROUND_REPEAT:
@@ -1747,6 +1747,10 @@ dark
 // only enable-if=ENABLE_DARK_MODE_CSS
 // light enable-if=ENABLE_DARK_MODE_CSS
 // dark enable-if=ENABLE_DARK_MODE_CSS
+
+// device-posture
+// continuous
+folded
 
 // auto-repeat
 auto-fill

@@ -1,0 +1,52 @@
+# `new Array(3)` that only reads and stores below 3 touch becomes `[, , ,]` in storage that it names. Not where a store may lie past the length, and not where somebody else gets the list
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="storedBelowTheLength" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Integer integer=3
+    v2 = CallBuiltin -, v1 overload=Array/0 [isDoneInPlace]
+    v3 = AssumeType v2 provenType=Array<string, proven, pristine[Storage, Names]>
+    v4 = Integer integer=2
+    ElemSet v3, v4, v0 [keyIsIntegral]
+    v6 = ElemGet v3, v4 [keyIsIntegral]
+    Return v6
+# CHECK: [[list]]: Array<string, Contiguous> = NewArray contents=string holes=[0, 1, 2] arrayStorage=Contiguous [contentsAreProven, keepsLength]
+# CHECK: = AssumeType [[list]] provenType=Array<string, proven, Contiguous, pristine[Storage, Names]>
+# CHECK-NOT: overload=Array/0
+}
+
+function f1 name="storedAtTheLength" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Integer integer=3
+    v2 = CallBuiltin -, v1 overload=Array/0 [isDoneInPlace]
+    v3 = AssumeType v2 provenType=Array<string, proven, pristine[Storage, Names]>
+    v4 = Integer integer=3
+    ElemSet v3, v4, v0 [keyIsIntegral]
+    v6 = ElemGet v3, v4 [keyIsIntegral]
+    Return v6
+# CHECK-NOT: holes=
+# CHECK: overload=Array/0
+}
+
+function f2 name="returned" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Integer integer=3
+    v2 = CallBuiltin -, v1 overload=Array/0 [isDoneInPlace]
+    v3 = AssumeType v2 provenType=Array<string, proven, pristine[Storage, Names]>
+    v4 = Integer integer=2
+    ElemSet v3, v4, v0 [keyIsIntegral]
+    Return v3
+# CHECK-NOT: holes=
+# CHECK: overload=Array/0
+}
+
+function f3 name="tooLong" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Integer integer=9
+    v2 = CallBuiltin -, v1 overload=Array/0 [isDoneInPlace]
+    v3 = AssumeType v2 provenType=Array<string, proven, pristine[Storage, Names]>
+    v4 = Integer integer=2
+    ElemSet v3, v4, v0 [keyIsIntegral]
+    v6 = ElemGet v3, v4 [keyIsIntegral]
+    Return v6
+# CHECK-NOT: holes=
+# CHECK: overload=Array/0
+}

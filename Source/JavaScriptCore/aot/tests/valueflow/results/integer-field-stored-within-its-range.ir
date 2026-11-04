@@ -1,0 +1,42 @@
+# The sets of the analysis know integers by kind alone. Whether the integers that are stored to a field lie inside the range of its type is asked of the proven types of the values that the operations store:
+# what an allocation lists, what a store by name stores, what constant data holds. Then no value of another type is ever stored, and a field that every allocation lists is always filled.
+# One store of a wider integer, by name or under a key nobody knows, takes that away
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Listed" fields=[{key="inside" {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+# CHECK: layout L1 name="StoredLater" fields=[{key="inside" {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+# CHECK: layout L2 name="StoredWider" fields=[{key="wider" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}}]
+# CHECK: layout L3 name="StoredUnderAnyKey" fields=[{key="any"
+# CHECK-NOT: IsNeverStoredWithOtherType
+# CHECK: layout L4 name="Constant" fields=[{key="inside" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Listed" fields=[{key="inside" declared={type=int[0, 1000]} flags=[IsRequired]}]
+layout L1 name="StoredLater" fields=[{key="inside" declared={type=int[0, 1000]} flags=[IsRequired]}]
+layout L2 name="StoredWider" fields=[{key="wider" declared={type=int[0, 1000]} flags=[IsRequired]}]
+layout L3 name="StoredUnderAnyKey" fields=[{key="any" declared={type=int[0, 1000]} flags=[IsRequired]}]
+layout L4 name="Constant" fields=[{key="inside" declared={type=int[0, 1000]} flags=[IsRequired]}]
+data d0 root=Object{layout=L4 members=[{key="inside" value=Number{value=7}}]} module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = Integer integer=255
+    v5 = BitAnd v2, v4
+    v6 = Integer integer=0
+    v7 = BitOr v2, v6
+    v8 = NewObject -, v5 layout=L0 fields=[0]
+    v9 = FinishObject v8
+    v10 = NewObject -, v5 layout=L1 fields=[0]
+    v11 = FinishObject v10
+    PropSet v11, v5 key="inside" mode=Strict
+    v13 = NewObject -, v5 layout=L2 fields=[0]
+    v14 = FinishObject v13
+    PropSet v14, v7 key="wider" mode=Strict
+    v16 = NewObject -, v5 layout=L3 fields=[0]
+    v17 = FinishObject v16
+    ElemSet v17, v3, v7 mode=Strict
+    v19 = Data data=d0
+    Return
+}

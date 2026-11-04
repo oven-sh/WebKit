@@ -1,0 +1,18 @@
+# An array whose elements may run code is listed as a holder. A storage of numbers alone writes it in one call, and leaves the holder behind that call as the loop does: a list that goes on naming the array names a frame that has gone
+# FORM: Prepared
+# RUN: derived-functions Serializer:L1
+# CHECK: function {{*}}creator=Serializer{layout=L1}
+# CHECK: JSONEnterHolder v1, v0
+# CHECK: [[listed]]: jsonholders = JSONEnterHolder
+# CHECK: arrayStorage=Int32
+# CHECK: = JSONAppendValue {{*}} jsonPosition=Element
+# CHECK-NOT: HasArrayStorage
+# CHECK: JSONLeaveHolder v1, [[listed]]
+# CHECK: arrayStorage=Double
+# CHECK: = JSONAppendValue {{*}} jsonPosition=Element
+# CHECK-NOT: HasArrayStorage
+# CHECK: JSONLeaveHolder v1, [[listed]]
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Crate" fields=[{key="any" declared={type=anything}}] flow={constructorOrders=[{fields=[0]}]}
+layout L1 name="Shelf" fields=[{key="list" declared={type=Array<number|L0>}}] flow={constructorOrders=[{fields=[0]}]}

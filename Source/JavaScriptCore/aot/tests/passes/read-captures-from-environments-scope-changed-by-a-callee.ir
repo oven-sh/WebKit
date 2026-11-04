@@ -1,0 +1,54 @@
+# Once the closures are gone, the environment no longer escapes into one, and a function hands its own environment on where it used to take one out of a closure. What was known about the callees before that says they only read the environment. RemoveUnreadFields simplifies with what is known afterwards: the loop goes on reading the variable that a callee of its callee changes.
+# FORM: Prepared
+# RUN: pass ReadCapturesFromEnvironments RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="counting" fields=[{key="current" declared={type=number}}, {key="next" declared={type=f1}}, {key="bump" declared={type=f2}}]
+
+function f0 name="counting" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1 function=f1
+    PutEnvironmentField v1, v2 layout=L0 field=1
+    v4 = NewClosure v1 function=f2
+    PutEnvironmentField v1, v4 layout=L0 field=2
+    v6 = Integer integer=3
+    v7 = Add v0, v6
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = GetEnvironmentField v1 layout=L0 field=0
+    v10 = Less v9, v7
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = GetEnvironmentField v1 layout=L0 field=1
+    v12 = GetCapture v11 function=f1
+    v13 = CallDirect v12 function=f1
+    Jump -> next b1()
+  b3():
+    Return v9
+# CHECK-NOT: NewClosure
+# CHECK: LoopHint
+# CHECK-NEXT: [[current]]: number = GetEnvironmentField v1 layout=L0
+# CHECK-NEXT: = Less [[current]],
+# CHECK: CallDirect v1 function=f1
+}
+
+function f1 name="next" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=2
+    v2 = GetCapture v1 function=f2
+    v3 = Integer integer=1
+    v4 = CallDirect v2, v3 function=f2
+    Return v4
+# CHECK-NOT: GetCapture
+# CHECK: = CallDirect v0, {{*}} function=f2
+}
+
+function f2 name="bump" captures=[{type=env L0}] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = Add v2, v1
+    PutEnvironmentField v0, v3 layout=L0 field=0
+    Return v3
+}

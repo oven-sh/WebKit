@@ -29,6 +29,7 @@
 #include <wtf/Compiler.h>
 #include <wtf/DebugHeap.h>
 #include <wtf/DoublyLinkedList.h>
+#include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
@@ -95,6 +96,30 @@ public:
     typedef GCSegmentedArrayIterator<T> iterator;
     iterator begin() const { return GCSegmentedArrayIterator<T>(m_segments.head(), m_top); }
     iterator end() const { return GCSegmentedArrayIterator<T>(); }
+
+    // While a Cursor is loaded, m_top is stale: call store() before anything else touches the array, load() after.
+    class Cursor {
+        WTF_FORBID_HEAP_ALLOCATION;
+        WTF_MAKE_NONCOPYABLE(Cursor);
+    public:
+        ALWAYS_INLINE explicit Cursor(GCSegmentedArray& array)
+            : m_array(array)
+        {
+            load();
+        }
+
+        ALWAYS_INLINE ~Cursor() { store(); }
+
+        void load();
+        void store();
+
+        T* first;
+        T* next;
+        T* end;
+
+    private:
+        GCSegmentedArray& m_array;
+    };
 
 protected:
     template <size_t size> struct CapacityFromSize {

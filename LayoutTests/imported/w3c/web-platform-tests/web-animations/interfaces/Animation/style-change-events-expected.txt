@@ -16,6 +16,7 @@ PASS Animation.pending produces expected style change events
 PASS Animation.onfinish produces expected style change events
 PASS Animation.oncancel produces expected style change events
 PASS Animation.onremove produces expected style change events
+FAIL Animation.onprogress produces expected style change events assert_own_property: Should have a test for 'onprogress' property expected property "onprogress" missing
 PASS Animation.ready produces expected style change events
 PASS Animation.finished produces expected style change events
 PASS Animation.cancel produces expected style change events

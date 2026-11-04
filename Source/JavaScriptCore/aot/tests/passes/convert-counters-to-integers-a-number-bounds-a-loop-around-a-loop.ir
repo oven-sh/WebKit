@@ -1,0 +1,126 @@
+# `for (let i = 0; i < n; i++) { for (..) .. }` with `n: number`. The bound is tested for int32 once, in front of a copy of the whole loop, and the counter of the copy is an integer.
+# The loop as it was stays for a bound that is no int32, and is rare.
+# That is done behind the rounds: until then the loop inside may go, and PlaceTypeTests tests the bound of a loop that holds none.
+# RUN: pipeline Select
+# OPTIONS: check=VerifyEachPass disable=pass:RemoveUnusedParameters
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="count" [isFreeName]
+    v2 = ToNumber v1
+    v3 = PropGet v0 key="sink" [isFreeName]
+    v4 = CallDirect v2 function=f1
+    v5 = Call v3, -, v4
+    v6 = CallDirect v2 function=f2
+    v7 = Call v3, -, v6
+    v8 = CallDirect v2 function=f3
+    v9 = Call v3, -, v8
+    Return
+}
+
+# The inner loop adds the counter of the outer one to an integer and takes the low half of the sum.
+function f1 name="reckonedWithInside" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=16
+    v3 = Integer integer=40503
+    Jump -> next b1(v1, v1)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4(v5, v1)
+  b3():
+    Return v5
+  b4(v8, v9):
+    LoopHint
+    v11 = Less v9, v2
+    Branch v11 -> taken b5(), notTaken b6()
+  b5():
+    v12 = Mul v9, v3
+    v13 = Add v4, v12
+    v14 = BitOr v13, v1
+    v15 = BitXor v8, v14
+    v16 = Increment v9
+    Jump -> next b4(v15, v16)
+  b6():
+    v17 = Increment v4
+    Jump -> next b1(v17, v8)
+# CHECK: = TypeTest v0 testedType=i32
+# CHECK-NEXT: TestAndBranch
+# CHECK: ({{*}}: int[0, 2147483647], {{*}}: i32):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Less {{*}}form=Integers
+# CHECK: = Add {{*}}form=Integers
+# CHECK-NOT: TypeTest
+# CHECK: ({{*}}: int|whole{{*}}) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Less {{*}}form=Numbers
+# CHECK: = Add {{*}}form=Numbers
+}
+
+# Beside a fraction an integer would be converted in every turn: the loop is not copied.
+function f2 name="takenBesideFractions" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=16
+    v3 = Double number=0.5
+    Jump -> next b1(v1, v1)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v0
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4(v5, v1)
+  b3():
+    Return v5
+  b4(v8, v9):
+    LoopHint
+    v11 = Less v9, v2
+    Branch v11 -> taken b5(), notTaken b6()
+  b5():
+    v12 = Mul v4, v3
+    v13 = Add v8, v12
+    v14 = Increment v9
+    Jump -> next b4(v13, v14)
+  b6():
+    v15 = Increment v4
+    Jump -> next b1(v15, v8)
+# CHECK-NOT: TypeTest
+# CHECK: = Less {{*}}form=Numbers
+# CHECK-NOT: TypeTest
+# CHECK-NOT: frequency=Rare
+}
+
+# A bound that a turn changes says nothing in front of the loop.
+function f3 name="boundChangesInTheLoop" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=16
+    v3 = Double number=0.5
+    Jump -> next b1(v1, v1, v0)
+  b1(v4, v5, v6):
+    LoopHint
+    v8 = Less v4, v6
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4(v5, v1)
+  b3():
+    Return v5
+  b4(v9, v10):
+    LoopHint
+    v12 = Less v10, v2
+    Branch v12 -> taken b5(), notTaken b6()
+  b5():
+    v13 = Add v4, v10
+    v14 = BitOr v13, v1
+    v15 = BitXor v9, v14
+    v16 = Increment v10
+    Jump -> next b4(v15, v16)
+  b6():
+    v17 = Increment v4
+    v18 = Sub v6, v3
+    Jump -> next b1(v17, v9, v18)
+# CHECK-NOT: TypeTest {{*}}testedType=i32
+# CHECK: = Less {{*}}form=Numbers
+}

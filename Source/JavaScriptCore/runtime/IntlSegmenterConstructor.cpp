@@ -66,7 +66,7 @@ static JSC_DECLARE_HOST_FUNCTION(callIntlSegmenter);
 static JSC_DECLARE_HOST_FUNCTION(constructIntlSegmenter);
 
 IntlSegmenterConstructor::IntlSegmenterConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callIntlSegmenter, constructIntlSegmenter)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callIntlSegmenter), JSC_REGISTERED_HOST_FUNCTION(constructIntlSegmenter))
 {
 }
 

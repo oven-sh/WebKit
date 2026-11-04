@@ -612,21 +612,25 @@ void MacroAssembler::probe(Probe::Function function, void* arg)
     JIT_COMMENT(*this, "First non-probe instruction");
 }
 
-void MacroAssemblerARM64::collectCPUFeatures()
+CPUFeatureSet MacroAssemblerARM64::collectCPUFeatures()
 {
+    CPUFeatureSet features;
+    [[maybe_unused]] auto add = [&](CPUFeature feature, bool isPresent) {
+        if (isPresent)
+            features = features.with(feature);
+    };
+
 #if OS(LINUX)
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [] {
-        // A register for describing ARM64 CPU features are only accessible in kernel mode.
-        // Thus, some kernel support is necessary to collect CPU features. In Linux, the
-        // kernel passes CPU feature flags in AT_HWCAP auxiliary vector which is passed
-        // when the process starts. While this may pose a bit conservative information
-        // (for example, the Linux kernel may add a flag for a feature after the feature
-        // is shipped and implemented in some CPUs. In that case, even if the CPU has
-        // that feature, the kernel does not tell it to users.), it is a stable approach.
-        // https://www.kernel.org/doc/Documentation/arm64/elf_hwcaps.txt
-        uint64_t hwcaps = getauxval(AT_HWCAP);
-        uint64_t hwcaps2 = getauxval(AT_HWCAP2);
+    // A register for describing ARM64 CPU features are only accessible in kernel mode.
+    // Thus, some kernel support is necessary to collect CPU features. In Linux, the
+    // kernel passes CPU feature flags in AT_HWCAP auxiliary vector which is passed
+    // when the process starts. While this may pose a bit conservative information
+    // (for example, the Linux kernel may add a flag for a feature after the feature
+    // is shipped and implemented in some CPUs. In that case, even if the CPU has
+    // that feature, the kernel does not tell it to users.), it is a stable approach.
+    // https://www.kernel.org/doc/Documentation/arm64/elf_hwcaps.txt
+    uint64_t hwcaps = getauxval(AT_HWCAP);
+    uint64_t hwcaps2 = getauxval(AT_HWCAP2);
 
 #if !defined(HWCAP_ATOMICS)
 #define HWCAP_ATOMICS (1 << 8)
@@ -656,38 +660,32 @@ void MacroAssemblerARM64::collectCPUFeatures()
 #define HWCAP2_FRINT (1 << 8)
 #endif
 
-        s_lseCheckState = (hwcaps & HWCAP_ATOMICS) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        s_jscvtCheckState = (hwcaps & HWCAP_JSCVT) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        s_float16CheckState = ((hwcaps & HWCAP_FPHP) && (hwcaps & HWCAP_ASIMDHP)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        s_frintCheckState = (hwcaps2 & HWCAP2_FRINT) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        s_sha3CheckState = (hwcaps & HWCAP_SHA3) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        s_dotProdCheckState = (hwcaps & HWCAP_ASIMDDP) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-    });
+    add(CPUFeature::LSE, hwcaps & HWCAP_ATOMICS);
+    add(CPUFeature::JSCVT, hwcaps & HWCAP_JSCVT);
+    add(CPUFeature::Float16, (hwcaps & HWCAP_FPHP) && (hwcaps & HWCAP_ASIMDHP));
+    add(CPUFeature::FRINT, hwcaps2 & HWCAP2_FRINT);
+    add(CPUFeature::SHA3, hwcaps & HWCAP_SHA3);
+    add(CPUFeature::DotProd, hwcaps & HWCAP_ASIMDDP);
 #endif
 
 #if OS(DARWIN)
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [] {
-        auto checkCPU = [&](const char* string) {
-            uint32_t val = 0;
-            size_t valSize = sizeof(val);
-            int rc = sysctlbyname(string, &val, &valSize, nullptr, 0);
-            return (rc >= 0 && val) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        };
+    auto checkCPU = [&](const char* string) {
+        uint32_t val = 0;
+        size_t valSize = sizeof(val);
+        int rc = sysctlbyname(string, &val, &valSize, nullptr, 0);
+        return rc >= 0 && val;
+    };
 
-        s_lseCheckState = checkCPU("hw.optional.arm.FEAT_LSE");
-        s_jscvtCheckState = checkCPU("hw.optional.arm.FEAT_JSCVT");
-        s_float16CheckState = checkCPU("hw.optional.arm.FEAT_FP16");
-        s_frintCheckState = checkCPU("hw.optional.arm.FEAT_FRINTTS");
-        s_sha3CheckState = checkCPU("hw.optional.arm.FEAT_SHA3");
-        s_dotProdCheckState = checkCPU("hw.optional.arm.FEAT_DotProd");
-    });
+    add(CPUFeature::LSE, checkCPU("hw.optional.arm.FEAT_LSE"));
+    add(CPUFeature::JSCVT, checkCPU("hw.optional.arm.FEAT_JSCVT"));
+    add(CPUFeature::Float16, checkCPU("hw.optional.arm.FEAT_FP16"));
+    add(CPUFeature::FRINT, checkCPU("hw.optional.arm.FEAT_FRINTTS"));
+    add(CPUFeature::SHA3, checkCPU("hw.optional.arm.FEAT_SHA3"));
+    add(CPUFeature::DotProd, checkCPU("hw.optional.arm.FEAT_DotProd"));
 #endif
 
 #if OS(WINDOWS)
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [] {
-        // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent
+    // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent
 #if !defined(PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE)
 #define PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE 34
 #endif
@@ -703,62 +701,16 @@ void MacroAssemblerARM64::collectCPUFeatures()
 #if !defined(PF_ARM_V82_FP16_INSTRUCTIONS_AVAILABLE)
 #define PF_ARM_V82_FP16_INSTRUCTIONS_AVAILABLE 67
 #endif
-        s_lseCheckState = IsProcessorFeaturePresent(PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        s_jscvtCheckState = IsProcessorFeaturePresent(PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        s_float16CheckState = IsProcessorFeaturePresent(PF_ARM_V82_FP16_INSTRUCTIONS_AVAILABLE) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        s_sha3CheckState = IsProcessorFeaturePresent(PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        s_dotProdCheckState = IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        // FRINT has no Windows PF_ constant for now.
-    });
+    add(CPUFeature::LSE, IsProcessorFeaturePresent(PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE));
+    add(CPUFeature::JSCVT, IsProcessorFeaturePresent(PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE));
+    add(CPUFeature::Float16, IsProcessorFeaturePresent(PF_ARM_V82_FP16_INSTRUCTIONS_AVAILABLE));
+    add(CPUFeature::SHA3, IsProcessorFeaturePresent(PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE));
+    add(CPUFeature::DotProd, IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE));
+    // FRINT has no Windows PF_ constant for now.
 #endif
 
-    if (s_lseCheckState == CPUIDCheckState::NotChecked) {
-#if HAVE(LSE_INSTRUCTION)
-        s_lseCheckState = CPUIDCheckState::Set;
-#else
-        s_lseCheckState = CPUIDCheckState::Clear;
-#endif
-    }
-
-    if (s_jscvtCheckState == CPUIDCheckState::NotChecked) {
-#if HAVE(FJCVTZS_INSTRUCTION)
-        s_jscvtCheckState = CPUIDCheckState::Set;
-#else
-        s_jscvtCheckState = CPUIDCheckState::Clear;
-#endif
-    }
-
-    if (s_float16CheckState == CPUIDCheckState::NotChecked) {
-#if HAVE(FLOAT16_INSTRUCTION)
-        s_float16CheckState = CPUIDCheckState::Set;
-#else
-        s_float16CheckState = CPUIDCheckState::Clear;
-#endif
-    }
-
-    if (s_frintCheckState == CPUIDCheckState::NotChecked) {
-#if HAVE(FRINT_INSTRUCTION)
-        s_frintCheckState = CPUIDCheckState::Set;
-#else
-        s_frintCheckState = CPUIDCheckState::Clear;
-#endif
-    }
-
-    if (s_sha3CheckState == CPUIDCheckState::NotChecked) {
-#if HAVE(SHA3_INSTRUCTION)
-        s_sha3CheckState = CPUIDCheckState::Set;
-#else
-        s_sha3CheckState = CPUIDCheckState::Clear;
-#endif
-    }
+    return features;
 }
-
-MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_lseCheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_jscvtCheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_float16CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_frintCheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_sha3CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_dotProdCheckState = CPUIDCheckState::NotChecked;
 
 } // namespace JSC
 

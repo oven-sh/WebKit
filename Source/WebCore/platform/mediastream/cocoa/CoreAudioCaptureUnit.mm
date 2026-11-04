@@ -33,6 +33,7 @@
 
 #include <AudioUnit/AudioUnit.h>
 #include <AudioUnit/AudioUnitProperties.h>
+#include <wtf/cocoa/TypeCastsCocoa.h>
 
 #if PLATFORM(MAC)
 #include <CoreAudio/AudioHardware.h>
@@ -70,7 +71,7 @@ void unregisterAudioInputMuteChangeListener(WebCoreAudioInputMuteChangeListener*
 
 - (void)handleMuteStatusChangedNotification:(NSNotification*)notification
 {
-    RetainPtr<NSNumber> newMuteState = [notification.userInfo valueForKey:AVAudioApplicationMuteStateKey];
+    RetainPtr newMuteState = dynamic_objc_cast<NSNumber>([notification.userInfo valueForKey:AVAudioApplicationMuteStateKey]);
     WebCore::CoreAudioCaptureUnit::defaultSingleton().handleMuteStatusChangedNotification(newMuteState.get().boolValue);
 }
 
@@ -106,7 +107,7 @@ static void setNoopInputMuteStateChangeHandler(AVAudioApplication *audioApplicat
 
 void registerAudioInputMuteChangeListener(WebCoreAudioInputMuteChangeListener *listener)
 {
-    auto *audioApplication = getSharedAVAudioApplication();
+    RetainPtr audioApplication = getSharedAVAudioApplication();
     if (!audioApplication)
         return;
 
@@ -120,7 +121,7 @@ void registerAudioInputMuteChangeListener(WebCoreAudioInputMuteChangeListener *l
 
 void unregisterAudioInputMuteChangeListener(WebCoreAudioInputMuteChangeListener *listener)
 {
-    auto *audioApplication = getSharedAVAudioApplication();
+    RetainPtr audioApplication = getSharedAVAudioApplication();
     if (!audioApplication)
         return;
 
@@ -244,7 +245,7 @@ void CoreAudioCaptureUnit::setMuteStatusChangedCallback(Function<void(bool)>&& c
 void CoreAudioCaptureUnit::setMutedState(bool isMuted)
 {
 #if HAVE(AVAUDIOAPPLICATION)
-    auto *audioApplication = getSharedAVAudioApplication();
+    RetainPtr audioApplication = getSharedAVAudioApplication();
     if (!audioApplication)
         return;
 

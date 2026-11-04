@@ -1,0 +1,148 @@
+# f.apply(t, arguments) passes on the arguments without the object: the frame, the rest list, or the values by name
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="restListIsEveryArgument" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: Array):
+    v4 = CreateUnmappedArguments v2, v3
+    v5 = CallBuiltin v0, v1, v4 overload=FunctionPrototypeApply/0
+    Return v5
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK-NOT: CallBuiltin
+# CHECK: v5: anything = CallList v0, v1, v3
+}
+
+function f1 name="valuesAreNamed" parameters=[{type=function}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v4 = Integer integer=3
+    v5 = NewArray v2, v3 contents=anything
+    v6 = CreateUnmappedArguments v4, v5, v1
+    v7 = Null
+    v8 = CallBuiltin v0, v7, v6 overload=FunctionPrototypeApply/0
+    Return v8
+# CHECK-NOT: NewArray
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK: v8: anything = Call v0, v7, v1, v2, v3
+}
+
+function f2 name="fewerThanDeclared" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=1
+    v3 = Undefined
+    v4 = NewArray contents=anything
+    v5 = CreateUnmappedArguments v2, v4, v1, v3
+    v6 = CallBuiltin v0, v3, v5 overload=FunctionPrototypeApply/0
+    Return v6
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK: v6: anything = Call v0, v3, v1
+# CHECK-NEXT: Return v6
+}
+
+function f3 name="target" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    Return v1
+}
+function f4 name="ownFrame" role=GenericEntrypoint flags=[HasThis] captures=[{type=f3}] results=[{type=anything}] derivation={source=f3} creator=Entrypoint{target=f3} {
+    v2 = GetRestLength
+    v3 = GetArgument
+    v4 = CreateRest firstArgument=1
+    v5 = CreateUnmappedArguments v2, v4, v3
+    v6 = CallBuiltin v3, v1, v5 overload=FunctionPrototypeApply/0
+    Return v6
+# CHECK-NOT: CreateRest
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK: v6: anything = CallForwardVarargs v3, v1
+}
+
+function f5 name="countDoesNotSayHowManyParameters" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: function, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Undefined
+    v5 = CallBuiltin v1, v4, v3 overload=FunctionPrototypeApply/0
+    Return v5
+# CHECK: v3: Arguments = CreateUnmappedArguments v0, v2, v1
+# CHECK: v5: anything = CallBuiltin v1, v4, v3 overload=FunctionPrototypeApply/0
+}
+
+function f6 name="writtenBefore" flags=[HasArgumentCount, HasHiddenRest] captures=[{type=function}] results=[{type=anything}] {
+  b0(v0: function, v1: int[0, 4294967295], v2: Array):
+    v3 = CreateUnmappedArguments v1, v2
+    v4 = Integer
+    ElemSet v3, v4, v0 mode=Strict
+    v6 = Undefined
+    v7 = CallBuiltin v0, v6, v3 overload=FunctionPrototypeApply/0
+    Return v7
+# CHECK: v3: Arguments = CreateUnmappedArguments v1, v2
+# CHECK: v7: anything = CallBuiltin v0, v6, v3 overload=FunctionPrototypeApply/0
+}
+
+function f7 name="objectIsAlsoReturned" flags=[HasArgumentCount, HasHiddenRest] captures=[{type=function}] results=[{type=anything}] {
+  b0(v0: function, v1: int[0, 4294967295], v2: Array):
+    v3 = CreateUnmappedArguments v1, v2
+    v4 = Undefined
+    v5 = CallBuiltin v0, v4, v3 overload=FunctionPrototypeApply/0
+    Return v3
+# CHECK: v3: Arguments = CreateUnmappedArguments v1, v2
+# CHECK: v5: anything = CallBuiltin v0, v4, v3 overload=FunctionPrototypeApply/0
+}
+
+function f8 name="checkedTarget" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: string, v2: Array):
+    Return v1
+}
+# The entry of a function that checks its parameter: behind the test the argument has another name.
+function f9 name="ownFrameBehindTest" role=GenericEntrypoint flags=[HasThis] captures=[{type=f8}] results=[{type=anything}] derivation={source=f8} creator=Entrypoint{target=f8} {
+    v2 = GetRestLength
+    v3 = GetArgument
+    v4 = TypeTest v3 testedType=string
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5: string):
+    v6 = CreateRest firstArgument=1
+    v7 = CreateUnmappedArguments v2, v6, v5
+    v8 = CallBuiltin v0, v1, v7 overload=FunctionPrototypeApply/0
+    Return v8
+  b2():
+    Return v3
+# CHECK-NOT: CreateRest
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK: v8: anything = CallForwardVarargs v0, v1
+}
+
+function f10 name="objectIsAlsoThisValue" flags=[HasArgumentCount, HasHiddenRest] captures=[{type=function}] results=[{type=anything}] {
+  b0(v0: function, v1: int[0, 4294967295], v2: Array):
+    v3 = CreateUnmappedArguments v1, v2
+    v4 = CallBuiltin v0, v3, v3 overload=FunctionPrototypeApply/0
+    Return v4
+# CHECK: v3: Arguments = CreateUnmappedArguments v1, v2
+# CHECK: v4: anything = CallBuiltin v0, v3, v3 overload=FunctionPrototypeApply/0
+}
+
+function f11 name="namedValuesOfThisValue" parameters=[{type=function}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Integer integer=2
+    v4 = NewArray v2 contents=anything
+    v5 = CreateUnmappedArguments v3, v4, v1
+    v6 = CallBuiltin v0, v5, v5 overload=FunctionPrototypeApply/0
+    Return v6
+# CHECK: v5: Arguments = CreateUnmappedArguments v3, v4, v1
+# CHECK: v6: anything = CallBuiltin v0, v5, v5 overload=FunctionPrototypeApply/0
+}
+
+function f12 name="ownFrameOfThisValue" role=GenericEntrypoint flags=[HasThis] captures=[{type=f3}] results=[{type=anything}] derivation={source=f3} creator=Entrypoint{target=f3} {
+    v2 = GetRestLength
+    v3 = GetArgument
+    v4 = CreateRest firstArgument=1
+    v5 = CreateUnmappedArguments v2, v4, v3
+    v6 = CallBuiltin v3, v5, v5 overload=FunctionPrototypeApply/0
+    Return v6
+# CHECK: v5: Arguments = CreateUnmappedArguments v2, v4, v3
+# CHECK: v6: anything = CallBuiltin v3, v5, v5 overload=FunctionPrototypeApply/0
+}
+
+function f13 name="objectIsAlsoThisValueOfReflectApply" flags=[HasArgumentCount, HasHiddenRest] captures=[{type=function}] results=[{type=anything}] {
+  b0(v0: function, v1: int[0, 4294967295], v2: Array):
+    v3 = CreateUnmappedArguments v1, v2
+    v4 = CallBuiltin -, v0, v3, v3 overload=ReflectApply/0
+    Return v4
+# CHECK: v3: Arguments = CreateUnmappedArguments v1, v2
+# CHECK: v4: anything = CallBuiltin -, v0, v3, v3 overload=ReflectApply/0
+}

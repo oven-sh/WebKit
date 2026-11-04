@@ -1,0 +1,7 @@
+# Supertypes that do not ascend
+# RUN: print
+# DIAGNOSTIC: UnsortedList
+
+layout L0
+layout L1
+layout L2 supertypes=[L1, L0]

@@ -95,7 +95,7 @@ struct BackgroundSize {
         return { };
     }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -142,7 +142,7 @@ template<> struct Serialize<BackgroundSize> { void operator()(StringBuilder&, co
 // MARK: - Blending
 
 template<> struct Blending<BackgroundSize> {
-    auto canBlend(const BackgroundSize&, const BackgroundSize&) -> bool;
+    bool LEGACY_NODELETE canBlend(const BackgroundSize&, const BackgroundSize&);
     auto blend(const BackgroundSize&, const BackgroundSize&, const BlendingContext&) -> BackgroundSize;
 };
 

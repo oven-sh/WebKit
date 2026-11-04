@@ -1,0 +1,55 @@
+# A guard about an array that the loop itself chooses is live across the unlikely path that only computes, so no copy of the loop is entered on that path: it stays in the loop, and the unlikely path that calls leaves as it does without the other
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sum" parameters=[{type=undefined|int[0, 9]}, {type=number}, {type=Array<int[0, 9], pristine[Storage, Names, Dense]>}, {type=undefined|int[0, 9]}, {type=anything}, {type=Array<int[0, 9], pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+    v6 = Integer integer=0
+    v7 = Integer integer=0
+    v8 = Integer integer=0
+    Jump -> next b1(v6, v7, v8, v2, v5)
+  b1(v9, v10, v11, v12, v13):
+    LoopHint
+    v15 = Less v11, v1
+    Branch v15 -> taken b2(), notTaken b11()
+  b2():
+    v16 = HasArrayStorage v12 arrayStorage=Int32
+    Branch v16 -> taken b3(| 0), notTaken b11()
+  b3(v17):
+    v18 = TypeTest v0 testedType=number
+    Branch v18 -> taken b4(| 0), notTaken b5()
+  b4(v19):
+    v20 = Add v9, v19
+    Jump -> next b6(v20)
+  b5() frequency=Unlikely:
+    v21 = Add v9, v0
+    Jump -> next b6(v21)
+  b6(v22):
+    v23 = HasArrayElement v12, v8, v17 arrayStorage=Int32 level=Expected [keyIsIntegral]
+    v24 = TypeTest v3 testedType=number
+    Branch v24 -> taken b7(| 0), notTaken b8()
+  b7(v25):
+    v26 = Add v10, v25
+    Jump -> next b9(v26)
+  b8() frequency=Unlikely:
+    v27 = Call v4, -, v10
+    Jump -> next b9(v27)
+  b9(v28):
+    v29 = BitOr v28, v8
+    Branch v23 -> taken b10(), notTaken b11()
+  b10():
+    v30 = BitOr v22, v8
+    v31 = Increment v11
+    Jump -> next b1(v30, v29, v31, v13, v12)
+  b11():
+    Return v10
+# CHECK: Branch v18 -> taken b4(| 0), notTaken b5()
+# CHECK: b5() frequency=Unlikely:
+# CHECK: Jump -> next b6(v21)
+# CHECK: Branch v24 -> taken b7(| 0), notTaken [[calls]]({{*}})
+# CHECK: b9(v28: int[-2147483648, 2147483656]):
+# CHECK: [[calls]]({{*}}) frequency=Rare:
+# CHECK-NEXT: = Call v4, -, v10
+}

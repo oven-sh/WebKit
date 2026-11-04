@@ -189,7 +189,7 @@ void ScrollTimeline::setSource(const Styleable& styleable)
 
     removeTimelineFromDocument(protect(previousSource.get()));
 
-    protect(styleable.element.document())->ensureTimelinesController().addTimeline(*this);
+    protect(protect(styleable.element.document())->ensureTimelinesController())->addTimeline(*this);
 }
 
 void ScrollTimeline::removeTimelineFromDocument(Element* element)
@@ -257,7 +257,7 @@ auto ScrollTimeline::computeCurrentTimeData() const -> CurrentTimeData
     RefPtr source = this->source();
     if (!source)
         return { };
-    CheckedPtr sourceScrollableArea = scrollableAreaForSourceRenderer(source->renderer(), protect(source->document()));
+    CheckedPtr sourceScrollableArea = scrollableAreaForSourceRenderer(protect(source->renderer()), protect(source->document()));
     if (!sourceScrollableArea)
         return { };
     auto scrollDirection = resolvedScrollDirection();
@@ -428,7 +428,7 @@ bool ScrollTimeline::canBeAccelerated() const
 
     ASSERT(source->document().settings().threadedScrollDrivenAnimationsEnabled());
 
-    CheckedPtr sourceScrollableArea = scrollableAreaForSourceRenderer(source->renderer(), protect(source->document()));
+    CheckedPtr sourceScrollableArea = scrollableAreaForSourceRenderer(protect(source->renderer()), protect(source->document()));
     return sourceScrollableArea && !!sourceScrollableArea->scrollingNodeID();
 }
 
@@ -447,7 +447,7 @@ ProgressResolutionData ScrollTimeline::computeProgressResolutionData() const
     ASSERT(this->source());
     ASSERT(this->source()->document().settings().threadedScrollDrivenAnimationsEnabled());
     Ref source = *this->source();
-    CheckedPtr sourceScrollableArea = scrollableAreaForSourceRenderer(source->renderer(), protect(source->document()));
+    CheckedPtr sourceScrollableArea = scrollableAreaForSourceRenderer(protect(source->renderer()), protect(source->document()));
     ASSERT(sourceScrollableArea);
     ASSERT(sourceScrollableArea->scrollingNodeID());
 
@@ -482,7 +482,7 @@ std::optional<ScrollingNodeID> ScrollTimeline::scrollingNodeIDForTesting() const
     if (!m_acceleratedRepresentation)
         return std::nullopt;
     if (RefPtr source = this->source()) {
-        if (CheckedPtr sourceScrollableArea = scrollableAreaForSourceRenderer(source->renderer(), protect(source->document())))
+        if (CheckedPtr sourceScrollableArea = scrollableAreaForSourceRenderer(protect(source->renderer()), protect(source->document())))
             return sourceScrollableArea->scrollingNodeID();
     }
     return std::nullopt;

@@ -34,7 +34,9 @@ class CryptoAlgorithmEd25519 final : public CryptoAlgorithm {
 public:
     static constexpr ASCIILiteral s_name = "Ed25519"_s;
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::Ed25519;
-    static Ref<CryptoAlgorithm> create();
+    static Ref<CryptoAlgorithm> LEGACY_NODELETE create();
+
+    static bool isSmallOrderPoint(std::span<const uint8_t>);
 
 private:
     CryptoAlgorithmEd25519() = default;

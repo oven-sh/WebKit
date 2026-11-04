@@ -17,10 +17,10 @@ function(WEBKIT_CHECK_COMPILER_FLAGS _compiler _result)
         else ()
             set(${_cachevar} FALSE CACHE INTERNAL "" FORCE)
             message(WARNING "WEBKIT_CHECK_COMPILER_FLAGS: unknown compiler '${_compiler}'")
-            return()
+            return ()
         endif ()
         if (NOT ${_cachevar})
-            return()
+            return ()
         endif ()
     endforeach ()
     set(${_result} TRUE PARENT_SCOPE)
@@ -344,6 +344,9 @@ if (COMPILER_IS_GCC_OR_CLANG)
 
     # FIXME: https://bugs.webkit.org/show_bug.cgi?id=299689
     WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-character-conversion)
+
+    # -Wunused-template seems to be outright broken with Clang 23.1. There are way too many false positives.
+    WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-unused-template)
 endif ()
 
 if (COMPILER_IS_GCC_OR_CLANG AND NOT MSVC)

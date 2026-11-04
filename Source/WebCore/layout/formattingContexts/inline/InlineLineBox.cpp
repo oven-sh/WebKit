@@ -26,6 +26,7 @@
 #include "config.h"
 #include "InlineLineBox.h"
 
+#include "InlineFormattingContext.h"
 #include "InlineFormattingUtils.h"
 #include "InlineLevelBoxInlines.h"
 #include "LayoutBoxGeometry.h"
@@ -38,9 +39,10 @@ namespace Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LineBox);
 
-LineBox::LineBox(const Box& rootLayoutBox, InlineLayoutUnit contentLogicalLeft, InlineLayoutUnit contentLogicalWidth, size_t lineIndex, bool isFirstFormattedLine, size_t nonSpanningInlineLevelBoxCount)
+LineBox::LineBox(const Box& rootLayoutBox, InlineLayoutUnit contentLogicalLeft, InlineLayoutUnit contentLogicalWidth, size_t lineIndex, bool isFirstFormattedLine, bool hasBlockEllipsisContentOnly, size_t nonSpanningInlineLevelBoxCount)
     : m_lineIndex(lineIndex)
     , m_isFirstFormattedLine(isFirstFormattedLine)
+    , m_hasBlockEllipsisContentOnly(hasBlockEllipsisContentOnly)
     , m_rootInlineBox(InlineLevelBox::createRootInlineBox(rootLayoutBox, isFirstFormattedLine ? rootLayoutBox.firstLineStyle() : rootLayoutBox.style(), contentLogicalLeft, contentLogicalWidth))
 {
     m_nonRootInlineLevelBoxList.reserveInitialCapacity(nonSpanningInlineLevelBoxCount);
@@ -55,7 +57,7 @@ void LineBox::addInlineLevelBox(InlineLevelBox&& inlineLevelBox)
     m_nonRootInlineLevelBoxList.append(WTF::move(inlineLevelBox));
 }
 
-InlineRect LineBox::logicalRectForTextRun(const Line::Run& run) const
+InlineRect LineBox::logicalRectForTextRun(const LineRun& run) const
 {
     ASSERT(run.isText() || run.isSoftLineBreak());
     auto* ancestorInlineBox = &parentInlineBox(run);

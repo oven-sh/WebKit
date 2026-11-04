@@ -1,0 +1,21 @@
+# A call that a ReturnCall names stays a Call, next to a resolved call of the same callee
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: ResolvedCallTargetGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="tail-call-after-loop" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Call v0, -, v2
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    v5 = Call v0, -, v2
+    ReturnCall v5
+}
+# CHECK: [[target]]: codeaddress = ResolveCallTarget v0 argumentCount=1
+# CHECK: anything = CallResolved v0, [[target]], -, v2
+# CHECK: b2():
+# CHECK-NEXT: [[tail]]: anything = Call v0, -, v2
+# CHECK-NEXT: ReturnCall [[tail]]

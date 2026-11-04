@@ -1,0 +1,57 @@
+# const point = { x }; const steps = repeats(v); call(); point.x; call(point); steps.next()
+# The read names the allocation as its guard: the first call cannot reach an object that nobody has seen yet.
+# The code between the creation and the first step runs once, so the merge leaves it on no cycle, and the later call that sees the object does not come in front of the first one.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass FuseGeneratorLoops
+# STATISTIC: GeneratorLoopsFused = 1
+# CHECK: outcome: Changed
+# CHECK: [[leave]]([[value]]: anything, [[status]]: int[0, 1]):
+# CHECK-NEXT: Jump -> next [[afterStep]]([[value]], [[status]])
+# CHECK: = GetSlot v3, v3 key="x"
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+
+function f0 name="readBetweenTwoCallsInFrontOfTheFirstStep" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewClosure function=f1
+    v5 = NewGenerator v4 function=f1 @40
+    v6 = CallDirect v4, v0, v5 function=f2 @40
+    v7 = Call v1 @41
+    v8 = GetSlot v3, v3 key="x" receivers=[L0] level=Proven
+    v9 = Call v1, -, v3 @42
+    v10 = Undefined
+    v11 = StepGenerator v5, v10 check=None @50
+    v12 = ResultAt v11 index=0
+    v13 = Add v8, v12
+    Return v13
+}
+function f1 name="repeats" position=10 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f1 body=f2 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f1 @10
+    v3 = CallDirect v0, v1, v2 function=f2 @10
+    Return v2 @10
+}
+function f2 name="repeats" position=10 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{ramp=f1 body=f2 promiseParameter=2} {
+    v3 = Undefined @10
+    v4 = YieldBySavingFrame v2, v3 @10
+    v5 = ResultAt v4 index=0 @10
+    v6 = ResultAt v4 index=1 @10
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @10
+  b1() frequency=Rare:
+    Throw v5 @10
+  b2() frequency=Rare:
+    Return v5 @10
+  b3():
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v8 = YieldBySavingFrame v2, v1 @12
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b5(), case b6(), otherwise b4()
+  b5() frequency=Rare:
+    Throw v9
+  b6() frequency=Rare:
+    Return v9
+}

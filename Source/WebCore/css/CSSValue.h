@@ -43,8 +43,8 @@ class DeprecatedCSSOMValue;
 
 struct ComputedStyleDependencies;
 
-enum CSSPropertyID : uint16_t;
-enum CSSValueID : uint16_t;
+enum class CSSPropertyID : uint16_t;
+enum class CSSValueID : uint16_t;
 
 namespace CSS {
 struct SerializationContext;
@@ -69,7 +69,6 @@ public:
     WEBCORE_EXPORT String cssText(const CSS::SerializationContext&) const;
 
     bool isAppleColorFilterValue() const { return m_classType == ClassType::AppleColorFilter; }
-    bool isAttrValue() const { return m_classType == ClassType::Attr; }
     bool isBackgroundRepeatValue() const { return m_classType == ClassType::BackgroundRepeat; }
     bool isBasicShape() const { return m_classType == ClassType::BasicShape; }
     bool isBorderImageOutsetValue() const { return m_classType == ClassType::BorderImageOutset; }
@@ -181,7 +180,7 @@ public:
 
     // https://www.w3.org/TR/css-values-4/#local-urls
     // Empty URLs and fragment-only URLs should not be resolved relative to the base URL.
-    static bool NODELETE isCSSLocalURL(StringView relativeURL);
+    static bool LEGACY_NODELETE isCSSLocalURL(StringView relativeURL);
 
     enum StaticCSSValueTag { StaticCSSValue };
 
@@ -219,7 +218,6 @@ protected:
 
         // Other non-list classes.
         AppleColorFilter,
-        Attr,
         BackgroundRepeat,
         BasicShape,
         BorderImageOutset,
@@ -311,11 +309,11 @@ protected:
     ASCIILiteral separatorCSSText() const { return separatorCSSText(separator()); };
 
 private:
-    template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE Visitor&&);
-    template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE Visitor&&) const;
+    template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE const Visitor&);
+    template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE const Visitor&) const;
 
-    static inline bool NODELETE customTraverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>&);
-    bool NODELETE addDerivedHash(Hasher&) const;
+    static inline bool LEGACY_NODELETE customTraverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>&);
+    bool LEGACY_NODELETE addDerivedHash(Hasher&) const;
 
     mutable unsigned m_refCount { refCountIncrement };
 
@@ -349,8 +347,8 @@ IGNORE_GCC_WARNINGS_END
     m_refCount = tempRefCount;
 }
 
-template<typename CSSValueType>
-inline bool compareCSSValueVector(const Vector<Ref<CSSValueType>>& firstVector, const Vector<Ref<CSSValueType>>& secondVector)
+template<typename ValueType>
+inline bool compareCSSValueVector(const Vector<Ref<ValueType>>& firstVector, const Vector<Ref<ValueType>>& secondVector)
 {
     size_t size = firstVector.size();
     if (size != secondVector.size())
@@ -366,14 +364,14 @@ inline bool compareCSSValueVector(const Vector<Ref<CSSValueType>>& firstVector, 
     return true;
 }
 
-template<typename CSSValueType>
-inline bool compareCSSValuePtr(const RefPtr<CSSValueType>& first, const RefPtr<CSSValueType>& second)
+template<typename ValueType>
+inline bool compareCSSValuePtr(const RefPtr<ValueType>& first, const RefPtr<ValueType>& second)
 {
     return first ? second && first->equals(*second) : !second;
 }
 
-template<typename CSSValueType>
-inline bool compareCSSValue(const Ref<CSSValueType>& first, const Ref<CSSValueType>& second)
+template<typename ValueType>
+inline bool compareCSSValue(const Ref<ValueType>& first, const Ref<ValueType>& second)
 {
     return first.get().equals(second);
 }

@@ -1,0 +1,44 @@
+# interface Range { pos: number; end: number }  interface Node { pos: number }  interface Literal extends Range {}  function take(range: Range) {}  take(node)  take(literal)  function keep(node: Node) {}  keep(node)  function hold(range: Range) {}  hold(unknown())
+# The type of a position that nothing tests may stand in for the objects that flow stopped following, and for nothing else: whatever flow does follow has to lie inside the type already.
+# The lie: `take` is entered without a test (its parameter has no site, so the function is not split), the front end sent no conversion from Node to Range, and a Node has no `end`, so the family of Range does not list Node.
+# Flow sees the Node arrive at `range`. The position is not proven and is counted in every build. A validating build is there to find the fault, so it fails, at the one position.
+# Beside it, and not reported: a layout below Range arrives at the same position, the Node arrives at a position of its own type, and the unknown object arrives at a position of type Range
+# FORM: AsRead
+# RUN: pipeline AnalyzeFlow
+# OPTIONS: validate
+# DIAGNOSTIC: MaskCutKnownValue 1
+# STATISTIC: LayoutsOutsideFamily = 1
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Range" fields=[{key="pos" declared={type=number} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Node" fields=[{key="pos" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Literal" fields=[{key="pos" declared={type=number} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}] supertypes=[L0]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v1
+    v5 = Call v3, -, v2
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v1
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="aFunctionThatNoTableLists" [isFreeName]
+    v10 = Call v9
+    v11 = NewClosure function=f3
+    v12 = Call v11, -, v10
+    Return
+}
+function f1 name="take" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pos"
+    Return
+}
+function f2 name="keep" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pos"
+    Return
+}
+function f3 name="hold" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pos"
+    Return
+}

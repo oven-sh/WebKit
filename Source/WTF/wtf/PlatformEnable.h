@@ -67,6 +67,31 @@
 #endif
 #endif
 
+#ifndef BACKTRACE_DISABLED
+#define BACKTRACE_DISABLED !ASSERT_ENABLED
+#endif
+
+#ifndef ASSERT_MSG_DISABLED
+#define ASSERT_MSG_DISABLED !ASSERT_ENABLED
+#endif
+
+#ifndef ASSERT_ARG_DISABLED
+#define ASSERT_ARG_DISABLED !ASSERT_ENABLED
+#endif
+
+#ifndef FATAL_DISABLED
+#define FATAL_DISABLED !ASSERT_ENABLED
+#endif
+
+#ifndef ERROR_DISABLED
+#define ERROR_DISABLED !ASSERT_ENABLED
+#endif
+
+#ifndef LOG_DISABLED
+#define LOG_DISABLED !ASSERT_ENABLED
+#endif
+
+
 /* ==== Platform additions: additions to PlatformEnable.h from outside the main repository ==== */
 
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/AdditionalFeatureDefines.h>)
@@ -161,6 +186,10 @@
 
 #if !defined(ENABLE_CONJECTURE_ASSERT)
 #define ENABLE_CONJECTURE_ASSERT 0
+#endif
+
+#if !defined(ENABLE_CONNECTED_VOLUMETRIC_SCENE)
+#define ENABLE_CONNECTED_VOLUMETRIC_SCENE 0
 #endif
 
 #if !defined(ENABLE_CONTENT_CHANGE_OBSERVER)
@@ -752,6 +781,36 @@
 #define ENABLE_DFG_JIT 0
 #endif
 
+/* The ShadowRealm class, its global and the functions that wrap a callable of another realm. */
+#if !defined(ENABLE_SHADOW_REALM)
+#define ENABLE_SHADOW_REALM 1
+#endif
+
+/* Calls of native functions by a signature: JSFFIFunction, JSFFICallback, and CallFFI in the DFG and the FTL. */
+#if !defined(ENABLE_FFI)
+#if USE(BUN_JSC_ADDITIONS)
+#define ENABLE_FFI 1
+#else
+#define ENABLE_FFI 0
+#endif
+#endif
+
+#if !defined(ENABLE_AOT)
+#if ENABLE(FTL_JIT) && (CPU(ARM64) || CPU(X86_64)) && (OS(DARWIN) || OS(LINUX) || OS(FREEBSD) || OS(WINDOWS))
+#define ENABLE_AOT 1
+#else
+#define ENABLE_AOT 0
+#endif
+#endif
+
+#if !defined(ENABLE_AOT_POSITION_INDEPENDENT_IMAGE)
+#if OS(DARWIN) || OS(WINDOWS)
+#define ENABLE_AOT_POSITION_INDEPENDENT_IMAGE 1
+#else
+#define ENABLE_AOT_POSITION_INDEPENDENT_IMAGE 0
+#endif
+#endif
+
 /* The JIT disassembler is a debugging-only facility: it is reached solely by
    diagnostic options such as dumpDisassembly, dumpDFGDisassembly,
    dumpFTLDisassembly and logJIT. Its instruction tables are large - the
@@ -828,7 +887,7 @@
 #define ENABLE_DFG_DOES_GC_VALIDATION 0
 #endif
 
-#if ENABLE(JIT)
+#if ENABLE(JIT) || ENABLE(AOT)
 #define ENABLE_CONCURRENT_JS 1
 #endif
 
@@ -847,7 +906,7 @@
 #endif
 
 /* This controls whether B3 is built. B3 is needed for FTL JIT and WebAssembly */
-#if ENABLE(FTL_JIT)
+#if ENABLE(FTL_JIT) || ENABLE(AOT)
 #define ENABLE_B3_JIT 1
 #endif
 
@@ -923,7 +982,7 @@
 #endif
 
 /* Yet Another Regex Runtime - turned on by default for JIT enabled ports. */
-#if !defined(ENABLE_YARR_JIT) && ENABLE(JIT)
+#if !defined(ENABLE_YARR_JIT) && (ENABLE(JIT) || ENABLE(AOT))
 #define ENABLE_YARR_JIT 1
 #endif
 
@@ -946,6 +1005,11 @@
 /* Enables an optimiztion to advance two codepoints when we fail to match a non-BMP character */
 #if ENABLE(YARR_JIT) && CPU(ARM64)
 #define ENABLE_YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP 1
+#endif
+
+/* Something emits machine code through jit/'s helpers: a JIT tier, or the back end of the ahead-of-time compiler. */
+#if ENABLE(JIT) || ENABLE(B3_JIT) || ENABLE(YARR_JIT)
+#define ENABLE_CODE_GENERATION 1
 #endif
 
 /* If either the JIT or the RegExp JIT is enabled, then the Assembler must be
@@ -1007,8 +1071,7 @@
 #if OS(DARWIN) && ENABLE(JIT) && USE(APPLE_INTERNAL_SDK) && CPU(ARM64E) && HAVE(JIT_CAGE)
 #if    HAVE(JIT_CAGE_RELAXATION) && !(PLATFORM(MAC) || PLATFORM(MACCATALYST))
 #define ENABLE_JIT_CAGE 1
-// FIXME: rdar://183646426
-#define ENABLE_JIT_CAGE_RELAXATION 0
+#define ENABLE_JIT_CAGE_RELAXATION 1
 #elif  HAVE(JIT_CAGE_RELAXATION) &&  (PLATFORM(MAC) || PLATFORM(MACCATALYST))
 #define ENABLE_JIT_CAGE 0
 // FIXME: rdar://183649352
@@ -1037,6 +1100,21 @@
 #define ENABLE_JIT_SIGN_ASSEMBLER_BUFFER 1
 #endif
 
+/* LLInt and the code that the JITs generate sign the return address at the places where they do for CPU(ARM64E), and with the same key,
+   but nothing else of that ABI: no other pointer is signed. Every instruction is a hint, which a processor without pointer
+   authentication ignores. C++ is signed by the compiler (-mbranch-protection=pac-ret), with the other key. */
+#if !defined(ENABLE_RETURN_ADDRESS_SIGNING)
+#define ENABLE_RETURN_ADDRESS_SIGNING 0
+#endif
+
+#if ENABLE(RETURN_ADDRESS_SIGNING) && (!CPU(ARM64) || CPU(ARM64E) || !OS(LINUX))
+#error "ENABLE(RETURN_ADDRESS_SIGNING) is for ARM64 Linux"
+#endif
+
+#if ENABLE(RETURN_ADDRESS_SIGNING) && ENABLE(AOT)
+#error "The run time of compiled programs is not ready for ENABLE(RETURN_ADDRESS_SIGNING)"
+#endif
+
 #if !defined(ENABLE_JIT_SCAN_ASSEMBLER_BUFFER_FOR_ZEROES) && CPU(X86_64) && PLATFORM(MAC)
 #define ENABLE_JIT_SCAN_ASSEMBLER_BUFFER_FOR_ZEROES 1
 #endif
@@ -1057,6 +1135,12 @@
 #define ENABLE_LLINT_EMBEDDED_OPCODE_ID 1
 #endif
 
+#if !defined(ENABLE_LIB_JSC_TOOLS)
+#if (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#define ENABLE_LIB_JSC_TOOLS 1
+#endif
+#endif
+
 /* Asserts, invariants for macro definitions */
 
 #if ENABLE(COCOA_WEBM_PLAYER) && !ENABLE(MEDIA_SOURCE)
@@ -1069,6 +1153,10 @@
 
 #if ENABLE(INSPECTOR_ALTERNATE_DISPATCHERS) && !ENABLE(REMOTE_INSPECTOR)
 #error "ENABLE(INSPECTOR_ALTERNATE_DISPATCHERS) requires ENABLE(REMOTE_INSPECTOR)"
+#endif
+
+#if ENABLE(GPU_PROCESS_SPATIAL_PORTAL) && (!ENABLE(SPATIAL_PORTAL) || !ENABLE(GPU_PROCESS_MODEL))
+#error "ENABLE(GPU_PROCESS_SPATIAL_PORTAL) requires ENABLE(SPATIAL_PORTAL) and ENABLE(GPU_PROCESS_MODEL)"
 #endif
 
 #if ENABLE(IOS_TOUCH_EVENTS) && !ENABLE(TOUCH_EVENTS)
@@ -1089,6 +1177,10 @@
 
 #if ENABLE(PREDEFINED_COLOR_SPACE_DISPLAY_P3) && !ENABLE(DESTINATION_COLOR_SPACE_DISPLAY_P3)
 #error "ENABLE(PREDEFINED_COLOR_SPACE_DISPLAY_P3) requires ENABLE(DESTINATION_COLOR_SPACE_DISPLAY_P3)"
+#endif
+
+#if ENABLE(PHONE_NUMBER_POSSESSION) && !ENABLE(WEB_AUTHN)
+#error "ENABLE(PHONE_NUMBER_POSSESSION) requires ENABLE(WEB_AUTHN)"
 #endif
 
 #if ENABLE(WEBXR_AR) && !ENABLE(WEBXR)
@@ -1151,20 +1243,29 @@
 #define ENABLE_TLS_1_2_DEFAULT_MINIMUM 1
 #endif
 
-#if !defined(ENABLE_IPC_TESTING_SWIFT) \
-    && (PLATFORM(MAC) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 260500)
-#define ENABLE_IPC_TESTING_SWIFT 1
-#endif
-
 #if PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 270000
 #define ENABLE_SCROLL_POCKET_IN_FULLSCREEN 1
 #endif
 
 #if !defined(ENABLE_BACK_FORWARD_LIST_SWIFT) \
     && ((PLATFORM(MAC) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 260500) \
-    || ((PLATFORM(IOS) || PLATFORM(MACCATALYST)) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 270000) \
+    || ((PLATFORM(IOS) || PLATFORM(MACCATALYST)) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 260500) \
     || (PLATFORM(VISION) && __VISION_OS_VERSION_MAX_ALLOWED >= 270000) \
     || (PLATFORM(WATCHOS) && __WATCH_OS_VERSION_MAX_ALLOWED >= 270000) \
     || (PLATFORM(APPLETV) && __TV_OS_VERSION_MAX_ALLOWED >= 270000))
 #define ENABLE_BACK_FORWARD_LIST_SWIFT 1
+#endif
+
+#if !defined(ENABLE_IPC_TESTING_SWIFT) && ENABLE(BACK_FORWARD_LIST_SWIFT)
+#define ENABLE_IPC_TESTING_SWIFT 1
+#endif
+
+// Non-Cocoa ports set this from CMake, based on the Swift compiler version.
+#if !defined(ENABLE_SWIFT_BASE_CLASS_ANNOTATIONS) \
+    && ((PLATFORM(MAC) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 270000) \
+    || ((PLATFORM(IOS) || PLATFORM(MACCATALYST)) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 270000) \
+    || (PLATFORM(VISION) && __VISION_OS_VERSION_MAX_ALLOWED >= 270000) \
+    || (PLATFORM(WATCHOS) && __WATCH_OS_VERSION_MAX_ALLOWED >= 270000) \
+    || (PLATFORM(APPLETV) && __TV_OS_VERSION_MAX_ALLOWED >= 270000))
+#define ENABLE_SWIFT_BASE_CLASS_ANNOTATIONS 1
 #endif

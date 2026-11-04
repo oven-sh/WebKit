@@ -1,0 +1,17 @@
+# The reads in place would stand beside the reads by name, which stay for every other value. Code that does not run often keeps the reads by name alone.
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="whereItBeginsAndHowLongItIs" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="byteOffset"
+    v2 = PropGet v0 key="byteLength"
+    v3 = Add v1, v2
+    Return v3
+# CHECK-NEXT: b0(v0: anything ~ object):
+# CHECK-NEXT: = PropGet v0 key="byteOffset"
+# CHECK-NEXT: = PropGet v0 key="byteLength"
+# CHECK-NOT: TypeTest v0
+}

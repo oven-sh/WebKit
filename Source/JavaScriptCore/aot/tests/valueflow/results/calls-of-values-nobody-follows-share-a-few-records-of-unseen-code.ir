@@ -1,0 +1,259 @@
+# const given = globalThis[key] ?? { f() { return 1 } }; given[other] = Function; sum += given.f(0); .. sum += given.f(39)
+# From the store on, each call of a value read off `given` may be a call of `Function`. The first few places are recorded, not one for each such call: they all say the same
+# RUN: valueflow-solve unseen
+# CHECK-COUNT-8: unseen EvaluatesText Function f0:
+# CHECK-NOT: unseen EvaluatesText
+# CHECK: unseen-code yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="f" declared={type=undefined|null|f2 flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
+
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="globalThis" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="key" [isFreeName]
+    v5 = ElemGet v2, v4
+    v6 = TypeTest v5 testedType=undefined|null
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = NewClosure function=f1
+    v9 = Convert v8 declared={type=undefined|null|f2 flags=[IsExpected]}
+    v10 = NewObject layout=L0
+    PropDefine v10, v9 key="f"
+    v12 = FinishObject v10
+    Jump -> next b5(v12)
+  b4(v13):
+    Jump -> next b5(v13)
+  b5(v14):
+    v15 = Integer
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="other" [isFreeName]
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="Function" [isFreeName]
+    v21 = Convert v20 declared={type=builtin(Function) flags=[IsExpected]}
+    ElemSet v14, v18, v21
+    v23 = PropGet v14 key="f"
+    v24 = Integer
+    v25 = Call v23, v14, v24 calleeKey="f" calleeName="given.f"
+    v26 = Add v16, v25
+    v27 = Convert v26 declared={type=number flags=[IsExpected]}
+    v28 = PropGet v14 key="f"
+    v29 = Integer integer=1
+    v30 = Call v28, v14, v29 calleeKey="f" calleeName="given.f"
+    v31 = Add v27, v30
+    v32 = Convert v31 declared={type=number flags=[IsExpected]}
+    v33 = PropGet v14 key="f"
+    v34 = Integer integer=2
+    v35 = Call v33, v14, v34 calleeKey="f" calleeName="given.f"
+    v36 = Add v32, v35
+    v37 = Convert v36 declared={type=number flags=[IsExpected]}
+    v38 = PropGet v14 key="f"
+    v39 = Integer integer=3
+    v40 = Call v38, v14, v39 calleeKey="f" calleeName="given.f"
+    v41 = Add v37, v40
+    v42 = Convert v41 declared={type=number flags=[IsExpected]}
+    v43 = PropGet v14 key="f"
+    v44 = Integer integer=4
+    v45 = Call v43, v14, v44 calleeKey="f" calleeName="given.f"
+    v46 = Add v42, v45
+    v47 = Convert v46 declared={type=number flags=[IsExpected]}
+    v48 = PropGet v14 key="f"
+    v49 = Integer integer=5
+    v50 = Call v48, v14, v49 calleeKey="f" calleeName="given.f"
+    v51 = Add v47, v50
+    v52 = Convert v51 declared={type=number flags=[IsExpected]}
+    v53 = PropGet v14 key="f"
+    v54 = Integer integer=6
+    v55 = Call v53, v14, v54 calleeKey="f" calleeName="given.f"
+    v56 = Add v52, v55
+    v57 = Convert v56 declared={type=number flags=[IsExpected]}
+    v58 = PropGet v14 key="f"
+    v59 = Integer integer=7
+    v60 = Call v58, v14, v59 calleeKey="f" calleeName="given.f"
+    v61 = Add v57, v60
+    v62 = Convert v61 declared={type=number flags=[IsExpected]}
+    v63 = PropGet v14 key="f"
+    v64 = Integer integer=8
+    v65 = Call v63, v14, v64 calleeKey="f" calleeName="given.f"
+    v66 = Add v62, v65
+    v67 = Convert v66 declared={type=number flags=[IsExpected]}
+    v68 = PropGet v14 key="f"
+    v69 = Integer integer=9
+    v70 = Call v68, v14, v69 calleeKey="f" calleeName="given.f"
+    v71 = Add v67, v70
+    v72 = Convert v71 declared={type=number flags=[IsExpected]}
+    v73 = PropGet v14 key="f"
+    v74 = Integer integer=10
+    v75 = Call v73, v14, v74 calleeKey="f" calleeName="given.f"
+    v76 = Add v72, v75
+    v77 = Convert v76 declared={type=number flags=[IsExpected]}
+    v78 = PropGet v14 key="f"
+    v79 = Integer integer=11
+    v80 = Call v78, v14, v79 calleeKey="f" calleeName="given.f"
+    v81 = Add v77, v80
+    v82 = Convert v81 declared={type=number flags=[IsExpected]}
+    v83 = PropGet v14 key="f"
+    v84 = Integer integer=12
+    v85 = Call v83, v14, v84 calleeKey="f" calleeName="given.f"
+    v86 = Add v82, v85
+    v87 = Convert v86 declared={type=number flags=[IsExpected]}
+    v88 = PropGet v14 key="f"
+    v89 = Integer integer=13
+    v90 = Call v88, v14, v89 calleeKey="f" calleeName="given.f"
+    v91 = Add v87, v90
+    v92 = Convert v91 declared={type=number flags=[IsExpected]}
+    v93 = PropGet v14 key="f"
+    v94 = Integer integer=14
+    v95 = Call v93, v14, v94 calleeKey="f" calleeName="given.f"
+    v96 = Add v92, v95
+    v97 = Convert v96 declared={type=number flags=[IsExpected]}
+    v98 = PropGet v14 key="f"
+    v99 = Integer integer=15
+    v100 = Call v98, v14, v99 calleeKey="f" calleeName="given.f"
+    v101 = Add v97, v100
+    v102 = Convert v101 declared={type=number flags=[IsExpected]}
+    v103 = PropGet v14 key="f"
+    v104 = Integer integer=16
+    v105 = Call v103, v14, v104 calleeKey="f" calleeName="given.f"
+    v106 = Add v102, v105
+    v107 = Convert v106 declared={type=number flags=[IsExpected]}
+    v108 = PropGet v14 key="f"
+    v109 = Integer integer=17
+    v110 = Call v108, v14, v109 calleeKey="f" calleeName="given.f"
+    v111 = Add v107, v110
+    v112 = Convert v111 declared={type=number flags=[IsExpected]}
+    v113 = PropGet v14 key="f"
+    v114 = Integer integer=18
+    v115 = Call v113, v14, v114 calleeKey="f" calleeName="given.f"
+    v116 = Add v112, v115
+    v117 = Convert v116 declared={type=number flags=[IsExpected]}
+    v118 = PropGet v14 key="f"
+    v119 = Integer integer=19
+    v120 = Call v118, v14, v119 calleeKey="f" calleeName="given.f"
+    v121 = Add v117, v120
+    v122 = Convert v121 declared={type=number flags=[IsExpected]}
+    v123 = PropGet v14 key="f"
+    v124 = Integer integer=20
+    v125 = Call v123, v14, v124 calleeKey="f" calleeName="given.f"
+    v126 = Add v122, v125
+    v127 = Convert v126 declared={type=number flags=[IsExpected]}
+    v128 = PropGet v14 key="f"
+    v129 = Integer integer=21
+    v130 = Call v128, v14, v129 calleeKey="f" calleeName="given.f"
+    v131 = Add v127, v130
+    v132 = Convert v131 declared={type=number flags=[IsExpected]}
+    v133 = PropGet v14 key="f"
+    v134 = Integer integer=22
+    v135 = Call v133, v14, v134 calleeKey="f" calleeName="given.f"
+    v136 = Add v132, v135
+    v137 = Convert v136 declared={type=number flags=[IsExpected]}
+    v138 = PropGet v14 key="f"
+    v139 = Integer integer=23
+    v140 = Call v138, v14, v139 calleeKey="f" calleeName="given.f"
+    v141 = Add v137, v140
+    v142 = Convert v141 declared={type=number flags=[IsExpected]}
+    v143 = PropGet v14 key="f"
+    v144 = Integer integer=24
+    v145 = Call v143, v14, v144 calleeKey="f" calleeName="given.f"
+    v146 = Add v142, v145
+    v147 = Convert v146 declared={type=number flags=[IsExpected]}
+    v148 = PropGet v14 key="f"
+    v149 = Integer integer=25
+    v150 = Call v148, v14, v149 calleeKey="f" calleeName="given.f"
+    v151 = Add v147, v150
+    v152 = Convert v151 declared={type=number flags=[IsExpected]}
+    v153 = PropGet v14 key="f"
+    v154 = Integer integer=26
+    v155 = Call v153, v14, v154 calleeKey="f" calleeName="given.f"
+    v156 = Add v152, v155
+    v157 = Convert v156 declared={type=number flags=[IsExpected]}
+    v158 = PropGet v14 key="f"
+    v159 = Integer integer=27
+    v160 = Call v158, v14, v159 calleeKey="f" calleeName="given.f"
+    v161 = Add v157, v160
+    v162 = Convert v161 declared={type=number flags=[IsExpected]}
+    v163 = PropGet v14 key="f"
+    v164 = Integer integer=28
+    v165 = Call v163, v14, v164 calleeKey="f" calleeName="given.f"
+    v166 = Add v162, v165
+    v167 = Convert v166 declared={type=number flags=[IsExpected]}
+    v168 = PropGet v14 key="f"
+    v169 = Integer integer=29
+    v170 = Call v168, v14, v169 calleeKey="f" calleeName="given.f"
+    v171 = Add v167, v170
+    v172 = Convert v171 declared={type=number flags=[IsExpected]}
+    v173 = PropGet v14 key="f"
+    v174 = Integer integer=30
+    v175 = Call v173, v14, v174 calleeKey="f" calleeName="given.f"
+    v176 = Add v172, v175
+    v177 = Convert v176 declared={type=number flags=[IsExpected]}
+    v178 = PropGet v14 key="f"
+    v179 = Integer integer=31
+    v180 = Call v178, v14, v179 calleeKey="f" calleeName="given.f"
+    v181 = Add v177, v180
+    v182 = Convert v181 declared={type=number flags=[IsExpected]}
+    v183 = PropGet v14 key="f"
+    v184 = Integer integer=32
+    v185 = Call v183, v14, v184 calleeKey="f" calleeName="given.f"
+    v186 = Add v182, v185
+    v187 = Convert v186 declared={type=number flags=[IsExpected]}
+    v188 = PropGet v14 key="f"
+    v189 = Integer integer=33
+    v190 = Call v188, v14, v189 calleeKey="f" calleeName="given.f"
+    v191 = Add v187, v190
+    v192 = Convert v191 declared={type=number flags=[IsExpected]}
+    v193 = PropGet v14 key="f"
+    v194 = Integer integer=34
+    v195 = Call v193, v14, v194 calleeKey="f" calleeName="given.f"
+    v196 = Add v192, v195
+    v197 = Convert v196 declared={type=number flags=[IsExpected]}
+    v198 = PropGet v14 key="f"
+    v199 = Integer integer=35
+    v200 = Call v198, v14, v199 calleeKey="f" calleeName="given.f"
+    v201 = Add v197, v200
+    v202 = Convert v201 declared={type=number flags=[IsExpected]}
+    v203 = PropGet v14 key="f"
+    v204 = Integer integer=36
+    v205 = Call v203, v14, v204 calleeKey="f" calleeName="given.f"
+    v206 = Add v202, v205
+    v207 = Convert v206 declared={type=number flags=[IsExpected]}
+    v208 = PropGet v14 key="f"
+    v209 = Integer integer=37
+    v210 = Call v208, v14, v209 calleeKey="f" calleeName="given.f"
+    v211 = Add v207, v210
+    v212 = Convert v211 declared={type=number flags=[IsExpected]}
+    v213 = PropGet v14 key="f"
+    v214 = Integer integer=38
+    v215 = Call v213, v14, v214 calleeKey="f" calleeName="given.f"
+    v216 = Add v212, v215
+    v217 = Convert v216 declared={type=number flags=[IsExpected]}
+    v218 = PropGet v14 key="f"
+    v219 = Integer integer=39
+    v220 = Call v218, v14, v219 calleeKey="f" calleeName="given.f"
+    v221 = Add v217, v220
+    v222 = Convert v221 declared={type=number flags=[IsExpected]}
+    v223 = Builtin builtin=GlobalThis
+    v224 = PropGet v223 key="print" [isFreeName]
+    v225 = Call v224, -, v222 calleeName="print"
+    v226 = Undefined
+    Return v226
+}
+
+function f1 name="f" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f2] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer integer=1
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    Return v1
+}
+function f2 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

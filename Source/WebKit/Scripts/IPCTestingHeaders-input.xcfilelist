@@ -8,6 +8,7 @@
 $(SRCROOT)/Platform/IPC/ArgumentCoders.h
 $(SRCROOT)/Shared/Cocoa/ArgumentCodersCocoa.h
 $(SRCROOT)/Platform/IPC/ArrayReferenceTuple.h
+$(SRCROOT)/Platform/IPC/AsyncReplyID.h
 $(SRCROOT)/Platform/IPC/Attachment.h
 $(SRCROOT)/Platform/IPC/Connection.h
 $(SRCROOT)/Platform/IPC/ConnectionHandle.h
@@ -26,7 +27,6 @@ $(SRCROOT)/Shared/Cocoa/CoreIPCPKShippingMethod.h
 $(SRCROOT)/Shared/Cocoa/CoreIPCPlistArray.h
 $(SRCROOT)/Shared/Cocoa/CoreIPCPlistDictionary.h
 $(SRCROOT)/Shared/Cocoa/CoreIPCPlistObject.h
-$(SRCROOT)/Shared/Cocoa/CoreIPCRetainPtr.h
 $(SRCROOT)/Shared/cf/CoreIPCSecTrust.h
 $(SRCROOT)/Shared/Cocoa/CoreIPCString.h
 $(SRCROOT)/Shared/Cocoa/CoreIPCURL.h

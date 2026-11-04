@@ -1,0 +1,66 @@
+# Every header parameter that steps has a record, with or without a test
+# FORM: Prepared
+# RUN: induction
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="oneTested" parameters=[{type=int[0, 1000]}] results=[{type=number}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=100
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v3, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = Increment v7
+    v9 = Integer integer=2
+    v10 = Sub v4, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    Return v4
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v3 start v1 step +1 Increasing stepped [v8] tests [b1 v3 Less v0 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: v4 start v2 step -2 Decreasing stepped [v10] tests []
+# CHECK-NEXT: loop b1 counter: v3
+
+function f1 name="comparedWithEachOther" results=[{type=undefined}] {
+    v0 = Integer integer=0
+    v1 = Integer integer=100
+    Jump -> next b1(v0, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v2, v3
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Increment v2
+    v7 = Decrement v3
+    Jump -> next b1(v6, v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v0 step +1 Increasing stepped [v6] tests [b1 v2 Less v3 Unknown BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: v3 start v1 step -1 Decreasing stepped [v7] tests [b1 v3 Greater v2 Unknown BeforeStep entry Unknown exits OnlyAtTest]
+
+function f2 name="carriedValuesDoNotStep" parameters=[{type=int[0, 1000]}, {type=number}] results=[{type=number}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v1, v1)
+  b1(v3, v4, v5):
+    LoopHint
+    v7 = Less v3, v0
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = Increment v8
+    v10 = Mul v5, v5
+    Jump -> next b1(v9, v4, v10)
+  b3():
+    Return v5
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v3 start v2 step +1 Increasing stepped [v9] tests [b1 v3 Less v0 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v3

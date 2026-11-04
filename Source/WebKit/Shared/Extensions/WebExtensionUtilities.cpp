@@ -25,14 +25,20 @@
 
 #include "config.h"
 #include "WebExtensionUtilities.h"
+
 #include "JSWebExtensionWrapper.h"
+#include "WebExtensionConstants.h"
+#include "WebFrame.h"
+#include <WebCore/Document.h>
+#include <WebCore/LocalFrameInlines.h>
+#include <wtf/Borrow.h>
 #include <wtf/text/MakeString.h>
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 namespace WebKit {
 
-Ref<JSON::Array> filterObjects(const JSON::Array& array, WTF::Function<bool(const JSON::Value&)>&& lambda)
+Ref<JSON::Array> filterObjects(const JSON::Array& array, NOESCAPE const WTF::Function<bool(const JSON::Value&)>& lambda)
 {
     auto result = JSON::Array::create();
 
@@ -80,7 +86,7 @@ RefPtr<JSON::Object> jsonWithLowercaseKeys(RefPtr<JSON::Object> json)
         return json;
 
     Ref newObject = JSON::Object::create();
-    for (auto& key : json->keys())
+    for (auto& key : borrow(json->keys()))
         newObject->setValue(key.convertToASCIILowercase(), *json->getValue(key));
 
     return newObject;
@@ -92,7 +98,7 @@ RefPtr<JSON::Object> mergeJSON(RefPtr<JSON::Object> jsonA, RefPtr<JSON::Object> 
         return jsonA ?: jsonB;
 
     RefPtr mergedObject = jsonA.copyRef();
-    for (auto& key : jsonB->keys()) {
+    for (auto& key : borrow(jsonB->keys())) {
         if (!mergedObject->getValue(key))
             mergedObject->setValue(key, *jsonB->getValue(key));
     }
@@ -100,7 +106,7 @@ RefPtr<JSON::Object> mergeJSON(RefPtr<JSON::Object> jsonA, RefPtr<JSON::Object> 
     return mergedObject;
 }
 
-void serializeToMultipleJSONStrings(Ref<JSON::Object> jsonObject, Function<void(String&&)>&& chunkCallback)
+void serializeToMultipleJSONStrings(Ref<JSON::Object> jsonObject, NOESCAPE const Function<void(String&&)>& chunkCallback)
 {
     // StringBuilder is limited to INT_MAX characters and JSON chars may expand up to 6x to account for escaping (\uNNNN).
     // We can assume memoryCost() ≈ total bytes of string storage, so a threshold cap of INT_MAX / 6
@@ -116,7 +122,7 @@ void serializeToMultipleJSONStrings(Ref<JSON::Object> jsonObject, Function<void(
     size_t currentMemoryCost = 0;
     Ref<JSON::Object> currentJSON = JSON::Object::create();
 
-    for (auto& key : jsonObject->keys()) {
+    for (auto& key : borrow(jsonObject->keys())) {
         RefPtr value = jsonObject->getValue(key);
         if (!value)
             continue;
@@ -136,6 +142,55 @@ void serializeToMultipleJSONStrings(Ref<JSON::Object> jsonObject, Function<void(
 
     if (currentJSON->size())
         chunkCallback(currentJSON->toJSONString());
+}
+
+size_t storageMaximumBytesPerCall(bool inTestingMode)
+{
+    return inTestingMode ? webExtensionStorageAreaMaximumBytesPerCallForTesting : webExtensionStorageAreaMaximumBytesPerCall;
+}
+
+size_t storageSizeOf(const String& keyOrValue)
+{
+    // The size of a key is the length of the key string.
+    // The size of a value is the length of the JSON representation of the value.
+    // If keyOrValue represents a value we assume that the string is the JSON representation.
+    return keyOrValue.utf8().length();
+}
+
+size_t storageSizeOf(RefPtr<JSON::Object> keysAndValues)
+{
+    if (!keysAndValues)
+        return 0;
+
+    double storageSize = 0;
+    for (const auto& item : *keysAndValues)
+        storageSize += storageSizeOf(item.key) + storageSizeOf(item.value->asString());
+
+    return storageSize;
+}
+
+bool anyItemsExceedQuota(RefPtr<JSON::Object> items, size_t quota, String& outKeyWithError)
+{
+    if (!items)
+        return false;
+
+    bool itemExceededQuota = false;
+    String keyWithError = nullString();
+
+    for (const auto& item : *items) {
+        size_t sizeOfCurrentItem = storageSizeOf(item.key) + storageSizeOf(item.value->asString());
+        if (sizeOfCurrentItem > quota) {
+            itemExceededQuota = true;
+            keyWithError = item.key;
+            break;
+        }
+    }
+
+    ASSERT(!itemExceededQuota || !keyWithError.isNull());
+
+    outKeyWithError = keyWithError;
+
+    return itemExceededQuota;
 }
 
 static inline String lowercaseFirst(const String& input)
@@ -180,31 +235,31 @@ JSObjectRef toJSError(JSContextRef context, const String& callingAPIName, const 
     return toJSError(context, toErrorString(callingAPIName, sourceKey, underlyingErrorString));
 }
 
-static String classToClassString(JSON::Value::Type classType)
+static String classToClassString(JSON::Value::Type classType, bool plural = false)
 {
     switch (classType) {
     case JSON::Value::Type::Integer:
     case JSON::Value::Type::Double:
-        return "a number"_s;
+        return plural ? "numbers"_s : "a number"_s;
     case JSON::Value::Type::Null:
-        return "null"_s;
+        return plural ? "null values"_s : "null"_s;
     case JSON::Value::Type::Boolean:
-        return "a boolean"_s;
+        return plural ? "booleans"_s : "a boolean"_s;
     case JSON::Value::Type::Object:
-        return "an object"_s;
+        return plural ? "objects"_s : "an object"_s;
     case JSON::Value::Type::String:
-        return "a string"_s;
+        return plural ? "strings"_s : "a string"_s;
     case JSON::Value::Type::Array:
-        return "an array"_s;
+        return plural ? "arrays"_s : "an array"_s;
     default:
-        return "a value"_s;
+        return plural ? "values"_s : "a value"_s;
     }
 
     ASSERT_NOT_REACHED();
     return "unknown"_s;
 }
 
-static String valueToTypeString(RefPtr<JSON::Value>& value)
+static String valueToTypeString(RefPtr<JSON::Value> value)
 {
     if (auto number = value->asDouble(); (value->type() == JSON::Value::Type::Double || value->type() == JSON::Value::Type::Integer)) {
         if (std::isnan(number.value_or(0)))
@@ -217,14 +272,19 @@ static String valueToTypeString(RefPtr<JSON::Value>& value)
     return classToClassString(value->type());
 }
 
-static String constructExpectedMessage(const String& key, const String& expected, const String& found)
+static String constructExpectedMessage(const String& key, const String& expected, const String& found, bool inArray = false)
 {
     ASSERT(expected);
     ASSERT(found);
 
+    if (inArray && !key.isEmpty())
+        return makeString("'"_s, key, "' is expected to be "_s, expected, " but "_s, found, " was provided in the array"_s);
+    if (inArray)
+        return makeString(expected, " is expected, but "_s, found, " was provided in the array"_s);
+
     if (!key.isEmpty())
         return makeString("'"_s, key, "' is expected to be "_s, expected, ", but "_s, found, " was provided"_s);
-    return makeString("'"_s, expected, "' is expected, but "_s, found, " was provided"_s);
+    return makeString(expected, " is expected, but "_s, found, " was provided"_s);
 }
 
 static bool validate(const String& key, RefPtr<JSON::Value> value, JSON::Value::Type expectedValueType, String& outExceptionString)
@@ -266,7 +326,7 @@ static String formatList(Vector<String>& list)
     if (count == 2)
         return makeString("'"_s, list.first(), "' and '"_s, list.last(), "'"_s);
 
-    auto allButLast = list.subvector(0, count - 1);
+    const auto allButLast = list.subvector(0, count - 1);
     auto formattedInitialItems = makeStringByJoining(allButLast, "', '"_s);
     return makeString("'"_s, formattedInitialItems, "' and '"_s, list.last(), "'"_s);
 }
@@ -283,7 +343,7 @@ bool validateDictionary(RefPtr<JSON::Value> dictionary, const String& sourceKey,
 
     Vector<String> remainingRequiredKeys = requiredKeys;
     HashSet<String> requiredKeysSet;
-    for (auto& key : requiredKeys)
+    for (auto& key : borrow(requiredKeys))
         requiredKeysSet.addVoid(key);
     HashSet<String> optionalKeysSet;
     for (auto& key : keyTypes.keys())
@@ -292,7 +352,7 @@ bool validateDictionary(RefPtr<JSON::Value> dictionary, const String& sourceKey,
 
     String errorString;
 
-    for (auto& key : object->keys()) {
+    for (auto& key : borrow(object->keys())) {
         if (!requiredKeysSet.contains(key) && !optionalKeysSet.contains(key))
             continue;
 
@@ -320,6 +380,83 @@ bool validateDictionary(RefPtr<JSON::Value> dictionary, const String& sourceKey,
     return errorString.isEmpty();
 }
 
+static bool validateArray(const String& sourceKey, RefPtr<JSON::Value> value, Vector<JSON::Value::Type> expectedArrayType, String& outExceptionString)
+{
+    ASSERT(expectedArrayType.size() == 1);
+
+    if (!value || !value->asArray()) {
+        outExceptionString = constructExpectedMessage(sourceKey, makeString("an array of "_s, classToClassString(expectedArrayType.first())), valueToTypeString(value));
+        return false;
+    }
+
+    RefPtr array = value->asArray();
+    for (auto& element : *array) {
+        String errorString;
+        if (!validate(emptyString(), element.get(), expectedArrayType.first(), errorString)) {
+            outExceptionString = constructExpectedMessage(sourceKey, makeString("an array of "_s, classToClassString(expectedArrayType.first())), valueToTypeString(element.get()), true);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool validateSet(const String& sourceKey, RefPtr<JSON::Value> value, Vector<JSON::Value::Type> expectedValueType, Vector<JSON::Value::Type> expectedArrayTypes, String& outExceptionString)
+{
+    if (expectedValueType.contains(value->type()) && (value->type() != JSON::Value::Type::Array))
+        return true;
+
+    StringBuilder expectedValuesString;
+
+    auto addExpectedValueString = [&](JSON::Value::Type expectedType, std::optional<JSON::Value::Type> expectedSubtype) {
+        if (expectedValuesString.length())
+            expectedValuesString.append(" or "_s);
+
+        expectedValuesString.append(classToClassString(expectedType));
+
+        if (!expectedSubtype)
+            return;
+
+        expectedValuesString.append(" of "_s);
+        expectedValuesString.append(classToClassString(expectedSubtype.value(), true));
+    };
+
+    bool arrayIsValid = false;
+    String exception;
+    for (auto type : expectedValueType) {
+        if (type == JSON::Value::Type::Array) {
+            arrayIsValid = true;
+            addExpectedValueString(JSON::Value::Type::Array, expectedArrayTypes.first());
+            if (validateArray(sourceKey, value, expectedArrayTypes, exception))
+                return true;
+            continue;
+        }
+
+        addExpectedValueString(type, { });
+
+        if (validate(sourceKey, value, type, exception))
+            return true;
+    }
+
+    auto foundString = arrayIsValid && value->asArray() ? "an array of other values"_s : valueToTypeString(value);
+    outExceptionString = constructExpectedMessage(sourceKey, expectedValuesString.toString(), foundString);
+
+    return false;
+}
+
+bool validateObject(RefPtr<JSON::Value> value, const String& sourceKey, Vector<JSON::Value::Type> expectedValueType, Vector<JSON::Value::Type> expectedArrayType, String& outExceptionString)
+{
+    ASSERT(!expectedValueType.isEmpty());
+
+    String errorString;
+    validateSet(nullString(), value, expectedValueType, expectedArrayType, errorString);
+
+    if (!errorString.isEmpty())
+        outExceptionString = toErrorString(nullString(), sourceKey, errorString);
+
+    return errorString.isEmpty();
+}
+
 void callAfterRandomDelay(Function<void()>&& callback)
 {
     // Random delay between 100 and 500 milliseconds.
@@ -327,6 +464,15 @@ void callAfterRandomDelay(Function<void()>&& callback)
     RunLoop::mainSingleton().dispatchAfter(delay, [callback = WTF::move(callback)]() {
         callback();
     });
+}
+
+Markable<WTF::UUID> toDocumentIdentifier(WebFrame& frame)
+{
+    auto* coreFrame = frame.coreLocalFrame();
+    auto* document = coreFrame ? coreFrame->document() : nullptr;
+    if (!document)
+        return { };
+    return document->identifier().object();
 }
 
 } // namespace WebKit

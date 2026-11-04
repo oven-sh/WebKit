@@ -23,8 +23,11 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// https://webaudio.github.io/web-speech-api/#speechrecognitionresultlist
+
 [
     EnabledBySetting=SpeechRecognitionEnabled,
+    SecureContext,
     Exposed=Window
 ] interface SpeechRecognitionResultList {
     readonly attribute unsigned long length;

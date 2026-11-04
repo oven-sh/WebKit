@@ -33,7 +33,7 @@ bool HTTPServer::listen(const std::optional<String>& host, unsigned port)
 {
     auto& endpoint = RemoteInspectorSocketEndpoint::singleton();
 
-    if (auto id = endpoint.listenInet(host ? host.value().utf8().legacyCStringPointer() : "", port, *this)) {
+    if (auto id = endpoint.listenInet(host ? host->utf8() : UTF8CString { }, port, *this)) {
         m_server = id;
         return true;
     }
@@ -93,7 +93,7 @@ void HTTPRequestHandler::didReceive(RemoteInspectorSocketEndpoint&, ConnectionID
     case HTTPParser::Phase::Error: {
         HTTPRequestHandler::Response response {
             400,
-            "text/html; charset=utf-8",
+            "text/html; charset=utf-8"_s,
             "<h1>Bad client</h1> Invalid HTML format"_s,
         };
         sendResponse(WTF::move(response));

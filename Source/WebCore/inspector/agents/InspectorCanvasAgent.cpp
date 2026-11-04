@@ -188,7 +188,7 @@ void InspectorCanvasAgent::internalEnable()
     }
     for (auto& device : devices) {
         if (device)
-            bindCanvas(*device, false);
+            bindCanvas(protect(*device), false);
     }
 
 #if ENABLE(WEBGL)
@@ -220,7 +220,7 @@ void InspectorCanvasAgent::internalEnable()
     }
     for (auto& [pipeline, device] : computePipelines) {
         if (pipeline && device)
-            didCreateWebGPUComputePipeline(*device, *pipeline);
+            didCreateWebGPUComputePipeline(protect(*device), protect(*pipeline));
     }
 
     Vector<std::pair<WeakPtr<GPURenderPipeline>, WeakPtr<GPUDevice, WeakPtrImplWithEventTargetData>>> renderPipelines;
@@ -238,7 +238,7 @@ void InspectorCanvasAgent::internalEnable()
     }
     for (auto& [pipeline, device] : renderPipelines) {
         if (pipeline && device)
-            didCreateWebGPURenderPipeline(*device, *pipeline);
+            didCreateWebGPURenderPipeline(protect(*device), protect(*pipeline));
     }
 }
 
@@ -428,8 +428,8 @@ void InspectorCanvasAgent::didCreateCanvasRenderingContext(CanvasRenderingContex
 void InspectorCanvasAgent::didChangeCanvasSize(CanvasRenderingContext& context)
 {
     RefPtr<InspectorCanvas> inspectorCanvas;
-    if (WeakPtr gpuCanvasContext = dynamicDowncast<GPUCanvasContext>(context)) {
-        WeakPtr device = gpuCanvasContext->device();
+    if (RefPtr gpuCanvasContext = dynamicDowncast<GPUCanvasContext>(context)) {
+        RefPtr device = gpuCanvasContext->device();
         if (!device)
             return;
         inspectorCanvas = findInspectorCanvas(*device);
@@ -446,8 +446,8 @@ void InspectorCanvasAgent::didChangeCanvasSize(CanvasRenderingContext& context)
 void InspectorCanvasAgent::didChangeCanvasMemory(const CanvasRenderingContext& context)
 {
     RefPtr<InspectorCanvas> inspectorCanvas;
-    if (WeakPtr gpuCanvasContext = dynamicDowncast<GPUCanvasContext>(context)) {
-        WeakPtr device = gpuCanvasContext->device();
+    if (RefPtr gpuCanvasContext = dynamicDowncast<GPUCanvasContext>(context)) {
+        RefPtr device = gpuCanvasContext->device();
         if (!device)
             return;
         inspectorCanvas = findInspectorCanvas(*device);
@@ -459,6 +459,30 @@ void InspectorCanvasAgent::didChangeCanvasMemory(const CanvasRenderingContext& c
         return;
 
     m_frontendDispatcher->canvasMemoryChanged(inspectorCanvas->identifier(), inspectorCanvas->memoryCost());
+}
+
+void InspectorCanvasAgent::didChangeCSSCanvasClientNodes(CanvasBase& canvasBase)
+{
+    RefPtr context = canvasBase.renderingContext();
+    if (!context) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    RefPtr<InspectorCanvas> inspectorCanvas;
+    if (RefPtr gpuCanvasContext = dynamicDowncast<GPUCanvasContext>(*context)) {
+        RefPtr device = gpuCanvasContext->device();
+        if (!device)
+            return;
+        inspectorCanvas = findInspectorCanvas(*device);
+    } else
+        inspectorCanvas = findInspectorCanvas(*context);
+
+    ASSERT(inspectorCanvas);
+    if (!inspectorCanvas)
+        return;
+
+    dispatchCSSCanvasClientNodesChanged(*inspectorCanvas);
 }
 
 void InspectorCanvasAgent::canvasContentsWillChange(CanvasBase& canvasBase, const FloatRect&)
@@ -669,6 +693,15 @@ void InspectorCanvasAgent::willDestroyWebGPUDevice(GPUDevice& device)
     unbindCanvas(*inspectorCanvas);
 }
 
+void InspectorCanvasAgent::didChangeWebGPUDeviceLabel(GPUDevice& device)
+{
+    RefPtr inspectorCanvas = findInspectorCanvas(device);
+    if (!inspectorCanvas)
+        return;
+
+    m_frontendDispatcher->canvasNameChanged(inspectorCanvas->identifier(), device.label());
+}
+
 void InspectorCanvasAgent::didChangeGPUDeviceClientNodes(GPUDevice& device)
 {
     RefPtr inspectorCanvas = findInspectorCanvas(device);
@@ -709,6 +742,15 @@ void InspectorCanvasAgent::willDestroyWebGPUComputePipeline(GPUComputePipeline& 
     unbindProgram(*inspectorProgram);
 }
 
+void InspectorCanvasAgent::didChangeWebGPUComputePipelineLabel(GPUComputePipeline& pipeline)
+{
+    RefPtr inspectorProgram = findInspectorProgram(pipeline);
+    if (!inspectorProgram)
+        return;
+
+    m_frontendDispatcher->programNameChanged(inspectorProgram->identifier(), pipeline.label());
+}
+
 void InspectorCanvasAgent::didCreateWebGPURenderPipeline(GPUDevice& device, GPURenderPipeline& pipeline)
 {
     auto inspectorCanvas = findInspectorCanvas(device);
@@ -729,6 +771,15 @@ void InspectorCanvasAgent::willDestroyWebGPURenderPipeline(GPURenderPipeline& pi
         return;
 
     unbindProgram(*inspectorProgram);
+}
+
+void InspectorCanvasAgent::didChangeWebGPURenderPipelineLabel(GPURenderPipeline& pipeline)
+{
+    RefPtr inspectorProgram = findInspectorProgram(pipeline);
+    if (!inspectorProgram)
+        return;
+
+    m_frontendDispatcher->programNameChanged(inspectorProgram->identifier(), pipeline.label());
 }
 
 bool InspectorCanvasAgent::isWebGPURenderPipelineDisabled(GPURenderPipeline& pipeline)
@@ -756,6 +807,8 @@ void InspectorCanvasAgent::recordAction(CanvasRenderingContext& canvasRenderingC
 
     auto inspectorCanvas = findInspectorCanvas(canvasRenderingContext);
     ASSERT(inspectorCanvas);
+    if (!inspectorCanvas)
+        return;
 
     scheduleRecordingCanvasFrame(*inspectorCanvas);
     inspectorCanvas->recordAction(WTF::move(name), WTF::move(arguments));
@@ -770,6 +823,8 @@ void InspectorCanvasAgent::recordAction(CanvasRenderingContext& canvasRenderingC
 
     RefPtr inspectorCanvas = findInspectorCanvas(canvasRenderingContext);
     ASSERT(inspectorCanvas);
+    if (!inspectorCanvas)
+        return;
 
     scheduleRecordingCanvasFrame(*inspectorCanvas);
     inspectorCanvas->recordAction(WTF::move(name), WTF::move(receiver), WTF::move(arguments));
@@ -845,7 +900,7 @@ void InspectorCanvasAgent::scheduleRecordingCanvasFrame(InspectorCanvas& inspect
     // Only enqueue one microtask for all actively recording canvases.
     if (m_recordingCanvasIdentifiers.isEmpty()) {
         if (RefPtr scriptExecutionContext = inspectorCanvas.scriptExecutionContext()) {
-            scriptExecutionContext->eventLoop().queueMicrotask(scriptExecutionContext->vm(), [weakThis = WeakPtr { *this }] {
+            protect(scriptExecutionContext->eventLoop())->queueMicrotask(scriptExecutionContext->vm(), [weakThis = WeakPtr { *this }] {
                 if (!weakThis)
                     return;
 
@@ -999,6 +1054,30 @@ void InspectorCanvasAgent::dispatchCanvasSizeChanged(InspectorCanvas& inspectorC
         }
     }
     m_frontendDispatcher->canvasSizeChanged(inspectorCanvas.identifier(), WTF::move(sizesPayload));
+}
+
+void InspectorCanvasAgent::dispatchNodesChanged(InspectorCanvas& inspectorCanvas)
+{
+    if (!m_pendingNodesChange.add(inspectorCanvas).isNewEntry)
+        return;
+
+    m_frontendDispatcher->nodesChanged(inspectorCanvas.identifier());
+}
+
+void InspectorCanvasAgent::dispatchCSSCanvasClientNodesChanged(InspectorCanvas& inspectorCanvas)
+{
+    if (!m_pendingCSSCanvasClientNodesChange.add(inspectorCanvas).isNewEntry)
+        return;
+
+    m_frontendDispatcher->cssCanvasClientNodesChanged(inspectorCanvas.identifier());
+}
+
+void InspectorCanvasAgent::dispatchCSSCanvasNamesChanged(InspectorCanvas& inspectorCanvas)
+{
+    Ref cssCanvasNames = JSON::ArrayOf<String>::create();
+    for (auto& cssCanvasName : inspectorCanvas.cssCanvasNames())
+        cssCanvasNames->addItem(cssCanvasName);
+    m_frontendDispatcher->cssCanvasNamesChanged(inspectorCanvas.identifier(), WTF::move(cssCanvasNames));
 }
 
 void InspectorCanvasAgent::unbindCanvas(InspectorCanvas& inspectorCanvas)

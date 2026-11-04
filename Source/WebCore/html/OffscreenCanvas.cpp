@@ -38,6 +38,7 @@
 #include "EventNames.h"
 #include "GPU.h"
 #include "GPUCanvasContext.h"
+#include "GraphicsClient.h"
 #include "HTMLCanvasElement.h"
 #include "ImageBitmap.h"
 #include "ImageBitmapRenderingContext.h"
@@ -52,6 +53,7 @@
 #include "Page.h"
 #include "PlaceholderRenderingContext.h"
 #include "ScriptTrackingPrivacyCategory.h"
+#include "UpdateElementGeometryOptions.h"
 #include "WorkerClient.h"
 #include "WorkerGlobalScope.h"
 #include "WorkerNavigator.h"
@@ -75,18 +77,64 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DetachedOffscreenCanvas);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(OffscreenCanvas);
 
-DetachedOffscreenCanvas::DetachedOffscreenCanvas(const IntSize& size, bool originClean, RefPtr<PlaceholderRenderingContextSource>&& placeholderSource)
-    : m_placeholderSource(WTF::move(placeholderSource))
+DetachedOffscreenCanvas::DetachedOffscreenCanvas(const IntSize& size, bool originClean, RefPtr<PlaceholderRenderingContextSource>&& placeholderSource, String&& inheritedLanguage, TextDirection inheritedDirection)
+    : m_placeholder(WTF::move(placeholderSource))
     , m_size(size)
     , m_originClean(originClean)
+    , m_inheritedLanguage(WTF::move(inheritedLanguage))
+    , m_inheritedDirection(inheritedDirection)
 {
 }
 
+DetachedOffscreenCanvas::DetachedOffscreenCanvas(const IntSize& size, bool originClean, std::optional<RemotePlaceholderRenderingContextIdentifier> placeholderIdentifier, String&& inheritedLanguage, TextDirection inheritedDirection)
+    : m_size(size)
+    , m_originClean(originClean)
+    , m_inheritedLanguage(WTF::move(inheritedLanguage))
+    , m_inheritedDirection(inheritedDirection)
+{
+    if (placeholderIdentifier)
+        m_placeholder = *placeholderIdentifier;
+}
+
+DetachedOffscreenCanvas::DetachedOffscreenCanvas(DetachedOffscreenCanvas&&) = default;
+DetachedOffscreenCanvas& DetachedOffscreenCanvas::operator=(DetachedOffscreenCanvas&&) = default;
 DetachedOffscreenCanvas::~DetachedOffscreenCanvas() = default;
 
-RefPtr<PlaceholderRenderingContextSource> DetachedOffscreenCanvas::takePlaceholderSource()
+std::unique_ptr<DetachedOffscreenCanvas> DetachedOffscreenCanvas::clone() const
 {
-    return WTF::move(m_placeholderSource);
+    return WTF::switchOn(m_placeholder,
+        [&](const RefPtr<PlaceholderRenderingContextSource>& source) {
+            return makeUnique<DetachedOffscreenCanvas>(m_size, m_originClean, RefPtr { source }, m_inheritedLanguage.isolatedCopy(), m_inheritedDirection);
+        },
+        [&](const RemotePlaceholderRenderingContextIdentifier& identifier) {
+            return makeUnique<DetachedOffscreenCanvas>(m_size, m_originClean, identifier, m_inheritedLanguage.isolatedCopy(), m_inheritedDirection);
+        });
+}
+
+std::optional<RemotePlaceholderRenderingContextIdentifier> DetachedOffscreenCanvas::placeholderIdentifier() const
+{
+    return WTF::switchOn(m_placeholder,
+        [](const RefPtr<PlaceholderRenderingContextSource>& source) -> std::optional<RemotePlaceholderRenderingContextIdentifier> {
+            if (!source)
+                return std::nullopt;
+            return source->remoteIdentifier();
+        },
+        [](const RemotePlaceholderRenderingContextIdentifier& identifier) -> std::optional<RemotePlaceholderRenderingContextIdentifier> {
+            return identifier;
+        });
+}
+
+RefPtr<PlaceholderRenderingContextSource> DetachedOffscreenCanvas::takePlaceholderSource(ScriptExecutionContext& context)
+{
+    if (auto* source = std::get_if<RefPtr<PlaceholderRenderingContextSource>>(&m_placeholder))
+        return WTF::move(*source);
+
+    // Creates a remote source even if this message ended same process, simplification to avoid needing a way to construct
+    // a new local source for this corner case.
+    auto* graphicsClient = context.graphicsClient();
+    if (!graphicsClient)
+        return nullptr;
+    return graphicsClient->createPlaceholderRenderingContextSource(std::get<RemotePlaceholderRenderingContextIdentifier>(m_placeholder));
 }
 
 bool OffscreenCanvas::enabledForContext(ScriptExecutionContext& context)
@@ -105,22 +153,33 @@ bool OffscreenCanvas::enabledForContext(ScriptExecutionContext& context)
 Ref<OffscreenCanvas> OffscreenCanvas::create(ScriptExecutionContext& scriptExecutionContext, unsigned width, unsigned height)
 {
     auto canvas = adoptRef(*new OffscreenCanvas(scriptExecutionContext, { static_cast<int>(width), static_cast<int>(height) }, nullptr));
+    if (RefPtr document = dynamicDowncast<Document>(scriptExecutionContext)) {
+        if (RefPtr documentElement = document->documentElement()) {
+            canvas->m_inheritedLanguage = documentElement->effectiveLang();
+            canvas->m_inheritedDirection = documentElement->effectiveTextDirection();
+        }
+    }
     canvas->suspendIfNeeded();
     return canvas;
 }
 
 Ref<OffscreenCanvas> OffscreenCanvas::create(ScriptExecutionContext& scriptExecutionContext, std::unique_ptr<DetachedOffscreenCanvas>&& detachedCanvas)
 {
-    Ref<OffscreenCanvas> clone = adoptRef(*new OffscreenCanvas(scriptExecutionContext, detachedCanvas->size(), detachedCanvas->takePlaceholderSource()));
+    Ref<OffscreenCanvas> clone = adoptRef(*new OffscreenCanvas(scriptExecutionContext, detachedCanvas->size(), detachedCanvas->takePlaceholderSource(scriptExecutionContext)));
     if (!detachedCanvas->originClean())
         clone->setOriginTainted();
+    clone->m_inheritedLanguage = AtomString { detachedCanvas->inheritedLanguage() };
+    clone->m_inheritedDirection = detachedCanvas->inheritedDirection();
     clone->suspendIfNeeded();
     return clone;
 }
 
 Ref<OffscreenCanvas> OffscreenCanvas::create(ScriptExecutionContext& scriptExecutionContext, PlaceholderRenderingContext& placeholder)
 {
-    auto offscreen = adoptRef(*new OffscreenCanvas(scriptExecutionContext, placeholder.size(), &placeholder.source()));
+    Ref offscreen = adoptRef(*new OffscreenCanvas(scriptExecutionContext, placeholder.size(), LocalPlaceholderRenderingContextSource::create(placeholder)));
+    Ref canvas = placeholder.canvas();
+    offscreen->m_inheritedLanguage = canvas->effectiveLang();
+    offscreen->m_inheritedDirection = canvas->effectiveTextDirection();
     offscreen->suspendIfNeeded();
     return offscreen;
 }
@@ -130,6 +189,14 @@ OffscreenCanvas::OffscreenCanvas(ScriptExecutionContext& scriptExecutionContext,
     , CanvasBase(WTF::move(size), scriptExecutionContext)
     , m_placeholderSource(WTF::move(placeholderSource))
 {
+    if (RefPtr source = m_placeholderSource) {
+        source->setRecommitHandler([weakThis = WeakPtr { *this }, contextIdentifier = scriptExecutionContext.identifier()] {
+            ScriptExecutionContext::postTaskTo(contextIdentifier, [weakThis](ScriptExecutionContext&) {
+                if (RefPtr canvas = weakThis.get())
+                    canvas->scheduleCommitToPlaceholderCanvas();
+            });
+        });
+    }
 }
 
 OffscreenCanvas::~OffscreenCanvas()
@@ -172,14 +239,19 @@ void OffscreenCanvas::setSizeForControllingContext(IntSize newSize)
 void OffscreenCanvas::didUpdateSizeProperties(bool sizeChanged)
 {
     if (m_context)
-        m_context->didUpdateCanvasSizeProperties(sizeChanged);
+        protect(m_context.get())->didUpdateCanvasSizeProperties(sizeChanged);
     notifyObserversCanvasResized();
     scheduleCommitToPlaceholderCanvas();
 }
 
-ExceptionOr<Ref<DOMMatrix>> OffscreenCanvas::getElementTransform(const CanvasElementImageSource&, DOMMatrix&)
+ExceptionOr<void> OffscreenCanvas::updateElementGeometry(const CanvasElementImageSource&, std::optional<UpdateElementGeometryOptions>)
 {
-    return Exception { ExceptionCode::InvalidStateError };
+    return Exception { ExceptionCode::NotSupportedError };
+}
+
+ExceptionOr<void> OffscreenCanvas::clearElementGeometry(const CanvasElementImageSource&)
+{
+    return Exception { ExceptionCode::NotSupportedError };
 }
 
 ExceptionOr<std::optional<OffscreenRenderingContext>> OffscreenCanvas::getContext(JSC::JSGlobalObject& state, RenderingContextType contextType, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments)
@@ -223,7 +295,7 @@ ExceptionOr<std::optional<OffscreenRenderingContext>> OffscreenCanvas::getContex
                 return result.releaseException();
             if (!m_context) {
                 m_context = ImageBitmapRenderingContext::create(*this, settings.releaseReturnValue());
-                downcast<ImageBitmapRenderingContext>(m_context.get())->transferFromImageBitmap(nullptr);
+                protect(downcast<ImageBitmapRenderingContext>(m_context.get()))->transferFromImageBitmap(nullptr);
             }
         }
         if (RefPtr context = dynamicDowncast<ImageBitmapRenderingContext>(m_context.get()))
@@ -293,7 +365,7 @@ ExceptionOr<Ref<ImageBitmap>> OffscreenCanvas::transferToImageBitmap()
     if (size().isEmpty())
         return Exception { ExceptionCode::InvalidStateError };
     bool bitmapOriginClean = originClean();
-    RefPtr buffer = m_context->transferToImageBuffer();
+    RefPtr buffer = protect(m_context.get())->transferToImageBuffer();
     if (!buffer)
         return Exception { ExceptionCode::UnknownError }; // UnknownError is used for DOM out-of-memory.
     return ImageBitmap::create(buffer.releaseNonNull(), bitmapOriginClean);
@@ -306,7 +378,7 @@ static String toEncodingMimeType(const String& mimeType)
     return mimeType.convertToASCIILowercase();
 }
 
-static std::optional<double> NODELETE qualityFromDouble(double qualityNumber)
+static std::optional<double> LEGACY_NODELETE qualityFromDouble(double qualityNumber)
 {
     if (!(qualityNumber >= 0 && qualityNumber <= 1))
         return std::nullopt;
@@ -359,7 +431,7 @@ SecurityOrigin* OffscreenCanvas::securityOrigin() const
     if (RefPtr globalScope = dynamicDowncast<WorkerGlobalScope>(scriptExecutionContext.get()))
         return &globalScope->topOrigin();
 
-    return &downcast<Document>(scriptExecutionContext)->securityOrigin();
+    return &downcast<Document>(scriptExecutionContext).securityOrigin();
 }
 
 bool OffscreenCanvas::canDetach() const
@@ -376,7 +448,7 @@ std::unique_ptr<DetachedOffscreenCanvas> OffscreenCanvas::detach()
 
     m_detached = true;
 
-    auto detached = makeUnique<DetachedOffscreenCanvas>(size(), originClean(), WTF::move(m_placeholderSource));
+    auto detached = makeUnique<DetachedOffscreenCanvas>(size(), originClean(), WTF::move(m_placeholderSource), m_inheritedLanguage.string().isolatedCopy(), m_inheritedDirection);
     setSize(IntSize(0, 0));
     return detached;
 }
@@ -385,14 +457,17 @@ void OffscreenCanvas::commitToPlaceholderCanvas()
 {
     if (!m_placeholderSource)
         return;
-    if  (!m_context)
+    RefPtr context = m_context.get();
+    if (!context)
         return;
-    if (m_context->compositingResultsNeedUpdating())
-        m_context->prepareForDisplay();
-    RefPtr imageBuffer = m_context->surfaceBufferToImageBuffer(CanvasRenderingContext::SurfaceBuffer::DisplayBuffer);
+    if (context->compositingResultsNeedUpdating())
+        context->prepareForDisplay();
+    if (context->commitToPlaceholder(*protect(m_placeholderSource)))
+        return;
+    RefPtr imageBuffer = context->surfaceBufferToImageBuffer(CanvasRenderingContext::SurfaceBuffer::DisplayBuffer);
     if (!imageBuffer)
         return;
-    protect(m_placeholderSource)->setPlaceholderBuffer(*imageBuffer, m_context->canvasBase().originClean(), m_context->isOpaque());
+    protect(m_placeholderSource)->setPlaceholderBuffer(*imageBuffer, protect(context->canvasBase())->originClean(), context->isOpaque());
 }
 
 void OffscreenCanvas::scheduleCommitToPlaceholderCanvas()

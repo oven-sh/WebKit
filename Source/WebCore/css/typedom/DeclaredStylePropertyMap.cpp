@@ -65,12 +65,12 @@ auto DeclaredStylePropertyMap::entries(ScriptExecutionContext* context) const ->
     if (!styleRule)
         return { };
 
-    auto& document = downcast<Document>(*context);
+    Ref document = downcast<Document>(*context);
     Ref properties = styleRule->properties();
     return map(properties.get(), [&document](auto propertyReference) {
         return StylePropertyMapEntry {
             propertyReference.cssName(),
-            propertyReference.id() == CSSPropertyCustom
+            propertyReference.id() == CSSPropertyID::Custom
                 ? reifyValueToVector(document, RefPtr<CSSValue> { propertyReference.value() }, AtomString { propertyReference.cssName() })
                 : reifyValueToVector(document, RefPtr<CSSValue> { propertyReference.value() }, propertyReference.id()),
         };
@@ -107,7 +107,7 @@ bool DeclaredStylePropertyMap::setShorthandProperty(CSSPropertyID propertyID, co
     if (!styleRule)
         return false;
 
-    CSSStyleSheet::RuleMutationScope mutationScope(m_ownerRule.get());
+    CSSStyleSheet::RuleMutationScope mutationScope(protect(m_ownerRule));
     bool didFailParsing = false;
     protect(styleRule->mutableProperties())->setProperty(propertyID, value, IsImportant::No, &didFailParsing);
     return !didFailParsing;
@@ -119,7 +119,7 @@ bool DeclaredStylePropertyMap::setProperty(CSSPropertyID propertyID, Ref<CSSValu
     if (!styleRule)
         return false;
 
-    CSSStyleSheet::RuleMutationScope mutationScope(m_ownerRule.get());
+    CSSStyleSheet::RuleMutationScope mutationScope(protect(m_ownerRule));
     bool didFailParsing = false;
     protect(styleRule->mutableProperties())->setProperty(propertyID, value->cssText(CSS::defaultSerializationContext()), IsImportant::No, &didFailParsing);
     return !didFailParsing;
@@ -131,9 +131,9 @@ bool DeclaredStylePropertyMap::setCustomProperty(Document&, const AtomString& pr
     if (!styleRule)
         return false;
 
-    CSSStyleSheet::RuleMutationScope mutationScope(m_ownerRule.get());
+    CSSStyleSheet::RuleMutationScope mutationScope(protect(m_ownerRule));
     Ref customPropertyValue = CSSCustomPropertyValue::createUnresolved(property, WTF::move(value));
-    protect(styleRule->mutableProperties())->addParsedProperty(CSSProperty(CSSPropertyCustom, WTF::move(customPropertyValue)));
+    protect(styleRule->mutableProperties())->addParsedProperty(CSSProperty(CSSPropertyID::Custom, WTF::move(customPropertyValue)));
     return true;
 }
 
@@ -143,7 +143,7 @@ void DeclaredStylePropertyMap::removeProperty(CSSPropertyID propertyID)
     if (!styleRule)
         return;
 
-    CSSStyleSheet::RuleMutationScope mutationScope(m_ownerRule.get());
+    CSSStyleSheet::RuleMutationScope mutationScope(protect(m_ownerRule));
     protect(styleRule->mutableProperties())->removeProperty(propertyID);
 }
 
@@ -153,7 +153,7 @@ void DeclaredStylePropertyMap::removeCustomProperty(const AtomString& property)
     if (!styleRule)
         return;
 
-    CSSStyleSheet::RuleMutationScope mutationScope(m_ownerRule.get());
+    CSSStyleSheet::RuleMutationScope mutationScope(protect(m_ownerRule));
     protect(styleRule->mutableProperties())->removeCustomProperty(property.string());
 }
 
@@ -168,7 +168,7 @@ void DeclaredStylePropertyMap::clear()
     if (!styleRule)
         return;
 
-    CSSStyleSheet::RuleMutationScope mutationScope(m_ownerRule.get());
+    CSSStyleSheet::RuleMutationScope mutationScope(protect(m_ownerRule));
     protect(styleRule->mutableProperties())->clear();
 }
 

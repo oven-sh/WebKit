@@ -24,6 +24,9 @@
 #ifndef USTDIO_H
 #define USTDIO_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include <stdio.h>
 #include <stdarg.h>
 

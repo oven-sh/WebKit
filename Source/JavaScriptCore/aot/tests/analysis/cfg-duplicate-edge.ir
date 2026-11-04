@@ -1,0 +1,42 @@
+# A Branch with equal targets gives one predecessor and two incoming edges
+# FORM: Prepared
+# RUN: analyses control-flow dominators edge-dominance
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="duplicateEdge" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(v1), notTaken b1(v2)
+  b1(v3):
+    Jump -> next b2()
+  b2():
+    Return v3
+}
+# CHECK: function f0
+# CHECK-NEXT: control-flow:
+# CHECK-NEXT: reverse postorder: [b0 b1 b2]
+# CHECK-NEXT: unreachable: []
+# CHECK-NEXT: b0 successors: [b1 b1]
+# CHECK-NEXT: b0 predecessors: []
+# CHECK-NEXT: b0 incoming edges: []
+# CHECK-NEXT: b0 single incoming edge: none
+# CHECK-NEXT: b0 handler: none
+# CHECK-NEXT: b1 successors: [b2]
+# CHECK-NEXT: b1 predecessors: [b0]
+# CHECK-NEXT: b1 incoming edges: [b0.0 b0.1]
+# CHECK-NEXT: b1 single incoming edge: none
+# CHECK-NEXT: b1 handler: none
+# CHECK-NEXT: b2 successors: []
+# CHECK-NEXT: b2 predecessors: [b1]
+# CHECK-NEXT: b2 incoming edges: [b1.0]
+# CHECK-NEXT: b2 single incoming edge: b1.0
+# CHECK-NEXT: b2 handler: none
+# CHECK-NEXT: dominators:
+# CHECK-NEXT: b0 idom: none
+# CHECK-NEXT: b0 children: [b1]
+# CHECK-NEXT: b1 idom: b0
+# CHECK-NEXT: b1 children: [b2]
+# CHECK-NEXT: b2 idom: b1
+# CHECK-NEXT: b2 children: []
+# CHECK-NEXT: edge-dominance:
+# CHECK-NEXT: b0.0 dominates: []
+# CHECK-NEXT: b0.1 dominates: []
+# CHECK-NEXT: b1.0 dominates: [b2]

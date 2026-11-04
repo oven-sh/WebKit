@@ -1,0 +1,100 @@
+# A test at the bottom of a loop compares the stepped value, and holds at entry only when it was tested before the loop
+# FORM: Prepared
+# RUN: induction
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="testedAfterStep" parameters=[{type=int[0, 1000]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Increment v2
+    v5 = Less v4, v0
+    Branch v5 -> taken b1(v4), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +1 Increasing stepped [v4] tests [b1 v2 Less v0 Invariant AfterStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v2
+
+function f1 name="narrowedCopyGoesAround" parameters=[{type=int[0, 1000]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Increment v2
+    v5 = Less v4, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +1 Increasing stepped [v4] tests [b1 v2 Less v0 Invariant AfterStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v2
+
+function f2 name="testedBeforeLoop" parameters=[{type=int[0, 1000]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    v2 = Less v1, v0
+    Branch v2 -> taken b1(), notTaken b3()
+  b1():
+    Jump -> next b2(v1)
+  b2(v3):
+    LoopHint
+    v5 = Increment v3
+    v6 = Less v5, v0
+    Branch v6 -> taken b2(v5), notTaken b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: loop b2:
+# CHECK-NEXT: v3 start v1 step +1 Increasing stepped [v5] tests [b2 v3 Less v0 Invariant AfterStep entry Holds exits OnlyAtTest]
+# CHECK-NEXT: loop b2 counter: v3
+
+function f3 name="anotherBoundTestedBeforeLoop" parameters=[{type=int[0, 1000]}, {type=int[0, 1000]}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    v3 = Less v2, v1
+    Branch v3 -> taken b1(), notTaken b3()
+  b1():
+    Jump -> next b2(v2)
+  b2(v4):
+    LoopHint
+    v6 = Increment v4
+    v7 = Less v6, v0
+    Branch v7 -> taken b2(v6), notTaken b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: loop b2:
+# CHECK-NEXT: v4 start v2 step +1 Increasing stepped [v6] tests [b2 v4 Less v0 Invariant AfterStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b2 counter: v4
+
+function f4 name="testedOnOneOfTwoWaysIn" parameters=[{type=int[0, 1000]}, {type=boolean}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    v3 = Less v2, v0
+    Branch v3 -> taken b2(), notTaken b5()
+  b2():
+    Jump -> next b4(v2)
+  b3():
+    Jump -> next b4(v2)
+  b4(v4):
+    LoopHint
+    v6 = Increment v4
+    v7 = Less v6, v0
+    Branch v7 -> taken b4(v6), notTaken b5()
+  b5():
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: loop b4:
+# CHECK-NEXT: v4 start v2 step +1 Increasing stepped [v6] tests [b4 v4 Less v0 Invariant AfterStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b4 counter: v4

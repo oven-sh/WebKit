@@ -1,0 +1,59 @@
+# From the flow analysis to the removal. A variable holds the closure of one of two functions, and flow has followed both to the one call that finds them.
+# By the time its caller is optimized that call tests which closure it has and names the function. What is left of the call by value has a callee that is undefined, whatever its stamp lists, so nothing can enter their entrypoints.
+# The closures are still created and told apart, and the identity of a closure is its entrypoint: each entrypoint stays with a body that throws an error which names the function, and holds no copy of it.
+# The function that is handed to code which nobody has seen keeps its entrypoint as it is
+# FORM: AsRead
+# RUN: pipeline RemoveUnreachableFunctions
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="chosen" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewClosure function=f1
+    PutModuleVariable v3 variable=g0
+    Jump -> next b3()
+  b2():
+    v5 = NewClosure function=f2
+    PutModuleVariable v5 variable=g0
+    Jump -> next b3()
+  b3():
+    v7 = NewClosure function=f3
+    v8 = PropGet v0 key="publish" [isFreeName]
+    v9 = Call v8, -, v7
+    Return
+# CHECK: = NewClosure function=f1
+# CHECK: = NewClosure function=f2
+}
+
+function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Mul v0, v0
+    Return v1
+}
+function f2 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Sub v0, v0
+    Return v1
+}
+function f3 name="published" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: name="first" module=m0 role=GenericEntrypoint
+# CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw
+# CHECK-LABEL: name="second" module=m0 role=GenericEntrypoint
+# CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw
+# CHECK-LABEL: name="published" module=m0 role=GenericEntrypoint
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK: = CallDirect {{*}} function=f2
+# CHECK: [[neither]]: undefined = Undefined
+# CHECK-NEXT: = Call [[neither]], {{*}}callees=[f1, f2]

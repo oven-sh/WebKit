@@ -375,9 +375,9 @@
 // link.
 //
 #define ABSL_ATTRIBUTE_SECTION_START(name) \
-  (reinterpret_cast<void *>(__start_##name))
+  (reinterpret_cast<void*>(__start_##name))
 #define ABSL_ATTRIBUTE_SECTION_STOP(name) \
-  (reinterpret_cast<void *>(__stop_##name))
+  (reinterpret_cast<void*>(__stop_##name))
 
 #else  // !ABSL_HAVE_ATTRIBUTE_SECTION
 
@@ -389,8 +389,8 @@
 #define ABSL_INIT_ATTRIBUTE_SECTION_VARS(name)
 #define ABSL_DEFINE_ATTRIBUTE_SECTION_VARS(name)
 #define ABSL_DECLARE_ATTRIBUTE_SECTION_VARS(name)
-#define ABSL_ATTRIBUTE_SECTION_START(name) (reinterpret_cast<void *>(0))
-#define ABSL_ATTRIBUTE_SECTION_STOP(name) (reinterpret_cast<void *>(0))
+#define ABSL_ATTRIBUTE_SECTION_START(name) (reinterpret_cast<void*>(0))
+#define ABSL_ATTRIBUTE_SECTION_STOP(name) (reinterpret_cast<void*>(0))
 
 #endif  // ABSL_ATTRIBUTE_SECTION
 
@@ -419,8 +419,7 @@
 //
 // Tells the compiler to warn about unused results.
 //
-// For code or headers that are assured to only build with C++17 and up, prefer
-// just using the standard `[[nodiscard]]` directly over this macro.
+// Deprecated: Use the standard C++17 `[[nodiscard]]` instead.
 //
 // When annotating a function, it must appear as the first part of the
 // declaration or definition. The compiler will warn if the return value from
@@ -442,15 +441,6 @@
 //
 //   Sprocket* SprocketPointer();
 //   SprocketPointer();  // Does *not* trigger a warning.
-//
-// ABSL_MUST_USE_RESULT allows using cast-to-void to suppress the unused result
-// warning. For that, warn_unused_result is used only for clang but not for gcc.
-// https://gcc.gnu.org/bugzilla/show_bug.cgi?id=66425
-//
-// Note: past advice was to place the macro after the argument list.
-//
-// TODO(b/176172494): Use ABSL_HAVE_CPP_ATTRIBUTE(nodiscard) when all code is
-// compliant with the stricter [[nodiscard]].
 #if defined(__clang__) && ABSL_HAVE_ATTRIBUTE(warn_unused_result)
 #define ABSL_MUST_USE_RESULT __attribute__((warn_unused_result))
 #else
@@ -494,8 +484,8 @@
 //
 // These attributes only take effect when the following conditions are met:
 //
-//   * The file/target is built in at least C++11 mode, with a Clang compiler
-//     that supports XRay attributes.
+//   * The file/target is built with a Clang compiler that supports XRay
+//     attributes.
 //   * The file/target is built with the -fxray-instrument flag set for the
 //     Clang/LLVM compiler.
 //   * The function is defined in the translation unit (the compiler honors the
@@ -577,12 +567,10 @@
 // Due to differences in positioning requirements between the old, compiler
 // specific __attribute__ syntax and the now standard `[[maybe_unused]]`, this
 // macro does not attempt to take advantage of `[[maybe_unused]]`.
-#if ABSL_HAVE_ATTRIBUTE(unused) || (defined(__GNUC__) && !defined(__clang__))
-#undef ABSL_ATTRIBUTE_UNUSED
-#define ABSL_ATTRIBUTE_UNUSED __attribute__((__unused__))
-#else
-#define ABSL_ATTRIBUTE_UNUSED
+#ifdef ABSL_ATTRIBUTE_UNUSED
+#error "ABSL_ATTRIBUTE_UNUSED should not be defined."
 #endif
+#define ABSL_ATTRIBUTE_UNUSED [[maybe_unused]]
 
 // ABSL_ATTRIBUTE_INITIAL_EXEC
 //
@@ -639,47 +627,19 @@
 //
 // Annotates implicit fall-through between switch labels, allowing a case to
 // indicate intentional fallthrough and turn off warnings about any lack of a
-// `break` statement. The ABSL_FALLTHROUGH_INTENDED macro should be followed by
-// a semicolon and can be used in most places where `break` can, provided that
-// no statements exist between it and the next switch label.
+// `break` statement.
 //
-// Example:
+// Deprecated: Use the standard C++17 `[[fallthrough]]` instead.
 //
-//  switch (x) {
-//    case 40:
-//    case 41:
-//      if (truth_is_out_there) {
-//        ++x;
-//        ABSL_FALLTHROUGH_INTENDED;  // Use instead of/along with annotations
-//                                    // in comments
-//      } else {
-//        return x;
-//      }
-//    case 42:
-//      ...
-//
-// Notes: When supported, GCC and Clang can issue a warning on switch labels
-// with unannotated fallthrough using the warning `-Wimplicit-fallthrough`. See
-// clang documentation on language extensions for details:
-// https://clang.llvm.org/docs/AttributeReference.html#fallthrough-clang-fallthrough
-//
-// When used with unsupported compilers, the ABSL_FALLTHROUGH_INTENDED macro has
-// no effect on diagnostics. In any case this macro has no effect on runtime
-// behavior and performance of code.
+// This macro has no effect on runtime behavior and performance of code.
 
 #ifdef ABSL_FALLTHROUGH_INTENDED
 #error "ABSL_FALLTHROUGH_INTENDED should not be defined."
-#elif ABSL_HAVE_CPP_ATTRIBUTE(fallthrough)
-#define ABSL_FALLTHROUGH_INTENDED [[fallthrough]]
-#elif ABSL_HAVE_CPP_ATTRIBUTE(clang::fallthrough)
-#define ABSL_FALLTHROUGH_INTENDED [[clang::fallthrough]]
-#elif ABSL_HAVE_CPP_ATTRIBUTE(gnu::fallthrough)
-#define ABSL_FALLTHROUGH_INTENDED [[gnu::fallthrough]]
-#else
-#define ABSL_FALLTHROUGH_INTENDED \
-  do {                            \
-  } while (0)
 #endif
+#define ABSL_FALLTHROUGH_INTENDED                                         \
+  struct _absl_fallthrough_intended_macro;                                \
+  (void)sizeof(_absl_fallthrough_intended_macro*);                        \
+  [[fallthrough]]
 
 // ABSL_DEPRECATED()
 //
@@ -687,8 +647,7 @@
 // declarations. The macro argument is used as a custom diagnostic message (e.g.
 // suggestion of a better alternative).
 //
-// For code or headers that are assured to only build with C++14 and up, prefer
-// just using the standard `[[deprecated("message")]]` directly over this macro.
+// Deprecated: Use the standard `[[deprecated("message")]]` macro instead.
 //
 // Examples:
 //
@@ -709,7 +668,25 @@
 // turns this warning off by default, instead relying on clang-tidy to report
 // new uses of deprecated code.
 #if ABSL_HAVE_ATTRIBUTE(deprecated)
+#if defined(__cplusplus) && defined(__clang__) && \
+    ABSL_HAVE_ATTRIBUTE(diagnose_if) && !defined(SWIG)
+struct [[deprecated(
+    "Use [[deprecated(...)]] instead.")]] _absl_deprecated_macro;
+// Trick: We use __attribute__((diagnose_if(...))) to refer to our own
+// deprecated symbol, which then causes a deprecation message to be emitted when
+// the macro is used. Since diagnose_if() isn't valid on every declaration, we
+// also suppress the warning regarding that.
+#define ABSL_DEPRECATED(message)                                             \
+  _Pragma("clang diagnostic push") /*                                     */ \
+      _Pragma("clang diagnostic ignored \"-Wignored-attributes\"")           \
+          __attribute__((diagnose_if(                                        \
+              sizeof(_absl_deprecated_macro*) == 0, "",                      \
+              "warning"))) /*                                             */ \
+          _Pragma("clang diagnostic pop") /*                              */ \
+      __attribute__((deprecated(message)))
+#else
 #define ABSL_DEPRECATED(message) __attribute__((deprecated(message)))
+#endif
 #else
 #define ABSL_DEPRECATED(message)
 #endif
@@ -719,7 +696,7 @@
 // deprecated code can be surrounded with these directives to achieve that
 // result.
 //
-// class ABSL_DEPRECATED("Use Bar instead") Foo;
+// class [[deprecated("Use Bar instead")]] Foo;
 //
 // ABSL_INTERNAL_DISABLE_DEPRECATED_DECLARATION_WARNING
 // Baz ComputeBazFromFoo(Foo f);
@@ -727,8 +704,8 @@
 #if defined(__GNUC__) || defined(__clang__)
 // Clang also supports these GCC pragmas.
 #define ABSL_INTERNAL_DISABLE_DEPRECATED_DECLARATION_WARNING \
-  _Pragma("GCC diagnostic push")             \
-  _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
+  _Pragma("GCC diagnostic push")                             \
+      _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
 #define ABSL_INTERNAL_RESTORE_DEPRECATED_DECLARATION_WARNING \
   _Pragma("GCC diagnostic pop")
 #elif defined(_MSC_VER)
@@ -764,40 +741,36 @@
 //
 // See the upstream documentation for more details:
 // https://clang.llvm.org/docs/AttributeReference.html#require-explicit-initialization
-#ifdef __cplusplus
-#if ABSL_HAVE_CPP_ATTRIBUTE(clang::require_explicit_initialization)
-// clang-format off
-#define ABSL_REQUIRE_EXPLICIT_INIT \
+#if defined(__cplusplus) && !defined(SWIG)
+#if defined(_MSC_VER) && !defined(__clang__)
+// Workaround for MSVC: https://github.com/abseil/abseil-cpp/issues/2157
+#define ABSL_REQUIRE_EXPLICIT_INIT
+#elif ABSL_HAVE_CPP_ATTRIBUTE(clang::require_explicit_initialization)
+#define ABSL_REQUIRE_EXPLICIT_INIT             \
   [[clang::require_explicit_initialization]] = \
-    AbslInternal_YouForgotToExplicitlyInitializeAField::v
+      AbslInternal_YouForgotToExplicitlyInitializeAField::v
 #else
 #define ABSL_REQUIRE_EXPLICIT_INIT \
   = AbslInternal_YouForgotToExplicitlyInitializeAField::v
 #endif
-// clang-format on
 #else
-// clang-format off
 #if ABSL_HAVE_ATTRIBUTE(require_explicit_initialization)
 #define ABSL_REQUIRE_EXPLICIT_INIT \
   __attribute__((require_explicit_initialization))
 #else
-#define ABSL_REQUIRE_EXPLICIT_INIT \
-  /* No portable fallback for C is available */
+// No portable fallback for C is available
+#define ABSL_REQUIRE_EXPLICIT_INIT
 #endif
-// clang-format on
 #endif
 
-#ifdef __cplusplus
+#if defined(__cplusplus) && !defined(SWIG)
 struct AbslInternal_YouForgotToExplicitlyInitializeAField {
   // A portable version of [[clang::require_explicit_initialization]] that
   // never builds, as a last resort for all toolchains.
   // The error messages are poor, so we don't rely on this unless we have to.
   template <class T>
-#if !defined(SWIG)
-  constexpr
-#endif
-  operator T() const /* NOLINT */ {
-    const void *volatile deliberately_volatile_ptr = nullptr;
+  constexpr operator T() const /* NOLINT */ {
+    const void* volatile deliberately_volatile_ptr = nullptr;
     // Infinite loop to prevent constexpr compilation
     for (;;) {
       // This assignment ensures the 'this' pointer is not optimized away, so
@@ -813,22 +786,20 @@ struct AbslInternal_YouForgotToExplicitlyInitializeAField {
 
 // ABSL_CONST_INIT
 //
-// A variable declaration annotated with the `ABSL_CONST_INIT` attribute will
-// not compile (on supported platforms) unless the variable has a constant
-// initializer. This is useful for variables with static and thread storage
-// duration, because it guarantees that they will not suffer from the so-called
-// "static init order fiasco".
+// A variable declared with `ABSL_CONST_INIT` will not compile (on supported
+// platforms) unless the variable has a constant initializer. This is useful for
+// variables with static and thread storage duration, because it guarantees that
+// they will not suffer from the so-called "static init order fiasco".
 //
-// This attribute must be placed on the initializing declaration of the
-// variable. Some compilers will give a -Wmissing-constinit warning when this
-// attribute is placed on some other declaration but missing from the
-// initializing declaration.
+// `ABSL_CONST_INIT` must be placed on the initializing declaration
+// (i.e. definition) of the variable. Some compilers will give a
+// `-Wmissing-constinit` warning when it is placed on some other
+// declaration but missing from the initializing declaration.
 //
-// In some cases (notably with thread_local variables), `ABSL_CONST_INIT` can
-// also be used in a non-initializing declaration to tell the compiler that a
-// variable is already initialized, reducing overhead that would otherwise be
-// incurred by a hidden guard variable. Thus annotating all declarations with
-// this attribute is recommended to potentially enhance optimization.
+// For thread_local variables, placing `ABSL_CONST_INIT` on the non-initializing
+// declaration tells the compiler that the variable is already initialized,
+// reducing overhead that would otherwise be incurred by a hidden guard
+// variable.
 //
 // Example:
 //
@@ -840,9 +811,10 @@ struct AbslInternal_YouForgotToExplicitlyInitializeAField {
 //   ABSL_CONST_INIT MyType MyClass::my_var = MakeMyType(...);
 //
 // For code or headers that are assured to only build with C++20 and up, prefer
-// just using the standard `constinit` keyword directly over this macro.
+// using the standard `constinit` keyword directly over this macro.
 //
-// Note that this attribute is redundant if the variable is declared constexpr.
+// Note that `ABSL_CONST_INIT` must not be used on a variable declared
+// constexpr.
 #if defined(__cpp_constinit) && __cpp_constinit >= 201907L
 #define ABSL_CONST_INIT constinit
 #elif ABSL_HAVE_CPP_ATTRIBUTE(clang::require_constant_initialization)
@@ -1075,7 +1047,8 @@ struct AbslInternal_YouForgotToExplicitlyInitializeAField {
 // overriding the compiler flag.
 //
 // See https://clang.llvm.org/docs/AttributeReference.html#uninitialized
-// and https://gcc.gnu.org/onlinedocs/gcc/Common-Variable-Attributes.html#index-uninitialized-variable-attribute
+// and
+// https://gcc.gnu.org/onlinedocs/gcc/Common-Variable-Attributes.html#index-uninitialized-variable-attribute
 #if ABSL_HAVE_CPP_ATTRIBUTE(clang::uninitialized)
 #define ABSL_ATTRIBUTE_UNINITIALIZED [[clang::uninitialized]]
 #elif ABSL_HAVE_CPP_ATTRIBUTE(gnu::uninitialized)

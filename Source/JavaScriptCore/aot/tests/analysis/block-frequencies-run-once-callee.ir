@@ -1,0 +1,76 @@
+# A call of a function that runs at most once changes no frequency, with and without flow results
+# FORM: AsRead
+# RUN: frequencies
+# RUN(FLOW): frequencies flow
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v2 function=f1
+    Jump -> next b2()
+  b2():
+    v4 = CallDirect v2 function=f3
+    v5 = CallDirect v2 function=f3
+    Return v5
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+# FLOW-LABEL: function f0
+# FLOW-NEXT: b0 frequency: Normal count: 1.000000
+# FLOW-NEXT: b1 frequency: Normal count: 0.500000
+# FLOW-NEXT: b2 frequency: Normal count: 1.000000
+# FLOW-NOT: frequency
+function f1 name="runsOnce" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = CallDirect function=f2
+    Jump -> next b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+# FLOW-LABEL: function f1
+# FLOW-NEXT: b0 frequency: Normal count: 1.000000
+# FLOW-NEXT: b1 frequency: Normal count: 0.500000
+# FLOW-NEXT: b2 frequency: Normal count: 1.000000
+# FLOW-NOT: frequency
+function f2 name="runsOnceCallee" results=[{type=undefined}] {
+    Return
+}
+# CHECK-LABEL: function f2
+# FLOW-LABEL: function f2
+function f3 name="runsTwice" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = CallDirect function=f4
+    Jump -> next b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+# FLOW-LABEL: function f3
+# FLOW-NEXT: b0 frequency: Normal count: 1.000000
+# FLOW-NEXT: b1 frequency: Normal count: 0.500000
+# FLOW-NEXT: b2 frequency: Normal count: 1.000000
+# FLOW-NOT: frequency
+function f4 name="runsTwiceCallee" results=[{type=undefined}] {
+    Return
+}
+# CHECK-LABEL: function f4
+# FLOW-LABEL: function f4

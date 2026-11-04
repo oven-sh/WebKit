@@ -41,8 +41,6 @@ class WebPageProxy;
 
 namespace API {
 
-class FrameTreeNode;
-
 class TargetedElementInfo final : public ObjectImpl<Object::Type::TargetedElementInfo> {
 public:
     static Ref<TargetedElementInfo> create(WebKit::WebPageProxy& page, WebCore::TargetedElementInfo&& info)
@@ -72,9 +70,7 @@ public:
 
     const HashSet<WTF::URL>& mediaAndLinkURLs() const LIFETIME_BOUND { return m_info.mediaAndLinkURLs; }
 
-    void childFrames(CompletionHandler<void(Vector<Ref<FrameTreeNode>>&&)>&&) const;
-
-    bool NODELETE isSameElement(const TargetedElementInfo&) const;
+    bool LEGACY_NODELETE isSameElement(const TargetedElementInfo&) const;
 
     WebCore::NodeIdentifier nodeIdentifier() const { return m_info.nodeIdentifier; }
     WebCore::ScriptExecutionContextIdentifier documentIdentifier() const { return m_info.documentIdentifier; }

@@ -73,12 +73,6 @@
 #import <wtf/text/StringBuilder.h>
 #import <wtf/text/StringToIntegerConversion.h>
 
-#if PLATFORM(MAC)
-template<> struct WTF::CFTypeTrait<DDResultRef> {
-    static inline CFTypeID typeID(void) { return DDResultGetCFTypeID(); }
-};
-#endif
-
 namespace WebCore {
 
 using namespace HTMLNames;
@@ -176,6 +170,16 @@ std::optional<DetectedItem> DataDetection::detectItemAroundHitTestResult(const H
     return detectItem(position, *contextRange);
 }
 
+IntRect DataDetection::visibleContentRectForHighlights(const LocalFrameView& rootView)
+{
+    IntRect visibleContentRect { rootView.visibleContentRect() };
+    if (rootView.frame().isMainFrame())
+        return visibleContentRect;
+
+    IntRect clippedRect { rootView.windowToContents(rootView.windowClipRect()) };
+    return clippedRect.isEmpty() ? visibleContentRect : clippedRect;
+}
+
 #endif // PLATFORM(MAC)
 
 static BOOL resultIsURL(DDResultRef result)
@@ -198,7 +202,7 @@ static BOOL resultIsURL(DDResultRef result)
 
 bool DataDetection::canBePresentedByDataDetectors(const URL& url)
 {
-    return [PAL::softLink_DataDetectorsCore_DDURLTapAndHoldSchemes() containsObject:url.protocol().convertToASCIILowercase().createNSString().get()];
+    return [protect(PAL::softLink_DataDetectorsCore_DDURLTapAndHoldSchemes()) containsObject:url.protocol().convertToASCIILowercase().createNSString().get()];
 }
 
 bool DataDetection::isDataDetectorLink(Element& element)
@@ -233,18 +237,18 @@ bool DataDetection::canPresentDataDetectorsUIForElement(Element& element)
     if (!dataDetectionResults)
         return false;
 
-    NSArray *results = dataDetectionResults->documentLevelResults();
+    RetainPtr results = dataDetectionResults->documentLevelResults();
     if (!results)
         return false;
 
     auto resultIndices = StringView { resultAttribute }.split('/');
     auto indexIterator = resultIndices.begin();
-    auto result = [results[parseIntegerAllowingTrailingJunk<int>(*indexIterator).value_or(0)] coreResult];
+    RetainPtr result = [[results objectAtIndex:parseIntegerAllowingTrailingJunk<int>(*indexIterator).value_or(0)] coreResult];
 
     // Handle the case of a signature block, where we need to follow the path down one or more subresult levels.
     while (++indexIterator != resultIndices.end()) {
         results = (__bridge NSArray *)PAL::softLink_DataDetectorsCore_DDResultGetSubResults(result);
-        result = (__bridge DDResultRef)results[parseIntegerAllowingTrailingJunk<int>(*indexIterator).value_or(0)];
+        result = (__bridge DDResultRef)[results objectAtIndex:parseIntegerAllowingTrailingJunk<int>(*indexIterator).value_or(0)];
     }
 
     return PAL::softLink_DataDetectorsCore_DDShouldImmediatelyShowActionSheetForResult(result);
@@ -257,7 +261,7 @@ static NSString *constructURLStringForResult(DDResultRef currentResult, NSString
 
     auto phoneTypes = detectionTypes.contains(DataDetectorType::PhoneNumber) ? DDURLifierPhoneNumberDetectionRegular : DDURLifierPhoneNumberDetectionNone;
     auto category = PAL::softLink_DataDetectorsCore_DDResultGetCategory(currentResult);
-    auto type = PAL::softLink_DataDetectorsCore_DDResultGetType(currentResult);
+    RetainPtr type = PAL::softLink_DataDetectorsCore_DDResultGetType(currentResult);
 
     if ((detectionTypes.contains(DataDetectorType::Address) && DDResultCategoryAddress == category)
         || (detectionTypes.contains(DataDetectorType::TrackingNumber) && CFEqual(PAL::get_DataDetectorsCore_DDBinderTrackingNumberKey(), type))
@@ -374,8 +378,8 @@ static void buildQuery(DDScanQueryRef scanQuery, const SimpleRange& contextRange
     // Once we're over this number of fragments, we stop at the space.
     const CFIndex maxFragmentSpace = 10000;
 
-    CFCharacterSetRef whiteSpacesSet = CFCharacterSetGetPredefined(kCFCharacterSetWhitespaceAndNewline);
-    CFCharacterSetRef newLinesSet = CFCharacterSetGetPredefined(kCFCharacterSetNewline);
+    RetainPtr whiteSpacesSet = CFCharacterSetGetPredefined(kCFCharacterSetWhitespaceAndNewline);
+    RetainPtr newLinesSet = CFCharacterSetGetPredefined(kCFCharacterSetNewline);
     
     CFIndex iteratorCount = 0;
     
@@ -581,10 +585,10 @@ static NSArray * processDataDetectorScannerResults(DDScannerRef scanner, OptionS
     // Iterate through the scanner results to find signatures and extract all the subresults while
     // populating the array of index paths to use in the href of the anchors being created.
     for (id resultObject in (NSArray *)scannerResults.get()) {
-        DDResultRef result = (DDResultRef)resultObject;
+        RetainPtr result = (DDResultRef)resultObject;
         NSIndexPath *indexPath = [NSIndexPath indexPathWithIndex:currentTopLevelIndex];
         if (CFEqual(PAL::softLink_DataDetectorsCore_DDResultGetType(result), PAL::get_DataDetectorsCore_DDBinderSignatureBlockKey())) {
-            NSArray *subresults = (NSArray *)PAL::softLink_DataDetectorsCore_DDResultGetSubResults(result);
+            RetainPtr subresults = (NSArray *)PAL::softLink_DataDetectorsCore_DDResultGetSubResults(result);
 
             for (NSUInteger subResultIndex = 0 ; subResultIndex < [subresults count] ; subResultIndex++) {
                 indexPaths.append([indexPath indexPathByAddingIndex:subResultIndex]);
@@ -615,7 +619,7 @@ static NSArray * processDataDetectorScannerResults(DDScannerRef scanner, OptionS
     // we are about to process a different text node.
     CFIndex resultCount = allResults.size();
     for (CFIndex resultIndex = 0; resultIndex < resultCount; ++resultIndex) {
-        DDResultRef coreResult = allResults[resultIndex].get();
+        RetainPtr coreResult = allResults[resultIndex];
         DDQueryRange queryRange = PAL::softLink_DataDetectorsCore_DDResultGetQueryRangeForURLification(coreResult);
         auto& resultRanges = (*allResultRanges)[resultIndex];
 
@@ -683,8 +687,8 @@ static NSArray * processDataDetectorScannerResults(DDScannerRef scanner, OptionS
                         // FIXME: Consider keeping color in LCHA (if that change is made) or converting back to the initial underlying color type to avoid unnecessarily clamping colors outside of sRGB.
                         auto underlineColor = convertColor<SRGBA<uint8_t>>(hsla);
 
-                        anchorElement->setInlineStyleProperty(CSSPropertyColor, CSSValueCurrentcolor);
-                        anchorElement->setInlineStyleProperty(CSSPropertyTextDecorationColor, serializationForCSS(static_cast<Color>(underlineColor)));
+                        anchorElement->setInlineStyleProperty(CSSPropertyID::Color, CSSValueID::Currentcolor);
+                        anchorElement->setInlineStyleProperty(CSSPropertyID::TextDecorationColor, serializationForCSS(static_cast<Color>(underlineColor)));
                     }
                 }
             }
@@ -754,7 +758,7 @@ void DataDetection::detectContentInFrame(LocalFrame* frame, OptionSet<DataDetect
                 return;
 
             auto contextRange = makeRangeSelectingNodeContents(*document);
-            completionHandler(processDataDetectorScannerResults(scanner.get(), types, referenceDateFromContext, scanQuery.get(), contextRange, fragments));
+            completionHandler(protect(processDataDetectorScannerResults(scanner.get(), types, referenceDateFromContext, scanQuery.get(), contextRange, fragments)));
         });
     });
 }
@@ -898,7 +902,8 @@ Vector<SimpleRange> DataDetection::detectRanges(const SimpleRange& contextRange,
         return ranges;
 
     RetainPtr results = adoptCF(PAL::softLink_DataDetectorsCore_DDScannerCopyResultsWithOptions(scanner.get(), DDScannerCopyResultsOptionsNoOverlap));
-    for (id resultObject in static_cast<NSArray *>(results.get())) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id resultObject in static_cast<NSArray *>(results.get())) {
         RetainPtr ddResult = static_cast<DDResultRef>(resultObject);
         auto dataType = typeForResult(ddResult.get());
         if (!dataType)

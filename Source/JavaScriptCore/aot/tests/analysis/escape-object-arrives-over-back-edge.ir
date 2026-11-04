@@ -1,0 +1,29 @@
+# The back edge hands the object of the loop's body to a parameter with a smaller number than the allocation: it arrives behind the place the solver has reached and is followed from there all the same
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: analyses escape
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+function f0 name="theBackEdgeBringsALaterObject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b1(v2)
+  b1(v3: L0):
+    LoopHint
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v1 -> taken b1(v5), notTaken b2(v3)
+  b2(v6: L0):
+    Return v6
+}
+# CHECK: function f0
+# CHECK: objects: 3
+# CHECK: o1 definition: v2
+# CHECK: o1 aliases: [v2 v3 v6]
+# CHECK: o1 object uses: [b2.terminator(0)]
+# CHECK: o2 definition: v5
+# CHECK: o2 state: Escapes
+# CHECK: o2 reasons: [Returned]
+# CHECK: o2 aliases: [v3 v5 v6]
+# CHECK: o2 object uses: [b2.terminator(0)]
+# CHECK: v3 points to: [o1 o2]
+# CHECK: v6 points to: [o1 o2]

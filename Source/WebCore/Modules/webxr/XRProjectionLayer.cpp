@@ -106,6 +106,14 @@ Vector<IntRect> XRProjectionLayer::computeViewports()
     return viewports;
 }
 
+void XRProjectionLayer::setViewport(size_t viewIndex, const IntRect& rect)
+{
+    if (m_viewports.isEmpty())
+        m_viewports = computeViewports();
+    ASSERT(viewIndex < m_viewports.size());
+    m_viewports[viewIndex] = rect;
+}
+
 PlatformXR::DeviceLayer XRProjectionLayer::endFrame()
 {
     PlatformXR::DeviceLayer layerData;
@@ -179,7 +187,7 @@ uint32_t XRProjectionLayer::textureArrayLength() const
 
 bool XRProjectionLayer::ignoreDepthValues() const
 {
-    return false;
+    return m_ignoreDepthValues;
 }
 
 std::optional<float> XRProjectionLayer::fixedFoveation() const

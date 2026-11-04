@@ -39,8 +39,9 @@ inline Quirks& Document::quirks()
 
 inline const Quirks& Document::quirks() const
 {
-    if (!m_quirks)
+    if (!m_quirks) {
         return const_cast<Document&>(*this).ensureQuirks();
+    }
     return *m_quirks;
 }
 

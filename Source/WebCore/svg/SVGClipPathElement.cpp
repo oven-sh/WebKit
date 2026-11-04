@@ -27,6 +27,7 @@
 #include "Document.h"
 #include "ImageBuffer.h"
 #include "LegacyRenderSVGResourceClipper.h"
+#include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGResourceClipper.h"
@@ -47,7 +48,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGClipPathElement);
 
 inline SVGClipPathElement::SVGClipPathElement(const QualifiedName& tagName, Document& document)
-    : SVGGraphicsElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGGraphicsElement(tagName, document, PropertyRegistry::singleton())
 {
     ASSERT(hasTagName(SVGNames::clipPathTag));
 
@@ -123,7 +124,7 @@ RefPtr<SVGGraphicsElement> SVGClipPathElement::shouldApplyPathClipping() const
         if (is<RenderSVGText>(renderer))
             return true;
         auto& style = renderer.style();
-        if (style.display() == Style::DisplayType::None || style.usedVisibility() != Visibility::Visible)
+        if (style.display() == Style::DisplayType::None || renderer.usedStyle().visibility() != UsedVisibility::Visible)
             return false;
         // Current shape in clip-path gets clipped too. Fall back to masking.
         return renderer.hasClipPath();
@@ -180,7 +181,7 @@ FloatRect SVGClipPathElement::calculateClipContentRepaintRect(RepaintRectCalcula
         ASSERT(child.isSVGLayerAwareRenderer());
         ASSERT(!child.isRenderSVGRoot());
 
-        auto transform = SVGTransformComputation(child).computeAccumulatedTransform(downcast<RenderLayerModelObject>(renderer()), TransformState::TrackSVGCTMMatrix);
+        auto transform = SVGTransformComputation(child).computeAccumulatedTransform(protect(downcast<RenderLayerModelObject>(renderer())), TransformState::TrackSVGCTMMatrix);
         return transform.isIdentity() ? std::nullopt : std::make_optional(WTF::move(transform));
     };
 
@@ -194,7 +195,7 @@ FloatRect SVGClipPathElement::calculateClipContentRepaintRect(RepaintRectCalcula
             continue;
         CheckedRef style = renderer->style();
         // For <use> elements, skip visibility check on the <use> itself, check target instead.
-        if (style->display() == Style::DisplayType::None || (style->usedVisibility() != Visibility::Visible && !childNode->hasTagName(SVGNames::useTag)))
+        if (style->display() == Style::DisplayType::None || (renderer->usedStyle().visibility() != UsedVisibility::Visible && !childNode->hasTagName(SVGNames::useTag)))
             continue;
 
         // For <use> elements, verify the target is visible and valid

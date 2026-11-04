@@ -1,0 +1,113 @@
+# function Options() { this.dt = 0.5; this.label = "x" }  const options = new Options()
+# In flow the read `options.dt` may answer undefined, as every read off what a constructor function has made, so the sets of the parameters and results below hold undefined and flow leaves their checks in place.
+# The field is always filled, which the type of the read says. With every caller seen, a parameter or a result is proven where the type of all that arrives fits:
+#   step(options.dt) . scale(dt) inside step, which rests on step's own parameter . down(n), which calls itself with its own parameter . read(), whose result is the read . the check of what read() answers.
+# Not proven: mixed(options.label) beside mixed(options.dt): a string arrives. after(x), whose argument rests on the check in mixed, which may fail. each(x), which Array.prototype.forEach calls.
+# FORM: AsRead
+# RUN: pipeline ApplyFlowResults
+# STATISTIC: PositionsProvenByTypes = 4
+# STATISTIC: ChecksProvenByTypes = 4
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Parameter
+typesite w3 module=m0 position=40 kind=Result
+typesite w4 module=m0 position=50 kind=Parameter
+typesite w5 module=m0 position=60 kind=Parameter
+typesite w6 module=m0 position=70 kind=Parameter
+typesite w7 module=m0 position=80 kind=CallResult
+layout L0 kind=Instance name="Options" constructor=f8 fields=[{key="dt" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=string} flags=[IsRequired]}] flags=[IsConstructorFunction]
+variable g0 name="options" module=m0 declared={type=L0} initialization=Uninitialized
+variable g1 name="step" module=m0 declared={type=anything} initialization=Function function=f1
+variable g2 name="scale" module=m0 declared={type=anything} initialization=Function function=f2
+variable g3 name="down" module=m0 declared={type=anything} initialization=Function function=f3
+variable g4 name="read" module=m0 declared={type=anything} initialization=Function function=f4
+variable g5 name="mixed" module=m0 declared={type=anything} initialization=Function function=f5
+variable g6 name="after" module=m0 declared={type=anything} initialization=Function function=f6
+variable g7 name="each" module=m0 declared={type=anything} initialization=Function function=f7
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f8
+    v1 = Construct v0, -
+    v2 = Convert v1 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v2 variable=g0
+    v4 = PropGet v2 key="dt"
+    v5 = GetModuleVariable variable=g1
+    v6 = Call v5, -, v4
+    v7 = GetModuleVariable variable=g3
+    v8 = Call v7, -, v4
+    v9 = GetModuleVariable variable=g4
+    v10 = Call v9, -
+    v11 = Convert v10 declared={type=number site=w7}
+    v12 = GetModuleVariable variable=g5
+    v13 = Call v12, -, v4
+    v14 = PropGet v2 key="label"
+    v15 = Call v12, -, v14
+    v16 = NewArray v4
+    v17 = PropGet v16 key="forEach"
+    v18 = GetModuleVariable variable=g7
+    v19 = Call v17, v16, v18
+    v20 = Add v11, v6
+    Return v20
+# CHECK: [[answer]]: {{*}} = Call v9
+# CHECK-NOT: = Check
+}
+function f1 name="step" flags=[IsChecked] parameters=[{type=number site=w0}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g2
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="step" {{*}}parameters=[{type={{*}} site=w0}]
+# CHECK-NOT: = Check
+function f2 name="scale" flags=[IsChecked] parameters=[{type=number site=w1}] results=[{type=anything}] {
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f2 name="scale" {{*}}parameters=[{type={{*}} site=w1}]
+# CHECK-NOT: = Check
+function f3 name="down" flags=[IsChecked] parameters=[{type=number site=w2}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = GetModuleVariable variable=g3
+    v4 = Call v3, -, v0
+    Return v4
+}
+# CHECK-LABEL: function f3 name="down" {{*}}parameters=[{type={{*}} site=w2}]
+# CHECK-NOT: = Check
+function f4 name="read" flags=[IsChecked] results=[{type=number site=w3}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="dt"
+    v2 = Convert v1 declared={type=number site=w3}
+    Return v2
+}
+# CHECK-LABEL: function f4 name="read" {{*}}results=[{type={{*}} site=w3}]
+function f5 name="mixed" flags=[IsChecked] parameters=[{type=number site=w4}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g6
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f5 name="mixed" {{*}}parameters=[{type=number site=w4 flags=[IsExpected]}]
+# CHECK: = Check {{*}}expectedType=number site=w4
+function f6 name="after" flags=[IsChecked] parameters=[{type=number site=w5}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: function f6 name="after" {{*}}parameters=[{type=number site=w5 flags=[IsExpected]}]
+# CHECK: = Check {{*}}expectedType=number site=w5
+function f7 name="each" flags=[IsChecked] parameters=[{type=number site=w6}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: function f7 name="each"
+function f8 name="Options" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+    v1 = Double number=0.5
+    PropSet v0, v1 key="dt"
+    v3 = String string="x"
+    PropSet v0, v3 key="label"
+    v5 = Undefined
+    Return v5
+}

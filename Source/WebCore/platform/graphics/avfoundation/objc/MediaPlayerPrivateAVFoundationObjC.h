@@ -101,11 +101,11 @@ public:
 #endif
 
     void playerItemStatusDidChange(int);
-    void NODELETE playbackLikelyToKeepUpWillChange();
+    void LEGACY_NODELETE playbackLikelyToKeepUpWillChange();
     void playbackLikelyToKeepUpDidChange(bool);
-    void NODELETE playbackBufferEmptyWillChange();
+    void LEGACY_NODELETE playbackBufferEmptyWillChange();
     void playbackBufferEmptyDidChange(bool);
-    void NODELETE playbackBufferFullWillChange();
+    void LEGACY_NODELETE playbackBufferFullWillChange();
     void playbackBufferFullDidChange(bool);
     void loadedTimeRangesDidChange(RetainPtr<NSArray>&&);
     void seekableTimeRangesDidChange(RetainPtr<NSArray>&&, NSTimeInterval, NSTimeInterval);
@@ -120,8 +120,8 @@ public:
     void metadataDidArrive(const RetainPtr<NSArray>&, const MediaTime&);
     void firstFrameAvailableDidChange(bool);
     void trackEnabledDidChange(bool);
-    void NODELETE canPlayFastReverseDidChange(bool);
-    void NODELETE canPlayFastForwardDidChange(bool);
+    void LEGACY_NODELETE canPlayFastReverseDidChange(bool);
+    void LEGACY_NODELETE canPlayFastForwardDidChange(bool);
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     void playbackTargetIsWirelessDidChange();
@@ -177,7 +177,7 @@ private:
     void setMuted(bool) final;
     void paint(GraphicsContext&, const FloatRect&) final;
     void paintCurrentFrameInContext(GraphicsContext&, const FloatRect&) final;
-    PlatformLayer* platformLayer() const final;
+    PlatformLayer* platformLayer() final;
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     RetainPtr<PlatformLayer> createVideoFullscreenLayer() final;
     void setVideoFullscreenLayer(PlatformLayer*, Function<void()>&& completionHandler) final;
@@ -240,6 +240,7 @@ private:
 
     bool hasContextRenderer() const final;
     bool hasLayerRenderer() const final;
+    bool hasVideoInlineLayer() const final;
 
 
     enum class ShouldAnimate : bool { No, Yes };
@@ -397,13 +398,13 @@ private:
 #endif
 
 
-    void forEachResourceLoader(Function<void(WebCoreAVFResourceLoader&)>&&) const;
+    void forEachResourceLoader(NOESCAPE const Function<void(WebCoreAVFResourceLoader&)>&) const;
     void addResourceLoader(AVAssetResourceLoadingRequest *, Ref<WebCoreAVFResourceLoader>&&);
     RefPtr<WebCoreAVFResourceLoader> getResourceLoader(AVAssetResourceLoadingRequest *) const;
     RefPtr<WebCoreAVFResourceLoader> takeResourceLoader(AVAssetResourceLoadingRequest *);
 
     void updateLayerAttachment();
-    bool shouldAttachLayerToPlayer();
+    bool LEGACY_NODELETE shouldAttachLayerToPlayer();
 
 #if PLATFORM(MAC)
     void screenReservedChanged(bool) final;
@@ -435,7 +436,7 @@ private:
     RetainPtr<CVPixelBufferRef> m_lastPixelBuffer;
     RefPtr<NativeImage> m_lastImage;
     std::unique_ptr<ImageRotationSessionVT> m_imageRotationSession;
-    std::unique_ptr<PixelBufferConformerCV> m_pixelBufferConformer;
+    const std::unique_ptr<PixelBufferConformerCV> m_pixelBufferConformer;
 
     friend class WebCoreAVFResourceLoader;
     mutable Lock m_resourceLoaderMapLock;
@@ -447,13 +448,13 @@ private:
 
     Vector<Ref<AudioTrackPrivateAVFObjC>> m_audioTracks;
     Vector<Ref<VideoTrackPrivateAVFObjC>> m_videoTracks;
-    RefPtr<MediaSelectionGroupAVFObjC> m_audibleGroup;
-    RefPtr<MediaSelectionGroupAVFObjC> m_visualGroup;
+    const RefPtr<MediaSelectionGroupAVFObjC> m_audibleGroup;
+    const RefPtr<MediaSelectionGroupAVFObjC> m_visualGroup;
 
     ThreadSafeWeakPtr<InbandTextTrackPrivateAVF> m_currentTextTrack;
 
 #if ENABLE(DATACUE_VALUE)
-    RefPtr<InbandMetadataTextTrackPrivateAVF> m_metadataTrack;
+    const RefPtr<InbandMetadataTextTrackPrivateAVF> m_metadataTrack;
 #endif
 
     MemoryCompactRobinHoodHashMap<String, Ref<InbandChapterTrackPrivateAVFObjC>> m_chapterTracks;

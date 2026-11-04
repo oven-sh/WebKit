@@ -31,6 +31,7 @@
 #include "Logging.h"
 #include "WellKnownResourceFetcher.h"
 #include <WebCore/WellKnownOriginList.h>
+#include <wtf/Borrow.h>
 
 namespace WebKit {
 
@@ -39,6 +40,11 @@ static constexpr auto webAuthnOriginsMember = "origins"_s;
 
 void RelatedOriginsValidation::validate(WebPageProxy& page, const WebCore::SecurityOriginData& callerOrigin, const String& relyingPartyIdentifier, CompletionHandler<void(Result&&)>&& completionHandler)
 {
+    validate(page, Vector<WebCore::SecurityOriginData> { callerOrigin }, relyingPartyIdentifier, WTF::move(completionHandler));
+}
+
+void RelatedOriginsValidation::validate(WebPageProxy& page, Vector<WebCore::SecurityOriginData>&& originsToCheck, const String& relyingPartyIdentifier, CompletionHandler<void(Result&&)>&& completionHandler)
+{
     auto url = WebCore::wellKnownURL(relyingPartyIdentifier, webAuthnWellKnownPath);
     if (!url.isValid()) {
         RELEASE_LOG_ERROR(WebAuthn, "Related origins: relying party identifier is not a host.");
@@ -46,19 +52,27 @@ void RelatedOriginsValidation::validate(WebPageProxy& page, const WebCore::Secur
         return;
     }
 
-    WellKnownResourceFetcher::fetch(page, WTF::move(url), { }, [callerOrigin, completionHandler = WTF::move(completionHandler)](WellKnownFetchResult&& result) mutable {
+    WellKnownResourceFetcher::fetch(page, WTF::move(url), { }, [originsToCheck = WTF::move(originsToCheck), completionHandler = WTF::move(completionHandler)](WellKnownFetchResult&& result) mutable {
         if (!result.succeeded()) {
             RELEASE_LOG_ERROR(WebAuthn, "Related origins: fetch failed (%" PUBLIC_LOG_STRING ").", wellKnownFetchStatusDescription(result.status).characters());
             completionHandler({ });
             return;
         }
 
-        auto origins = WebCore::parseOriginsFromWellKnownList(result.body.span(), webAuthnOriginsMember);
-        auto found = WebCore::findOriginInWellKnownList(callerOrigin, result.body.span(), webAuthnOriginsMember);
-        if (found == WebCore::WellKnownOriginListResult::Malformed)
-            RELEASE_LOG_ERROR(WebAuthn, "Related origins: well-known resource is malformed.");
+        Borrow borrowedBody = result.body;
+        auto origins = WebCore::parseOriginsFromWellKnownList(borrowedBody->span(), webAuthnOriginsMember);
+        bool allFound = !originsToCheck.isEmpty();
+        for (auto& originToCheck : originsToCheck) {
+            auto found = WebCore::findOriginInWellKnownList(originToCheck, borrowedBody->span(), webAuthnOriginsMember);
+            if (found == WebCore::WellKnownOriginListResult::Malformed)
+                RELEASE_LOG_ERROR(WebAuthn, "Related origins: well-known resource is malformed.");
+            if (found != WebCore::WellKnownOriginListResult::Found) {
+                allFound = false;
+                break;
+            }
+        }
 
-        completionHandler({ found == WebCore::WellKnownOriginListResult::Found, WTF::move(origins) });
+        completionHandler({ allFound, WTF::move(origins) });
     });
 }
 

@@ -1,0 +1,99 @@
+# A bound that the loop reads again from operands that do not change in it is computed in the loop
+# FORM: Prepared
+# RUN: induction
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="lengthReadInHeader" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = GetArrayLength v0
+    v5 = Less v2, v4
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Increment v6
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +1 Increasing stepped [v7] tests [b1 v2 Less v4 ComputedInLoop BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v2
+
+function f1 name="loopAppendsToArray" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = GetArrayLength v0
+    v5 = Less v2, v4
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    AppendElement v0, v6
+    v8 = Increment v6
+    Jump -> next b1(v8)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +1 Increasing stepped [v8] tests [b1 v2 Less v4 ComputedInLoop BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v2
+
+function f2 name="lengthReadBeforeLoop" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    v2 = GetArrayLength v0
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v2
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Increment v6
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v3 start v1 step +1 Increasing stepped [v7] tests [b1 v3 Less v2 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v3
+
+function f3 name="arrayChangesInLoop" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v0)
+  b1(v3, v4):
+    LoopHint
+    v6 = GetArrayLength v4
+    v7 = Less v3, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = Increment v8
+    Jump -> next b1(v9, v1)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v3 start v2 step +1 Increasing stepped [v9] tests [b1 v3 Less v6 Unknown BeforeStep entry Unknown exits OnlyAtTest]
+
+function f4 name="boundComesFromCall" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Call v0
+    v5 = Less v2, v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Increment v2
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +1 Increasing stepped [v6] tests [b1 v2 Less v4 Unknown BeforeStep entry Unknown exits OnlyAtTest]

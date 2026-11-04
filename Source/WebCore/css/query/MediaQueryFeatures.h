@@ -47,6 +47,7 @@ const FeatureSchema& colorIndex();
 const FeatureSchema& deviceAspectRatio();
 const FeatureSchema& deviceHeight();
 const FeatureSchema& devicePixelRatio();
+const FeatureSchema& devicePosture();
 const FeatureSchema& deviceWidth();
 const FeatureSchema& dynamicRange();
 const FeatureSchema& forcedColors();
@@ -71,6 +72,8 @@ const FeatureSchema& transition();
 const FeatureSchema& update();
 const FeatureSchema& videoPlayableInline();
 const FeatureSchema& width();
+const FeatureSchema& horizontalViewportSegments();
+const FeatureSchema& verticalViewportSegments();
 #if ENABLE(APPLICATION_MANIFEST)
 const FeatureSchema& displayMode();
 #endif

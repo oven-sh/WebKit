@@ -1,0 +1,6 @@
+# The fields of a record come in the order the schema declares them
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 declared={type=anything} name="g"

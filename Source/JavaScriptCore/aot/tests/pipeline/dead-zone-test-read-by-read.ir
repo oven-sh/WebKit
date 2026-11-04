@@ -1,0 +1,58 @@
+# Of a binding that one reader may find empty, a read that the store comes before on every path loses its dead-zone test. The others keep theirs
+# FORM: AsRead
+# RUN: pipeline SimplifyCasts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="late" module=m0 declared={type=anything|absent}
+layout L0 kind=Environment name="scope" fields=[{key=@"binding.0" declared={type=anything|absent}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    v3 = GetModuleVariable variable=g0
+    v4 = CheckInitialized v3 name="late"
+    v5 = CallDirect function=f1
+    v6 = CallDirect v4 function=f2
+    v7 = CallDirect v5 function=f2
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="publish" [isFreeName]
+    v10 = Call v9, -, v0, v4, v5, v6, v7
+    Return
+}
+function f1 name="reader" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="late"
+    Return v1
+}
+function f2 name="owner" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = NewClosure v1 function=f3
+    v3 = Call v2
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    v5 = GetEnvironmentField v1 layout=L0 field=0
+    v6 = CheckInitialized v5 name="captured"
+    v7 = Add v3, v6
+    Return v7
+}
+function f3 name="step" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = CheckInitialized v1 name="captured"
+    Return v2
+}
+# CHECK: layout L0 kind=Environment {{*}}key=@"binding.0" declared={type={{*}}|absent
+# CHECK: variable g0 {{*}}declared={type={{*}}|absent
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = GetModuleVariable variable=g0
+# CHECK-NOT: CheckInitialized
+# CHECK-LABEL: function f1 name="reader"
+# CHECK: [[early]]: {{*}}|absent = GetModuleVariable variable=g0
+# CHECK-NEXT: = CheckInitialized [[early]] name="late"
+# CHECK-LABEL: function f2 name="owner"
+# CHECK: = GetEnvironmentField v1 layout=L0
+# CHECK-NOT: CheckInitialized
+# CHECK-LABEL: function f3 name="step"
+# CHECK: [[captured]]: {{*}}|absent = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: = CheckInitialized [[captured]] name="captured"

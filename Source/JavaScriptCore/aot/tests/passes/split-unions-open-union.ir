@@ -1,0 +1,56 @@
+# A union with a part nothing is known about loses the parts a rule resolves to arms, and the rest keeps the operation by name on the narrowed value
+# FORM: Prepared
+# RUN: pass SplitUnions SplitUnions
+# STATISTIC: UnionsSplit = 2
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Scanner" fields=[{key="pos" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="layout-or-any-function" parameters=[{type=function|L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pos"
+    Return v1
+# CHECK-NEXT: b0(v0: function|L0):
+# CHECK-NEXT: [[isScanner]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[isScanner]] -> taken [[scannerArm]](| 0), notTaken [[rest]](| 0)
+# CHECK: [[scannerArm]]([[scanner]]: L0):
+# CHECK-NEXT: = PropGet [[scanner]] key="pos" receivers=[L0]
+# CHECK: [[rest]]([[callback]]: function) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[callback]] key="pos"
+# CHECK-NOT: TypeTest
+}
+function f1 name="string-or-any-function" parameters=[{type=string|function}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return v1
+# CHECK: = TypeTest v0 testedType=string
+# CHECK: ([[text]]: string):
+# CHECK-NEXT: = PropGet [[text]] key="length"
+# CHECK: ([[handler]]: function) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[handler]] key="length"
+# CHECK-NOT: TypeTest
+}
+function f2 name="string-or-any-object" parameters=[{type=string|object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return v1
+# CHECK-NEXT: b0(v0: string|object):
+# CHECK-NEXT: = PropGet v0 key="length"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f3 name="any-object" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pos"
+    Return v1
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: = PropGet v0 key="pos"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f4 name="no-part-beside-the-open-one-resolves" parameters=[{type=function|L0}] results=[{type=anything}] {
+    PropSet v0, v0 key="missing"
+    Return
+# CHECK-NEXT: b0(v0: function|L0):
+# CHECK-NEXT: PropSet v0, v0 key="missing"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+}

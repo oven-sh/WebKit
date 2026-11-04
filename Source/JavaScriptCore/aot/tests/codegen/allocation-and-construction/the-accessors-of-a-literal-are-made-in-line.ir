@@ -1,0 +1,43 @@
+# The accessors of a literal whose layout is known, each with a slot in the cell: compiled code makes the pair of functions, lists the key and fills the slot. The run time is called where the object
+# is not as it was made, or has the accessor already. A name that the layout keeps as a value, and an object of any layout, are the run time's.
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot
+# RUN: generate-code calls
+# CHECK-LABEL: f2: size=
+# CHECK: operation operationAOTDefineAccessors x1
+# CHECK: stub DidCreateField.One x2
+# CHECK-LABEL: f3: size=
+# CHECK: operation operationAOTDefineAccessor x1
+# CHECK: stub DidCreateField.One x1
+# CHECK-LABEL: f4: size=
+# CHECK: operation operationAOTDefineAccessor x1
+# CHECK-NOT: stub DidCreateField
+# CHECK-LABEL: f5: size=
+# CHECK: operation operationAOTDefineAccessors x1
+# CHECK-NOT: stub DidCreateField
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="a" declared={type=anything} form=[IsAccessor] slotType=f0 setterType=f1}, {key="b" declared={type=anything} form=[IsAccessor] slotType=f0}, {key="value" declared={type=anything}}]
+function f0 name="get" results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f1 name="set" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f2 name="aPairAndAGetter" parameters=[{type=L0}, {type=f0}, {type=f1}] results=[{type=anything}] {
+    DefineAccessors v0, v1, v2, v1 keys=["a", "a", "b"] getterMask=5 enumerableMask=7
+    Return v0
+}
+function f3 name="aLoneGetter" parameters=[{type=L0}, {type=f0}] results=[{type=anything}] {
+    DefineGetter v0, v1 key="b"
+    Return v0
+}
+function f4 name="overAValue" parameters=[{type=L0}, {type=f0}] results=[{type=anything}] {
+    DefineGetter v0, v1 key="value"
+    Return v0
+}
+function f5 name="anyObject" parameters=[{type=object}, {type=f0}, {type=f1}] results=[{type=anything}] {
+    DefineAccessors v0, v1, v2 keys=["a", "a"] getterMask=1 enumerableMask=3
+    Return v0
+}

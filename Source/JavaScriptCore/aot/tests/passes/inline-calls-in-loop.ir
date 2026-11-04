@@ -1,0 +1,45 @@
+# A loop parameter that goes around through an inlined call gets the type the copy gives for the caller's arguments, in the run that makes the copy
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="add" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Add v0, v1
+    Return v2
+}
+
+function f1 name="sumsNumbers" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v5 = CallDirect v3, v0 function=f0
+    Jump -> next b1(v5)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: name="sumsNumbers"
+# CHECK: b1(v3: number):
+# CHECK-NOT: CallDirect
+# CHECK: : number = Add v3,
+
+function f2 name="sumsUnknownValues" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v5 = CallDirect v3, v0 function=f0
+    Jump -> next b1(v5)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: name="sumsUnknownValues"
+# CHECK: b1(v3: number|string|bigint):
+# CHECK-NOT: CallDirect
+# CHECK: : number|string|bigint = Add v3, v0

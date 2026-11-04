@@ -60,7 +60,7 @@ static std::filesystem::path toStdFileSystemPath(StringView path)
 {
 #if HAVE(MISSING_U8STRING)
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    return std::filesystem::u8path(path.utf8().legacyCStringPointer());
+    return std::filesystem::u8path(path.utf8().data());
 ALLOW_DEPRECATED_DECLARATIONS_END
 #else
     return { std::u8string(path.utf8().data()) };
@@ -121,7 +121,7 @@ constexpr std::array<bool, 128> needsEscaping = {
     false, false, false, false, true,  false, false, true,  /* 78-7F */
 };
 
-static inline bool NODELETE shouldEscapeChar16(char16_t character, char16_t previousCharacter, char16_t nextCharacter)
+static inline bool LEGACY_NODELETE shouldEscapeChar16(char16_t character, char16_t previousCharacter, char16_t nextCharacter)
 {
     if (character <= 127)
         return needsEscaping[character];
@@ -210,7 +210,7 @@ String decodeFromFilename(const String& inputString)
                 return { };
             if (!isASCIIHexDigit(inputString[i + 2]))
                 return { };
-            result.append(toASCIIHexValue(inputString[i + 1], inputString[i + 2]));
+            result.append(byteCast<Latin1Character>(toASCIIHexValue(inputString[i + 1], inputString[i + 2])));
             i += 2;
             continue;
         }

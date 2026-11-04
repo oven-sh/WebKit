@@ -1,0 +1,6 @@
+# The program of early-exit-without-frame.ir without the split of live ranges around the frame: what lives across the calls has one home from the entry block on, and the frame covers the early exit too
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:SplitLiveRangesAroundFrame testing=ignore-branch-hints
+# RUN: generate-code FunctionsWithFrameOnSomePaths
+# CHECK: statistic FunctionsWithFrameOnSomePaths 0
+# PROGRAM-OF: early-exit-without-frame.ir

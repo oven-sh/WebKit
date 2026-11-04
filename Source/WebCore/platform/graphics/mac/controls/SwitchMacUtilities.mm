@@ -103,7 +103,7 @@ FloatRect rectWithTransposedSize(const FloatRect& rect, bool isVertical)
     return logicalRect;
 }
 
-FloatRect trackRectForBounds(const FloatRect& bounds, const FloatSize& size)
+FloatRect LEGACY_NODELETE trackRectForBounds(const FloatRect& bounds, const FloatSize& size)
 {
     auto offsetY = std::max(((bounds.height() - size.height()) / 2.0f), 0.0f);
     return { FloatPoint { bounds.x(), bounds.y() + offsetY }, size };
@@ -124,7 +124,7 @@ RefPtr<ImageBuffer> trackMaskImage(GraphicsContext& context, FloatSize trackRect
     if (!maskImage)
         return nullptr;
 
-    auto cgContext = maskImage->context().platformContext();
+    RetainPtr cgContext = maskImage->context().platformContext();
 
     auto coreUIDirection = (__bridge NSString *)(isRTL ? kCUIUserInterfaceLayoutDirectionRightToLeft : kCUIUserInterfaceLayoutDirectionLeftToRight);
 

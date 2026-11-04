@@ -192,8 +192,8 @@ JSC_DEFINE_HOST_FUNCTION(iteratorProtoFuncForEach, (JSGlobalObject* globalObject
 
     uint64_t counter = 0;
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(callbackArg), 2);
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, asObject(callbackArg), callData, 2);
         RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
@@ -280,6 +280,11 @@ JSC_DEFINE_HOST_FUNCTION(iteratorProtoFuncIncludes, (JSGlobalObject* globalObjec
         RETURN_IF_EXCEPTION(scope, { });
 
         cachedCall = &cachedCallHolder.value();
+    } else if (callData.type == CallData::Type::Compiled) {
+        cachedCallHolder.emplace(globalObject, asObject(nextMethod), callData, 0);
+        RETURN_IF_EXCEPTION(scope, { });
+
+        cachedCall = &cachedCallHolder.value();
     }
 
     JSValue searchElement = callFrame->argument(0);
@@ -359,6 +364,11 @@ JSC_DEFINE_HOST_FUNCTION(iteratorProtoFuncJoin, (JSGlobalObject* globalObject, C
     CachedCall* cachedCall = nullptr;
     if (callData.type == CallData::Type::JS) [[likely]] {
         cachedCallHolder.emplace(globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        RETURN_IF_EXCEPTION(scope, { });
+
+        cachedCall = &cachedCallHolder.value();
+    } else if (callData.type == CallData::Type::Compiled) {
+        cachedCallHolder.emplace(globalObject, asObject(nextMethod), callData, 0);
         RETURN_IF_EXCEPTION(scope, { });
 
         cachedCall = &cachedCallHolder.value();

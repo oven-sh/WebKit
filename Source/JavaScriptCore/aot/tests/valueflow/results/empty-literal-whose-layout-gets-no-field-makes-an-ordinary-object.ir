@@ -1,0 +1,64 @@
+# function fill(key) { var byKey = {}; byKey[key] = 1; var fresh = {}; fresh[key] = 2; var named = {}; named.a = 3; var typed = {}; take(typed); typed[key] = 4; var below = { __proto__: named };
+#   var outer = { inner: {} }; outer.inner[key] = 5; return [byKey, fresh, named, typed, below, outer] }
+# A compiled object without a slot has nothing that an ordinary object lacks. L0 and L1 end without a field, one as constant data and one as an allocation: their literals make ordinary objects, and what holds them is typed Object.
+# So does L3, which the parameters of take() are declared with, one of them as what an array holds: a type that names such a layout names Object in its place.
+# L2 gets the field `a` from the store. The literal of L4 names the object above it, and nothing is added to it. The object of L5 lies inside other constant data. These three stay as they are.
+# RUN: valueflow-apply
+# CHECK: layout L2 {{*}}key="a"
+# CHECK: function f1
+# CHECK: v1: object = NewDictionary
+# CHECK-NEXT: Object = AssumeType v1 provenType=Object
+# CHECK: object = NewDictionary
+# CHECK-NEXT: Object = AssumeType {{*}} provenType=Object
+# CHECK: L2 = NewObject layout=L2
+# CHECK: object = NewDictionary
+# CHECK-NEXT: Object = AssumeType {{*}} provenType=Object
+# CHECK: L4 = NewObject {{*}} layout=L4
+# CHECK: L6 = Data data=d1
+# CHECK: L5 = {{*}}
+# CHECK-NOT: NewDictionary
+# CHECK: function f2 name="take" {{*}}parameters=[{type=Object}, {type=Array<Object{{*}}>}]
+# CHECK: b0(v0: Object, v1: Array<Object{{*}}>):
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0
+layout L1
+layout L2
+layout L3
+layout L4
+layout L5
+layout L6 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}]
+data d0 root=Object{layout=L0} module=m0
+data d1 root=Object{layout=L6 members=[{key="inner" value=Object{layout=L5}}]} module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = String string="k"
+    v2 = String string="l"
+    v3 = Add v1, v2
+    v4 = Call v0, -, v3
+    Return
+}
+function f1 name="fill" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Data data=d0
+    v2 = Integer integer=1
+    ElemSet v1, v0, v2 mode=Strict
+    v4 = NewObject layout=L1
+    ElemSet v4, v0, v2 mode=Strict
+    v6 = NewObject layout=L2
+    PropSet v6, v2 key="a" mode=Strict
+    v8 = NewObject layout=L3
+    v9 = NewClosure function=f2
+    v10 = NewArray v8 contents=L3
+    v11 = Call v9, -, v8, v10
+    ElemSet v8, v0, v2 mode=Strict
+    v13 = NewObject v6 layout=L4
+    v14 = Data data=d1
+    v15 = PropGet v14 key="inner"
+    ElemSet v15, v0, v2 mode=Strict
+    v17 = NewArray v1, v4, v6, v8, v13, v14 contents=anything
+    Return v17
+}
+function f2 name="take" parameters=[{type=L3}, {type=Array<L3>}] results=[{type=anything}] {
+    Return
+}

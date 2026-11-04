@@ -1,0 +1,27 @@
+# No layout of the receiver has the names, so what is found lies above the object. In fast code the read compares the slot at its site in line, and so does the look for the getter that the read would call: neither has a frame until its site has no answer.
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# RUN: generate-code
+# CHECK: f1: size={{*}} frame=0@
+# CHECK: f2: size={{*}} frame=0@
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f1
+    v4 = CallDirect v1 function=f2
+    v5 = CallDirect v1 function=f2
+    Return v5
+}
+function f1 name="read" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="above" receivers=[L0]
+    Return v1
+}
+function f2 name="findGetter" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetCachedGetter v0 key="twice"
+    Return v1
+}

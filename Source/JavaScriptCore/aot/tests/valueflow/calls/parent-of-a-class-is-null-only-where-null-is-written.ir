@@ -1,0 +1,96 @@
+# class A { m() {} }  class D extends A { constructor() { super() }  m() { super.m() } }  new D().m()
+# class N extends null { m() { super.m } }  class S extends A { constructor() { super() } }  Object.setPrototypeOf(S, null)  new S()
+# The links of a class with a heritage and of its prototype object are written by NewClass, and whoever changes a link writes it. So what lies above D is A and nothing else, and above D.prototype A.prototype:
+# no test for null in front of the call of super, and no arm behind it that calls nobody knows what. Above N.prototype lies null, which `extends null` has written, and above S null or A, after Object.setPrototypeOf.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[above]]: {{*}} = ResolveHeritage v4
+# CHECK-NEXT: : object = AssumeType [[above]] provenType=object
+# CHECK-LABEL: function f2 name="D"
+# CHECK: [[parent]]: {{*}} = GetSuperBase
+# CHECK-NEXT: : f1 = AssumeType [[parent]] provenType=f1
+# CHECK-LABEL: function f4 name="m"
+# CHECK: [[base]]: {{*}} = GetSuperBase
+# CHECK-NEXT: : object = AssumeType [[base]] provenType=object
+# CHECK-LABEL: function f6 name="m"
+# CHECK: [[none]]: {{*}} = GetSuperBase
+# CHECK-NEXT: : null = AssumeType [[none]] provenType=null
+# CHECK-LABEL: function f7 name="S"
+# CHECK: [[either]]: {{*}} = GetSuperBase
+# CHECK-NEXT: : null|f1 = AssumeType [[either]] provenType=null|f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="A" constructor=f1
+layout L1 kind=Instance name="D" base=L0 constructor=f2 flags=[HasHeritage]
+layout L2 kind=Instance name="N" constructor=f5 flags=[HasHeritage]
+layout L3 kind=Instance name="S" base=L0 constructor=f7 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f3
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = FinishClass v1 layout=L0
+    v5 = NewClosure function=f2
+    v6 = ResolveHeritage v4
+    v7 = NewClass v5, v4, v6 layout=L1
+    v8 = NewClosure v7 function=f4
+    DefineMethod v7, v8 layout=L1 key="m"
+    v10 = FinishClass v7 layout=L1
+    v11 = Undefined
+    v12 = Construct v10
+    v13 = PropGet v12 key="m"
+    v14 = Call v13, v12
+    v15 = Null
+    v16 = NewClosure function=f5
+    v17 = ResolveHeritage v15
+    v18 = NewClass v16, v15, v17 layout=L2
+    v19 = NewClosure v18 function=f6
+    DefineMethod v18, v19 layout=L2 key="m"
+    v21 = FinishClass v18 layout=L2
+    v22 = Undefined
+    v23 = PropGet v21 key="prototype"
+    v24 = PropGet v23 key="m"
+    v25 = Call v24, v23
+    v26 = NewClosure function=f7
+    v27 = ResolveHeritage v4
+    v28 = NewClass v26, v4, v27 layout=L3
+    v29 = FinishClass v28 layout=L3
+    v30 = Builtin builtin=ObjectSetPrototypeOf
+    v31 = Call v30, -, v29, v15
+    v32 = Construct v29
+    Return
+}
+function f1 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="D" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="m" kind=Method flags=[HasThis] results=[{type=anything}] {
+    Return v0
+}
+function f4 name="m" kind=Method flags=[HasThis] captures=[{type=object}] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=ClassPrototype
+    v3 = SuperGet v2, v1 key="m"
+    v4 = Call v3, v1
+    Return v4
+}
+function f5 name="N" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f6 name="m" kind=Method flags=[HasThis] captures=[{type=object}] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=ClassPrototype
+    Return v2
+}
+function f7 name="S" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L3
+    Return v3
+}

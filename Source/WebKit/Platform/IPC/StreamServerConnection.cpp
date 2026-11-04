@@ -148,13 +148,17 @@ void StreamServerConnection::didReceiveInvalidMessage(Connection&, MessageName, 
 StreamServerConnection::DispatchResult StreamServerConnection::dispatchStreamMessages(size_t messageLimit)
 {
     RefPtr<StreamMessageReceiver> currentReceiver;
+    bool didDispatchMessage = false;
     // FIXME: Implement WTF::isValid(ReceiverName).
     uint8_t currentReceiverName = static_cast<uint8_t>(ReceiverName::Invalid);
 
     for (size_t i = 0; i < messageLimit; ++i) {
         auto span = m_buffer.tryAcquire();
-        if (!span)
+        if (!span) {
+            if (didDispatchMessage)
+                CheckedPtr { m_client }->didRunOutOfMessages();
             return DispatchResult::HasNoMessages;
+        }
         IPC::Decoder decoder { *span, m_currentDestinationID };
         if (!decoder.isValid()) {
             dispatchDidReceiveInvalidMessage(decoder);
@@ -168,6 +172,7 @@ StreamServerConnection::DispatchResult StreamServerConnection::dispatchStreamMes
         if (decoder.messageName() == MessageName::ProcessOutOfStreamMessage) {
             if (!processOutOfStreamMessage(decoder))
                 return DispatchResult::HasNoMessages;
+            didDispatchMessage = true;
             continue;
         }
         if (currentReceiverName != static_cast<uint8_t>(decoder.messageReceiverName())) {
@@ -189,12 +194,19 @@ StreamServerConnection::DispatchResult StreamServerConnection::dispatchStreamMes
             // This means we must timeout every receiver in the stream connection.
             // Currently we assert that the receivers are empty, as we only have up to one receiver in
             // a stream connection until possibility of skipping is implemented properly.
+            sendAsyncReplyCancelIfNeeded(decoder);
             Locker locker { m_receiversLock };
             ASSERT(m_receivers.isEmpty());
             return DispatchResult::HasNoMessages;
         }
         if (!processStreamMessage(decoder, *currentReceiver))
             return DispatchResult::HasNoMessages;
+        didDispatchMessage = true;
+    }
+    if (!m_buffer.tryAcquire()) {
+        if (didDispatchMessage)
+            CheckedPtr { m_client }->didRunOutOfMessages();
+        return DispatchResult::HasNoMessages;
     }
     return DispatchResult::HasMoreMessages;
 }
@@ -229,11 +241,20 @@ bool StreamServerConnection::processStreamMessage(Decoder& decoder, StreamMessag
         result = m_buffer.releaseAll();
         if (m_syncReplyToDispatch)
             protect(connection())->sendSyncReply(makeUniqueRefFromNonNullUniquePtr(WTF::move(m_syncReplyToDispatch)));
-    } else
+    } else {
+        sendAsyncReplyCancelIfNeeded(decoder);
         result = m_buffer.release(decoder.currentBufferOffset());
+    }
     if (result == WakeUpClient::Yes)
         m_clientWaitSignal.signal();
     return true;
+}
+
+void StreamServerConnection::sendAsyncReplyCancelIfNeeded(const Decoder& decoder)
+{
+    if (!decoder.isAsyncWithReplyMessage() || decoder.wasHandled())
+        return;
+    protect(connection())->sendAsyncReplyCancel(decoder.asyncReplyID());
 }
 
 bool StreamServerConnection::processOutOfStreamMessage(Decoder& decoder)
@@ -251,6 +272,7 @@ bool StreamServerConnection::processOutOfStreamMessage(Decoder& decoder)
     if (!message->isValid() || !m_receivers.isValidKey(key)) {
         // The ignoreInvalidMessageForTesting() path for sync messages that dispatchStreamMessage() has
         //  is not supported here because it is likely we don't have a id to reply to. No clients for this.
+        sendAsyncReplyCancelIfNeeded(*message);
         dispatchDidReceiveInvalidMessage(*message);
         return false;
     }
@@ -265,9 +287,10 @@ bool StreamServerConnection::processOutOfStreamMessage(Decoder& decoder)
             return false;
     }
 
-    // If receiver does not exist if it has been removed but messages are still pending to be
-    // processed. It's ok to skip such messages.
-    // FIXME: Note, corresponding skip is not possible at the moment for stream messages.
+    // If the receiver does not exist it has been removed but messages are still pending to be
+    // processed; it's ok to skip such messages. Either way, if the async reply was not handled,
+    // tell the sender to cancel its pending reply handler so it is not orphaned.
+    sendAsyncReplyCancelIfNeeded(*message);
     auto result = m_buffer.release(decoder.currentBufferOffset());
     if (result == WakeUpClient::Yes)
         m_clientWaitSignal.signal();
@@ -317,6 +340,11 @@ void StreamServerConnection::markCurrentlyDispatchedMessageAsInvalid(ASCIILitera
     UNUSED_PARAM(error);
     ASSERT(m_isDispatchingMessage);
     m_didReceiveInvalidMessage = true;
+}
+
+void StreamServerConnection::markCurrentlyDispatchedMessageAsInvalid(const String&)
+{
+    markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral { });
 }
 
 }

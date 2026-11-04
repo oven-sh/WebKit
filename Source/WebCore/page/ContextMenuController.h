@@ -43,6 +43,8 @@ class ContextMenuProvider;
 class Event;
 class HitTestResult;
 class Page;
+class Range;
+struct TextCheckingGuesses;
 
 class ContextMenuController {
     WTF_MAKE_TZONE_ALLOCATED(ContextMenuController);
@@ -50,7 +52,7 @@ public:
     ContextMenuController(Page&, UniqueRef<ContextMenuClient>&&);
     ~ContextMenuController();
 
-    Page& NODELETE page();
+    Page& LEGACY_NODELETE page();
     ContextMenuClient& client() LIFETIME_BOUND { return m_client.get(); }
 
     ContextMenu* contextMenu() const LIFETIME_BOUND { return m_contextMenu.get(); }
@@ -101,6 +103,8 @@ private:
 
     bool shouldEnableCopyLinkWithHighlight() const;
 
+    TextCheckingGuesses guessesForSpellingAndGrammarItems(LocalFrame&);
+
 #if ENABLE(PDFJS)
     void performPDFJSAction(LocalFrame&, const String& action);
 #endif
@@ -110,6 +114,14 @@ private:
     std::unique_ptr<ContextMenu> m_contextMenu;
     RefPtr<ContextMenuProvider> m_menuProvider;
     ContextMenuContext m_context;
+
+    struct SpellingAndGrammarTarget {
+        Ref<Range> range;
+        String text;
+    };
+    // The unselected word that spelling and grammar items act on.
+    std::optional<SpellingAndGrammarTarget> m_spellingAndGrammarTarget;
+
     bool m_isHandlingContextMenuEvent { false };
 };
 

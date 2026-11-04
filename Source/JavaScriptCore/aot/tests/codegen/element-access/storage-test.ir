@@ -1,0 +1,147 @@
+# The test of the storage kind of an array has code for each kind, as the condition of a branch that passes its proof and as a value, in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-4: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+# RUN(R): pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="conditionForInt32" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = GetArrayElement v0, v1, v4 arrayStorage=Int32 level=Expected
+    v6 = NewArray v5 contents=anything
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v8 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    v10 = GetArrayElement v0, v1, v9 arrayStorage=Int32 level=Expected
+    v11 = NewArray v10 contents=anything
+    Jump -> next b4()
+  b4():
+    Branch v2 -> taken b2(), notTaken b5()
+  b5():
+    Branch v2 -> taken b6(), notTaken b8()
+  b6() frequency=Rare:
+    v12 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v12 -> taken b7(| 0), notTaken b8()
+  b7(v13) frequency=Rare:
+    v14 = GetArrayElement v0, v1, v13 arrayStorage=Int32 level=Expected
+    v15 = NewArray v14 contents=anything
+    Jump -> next b8()
+  b8():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b2 Fast
+# S: f0 b6 Compact
+# R-LABEL: function f0 name="conditionForInt32"
+# R: b1(v4: guard @Void):
+# R: b3(v9: guard @Void):
+# R: b7(v13: guard @Void)
+function f1 name="conditionForDouble" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = GetArrayElement v0, v1, v4 arrayStorage=Double level=Expected
+    v6 = NewArray v5 contents=anything
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v8 = HasArrayStorage v0 arrayStorage=Double
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    v10 = GetArrayElement v0, v1, v9 arrayStorage=Double level=Expected
+    v11 = NewArray v10 contents=anything
+    Jump -> next b4()
+  b4():
+    Branch v2 -> taken b2(), notTaken b5()
+  b5():
+    Branch v2 -> taken b6(), notTaken b8()
+  b6() frequency=Rare:
+    v12 = HasArrayStorage v0 arrayStorage=Double
+    Branch v12 -> taken b7(| 0), notTaken b8()
+  b7(v13) frequency=Rare:
+    v14 = GetArrayElement v0, v1, v13 arrayStorage=Double level=Expected
+    v15 = NewArray v14 contents=anything
+    Jump -> next b8()
+  b8():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b2 Fast
+# S: f1 b6 Compact
+# R-LABEL: function f1 name="conditionForDouble"
+# R: b1(v4: guard @Void):
+# R: b3(v9: guard @Void):
+# R: b7(v13: guard @Void)
+function f2 name="conditionForContiguous" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = GetArrayElement v0, v1, v4 arrayStorage=Contiguous level=Expected
+    v6 = NewArray v5 contents=anything
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v8 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    v10 = GetArrayElement v0, v1, v9 arrayStorage=Contiguous level=Expected
+    v11 = NewArray v10 contents=anything
+    Jump -> next b4()
+  b4():
+    Branch v2 -> taken b2(), notTaken b5()
+  b5():
+    Branch v2 -> taken b6(), notTaken b8()
+  b6() frequency=Rare:
+    v12 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v12 -> taken b7(| 0), notTaken b8()
+  b7(v13) frequency=Rare:
+    v14 = GetArrayElement v0, v1, v13 arrayStorage=Contiguous level=Expected
+    v15 = NewArray v14 contents=anything
+    Jump -> next b8()
+  b8():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b2 Fast
+# S: f2 b6 Compact
+# R-LABEL: function f2 name="conditionForContiguous"
+# R: b1(v4: guard @Void):
+# R: b3(v9: guard @Void):
+# R: b7(v13: guard @Void)
+function f3 name="values" parameters=[{type=Array}, {type=boolean}] results=[{type=undefined}] {
+    v2 = HasArrayStorage v0 arrayStorage=Int32
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    v4 = HasArrayStorage v0 arrayStorage=Contiguous
+    v5 = NewArray v2, v3, v4 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = HasArrayStorage v0 arrayStorage=Int32
+    v8 = HasArrayStorage v0 arrayStorage=Double
+    v9 = HasArrayStorage v0 arrayStorage=Contiguous
+    v10 = NewArray v7, v8, v9 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v11 = HasArrayStorage v0 arrayStorage=Int32
+    v12 = HasArrayStorage v0 arrayStorage=Double
+    v13 = HasArrayStorage v0 arrayStorage=Contiguous
+    v14 = NewArray v11, v12, v13 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b1 Fast
+# S: f3 b3 Compact
+# R-LABEL: function f3 name="values"
+# R-COUNT-9: boolean @Boolean = HasArrayStorage v0

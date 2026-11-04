@@ -32,7 +32,8 @@
 #include "GPUSupportedLimits.h"
 #include "JSDOMPromiseDeferredForward.h"
 #include "ScriptExecutionContext.h"
-#include "WebGPUAdapter.h"
+#include "WebGPU.h"
+#include <WebCore/WebGPUCppAPI.h>
 #include <optional>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
@@ -42,28 +43,31 @@ namespace WebCore {
 
 class GPUAdapter : public RefCounted<GPUAdapter> {
 public:
-    static Ref<GPUAdapter> create(Ref<WebGPU::Adapter>&& backing)
+    static Ref<GPUAdapter> create(Ref<::WebGPU::Adapter>&& backing, Ref<WebGPUIntegration>&& gpu)
     {
-        return adoptRef(*new GPUAdapter(WTF::move(backing)));
+        return adoptRef(*new GPUAdapter(WTF::move(backing), WTF::move(gpu)));
     }
 
-    String NODELETE name() const;
-    Ref<GPUSupportedFeatures> NODELETE features() const;
-    Ref<GPUSupportedLimits> NODELETE limits() const;
-    bool NODELETE isFallbackAdapter() const;
+    String LEGACY_NODELETE name() const;
+    Ref<GPUSupportedFeatures> LEGACY_NODELETE features() const;
+    Ref<GPUSupportedLimits> LEGACY_NODELETE limits() const;
+    bool LEGACY_NODELETE isFallbackAdapter() const;
 
     using RequestDevicePromise = DOMPromiseDeferred<IDLInterface<GPUDevice>>;
     void requestDevice(ScriptExecutionContext&, const std::optional<GPUDeviceDescriptor>&, RequestDevicePromise&&);
 
-    Ref<GPUAdapterInfo> NODELETE info();
+    Ref<GPUAdapterInfo> LEGACY_NODELETE info();
 
-    WebGPU::Adapter& backing() { return m_backing; }
-    const WebGPU::Adapter& backing() const { return m_backing; }
+    ::WebGPU::Adapter& backing() { return m_backing; }
+    const ::WebGPU::Adapter& backing() const { return m_backing; }
 
 private:
-    GPUAdapter(Ref<WebGPU::Adapter>&& backing);
+    GPUAdapter(Ref<::WebGPU::Adapter>&& backing, Ref<WebGPUIntegration>&&);
 
-    const Ref<WebGPU::Adapter> m_backing;
+    const Ref<::WebGPU::Adapter> m_backing;
+    // The root, which has the commands that take WebCore sources.
+    const Ref<WebGPUIntegration> m_gpu;
+    const ::WebGPU::AdapterInfo m_adapterInfo;
     const Ref<GPUSupportedFeatures> m_features;
     const Ref<GPUSupportedLimits> m_limits;
     const Ref<GPUAdapterInfo> m_info;

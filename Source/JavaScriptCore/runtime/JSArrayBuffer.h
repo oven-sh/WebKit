@@ -50,11 +50,12 @@ public:
     JS_EXPORT_PRIVATE static JSArrayBuffer* create(VM&, Structure*, RefPtr<ArrayBuffer>&&);
 
     ArrayBuffer* impl() const { return m_impl; }
+    static constexpr ptrdiff_t offsetOfImpl() { return OBJECT_OFFSETOF(JSArrayBuffer, m_impl); }
     
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
-    JS_EXPORT_PRIVATE bool NODELETE isShared() const;
-    ArrayBufferSharingMode NODELETE sharingMode() const;
+    JS_EXPORT_PRIVATE bool LEGACY_NODELETE isShared() const;
+    ArrayBufferSharingMode LEGACY_NODELETE sharingMode() const;
     bool isResizableOrGrowableShared() const { return m_impl->isResizableOrGrowableShared(); }
 
 #if ENABLE(WEBASSEMBLY)

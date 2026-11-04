@@ -27,13 +27,13 @@ namespace WebCore {
 
 class FontCascade;
 
-// Helper class used by SVGTextLayoutEngine to handle 'letter-spacing' and 'word-spacing'.
+// Helper class used by SVGTextLayoutAlgorithm to handle 'letter-spacing' and 'word-spacing'.
 class SVGTextLayoutEngineSpacing {
     WTF_MAKE_NONCOPYABLE(SVGTextLayoutEngineSpacing);
 public:
     SVGTextLayoutEngineSpacing(const FontCascade&);
 
-    float NODELETE calculateCSSSpacing(char32_t);
+    float LEGACY_NODELETE calculateCSSSpacing(char32_t);
 
 private:
     const CheckedRef<const FontCascade> m_font;

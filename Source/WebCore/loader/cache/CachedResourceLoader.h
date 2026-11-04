@@ -144,16 +144,16 @@ public:
     
     CachePolicy cachePolicy(CachedResource::Type, const URL&) const;
     
-    LocalFrame* NODELETE frame() const; // Can be null
+    LocalFrame* LEGACY_NODELETE frame() const; // Can be null
     Document* document() const { return m_document.get(); } // Can be null
     void setDocument(Document* document) { m_document = document; }
-    void NODELETE clearDocumentLoader();
+    void LEGACY_NODELETE clearDocumentLoader();
     void loadDone(LoadCompletionType, bool shouldPerformPostLoadActions = true);
 
     WEBCORE_EXPORT void garbageCollectDocumentResources();
 
-    void NODELETE incrementRequestCount(const CachedResource&);
-    void NODELETE decrementRequestCount(const CachedResource&);
+    void LEGACY_NODELETE incrementRequestCount(const CachedResource&);
+    void LEGACY_NODELETE decrementRequestCount(const CachedResource&);
     int requestCount() const { return m_requestCount; }
 
     WEBCORE_EXPORT bool isPreloaded(const String& urlString) const;
@@ -167,7 +167,7 @@ public:
     bool updateRequestAfterRedirection(CachedResource::Type, ResourceRequest&, const ResourceLoaderOptions&, FetchMetadataSite, const URL& preRedirectURL, const URL& lastRedirectURL);
     bool allowedByContentSecurityPolicy(CachedResource::Type, const URL&, const ResourceLoaderOptions&, ContentSecurityPolicy::RedirectResponseReceived, const URL& preRedirectURL = URL(), bool shouldReportViolationAsConsoleMessage = true) const;
 
-    static const ResourceLoaderOptions& defaultCachedResourceOptions();
+    static const ResourceLoaderOptions& LEGACY_NODELETE defaultCachedResourceOptions();
 
     void documentDidFinishLoadEvent();
 
@@ -207,12 +207,11 @@ private:
 
     void performPostLoadActions();
 
-    ImageLoading NODELETE clientDefersImage(const URL&) const;
+    ImageLoading LEGACY_NODELETE clientDefersImage(const URL&) const;
     void reloadImagesIfNotDeferred();
 
     bool canRequestAfterRedirection(CachedResource::Type, const URL&, const ResourceLoaderOptions&, const URL& preRedirectURL, IPAddressSpace targetAddressSpace) const;
     bool canRequestInContentDispositionAttachmentSandbox(CachedResource::Type, const URL&) const;
-    bool isNoCorsCrossOriginRequestToURLSchemeHandler(CachedResource::Type, const URL&, const ResourceLoaderOptions&) const;
 
     MemoryCompactRobinHoodHashSet<URL> m_validatedURLs;
     MemoryCompactRobinHoodHashSet<URL> m_cachedSVGImagesURLs;

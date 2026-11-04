@@ -81,7 +81,7 @@ void WebAssemblySuspendErrorConstructor::finishCreation(VM& vm, WebAssemblySuspe
 }
 
 WebAssemblySuspendErrorConstructor::WebAssemblySuspendErrorConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callJSWebAssemblySuspendError, constructJSWebAssemblySuspendError)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callJSWebAssemblySuspendError), JSC_REGISTERED_HOST_FUNCTION(constructJSWebAssemblySuspendError))
 {
 }
 

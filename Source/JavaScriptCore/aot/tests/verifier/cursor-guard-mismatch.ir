@@ -1,0 +1,24 @@
+# JSONAdvance skips the text that the JSONStartsWith test of its guard found
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: CursorGuardMismatch 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodSameText" role=Parser parameters=[{type=cursor}] results=[{type=cursor}] creator=Parser{type=anything} {
+    v1 = JSONStartsWith v0 string="true"
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = JSONAdvance v0, v2 string="true"
+    Return v3
+  b2():
+    Return v0
+}
+function f1 name="badOtherText" role=Parser parameters=[{type=cursor}] results=[{type=cursor}] creator=Parser{type=anything} {
+    v1 = JSONStartsWith v0 string="true"
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = JSONAdvance v0, v2 string="null"
+    Return v3
+  b2():
+    Return v0
+}

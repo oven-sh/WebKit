@@ -1,0 +1,27 @@
+# What is made from data that is written in the program throws for the lack of memory alone, which no program may count on. So it goes away with its unused result.
+# An operation that throws an error the language prescribes stays
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+# RUN(EFFECTS): effects f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="x" value=Number{value=1}}]}
+data d1 root=Array{contents=anything}
+data d2 root=Array{contents=anything}
+
+function f0 name="unusedValues" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Data data=d0
+    v2 = NewSetFromData data=d1
+    v3 = NewMapFromData data=d2
+    v4 = RequireObjectCoercible v0
+    Return
+}
+# CHECK-LABEL: function f0 name="unusedValues"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: = RequireObjectCoercible v0
+# CHECK-NEXT: Return
+# EFFECTS: v1 Data: {{*}}throwsForLackOfMemory
+# EFFECTS: v2 NewSetFromData: {{*}}throwsForLackOfMemory
+# EFFECTS: v3 NewMapFromData: {{*}}throwsForLackOfMemory
+# EFFECTS: v4 RequireObjectCoercible: {{*}}throws{{*}}

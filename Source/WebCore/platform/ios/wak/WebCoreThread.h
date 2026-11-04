@@ -40,6 +40,10 @@ extern "C" {
 #endif    
         
 typedef struct {
+    // There is no weak pointer type for CF types, and the context is not owned.
+#if defined(SUPPRESS_UNRETAINED_MEMBER)
+    SUPPRESS_UNRETAINED_MEMBER
+#endif
     CGContextRef currentCGContext;
 } WebThreadContext;
     

@@ -1,0 +1,99 @@
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="Late" constructor=f0 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="First" constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+function f0 name="Late" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    Return
+}
+function f1 name="First" flags=[HasThis] thisType={type=L1} results=[{type=undefined}] {
+    Return
+}
+
+# The class of a constructor function begins with its first object. Until then a set of guards takes what it says of the class to speak of no object.
+function f2 name="the-object-is-made-where-the-test-fails" parameters=[{type=i32}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L1 key="twice"}]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    PutModuleVariable v1 variable=g0
+    Return v0
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L0 side=Static key="prototype"}, {layout=L1 key="twice"}]
+# CHECK: b2():
+# CHECK-NEXT: [[made]]: L0 = NewObject layout=L0
+# CHECK-NEXT: PutModuleVariable [[made]] variable=g0
+}
+
+function f3 name="a-test-that-names-the-class-alone-may-be-joined-with-others-later" parameters=[{type=i32}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    PutModuleVariable v1 variable=g0
+    Return v0
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L0 side=Static key="prototype"}]
+}
+
+function f4 name="an-object-that-is-made-where-it-stands-begins-its-class" parameters=[{type=i32}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    PutModuleVariable v1 variable=g0
+    v3 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L1 key="twice"}]
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Return v1
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L1 key="twice"}]
+}
+
+function f5 name="a-test-of-other-classes-waits-for-nobody" parameters=[{type=i32}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = AreMembersUnchanged conditions=[{layout=L1 key="twice"}]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    PutModuleVariable v1 variable=g0
+    Return v0
+# CHECK: = AreMembersUnchanged conditions=[{layout=L1 key="twice"}]
+}
+
+function f6 name="a-test-from-which-no-way-leads-to-where-the-object-is-not-made-waits-for-nobody" parameters=[{type=i32}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject layout=L0
+    Branch v1 -> taken b1(), notTaken b4()
+  b1():
+    PutModuleVariable v2 variable=g0
+    Jump -> next b2()
+  b2():
+    v4 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L1 key="twice"}]
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v2
+  b4():
+    Return v0
+# CHECK: b1():
+# CHECK-NEXT: [[madeAhead]]: L0 = NewObject layout=L0
+# CHECK-NEXT: PutModuleVariable [[madeAhead]] variable=g0
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L1 key="twice"}]
+}
+
+function f7 name="a-test-ahead-of-the-object-is-believed-where-the-object-is-not-made" parameters=[{type=i32}] results=[{type=anything}] {
+    v1 = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L1 key="twice"}]
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    v2 = NewObject layout=L0
+    v3 = Less v0, v0
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    PutModuleVariable v2 variable=g0
+    Return v0
+  b3():
+    Return v0
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="twice"}, {layout=L0 side=Static key="prototype"}, {layout=L1 key="twice"}]
+}

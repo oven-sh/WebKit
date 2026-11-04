@@ -1,0 +1,40 @@
+# Layout sets meet in their common members and differ by the members removed. A member of a set is no function and no instance of a built-in class.
+# RUN: intersect
+# CHECK: t0 & t1 = L1
+# CHECK-NEXT: t0 - t1 = L0|L2
+# CHECK-NEXT: t0 & t2 = L1
+# CHECK-NEXT: t0 - t2 = L0|L2
+# CHECK-NEXT: t0 & t3 = never
+# CHECK-NEXT: t0 - t3 = L0|L1|L2
+# CHECK-NEXT: t0 & t4 = L0|L1|L2
+# CHECK-NEXT: t0 - t4 = never
+# CHECK-NEXT: t0 & t5 = L0|L1
+# CHECK-NEXT: t0 - t5 = L2
+# CHECK-NEXT: t0 & t6 = never
+# CHECK-NEXT: t0 - t6 = L0|L1|L2
+# CHECK-NEXT: t0 & t7 = L1
+# CHECK-NEXT: t0 - t7 = L0|L2
+# CHECK-NEXT: t0 & t8 = never
+# CHECK-NEXT: t0 - t8 = L0|L1|L2
+# CHECK-NEXT: t1 & t0 = L1
+# CHECK-NEXT: t1 - t0 = never
+# CHECK-NEXT: t1 & t2 = L1
+# CHECK-NEXT: t1 - t2 = never
+# CHECK: t2 & t1 = L1
+# CHECK-NEXT: t2 - t1 = L3
+# CHECK: t4 & t0 = L0|L1|L2
+# CHECK-NEXT: t4 - t0 = object
+# CHECK: t5 & t1 = L1
+# CHECK-NEXT: t5 - t1 = L0
+# CHECK: t7 & t0 = L1
+# CHECK-NEXT: t7 - t0 = undefined
+# CHECK: t7 & t6 = never
+# CHECK-NEXT: t7 - t6 = undefined|L1
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Shape"
+layout L1 name="Circle" supertypes=[L0]
+layout L2 name="Square" supertypes=[L0]
+layout L3 name="Other"
+function f0 name="types" parameters=[{type=L0|L1|L2}, {type=L1}, {type=L1|L3}, {type=function}, {type=object}, {type=L0|L1}, {type=L3}, {type=undefined|L1}, {type=Array<number>}] results=[{type=undefined}]

@@ -1,0 +1,53 @@
+# An optional field that nothing stores has no slot and a read of it goes by name, and a store through an unknown receiver counts for an object that has escaped
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots layouts
+# RUN(ACCESSES): place accesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="NeverStored" fields=[{key="stored" declared={type=number} flags=[IsRequired]}, {key="neverStored" declared={type=undefined|number}}]
+layout L1 name="StoredLater" fields=[{key="stored" declared={type=number} flags=[IsRequired]}, {key="later" declared={type=undefined|number}}]
+layout L2 name="Escaped" fields=[{key="stored" declared={type=number} flags=[IsRequired]}, {key="storedOutside" declared={type=undefined|number}}]
+layout L3 name="EscapedAndNeverStored" fields=[{key="stored" declared={type=number} flags=[IsRequired]}, {key="neverStored" declared={type=undefined|number}}]
+variable g0 name="neverStored" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = NewObject -, v2 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    PropSet v7, v2 key="later"
+    v9 = NewObject -, v2 layout=L2 fields=[0]
+    v10 = FinishObject v9
+    v11 = Call v1, -, v10
+    PropSet v11, v2 key="storedOutside"
+    v13 = NewObject -, v2 layout=L3 fields=[0]
+    v14 = FinishObject v13
+    v15 = Call v1, -, v14
+    v16 = CallDirect function=f1
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="neverStored"
+    Return v1
+}
+
+# CHECK: L0 CompiledObject
+# CHECK-NEXT: .0 "stored"
+# CHECK-NEXT: L1 CompiledObject
+# CHECK-NEXT: .0 "stored"
+# CHECK-NEXT: .1 "later"
+# CHECK-NEXT: L2 CompiledObject
+# CHECK-NEXT: .0 "stored"
+# CHECK-NEXT: .1 "storedOutside"
+# Code that nobody sees may store the field of an object that has escaped, and the object keeps its shape. So the field has a slot: out of line, because no store that the program shows fills it.
+# CHECK: L3 CompiledObject
+# CHECK-NEXT: .0 "stored"
+# CHECK-NEXT: .1 "neverStored" JSValue out@
+
+# ACCESSES-NOT: "neverStored"

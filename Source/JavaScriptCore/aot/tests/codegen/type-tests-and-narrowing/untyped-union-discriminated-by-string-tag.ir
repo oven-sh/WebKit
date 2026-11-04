@@ -1,0 +1,14 @@
+# Nothing is declared, and each layout is made with one text in `kind`: the text decides the layout, so the comparison is a test of the shape and no string is read.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# CHECK-LABEL: name="size" role=Source
+# CHECK-NOT: StringEqualsLiteral
+# CHECK-NOT: JSRopeString
+# CHECK-LABEL: end of function
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# X64-LABEL: name="size" role=Source
+# X64-NEXT: instructions: 6, patchpoints: 0
+# PROGRAM-OF: union-told-apart-by-a-string-tag-without-types.ir

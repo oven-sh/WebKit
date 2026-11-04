@@ -1,0 +1,517 @@
+# The inline code of concat and of splice has code for each number and kind of operands selection leaves to it, in balanced and in fast code
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-22: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="concatOneArray" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=Array<anything, proven, pristine[Storage, Names]>}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/2 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeConcat/2
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/2 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeConcat/2
+    Jump -> next b4(v9)
+  b6():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b3 Fast
+function f1 name="concatTwoArrays" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=Array<number, proven, pristine[Storage, Names]>}, {type=Array<number, proven, pristine[Storage, Names]>}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v2 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/1 -> done b1(), miss b2()
+  b1(v4):
+    v5 = NewArray v4 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v6 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeConcat/1
+    Jump -> next b1(v6)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v2 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/1 -> done b4(), miss b5()
+  b4(v8):
+    v9 = NewArray v8 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v10 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeConcat/1
+    Jump -> next b4(v10)
+  b6():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b3 Fast
+function f2 name="concatThreeArrays" parameters=[{type=Array<i32, proven, pristine[Storage, Names]>}, {type=Array<i32, proven, pristine[Storage, Names]>}, {type=Array<i32, proven, pristine[Storage, Names]>}, {type=Array<i32, proven, pristine[Storage, Names]>}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v2, v3 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v2, v3 overload=ArrayPrototypeConcat/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v2, v3 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/0 -> done b4(), miss b5()
+  b4(v9):
+    v10 = NewArray v9 contents=anything
+    Branch v4 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v11 = CallBuiltin v0, v1, v2, v3 overload=ArrayPrototypeConcat/0
+    Jump -> next b4(v11)
+  b6():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b3 Fast
+function f3 name="concatOnePrimitive" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=string}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/3 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeConcat/3
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/3 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeConcat/3
+    Jump -> next b4(v9)
+  b6():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b3 Fast
+function f4 name="concatTwoPrimitives" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=number}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v2 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/3 -> done b1(), miss b2()
+  b1(v4):
+    v5 = NewArray v4 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v6 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeConcat/3
+    Jump -> next b1(v6)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v2 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/3 -> done b4(), miss b5()
+  b4(v8):
+    v9 = NewArray v8 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v10 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeConcat/3
+    Jump -> next b4(v10)
+  b6():
+    Return
+}
+# S: f4 b0 Balanced
+# S: f4 b3 Fast
+function f5 name="concatThreePrimitives" parameters=[{type=Array<i32, proven, pristine[Storage, Names]>}, {type=i32}, {type=undefined}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v2, v3 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/3 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v2, v3 overload=ArrayPrototypeConcat/3
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v2, v3 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/3 -> done b4(), miss b5()
+  b4(v9):
+    v10 = NewArray v9 contents=anything
+    Branch v4 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v11 = CallBuiltin v0, v1, v2, v3 overload=ArrayPrototypeConcat/3
+    Jump -> next b4(v11)
+  b6():
+    Return
+}
+# S: f5 b0 Balanced
+# S: f5 b3 Fast
+function f6 name="concatArrayAndPrimitives" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=Array<string, proven, pristine[Storage, Names]>}, {type=string}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v2, v3 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/2 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v2, v3 overload=ArrayPrototypeConcat/2
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v2, v3 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/2 -> done b4(), miss b5()
+  b4(v9):
+    v10 = NewArray v9 contents=anything
+    Branch v4 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v11 = CallBuiltin v0, v1, v2, v3 overload=ArrayPrototypeConcat/2
+    Jump -> next b4(v11)
+  b6():
+    Return
+}
+# S: f6 b0 Balanced
+# S: f6 b3 Fast
+function f7 name="spliceRemovesNothingInsertsNothing" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=0
+    TryCallInline v0, v1, v4 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v4 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    v9 = Integer integer=0
+    TryCallInline v0, v1, v9 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v10):
+    v11 = NewArray v10 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v9 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v12)
+  b6():
+    Return
+}
+# S: f7 b0 Balanced
+# S: f7 b3 Fast
+function f8 name="spliceRemovesNothingInsertsOne" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=0
+    TryCallInline v0, v1, v4, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v4, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    v9 = Integer integer=0
+    TryCallInline v0, v1, v9, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v10):
+    v11 = NewArray v10 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v9, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v12)
+  b6():
+    Return
+}
+# S: f8 b0 Balanced
+# S: f8 b3 Fast
+function f9 name="spliceRemovesNothingInsertsTwo" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=0
+    TryCallInline v0, v1, v4, v2, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v4, v2, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    v9 = Integer integer=0
+    TryCallInline v0, v1, v9, v2, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v10):
+    v11 = NewArray v10 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v9, v2, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v12)
+  b6():
+    Return
+}
+# S: f9 b0 Balanced
+# S: f9 b3 Fast
+function f10 name="spliceRemovesOneInsertsNothing" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=1
+    TryCallInline v0, v1, v4 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v4 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    v9 = Integer integer=1
+    TryCallInline v0, v1, v9 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v10):
+    v11 = NewArray v10 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v9 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v12)
+  b6():
+    Return
+}
+# S: f10 b0 Balanced
+# S: f10 b3 Fast
+function f11 name="spliceRemovesOneInsertsOne" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=1
+    TryCallInline v0, v1, v4, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v4, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    v9 = Integer integer=1
+    TryCallInline v0, v1, v9, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v10):
+    v11 = NewArray v10 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v9, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v12)
+  b6():
+    Return
+}
+# S: f11 b0 Balanced
+# S: f11 b3 Fast
+function f12 name="spliceRemovesOneInsertsTwo" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=1
+    TryCallInline v0, v1, v4, v2, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v4, v2, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    v9 = Integer integer=1
+    TryCallInline v0, v1, v9, v2, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v10):
+    v11 = NewArray v10 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v9, v2, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v12)
+  b6():
+    Return
+}
+# S: f12 b0 Balanced
+# S: f12 b3 Fast
+function f13 name="spliceRemovesTwoInsertsNothing" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=2
+    TryCallInline v0, v1, v4 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v4 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    v9 = Integer integer=2
+    TryCallInline v0, v1, v9 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v10):
+    v11 = NewArray v10 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v9 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v12)
+  b6():
+    Return
+}
+# S: f13 b0 Balanced
+# S: f13 b3 Fast
+function f14 name="spliceRemovesTwoInsertsOne" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=2
+    TryCallInline v0, v1, v4, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v4, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    v9 = Integer integer=2
+    TryCallInline v0, v1, v9, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v10):
+    v11 = NewArray v10 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v9, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v12)
+  b6():
+    Return
+}
+# S: f14 b0 Balanced
+# S: f14 b3 Fast
+function f15 name="spliceRemovesTwoInsertsTwo" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=2
+    TryCallInline v0, v1, v4, v2, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v4, v2, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    v9 = Integer integer=2
+    TryCallInline v0, v1, v9, v2, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v10):
+    v11 = NewArray v10 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v9, v2, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v12)
+  b6():
+    Return
+}
+# S: f15 b0 Balanced
+# S: f15 b3 Fast
+function f16 name="spliceRemovesCountInsertsNothing" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=anything}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v3 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v3 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v3 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v9):
+    v10 = NewArray v9 contents=anything
+    Branch v4 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v11 = CallBuiltin v0, v1, v3 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v11)
+  b6():
+    Return
+}
+# S: f16 b0 Balanced
+# S: f16 b3 Fast
+function f17 name="spliceRemovesCountInsertsOne" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=anything}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v3, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v3, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v3, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v9):
+    v10 = NewArray v9 contents=anything
+    Branch v4 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v11 = CallBuiltin v0, v1, v3, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v11)
+  b6():
+    Return
+}
+# S: f17 b0 Balanced
+# S: f17 b3 Fast
+function f18 name="spliceRemovesCountInsertsTwo" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=anything}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v3, v2, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v3, v2, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v3, v2, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v9):
+    v10 = NewArray v9 contents=anything
+    Branch v4 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v11 = CallBuiltin v0, v1, v3, v2, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v11)
+  b6():
+    Return
+}
+# S: f18 b0 Balanced
+# S: f18 b3 Fast
+function f19 name="spliceOfNumbers" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=2
+    TryCallInline v0, v1, v4, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v4, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    v9 = Integer integer=2
+    TryCallInline v0, v1, v9, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v10):
+    v11 = NewArray v10 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v9, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v12)
+  b6():
+    Return
+}
+# S: f19 b0 Balanced
+# S: f19 b3 Fast
+function f20 name="spliceOfInt32" parameters=[{type=Array<i32, proven, pristine[Storage, Names]>}, {type=i32}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=1
+    TryCallInline v0, v1, v4, v2, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v5):
+    v6 = NewArray v5 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v7 = CallBuiltin v0, v1, v4, v2, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v7)
+  b3():
+    LoopHint
+    v9 = Integer integer=1
+    TryCallInline v0, v1, v9, v2, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v10):
+    v11 = NewArray v10 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v9, v2, v2 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v12)
+  b6():
+    Return
+}
+# S: f20 b0 Balanced
+# S: f20 b3 Fast
+function f21 name="spliceRemovesThree" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v3 = Integer integer=3
+    TryCallInline v0, v1, v3 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b1(), miss b2()
+  b1(v4):
+    v5 = NewArray v4 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v6 = CallBuiltin v0, v1, v3 overload=ArrayPrototypeSplice/0
+    Jump -> next b1(v6)
+  b3():
+    LoopHint
+    v8 = Integer integer=3
+    TryCallInline v0, v1, v8 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done b4(), miss b5()
+  b4(v9):
+    v10 = NewArray v9 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v11 = CallBuiltin v0, v1, v8 overload=ArrayPrototypeSplice/0
+    Jump -> next b4(v11)
+  b6():
+    Return
+}
+# S: f21 b0 Balanced
+# S: f21 b3 Fast

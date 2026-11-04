@@ -1,0 +1,26 @@
+# A union that stays inside one declared family is not widened, including when the family root is itself allocated and when the family is a class hierarchy.
+# FORM: Prepared
+# OPTIONS: limit=MaxLayoutsInType:4
+# RUN: union-widening
+# LOSS: MaxLayoutsInType f0
+# CHECK: t0 | t1 = L0|L1|L2|L3|L4|L5|L6
+# CHECK: t0 | t2 = object
+# CHECK: t3 | t4 = L8|L9|L10|L11|L12|L13
+# CHECK: laws hold
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Node"
+layout L1 name="A" supertypes=[L0]
+layout L2 name="B" supertypes=[L0]
+layout L3 name="C" supertypes=[L0]
+layout L4 name="Expression" supertypes=[L0]
+layout L5 name="D" supertypes=[L4]
+layout L6 name="E" supertypes=[L4]
+layout L7 name="Other"
+layout L8 kind=Instance name="Shape"
+layout L9 kind=Instance name="Circle" base=L8 flags=[HasHeritage]
+layout L10 kind=Instance name="Square" base=L8 flags=[HasHeritage]
+layout L11 kind=Instance name="Polygon" base=L8 flags=[HasHeritage]
+layout L12 kind=Instance name="Triangle" base=L11 flags=[HasHeritage]
+layout L13 kind=Instance name="Hexagon" base=L11 flags=[HasHeritage]
+function f0 name="types" parameters=[{type=L0|L1|L2|L3}, {type=L4|L5|L6}, {type=L5|L6|L7}, {type=L8|L9|L10}, {type=L11|L12|L13}] results=[{type=undefined}]

@@ -1,0 +1,41 @@
+# An overload that the table calls a special case is a faster form of the next one. A call whose operand is not known well enough to tell takes the next one, under the tests of its receiver, instead of the host function. Where the operand is known the choice is as before, and an overload that is no special case is never passed by
+# FORM: Prepared
+# RUN: pass ResolveBuiltins PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="searchedIsUnknown" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="includes"
+    v3 = Call v2, v0, v1 calleeKey="includes"
+    Return v3
+# CHECK: = IsPristine v0 builtinClass=Array
+# CHECK: boolean = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/1
+}
+
+function f1 name="searchedIsNumber" parameters=[{type=Array}, {type=number}] results=[{type=anything}] {
+    v2 = PropGet v0 key="includes"
+    v3 = Call v2, v0, v1 calleeKey="includes"
+    Return v3
+# CHECK: boolean = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+}
+
+function f2 name="searchedIsText" parameters=[{type=Array}, {type=string}] results=[{type=anything}] {
+    v2 = PropGet v0 key="includes"
+    v3 = Call v2, v0, v1 calleeKey="includes"
+    Return v3
+# CHECK: boolean = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/1
+}
+
+function f3 name="indexOfUnknown" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="indexOf"
+    v3 = Call v2, v0, v1 calleeKey="indexOf"
+    Return v3
+# CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+}
+
+function f4 name="noSpecialCase" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Array
+    v2 = Construct v1, v1, v0
+    Return v2
+# The length of a new array and its only element are two meanings, not a faster and a slower form of one.
+# CHECK-NOT: overload=Array/1
+}

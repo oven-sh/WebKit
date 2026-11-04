@@ -1,0 +1,20 @@
+# the copies of one allocation site become one remark with the worst outcome, its cause and the number of copies that share it, whatever the threads and the order of adding
+# OPTIONS: report=Allocations
+# RUN: losses allocation-remarks Frame,site=0,at=0:1 Heap,site=0,at=0:1,cause=SeveralLiveInstances Heap,site=1,at=0:2,cause=FieldsCreatedLater Heap,site=1,at=0:2,cause=Escapes Removed,site=2,at=0:3 Removed,site=3,at=0:4 Removed,site=3,at=0:4 Heap,site=3,at=0:4,cause=Escapes Removed,site=4,at=0:5 Frame,site=4,at=0:5 Frame,site=4,at=0:5
+# RUN: losses allocation-remarks Frame,site=0,at=0:1 Heap,site=0,at=0:1,cause=SeveralLiveInstances Heap,site=1,at=0:2,cause=FieldsCreatedLater Heap,site=1,at=0:2,cause=Escapes Removed,site=2,at=0:3 Removed,site=3,at=0:4 Removed,site=3,at=0:4 Heap,site=3,at=0:4,cause=Escapes Removed,site=4,at=0:5 Frame,site=4,at=0:5 Frame,site=4,at=0:5 threads=16 seed=1
+# RUN: losses allocation-remarks Frame,site=0,at=0:1 Heap,site=0,at=0:1,cause=SeveralLiveInstances Heap,site=1,at=0:2,cause=FieldsCreatedLater Heap,site=1,at=0:2,cause=Escapes Removed,site=2,at=0:3 Removed,site=3,at=0:4 Removed,site=3,at=0:4 Heap,site=3,at=0:4,cause=Escapes Removed,site=4,at=0:5 Frame,site=4,at=0:5 Frame,site=4,at=0:5 threads=16 seed=2
+# CHECK: s0 Heap x1 0:1 None SeveralLiveInstances
+# CHECK-NEXT: s1 Heap x2 0:2 None Escapes
+# CHECK-NEXT: s2 Removed x1 0:3 None None
+# CHECK-NEXT: s3 Heap x1 0:4 None Escapes
+# CHECK-NEXT: s4 Frame x2 0:5 None None
+# RUN(A): losses allocation-remarks Heap,site=0,cause=Unknown
+# RUN(B): losses declines HotCallNotInlined,f0,cause=Escapes
+# A: error: bad argument Heap,site=0,cause=Unknown
+# B: error: bad argument HotCallNotInlined,f0,cause=Escapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="main" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}

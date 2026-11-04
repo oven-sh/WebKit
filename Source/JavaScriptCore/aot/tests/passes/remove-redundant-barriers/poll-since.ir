@@ -1,0 +1,32 @@
+# A loop poll between the owner's allocation and the store can collect, so the store keeps its barrier
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 1
+# STATISTIC: BarriersCoveredLater = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="poll-since" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewObject layout=L0 fields=[]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = ToBoolean v0 form=Generic
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    Return
+# CHECK: PutEnvironmentField v1, v0 layout=L0
+# CHECK-NOT: ownerCannotBeMarked
+}
+function f1 name="branch-since" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewObject layout=L0 fields=[]
+    Jump -> next b1()
+  b1():
+    v2 = ToBoolean v0 form=Generic
+    Branch v2 -> taken b2(), notTaken b2()
+  b2():
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    Return
+# CHECK: PutEnvironmentField v1, v0 layout=L0 [ownerCannotBeMarked]
+}

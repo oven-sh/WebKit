@@ -1,0 +1,101 @@
+# The machine outliner asks more of a piece that stands where cold code may run: a call and a return are paid each time. Nothing says that a compact function runs,
+# so its cold code is taken like code behind a rare edge. A cold function that one that runs often calls keeps the mark
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat limit=MaxWarmCodeValues:1
+# RUN: generate-code units
+# RUN(HEAT): pipeline EstimateHeat
+# HEAT: f2 Cold
+# HEAT-NEXT: f3 Compact
+# CHECK-LABEL: f2: size=
+# CHECK-NOT: mayRun=0
+# CHECK-LABEL: f3: size=
+# CHECK-NEXT: units {{*}} mayRun=0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = CallDirect v1 function=f7
+    v4 = CallDirect v1 function=f7
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = CallDirect v1 function=f1
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+
+function f1 name="calledInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    v71 = CallDirect v0 function=f2
+    Return v71
+}
+
+function f2 name="calledByOneThatRunsOften" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..71
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Branch v71 -> taken b1(), notTaken b2()
+  b1():
+    v72 = CallDirect v0 function=f4
+    v73 = CallDirect v0 function=f4
+    Return v73
+  b2():
+    Return v0
+}
+
+function f3 name="calledByCompactFunction" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..71
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Branch v71 -> taken b1(), notTaken b2()
+  b1():
+    v72 = CallDirect v0 function=f4
+    v73 = CallDirect v0 function=f6
+    Return v73
+  b2():
+    Return v0
+}
+
+function f4 name="calledByTwo" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}
+
+function f5 name="hasLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+# REPEAT: i = 3..75
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v0
+}
+
+function f6 name="calledAtTheEndOfSuchAChain" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}
+
+function f7 name="calledTwiceByCodeThatRunsOnce" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..70
+    v%(i) = ToBoolean v0
+# END REPEAT
+    v71 = CallDirect v0 function=f3
+    v72 = CallDirect v0 function=f4
+    v73 = CallDirect v0 function=f5
+    Return v0
+}

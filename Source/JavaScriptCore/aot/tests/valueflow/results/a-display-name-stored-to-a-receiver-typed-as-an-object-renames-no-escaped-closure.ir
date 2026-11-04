@@ -1,0 +1,37 @@
+# type Labeled = { displayName?: string }
+# const make = () => function made() {};  unknown(make());  unknown(make());  function label(one: Labeled) { one.displayName = "x" }  label(unknown())
+# The receiver is an object nobody follows, and its type admits no function. A function that arrives all the same is stored to by name, where the run time sees it.
+# FORM: AsRead
+# RUN: pipeline CreateEntrypoints
+# CHECK-LABEL: function f2 name="made"
+# CHECK-NOT: RecordsCallee,
+# CHECK: RecordsCalleeOnceRenamed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Labeled" fields=[{key="displayName" declared={type=undefined|string}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v2, -
+    v4 = Call v1, -, v3
+    v5 = Call v2, -
+    v6 = Call v1, -, v5
+    v7 = NewClosure function=f3
+    v8 = Call v1, -
+    v9 = Call v7, -, v8
+    Return v9
+}
+function f1 name="make" kind=Arrow results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="made" results=[{type=anything}] {
+    Return
+}
+function f3 name="label" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = String string="x"
+    PropSet v0, v1 key="displayName" mode=Strict
+    Return
+}

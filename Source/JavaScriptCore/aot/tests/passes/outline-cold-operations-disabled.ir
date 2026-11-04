@@ -1,0 +1,30 @@
+# With its switch off the pass leaves equal cold sites where they are and adds no function
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot disable=pass:OutlineColdOperations
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 0
+# STATISTIC: ColdSitesOutlined = 0
+# STATISTIC: OutlineColdOperationsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="scopeLookups" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*2) = Builtin builtin=GlobalThis
+    v%(i*2+1) = PropGet v%(i*2) key="settings" [isFreeName]
+    Return v%(i*2+1)
+# END REPEAT
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: v2:{{*}}= Builtin builtin=GlobalThis
+# CHECK-NEXT: v3: anything = PropGet v2 key="settings" [isFreeName]
+# CHECK-NEXT: Return v3
+# CHECK-COUNT-5: = PropGet {{*}} key="settings" [isFreeName]
+# CHECK-NOT: CallDirect
+# CHECK-NOT: role=OutlinedBody

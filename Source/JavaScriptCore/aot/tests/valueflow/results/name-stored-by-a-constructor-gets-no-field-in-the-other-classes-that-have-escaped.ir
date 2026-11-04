@@ -1,0 +1,47 @@
+# class Point { constructor() { this.extra = 1 } }  class Other extends handedIn {}  publish(Point); publish(Other); new Point; new Other
+# Whoever got the two classes may construct Point under any new.target, so nobody knows the prototype that the constructor of Point allocates under: the object may have the layout of any class
+# that has escaped and may lie below Point. Nobody knows the parent of the other class, so it may. The store lists the layout that the allocation names, so the name gets a field there (ruling 74).
+# No store lists the layout of the other class. There the name is an extra property, and it stands in the one list of the program of the names that are stored through receivers nobody knows.
+# A class without a parent lies below nothing: class-that-is-no-relative-of-the-callee-is-filled-by-its-own-constructor-beside-an-unknown-new-target.ir
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Point"
+# CHECK: fields=[{key="extra" {{*}} flags=[IsAddedLate
+# CHECK: layout L1 kind=Instance name="Other"
+# CHECK-NOT: IsAddedLate
+# CHECK: function f0
+# RUN(RESULTS): valueflow-results
+# RESULTS: stored-through-unknown-receivers ["extra"]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 constructor=f1
+layout L1 kind=Instance name="Other" module=m0 constructor=f2 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="handedIn" [isFreeName]
+    v5 = NewClosure function=f2
+    v6 = ResolveHeritage v4
+    v7 = NewClass v5, v4, v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = PropGet v3 key="publish" [isFreeName]
+    v10 = Call v9, -, v2
+    v11 = Call v9, -, v8
+    v12 = Construct v2
+    v13 = Construct v8
+    Return
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="extra" mode=Strict
+    Return v2
+}
+function f2 name="Other" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}

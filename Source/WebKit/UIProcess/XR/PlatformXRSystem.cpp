@@ -26,6 +26,8 @@
 #include "config.h"
 #include "PlatformXRSystem.h"
 
+#include "ValidationProcedures.h"
+
 #if ENABLE(WEBXR)
 
 #include "GPUProcessProxy.h"
@@ -41,6 +43,8 @@
 #include <wtf/TZoneMallocInlines.h>
 
 #define MESSAGE_CHECK(assertion, connection) MESSAGE_CHECK_BASE(assertion, connection)
+#define EXTRACT_WITH_MESSAGE_CHECK_COMPLETION(name, untrusted, completion, ...) \
+    EXTRACT_WITH_MESSAGE_CHECK_BASE(connection, name, untrusted, completion, __VA_ARGS__)
 #define MESSAGE_CHECK_COMPLETION(assertion, connection, completion) MESSAGE_CHECK_COMPLETION_BASE(assertion, connection, completion)
 
 namespace WebKit {
@@ -162,9 +166,9 @@ static bool checkFeaturesConsent(const std::optional<PlatformXR::Device::Feature
 
 void PlatformXRSystem::requestPermissionOnSessionFeatures(IPC::Connection& connection, IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, PlatformXR::SessionMode mode, const PlatformXR::Device::FeatureList& granted, const PlatformXR::Device::FeatureList& consentRequired, const PlatformXR::Device::FeatureList& consentOptional, const PlatformXR::Device::FeatureList& requiredFeaturesRequested, const PlatformXR::Device::FeatureList& optionalFeaturesRequested, CompletionHandler<void(std::optional<PlatformXR::Device::FeatureList>&&)>&& completionHandler)
 {
-    auto securityOriginData = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
-
     ASSERT(RunLoop::isMain());
+
+    EXTRACT_WITH_MESSAGE_CHECK_COMPLETION(securityOriginData, untrustedOrigin, completionHandler(std::nullopt), ProcessSpeaksForDomain { connection });
 
     RefPtr page = m_page.get();
     if (!page) {
@@ -207,7 +211,7 @@ void PlatformXRSystem::requestPermissionOnSessionFeatures(IPC::Connection& conne
     });
 }
 
-void PlatformXRSystem::initializeTrackingAndRendering(IPC::Connection& connection, std::optional<WebCore::WebGPU::TextureFormat> colorFormat, std::optional<WebCore::WebGPU::TextureFormat> depthStencilFormat)
+void PlatformXRSystem::initializeTrackingAndRendering(IPC::Connection& connection, std::optional<::WebGPU::TextureFormat> colorFormat, std::optional<::WebGPU::TextureFormat> depthStencilFormat)
 {
     ASSERT(RunLoop::isMain());
     MESSAGE_CHECK(m_immersiveSessionMode, connection);
@@ -222,6 +226,8 @@ void PlatformXRSystem::initializeTrackingAndRendering(IPC::Connection& connectio
     auto* xrCoordinator = PlatformXRSystem::xrCoordinator();
     if (!xrCoordinator)
         return;
+
+    m_immersiveSessionProcess = WebProcessProxy::fromConnection(connection).get();
 
     setImmersiveSessionState(ImmersiveSessionState::SessionRunning, [](bool) mutable { });
 
@@ -378,7 +384,7 @@ void PlatformXRSystem::sessionDidEnd(XRDeviceIdentifier deviceIdentifier)
         if (!page)
             return;
 
-        protect(page->legacyMainFrameProcess())->send(Messages::PlatformXRSystemProxy::SessionDidEnd(deviceIdentifier), page->webPageIDInMainFrameProcess());
+        protectedThis->sendToImmersiveSessionProcess(Messages::PlatformXRSystemProxy::SessionDidEnd(deviceIdentifier));
         protectedThis->m_immersiveSessionActivity = { };
         // If this is called when the session is running, the ending of the session is triggered by the system side
         // and we should set the state to SessionEndingFromSystem. We expect the web process to send a
@@ -399,7 +405,7 @@ void PlatformXRSystem::sessionDidUpdateVisibilityState(XRDeviceIdentifier device
         if (!page)
             return;
 
-        protect(page->legacyMainFrameProcess())->send(Messages::PlatformXRSystemProxy::SessionDidUpdateVisibilityState(deviceIdentifier, visibilityState), page->webPageIDInMainFrameProcess());
+        protectedThis->sendToImmersiveSessionProcess(Messages::PlatformXRSystemProxy::SessionDidUpdateVisibilityState(deviceIdentifier, visibilityState));
     });
 }
 
@@ -414,13 +420,28 @@ void PlatformXRSystem::sessionDidInitializeRendering(XRDeviceIdentifier deviceId
         if (!page)
             return;
 
-        protect(page->legacyMainFrameProcess())->send(Messages::PlatformXRSystemProxy::SessionDidInitializeRendering(deviceIdentifier, width, height, arrayLength), page->webPageIDInMainFrameProcess());
+        protectedThis->sendToImmersiveSessionProcess(Messages::PlatformXRSystemProxy::SessionDidInitializeRendering(deviceIdentifier, width, height, arrayLength));
     });
+}
+
+template<typename Message>
+void PlatformXRSystem::sendToImmersiveSessionProcess(Message&& message)
+{
+    RefPtr page = m_page;
+    if (!page)
+        return;
+
+    RefPtr process = m_immersiveSessionProcess;
+    if (!process)
+        return;
+    process->send(std::forward<Message>(message), page->webPageIDInProcess(*process));
 }
 
 void PlatformXRSystem::setImmersiveSessionState(ImmersiveSessionState state, CompletionHandler<void(bool)>&& completion)
 {
     m_immersiveSessionState = state;
+    if (state == ImmersiveSessionState::Idle)
+        m_immersiveSessionProcess = nullptr;
 #if PLATFORM(COCOA)
     RefPtr page = m_page.get();
     if (!page || page->isClosed()) {
@@ -471,6 +492,7 @@ PlatformXRCoordinator* PlatformXRSystem::xrCoordinator()
 
 } // namespace WebKit
 
+#undef EXTRACT_WITH_MESSAGE_CHECK_COMPLETION
 #undef MESSAGE_CHECK_COMPLETION
 #undef MESSAGE_CHECK
 

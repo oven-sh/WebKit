@@ -254,7 +254,7 @@ OptionSet<WebEventModifier> kit(OptionSet<WebCore::PlatformEvent::Modifier> modi
     return result;
 }
 
-static double NODELETE forceForEvent(const WebMouseEvent& webEvent)
+static double LEGACY_NODELETE forceForEvent(const WebMouseEvent& webEvent)
 {
     switch (webEvent.type()) {
     case WebEventType::MouseDown:
@@ -565,6 +565,7 @@ public:
         m_gestureRotation = webEvent.gestureRotation();
         m_position = webEvent.position();
         m_globalPosition = webEvent.position();
+        m_inputSource = platform(webEvent.inputSource());
     }
 };
 

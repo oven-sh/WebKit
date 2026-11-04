@@ -41,7 +41,7 @@ namespace JSC { namespace B3 { namespace Air {
 class Code;
 
 // Computes the number of uses of a tmp based on frequency of execution. The frequency of blocks
-// that are only reachable by rare edges is scaled by Options::rareBlockPenalty().
+// that are only reachable by rare edges is scaled by RegisterPolicy::rareBlockPenalty.
 class UseCounts {
 public:
     class Analyzer;
@@ -111,6 +111,8 @@ public:
 
     void prepare(Code& code)
     {
+        m_rareBlockPenalty = code.policy().registers.rareBlockPenalty;
+
         // Find non-rare blocks.
         m_fastBlocks.push(code[0]);
         while (BasicBlock* block = m_fastBlocks.pop()) {
@@ -138,7 +140,7 @@ public:
     {
         m_frequency = block->frequency();
         if (!m_fastBlocks.saw(block))
-            m_frequency *= Options::rareBlockPenalty();
+            m_frequency *= m_rareBlockPenalty;
     }
 
     // A Tmp that a constant is moved into is counted here rather than by visitTmp, because we also
@@ -246,6 +248,7 @@ private:
     BitVector m_gpNonConstDefs;
     BitVector m_fpNonConstDefs;
     double m_frequency { 0 };
+    double m_rareBlockPenalty { 0 };
 };
 
 inline UseCounts::UseCounts(Code& code)

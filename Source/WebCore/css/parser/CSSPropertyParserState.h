@@ -41,8 +41,8 @@ struct PropertyParserState {
     CSSValuePool& pool { CSSValuePool::singleton() };
 
     StyleRuleType currentRule { StyleRuleType::Style };
-    CSSPropertyID currentProperty { CSSPropertyInvalid };
-    // Set when currentProperty is CSSPropertyCustom, which every custom property shares.
+    CSSPropertyID currentProperty { CSSPropertyID::Invalid };
+    // Set when currentProperty is CSSPropertyID::Custom, which every custom property shares.
     AtomString currentCustomPropertyName { };
     IsImportant important { IsImportant::No };
 

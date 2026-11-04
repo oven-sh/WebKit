@@ -110,10 +110,12 @@ struct AssertionTestHolder {
     {
         result = ++counter;
     }
+IGNORE_CLANG_WARNINGS_BEGIN("unused-template")
     template<typename T> void testTaskThatFailsToCompile()
     {
         ++counter;
     }
+IGNORE_CLANG_WARNINGS_END
 };
 }
 
@@ -180,7 +182,8 @@ TEST(WTF_Thread, SuspendIsSynchronous)
 }
 
 
-#if OS(LINUX)
+// Bun: Thread::updateSchedulingAttributes() does nothing on Linux: a thread keeps the policy, nice level and clamp of its process. Upstream runs these wherever OS(LINUX).
+#if OS(LINUX) && !USE(BUN_JSC_ADDITIONS)
 namespace {
 
 struct ObservedAttributes {
@@ -300,6 +303,6 @@ TEST(WTF_Thread, HighPriorityThreadsRestoresClampWhenReenabled)
     EXPECT_EQ(1024u * 20 / 100, demoted->minUtil);
     EXPECT_EQ(1024u, restored->minUtil);
 }
-#endif // OS(LINUX)
+#endif // OS(LINUX) && !USE(BUN_JSC_ADDITIONS)
 
 } // namespace TestWebKitAPI

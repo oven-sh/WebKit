@@ -1,0 +1,16 @@
+# new RegExp(text)
+# RUN: valueflow-results
+# CHECK: feature 7 RegExp
+# CHECK: feature 8 RegExp
+# CHECK: feature 53 RegExp
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="pattern" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=RegExp
+    v1 = String string="a|b"
+    v2 = Construct v0, -, v1
+    PutModuleVariable v2 variable=g0
+    Return
+}

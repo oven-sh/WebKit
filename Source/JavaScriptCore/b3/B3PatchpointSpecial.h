@@ -47,7 +47,7 @@ public:
     JS_EXPORT_PRIVATE ~PatchpointSpecial() final;
 
 private:
-    void forEachArg(Air::Inst&, const ScopedLambda<Air::Inst::EachArgCallback>&) final;
+    void forEachArg(Air::Inst&, NOESCAPE const ScopedLambda<Air::Inst::EachArgCallback>&) final;
     bool isValid(Air::Inst&) final;
     bool admitsStack(Air::Inst&, unsigned argIndex) final;
     bool admitsExtendedOffsetAddr(Air::Inst&, unsigned) final;
@@ -58,6 +58,7 @@ private:
     MacroAssembler::Jump generate(Air::Inst&, CCallHelpers&, Air::GenerationContext&) final;
     
     bool isTerminal(Air::Inst&) final;
+    bool hasFixedForms(Air::Inst&) final;
 
     void dumpImpl(PrintStream&) const final;
     void deepDumpImpl(PrintStream&) const final;

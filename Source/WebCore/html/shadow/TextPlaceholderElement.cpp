@@ -46,12 +46,12 @@ TextPlaceholderElement::TextPlaceholderElement(Document& document, const LayoutS
     : HTMLDivElement(document)
 {
     // FIXME: Move to User Agent stylesheet. See <https://webkit.org/b/208745>.
-    setInlineStyleProperty(CSSPropertyDisplay, size.width() ? CSSValueInlineBlock : CSSValueBlock);
-    setInlineStyleProperty(CSSPropertyVerticalAlign, CSSValueTop);
-    setInlineStyleProperty(CSSPropertyVisibility, CSSValueHidden, IsImportant::Yes);
+    setInlineStyleProperty(CSSPropertyID::Display, size.width() ? CSSValueID::InlineBlock : CSSValueID::Block);
+    setInlineStyleProperty(CSSPropertyID::VerticalAlign, CSSValueID::Top);
+    setInlineStyleProperty(CSSPropertyID::Visibility, CSSValueID::Hidden, IsImportant::Yes);
     if (size.width())
-        setInlineStyleProperty(CSSPropertyWidth, size.width(), CSSUnitType::Px);
-    setInlineStyleProperty(CSSPropertyHeight, size.height(), CSSUnitType::Px);
+        setInlineStyleProperty(CSSPropertyID::Width, size.width(), CSSUnitType::Px);
+    setInlineStyleProperty(CSSPropertyID::Height, size.height(), CSSUnitType::Px);
 }
 
 auto TextPlaceholderElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree) -> NeedsPostConnectionSteps

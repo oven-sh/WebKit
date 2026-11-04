@@ -1,0 +1,72 @@
+# A factory is mostly called by value, so nothing says how often the `new` inside it runs. A small constructor is taken in there all the same: its object is then made where it is wanted.
+# A constructor that is not small stays a call, and so does a function of the small one's size that makes no object
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 1
+# STATISTIC: InlineDecisionCostExceedsBenefit = 2
+# LOSS: MaxInlineHeadBytes x1 f2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}, {key="z" declared={type=anything}}, {key="w" declared={type=anything}}]
+
+function f0 name="Point" flags=[AllocatesOwnThis] parameters=[{type=anything}, {type=anything}] results=[{type=L0}] {
+    v2 = NewObject layout=L0
+    PropSet v2, v0 key="x"
+    PropSet v2, v1 key="y"
+    PropSet v2, v0 key="z"
+    PropSet v2, v1 key="w"
+    Return v2
+}
+
+function f1 name="LargePoint" flags=[AllocatesOwnThis] parameters=[{type=anything}, {type=anything}] results=[{type=L0}] {
+    v2 = NewObject layout=L0
+# REPEAT: i = 0..10
+    PropSet v2, v0 key="x"
+    PropSet v2, v1 key="y"
+    PropSet v2, v0 key="z"
+    PropSet v2, v1 key="w"
+# END REPEAT
+    Return v2
+}
+
+function f2 name="makesNoObject" parameters=[{type=number}] results=[{type=number}] {
+# REPEAT: i = 0..11
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
+    Return v12
+}
+
+function f3 name="factory" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 = CallDirect v0, v0 function=f0 [isConstruction]
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f3 name="factory"
+# CHECK-NOT: CallDirect
+# CHECK: = NewObject layout=L0
+
+function f4 name="factoryOfLargeOnes" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 = CallDirect v0, v0 function=f1 [isConstruction]
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f4 name="factoryOfLargeOnes"
+# CHECK: = CallDirect {{*}} function=f1
+
+function f5 name="callsAnother" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 = CallDirect v0 function=f2
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f5 name="callsAnother"
+# CHECK: = CallDirect {{*}} function=f2

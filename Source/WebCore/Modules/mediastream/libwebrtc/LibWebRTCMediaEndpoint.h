@@ -49,8 +49,10 @@ IGNORE_CLANG_WARNINGS_END
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
+#include <wtf/CheckedRef.h>
 #include <wtf/LoggerHelper.h>
 #include <wtf/RobinHoodHashMap.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 namespace webrtc {
@@ -74,12 +76,15 @@ struct LibWebRTCMediaEndpointTransceiverState;
 
 class LibWebRTCMediaEndpoint final
     : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<LibWebRTCMediaEndpoint, WTF::DestructionThread::Main>
+    , public CanMakeThreadSafeCheckedPtr<LibWebRTCMediaEndpoint>
     , private webrtc::PeerConnectionObserver
     , private webrtc::RTCStatsCollectorCallback
 #if !RELEASE_LOG_DISABLED
     , private LoggerHelper
 #endif
 {
+    WTF_MAKE_TZONE_ALLOCATED(LibWebRTCMediaEndpoint);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LibWebRTCMediaEndpoint);
 public:
     static RefPtr<LibWebRTCMediaEndpoint> create(RTCPeerConnection&, LibWebRTCProvider&, Document&, webrtc::PeerConnectionInterface::RTCConfiguration&&, bool shouldEnableServiceClass);
     ~LibWebRTCMediaEndpoint();
@@ -127,9 +132,9 @@ public:
     bool isNegotiationNeeded(uint32_t) const;
 
     void startRTCLogs();
-    void NODELETE stopRTCLogs();
+    void LEGACY_NODELETE stopRTCLogs();
 
-    void NODELETE setPeerConnectionBackend(LibWebRTCPeerConnectionBackend&);
+    void LEGACY_NODELETE setPeerConnectionBackend(LibWebRTCPeerConnectionBackend&);
 
     bool shouldEnableServiceClass() const { return m_rtcSocketFactory && m_rtcSocketFactory->shouldEnableServiceClass(); }
 
@@ -137,7 +142,7 @@ private:
     LibWebRTCMediaEndpoint(RTCPeerConnection&, LibWebRTCProvider&, Document&, bool shouldEnableServiceClass);
 
     // webrtc::PeerConnectionObserver API
-    void NODELETE OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState) final;
+    void LEGACY_NODELETE OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState) final;
     void OnDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface>) final;
 
     void OnNegotiationNeededEvent(uint32_t) final;
@@ -180,7 +185,7 @@ private:
     const Logger& logger() const final { return m_logger.get(); }
     uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const final { return "LibWebRTCMediaEndpoint"_s; }
-    WTFLogChannel& NODELETE logChannel() const final;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const final;
 
     Seconds statsLogInterval(int64_t) const;
 #endif

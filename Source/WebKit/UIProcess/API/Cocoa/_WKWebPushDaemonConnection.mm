@@ -37,6 +37,7 @@
 #import <WebCore/ExceptionData.h>
 #import <WebCore/PushPermissionState.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/StdLibExtras.h>
@@ -97,7 +98,7 @@ IGNORE_NULL_CHECK_WARNINGS_END
     return self;
 }
 
-static _WKWebPushPermissionState NODELETE toWKPermissionsState(WebCore::PushPermissionState state)
+static _WKWebPushPermissionState LEGACY_NODELETE toWKPermissionsState(WebCore::PushPermissionState state)
 {
     switch (state) {
     case WebCore::PushPermissionState::Denied:
@@ -193,7 +194,7 @@ static _WKWebPushPermissionState NODELETE toWKPermissionsState(WebCore::PushPerm
     protect(*_connection)->getNotifications(scopeURL, tag, [completionHandlerCopy = makeBlockPtr(completionHandler)] (auto result) {
         if (result) {
             NSMutableArray<_WKNotificationData *> *nsResult = [NSMutableArray arrayWithCapacity:result.value().size()];
-            for (auto& data : result.value())
+            for (auto& data : borrow(result.value()))
                 [nsResult addObject:[[[_WKNotificationData alloc] _initWithCoreData:data] autorelease]];
 
             return completionHandlerCopy(nsResult, nil);

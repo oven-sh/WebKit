@@ -165,6 +165,7 @@ private:
 
     void dispatchGoToBackForwardItemAtIndex(int steps) final;
     void dispatchEnqueueHistoryTraversalDelta(int delta) final;
+    void dispatchEnqueueHistoryTraversalToItem(WebCore::BackForwardFrameItemIdentifier, CompletionHandler<void(bool)>&&) final;
 
     void loadStorageAccessQuirksIfNeeded() final { }
 
@@ -257,5 +258,9 @@ private:
     WeakObjCPtr<WebFramePolicyListener> m_policyListener;
 };
 
-WebDataSource *NODELETE dataSource(WebCore::DocumentLoader*);
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebFrameLoaderClient)
+    static bool isType(const WebCore::LocalFrameLoaderClient& client) { return !client.isEmptyFrameLoaderClient(); }
+SPECIALIZE_TYPE_TRAITS_END()
+
+WebDataSource *LEGACY_NODELETE dataSource(WebCore::DocumentLoader*);
 void addTypesFromClass(NSMutableDictionary *, Class, NSArray *);

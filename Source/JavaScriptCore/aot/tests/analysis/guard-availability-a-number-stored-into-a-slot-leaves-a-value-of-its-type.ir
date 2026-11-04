@@ -1,0 +1,21 @@
+# The guard of a test that a slot holds a value of the field's type, without undefined and null, holds behind a store of such a value into that slot
+# FORM: Prepared
+# RUN: guards points uses
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=undefined|number}}]
+
+function f0 name="numberStoredToFieldTestedForItsType" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    v2 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven [holdsDeclaredType]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    PutSlot v0, v3, v1 key="x" receivers=[L0] level=Proven
+    v5 = GetSlot v0, v3 key="x" receivers=[L0] level=Proven [holdsDeclaredType]
+    Return v5
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: b1:0 available: [v3]
+# CHECK-NEXT: b1:1 available: [v3]
+# CHECK: v5 guard v3: Available

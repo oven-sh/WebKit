@@ -35,7 +35,7 @@ namespace JSC {
 template<typename BitfieldType>
 void ArithProfile<BitfieldType>::emitObserveResult(CCallHelpers& jit, GPRReg valueGPR, GPRReg tempGPR, TagRegistersMode mode)
 {
-    if (!shouldEmitSetDouble() && !shouldEmitSetNonNumeric() && !shouldEmitSetHeapBigInt() && !shouldEmitSetBigInt32())
+    if (!shouldEmitSetDouble() && !shouldEmitSetNonNumeric() && !shouldEmitSetHeapBigInt())
         return;
 
     CCallHelpers::JumpList done;
@@ -43,19 +43,22 @@ void ArithProfile<BitfieldType>::emitObserveResult(CCallHelpers& jit, GPRReg val
 
     done.append(jit.branchIfInt32(valueGPR, mode));
     CCallHelpers::Jump notDouble = jit.branchIfNotDoubleKnownNotInt32(valueGPR, mode);
-    emitSetDouble(jit, tempGPR);
+    if (shouldEmitSetDouble()) {
+        constexpr BitfieldType doubleBits = ObservedResults::Int32Overflow | ObservedResults::NegZeroDouble | ObservedResults::NonNegZeroDouble;
+        if ((m_bits & doubleBits) != doubleBits)
+            emitUnconditionalSet(jit, doubleBits);
+        if (!didObserveInt52Overflow()) {
+            if (mode == DoNotHaveTagRegisters) {
+                jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), tempGPR);
+                jit.add64(valueGPR, tempGPR);
+            } else
+                jit.add64(GPRInfo::numberTagRegister, valueGPR, tempGPR);
+            emitSetInt52OverflowIfNeeded(jit, tempGPR);
+        }
+    }
     done.append(jit.jump());
 
     notDouble.link(&jit);
-
-#if USE(BIGINT32)
-    CCallHelpers::Jump notBigInt32 = jit.branchIfNotBigInt32(valueGPR, tempGPR, mode);
-    emitSetBigInt32(jit);
-    done.append(jit.jump());
-    notBigInt32.link(&jit);
-#else
-    UNUSED_PARAM(tempGPR);
-#endif
 
     nonNumeric.append(jit.branchIfNotCell(valueGPR, mode));
     nonNumeric.append(jit.branchIfNotHeapBigInt(valueGPR));
@@ -90,6 +93,19 @@ void ArithProfile<BitfieldType>::emitSetDouble(CCallHelpers& jit, GPRReg scratch
 }
 
 template<typename BitfieldType>
+void ArithProfile<BitfieldType>::emitSetInt52OverflowIfNeeded(CCallHelpers& jit, GPRReg doubleBitsGPR) const
+{
+    constexpr double overflowPoint = static_cast<double>(ObservedResults::int52OverflowPoint);
+    CCallHelpers::JumpList inRange;
+    inRange.append(jit.branch64(CCallHelpers::Equal, doubleBitsGPR, CCallHelpers::TrustedImm64(std::bit_cast<uint64_t>(-overflowPoint))));
+    // Shifting out the sign bit orders the remaining bits by magnitude; NaN and Infinity sort above every finite value.
+    jit.lshift64(CCallHelpers::TrustedImm32(1), doubleBitsGPR);
+    inRange.append(jit.branch64(CCallHelpers::Below, doubleBitsGPR, CCallHelpers::TrustedImm64(std::bit_cast<uint64_t>(overflowPoint) << 1)));
+    emitUnconditionalSet(jit, ObservedResults::Int52Overflow);
+    inRange.link(&jit);
+}
+
+template<typename BitfieldType>
 bool ArithProfile<BitfieldType>::shouldEmitSetNonNumeric() const
 {
     BitfieldType mask = ObservedResults::NonNumeric;
@@ -101,17 +117,6 @@ void ArithProfile<BitfieldType>::emitSetNonNumeric(CCallHelpers& jit) const
 {
     if (shouldEmitSetNonNumeric())
         emitUnconditionalSet(jit, ObservedResults::NonNumeric);
-}
-
-template<typename BitfieldType>
-bool ArithProfile<BitfieldType>::shouldEmitSetBigInt32() const
-{
-#if USE(BIGINT32)
-    BitfieldType mask = ObservedResults::BigInt32;
-    return (m_bits & mask) != mask;
-#else
-    return false;
-#endif
 }
 
 template<typename BitfieldType>
@@ -127,15 +132,6 @@ void ArithProfile<BitfieldType>::emitSetHeapBigInt(CCallHelpers& jit) const
     if (shouldEmitSetHeapBigInt())
         emitUnconditionalSet(jit, ObservedResults::HeapBigInt);
 }
-
-#if USE(BIGINT32)
-template<typename BitfieldType>
-void ArithProfile<BitfieldType>::emitSetBigInt32(CCallHelpers& jit) const
-{
-    if (shouldEmitSetBigInt32())
-        emitUnconditionalSet(jit, ObservedResults::BigInt32);
-}
-#endif
 
 template<typename BitfieldType>
 void ArithProfile<BitfieldType>::emitUnconditionalSet(CCallHelpers& jit, BitfieldType mask) const
@@ -193,10 +189,6 @@ void printInternal(PrintStream& out, const ArithProfile<T>& profile)
         }
         if (profile.didObserveHeapBigInt()) {
             out.print(separator, "HeapBigInt");
-            separator = "|";
-        }
-        if (profile.didObserveBigInt32()) {
-            out.print(separator, "BigInt32");
             separator = "|";
         }
     }

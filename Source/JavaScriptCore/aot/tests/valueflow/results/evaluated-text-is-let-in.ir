@@ -1,0 +1,23 @@
+# A direct eval that is reached lets in code the build has not seen: the record names it, any locale may be named, and a function that only such code can find is reached
+# RUN: valueflow-results
+# CHECK-NOT: function f1 reachability
+# CHECK: locale Unknown
+# CHECK: unseen-code EvaluatesText f0:v5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="helper" module=m0 declared={type=anything} initialization=Uninitialized
+evalscope e0 bindings=[{name="helper" variable=g0}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Undefined
+    v5 = DirectEval v3, v4 evalScope=e0
+    Return
+}
+function f1 name="helper" results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}

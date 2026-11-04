@@ -1,0 +1,11 @@
+# A Parameter comes from the head of a block in every form, never from its values
+# FORM: Prepared
+# RUN: print
+# DIAGNOSTIC: EngineOnlyOnWire
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = Parameter
+    Return
+}

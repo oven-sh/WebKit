@@ -37,6 +37,9 @@
 #endif
 
 #if PLATFORM(COCOA)
+#include <CoreGraphics/CGAffineTransform.h>
+#include <numbers>
+
 #include <pal/cf/CoreMediaSoftLink.h>
 #include "CoreVideoSoftLink.h"
 #endif
@@ -58,13 +61,67 @@ void VideoFrame::initializeCharacteristics(MediaTime presentationTime, bool isMi
     const_cast<Rotation&>(m_rotation) = rotation;
 }
 
-Ref<VideoFrame> VideoFrame::updateTimestamp(MediaTime mediaTime, ShouldCloneWithDifferentTimestamp shouldCloneWithDifferentTimestamp)
+Ref<VideoFrame> VideoFrame::updateTimestamp(MediaTime mediaTime, ShouldClone shouldCloneIfUpdating)
 {
     if (m_presentationTime == mediaTime)
         return *this;
 
-    Ref updatedVideoFrame = shouldCloneWithDifferentTimestamp == ShouldCloneWithDifferentTimestamp::Yes ? clone() : Ref { *this };
+    Ref updatedVideoFrame = shouldCloneIfUpdating == ShouldClone::Yes ? clone() : Ref { *this };
     const_cast<MediaTime&>(updatedVideoFrame->m_presentationTime) = mediaTime;
+    return updatedVideoFrame;
+}
+
+Ref<VideoFrame> VideoFrame::updateOrientation(Rotation rotation, bool isMirrored, ShouldClone shouldCloneIfUpdating)
+{
+    if (m_rotation == rotation && m_isMirrored == isMirrored)
+        return *this;
+
+    Ref updatedVideoFrame = shouldCloneIfUpdating == ShouldClone::Yes ? clone() : Ref { *this };
+    const_cast<Rotation&>(updatedVideoFrame->m_rotation) = rotation;
+    const_cast<bool&>(updatedVideoFrame->m_isMirrored) = isMirrored;
+    return updatedVideoFrame;
+}
+
+ImageOrientation VideoFrame::orientation() const
+{
+    // The frame is rotated clockwise, then mirrored horizontally.
+    switch (m_rotation) {
+    case Rotation::None:
+        return m_isMirrored ? ImageOrientation::Orientation::OriginTopRight : ImageOrientation::Orientation::OriginTopLeft;
+    case Rotation::Right:
+        return m_isMirrored ? ImageOrientation::Orientation::OriginLeftTop : ImageOrientation::Orientation::OriginRightTop;
+    case Rotation::UpsideDown:
+        return m_isMirrored ? ImageOrientation::Orientation::OriginBottomLeft : ImageOrientation::Orientation::OriginBottomRight;
+    case Rotation::Left:
+        return m_isMirrored ? ImageOrientation::Orientation::OriginRightBottom : ImageOrientation::Orientation::OriginLeftBottom;
+    }
+    ASSERT_NOT_REACHED();
+    return ImageOrientation::Orientation::OriginTopLeft;
+}
+
+#if PLATFORM(COCOA)
+CGAffineTransform VideoFrame::affineTransform(RotationDirection direction) const
+{
+    if (hasNoTransformation())
+        return CGAffineTransformIdentity;
+
+    // The frame is rotated first, then mirrored.
+    double rotationRadians = static_cast<int>(m_rotation) * std::numbers::pi / 180;
+    if (direction == RotationDirection::CounterClockwise)
+        rotationRadians = -rotationRadians;
+    if (m_isMirrored)
+        return CGAffineTransformRotate(CGAffineTransformMakeScale(-1, 1), rotationRadians);
+    return CGAffineTransformMakeRotation(rotationRadians);
+}
+#endif
+
+Ref<VideoFrame> VideoFrame::updateShouldIgnoreAlpha(bool shouldIgnore, ShouldClone shouldCloneIfUpdating)
+{
+    if (shouldIgnoreAlpha() == shouldIgnore)
+        return *this;
+
+    Ref updatedVideoFrame = shouldCloneIfUpdating == ShouldClone::Yes ? clone() : Ref { *this };
+    updatedVideoFrame->setShouldIgnoreAlpha(shouldIgnore);
     return updatedVideoFrame;
 }
 
@@ -91,37 +148,49 @@ RefPtr<VideoFrame> createFromPixelBuffer(Ref<PixelBuffer>&&, PlatformVideoColorS
     return nullptr;
 }
 
-RefPtr<VideoFrame> VideoFrame::createNV12(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, const ComputedPlaneLayout&, PlatformVideoColorSpace&&)
+RefPtr<VideoFrame> VideoFrame::createNV12(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, const ComputedPlaneLayout&, Rotation, PlatformVideoColorSpace&&)
 {
     // FIXME: Add support.
     return nullptr;
 }
 
-RefPtr<VideoFrame> VideoFrame::createRGBA(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, PlatformVideoColorSpace&&)
+RefPtr<VideoFrame> VideoFrame::createRGBA(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, Rotation, PlatformVideoColorSpace&&)
 {
     // FIXME: Add support.
     return nullptr;
 }
 
-RefPtr<VideoFrame> VideoFrame::createBGRA(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, PlatformVideoColorSpace&&)
+RefPtr<VideoFrame> VideoFrame::createRGBX(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, Rotation, PlatformVideoColorSpace&&)
 {
     // FIXME: Add support.
     return nullptr;
 }
 
-RefPtr<VideoFrame> VideoFrame::createI420(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, PlatformVideoColorSpace&&)
+RefPtr<VideoFrame> VideoFrame::createBGRA(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, Rotation, PlatformVideoColorSpace&&)
 {
     // FIXME: Add support.
     return nullptr;
 }
 
-RefPtr<VideoFrame> VideoFrame::createI420A(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, PlatformVideoColorSpace&&)
+RefPtr<VideoFrame> VideoFrame::createBGRX(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, Rotation, PlatformVideoColorSpace&&)
 {
     // FIXME: Add support.
     return nullptr;
 }
 
-void VideoFrame::copyTo(std::span<uint8_t>, VideoPixelFormat, Vector<ComputedPlaneLayout>&&, CopyCallback&& callback)
+RefPtr<VideoFrame> VideoFrame::createI420(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, Rotation, PlatformVideoColorSpace&&)
+{
+    // FIXME: Add support.
+    return nullptr;
+}
+
+RefPtr<VideoFrame> VideoFrame::createI420A(std::span<const uint8_t>, size_t, size_t, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, const ComputedPlaneLayout&, Rotation, PlatformVideoColorSpace&&)
+{
+    // FIXME: Add support.
+    return nullptr;
+}
+
+void VideoFrame::copyTo(std::span<uint8_t>, VideoPixelFormat, ColorSpace, Vector<ComputedPlaneLayout>&&, CopyCallback&& callback)
 {
     // FIXME: Add support.
     callback({ });

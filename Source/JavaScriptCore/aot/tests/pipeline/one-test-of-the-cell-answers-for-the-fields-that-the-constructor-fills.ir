@@ -1,0 +1,67 @@
+# Unknown JavaScript gets the object, so no flow result says that its slots stay filled. The constructor fills them all before anybody sees the object, and the cell says whether that still holds:
+# a function that reads three of the fields tests the cell once, not three slots. A call ends what the test has proven. The test answers for the raw value of a number too: whoever stores the marker for undefined or null into its slot sets the mark of the cell
+# FORM: AsRead
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Node" constructor=f1 fields=[{key="first" declared={type=anything}}, {key="second" declared={type=anything}}, {key="third" declared={type=anything}}, {key="size" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = String string="a"
+    v4 = Double number=1.5
+    v5 = Construct v2, v2, v3, v4
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v5
+    v8 = NewClosure function=f3
+    v9 = Call v8, -, v5, v6
+    v10 = NewClosure function=f4
+    v11 = Call v10, -, v5
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="text" [isFreeName]
+    v14 = Builtin builtin=Function
+    v15 = Construct v14, -, v13
+    v16 = Call v15, -, v5, v2, v6, v8, v10
+    Return v16
+}
+function f1 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0
+    PropSet v4, v1 key="first" mode=Strict
+    PropSet v4, v1 key="second" mode=Strict
+    PropSet v4, v1 key="third" mode=Strict
+    PropSet v4, v2 key="size" mode=Strict
+    Return v4
+}
+# CHECK: layout L0 kind=Instance name="Node" {{*}}{key="first" {{*}}occupancy=FilledWithValueAtBirth{{*}}{key="second" {{*}}occupancy=FilledWithValueAtBirth{{*}}{key="third" {{*}}occupancy=FilledWithValueAtBirth{{*}}{key="size" {{*}}occupancy=FilledWithValueAtBirth
+function f2 name="readsThree" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="first"
+    v2 = PropGet v0 key="second"
+    v3 = PropGet v0 key="third"
+    v4 = StrictEq v1, v2
+    v5 = StrictEq v4, v3
+    Return v5
+# CHECK-COUNT-1: = HasBirthFieldsFilled
+# CHECK-NOT: IsSlotFilled
+}
+function f3 name="callsBetweenTwoReads" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="first"
+    v3 = Call v1, -, v0
+    v4 = PropGet v0 key="second"
+    v5 = StrictEq v2, v4
+    Return v5
+# CHECK-COUNT-2: = HasBirthFieldsFilled
+}
+function f4 name="readsTheNumber" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="size"
+    Return v1
+# CHECK: number = GetSlot {{*}} key="size" {{*}}[holdsDeclaredType]
+# CHECK-COUNT-1: = HasBirthFieldsFilled
+# CHECK-NOT: IsSlotFilled
+}

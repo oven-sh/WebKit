@@ -1,0 +1,34 @@
+# A chain whose comparisons cannot be claimed stays a chain of branches
+# FORM: Prepared
+# OPTIONS: limit=MaxSelectionGroupMembers:0
+# RUN: pass Select
+# LOSS: MaxSelectionGroupMembers x7 f0 v2
+# STATISTIC: SwitchStringGroups = 0
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="three-strings"
+# CHECK-NOT: Switch
+# CHECK: v2: boolean = StrictEq v0, v1
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NOT: Switch
+function f0 name="three-strings" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="a"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = String string="b"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    v5 = String string="c"
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    Return v0
+}

@@ -1,0 +1,200 @@
+# Which slot operation a store or a definition becomes, one row of the plan's tables per case, each followed by the case that lacks one of the facts the row relies on
+# FORM: Prepared
+# RUN: property-access
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="filled" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="optional" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="inheritable" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="redefinable" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverStoredWithOtherType]}}, {key="retypable" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined]}}, {key="deletable" declared={type=number} flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="constant" declared={type=number} flags=[IsImmutable] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Freezable" fields=[{key="filled" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="optional" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangePrototype]}
+layout L2 name="NeverEnumerated" fields=[{key="filled" declared={type=number|string} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="optional" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="inheritable" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype] keys=NeverEnumerated}
+layout L3 name="AlsoNeverEnumerated" fields=[{key="optional" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype] keys=NeverEnumerated}
+layout L4 kind=Instance name="Gauge" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true namedMembers=[{key="reset" function=f1 mutability=Fixed}, {key="level" kind=Setter function=f2 mutability=Fixed}, {key="peak" kind=Getter function=f3 mutability=Fixed}]}
+
+layout L5 name="Reparentable" fields=[{key="inheritable" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity]}
+layout L6 kind=Instance name="Open" constructor=f35 fields=[{key="inheritable" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed}
+layout L7 kind=Instance name="Watched" constructor=f36 fields=[{key="level" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true namedMembers=[{key="level" kind=Setter function=f2 mutability=Fixed}]}
+layout L8 name="Unchecked" fields=[{key="loose" declared={type=number flags=[IsExpected]} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="Gauge" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f1 name="reset" kind=Method flags=[HasThis] results=[{type=anything}]
+function f2 name="level" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}]
+function f3 name="peak" kind=Getter flags=[HasThis] results=[{type=anything}]
+
+function f4 name="store-filled" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    Return
+}
+# CHECK: F4 v2 PropSet [[filled]]: form=Slot level=Proven operation=PutSlot receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=0)
+function f5 name="store-object-may-be-frozen" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    Return
+}
+# CHECK-NEXT: F5 v2 PropSet [[filled]]: form=Slot level=Expected operation=PutSlot receivers=[L1] proofs=[NotFrozen] storedValueFits missPath member=(Field level=Proven holder=L1 field=0)
+function f6 name="store-one-member-may-be-frozen" parameters=[{type=L0|L1}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    Return
+}
+# CHECK-NEXT: F6 v2 PropSet [[filled]]: form=Slot level=Expected operation=PutSlot receivers=[L0, L1] proofs=[NotFrozen] storedValueFits missPath member=(Field level=Proven)
+function f7 name="store-value-of-another-type" parameters=[{type=L0}, {type=string}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    Return
+}
+# CHECK-NEXT: F7 v2 PropSet [[filled]]: form=Slot level=Expected operation=PutSlot receivers=[L0] testsStoredValue missPath member=(Field level=Proven holder=L0 field=0)
+function f8 name="store-value-of-a-wider-type" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    Return
+}
+# CHECK-NEXT: F8 v2 PropSet [[filled]]: form=Slot level=Expected operation=PutSlot receivers=[L0] testsStoredValue missPath member=(Field level=Proven holder=L0 field=0)
+function f9 name="store-value-fits-every-member" parameters=[{type=L0|L2}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    Return
+}
+# CHECK-NEXT: F9 v2 PropSet [[filled]]: form=Slot level=Proven operation=PutSlot receivers=[L0, L2] storedValueFits member=(Field level=Proven)
+function f10 name="store-value-fits-one-member" parameters=[{type=L0|L2}, {type=string}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    Return
+}
+# CHECK-NEXT: F10 v2 PropSet [[filled]]: form=Slot level=Expected operation=PutSlot receivers=[L0, L2] testsStoredValue missPath member=(Field level=Proven)
+function f11 name="store-creates-property-nobody-enumerates" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="optional"
+    Return
+}
+# CHECK-NEXT: F11 v2 PropSet [[optional]]: form=Slot level=Proven operation=PutSlot receivers=[L2] storedValueFits member=(Field level=Proven holder=L2 field=1)
+function f12 name="store-creates-property-in-key-order" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="optional"
+    Return
+}
+# CHECK-NEXT: F12 v2 PropSet [[optional]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=1)
+function f13 name="store-no-member-is-enumerated" parameters=[{type=L2|L3}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="optional"
+    Return
+}
+# CHECK-NEXT: F13 v2 PropSet [[optional]]: form=Slot level=Proven operation=PutSlot receivers=[L2, L3] storedValueFits member=(Field level=Proven)
+function f14 name="store-one-member-may-be-enumerated" parameters=[{type=L0|L2}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="optional"
+    Return
+}
+# CHECK-NEXT: F14 v2 PropSet [[optional]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0, L2] storedValueFits member=(Field level=Proven)
+function f15 name="store-creates-property-object-may-be-frozen" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="optional"
+    Return
+}
+# CHECK-NEXT: F15 v2 PropSet [[optional]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L1] proofs=[NotFrozen] storedValueFits missPath member=(Field level=Proven holder=L1 field=1)
+function f16 name="store-filled-field-may-be-deleted" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="deletable"
+    Return
+}
+# CHECK-NEXT: F16 v2 PropSet [[deletable]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=5)
+function f17 name="store-creates-where-no-prototype-can-have-the-name" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="inheritable"
+    Return
+}
+# CHECK-NEXT: F17 v2 PropSet [[inheritable]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=2)
+function f18 name="store-field-may-have-been-redefined" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="redefinable"
+    Return
+}
+# CHECK-NEXT: F18 v2 PropSet [[redefinable]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L0] proofs=[NoFieldOutsideSlot] storedValueFits missPath member=(Field level=Proven holder=L0 field=3)
+function f19 name="store-field-may-hold-another-type" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="retypable"
+    Return
+}
+# CHECK-NEXT: F19 v2 PropSet [[retypable]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L0] proofs=[NoFieldOutsideSlot] storedValueFits missPath member=(Field level=Proven holder=L0 field=4)
+function f20 name="store-immutable-field" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="constant"
+    Return
+}
+# CHECK-NEXT: F20 v2 PropSet [[constant]]: form=ByName level=Unknown receivers=[L0] member=(Field level=Proven holder=L0 field=6)
+function f21 name="store-name-without-field" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="missing"
+    Return
+}
+# CHECK-NEXT: F21 v2 PropSet [[missing]]: form=ByName level=Unknown receivers=[L0] member=(Absent level=Proven)
+function f22 name="store-hides-a-method" parameters=[{type=L4}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="reset"
+    Return
+}
+# CHECK-NEXT: F22 v2 PropSet [[reset]]: form=ByName level=Unknown receivers=[L4] member=(Method level=Proven holder=L4 method=F1)
+function f23 name="store-runs-a-setter" parameters=[{type=L4}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="level"
+    Return
+}
+# CHECK-NEXT: F23 v2 PropSet [[level]]: form=Call level=Proven receivers=[L4] member=(Accessor level=Proven holder=L4 getter=none setter=F2)
+function f24 name="store-meets-an-accessor-without-setter" parameters=[{type=L4}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="peak"
+    Return
+}
+# CHECK-NEXT: F24 v2 PropSet [[peak]]: form=ByName level=Unknown receivers=[L4] member=(Accessor level=Proven holder=L4 getter=F3 setter=none)
+function f25 name="store-hides-a-built-in-member" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="hasOwnProperty"
+    Return
+}
+# CHECK-NEXT: F25 v2 PropSet [[hasOwnProperty]]: form=ByName level=Unknown receivers=[L0] member=(Builtin level=Proven builtin=B
+
+function f26 name="define-filled" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropDefine v0, v1 key="filled"
+    Return
+}
+# CHECK-NEXT: F26 v2 PropDefine [[filled]]: form=Slot level=Proven operation=PutSlot receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=0)
+function f27 name="define-object-may-not-be-extensible" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+    PropDefine v0, v1 key="optional"
+    Return
+}
+# CHECK-NEXT: F27 v2 PropDefine [[optional]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L1] proofs=[NotFrozen] storedValueFits missPath member=(Field level=Proven holder=L1 field=1)
+function f28 name="define-value-of-another-type" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    PropDefine v0, v1 key="filled"
+    Return
+}
+# CHECK-NEXT: F28 v2 PropDefine [[filled]]: form=Slot level=Expected operation=PutSlot receivers=[L0] testsStoredValue missPath member=(Field level=Proven holder=L0 field=0)
+function f29 name="define-does-not-look-at-prototypes" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropDefine v0, v1 key="inheritable"
+    Return
+}
+# CHECK-NEXT: F29 v2 PropDefine [[inheritable]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=2)
+function f30 name="define-property-nobody-enumerates" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
+    PropDefine v0, v1 key="inheritable"
+    Return
+}
+# CHECK-NEXT: F30 v2 PropDefine [[inheritable]]: form=Slot level=Proven operation=PutSlot receivers=[L2] storedValueFits member=(Field level=Proven holder=L2 field=2)
+function f31 name="define-field-may-have-been-redefined" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropDefine v0, v1 key="redefinable"
+    Return
+}
+# CHECK-NEXT: F31 v2 PropDefine [[redefinable]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L0] proofs=[NoFieldOutsideSlot] storedValueFits missPath member=(Field level=Proven holder=L0 field=3)
+function f32 name="define-field-may-hold-another-type" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropDefine v0, v1 key="retypable"
+    Return
+}
+# CHECK-NEXT: F32 v2 PropDefine [[retypable]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L0] proofs=[NoFieldOutsideSlot] storedValueFits missPath member=(Field level=Proven holder=L0 field=4)
+function f33 name="define-immutable-field" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropDefine v0, v1 key="constant"
+    Return
+}
+# CHECK-NEXT: F33 v2 PropDefine [[constant]]: form=Slot level=Proven operation=PutSlot receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=6)
+function f34 name="define-over-a-setter" parameters=[{type=L4}, {type=number}] results=[{type=anything}] {
+    PropDefine v0, v1 key="level"
+    Return
+}
+# CHECK-NEXT: F34 v2 PropDefine [[level]]: form=ByName level=Unknown receivers=[L4] member=(Absent level=Proven)
+
+function f35 name="Open" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f36 name="Watched" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L7
+function f37 name="store-creates-while-the-object-has-its-first-prototype" parameters=[{type=L5}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="inheritable"
+    Return
+}
+# CHECK-NEXT: F37 v2 PropSet [[inheritable]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L5] proofs=[PrototypeLinkUnchanged] storedValueFits missPath member=(Field level=Proven holder=L5 field=0)
+function f38 name="store-creates-while-the-class-prototype-lacks-the-name" parameters=[{type=L6}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="inheritable"
+    Return
+}
+# CHECK-NEXT: F38 v2 PropSet [[inheritable]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L6] conditions=[MemberPassedByStores(L6, [[inheritable]])] storedValueFits missPath member=(Field level=Proven holder=L6 field=0)
+function f39 name="store-may-meet-the-setter-of-the-class" parameters=[{type=L7}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="level"
+    Return
+}
+# CHECK-NEXT: F39 v2 PropSet [[level]]: form=Slot level=Expected operation=PutSlot receivers=[L7] proofs=[SlotFilled] storedValueFits missPath member=(Field level=Proven holder=L7 field=0)
+function f40 name="store-any-value-where-the-type-of-the-field-is-only-expected" parameters=[{type=L8}, {type=string}] results=[{type=anything}] {
+    PropSet v0, v1 key="loose"
+    Return
+}
+# CHECK-NEXT: F40 v2 PropSet [[loose]]: form=Slot level=Proven operation=PutSlot receivers=[L8] storedValueFits member=(Field level=Proven holder=L8 field=0)

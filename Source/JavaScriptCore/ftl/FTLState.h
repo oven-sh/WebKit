@@ -69,7 +69,7 @@ public:
 
     VM& vm() { return graph.m_vm; }
 
-    void dumpDisassembly(PrintStream&, LinkBuffer&, const ScopedLambda<void(DFG::Node*)>& perDFGNodeCallback = [] (DFG::Node*) { });
+    void dumpDisassembly(PrintStream&, LinkBuffer&, NOESCAPE const ScopedLambda<void(DFG::Node*)>& perDFGNodeCallback = [] (DFG::Node*) { });
 
     PropertyInlineCache* addPropertyInlineCache();
     OptimizingCallLinkInfo* addCallLinkInfo(CodeOrigin);
@@ -88,6 +88,8 @@ public:
     Box<CCallHelpers::Label> exceptionHandler { Box<CCallHelpers::Label>::create() };
     B3::Air::StackSlot* capturedValue { nullptr };
     Vector<DFG::JumpReplacement> jumpReplacements;
+    Vector<OSRExit> osrExits;
+    Vector<uint8_t> osrExitValueReps;
 };
 
 } } // namespace JSC::FTL

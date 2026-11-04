@@ -28,9 +28,11 @@
 
 #include "Logging.h"
 #include "ServiceWorkerNotificationHandler.h"
+#include "ValidationProcedures.h"
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
 #include <WebCore/NotificationData.h>
+#include <wtf/Borrow.h>
 #include <wtf/CompletionHandler.h>
 
 namespace WebKit {
@@ -53,6 +55,12 @@ void WebNotificationManagerMessageHandler::deref() const
 void WebNotificationManagerMessageHandler::showNotification(IPC::Connection& connection, const WebCore::NotificationData& data, RefPtr<WebCore::NotificationResources>&& resources, CompletionHandler<void()>&& callback)
 {
     RELEASE_LOG(Push, "WebNotificationManagerMessageHandler showNotification called");
+
+    if (auto failure = ProcessSpeaksForDomain { connection }.checkUntrusted(WebCore::SecurityOriginData::fromURL(URL { data.originString }))) {
+        MESSAGE_CHECK_COMPLETION_BASE(*failure == IPC::ValidationFailure::Ignore, connection, callback());
+        callback();
+        return;
+    }
 
     if (!data.serviceWorkerRegistrationURL.isEmpty()) {
         ServiceWorkerNotificationHandler::singleton().showNotification(connection, data, WTF::move(resources), WTF::move(callback));
@@ -80,7 +88,7 @@ void WebNotificationManagerMessageHandler::clearNotifications(const Vector<WTF::
     Vector<WTF::UUID> pageNotifications;
     persistentNotifications.reserveInitialCapacity(notificationIDs.size());
     pageNotifications.reserveInitialCapacity(notificationIDs.size());
-    for (auto& notificationID : notificationIDs) {
+    for (auto& notificationID : borrow(notificationIDs)) {
         if (serviceWorkerNotificationHandler->handlesNotification(notificationID))
             persistentNotifications.append(notificationID);
         else
@@ -125,9 +133,9 @@ void WebNotificationManagerMessageHandler::getPermissionStateSync(WebCore::Secur
     completionHandler({ });
 }
 
-std::optional<SharedPreferencesForWebProcess> WebNotificationManagerMessageHandler::sharedPreferencesForWebProcess(const IPC::Connection&) const
+std::optional<SharedPreferencesForWebProcess> WebNotificationManagerMessageHandler::sharedPreferencesForWebProcess(const IPC::Connection& connection) const
 {
-    return page().legacyMainFrameProcess().sharedPreferencesForWebProcess();
+    return WebProcessProxy::fromConnection(connection)->sharedPreferencesForWebProcess();
 }
 
 } // namespace WebKit

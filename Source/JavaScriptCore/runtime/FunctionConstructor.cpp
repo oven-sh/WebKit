@@ -21,6 +21,7 @@
 #include "config.h"
 #include "FunctionConstructor.h"
 
+#include "AOTRemovableFeature.h"
 #include "ExceptionHelpers.h"
 #include "FunctionPrototype.h"
 #include "GlobalObjectMethodTable.h"
@@ -58,7 +59,7 @@ JSC_DEFINE_HOST_FUNCTION(callFunctionConstructor, (JSGlobalObject* globalObject,
 }
 
 FunctionConstructor::FunctionConstructor(VM& vm, Structure* structure)
-    : InternalFunction(vm, structure, callFunctionConstructor, constructWithFunctionConstructor)
+    : InternalFunction(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callFunctionConstructor), JSC_REGISTERED_HOST_FUNCTION(constructWithFunctionConstructor))
 {
 }
 
@@ -169,7 +170,7 @@ static String stringifyFunction(JSGlobalObject* globalObject, const ArgList& arg
 }
 
 // ECMA 15.3.2 The Function Constructor
-JSObject* constructFunction(JSGlobalObject* globalObject, const ArgList& args, const Identifier& functionName, const SourceOrigin& sourceOrigin, const String& sourceURL, SourceTaintedOrigin taintedOrigin, const TextPosition& position, FunctionConstructionMode functionConstructionMode, JSValue newTarget)
+JSObject* constructFunction(JSGlobalObject* globalObject, const ArgList& args, const Identifier& functionName, const SourceOrigin& sourceOrigin, const String& sourceURL, SourceTaintedness taintedOrigin, const TextPosition& position, FunctionConstructionMode functionConstructionMode, JSValue newTarget)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -214,8 +215,9 @@ JSObject* constructFunction(JSGlobalObject* globalObject, const ArgList& args, c
     RELEASE_AND_RETURN(scope, constructFunctionSkippingEvalEnabledCheck(globalObject, WTF::move(code), lexicallyScopedFeatures, functionName, sourceOrigin, sourceURL, taintedOrigin, position, -1, functionConstructorParametersEndPosition, functionConstructionMode, newTarget));
 }
 
-JSObject* constructFunctionSkippingEvalEnabledCheck(JSGlobalObject* globalObject, String&& program, LexicallyScopedFeatures lexicallyScopedFeatures, const Identifier& functionName, const SourceOrigin& sourceOrigin, const String& sourceURL, SourceTaintedOrigin taintedOrigin, const TextPosition& position, int overrideLineNumber, std::optional<int> functionConstructorParametersEndPosition, FunctionConstructionMode functionConstructionMode, JSValue newTarget)
+NEVER_INLINE JSObject* constructFunctionSkippingEvalEnabledCheck(JSGlobalObject* globalObject, String&& program, LexicallyScopedFeatures lexicallyScopedFeatures, const Identifier& functionName, const SourceOrigin& sourceOrigin, const String& sourceURL, SourceTaintedness taintedOrigin, const TextPosition& position, int overrideLineNumber, std::optional<int> functionConstructorParametersEndPosition, FunctionConstructionMode functionConstructionMode, JSValue newTarget)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, constructFunctionSkippingEvalEnabledCheck);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -230,8 +232,8 @@ JSObject* constructFunctionSkippingEvalEnabledCheck(JSGlobalObject* globalObject
     JSGlobalObject* structureGlobalObject = globalObject;
     bool needsSubclassStructure = newTarget && newTarget != globalObject->functionConstructor();
     if (needsSubclassStructure) {
-        structureGlobalObject = getFunctionRealm(globalObject, asObject(newTarget));
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (auto* functionGlobalObject = tryGetFunctionRealm(asObject(newTarget)))
+            structureGlobalObject = functionGlobalObject;
     }
     Structure* structure = nullptr;
     switch (functionConstructionMode) {
@@ -273,7 +275,7 @@ JSObject* constructFunctionSkippingEvalEnabledCheck(JSGlobalObject* globalObject
 JSObject* constructFunction(JSGlobalObject* globalObject, CallFrame* callFrame, const ArgList& args, FunctionConstructionMode functionConstructionMode, JSValue newTarget)
 {
     VM& vm = globalObject->vm();
-    return constructFunction(globalObject, args, vm.propertyNames->anonymous, callFrame->callerSourceOrigin(vm), String(), computeNewSourceTaintedOriginFromStack(vm, callFrame), TextPosition(), functionConstructionMode, newTarget);
+    return constructFunction(globalObject, args, vm.propertyNames->anonymous, callFrame->callerSourceOrigin(vm), String(), computeNewSourceTaintednessFromStack(vm, callFrame), TextPosition(), functionConstructionMode, newTarget);
 }
 
 } // namespace JSC

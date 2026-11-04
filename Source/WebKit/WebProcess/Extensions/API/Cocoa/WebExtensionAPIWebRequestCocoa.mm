@@ -35,6 +35,7 @@
 #import "WebExtensionAPIWebRequest.h"
 #import <WebCore/HTTPStatusCodes.h>
 #import <WebCore/ResourceResponse.h>
+#import <wtf/Borrow.h>
 #import <wtf/URLParser.h>
 
 #if ENABLE(WK_WEB_EXTENSIONS)
@@ -46,7 +47,7 @@ WebExtensionAPIWebRequestEvent& WebExtensionAPIWebRequest::onBeforeRequest()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onBeforeRequest
 
     if (!m_onBeforeRequestEvent)
-        m_onBeforeRequestEvent = WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnBeforeRequest);
+        lazyInitialize(m_onBeforeRequestEvent, WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnBeforeRequest));
 
     return *m_onBeforeRequestEvent;
 }
@@ -56,7 +57,7 @@ WebExtensionAPIWebRequestEvent& WebExtensionAPIWebRequest::onBeforeSendHeaders()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onBeforeSendHeaders
 
     if (!m_onBeforeSendHeadersEvent)
-        m_onBeforeSendHeadersEvent = WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnBeforeSendHeaders);
+        lazyInitialize(m_onBeforeSendHeadersEvent, WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnBeforeSendHeaders));
 
     return *m_onBeforeSendHeadersEvent;
 }
@@ -66,7 +67,7 @@ WebExtensionAPIWebRequestEvent& WebExtensionAPIWebRequest::onSendHeaders()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onSendHeaders
 
     if (!m_onSendHeadersEvent)
-        m_onSendHeadersEvent = WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnSendHeaders);
+        lazyInitialize(m_onSendHeadersEvent, WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnSendHeaders));
 
     return *m_onSendHeadersEvent;
 }
@@ -76,7 +77,7 @@ WebExtensionAPIWebRequestEvent& WebExtensionAPIWebRequest::onHeadersReceived()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onHeadersReceived
 
     if (!m_onHeadersReceivedEvent)
-        m_onHeadersReceivedEvent = WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnHeadersReceived);
+        lazyInitialize(m_onHeadersReceivedEvent, WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnHeadersReceived));
 
     return *m_onHeadersReceivedEvent;
 }
@@ -86,7 +87,7 @@ WebExtensionAPIWebRequestEvent& WebExtensionAPIWebRequest::onAuthRequired()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onAuthRequired
 
     if (!m_onAuthRequiredEvent)
-        m_onAuthRequiredEvent = WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnAuthRequired);
+        lazyInitialize(m_onAuthRequiredEvent, WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnAuthRequired));
 
     return *m_onAuthRequiredEvent;
 }
@@ -96,7 +97,7 @@ WebExtensionAPIWebRequestEvent& WebExtensionAPIWebRequest::onBeforeRedirect()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onBeforeRedirect
 
     if (!m_onBeforeRedirectEvent)
-        m_onBeforeRedirectEvent = WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnBeforeRedirect);
+        lazyInitialize(m_onBeforeRedirectEvent, WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnBeforeRedirect));
 
     return *m_onBeforeRedirectEvent;
 }
@@ -106,7 +107,7 @@ WebExtensionAPIWebRequestEvent& WebExtensionAPIWebRequest::onResponseStarted()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onResponseStarted
 
     if (!m_onResponseStartedEvent)
-        m_onResponseStartedEvent = WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnResponseStarted);
+        lazyInitialize(m_onResponseStartedEvent, WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnResponseStarted));
 
     return *m_onResponseStartedEvent;
 }
@@ -116,7 +117,7 @@ WebExtensionAPIWebRequestEvent& WebExtensionAPIWebRequest::onCompleted()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onCompleted
 
     if (!m_onCompletedEvent)
-        m_onCompletedEvent = WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnCompleted);
+        lazyInitialize(m_onCompletedEvent, WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnCompleted));
 
     return *m_onCompletedEvent;
 }
@@ -126,7 +127,7 @@ WebExtensionAPIWebRequestEvent& WebExtensionAPIWebRequest::onErrorOccurred()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onErrorOccurred
 
     if (!m_onErrorOccurredEvent)
-        m_onErrorOccurredEvent = WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnErrorOccurred);
+        lazyInitialize(m_onErrorOccurredEvent, WebExtensionAPIWebRequestEvent::create(*this, WebExtensionEventListenerType::WebRequestOnErrorOccurred));
 
     return *m_onErrorOccurredEvent;
 }
@@ -145,7 +146,7 @@ static NSString *toWebAPI(const WebCore::FormData& formData, const String& conte
     for (const WebCore::FormDataElement& element : formData.elements()) {
         if (auto* data = std::get_if<Vector<uint8_t>>(&element.data)) {
             if (isURLEncoded) {
-                auto dataString = String::fromUTF8(data->span());
+                auto dataString = String::fromUTF8(borrow(*data)->span());
 
                 for (auto& pair : URLParser::parseURLEncodedForm(dataString)) {
                     RetainPtr key = pair.key.createNSString();
@@ -288,7 +289,7 @@ void WebExtensionContextProxy::resourceLoadDidSendRequest(WebExtensionTabIdentif
     auto contentType = request.httpContentType();
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.webRequest().onBeforeRequest().enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
+        protect(protect(namespaceObject.webRequest())->onBeforeRequest())->enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
             if (formData && extraInfo.contains(String(requestBodyKey))) {
                 if (auto *requestBody = toWebAPI(*formData, contentType, listener.globalContext()))
                     [details setObject:requestBody forKey:requestBodyKey];
@@ -302,7 +303,7 @@ void WebExtensionContextProxy::resourceLoadDidSendRequest(WebExtensionTabIdentif
 
     RetainPtr<NSArray> requestHeaders;
 
-    auto handleListeners = [&](auto& listeners) {
+    auto handleListeners = [&](WebExtensionAPIWebRequestEvent& listeners) {
         listeners.enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
             if (extraInfo.contains(String(requestHeadersKey))) {
                 if (!requestHeaders)
@@ -317,8 +318,8 @@ void WebExtensionContextProxy::resourceLoadDidSendRequest(WebExtensionTabIdentif
     };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        handleListeners(namespaceObject.webRequest().onBeforeSendHeaders());
-        handleListeners(namespaceObject.webRequest().onSendHeaders());
+        handleListeners(protect(protect(namespaceObject.webRequest())->onBeforeSendHeaders()));
+        handleListeners(protect(protect(namespaceObject.webRequest())->onSendHeaders()));
     });
 }
 
@@ -327,7 +328,7 @@ void WebExtensionContextProxy::resourceLoadDidBlockBeforeRequest(WebExtensionTab
     auto *details = webRequestDetailsForResourceLoad(resourceLoad, tabID);
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.webRequest().onBeforeRequest().enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto&) {
+        protect(protect(namespaceObject.webRequest())->onBeforeRequest())->enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto&) {
             listener.call(toJSValueRef(listener.globalContext(), details));
         });
     });
@@ -338,7 +339,7 @@ void WebExtensionContextProxy::resourceLoadDidPerformHTTPRedirection(WebExtensio
     auto *details = headersReceivedDetails(resourceLoad, tabID, response);
     NSArray *responseHeaders;
 
-    auto handleListeners = [&](auto& listeners) {
+    auto handleListeners = [&](WebExtensionAPIWebRequestEvent& listeners) {
         listeners.enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
             if (extraInfo.contains(String(responseHeadersKey))) {
                 if (!responseHeaders)
@@ -353,13 +354,13 @@ void WebExtensionContextProxy::resourceLoadDidPerformHTTPRedirection(WebExtensio
     };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        handleListeners(namespaceObject.webRequest().onHeadersReceived());
+        handleListeners(protect(protect(namespaceObject.webRequest())->onHeadersReceived()));
     });
 
     details[redirectURLKey] = newRequest.url().string().createNSString().get();
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        handleListeners(namespaceObject.webRequest().onBeforeRedirect());
+        handleListeners(protect(protect(namespaceObject.webRequest())->onBeforeRedirect()));
     });
 }
 
@@ -389,7 +390,7 @@ void WebExtensionContextProxy::resourceLoadDidReceiveChallenge(WebExtensionTabId
         details[realmKey] = realm;
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.webRequest().onAuthRequired().invokeListenersWithArgument(details, tabID, windowID, resourceLoad);
+        protect(protect(namespaceObject.webRequest())->onAuthRequired())->invokeListenersWithArgument(details, tabID, windowID, resourceLoad);
     });
 }
 
@@ -398,7 +399,7 @@ void WebExtensionContextProxy::resourceLoadDidReceiveResponse(WebExtensionTabIde
     auto *details = headersReceivedDetails(resourceLoad, tabID, response);
     NSArray *responseHeaders;
 
-    auto handleListeners = [&](auto& listeners) {
+    auto handleListeners = [&](WebExtensionAPIWebRequestEvent& listeners) {
         listeners.enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
             if (extraInfo.contains(String(responseHeadersKey))) {
                 if (!responseHeaders)
@@ -413,8 +414,8 @@ void WebExtensionContextProxy::resourceLoadDidReceiveResponse(WebExtensionTabIde
     };
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        handleListeners(namespaceObject.webRequest().onHeadersReceived());
-        handleListeners(namespaceObject.webRequest().onResponseStarted());
+        handleListeners(protect(protect(namespaceObject.webRequest())->onHeadersReceived()));
+        handleListeners(protect(protect(namespaceObject.webRequest())->onResponseStarted()));
     });
 }
 
@@ -429,7 +430,7 @@ void WebExtensionContextProxy::resourceLoadDidCompleteWithError(WebExtensionTabI
         }];
 
         enumerateNamespaceObjects([&](auto& namespaceObject) {
-            namespaceObject.webRequest().onErrorOccurred().invokeListenersWithArgument(details, tabID, windowID, resourceLoad);
+            protect(protect(namespaceObject.webRequest())->onErrorOccurred())->invokeListenersWithArgument(details, tabID, windowID, resourceLoad);
         });
 
         return;
@@ -440,7 +441,7 @@ void WebExtensionContextProxy::resourceLoadDidCompleteWithError(WebExtensionTabI
     NSArray *responseHeaders;
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        namespaceObject.webRequest().onCompleted().enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
+        protect(protect(namespaceObject.webRequest())->onCompleted())->enumerateListeners(tabID, windowID, resourceLoad, [&](auto& listener, auto& extraInfo) {
             if (extraInfo.contains(String(responseHeadersKey))) {
                 if (!responseHeaders)
                     responseHeaders = convertHeaderFieldsToWebExtensionFormat(response.httpHeaderFields());

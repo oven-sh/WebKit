@@ -38,7 +38,7 @@ void JSOrderedHashTable<Traits>::visitChildrenImpl(JSCell* cell, Visitor& visito
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_storage);
+    visitFields(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename Traits>, JSOrderedHashTable<Traits>);

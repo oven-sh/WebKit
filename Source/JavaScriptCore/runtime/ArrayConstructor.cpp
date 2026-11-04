@@ -24,11 +24,14 @@
 #include "config.h"
 #include "ArrayConstructor.h"
 
+#include "AOTCompactTable.h"
+
 #include "ArrayPrototype.h"
 #include "ArrayPrototypeInlines.h"
 #include "BuiltinNames.h"
 #include "ClonedArguments.h"
 #include "ExecutableBaseInlines.h"
+#include "IndexingTypeInlines.h"
 #include "JSCInlines.h"
 #include "JSMapIterator.h"
 #include "JSSet.h"
@@ -87,6 +90,15 @@ JSArray* constructArrayWithSizeQuirk(JSGlobalObject* globalObject, ArrayAllocati
     
     uint32_t n = length.toUInt32(globalObject);
     if (n != length.toNumber(globalObject)) {
+        if (newTarget && newTarget != globalObject->arrayConstructor()) {
+            JSObject* target = asObject(newTarget);
+            JSValue prototype = target->get(globalObject, vm.propertyNames->prototype);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (!prototype.isObject()) {
+                getFunctionRealm(globalObject, target);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
+        }
         throwException(globalObject, scope, createRangeError(globalObject, ArrayInvalidLengthError));
         return nullptr;
     }
@@ -251,17 +263,17 @@ JSC_DEFINE_HOST_FUNCTION(arrayConstructorOf, (JSGlobalObject* globalObject, Call
     return JSValue::encode(result);
 }
 
-static ALWAYS_INLINE unsigned NODELETE getArgumentsLength(ScopedArguments* arguments)
+static ALWAYS_INLINE unsigned LEGACY_NODELETE getArgumentsLength(ScopedArguments* arguments)
 {
     return arguments->internalLength();
 }
 
-static ALWAYS_INLINE unsigned NODELETE getArgumentsLength(DirectArguments* arguments)
+static ALWAYS_INLINE unsigned LEGACY_NODELETE getArgumentsLength(DirectArguments* arguments)
 {
     return arguments->internalLength();
 }
 
-static ALWAYS_INLINE unsigned NODELETE getArgumentsLength(ClonedArguments* arguments)
+static ALWAYS_INLINE unsigned LEGACY_NODELETE getArgumentsLength(ClonedArguments* arguments)
 {
     ASSERT(arguments->isIteratorProtocolFastAndNonObservable());
     JSValue lengthValue = arguments->getDirect(clonedArgumentsLengthPropertyOffset);
@@ -270,7 +282,7 @@ static ALWAYS_INLINE unsigned NODELETE getArgumentsLength(ClonedArguments* argum
 }
 
 template<typename Arguments>
-static ALWAYS_INLINE void forEachArgumentsElement(JSGlobalObject* globalObject, Arguments* arguments, unsigned length, const Invocable<void(JSValue, unsigned)> auto& func)
+static ALWAYS_INLINE void forEachArgumentsElement(JSGlobalObject* globalObject, Arguments* arguments, unsigned length, NOESCAPE const Invocable<void(JSValue, unsigned)> auto& func)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     unsigned i;
@@ -359,6 +371,67 @@ static JSArray* tryCreateArrayFromClonedArguments(JSGlobalObject* globalObject, 
     return tryCreateArrayFromArguments(globalObject, arguments);
 }
 
+#if ENABLE(AOT)
+template<typename Helper>
+static NEVER_INLINE JSArray* tryCreateArrayFromCompactStorage(JSGlobalObject* globalObject, JSCell* storageCell, typename Helper::Entry startEntry, IterationKind kind)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto forEachElement = [&](const auto& functor) ALWAYS_INLINE_LAMBDA {
+        AOT::CompactTable::forEachInColumn(vm, storageCell, startEntry, kind == IterationKind::Keys, functor);
+    };
+
+    IndexingType indexingType = IsArray;
+    unsigned length = 0;
+    forEachElement([&](JSValue element) {
+        indexingType = leastUpperBoundOfIndexingTypeAndValue(indexingType, element);
+        ++length;
+    });
+
+    if (!length)
+        RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
+
+    Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
+    IndexingType resultIndexingType = resultStructure->indexingType();
+
+    if (hasAnyArrayStorage(resultIndexingType)) [[unlikely]]
+        return nullptr;
+
+    ASSERT(!globalObject->isHavingABadTime());
+
+    auto vectorLength = Butterfly::optimalContiguousVectorLength(resultStructure, length);
+    void* memory = vm.auxiliarySpace().allocate(
+        vm,
+        Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)),
+        nullptr, AllocationFailureMode::ReturnNull);
+    if (!memory) [[unlikely]]
+        return nullptr;
+    DeferGC deferGC(vm);
+    auto* resultButterfly = Butterfly::fromBase(memory, 0, 0);
+    resultButterfly->setVectorLength(vectorLength);
+    resultButterfly->setPublicLength(length);
+
+    size_t i = 0;
+    if (hasDouble(resultIndexingType)) {
+        forEachElement([&](JSValue element) {
+            ASSERT(element.isNumber());
+            resultButterfly->contiguousDouble().atUnsafe(i) = element.asNumber();
+            ++i;
+        });
+    } else if (hasInt32(resultIndexingType) || hasContiguous(resultIndexingType)) {
+        forEachElement([&](JSValue element) {
+            resultButterfly->contiguous().atUnsafe(i).setWithoutWriteBarrier(element);
+            ++i;
+        });
+    } else
+        RELEASE_ASSERT_NOT_REACHED();
+
+    Butterfly::clearRange(resultIndexingType, resultButterfly, length, vectorLength);
+    return JSArray::createWithButterfly(vm, nullptr, resultStructure, resultButterfly);
+}
+#endif
+
 static JSArray* tryCreateArrayFromSet(JSGlobalObject* globalObject, JSSet* set)
 {
     VM& vm = globalObject->vm();
@@ -372,6 +445,11 @@ static JSArray* tryCreateArrayFromSet(JSGlobalObject* globalObject, JSSet* set)
     JSCell* storageCell = set->storageOrSentinel(vm);
     if (storageCell == vm.orderedHashTableSentinel())
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
+
+#if ENABLE(AOT)
+    if (JSSet::Helper::isCompact(*storageCell)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, tryCreateArrayFromCompactStorage<JSSet::Helper>(globalObject, storageCell, 0, IterationKind::Keys));
+#endif
 
     auto* storage = uncheckedDowncast<JSSet::Storage>(storageCell);
 
@@ -478,6 +556,17 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
     }
 
     JSMap::Helper::Entry startEntry = mapIterator->entry();
+
+#if ENABLE(AOT)
+    if (JSMap::Helper::isCompact(*storageCell)) [[unlikely]] {
+        JSArray* result = tryCreateArrayFromCompactStorage<JSMap::Helper>(globalObject, storageCell, startEntry, kind);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (result && result->length())
+            mapIterator->close(vm);
+        return result;
+    }
+#endif
+
     auto* storage = uncheckedDowncast<JSMap::Storage>(storageCell);
 
     IndexingType indexingType = IsArray;
@@ -602,6 +691,17 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
     }
 
     JSSet::Helper::Entry startEntry = setIterator->entry();
+
+#if ENABLE(AOT)
+    if (JSSet::Helper::isCompact(*storageCell)) [[unlikely]] {
+        JSArray* result = tryCreateArrayFromCompactStorage<JSSet::Helper>(globalObject, storageCell, startEntry, IterationKind::Keys);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (result && result->length())
+            setIterator->close(vm);
+        return result;
+    }
+#endif
+
     auto* storage = uncheckedDowncast<JSSet::Storage>(storageCell);
 
     IndexingType indexingType = IsArray;

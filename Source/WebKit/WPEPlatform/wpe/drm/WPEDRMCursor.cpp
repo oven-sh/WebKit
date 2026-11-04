@@ -28,6 +28,11 @@
 
 #include "WPEDRM.h"
 #include "WPEDRMCursorTheme.h"
+#include <glib.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkBitmap.h>
+#include <skia/core/SkPixmap.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WPE {
@@ -71,21 +76,23 @@ void Cursor::updateBuffer(const uint8_t* pixels, uint32_t width, uint32_t height
     RELEASE_ASSERT(height <= m_deviceHeight);
 
     Vector<uint32_t> deviceBuffer(m_deviceWidth * m_deviceHeight);
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     for (uint32_t i = 0; i < height; ++i)
-        memcpy(&deviceBuffer[i * m_deviceWidth], pixels + i * stride, stride);
+        memcpy(&deviceBuffer[i * m_deviceWidth], pixels + i * stride, width * 4);
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     gbm_bo_write(m_buffer->bufferObject(), deviceBuffer.span().data(), deviceBuffer.sizeInBytes());
 }
 
-void Cursor::setFromName(const char* name, double scale)
+void Cursor::setFromName(UTF8CStringView name, double scale)
 {
     if (!m_theme)
         return;
 
-    if (!g_strcmp0(m_name.get(), name))
+    if (m_name == name)
         return;
 
-    m_name.reset(g_strdup(name));
-    if (!g_strcmp0(m_name.get(), "none")) {
+    m_name = UTF8CString { name.span() };
+    if (m_name == "none"_s) {
         m_isHidden = true;
         return;
     }
@@ -93,7 +100,7 @@ void Cursor::setFromName(const char* name, double scale)
     // FIXME: support animated cursors.
     const auto& cursor = m_theme->cursor(name, scale, 1);
     if (cursor.isEmpty()) {
-        g_warning("Cursor %s not found in theme", name);
+        g_warning("Cursor %s not found in theme", name.utf8());
         return;
     }
 
@@ -106,16 +113,40 @@ void Cursor::setFromName(const char* name, double scale)
     m_hotspot.y = cursor[0].hotspotY;
 }
 
-void Cursor::setFromBytes(GBytes* bytes, uint32_t width, uint32_t height, uint32_t stride, uint32_t hotspotX, uint32_t hotspotY)
+void Cursor::setFromBytes(GBytes* bytes, uint32_t width, uint32_t height, uint32_t stride, uint32_t hotspotX, uint32_t hotspotY, double scale)
 {
     if (!tryEnsureBuffer())
         return;
 
     m_isHidden = false;
-    m_name = nullptr;
-    updateBuffer(reinterpret_cast<const uint8_t*>(g_bytes_get_data(bytes, nullptr)), width, height, stride);
-    m_hotspot.x = hotspotX;
-    m_hotspot.y = hotspotY;
+    m_name = { };
+
+    scale = std::min({ scale, m_deviceWidth / static_cast<double>(width), m_deviceHeight / static_cast<double>(height) });
+    if (scale != 1) {
+        auto dstWidth = std::min<uint32_t>(std::lround(width * scale), m_deviceWidth);
+        auto dstHeight = std::min<uint32_t>(std::lround(height * scale), m_deviceHeight);
+        auto dstImageInfo = SkImageInfo::Make(dstWidth, dstHeight, kBGRA_8888_SkColorType, kPremul_SkAlphaType);
+        SkBitmap bitmap;
+        if (!bitmap.tryAllocPixels(dstImageInfo))
+            return;
+
+        SkPixmap dstPixmap;
+        if (!bitmap.peekPixels(&dstPixmap))
+            return;
+
+        auto srcImageInfo = SkImageInfo::Make(width, height, kBGRA_8888_SkColorType, kPremul_SkAlphaType);
+        SkPixmap srcPixmap(srcImageInfo, g_bytes_get_data(bytes, nullptr), stride);
+        if (!srcPixmap.scalePixels(dstPixmap, SkSamplingOptions(SkCubicResampler::CatmullRom())))
+            return;
+
+        updateBuffer(reinterpret_cast<const uint8_t*>(dstPixmap.addr()), dstPixmap.width(), dstPixmap.height(), dstImageInfo.minRowBytes());
+        m_hotspot.x = std::lround(hotspotX * scale);
+        m_hotspot.y = std::lround(hotspotY * scale);
+    } else {
+        updateBuffer(reinterpret_cast<const uint8_t*>(g_bytes_get_data(bytes, nullptr)), width, height, stride);
+        m_hotspot.x = hotspotX;
+        m_hotspot.y = hotspotY;
+    }
 }
 
 bool Cursor::setPosition(uint32_t x, uint32_t y)

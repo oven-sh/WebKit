@@ -115,14 +115,14 @@ MediaPlayerPrivateWebM::MediaPlayerPrivateWebM(MediaPlayer& player)
         else
             runningQueue->dispatch(WTF::move(function));
     });
-    m_parser->setDidParseInitializationDataCallback([weakThis = ThreadSafeWeakPtr { *this }, this] (InitializationSegment&& segment) {
+    m_parser->setDidParseInitializationDataCallback([weakThis = ThreadSafeWeakPtr { *this }] (InitializationSegment&& segment) {
         if (RefPtr protectedThis = weakThis.get())
-            didParseInitializationData(WTF::move(segment));
+            protectedThis->didParseInitializationData(WTF::move(segment));
     });
 
-    m_parser->setDidProvideMediaDataCallback([weakThis = ThreadSafeWeakPtr { *this }, this] (Ref<MediaSampleAVFObjC>&& sample, TrackID trackId, const String& mediaType) {
+    m_parser->setDidProvideMediaDataCallback([weakThis = ThreadSafeWeakPtr { *this }] (Ref<MediaSampleAVFObjC>&& sample, TrackID trackId, const String& mediaType) {
         if (RefPtr protectedThis = weakThis.get())
-            didProvideMediaDataForTrackId(WTF::move(sample), trackId, mediaType);
+            protectedThis->didProvideMediaDataForTrackId(WTF::move(sample), trackId, mediaType);
     });
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
@@ -134,6 +134,8 @@ MediaPlayerPrivateWebM::MediaPlayerPrivateWebM(MediaPlayer& player)
 MediaPlayerPrivateWebM::~MediaPlayerPrivateWebM() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     ALWAYS_LOG(LOGIDENTIFIER);
+
+    m_renderer->shutdown();
 
     // cancelPendingSeek() requires being on m_runningQueue because disconnecting a
     // NativePromiseRequest requires being on the queue the callback was registered on.
@@ -451,7 +453,7 @@ void MediaPlayerPrivateWebM::cancelLoad()
     }
 }
 
-PlatformLayer* MediaPlayerPrivateWebM::platformLayer() const
+PlatformLayer* MediaPlayerPrivateWebM::platformLayer()
 {
     return m_renderer->platformVideoLayer();
 }
@@ -687,6 +689,9 @@ void MediaPlayerPrivateWebM::completeSeek(const MediaTime& seekedTime)
     ALWAYS_LOG(LOGIDENTIFIER, "");
 
     m_seeking = false;
+
+    // The time-reached action is one-shot; re-arm it so the next end of media is reported.
+    durationReachedActionIfNeeded();
 
     monitorReadyState();
 
@@ -995,18 +1000,16 @@ void MediaPlayerPrivateWebM::setHasAvailableVideoFrame(bool hasAvailableVideoFra
         player->readyStateChanged();
 }
 
-void MediaPlayerPrivateWebM::setDuration(MediaTime duration)
+void MediaPlayerPrivateWebM::durationReachedActionIfNeeded()
 {
     assertIsCurrent(runningQueue());
-    if (duration == m_duration)
-        return;
 
-    if (m_stallRequest->hasCallback())
-        protect(m_stallRequest)->disconnect();
+    if (!m_duration.isValid() || !m_duration.isFinite() || m_stallRequest->hasCallback())
+        return;
 
     m_renderer->cancelTimeReachedAction();
 
-    m_renderer->notifyTimeReachedAndStall(duration)->whenSettled(runningQueue(), [weakThis = ThreadSafeWeakPtr { *this }](MediaTimePromise::Result&& result) {
+    m_renderer->notifyTimeReachedAndStall(m_duration)->whenSettled(runningQueue(), [weakThis = ThreadSafeWeakPtr { *this }](MediaTimePromise::Result&& result) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -1023,8 +1026,20 @@ void MediaPlayerPrivateWebM::setDuration(MediaTime duration)
                 player->timeChanged();
         });
     })->track(protect(m_stallRequest));
+}
+
+void MediaPlayerPrivateWebM::setDuration(MediaTime duration)
+{
+    assertIsCurrent(runningQueue());
+    if (duration == m_duration)
+        return;
+
+    if (m_stallRequest->hasCallback())
+        protect(m_stallRequest)->disconnect();
 
     m_duration = WTF::move(duration);
+    durationReachedActionIfNeeded();
+
     ensureOnMainThread([weakThis = ThreadSafeWeakPtr { *this }, durationCopy = m_duration] {
         assertIsMainThread();
         if (RefPtr protectedThis = weakThis.get()) {
@@ -1208,7 +1223,7 @@ void MediaPlayerPrivateWebM::enqueueSample(Ref<MediaSample>&& sample, TrackID tr
 
     PlatformSample platformSample = sample->platformSample();
 
-    CMFormatDescriptionRef formatDescription = PAL::CMSampleBufferGetFormatDescription(platformSample.cmSampleBuffer());
+    RetainPtr formatDescription = PAL::CMSampleBufferGetFormatDescription(protect(platformSample.cmSampleBuffer()));
     ASSERT(formatDescription);
     if (!formatDescription) {
         ERROR_LOG(logSiteIdentifier, "Received sample with a null formatDescription. Bailing.");

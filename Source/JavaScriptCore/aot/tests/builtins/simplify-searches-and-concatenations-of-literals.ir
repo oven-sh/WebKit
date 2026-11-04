@@ -1,0 +1,89 @@
+# includes, indexOf and concat on a list that is written for the call alone: the list is never made
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="includes" parameters=[{type=string}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = NewArray v0, v1 contents=string
+    v4 = CallBuiltin v3, v2 overload=ArrayPrototypeIncludes/1
+    Return v4
+# CHECK-NOT: CallBuiltin
+# CHECK: StrictEq v0, v2
+# CHECK: StrictEq v1, v2
+}
+
+function f1 name="indexOf" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=anything}] {
+    v3 = NewArray v0, v1 contents=number
+    v4 = CallBuiltin v3, v2 overload=ArrayPrototypeIndexOf/0
+    Return v4
+# CHECK-NOT: CallBuiltin
+# CHECK: StrictEq v0, v2
+# CHECK: Integer integer=1
+# CHECK: Integer integer=-1
+}
+
+function f2 name="includesMayFindNaN" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+    v2 = NewArray v0 contents=number
+    v3 = CallBuiltin v2, v1 overload=ArrayPrototypeIncludes/0
+    Return v3
+# CHECK-NOT: StrictEq
+# CHECK: CallBuiltin v2, v1 overload=ArrayPrototypeIncludes/0
+}
+
+function f3 name="integersAreNeverNaN" parameters=[{type=i32}, {type=number}] results=[{type=anything}] {
+    v2 = NewArray v0 contents=i32
+    v3 = CallBuiltin v2, v1 overload=ArrayPrototypeIncludes/0
+    Return v3
+# CHECK-NOT: CallBuiltin
+# CHECK: StrictEq v0, v1
+}
+
+function f4 name="listWithHole" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray v0 contents=string holes=[1]
+    v3 = CallBuiltin v2, v1 overload=ArrayPrototypeIncludes/1
+    Return v3
+# CHECK-NOT: StrictEq
+# CHECK: CallBuiltin v2, v1 overload=ArrayPrototypeIncludes/1
+}
+
+function f5 name="listWithAnotherUser" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray v0 contents=string
+    v3 = CallBuiltin v2, v1 overload=ArrayPrototypeIncludes/1
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+# CHECK-NOT: StrictEq
+# CHECK: CallBuiltin v2, v1 overload=ArrayPrototypeIncludes/1
+}
+
+function f6 name="fromIndex" parameters=[{type=string}, {type=anything}, {type=i32}] results=[{type=anything}] {
+    v3 = NewArray v0 contents=string
+    v4 = CallBuiltin v3, v1, v2 overload=ArrayPrototypeIncludes/1
+    Return v4
+# CHECK-NOT: StrictEq
+# CHECK: CallBuiltin v3, v1, v2 overload=ArrayPrototypeIncludes/1
+}
+
+function f7 name="concat" parameters=[{type=string}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = NewArray v0 contents=string
+    v4 = NewArray v1, v0 contents=string
+    v5 = CallBuiltin v3, v4, v2 overload=ArrayPrototypeConcat/2
+    Return v5
+# CHECK-NOT: CallBuiltin
+# CHECK: NewArray v0, v1, v0, v2
+}
+
+function f8 name="concatOfValueThatMayBeList" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray v0 contents=string
+    v3 = CallBuiltin v2, v1 overload=ArrayPrototypeConcat/3
+    Return v3
+# CHECK: CallBuiltin v2, v1 overload=ArrayPrototypeConcat/3
+}
+
+function f9 name="concatOfListWithHole" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=string
+    v2 = NewArray v0 contents=string holes=[0]
+    v3 = CallBuiltin v1, v2 overload=ArrayPrototypeConcat/2
+    Return v3
+# CHECK: CallBuiltin v1, v2 overload=ArrayPrototypeConcat/2
+}

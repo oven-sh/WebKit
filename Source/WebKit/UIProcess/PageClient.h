@@ -115,6 +115,7 @@ class SecurityOrigin;
 namespace WebCore {
 class Color;
 class ColorSpace;
+class CornerRadii;
 class Cursor;
 class FloatQuad;
 class FloatRect;
@@ -449,6 +450,7 @@ public:
 
 #if PLATFORM(MAC)
     virtual bool isViewVisible(NSView *, NSWindow *) const = 0;
+    virtual bool isPageClientImpl() const { return false; }
 #endif
 
     virtual void runModalJavaScriptDialog(CompletionHandler<void()>&& callback) { callback(); }
@@ -589,11 +591,18 @@ public:
     virtual WebCore::ColorSpace colorSpace() = 0;
 #endif
 
+#if ENABLE(UI_SIDE_COMPOSITING)
+    // The document rect in unscaled content coordinates, and the minimum scale it may be displayed at. Both
+    // feed WebPageProxy::computeLayoutViewportRect().
+    virtual WebCore::FloatRect documentRect() const = 0;
+    virtual double minimumZoomScale() const = 0;
+#endif
+
     virtual void reconcileEnclosingScrollViewContentOffset(EditorState&) { };
 
 #if ENABLE(TWO_PHASE_CLICKS)
     virtual void commitPotentialTapFailed() = 0;
-    virtual void didGetTapHighlightGeometries(WebKit::TapIdentifier requestID, const WebCore::Color&, const Vector<WebCore::FloatQuad>& highlightedQuads, const WebCore::IntSize& topLeftRadius, const WebCore::IntSize& topRightRadius, const WebCore::IntSize& bottomLeftRadius, const WebCore::IntSize& bottomRightRadius, bool nodeHasBuiltInClickHandling) = 0;
+    virtual void didGetTapHighlightGeometries(WebKit::TapIdentifier requestID, const WebCore::Color&, const Vector<WebCore::FloatQuad>& highlightedQuads, WebCore::CornerRadii&&, bool nodeHasBuiltInClickHandling) = 0;
     virtual bool isPotentialTapInProgress() const = 0;
     virtual void disableDoubleTapGesturesDuringTapIfNecessary(WebKit::TapIdentifier) = 0;
     virtual void handleSmartMagnificationInformationForPotentialTap(WebKit::TapIdentifier, const WebCore::FloatRect& renderRect, bool fitEntireRect, double viewportMinimumScale, double viewportMaximumScale, bool nodeIsRootLevel, bool nodeIsPluginElement) = 0;
@@ -617,8 +626,6 @@ public:
     virtual void saveImageToLibrary(const Ref<WebCore::SharedBuffer>&) = 0;
     virtual void showPlaybackTargetPicker(bool hasVideo, const WebCore::IntRect& elementRect, WebCore::RouteSharingPolicy, const String&) = 0;
     virtual void showDataDetectorsUIForPositionInformation(const InteractionInformationAtPosition&) = 0;
-    virtual double minimumZoomScale() const = 0;
-    virtual WebCore::FloatRect documentRect() const = 0;
     virtual WebCore::InteractiveWidgetValue viewportMetaTagInteractiveWidget() const = 0;
     virtual void scrollingNodeScrollViewWillStartPanGesture(WebCore::ScrollingNodeID) = 0;
     virtual void scrollingNodeScrollWillStartScroll(std::optional<WebCore::ScrollingNodeID>) = 0;
@@ -686,6 +693,10 @@ public:
     virtual void willBeginViewGesture() { }
     virtual void didEndViewGesture() { }
 
+#if PLATFORM(MAC)
+    virtual bool everMagnifiedDuringCurrentGesture() const { return false; }
+#endif
+
     virtual void didFirstVisuallyNonEmptyLayoutForMainFrame() = 0;
     virtual void didFinishNavigation(API::Navigation*) = 0;
     virtual void didFailNavigation(API::Navigation*) = 0;
@@ -697,6 +708,8 @@ public:
     virtual void underPageBackgroundColorDidChange() { }
     virtual void sampledPageTopColorWillChange() { }
     virtual void sampledPageTopColorDidChange() { }
+    virtual void effectivePageAppearanceWillChange() { }
+    virtual void effectivePageAppearanceDidChange() { }
     virtual void didChangeBackgroundColor() = 0;
     virtual void isPlayingAudioWillChange() = 0;
     virtual void isPlayingAudioDidChange() = 0;
@@ -728,7 +741,6 @@ public:
 #endif // ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS) && USE(UICONTEXTMENU)
     
 #if PLATFORM(MAC)
-    virtual void didPerformImmediateActionHitTest(const WebHitTestResultData&, bool contentPreventsDefault, API::Object*) = 0;
     virtual NSObject *immediateActionAnimationControllerForHitTestResult(RefPtr<API::HitTestResult>, uint64_t, RefPtr<API::Object>) = 0;
 #endif
 

@@ -1,0 +1,43 @@
+# for (const pair of Object.entries(JSON.parse('{"one":1,"two":"2"}'))) print(pair[0] + "=" + pair[1]), in the shell, which is a realm without the host
+# The loop alone has the list, so it calls %CompilerHelpers%.ownEntriesFlat. The table lists that under the host, but it is native code of the engine: once the shell said that it needs the host's, and exited
+# FORM: AsRead
+# RUN: run-in-shell
+# CHECK: one=1
+# CHECK-NEXT: two=2
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): pipeline Select
+# CALLED: = CallBuiltin -, {{*}} overload=CompilerHelpersOwnEntriesFlat/0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=JSON
+    v1 = Builtin builtin=JSONParse
+    v2 = String string="{\"one\":1,\"two\":\"2\"}"
+    v3 = Call v1, v0, v2
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectEntries
+    v6 = Call v5, v4, v3
+    v7 = IteratorOpen v6
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = IteratorResume v7
+    v10 = ResultAt v9
+    v11 = ResultAt v9 index=1
+    Branch v10 -> taken b3(), notTaken b2()
+  b2():
+    v12 = Integer
+    v13 = ElemGet v11, v12
+    v14 = String string="="
+    v15 = Add v13, v14
+    v16 = Integer integer=1
+    v17 = ElemGet v11, v16
+    v18 = Add v15, v17
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="print" [isFreeName]
+    v21 = Call v20, -, v18
+    Jump -> next b1()
+  b3():
+    Return
+}

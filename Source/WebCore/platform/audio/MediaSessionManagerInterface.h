@@ -31,6 +31,7 @@
 #include <WebCore/NowPlayingMetadataObserver.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/PlatformMediaSessionTypes.h>
+#include <WebCore/Timer.h>
 #include <wtf/AggregateLogger.h>
 #include <wtf/CancellableTask.h>
 #include <wtf/LoggerHelper.h>
@@ -244,7 +245,7 @@ private:
 
     Markable<PageIdentifier> m_pageIdentifier;
 #if !RELEASE_LOG_DISABLED
-    UniqueRef<Timer> m_stateLogTimer;
+    const UniqueRef<Timer> m_stateLogTimer;
     const Ref<AggregateLogger> m_logger;
 #endif
 

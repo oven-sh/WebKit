@@ -1,0 +1,56 @@
+# define = Object.defineProperty.bind(Object); define(holder, "go", { value: one }); holder.go(); holder.stay()
+# pick = second.bind(receiver); pick(two, three)        function second(a, b) { b() }
+# `f.bind(thisValue)` binds no argument, so each argument of a call of the bound function keeps its position. A function of the table is applied with the operands of that very call:
+# the definition goes under the key that the call passes and under no other. A function of the program gets each argument at its own parameter.
+# RUN: valueflow-solve calls
+# CHECK: f0 v11 -> f1
+# CHECK-NEXT: f0 v13 ->
+# CHECK-NOT: f1
+# CHECK: f4 v2 -> f3
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED: unreached f2
+# UNREACHED-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder"
+layout L1 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Receiver"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = PropGet v1 key="bind"
+    v3 = Call v2, v1, v0 calleeKey="bind"
+    v4 = NewObject layout=L0 fields=[]
+    v5 = String string="go"
+    v6 = NewClosure function=f1
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = Call v3, -, v4, v5, v7
+    v9 = Undefined
+    v10 = PropGet v4 key="go"
+    v11 = Call v10, v4 calleeKey="go"
+    v12 = PropGet v4 key="stay"
+    v13 = Call v12, v4 calleeKey="stay"
+    v14 = NewClosure function=f4
+    v15 = PropGet v14 key="bind"
+    v16 = NewObject layout=L2 fields=[]
+    v17 = Call v15, v14, v16 calleeKey="bind"
+    v18 = NewClosure function=f2
+    v19 = NewClosure function=f3
+    v20 = Call v17, -, v18, v19
+    Return
+}
+function f1 name="one" module=m0 results=[{type=anything}] {
+    Return
+}
+function f2 name="two" module=m0 results=[{type=anything}] {
+    Return
+}
+function f3 name="three" module=m0 results=[{type=anything}] {
+    Return
+}
+function f4 name="second" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -
+    Return
+}

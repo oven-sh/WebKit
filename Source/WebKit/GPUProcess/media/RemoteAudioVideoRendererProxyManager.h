@@ -95,6 +95,7 @@ private:
     // Messages
     void createManager(RemoteAudioVideoRendererIdentifier, WebCore::HTMLMediaElementIdentifier, WebCore::MediaPlayerIdentifier, CompletionHandler<void(std::optional<WebCore::SharedTimebaseHandle>)>&&);
     void shutdown(RemoteAudioVideoRendererIdentifier);
+    void destroy(RemoteAudioVideoRendererIdentifier);
 
     void setPreferences(RemoteAudioVideoRendererIdentifier, WebCore::VideoRendererPreferences);
     void setHasProtectedVideoContent(RemoteAudioVideoRendererIdentifier, bool);
@@ -105,7 +106,7 @@ private:
     void addTrack(RemoteAudioVideoRendererIdentifier, WebCore::TrackInfo::TrackType, CompletionHandler<void(std::expected<TrackIdentifier, WebCore::PlatformMediaError>)>&&);
     void removeTrack(RemoteAudioVideoRendererIdentifier, TrackIdentifier);
 
-    void newTrackInfoForTrack(RemoteAudioVideoRendererIdentifier, TrackIdentifier, Ref<WebCore::TrackInfo>&&);
+    void newTrackInfoForTrack(RemoteAudioVideoRendererIdentifier, TrackIdentifier, Ref<const WebCore::TrackInfo>&&);
     void enqueueSample(RemoteAudioVideoRendererIdentifier, TrackIdentifier, WebCore::MediaSamplesBlock&&, std::optional<MediaTime>, CompletionHandler<void(bool)>&&);
     void requestMediaDataWhenReady(RemoteAudioVideoRendererIdentifier, TrackIdentifier);
 
@@ -187,7 +188,7 @@ private:
     RefPtr<WebCore::AudioVideoRenderer> createRenderer(UniqueRef<WebCore::SharedTimebase>&&);
     RefPtr<WebCore::AudioVideoRenderer> rendererFor(RemoteAudioVideoRendererIdentifier) const;
     RemoteAudioVideoRendererState stateFor(RemoteAudioVideoRendererIdentifier) const;
-    RendererContext& NODELETE contextFor(RemoteAudioVideoRendererIdentifier);
+    RendererContext& LEGACY_NODELETE contextFor(RemoteAudioVideoRendererIdentifier);
     void rendereringModeChanged(RemoteAudioVideoRendererIdentifier);
     void updateCachedVideoMetrics(RemoteAudioVideoRendererIdentifier);
     void maybeUpdateCachedVideoMetrics(RemoteAudioVideoRendererIdentifier);
@@ -204,7 +205,7 @@ private:
 
 #if !RELEASE_LOG_DISABLED
     Logger& logger() { return m_logger; }
-    WTFLogChannel& NODELETE logChannel() const;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const;
     ASCIILiteral logClassName() const { return "RemoteAudioVideoRendererProxyManager"; }
     uint64_t logIdentifier() const { return m_logIdentifier; }
 #endif

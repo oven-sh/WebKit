@@ -1,0 +1,143 @@
+# An emptied block and an unlisted value go, every id behind them moves up, and a function without gaps stays as it is
+# FORM: Prepared optimizing
+# RUN: pass EliminateDeadCode CompactBlocks CompactBlocks
+# STATISTIC: EliminateDeadCodeChanges = 2
+# STATISTIC: CompactBlocksChanges = 4
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="emptiedBlockAndUnlistedValue" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Add v1, v1
+    v3 = Mul v1, v1
+    v4 = IteratorOpen v0
+    Jump -> next b2()
+  b1():
+    Unreachable
+  b2() handler=b6(v3):
+    v5 = Call v0
+    v6 = TypeTest v5 testedType=string
+    Branch v6 -> taken b3(| 0), notTaken b4()
+  b3(v7):
+    Return v7
+  b4() handler=b5():
+    v8 = Call v0
+    Return v8
+  b5() role=IterationCleanup subject=v4:
+    v9 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v9
+  b6(v11) role=CatchHandler:
+    v12 = CatchValue
+    v13 = Call v0, -, v11, v12
+    Return v13
+# CHECK-NEXT: b0(v0: anything, v1: number):
+# CHECK-NEXT: v2: number = Mul v1, v1
+# CHECK-NEXT: v3: iteratorstate = IteratorOpen v0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b5(v2):
+# CHECK-NEXT: v4: anything = Call v0
+# CHECK-NEXT: v5: boolean = TypeTest v4 testedType=string
+# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v6: string):
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: b3() handler=b4():
+# CHECK-NEXT: v7: anything = Call v0
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b4() role=IterationCleanup subject=v3:
+# CHECK-NEXT: v8: exception = CatchException
+# CHECK-NEXT: IteratorClose v3 completion=Throw
+# CHECK-NEXT: Rethrow v8
+# CHECK-NEXT: b5(v10: number) role=CatchHandler:
+# CHECK-NEXT: v11: anything = CatchValue
+# CHECK-NEXT: v12: anything = Call v0, -, v10, v11
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: }
+}
+
+function f1 name="unlistedValueOnly" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    v2 = Add v0, v0
+    v3 = Mul v0, v0
+    Branch v1 -> taken b1(v3), notTaken b2()
+  b1(v4):
+    Return v4
+  b2():
+    Return v3
+# CHECK-NEXT: b0(v0: number, v1: boolean):
+# CHECK-NEXT: v2: number = Mul v0, v0
+# CHECK-NEXT: Branch v1 -> taken b1(v2), notTaken b2()
+# CHECK-NEXT: b1(v3: number):
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}
+
+function f2 name="unreachableBlockWithValues" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b2()
+  b1():
+    v1 = Add v0, v0
+    Jump -> next b2()
+  b2():
+    v2 = Mul v0, v0
+    Return v2
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: number = Mul v0, v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+
+function f3 name="blockAheadOfItsOnlyPredecessor" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b2()
+  b1():
+    v1 = Add v2, v0
+    Return v1
+  b2():
+    v2 = Mul v0, v0
+    Jump -> next b1()
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: number = Mul v0, v0
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v2: number = Add v1, v0
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}
+
+function f4 name="withoutGaps" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Mul v1, v1
+    Jump -> next b1()
+  b1() handler=b4(v2):
+    v3 = Call v0
+    v4 = TypeTest v3 testedType=string
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    Return v5
+  b3():
+    Return v0
+  b4(v6) role=CatchHandler:
+    v7 = CatchValue
+    v8 = Call v0, -, v6, v7
+    Return v8
+# CHECK-NEXT: b0(v0: anything, v1: number):
+# CHECK-NEXT: v2: number = Mul v1, v1
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b4(v2):
+# CHECK-NEXT: v3: anything = Call v0
+# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=string
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v5: string):
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: b4(v6: number) role=CatchHandler:
+# CHECK-NEXT: v7: anything = CatchValue
+# CHECK-NEXT: v8: anything = Call v0, -, v6, v7
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+}

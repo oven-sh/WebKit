@@ -29,6 +29,7 @@
 #include <glib.h>
 #include <wpe/WPEDisplay.h>
 #include <wtf/HashMap.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
@@ -77,7 +78,7 @@ G_DEFINE_QUARK(wpe-settings-error-quark, wpe_settings_error)
  * to watch a specific key, e.g. `changed::/wpe-platform/fonts/font-hinting`.
  */
 struct _WPESettingsPrivate {
-    HashMap<CString, SettingEntry> settings;
+    HashMap<UTF8CString, SettingEntry> settings;
 
     _WPESettingsPrivate()
     {
@@ -109,7 +110,7 @@ struct _WPESettingsPrivate {
         };
 
         for (auto& setting : defaultSettings)
-            settings.add(setting.key, SettingEntry(setting.defaultValue, GUniquePtr<GVariantType>(g_variant_type_copy(setting.type))));
+            settings.add(UTF8CString::unsafeFromUTF8(setting.key), SettingEntry(setting.defaultValue, GUniquePtr<GVariantType>(g_variant_type_copy(setting.type))));
     }
 };
 
@@ -148,7 +149,9 @@ static void wpe_settings_class_init(WPESettingsClass* settingsClass)
 static UTF8CString makeKeyPath(const char* group, const char* key)
 {
     std::span<char8_t> buffer;
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     size_t length = strlen(group) + strlen(key) + 3;
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     auto path = UTF8CString::newUninitialized(length - 1, buffer);
     g_snprintf(byteCast<char>(buffer).data(), length, "/%s/%s", group, key);
@@ -175,17 +178,19 @@ static UTF8CString makeKeyPath(const char* group, const char* key)
 gboolean wpe_settings_register(WPESettings* settingsObject, const char* key, const GVariantType* type, GVariant* defaultValue, GError** error)
 {
     g_return_val_if_fail(WPE_IS_SETTINGS(settingsObject), FALSE);
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     g_return_val_if_fail(key && g_str_has_prefix(key, "/wpe-platform/") && !g_str_has_suffix(key, "/"), FALSE);
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     g_return_val_if_fail(defaultValue, FALSE);
     g_return_val_if_fail(type, FALSE);
     g_return_val_if_fail(g_variant_type_equal(type, g_variant_get_type(defaultValue)), FALSE);
 
-    if (settingsObject->priv->settings.contains(key)) {
+    if (settingsObject->priv->settings.contains(UTF8CString::unsafeFromUTF8(key))) {
         g_set_error(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_ALREADY_REGISTERED, "%s has already been reigstered", key);
         return FALSE;
     }
 
-    settingsObject->priv->settings.add(key, SettingEntry(defaultValue, GUniquePtr<GVariantType>(g_variant_type_copy(type))));
+    settingsObject->priv->settings.add(UTF8CString::unsafeFromUTF8(key), SettingEntry(defaultValue, GUniquePtr<GVariantType>(g_variant_type_copy(type))));
 
     return TRUE;
 }
@@ -215,17 +220,19 @@ gboolean wpe_settings_load_from_keyfile(WPESettings* settingsObject, GKeyFile* k
     g_return_val_if_fail(!error || !*error, FALSE);
     g_return_val_if_fail(keyFile, FALSE);
 
-    GUniquePtr<char*> groups(g_key_file_get_groups(keyFile, nullptr));
-    for (unsigned i = 0; groups.get()[i]; i++) {
-        const char* group = groups.get()[i];
-
+    auto groups = gKeyFileGetGroups(keyFile);
+    for (const char* group : groups.span()) {
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         if (!g_str_has_prefix(group, "wpe-platform/") && strcmp(group, "wpe-platform"))
             continue;
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-        GUniquePtr<char*> keys(g_key_file_get_keys(keyFile, group, nullptr, nullptr));
+        // The group is known to exist because we are iterating over the group names returned by
+        // gKeyFileGetGroups(), and the only possible error is G_KEY_FILE_ERROR_GROUP_NOT_FOUND.
+        auto keys = gKeyFileGetKeys(keyFile, UTF8CStringView::unsafeFromUTF8(group));
+        ASSERT(keys);
 
-        for (unsigned k = 0; keys.get()[k]; k++) {
-            const char* key = keys.get()[k];
+        for (const char* key : keys->span()) {
             GUniquePtr<char> value(g_key_file_get_value(keyFile, group, key, nullptr));
             if (!value)
                 continue;
@@ -233,14 +240,14 @@ gboolean wpe_settings_load_from_keyfile(WPESettings* settingsObject, GKeyFile* k
             auto path = makeKeyPath(group, key);
             auto iter = settingsObject->priv->settings.find(path);
             if (iter == settingsObject->priv->settings.end()) {
-                g_set_error(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_NOT_REGISTERED, "Key %s not registered", path.legacyCStringPointer());
+                SAFE_G_SET_ERROR(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_NOT_REGISTERED, "Key %s not registered", path);
                 return FALSE;
             }
 
             GUniqueOutPtr<GError> innerError;
             GRefPtr<GVariant> parsedValue = adoptGRef(g_variant_parse(iter->value.type.get(), value.get(), nullptr, nullptr, &innerError.outPtr()));
             if (!parsedValue) {
-                g_set_error(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_INVALID_VALUE, "Failed to parse value for key %s: %s", path.legacyCStringPointer(), innerError->message);
+                SAFE_G_SET_ERROR(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_INVALID_VALUE, "Failed to parse value for key %s: %s", path, innerError->message);
                 return FALSE;
             }
 
@@ -248,7 +255,7 @@ gboolean wpe_settings_load_from_keyfile(WPESettings* settingsObject, GKeyFile* k
                 continue;
 
             iter->value.setValue = WTF::move(parsedValue);
-            g_signal_emit(settingsObject, signals[CHANGED], g_quark_from_string(path.legacyCStringPointer()), path.legacyCStringPointer(), iter->value.setValue.get());
+            gSignalEmit(settingsObject, signals[CHANGED], gQuarkFromString(path), path, iter->value.setValue.get());
         }
     }
 
@@ -275,7 +282,8 @@ void wpe_settings_save_to_keyfile(WPESettings* settingsObject, GKeyFile* keyFile
             continue;
 
         // Transform "/foo/bar/baz" into "foo/bar" and "baz".
-        GUniquePtr<char> keyString(g_strdup(key.data()));
+        GUniquePtr<char> keyString(gStrdup(key));
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         auto* keyStart = strrchr(keyString.get(), '/');
         ASSERT(keyStart && keyStart != keyString.get());
         *keyStart = '\0';
@@ -283,6 +291,7 @@ void wpe_settings_save_to_keyfile(WPESettings* settingsObject, GKeyFile* keyFile
 
         const char* group = keyString.get() + 1;
         // FIXME: Handle empty?
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
         GUniquePtr<char> variantString(g_variant_print(entry.setValue.get(), FALSE));
         g_key_file_set_value(keyFile, group, keyStart, variantString.get());
@@ -317,7 +326,7 @@ gboolean wpe_settings_set_value(WPESettings* settingsObject, const char* key, GV
     g_return_val_if_fail(!error || !*error, FALSE);
     g_return_val_if_fail(key && *key == '/', FALSE);
 
-    auto iter = settingsObject->priv->settings.find(key);
+    auto iter = settingsObject->priv->settings.find(UTF8CString::unsafeFromUTF8(key));
     if (iter == settingsObject->priv->settings.end()) {
         g_set_error(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_NOT_REGISTERED, "Key %s not registered", key);
         return FALSE;
@@ -366,7 +375,7 @@ GVariant* wpe_settings_get_value(WPESettings* settingsObject, const char* key, G
     g_return_val_if_fail(WPE_IS_SETTINGS(settingsObject), NULL);
     g_return_val_if_fail(key && *key == '/', NULL);
 
-    const auto iter = settingsObject->priv->settings.find(key);
+    const auto iter = settingsObject->priv->settings.find(UTF8CString::unsafeFromUTF8(key));
     if (iter == settingsObject->priv->settings.end()) {
         g_set_error(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_NOT_REGISTERED, "Key %s not registered", key);
         return nullptr;

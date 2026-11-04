@@ -49,7 +49,7 @@ messages -> NetworkConnectionToWebProcess WantsDispatchMessage {
     SetRawCookie(URL firstParty, URL url, struct WebCore::Cookie cookie, enum:bool WebCore::ShouldPartitionCookie shouldPartitionCookie)
     GetRawCookies(URL firstParty, struct WebCore::SameSiteInfo sameSiteInfo, URL url, std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebKit::WebPageProxyIdentifier> webPageProxyID) -> (Vector<WebCore::Cookie> cookies) Synchronous
     DeleteCookie(URL firstParty, URL url, String cookieName) -> ()
-    DomCookiesForHost(URL host) -> (Vector<WebCore::Cookie> cookies) Synchronous
+    DomCookiesForHost(URL host) -> (std::optional<Vector<WebCore::Cookie>> cookies) Synchronous
 
     [EnabledBy=CookieStoreAPIEnabled] CookiesForDOMAsync(URL firstParty, struct WebCore::SameSiteInfo sameSiteInfo, URL url, std::optional<WebCore::FrameIdentifier> frameID, enum:bool WebCore::IncludeSecureCookies includeSecureCookies, struct WebCore::CookieStoreGetOptions options, std::optional<WebKit::WebPageProxyIdentifier> webPageProxyID) -> (std::optional<Vector<WebCore::Cookie>> cookies)
 
@@ -79,7 +79,7 @@ messages -> NetworkConnectionToWebProcess WantsDispatchMessage {
 
     SetCaptureExtraNetworkLoadMetricsEnabled(bool enabled)
 
-    [EnabledBy=WebSocketEnabled] CreateSocketChannel(WebCore::ResourceRequest request, String protocol, WebCore::WebSocketIdentifier identifier, WebKit::WebPageProxyIdentifier webPageProxyID, std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebCore::PageIdentifier> pageID, struct WebCore::ClientOrigin clientOrigin, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections> protections, enum:uint8_t WebCore::StoredCredentialsPolicy storedCredentialsPolicy, enum:bool WebCore::IsInitiatedByDedicatedWorker isInitiatedByDedicatedWorker)
+    [EnabledBy=WebSocketEnabled] CreateSocketChannel(WebCore::ResourceRequest request, String protocol, WebCore::WebSocketIdentifier identifier, WebKit::WebPageProxyIdentifier webPageProxyID, std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebCore::PageIdentifier> pageID, struct WebCore::ClientOrigin clientOrigin, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections> protections, enum:uint8_t WebCore::StoredCredentialsPolicy storedCredentialsPolicy, enum:bool WebCore::IsInitiatedByWorker isInitiatedByWorker)
 
     CountWebSocketChannelsForTesting() -> (uint32_t count)
 
@@ -119,9 +119,10 @@ messages -> NetworkConnectionToWebProcess WantsDispatchMessage {
     MessagePortDisentangled(struct WebCore::MessagePortIdentifier local)
     MessagePortClosed(struct WebCore::MessagePortIdentifier local)
     TakeAllMessagesForPort(struct WebCore::MessagePortIdentifier port) -> (Vector<WebCore::MessageWithMessagePorts> messages, std::optional<WebKit::MessageBatchIdentifier> messageBatchIdentifier)
-    QueryLocalNetworkAccessPermission(struct WebCore::ClientOrigin origin, enum:uint8_t WebCore::IPAddressSpace addressSpace) -> (enum:uint8_t std::optional<WebCore::PermissionState> state)
+    QueryLocalNetworkAccessPermission(std::optional<WebKit::WebPageProxyIdentifier> webPageProxyID, struct WebCore::ClientOrigin origin, enum:uint8_t WebCore::IPAddressSpace addressSpace) -> (enum:uint8_t std::optional<WebCore::PermissionState> state)
     PostMessageToRemote(struct WebCore::MessageWithMessagePorts message, struct WebCore::MessagePortIdentifier remote, Vector<URL> blobURLs)
     DidDeliverMessagePortMessages(WebKit::MessageBatchIdentifier messageBatchIdentifier)
+    FlushNetworkProcessIPC() -> ()
     RegisterURLSchemesAsCORSEnabled(Vector<String> schemes);
 #if PLATFORM(MAC)
     GetProcessDisplayName(struct WebKit::CoreIPCAuditToken auditToken) -> (String displayName)
@@ -164,5 +165,7 @@ messages -> NetworkConnectionToWebProcess WantsDispatchMessage {
 
 #if ENABLE(IPC_TESTING_API)
     TakeInvalidMessageStringForTesting() -> (String error) Synchronous
+    AddSyntheticParkedLoaderForTesting(WebKit::NetworkResourceLoadIdentifier identifier, WebCore::ProcessIdentifier destination) -> (bool added) Synchronous
+    RemoveSyntheticParkedLoaderForTesting(WebKit::NetworkResourceLoadIdentifier identifier) -> () Synchronous
 #endif
 }

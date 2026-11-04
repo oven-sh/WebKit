@@ -14,7 +14,6 @@
 
 //! TLS Configurations
 
-use alloc::string::String;
 use core::ffi::c_int;
 
 use bssl_macros::bssl_enum;
@@ -22,6 +21,7 @@ use bssl_macros::bssl_enum;
 bssl_enum! {
     /// Protocol version for TLS or DTLS
     #[derive(Clone, Copy, PartialEq, Eq)]
+    #[non_exhaustive]
     pub enum ProtocolVersion: u16 {
         /// TLS version 1.2
         Tls12 = bssl_sys::TLS1_2_VERSION as u16,
@@ -63,6 +63,7 @@ bitflags::bitflags! {
 bssl_enum! {
     /// Key exchange groups for TLS or DTLS
     #[derive(Clone, Copy, PartialEq, Eq)]
+    #[non_exhaustive]
     pub enum KeyExchangeGroups: u16 {
         /// Key exchange using `ECDH-P256`
         Secp256r1 = bssl_sys::SSL_GROUP_SECP256R1 as u16,
@@ -92,6 +93,7 @@ bitflags::bitflags! {
 
 /// Configuration errors
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ConfigurationError {
     /// Some parameters are specified twice in the list.
     DuplicatedParameters,
@@ -110,6 +112,8 @@ pub enum ConfigurationError {
     InvalidIp,
     /// Invalid parameters.
     InvalidParameters,
+    /// Invalid ALPN protocols.
+    InvalidAlpnProtocols,
 }
 
 impl core::fmt::Display for ConfigurationError {
@@ -127,6 +131,7 @@ impl core::fmt::Display for ConfigurationError {
             ConfigurationError::ValueOutOfRange => f.write_str("value is out of range"),
             ConfigurationError::InvalidIp => f.write_str("invalid IP address"),
             ConfigurationError::InvalidParameters => f.write_str("invalid parameters"),
+            ConfigurationError::InvalidAlpnProtocols => f.write_str("invalid ALPN protocols"),
         }
     }
 }

@@ -1,0 +1,12 @@
+# A row with effects that does not name the replaced row in its replaces column is reported, though the replaced row is unknown code and nothing can exceed it
+# FORM: Prepared
+# RUN: check-replacement f0 v2 v1
+# DIAGNOSTIC: EffectsOfPreparedTooNarrow 1
+# CHECK-NOT: valid
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="length" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    v1 = PropGet v0 key="length"
+    v2 = GetArrayLength v0
+    Return
+}

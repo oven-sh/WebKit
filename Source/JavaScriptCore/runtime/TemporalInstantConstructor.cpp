@@ -73,7 +73,7 @@ static JSC_DECLARE_HOST_FUNCTION(callTemporalInstant);
 static JSC_DECLARE_HOST_FUNCTION(constructTemporalInstant);
 
 TemporalInstantConstructor::TemporalInstantConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callTemporalInstant, constructTemporalInstant)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callTemporalInstant), JSC_REGISTERED_HOST_FUNCTION(constructTemporalInstant))
 {
 }
 

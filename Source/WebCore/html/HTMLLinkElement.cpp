@@ -105,7 +105,7 @@ private:
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ExpectIdTargetObserver);
 
 ExpectIdTargetObserver::ExpectIdTargetObserver(const AtomString& id, HTMLLinkElement& element)
-    : IdTargetObserver(protect(element)->treeScope().idTargetObserverRegistry(), id)
+    : IdTargetObserver(protect(element.treeScope())->idTargetObserverRegistry(), id)
     , m_element(element)
 {
 }
@@ -198,8 +198,8 @@ void HTMLLinkElement::attributeChanged(const QualifiedName& name, const AtomStri
     switch (name.nodeName()) {
     case AttributeNames::relAttr: {
         if (equalLettersIgnoringASCIICase(newValue, "spatial-backdrop"_s))
-            document().addConsoleMessage(MessageSource::Other, MessageLevel::Error, "The \"spatial-backdrop\" link rel value is no longer supported and was ignored. Use the <model> immersive API instead."_s);
-        auto parsedRel = LinkRelAttribute(document(), newValue);
+            protect(document())->addConsoleMessage(MessageSource::Other, MessageLevel::Error, "The \"spatial-backdrop\" link rel value is no longer supported and was ignored. Use the <model> immersive API instead."_s);
+        auto parsedRel = LinkRelAttribute(protect(document()), newValue);
         auto didMutateRel = parsedRel != m_relAttribute;
         m_relAttribute = WTF::move(parsedRel);
         if (m_relList)
@@ -243,7 +243,7 @@ void HTMLLinkElement::attributeChanged(const QualifiedName& name, const AtomStri
         m_media = WTF::move(media);
         process();
         if (m_sheet && !isDisabled())
-            m_styleScope->didChangeActiveStyleSheetCandidates();
+            protect(m_styleScope)->didChangeActiveStyleSheetCandidates();
         break;
     }
     case AttributeNames::crossoriginAttr:
@@ -548,6 +548,10 @@ void HTMLLinkElement::removingSteps(RemovalType removalType, ContainerNode& oldP
         m_styleScope = nullptr;
     }
 
+    // The observer is registered with the tree scope we are being removed from, so it must not
+    // outlive this removal: a shadow tree scope can be destroyed while this element is still alive.
+    m_expectIdTargetObserver = nullptr;
+
     processInternalResourceLink();
     unblockRendering();
 }
@@ -573,8 +577,10 @@ void HTMLLinkElement::initializeStyleSheet(Ref<StyleSheetContents>&& styleSheet,
     if (CheckedPtr styleScope = m_styleScope)
         styleScope->establishPreferredStylesheetSetName(*this, protect(*m_sheet));
 
-    if (!protect(m_sheet)->canAccessRules())
+    if (!protect(m_sheet)->canAccessRules()) {
+        ASSERT(m_sheet->contents().loadedFromOpaqueSource() == LoadedFromOpaqueSource::Yes);
         m_sheet->contents().setAsLoadedFromOpaqueSource();
+    }
 }
 
 void HTMLLinkElement::setCSSStyleSheet(const String& href, const URL& baseURL, ASCIILiteral charset, const CachedCSSStyleSheet& cachedStyleSheet)
@@ -602,6 +608,8 @@ void HTMLLinkElement::setCSSStyleSheet(const String& href, const URL& baseURL, A
     }
 
     CSSParserContext parserContext(document.get(), baseURL, charset);
+    if (!cachedStyleSheet.isCORSSameOrigin())
+        parserContext.loadedFromOpaqueSource = LoadedFromOpaqueSource::Yes;
     auto cachePolicy = frame->loader().subresourceCachePolicy(baseURL);
 
     if (auto restoredSheet = const_cast<CachedCSSStyleSheet&>(cachedStyleSheet).restoreParsedStyleSheet(parserContext, cachePolicy, frame->loader())) {
@@ -660,7 +668,7 @@ bool HTMLLinkElement::mediaAttributeMatches() const
     auto mediaQueryList = MQ::MediaQueryParser::parse(m_media, document->cssParserContext());
     LOG(MediaQueries, "HTMLLinkElement::mediaAttributeMatches");
 
-    MQ::MediaQueryEvaluator evaluator(protect(document->frame())->view()->mediaType(), document.get());
+    MQ::MediaQueryEvaluator evaluator(protect(document->view())->mediaType(), document.get());
     return evaluator.evaluate(mediaQueryList);
 }
 
@@ -764,7 +772,7 @@ std::optional<LinkIconType> HTMLLinkElement::iconType() const
     return m_relAttribute.iconType;
 }
 
-static bool NODELETE mayFetchResource(LinkRelAttribute relAttribute)
+static bool LEGACY_NODELETE mayFetchResource(LinkRelAttribute relAttribute)
 {
     // https://html.spec.whatwg.org/multipage/links.html#linkTypes
     return relAttribute.isStyleSheet

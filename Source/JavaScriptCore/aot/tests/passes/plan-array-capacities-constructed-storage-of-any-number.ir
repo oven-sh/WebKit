@@ -1,0 +1,57 @@
+# The array that an inlined `filter` or `map` makes of a number[] takes any number through tested stores, and the code behind it tests for double storage.
+# A store that may lie behind the end looks at the number that it is given and leaves a NaN to the operation, so the allocation, its stores and their tests go by double storage.
+# A store inside the length takes its value unseen: where that may be a NaN nothing changes.
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="anyNumberReadAsDoubles" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}] results=[{type=anything}] {
+    v3 = NewArrayLike v0, v1
+    v4 = Integer integer=0
+    v5 = IsPristine v3 builtinClass=Array aspects=[Storage]
+    Branch v5 -> taken b1(| 0), notTaken b4()
+  b1(v6):
+    v7 = HasArrayStorage v3 arrayStorage=Contiguous [isWritable]
+    Branch v7 -> taken b2(| 0), notTaken b4()
+  b2(v8):
+    v9 = AllGuards v6, v8
+    PutArrayElement v3, v4, v2, v9 arrayStorage=Contiguous mode=Strict level=Expected [keyIsIntegral]
+    v11 = HasArrayStorage v3 arrayStorage=Double
+    Branch v11 -> taken b3(| 0), notTaken b4()
+  b3(v12):
+    Return v4
+  b4() frequency=Unlikely:
+    v13 = ElemGet v3, v4
+    Return v13
+}
+# CHECK-LABEL: function f0
+# CHECK: v3: {{*}} = NewArrayLike v0, v1 arrayStorage=Double
+# CHECK: v7: {{*}} = HasArrayStorage v3 arrayStorage=Double [isWritable]
+# CHECK: PutArrayElement v3, v4, v2, v9 arrayStorage=Double
+
+function f1 name="anyNumberStoredInsideTheLength" parameters=[{type=int[1, 100]}, {type=Array<anything>}, {type=number}] results=[{type=anything}] {
+    v3 = NewArrayLike v0, v1
+    v4 = Integer integer=0
+    v5 = IsPristine v3 builtinClass=Array aspects=[Storage]
+    Branch v5 -> taken b1(| 0), notTaken b5()
+  b1(v6):
+    v7 = HasArrayStorage v3 arrayStorage=Contiguous [isWritable]
+    Branch v7 -> taken b2(| 0), notTaken b5()
+  b2(v8):
+    v9 = IsInBounds v3, v4
+    Branch v9 -> taken b3(| 0), notTaken b5()
+  b3(v10):
+    v11 = AllGuards v6, v8, v10
+    PutArrayElement v3, v4, v2, v11 arrayStorage=Contiguous mode=Strict level=Expected [keyIsIntegral, isInBounds]
+    v13 = HasArrayStorage v3 arrayStorage=Double
+    Branch v13 -> taken b4(| 0), notTaken b5()
+  b4(v14):
+    Return v4
+  b5() frequency=Unlikely:
+    v15 = ElemGet v3, v4
+    Return v15
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: NewArrayLike v0, v1 arrayStorage=
+# CHECK: PutArrayElement v3, v4, v2, v11 arrayStorage=Contiguous

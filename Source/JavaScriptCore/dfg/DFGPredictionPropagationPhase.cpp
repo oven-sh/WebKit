@@ -108,7 +108,7 @@ private:
         dataLogLnIf(verboseFixPointLoops, "Iterated ", counter, " times in propagateToFixpoint.");
     }
     
-    bool NODELETE setPrediction(SpeculatedType prediction)
+    bool LEGACY_NODELETE setPrediction(SpeculatedType prediction)
     {
         ASSERT(m_currentNode->hasResult());
         
@@ -121,14 +121,14 @@ private:
         return m_currentNode->predict(prediction);
     }
     
-    bool NODELETE mergePrediction(SpeculatedType prediction)
+    bool LEGACY_NODELETE mergePrediction(SpeculatedType prediction)
     {
         ASSERT(m_currentNode->hasResult());
         
         return m_currentNode->predict(prediction);
     }
 
-    bool NODELETE setTuplePrediction(SpeculatedType prediction, unsigned index)
+    bool LEGACY_NODELETE setTuplePrediction(SpeculatedType prediction, unsigned index)
     {
         ASSERT(index < m_currentNode->tupleSize());
 
@@ -141,7 +141,7 @@ private:
         return mergeSpeculation(speculation, prediction);
     }
 
-    bool NODELETE mergeTuplePrediction(SpeculatedType prediction, unsigned index)
+    bool LEGACY_NODELETE mergeTuplePrediction(SpeculatedType prediction, unsigned index)
     {
         ASSERT(index < m_currentNode->tupleSize());
 
@@ -159,7 +159,7 @@ private:
         return updatedPrediction;
     }
     
-    SpeculatedType NODELETE speculatedDoubleTypeForPrediction(SpeculatedType value)
+    SpeculatedType LEGACY_NODELETE speculatedDoubleTypeForPrediction(SpeculatedType value)
     {
         SpeculatedType result = SpecDoubleReal;
         if (value & SpecDoubleImpureNaN)
@@ -171,7 +171,7 @@ private:
         return result;
     }
 
-    SpeculatedType NODELETE speculatedDoubleTypeForPredictions(SpeculatedType left, SpeculatedType right)
+    SpeculatedType LEGACY_NODELETE speculatedDoubleTypeForPredictions(SpeculatedType left, SpeculatedType right)
     {
         return speculatedDoubleTypeForPrediction(mergeSpeculations(left, right));
     }
@@ -236,10 +236,6 @@ private:
             if (prediction) {
                 if (isFullNumberOrBooleanSpeculationExpectingDefined(prediction))
                     changed |= mergePrediction(SpecInt32Only);
-#if USE(BIGINT32)
-                else if (m_graph.unaryArithShouldSpeculateBigInt32(node, m_pass))
-                    changed |= mergePrediction(SpecBigInt32);
-#endif
                 else if (m_graph.unaryArithShouldSpeculateHeapBigInt(node))
                     changed |= mergePrediction(SpecHeapBigInt);
                 else if (isBigIntSpeculation(prediction))
@@ -271,10 +267,6 @@ private:
                     // left or right is definitely something other than a number.
                     changed |= mergePrediction(SpecString);
                 }
-#if USE(BIGINT32)
-                else if (m_graph.binaryArithShouldSpeculateBigInt32(node, m_pass))
-                    changed |= mergePrediction(SpecBigInt32);
-#endif
                 else if (m_graph.binaryArithShouldSpeculateHeapBigInt(node))
                     changed |= mergePrediction(SpecHeapBigInt);
                 else if (isBigIntSpeculation(left) && isBigIntSpeculation(right))
@@ -346,10 +338,6 @@ private:
                     else
                         changed |= mergePrediction(speculatedDoubleTypeForPredictions(left, right));
                 }
-#if USE(BIGINT32)
-                else if (m_graph.binaryArithShouldSpeculateBigInt32(node, m_pass))
-                    changed |= mergePrediction(SpecBigInt32);
-#endif
                 else if (m_graph.binaryArithShouldSpeculateHeapBigInt(node))
                     changed |= mergePrediction(SpecHeapBigInt);
                 else if (isBigIntSpeculation(left) && isBigIntSpeculation(right))
@@ -379,10 +367,6 @@ private:
                     else
                         changed |= mergePrediction(speculatedDoubleTypeForPrediction(prediction));
                 }
-#if USE(BIGINT32)
-                else if (m_graph.unaryArithShouldSpeculateBigInt32(node, m_pass))
-                    changed |= mergePrediction(SpecBigInt32);
-#endif
                 else if (m_graph.unaryArithShouldSpeculateHeapBigInt(node))
                     changed |= mergePrediction(SpecHeapBigInt);
                 else if (isBigIntSpeculation(prediction))
@@ -412,10 +396,6 @@ private:
                     else
                         changed |= mergePrediction(speculatedDoubleTypeForPrediction(prediction));
                 }
-#if USE(BIGINT32)
-                else if (node->op() == ToNumeric && m_graph.unaryArithShouldSpeculateBigInt32(node, m_pass))
-                    changed |= mergePrediction(SpecBigInt32);
-#endif
                 else if (node->op() == ToNumeric && m_graph.unaryArithShouldSpeculateHeapBigInt(node))
                     changed |= mergePrediction(SpecHeapBigInt);
                 else if (node->op() == ToNumeric && isBigIntSpeculation(prediction))
@@ -500,17 +480,13 @@ private:
                 // prediction propagation logic and rely solely on the result type.
                 if (isFullNumberOrBooleanSpeculationExpectingDefined(left)
                     && isFullNumberOrBooleanSpeculationExpectingDefined(right)) {
-                    if (m_graph.binaryArithShouldSpeculateInt32(node, m_pass))
+                    if (m_graph.mulShouldSpeculateInt32(node, m_pass))
                         changed |= mergePrediction(SpecInt32Only);
                     else if (m_graph.binaryArithShouldSpeculateInt52(node, m_pass))
                         changed |= mergePrediction(SpecInt52Any);
                     else
                         changed |= mergePrediction(speculatedDoubleTypeForPredictions(left, right));
                 }
-#if USE(BIGINT32)
-                else if (op == ValueMul && m_graph.binaryArithShouldSpeculateBigInt32(node, m_pass))
-                    changed |= mergePrediction(SpecBigInt32);
-#endif
                 else if (op == ValueMul && m_graph.binaryArithShouldSpeculateHeapBigInt(node))
                     changed |= mergePrediction(SpecHeapBigInt);
                 else if (op == ValueMul && isBigIntSpeculation(left) && isBigIntSpeculation(right))
@@ -694,13 +670,6 @@ private:
                     break;
                 }
 
-#if USE(BIGINT32)
-                if (node->child1()->shouldSpeculateBigInt32()) {
-                    changed |= mergePrediction(SpecBigInt32);
-                    break;
-                }
-#endif
-
                 if (node->child1()->shouldSpeculateHeapBigInt()) {
                     changed |= mergePrediction(SpecHeapBigInt);
                     break;
@@ -835,7 +804,7 @@ private:
                 
             if (isFullNumberSpeculation(left)
                 && isFullNumberSpeculation(right)
-                && !m_graph.binaryArithShouldSpeculateInt32(node, m_pass)
+                && !m_graph.mulShouldSpeculateInt32(node, m_pass)
                 && !m_graph.binaryArithShouldSpeculateInt52(node, m_pass))
                 ballot = VoteDouble;
             else
@@ -932,6 +901,16 @@ private:
             break;
         }
         
+        case PutCellButterflySlot: {
+            // The inlined sort reads the scratch of an Int32 array back with no check, and ArraySortCommit
+            // copies it into the array as is. A pivot in the double format would be stored as a boxed double.
+            m_graph.voteChildren(node, VoteValue, weight);
+            Node* value = node->child3().node();
+            if (value->op() == GetLocal)
+                value->variableAccessData()->mergeDoubleFormatState(CantUseDoubleFormat);
+            break;
+        }
+
         case DataViewSet: {
             DataViewData data = node->dataViewData();
             if (data.isFloatingPoint)
@@ -1341,7 +1320,6 @@ private:
         case IsUndefinedOrNull:
         case IsBoolean:
         case IsNumber:
-        case IsBigInt:
         case NumberIsInteger:
         case GlobalIsNaN:
         case NumberIsNaN:
@@ -1778,7 +1756,7 @@ private:
         case RecordRegExpCachedResult:
         case CallDOM: {
             // This node should never be visible at this stage of compilation.
-            DFG_CRASH(m_graph, m_currentNode, "Unexpected node during prediction propagation");
+            DFG_CRASH(m_graph, m_currentNode, "Unexpected node during prediction propagation"_s);
             break;
         }
         
@@ -1886,6 +1864,7 @@ private:
         case ClearCatchLocals:
         case DataViewSet:
         case BufferWrite:
+        case TypedArraySet:
         case InvalidationPoint:
         case ObjectAssign:
         case ResolvePromiseFirstResolving:

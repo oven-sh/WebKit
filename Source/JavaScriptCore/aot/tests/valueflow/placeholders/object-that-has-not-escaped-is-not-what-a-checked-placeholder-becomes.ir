@@ -1,0 +1,42 @@
+# function side(value) { if (value is a Shape) return value.side }    side(handedIn); kept = new Circle; kept.side    and beside it: publish(shown = new Circle)
+# Behind the test the value nobody knows is a Shape, and only the program makes those. It stands for an object in hands that nobody knows, so it is a Shape that has escaped: the one that was shown.
+# The one that the program has kept fits the type and has never come this way: nothing that is done to the tested value is done to it.
+# RUN: valueflow-why values=f0:v3 values=f0:v5 values=f1:v3 escaped-layout=L1
+# CHECK: values=f0:v3
+# CHECK: operand 0 1 members: [[kept]]@f0
+# CHECK: values=f0:v5
+# CHECK: operand 2 1 members: [[shown]]@f0
+# CHECK: values=f1:v3
+# CHECK: operand 0
+# CHECK-NOT: unknown
+# CHECK-NOT: [[kept]]@f0
+# CHECK: 1 members: [[shown]]@f0
+# CHECK: escaped-layout=L1
+# CHECK-NOT: [[kept]]@f0
+# CHECK: [[shown]]@f0
+# CHECK-NOT: [[kept]]@f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Shape"
+layout L1 name="Circle" supertypes=[L0]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = NewObject layout=L1 fields=[]
+    v3 = PropGet v2 key="side"
+    v4 = NewObject layout=L1 fields=[]
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f1
+    v7 = Call v6, -, v1
+    Return
+}
+function f1 name="side" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = PropGet v2 key="side"
+    Return
+  b2(v4):
+    Return
+}

@@ -26,7 +26,7 @@
 #include "config.h"
 #include "B3WasmArrayLengthValue.h"
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)
 
 namespace JSC::B3 {
 
@@ -34,4 +34,4 @@ WasmArrayLengthValue::~WasmArrayLengthValue() = default;
 
 } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT)
+#endif // ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)

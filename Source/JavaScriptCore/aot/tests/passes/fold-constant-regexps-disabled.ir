@@ -1,0 +1,16 @@
+# With the pass switched off a call of RegExp on constants stays a call
+# FORM: Prepared
+# OPTIONS: disable=pass:FoldConstantRegExps
+# RUN: pass FoldConstantRegExps
+# STATISTIC: FoldConstantRegExpsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="patternAndFlags" results=[{type=RegExp}] {
+    v0 = String string="a+"
+    v1 = String string="gi"
+    v2 = CallBuiltin -, v0, v1 overload=RegExp/4
+    Return v2
+}
+# CHECK: v2: RegExp = CallBuiltin -, v0, v1 overload=RegExp/4
+# CHECK-NOT: NewRegExp

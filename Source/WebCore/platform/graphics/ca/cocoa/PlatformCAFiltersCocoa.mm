@@ -38,7 +38,7 @@
 namespace WebCore {
 
 #if PLATFORM(MAC)
-static unsigned NODELETE keyValueCountForFilter(const FilterOperation& filterOperation)
+static unsigned LEGACY_NODELETE keyValueCountForFilter(const FilterOperation& filterOperation)
 {
     switch (filterOperation.type()) {
     case FilterOperation::Type::Default:
@@ -140,7 +140,7 @@ void PlatformCAFilters::presentationModifiers(const FilterOperations& initialFil
             const Ref dropShadowOperation = downcast<DropShadowFilterOperation>(initialFilterOperation);
             auto size = CGSizeMake(dropShadowOperation->x(), dropShadowOperation->y());
             presentationModifiers.append({ type, adoptNS([[CAPresentationModifier alloc] initWithKeyPath:@"shadowOffset" initialValue:[NSValue value:&size withObjCType:@encode(CGSize)] additive:NO group:group.get()]) });
-            presentationModifiers.append({ type, adoptNS([[CAPresentationModifier alloc] initWithKeyPath:@"shadowColor" initialValue:(id) cachedCGColor(dropShadowOperation->color()).autorelease() additive:NO group:group.get()]) });
+            presentationModifiers.append({ type, adoptNS([[CAPresentationModifier alloc] initWithKeyPath:@"shadowColor" initialValue:bridge_id_cast(cachedCGColor(dropShadowOperation->color())) additive:NO group:group.get()]) });
             presentationModifiers.append({ type, adoptNS([[CAPresentationModifier alloc] initWithKeyPath:@"shadowRadius" initialValue:@(dropShadowOperation->stdDeviation()) additive:NO group:group.get()]) });
             continue;
         }
@@ -185,7 +185,7 @@ void PlatformCAFilters::updatePresentationModifiers(const FilterOperations& filt
             const Ref dropShadowOperation = downcast<DropShadowFilterOperation>(filterOperation);
             auto size = CGSizeMake(dropShadowOperation->x(), dropShadowOperation->y());
             [presentationModifiers[i].second.get() setValue:[NSValue value:&size withObjCType:@encode(CGSize)]];
-            [presentationModifiers[i + 1].second.get() setValue:(id) cachedCGColor(dropShadowOperation->color()).autorelease()];
+            [presentationModifiers[i + 1].second.get() setValue:bridge_id_cast(cachedCGColor(dropShadowOperation->color()))];
             [presentationModifiers[i + 2].second.get() setValue:@(dropShadowOperation->stdDeviation())];
             i += 2;
             continue;
@@ -243,17 +243,17 @@ void PlatformCAFilters::setFiltersOnLayer(PlatformLayer* layer, const FilterOper
         case FilterOperation::Type::DropShadow: {
             // FIXME: For now assume drop shadow is the last filter, put it on the layer.
             // <rdar://problem/10959969> Handle case where drop-shadow is not the last filter.
-            const auto& dropShadowOperation = downcast<DropShadowFilterOperation>(filterOperation);
-            [layer setShadowOffset:CGSizeMake(dropShadowOperation.x(), dropShadowOperation.y())];
-            [layer setShadowColor:cachedCGColor(dropShadowOperation.color()).get()];
-            [layer setShadowRadius:dropShadowOperation.stdDeviation()];
+            const Ref dropShadowOperation = downcast<DropShadowFilterOperation>(filterOperation);
+            [layer setShadowOffset:CGSizeMake(dropShadowOperation->x(), dropShadowOperation->y())];
+            [layer setShadowColor:cachedCGColor(dropShadowOperation->color())];
+            [layer setShadowRadius:dropShadowOperation->stdDeviation()];
             [layer setShadowOpacity:1];
             return nil;
         }
         case FilterOperation::Type::Grayscale: {
-            const auto& colorMatrixOperation = downcast<BasicColorMatrixFilterOperation>(filterOperation);
+            const Ref colorMatrixOperation = downcast<BasicColorMatrixFilterOperation>(filterOperation);
             CAFilter *filter = [CAFilter filterWithType:kCAFilterColorMonochrome];
-            [filter setValue:[NSNumber numberWithFloat:colorMatrixOperation.amount()] forKey:@"inputAmount"];
+            [filter setValue:[NSNumber numberWithFloat:colorMatrixOperation->amount()] forKey:@"inputAmount"];
             [filter setName:filterName.createNSString().get()];
             return filter;
         }
@@ -265,16 +265,16 @@ void PlatformCAFilters::setFiltersOnLayer(PlatformLayer* layer, const FilterOper
             return filter;
         }
         case FilterOperation::Type::Saturate: {
-            const auto& colorMatrixOperation = downcast<BasicColorMatrixFilterOperation>(filterOperation);
+            const Ref colorMatrixOperation = downcast<BasicColorMatrixFilterOperation>(filterOperation);
             CAFilter *filter = [CAFilter filterWithType:kCAFilterColorSaturate];
-            [filter setValue:[NSNumber numberWithFloat:colorMatrixOperation.amount()] forKey:@"inputAmount"];
+            [filter setValue:[NSNumber numberWithFloat:colorMatrixOperation->amount()] forKey:@"inputAmount"];
             [filter setName:filterName.createNSString().get()];
             return filter;
         }
         case FilterOperation::Type::HueRotate: {
-            const auto& colorMatrixOperation = downcast<BasicColorMatrixFilterOperation>(filterOperation);
+            const Ref colorMatrixOperation = downcast<BasicColorMatrixFilterOperation>(filterOperation);
             CAFilter *filter = [CAFilter filterWithType:kCAFilterColorHueRotate];
-            [filter setValue:[NSNumber numberWithFloat:deg2rad(colorMatrixOperation.amount())] forKey:@"inputAngle"];
+            [filter setValue:[NSNumber numberWithFloat:deg2rad(colorMatrixOperation->amount())] forKey:@"inputAngle"];
             [filter setName:filterName.createNSString().get()];
             return filter;
         }
@@ -307,9 +307,9 @@ void PlatformCAFilters::setFiltersOnLayer(PlatformLayer* layer, const FilterOper
             return filter;
         }
         case FilterOperation::Type::Blur: {
-            const auto& blurOperation = downcast<BlurFilterOperation>(filterOperation);
+            const Ref blurOperation = downcast<BlurFilterOperation>(filterOperation);
             CAFilter *filter = [CAFilter filterWithType:kCAFilterGaussianBlur];
-            [filter setValue:@(blurOperation.stdDeviation()) forKey:@"inputRadius"];
+            [filter setValue:@(blurOperation->stdDeviation()) forKey:@"inputRadius"];
             if (is_objc<CABackdropLayer>(layer)) {
 #if PLATFORM(VISION)
                 // FIXME: https://bugs.webkit.org/show_bug.cgi?id=275965
@@ -428,7 +428,7 @@ RetainPtr<NSValue> PlatformCAFilters::filterValueForOperation(const FilterOperat
     return value;
 }
 
-static CAColorMatrix NODELETE caColorMatrixFromColorMatrix(const ColorMatrix<3, 3>& colorMatrix)
+static CAColorMatrix LEGACY_NODELETE caColorMatrixFromColorMatrix(const ColorMatrix<3, 3>& colorMatrix)
 {
     return {
         colorMatrix.at(0, 0), colorMatrix.at(0, 1), colorMatrix.at(0, 2), 0, 0,
@@ -438,7 +438,7 @@ static CAColorMatrix NODELETE caColorMatrixFromColorMatrix(const ColorMatrix<3, 
     };
 }
 
-static CAColorMatrix NODELETE caColorMatrixFromColorMatrix(const ColorMatrix<5, 4>& colorMatrix)
+static CAColorMatrix LEGACY_NODELETE caColorMatrixFromColorMatrix(const ColorMatrix<5, 4>& colorMatrix)
 {
     return {
         colorMatrix.at(0, 0), colorMatrix.at(0, 1), colorMatrix.at(0, 2), colorMatrix.at(0, 3), colorMatrix.at(0, 4),

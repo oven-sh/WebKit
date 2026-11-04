@@ -360,6 +360,11 @@ void PluginView::mainFramePageScaleFactorDidChange()
     m_plugin->mainFramePageScaleFactorDidChange();
 }
 
+void PluginView::pageScaleFactorDidChange()
+{
+    viewGeometryDidChange();
+}
+
 double PluginView::pageScaleFactor() const
 {
     return m_plugin->scaleFactor();
@@ -548,10 +553,10 @@ void PluginView::paint(GraphicsContext& context, const IntRect& dirtyRect, Widge
 
     if (RefPtr transientPaintingSnapshot = m_transientPaintingSnapshot) {
         if (!context.hasPlatformContext()) {
-            RefPtr image = transientPaintingSnapshot->createImage();
+            RefPtr image = BitmapImage::create(*transientPaintingSnapshot);
             if (!image)
                 return;
-            context.drawBitmapImage(*image, frameRect());
+            image->draw(context, frameRect());
         } else {
             auto deviceScaleFactor = 1;
             if (auto* page = m_pluginElement->document().page())
@@ -914,12 +919,18 @@ void PluginView::viewGeometryDidChange()
         if (frame->isMainFrame() && m_plugin->isFullFramePlugin() && !m_plugin->handlesPageScaleFactor())
             return transform;
 
-        float pageScaleFactor = frame->page() ? frame->page()->pageScaleFactor() : 1;
-        IntPoint scaledFrameRectLocation { frameRect().location().scaled(pageScaleFactor) };
-        IntPoint scaledLocationInRootViewCoordinates { protect(parent())->contentsToRootView(scaledFrameRectLocation) };
+        FloatPoint location { frameRect().location() };
+        location.scale(frame->frameScaleFactor());
+        transform.translate(roundedIntPoint(protect(parent())->contentsToRootView(location)));
 
-        transform.translate(scaledLocationInRootViewCoordinates);
-        transform.scale(pageScaleFactor);
+        float scale = 1;
+        for (RefPtr<LocalFrame> ancestor = frame; ancestor; ancestor = dynamicDowncast<LocalFrame>(ancestor->tree().parent()))
+            scale *= ancestor->frameScaleFactor();
+
+        RefPtr<ScrollView> rootView = frame->rootFrame().view();
+        if (rootView && !rootView->delegatesScrollingToNativeView())
+            scale *= rootView->visibleContentScaleFactor();
+        transform.scale(scale);
 
         return transform;
     }();
@@ -1161,6 +1172,11 @@ void PluginView::setPDFTextAnnotationValueForTesting(unsigned pageIndex, unsigne
 Vector<String> PluginView::pdfContextMenuItemTitlesForTesting(const WebCore::IntPoint& pointInRootView) const
 {
     return m_plugin->contextMenuItemTitlesForTesting(pointInRootView);
+}
+
+WebCore::IntRect PluginView::pdfBoundsOnScreenForTesting() const
+{
+    return m_plugin->boundsOnScreen();
 }
 
 void PluginView::registerPDFTestCallback(RefPtr<VoidCallback>&& callback)

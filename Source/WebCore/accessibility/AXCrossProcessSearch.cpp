@@ -79,7 +79,7 @@ bool shouldMockChildFrameSearchResultsForTesting()
     return s_shouldMockChildFrameSearchResults;
 }
 
-static bool NODELETE canDoRemoteSearch(const std::optional<AXTreeID>& treeID)
+static bool LEGACY_NODELETE canDoRemoteSearch(const std::optional<AXTreeID>& treeID)
 {
 #if PLATFORM_SUPPORTS_REMOTE_SEARCH
     return treeID.has_value();
@@ -93,7 +93,7 @@ static bool NODELETE canDoRemoteSearch(const std::optional<AXTreeID>& treeID)
 // In the future, we could consider changing callers to implement a solution that doesn't
 // require polling as done in this function, since polling can be inefficient.
 template<typename Predicate>
-static DidTimeout spinRunLoopUntil(Predicate&& isComplete, Seconds timeout)
+static DidTimeout spinRunLoopUntil(NOESCAPE const Predicate& isComplete, Seconds timeout)
 {
     AX_ASSERT(isMainThread());
 
@@ -402,11 +402,11 @@ public:
         return didTimeout;
     }
 
-    void cancel() { m_cancelled.store(true, std::memory_order_release); }
-    bool isCancelled() const { return m_cancelled.load(std::memory_order_acquire); }
+    void LEGACY_NODELETE cancel() { m_cancelled.store(true, std::memory_order_release); }
+    bool LEGACY_NODELETE isCancelled() const { return m_cancelled.load(std::memory_order_acquire); }
 
-    void NODELETE markParentDispatched() { m_dispatchedParent.store(true, std::memory_order_release); }
-    bool NODELETE didDispatchParent() const { return m_dispatchedParent.load(std::memory_order_acquire); }
+    void LEGACY_NODELETE markParentDispatched() { m_dispatchedParent.store(true, std::memory_order_release); }
+    bool LEGACY_NODELETE didDispatchParent() const { return m_dispatchedParent.load(std::memory_order_acquire); }
 
     void setParentTokens(Vector<AccessibilityRemoteToken>&& tokens)
     {
@@ -463,7 +463,7 @@ AccessibilitySearchResults performSearchWithParentCoordination(AXCoreObject& anc
     Ref context = adoptRef(*new ParentFrameSearchContext);
 
     ensureOnMainThread([context, criteriaForParent, treeID, currentFrameID]() mutable {
-        WeakPtr cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(*treeID);
+        CheckedPtr cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(*treeID);
         RefPtr document = cache ? cache->document() : nullptr;
         RefPtr frame = document ? document->frame() : nullptr;
         RefPtr page = frame ? frame->page() : nullptr;

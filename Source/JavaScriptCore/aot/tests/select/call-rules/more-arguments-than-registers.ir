@@ -1,0 +1,55 @@
+# x86-64 has four registers for arguments and ARM64 eight. A call that passes more is resolved in front of the loop like any other: the rest go on the stack, and a resolved call passes their count
+# FORM: Prepared
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="nine-arguments" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Call v0, -, v2, v2, v2, v2, v2, v2, v2, v2, v2
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK: [[nine]]: codeaddress = ResolveCallTarget v0 argumentCount=9
+# CHECK: anything = CallResolved v0, [[nine]], -, v2, v2, v2, v2, v2, v2, v2, v2, v2
+}
+
+function f1 name="four-arguments" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Call v0, -, v2, v2, v2, v2
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK: [[four]]: codeaddress = ResolveCallTarget v0 argumentCount=4
+# CHECK: anything = CallResolved v0, [[four]], -, v2, v2, v2, v2
+}
+
+function f2 name="five-arguments" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Call v0, -, v2, v2, v2, v2, v2
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK: [[five]]: codeaddress = ResolveCallTarget v0 argumentCount=5
+# CHECK: anything = CallResolved v0, [[five]], -, v2, v2, v2, v2, v2
+}
+
+function f3 name="five-and-six-arguments" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Call v0, -, v2, v2, v2, v2, v2
+    v5 = Call v0, -, v2, v2, v2, v2, v2, v2
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK: [[forSix]]: codeaddress = ResolveCallTarget v0 argumentCount=6
+# CHECK: [[forFive]]: codeaddress = ResolveCallTarget v0 argumentCount=5
+# CHECK: anything = CallResolved v0, [[forFive]], -, v2, v2, v2, v2, v2
+# CHECK: anything = CallResolved v0, [[forSix]], -, v2, v2, v2, v2, v2, v2
+}

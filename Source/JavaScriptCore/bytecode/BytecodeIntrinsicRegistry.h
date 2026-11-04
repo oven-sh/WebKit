@@ -40,9 +40,17 @@ class BytecodeIntrinsicNode;
 class RegisterID;
 enum class LinkTimeConstant : int32_t;
 
+#if ENABLE(SHADOW_REALM)
+#define JSC_SHADOW_REALM_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(macro) \
+    macro(isShadowRealm)
+#else
+#define JSC_SHADOW_REALM_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(macro)
+#endif
+
 #define JSC_COMMON_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(macro) \
     macro(argument) \
     macro(argumentCount) \
+    macro(argumentsFrom) \
     macro(arrayPush) \
     macro(getByIdDirect) \
     macro(getByIdDirectPrivate) \
@@ -70,7 +78,7 @@ enum class LinkTimeConstant : int32_t;
     macro(isRegExpObject) \
     macro(isMap) \
     macro(isSet) \
-    macro(isShadowRealm) \
+    JSC_SHADOW_REALM_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(macro) \
     macro(isArrayIterator) \
     macro(isUndefinedOrNull) \
     macro(isWrapForValidIterator) \
@@ -155,8 +163,7 @@ enum class LinkTimeConstant : int32_t;
     macro(InternalMicrotaskAsyncFromSyncIteratorDone) \
 
 
-#define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_CUSTOM_EACH_NAME(macro) \
-    macro(orderedHashTableSentinel)
+#define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_CUSTOM_EACH_NAME(macro)
 
 class BytecodeIntrinsicRegistry {
     WTF_MAKE_NONCOPYABLE(BytecodeIntrinsicRegistry);
@@ -203,7 +210,7 @@ public:
         Type m_type;
     };
 
-    std::optional<Entry> NODELETE lookup(const Identifier&) const;
+    std::optional<Entry> LEGACY_NODELETE lookup(const Identifier&) const;
 
 #define JSC_DECLARE_BYTECODE_INTRINSIC_CONSTANT_GENERATORS(name) JSValue name##Value(BytecodeGenerator&);
     JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_EACH_NAME(JSC_DECLARE_BYTECODE_INTRINSIC_CONSTANT_GENERATORS)

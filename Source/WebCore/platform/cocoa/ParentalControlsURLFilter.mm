@@ -32,10 +32,6 @@
 #import "DeprecatedGlobalSettings.h"
 #endif
 
-#if USE(APPLE_INTERNAL_SDK)
-#import <WebKitAdditions/WebContentRestrictionsInternalSPI.h>
-#endif
-
 #import "Logging.h"
 #import "ParentalControlsURLFilterParameters.h"
 #import <wtf/CompletionHandler.h>
@@ -90,7 +86,7 @@ static bool wcrBrowserEngineClientEnabled()
     return [PAL::getWCRBrowserEngineClientClassSingleton() shouldEvaluateURLs];
 }
 
-static RefPtr<ParentalControlsURLFilter>& NODELETE globalFilter()
+static RefPtr<ParentalControlsURLFilter>& LEGACY_NODELETE globalFilter()
 {
     static MainThreadNeverDestroyed<RefPtr<ParentalControlsURLFilter>> filter;
     return filter.get();
@@ -130,7 +126,7 @@ ParentalControlsURLFilter::ParentalControlsURLFilter() = default;
 
 WorkQueue& ParentalControlsURLFilter::workQueueSingleton()
 {
-    static MainThreadNeverDestroyed<Ref<WorkQueue>> queue = WorkQueue::create("ParentalControlsContentFilter queue"_s);
+    static NeverDestroyed<Ref<WorkQueue>> queue(WorkQueue::create("ParentalControlsContentFilter queue"_s));
     return queue.get();
 }
 
@@ -231,14 +227,14 @@ void ParentalControlsURLFilter::isURLAllowedImpl(IsMainFrameLoad isMainFrame, co
         && [wcrBrowserEngineClient respondsToSelector:@selector(evaluateURL:mainDocumentURL:withCompletion:onCompletionQueue:)]) {
         [wcrBrowserEngineClient evaluateURL:url.createNSURL().get() mainDocumentURL:mainDocumentURL.createNSURL().get() withCompletion:makeBlockPtr([completionHandler = WTF::move(completionHandler)](BOOL shouldBlock, NSData *replacementData) mutable {
         completionHandler(!shouldBlock, replacementData);
-        }).get() onCompletionQueue:workQueueSingleton().dispatchQueue()];
+        }).get() onCompletionQueue:protect(workQueueSingleton().dispatchQueue())];
         return;
     }
 #endif
     UNUSED_PARAM(mainDocumentURL);
     [wcrBrowserEngineClient evaluateURL:url.createNSURL().get() withCompletion:makeBlockPtr([completionHandler = WTF::move(completionHandler)](BOOL shouldBlock, NSData *replacementData) mutable {
         completionHandler(!shouldBlock, replacementData);
-        }).get() onCompletionQueue:workQueueSingleton().dispatchQueue()];
+        }).get() onCompletionQueue:protect(workQueueSingleton().dispatchQueue())];
 }
 
 void ParentalControlsURLFilter::allowURL(const URL& url, CompletionHandler<void(bool)>&& completionHandler)
@@ -279,8 +275,35 @@ void ParentalControlsURLFilter::requestPermissionForURL(const URL& url, const UR
     if (!wcrBrowserEngineClient)
         return completionHandler(true);
 
-#if __has_include(<WebKitAdditions/WebContentRestrictionsInternalSPI.h>)
-    MAYBE_REQUEST_PERMISSION_WCR_ASK_TO
+#if PLATFORM(MAC)
+    if ([wcrBrowserEngineClient respondsToSelector:@selector(askToBrowseURL:referrerURL:withCompletion:)]) {
+        [wcrBrowserEngineClient askToBrowseURL:url.createNSURL().get() referrerURL:referrerURL.createNSURL().get() withCompletion:makeBlockPtr([completionHandler = WTF::move(completionHandler)](WCRAskToBrowseResponse result, NSError *) mutable {
+            switch (result) {
+            case WCRAskToBrowseResponseNone:
+                RELEASE_LOG(Loading, "ParentalControlsURLFilter::requestPermissionForURL result is none");
+                break;
+            case WCRAskToBrowseResponseApproved:
+                RELEASE_LOG(Loading, "ParentalControlsURLFilter::requestPermissionForURL result is approved");
+                break;
+            case WCRAskToBrowseResponseDenied:
+                RELEASE_LOG(Loading, "ParentalControlsURLFilter::requestPermissionForURL result is denied");
+                break;
+            case WCRAskToBrowseResponsePending:
+                RELEASE_LOG(Loading, "ParentalControlsURLFilter::requestPermissionForURL result is pending");
+                break;
+            default:
+                RELEASE_LOG(Loading, "ParentalControlsURLFilter::requestPermissionForURL result is invalid, result:%ld", (long)result);
+                break;
+            }
+            bool didAllow = (result == WCRAskToBrowseResponseApproved);
+            ASSERT(isMainThread());
+            completionHandler(didAllow);
+        }).get()];
+        return;
+    }
+#else
+    UNUSED_PARAM(url);
+    UNUSED_PARAM(referrerURL);
 #endif
 
     RELEASE_LOG(ContentFiltering, "ParentalControlsURLFilter::requestPermissionForURL falls back to allow.");

@@ -54,9 +54,10 @@ public:
         GetOwnPropertyDescriptor,
         OwnKeys,
         Set,
+        Apply,
     };
 
-    static constexpr unsigned numberOfCachedHandlerTrapsOffsets = 5;
+    static constexpr unsigned numberOfCachedHandlerTrapsOffsets = 6;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -84,33 +85,55 @@ public:
 
     static void validateNegativeHasTrapResult(JSGlobalObject*, JSObject*, PropertyName);
     static void validatePositiveSetTrapResult(JSGlobalObject*, JSObject*, PropertyName, JSValue putValue);
+    static void validatePositiveDeleteTrapResult(JSGlobalObject*, JSObject*, PropertyName);
     static void validateGetTrapResult(JSGlobalObject*, JSValue trapResult, JSObject*, PropertyName);
+#if ENABLE(AOT)
+    // For a caller that has read the trap off the handler itself. The target and the handler are those that the proxy had before that read.
+    JS_EXPORT_PRIVATE static JSValue getWithTrap(JSGlobalObject*, JSObject* target, JSObject* handler, JSValue trap, JSValue key, JSValue receiver);
+    JS_EXPORT_PRIVATE static void validateGetTrapResultWhereBound(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key);
+    JS_EXPORT_PRIVATE static bool hasWithTrap(JSGlobalObject*, JSObject* target, JSObject* handler, JSValue trap, JSValue key);
+    JS_EXPORT_PRIVATE static void setWithTrap(JSGlobalObject*, JSObject* target, JSObject* handler, JSValue trap, JSValue key, JSValue putValue, JSValue receiver, bool shouldThrow);
+    // What follows the call of the trap.
+    JS_EXPORT_PRIVATE static bool finishHas(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key);
+    JS_EXPORT_PRIVATE static void finishSet(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key, JSValue putValue, bool shouldThrow);
+    // The trap has said yes.
+    JS_EXPORT_PRIVATE static void finishDelete(JSGlobalObject*, JSObject* target, JSValue key);
+    // What the getOwnPropertyDescriptor trap has answered is held against the target. Whether it describes a property.
+    JS_EXPORT_PRIVATE static bool hasOwnByAnswerOfTrap(JSGlobalObject*, JSObject* target, JSValue key, JSValue trapResult);
+#endif
 
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static bool putByIndex(JSCell*, JSGlobalObject*, unsigned propertyName, JSValue, bool shouldThrow);
     bool putByIndexCommon(JSGlobalObject*, JSValue thisValue, unsigned propertyName, JSValue putValue, bool shouldThrow);
     JSValue performGetPrototype(JSGlobalObject*);
     void revoke(VM&);
-    bool NODELETE isRevoked() const;
+    bool LEGACY_NODELETE isRevoked() const;
 
     const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
 
     JSObject* getHandlerTrap(JSGlobalObject*, JSObject*, CallData&, const Identifier&, HandlerTrap);
-    bool NODELETE forwardsGetOwnPropertyNamesToTarget(DontEnumPropertiesMode);
+    inline JSObject* callTargetIfKnownToHaveNoApplyTrap();
+    bool LEGACY_NODELETE forwardsGetOwnPropertyNamesToTarget(DontEnumPropertiesMode);
 
 private:
     JS_EXPORT_PRIVATE ProxyObject(VM&, Structure*);
     JS_EXPORT_PRIVATE void finishCreation(VM&, JSGlobalObject*, JSValue target, JSValue handler);
     JS_EXPORT_PRIVATE static Structure* structureForTarget(JSGlobalObject*, JSValue target);
 
+    bool isCallableProxy() const { return inlineTypeFlags() & ImplementsDefaultHasInstance; }
+    bool isConstructibleProxy() const { return TypeInfo::perCellBit(inlineTypeFlags()); }
+
     bool isHandlerTrapsCacheValid(JSObject* handler);
-    void NODELETE clearHandlerTrapsOffsetsCache();
+#if ENABLE(AOT)
+    JS_EXPORT_PRIVATE bool isCachedTrapFieldEmpty(JSObject* handler, PropertyOffset cached);
+#endif
+    void LEGACY_NODELETE clearHandlerTrapsOffsetsCache();
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
-    static CallData NODELETE getCallData(JSCell*);
-    static CallData NODELETE getConstructData(JSCell*);
+    static CallData LEGACY_NODELETE getCallData(JSCell*);
+    static CallData LEGACY_NODELETE getConstructData(JSCell*);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
     static bool preventExtensions(JSObject*, JSGlobalObject*);
@@ -122,6 +145,7 @@ private:
 
     bool getOwnPropertySlotCommon(JSGlobalObject*, PropertyName, PropertySlot&);
     bool performInternalMethodGetOwnProperty(JSGlobalObject*, PropertyName, PropertySlot&);
+    static bool finishGetOwnProperty(JSGlobalObject*, JSObject* slotBase, JSObject* target, PropertyName, JSValue trapResult, PropertySlot&);
     bool performGet(JSGlobalObject*, PropertyName, PropertySlot&);
     bool performHasProperty(JSGlobalObject*, PropertyName, PropertySlot&);
     template <typename DefaultDeleteFunction>
@@ -135,8 +159,6 @@ private:
     void performGetOwnEnumerablePropertyNames(JSGlobalObject*, PropertyNameArrayBuilder&);
     bool performSetPrototype(JSGlobalObject*, JSValue prototype, bool shouldThrowIfCantSet);
 
-    bool m_isCallable : 1 { false };
-    bool m_isConstructible : 1 { false };
     PropertyOffset m_handlerTrapsOffsetsCache[numberOfCachedHandlerTrapsOffsets];
     WriteBarrierStructureID m_handlerStructureID;
     WriteBarrierStructureID m_handlerPrototypeStructureID;
@@ -148,6 +170,26 @@ ALWAYS_INLINE bool ProxyObject::isHandlerTrapsCacheValid(JSObject* handler)
         return false;
     ASSERT(handler->structure()->hasMonoProto());
     return asObject(handler->getPrototypeDirect())->structureID() == m_handlerPrototypeStructureID.value();
+}
+
+// Returns the target when calling this proxy is exactly calling its target; decided without running user code.
+inline JSObject* ProxyObject::callTargetIfKnownToHaveNoApplyTrap()
+{
+    if (!isCallableProxy())
+        return nullptr;
+    JSValue handlerValue = handler();
+    if (handlerValue.isNull())
+        return nullptr;
+    if (!isHandlerTrapsCacheValid(asObject(handlerValue)))
+        return nullptr;
+    PropertyOffset offset = m_handlerTrapsOffsetsCache[static_cast<uint8_t>(HandlerTrap::Apply)];
+    if (offset == invalidOffset)
+        return target();
+#if ENABLE(AOT)
+    if (offset < invalidOffset && isCachedTrapFieldEmpty(asObject(handlerValue), offset))
+        return target();
+#endif
+    return nullptr;
 }
 
 } // namespace JSC

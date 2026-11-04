@@ -1,0 +1,10 @@
+# publish(Handed); const callee = flag ? unknown : other ? Handed : Kept; new callee(); callee()
+# A callee that may be anything. The unknown object stands for `Handed`, which has escaped, and with the limit of this test one is many: the construction leaves it out as the call does.
+# `Kept` has not escaped: only the list says that it is entered here, so it stays whatever the number.
+# The same program with the limit as it is: callee-list-of-a-construction-keeps-the-few-that-have-escaped.ir
+# OPTIONS: limit=MaxValueFlowMembersToldApart:0
+# RUN: valueflow-apply
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = Construct v10 {{*}}callees=[f2, ..]
+# CHECK: = Call v10 {{*}}callees=[f2, ..]
+# PROGRAM-OF: callee-list-of-a-construction-keeps-the-few-that-have-escaped.ir

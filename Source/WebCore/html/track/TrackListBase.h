@@ -38,6 +38,7 @@
 namespace WebCore {
 
 class TrackBase;
+class TrackOpaqueRoot;
 using TrackID = uint64_t;
 
 class TrackListBase : public RefCounted<TrackListBase>, public EventTarget, public ActiveDOMObject {
@@ -50,7 +51,7 @@ public:
     void deref() const final { RefCounted::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    virtual unsigned NODELETE length() const;
+    virtual unsigned LEGACY_NODELETE length() const;
     virtual bool contains(TrackBase&) const;
     virtual bool contains(TrackID) const;
     virtual void remove(TrackBase&, bool scheduleEvent = true);
@@ -60,12 +61,12 @@ public:
     // EventTarget
     enum EventTargetInterfaceType eventTargetInterface() const override = 0;
     ScriptExecutionContext* scriptExecutionContext() const final;
-    WebCoreOpaqueRoot NODELETE opaqueRoot() const final;
+    WebCoreOpaqueRoot LEGACY_NODELETE opaqueRoot() const final;
 
     void didMoveToNewDocument(Document&);
 
-    using OpaqueRootObserver = WTF::Observer<WebCoreOpaqueRoot()>;
-    void setOpaqueRootObserver(const OpaqueRootObserver& observer) { m_opaqueRootObserver = observer; };
+    TrackOpaqueRoot* trackOpaqueRoot() { return m_trackOpaqueRoot.get(); }
+    virtual void setOpaqueRoot(TrackOpaqueRoot&);
 
     // Needs to be public so tracks can call it
     void scheduleChangeEvent();
@@ -88,7 +89,7 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    WeakPtr<OpaqueRootObserver> m_opaqueRootObserver;
+    RefPtr<TrackOpaqueRoot> m_trackOpaqueRoot;
     bool m_isChangeEventScheduled { false };
 };
 

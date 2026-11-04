@@ -1,0 +1,117 @@
+# A loop parameter that reaches itself through an operation gets the type the operation gives for what really flows in, once the wide value no longer enters the loop
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SimplifyControlFlow RetypeValues
+# RUN(STALE): pass SimplifyControlFlow
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sum" parameters=[{type=number}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4):
+    LoopHint
+    Branch v1 -> taken b4(), notTaken b5()
+  b4():
+    v6 = Add v4, v0
+    Jump -> next b3(v6)
+  b5():
+    Return v4
+# CHECK: b3(v4: number):
+# CHECK: v6: number = Add v4, v0
+# STALE: b3(v4: anything):
+# STALE: v6: number|string|bigint = Add v4, v0
+}
+
+function f1 name="concatenation" parameters=[{type=string}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4):
+    LoopHint
+    Branch v1 -> taken b4(), notTaken b5()
+  b4():
+    v6 = Add v4, v0
+    Jump -> next b3(v6)
+  b5():
+    Return v4
+# CHECK: b3(v4: string):
+# CHECK: v6: string = Add v4, v0
+}
+
+function f2 name="innerLoopCarriesOuterSum" parameters=[{type=number}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4):
+    LoopHint
+    Branch v1 -> taken b4(v4), notTaken b7()
+  b4(v6):
+    LoopHint
+    Branch v1 -> taken b5(), notTaken b6()
+  b5():
+    v8 = Mul v6, v0
+    v9 = Add v8, v4
+    Jump -> next b4(v9)
+  b6():
+    Jump -> next b3(v6)
+  b7():
+    Return v4
+# CHECK: b3(v4: number):
+# CHECK: b4(v6: number):
+# CHECK: v8: number = Mul v6, v0
+# CHECK-NEXT: v9: number = Add v8, v4
+}
+
+function f3 name="unknownValueAddedInLoop" parameters=[{type=number}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4):
+    LoopHint
+    Branch v1 -> taken b4(), notTaken b5()
+  b4():
+    v6 = Add v4, v2
+    Jump -> next b3(v6)
+  b5():
+    Return v4
+# CHECK: b3(v4: number|string|bigint):
+# CHECK: v6: number|string|bigint = Add v4, v2
+}
+
+function f4 name="textAddedOnOnePath" parameters=[{type=number}, {type=boolean}, {type=anything}, {type=string}] results=[{type=anything}] {
+    v4 = Boolean boolean=false
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v5):
+    LoopHint
+    Branch v1 -> taken b4(), notTaken b7()
+  b4():
+    v7 = Add v5, v0
+    Branch v1 -> taken b5(), notTaken b6()
+  b5():
+    v8 = Add v7, v3
+    Jump -> next b3(v8)
+  b6():
+    Jump -> next b3(v7)
+  b7():
+    Return v5
+# CHECK: b3(v5: number|string
+# CHECK: v8: string = Add v7, v3
+}

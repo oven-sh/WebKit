@@ -1,0 +1,15 @@
+# memory.toResizableBuffer() and memory.toFixedLengthBuffer() do to the buffer that the memory has handed out what memory.grow() does: a view behind either answers as bun run
+# FORM: Prepared
+# RUN: effects f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="asks" parameters=[{type=WebAssemblyMemory}] results=[{type=undefined}] {
+  b0(v0: WebAssemblyMemory):
+    v1 = Builtin builtin=WebAssemblyMemoryPrototypeToResizableBuffer
+    v2 = Call v1, v0 callees=[builtin(WebAssemblyMemoryPrototypeToResizableBuffer)]
+    v3 = Builtin builtin=WebAssemblyMemoryPrototypeToFixedLengthBuffer
+    v4 = Call v3, v0 callees=[builtin(WebAssemblyMemoryPrototypeToFixedLengthBuffer)]
+    Return
+}
+# CHECK: v2 Call: reads({{*}}) writes(TypedArrayStorage,
+# CHECK: v4 Call: reads({{*}}) writes(TypedArrayStorage,

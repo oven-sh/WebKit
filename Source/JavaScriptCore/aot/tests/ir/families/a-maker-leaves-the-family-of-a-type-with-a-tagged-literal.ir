@@ -1,0 +1,44 @@
+# interface Node { kind: number; pos: number }  interface Identifier extends Node { kind: 80 }  interface IfStatement extends Node { kind: 245; condition?: Node }  interface Token extends Node { kind: 70 | .. | 90 }
+# interface MaybeIdentifier extends Node { kind: 80 | undefined }  interface Loose { kind: 7 }  function NodeObject(this: Node, kind: number, pos: number) { this.kind = kind; this.pos = pos }  new NodeObject(80, 0) as Identifier
+# NodeObject gives an object the layout of its tag wherever there is one: L7 for 80 and L8 for 245. So an object with the layout of NodeObject itself was made with another tag,
+# and that layout leaves the family of a type that writes one of those literals and nothing else for `kind`, whether its names brought it there (IfStatement) or an assertion of the program (Identifier).
+# Beside them, NodeObject stays wherever one of its own objects may still arrive: in its declared type (Node writes `number`), in a type that lists more than one tag (Token),
+# in a type whose `kind` may be undefined, which is no tag (MaybeIdentifier), and in a type whose literal has no layout, because Loose is no Node (an object made with 7 has the layout of NodeObject)
+# FORM: AsRead
+# RUN: members
+# RUN(READ): print
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}, {key="pos" declared={type=number}}] supertypes=[L1, L2] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Identifier" fields=[{key="kind" declared={type=80} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="IfStatement" fields=[{key="kind" declared={type=245} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="condition" declared={type=anything}}] supertypes=[L1]
+layout L4 name="Token" fields=[{key="kind" declared={type=int[70, 90]} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L5 name="MaybeIdentifier" fields=[{key="kind" declared={type=undefined|80} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L6 name="Loose" fields=[{key="kind" declared={type=7} flags=[IsRequired]}]
+# CHECK: L0: members [L0, L7, L8]
+# CHECK-NEXT: L1: members [L0, L1, L2, L3, L4, L5, L7, L8]
+# CHECK-NEXT: L2: members [L1, L2, L4, L5, L7]
+# CHECK-NEXT: L3: members [L1, L3, L8]
+# CHECK-NEXT: L4: members [L0, L1, L2, L4, L5, L7]
+# CHECK-NEXT: L5: members [L0, L1, L2, L4, L5, L7]
+# CHECK-NEXT: L6: members [L0, L1, L6]
+# READ: layout L6 name="Loose"
+# READ-NEXT: layout L7 kind=Instance name="NodeObject" {{*}}flags=[IsDerived] flow={baseState=Layout base=L0}
+# READ-NEXT: layout L8 kind=Instance name="NodeObject" {{*}}flags=[IsDerived] flow={baseState=Layout base=L0}
+# READ-NEXT: module m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=L1} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="kind" mode=Strict
+    PropSet v0, v2 key="pos" mode=Strict
+    Return
+# READ: thisType={type=L0|L1|L2|L3|L4|L5|L7|L8}
+}
+function f2 name="take" parameters=[{type=L2}, {type=L3}, {type=L4}, {type=L5}, {type=L6}] results=[{type=anything}] {
+    Return
+# READ: parameters=[{type=L1|L2|L4|L5|L7}, {type=L1|L3|L8}, {type=L0|L1|L2|L4|L5|L7}, {type=L0|L1|L2|L4|L5|L7}, {type=L0|L1|L6}]
+}

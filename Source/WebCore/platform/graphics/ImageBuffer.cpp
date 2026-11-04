@@ -28,7 +28,6 @@
 #include "config.h"
 #include "ImageBuffer.h"
 
-#include "BitmapImage.h"
 #include "Filter.h"
 #include "FilterImage.h"
 #include "FilterResults.h"
@@ -93,8 +92,10 @@ RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingMode ren
 #if HAVE(IOSURFACE)
         if (ProcessCapabilities::canUseAcceleratedBuffers()) {
             ImageBufferCreationContext creationContext;
-            if (graphicsClient)
+            if (graphicsClient) {
                 creationContext.displayID = graphicsClient->displayID();
+                creationContext.useIOSurfaceWebKitBehavior = graphicsClient->useIOSurfaceWebKitBehavior();
+            }
             if (auto imageBuffer = ImageBuffer::create<ImageBufferIOSurfaceBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, creationContext))
                 return imageBuffer;
         }
@@ -178,7 +179,7 @@ public:
 
     size_t memoryCost() const final
     {
-        return protect(m_buffer)->memoryCost();
+        return m_buffer->memoryCost();
     }
 
     std::unique_ptr<SerializedImageBuffer> clone() const final
@@ -187,7 +188,7 @@ public:
     }
 
 private:
-    RefPtr<ImageBuffer> m_buffer;
+    const RefPtr<ImageBuffer> m_buffer;
 };
 #endif
 
@@ -320,7 +321,6 @@ void ImageBuffer::submitDrawingCommands()
 
 void ImageBuffer::prepareForDisplay()
 {
-    flushDrawingContextAsync();
     if (auto* backend = m_backend.get())
         backend->prepareForDisplay();
 }
@@ -465,6 +465,12 @@ RefPtr<GraphicsLayerContentsDisplayDelegate> ImageBuffer::layerContentsDisplayDe
     if (auto* backend = m_backend.get())
         return backend->layerContentsDisplayDelegate();
     return nullptr;
+}
+
+void ImageBuffer::releaseLayerContentsDisplayDelegate()
+{
+    if (auto* backend = m_backend.get())
+        backend->releaseLayerContentsDisplayDelegate();
 }
 
 RefPtr<NativeImage> ImageBuffer::sinkIntoNativeImage(RefPtr<ImageBuffer> source)

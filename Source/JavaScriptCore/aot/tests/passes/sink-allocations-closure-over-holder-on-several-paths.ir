@@ -1,0 +1,119 @@
+# An object and the closures over it that several ways need are built once, in front of the first branch behind the closures, so the stores between the closures and the branch fold into the allocation
+# FORM: Prepared
+# RUN: pass SinkAllocations SinkAllocations
+# LOSS: MaxMaterializations x3 f4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Context" fields=[{key="env" declared={type=anything}}, {key="text" declared={type=anything}}, {key="json" declared={type=anything}}, {key="path" declared={type=anything}}]
+layout L1 name="Empty"
+
+function f0 name="text" kind=Arrow captures=[{type=object}] results=[{type=anything}] {
+    Return v0
+}
+function f1 name="json" kind=Arrow captures=[{type=object}] results=[{type=anything}] {
+    Return v0
+}
+
+function f2 name="oneWayHandsItOnAndMeetsTheOther" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewObject layout=L0
+    v4 = NewObject layout=L1
+    PropDefine v3, v4 key="env" receivers=[L0]
+    v6 = NewClosure v3 function=f0
+    PropDefine v3, v6 key="text" receivers=[L0]
+    v8 = NewClosure v3 function=f1
+    PropDefine v3, v8 key="json" receivers=[L0]
+    PropSet v3, v1 key="env" receivers=[L0]
+    PropDefine v3, v0 key="path" receivers=[L0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v12 = Call v0, -, v3
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v13 = Call v0, -, v3
+    Return v13
+# CHECK: b0(
+# CHECK-NOT: layout=L1
+# CHECK: [[object2]]:{{*}}= NewObject -, v1, {{*}}, v0 layout=L0 fields=[0, 1, 2, 3]
+# CHECK-NOT: key="env"
+# CHECK-NOT: key="path"
+# CHECK-COUNT-2: = NewClosure [[object2]] function=
+# CHECK-COUNT-2: PutSlotOrAdd [[object2]], [[object2]],
+# CHECK-NEXT: Branch v2
+# CHECK: b1():
+# CHECK-NEXT: = Call v0, -, [[object2]]
+# CHECK: b3([[joined2]]: L0):
+# CHECK-NEXT: = Call v0, -, [[joined2]]
+}
+
+function f3 name="branchInFrontOfTheClosures" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewObject layout=L0
+    PropDefine v3, v1 key="env" receivers=[L0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v1
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v6 = NewClosure v3 function=f0
+    PropDefine v3, v6 key="text" receivers=[L0]
+    PropSet v3, v0 key="env" receivers=[L0]
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    v9 = Call v0, -, v3
+    Jump -> next b6()
+  b5():
+    Jump -> next b6()
+  b6():
+    v10 = Call v0, -, v3
+    Return v10
+# The object passes the branch that stands in front of its closures.
+# CHECK: b0(
+# CHECK-NOT: NewObject
+# CHECK: b3(
+# CHECK: [[object3]]:{{*}}= NewObject -, v0{{*}} layout=L0
+# CHECK-NOT: key="env"
+# CHECK: = NewClosure [[object3]] function=f0
+# CHECK-NEXT: PutSlotOrAdd [[object3]], [[object3]],
+# CHECK-NEXT: Branch v2
+}
+
+function f4 name="everyWayHandsItOnAndReturns" parameters=[{type=anything}, {type=anything}, {type=int}] results=[{type=anything}] {
+    v3 = NewObject layout=L0
+    v4 = NewObject layout=L1
+    PropDefine v3, v4 key="env" receivers=[L0]
+    v6 = NewClosure v3 function=f0
+    PropDefine v3, v6 key="text" receivers=[L0]
+    v8 = NewClosure v3 function=f1
+    PropDefine v3, v8 key="json" receivers=[L0]
+    PropSet v3, v1 key="env" receivers=[L0]
+    Switch v2 cases=[0, 1, 2, 3, 4] -> case b1(), case b2(), case b3(), case b4(), case b5(), otherwise b6()
+  b1():
+    v11 = Call v0, -, v3
+    Return v11
+  b2():
+    v12 = Call v1, -, v3
+    Return v12
+  b3():
+    v13 = Call v0, v1, v3
+    Return v13
+  b4():
+    v14 = Call v1, v0, v3
+    Return v14
+  b5():
+    v15 = Call v0, v0, v3
+    Return v15
+  b6():
+    v16 = Call v1, v1, v3
+    Return v16
+# Six builds would repeat the two late stores six times. The one build repeats them once.
+# CHECK: b0(
+# CHECK-NOT: layout=L1
+# CHECK: [[object4]]:{{*}}= NewObject -, v1{{*}} layout=L0
+# CHECK-NOT: key="env"
+# CHECK-COUNT-2: = NewClosure [[object4]] function=
+# CHECK-COUNT-2: PutSlotOrAdd [[object4]], [[object4]],
+# CHECK-NEXT: Switch v2
+}

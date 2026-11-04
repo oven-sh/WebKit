@@ -21,538 +21,538 @@ public:
         auto mapper = [](auto& extractorState, const auto& value, const std::optional<BackgroundLayers::value_type>&, const auto&) -> Ref<CSSValue> {
             return createCSSValue(extractorState.pool, extractorState.style, value);
         };
-        return extractCoordinatedValueListValue<CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete>(extractorState, extractorState.style.backgroundLayers(), mapper);
+        return extractCoordinatedValueListValue<CSSPropertyID::BackgroundCoordinatedValueListPropertyTestDiscrete>(extractorState, extractorState.style->backgroundLayers(), mapper);
     }
     static void extractBackgroundCoordinatedValueListPropertyTestDiscreteSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
         auto mapper = [](auto& extractorState, auto& builder, const auto& context, const auto& value, const std::optional<BackgroundLayers::value_type>&, const auto&) {
             serializationForCSS(builder, context, extractorState.style, value);
         };
-        extractCoordinatedValueListSerialization<CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete>(extractorState, builder, context, extractorState.style.backgroundLayers(), mapper);
+        extractCoordinatedValueListSerialization<CSSPropertyID::BackgroundCoordinatedValueListPropertyTestDiscrete>(extractorState, builder, context, extractorState.style->backgroundLayers(), mapper);
     }
     static RefPtr<CSSValue> extractBackgroundCoordinatedValueListPropertyTestTwo(ExtractorState& extractorState)
     {
         auto mapper = [](auto& extractorState, const auto& value, const std::optional<BackgroundLayers::value_type>&, const auto&) -> Ref<CSSValue> {
             return createCSSValue(extractorState.pool, extractorState.style, value);
         };
-        return extractCoordinatedValueListValue<CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestTwo>(extractorState, extractorState.style.backgroundLayers(), mapper);
+        return extractCoordinatedValueListValue<CSSPropertyID::BackgroundCoordinatedValueListPropertyTestTwo>(extractorState, extractorState.style->backgroundLayers(), mapper);
     }
     static void extractBackgroundCoordinatedValueListPropertyTestTwoSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
         auto mapper = [](auto& extractorState, auto& builder, const auto& context, const auto& value, const std::optional<BackgroundLayers::value_type>&, const auto&) {
             serializationForCSS(builder, context, extractorState.style, value);
         };
-        extractCoordinatedValueListSerialization<CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestTwo>(extractorState, builder, context, extractorState.style.backgroundLayers(), mapper);
+        extractCoordinatedValueListSerialization<CSSPropertyID::BackgroundCoordinatedValueListPropertyTestTwo>(extractorState, builder, context, extractorState.style->backgroundLayers(), mapper);
     }
     static RefPtr<CSSValue> extractTestAnimationWrapper(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testAnimationWrapper());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testAnimationWrapper());
     }
     static void extractTestAnimationWrapperSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testAnimationWrapper());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testAnimationWrapper());
     }
     static RefPtr<CSSValue> extractTestAnimationWrapperAccelerationAlways(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testAnimationWrapperAccelerationAlways());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testAnimationWrapperAccelerationAlways());
     }
     static void extractTestAnimationWrapperAccelerationAlwaysSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testAnimationWrapperAccelerationAlways());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testAnimationWrapperAccelerationAlways());
     }
     static RefPtr<CSSValue> extractTestAnimationWrapperAccelerationThreadedOnly(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testAnimationWrapperAccelerationThreadedOnly());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testAnimationWrapperAccelerationThreadedOnly());
     }
     static void extractTestAnimationWrapperAccelerationThreadedOnlySerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testAnimationWrapperAccelerationThreadedOnly());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testAnimationWrapperAccelerationThreadedOnly());
     }
     static RefPtr<CSSValue> extractTestColor(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testColor());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testColor());
     }
     static void extractTestColorSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testColor());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testColor());
     }
     static RefPtr<CSSValue> extractTestColorAllowsTypesAbsolute(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testColorAllowsTypesAbsolute());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testColorAllowsTypesAbsolute());
     }
     static void extractTestColorAllowsTypesAbsoluteSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testColorAllowsTypesAbsolute());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testColorAllowsTypesAbsolute());
     }
     static RefPtr<CSSValue> extractTestColorPropertyWithVisitedLinkSupport(ExtractorState& extractorState)
     {
         if (extractorState.allowVisitedStyle) {
-            return extractorState.pool.createColorValue(extractorState.style.visitedDependentTestColorPropertyWithVisitedLinkSupport());
+            return extractorState.pool.createColorValue(extractorState.style->visitedDependentTestColorPropertyWithVisitedLinkSupport());
         }
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testColorPropertyWithVisitedLinkSupport());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testColorPropertyWithVisitedLinkSupport());
     }
     static void extractTestColorPropertyWithVisitedLinkSupportSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
         if (extractorState.allowVisitedStyle) {
-            builder.append(WebCore::serializationForCSS(extractorState.style.visitedDependentTestColorPropertyWithVisitedLinkSupport()));
+            builder.append(WebCore::serializationForCSS(extractorState.style->visitedDependentTestColorPropertyWithVisitedLinkSupport()));
             return;
         }
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testColorPropertyWithVisitedLinkSupport());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testColorPropertyWithVisitedLinkSupport());
     }
     static RefPtr<CSSValue> extractTestRenderStyleGetterNodeleteFalse(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testRenderStyleGetterNodeleteFalse());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testRenderStyleGetterNodeleteFalse());
     }
     static void extractTestRenderStyleGetterNodeleteFalseSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testRenderStyleGetterNodeleteFalse());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testRenderStyleGetterNodeleteFalse());
     }
     static RefPtr<CSSValue> extractTestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testRenderStyleHasExplicitlySetPolicyAllAuthorOrigin());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testRenderStyleHasExplicitlySetPolicyAllAuthorOrigin());
     }
     static void extractTestRenderStyleHasExplicitlySetPolicyAllAuthorOriginSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testRenderStyleHasExplicitlySetPolicyAllAuthorOrigin());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testRenderStyleHasExplicitlySetPolicyAllAuthorOrigin());
     }
     static RefPtr<CSSValue> extractTestRenderStyleHasExplicitlySetPolicyAllBorderRadius(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testRenderStyleHasExplicitlySetPolicyAllBorderRadius());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testRenderStyleHasExplicitlySetPolicyAllBorderRadius());
     }
     static void extractTestRenderStyleHasExplicitlySetPolicyAllBorderRadiusSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testRenderStyleHasExplicitlySetPolicyAllBorderRadius());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testRenderStyleHasExplicitlySetPolicyAllBorderRadius());
     }
     static RefPtr<CSSValue> extractTestRenderStyleHasExplicitlySetPolicyValueOnly(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testRenderStyleHasExplicitlySetPolicyValueOnly());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testRenderStyleHasExplicitlySetPolicyValueOnly());
     }
     static void extractTestRenderStyleHasExplicitlySetPolicyValueOnlySerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testRenderStyleHasExplicitlySetPolicyValueOnly());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testRenderStyleHasExplicitlySetPolicyValueOnly());
     }
     static RefPtr<CSSValue> extractTestRenderStyleStorageOneLevelEnum(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testRenderStyleStorageOneLevelEnum());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testRenderStyleStorageOneLevelEnum());
     }
     static void extractTestRenderStyleStorageOneLevelEnumSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testRenderStyleStorageOneLevelEnum());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testRenderStyleStorageOneLevelEnum());
     }
     static RefPtr<CSSValue> extractTestRenderStyleStorageOneLevelRaw(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testRenderStyleStorageOneLevelRaw());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testRenderStyleStorageOneLevelRaw());
     }
     static void extractTestRenderStyleStorageOneLevelRawSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testRenderStyleStorageOneLevelRaw());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testRenderStyleStorageOneLevelRaw());
     }
     static RefPtr<CSSValue> extractTestRenderStyleStorageOneLevelReference(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testRenderStyleStorageOneLevelReference());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testRenderStyleStorageOneLevelReference());
     }
     static void extractTestRenderStyleStorageOneLevelReferenceSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testRenderStyleStorageOneLevelReference());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testRenderStyleStorageOneLevelReference());
     }
     static RefPtr<CSSValue> extractTestRenderStyleStorageOneLevelValue(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testRenderStyleStorageOneLevelValue());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testRenderStyleStorageOneLevelValue());
     }
     static void extractTestRenderStyleStorageOneLevelValueSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testRenderStyleStorageOneLevelValue());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testRenderStyleStorageOneLevelValue());
     }
     static RefPtr<CSSValue> extractTestRenderStyleStorageTwoLevelEnum(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testRenderStyleStorageTwoLevelEnum());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testRenderStyleStorageTwoLevelEnum());
     }
     static void extractTestRenderStyleStorageTwoLevelEnumSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testRenderStyleStorageTwoLevelEnum());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testRenderStyleStorageTwoLevelEnum());
     }
     static RefPtr<CSSValue> extractTestRenderStyleStorageTwoLevelRaw(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testRenderStyleStorageTwoLevelRaw());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testRenderStyleStorageTwoLevelRaw());
     }
     static void extractTestRenderStyleStorageTwoLevelRawSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testRenderStyleStorageTwoLevelRaw());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testRenderStyleStorageTwoLevelRaw());
     }
     static RefPtr<CSSValue> extractTestRenderStyleStorageTwoLevelReference(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testRenderStyleStorageTwoLevelReference());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testRenderStyleStorageTwoLevelReference());
     }
     static void extractTestRenderStyleStorageTwoLevelReferenceSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testRenderStyleStorageTwoLevelReference());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testRenderStyleStorageTwoLevelReference());
     }
     static RefPtr<CSSValue> extractTestRenderStyleStorageTwoLevelValue(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testRenderStyleStorageTwoLevelValue());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testRenderStyleStorageTwoLevelValue());
     }
     static void extractTestRenderStyleStorageTwoLevelValueSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testRenderStyleStorageTwoLevelValue());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testRenderStyleStorageTwoLevelValue());
     }
     static RefPtr<CSSValue> extractTestSettingsOne(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testSettingsOne());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testSettingsOne());
     }
     static void extractTestSettingsOneSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testSettingsOne());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testSettingsOne());
     }
     static RefPtr<CSSValue> extractTestLogicalPropertyGroupPhysicalVertical(ExtractorState& extractorState)
     {
-        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style.testLogicalPropertyGroupPhysicalVertical());
+        return createCSSValue(extractorState.pool, extractorState.style, extractorState.style->testLogicalPropertyGroupPhysicalVertical());
     }
     static void extractTestLogicalPropertyGroupPhysicalVerticalSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context)
     {
-        serializationForCSS(builder, context, extractorState.style, extractorState.style.testLogicalPropertyGroupPhysicalVertical());
+        serializationForCSS(builder, context, extractorState.style, extractorState.style->testLogicalPropertyGroupPhysicalVertical());
     }
 };
 
 RefPtr<CSSValue> ExtractorGenerated::extractValue(ExtractorState& extractorState, CSSPropertyID id)
 {
     switch (id) {
-    case CSSPropertyID::CSSPropertyInvalid:
+    case CSSPropertyID::Invalid:
         break;
-    case CSSPropertyID::CSSPropertyCustom:
+    case CSSPropertyID::Custom:
         ASSERT_NOT_REACHED();
         break;
-    case CSSPropertyID::CSSPropertyTestTopPriority:
+    case CSSPropertyID::TestTopPriority:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestHighPriority:
+    case CSSPropertyID::TestHighPriority:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMediumPriority:
+    case CSSPropertyID::TestMediumPriority:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete:
+    case CSSPropertyID::BackgroundCoordinatedValueListPropertyTestDiscrete:
         return ExtractorFunctions::extractBackgroundCoordinatedValueListPropertyTestDiscrete(extractorState);
-    case CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestTwo:
+    case CSSPropertyID::BackgroundCoordinatedValueListPropertyTestTwo:
         return ExtractorFunctions::extractBackgroundCoordinatedValueListPropertyTestTwo(extractorState);
-    case CSSPropertyID::CSSPropertyFirstTestDescriptorForFirstDescriptor:
+    case CSSPropertyID::FirstTestDescriptorForFirstDescriptor:
         // Skipped - Descriptor-only property
         return nullptr;
-    case CSSPropertyID::CSSPropertyFirstTestDescriptorForSecondDescriptor:
+    case CSSPropertyID::FirstTestDescriptorForSecondDescriptor:
         // Skipped - Descriptor-only property
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestAnimationWrapper:
+    case CSSPropertyID::TestAnimationWrapper:
         return ExtractorFunctions::extractTestAnimationWrapper(extractorState);
-    case CSSPropertyID::CSSPropertyTestAnimationWrapperAccelerationAlways:
+    case CSSPropertyID::TestAnimationWrapperAccelerationAlways:
         return ExtractorFunctions::extractTestAnimationWrapperAccelerationAlways(extractorState);
-    case CSSPropertyID::CSSPropertyTestAnimationWrapperAccelerationThreadedOnly:
+    case CSSPropertyID::TestAnimationWrapperAccelerationThreadedOnly:
         return ExtractorFunctions::extractTestAnimationWrapperAccelerationThreadedOnly(extractorState);
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommas:
+    case CSSPropertyID::TestBoundedRepetitionWithCommas:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasFixed:
+    case CSSPropertyID::TestBoundedRepetitionWithCommasFixed:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasNoSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithCommasNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithCommasSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpaces:
+    case CSSPropertyID::TestBoundedRepetitionWithSpaces:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesFixed:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesFixed:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesNoSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithType:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithType:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeNoSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeWithDefaultPrevious:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeWithDefaultPrevious:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeWithDefaultPreviousTwo:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeWithDefaultPreviousTwo:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestColor:
+    case CSSPropertyID::TestColor:
         return ExtractorFunctions::extractTestColor(extractorState);
-    case CSSPropertyID::CSSPropertyTestColorAllowsTypesAbsolute:
+    case CSSPropertyID::TestColorAllowsTypesAbsolute:
         return ExtractorFunctions::extractTestColorAllowsTypesAbsolute(extractorState);
-    case CSSPropertyID::CSSPropertyTestColorPropertyWithVisitedLinkSupport:
+    case CSSPropertyID::TestColorPropertyWithVisitedLinkSupport:
         return ExtractorFunctions::extractTestColorPropertyWithVisitedLinkSupport(extractorState);
-    case CSSPropertyID::CSSPropertyTestCustomExtractor:
+    case CSSPropertyID::TestCustomExtractor:
         return ExtractorCustom::extractTestCustomExtractor(extractorState);
-    case CSSPropertyID::CSSPropertyTestFunctionBoundedParameters:
+    case CSSPropertyID::TestFunctionBoundedParameters:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestFunctionFixedParameters:
+    case CSSPropertyID::TestFunctionFixedParameters:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestFunctionNoParameters:
+    case CSSPropertyID::TestFunctionNoParameters:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllAnyOrder:
+    case CSSPropertyID::TestFunctionParametersMatchAllAnyOrder:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllAnyOrderWithOptional:
+    case CSSPropertyID::TestFunctionParametersMatchAllAnyOrderWithOptional:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllOrdered:
+    case CSSPropertyID::TestFunctionParametersMatchAllOrdered:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllOrderedWithOptional:
+    case CSSPropertyID::TestFunctionParametersMatchAllOrderedWithOptional:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchOneOrMoreAnyOrder:
+    case CSSPropertyID::TestFunctionParametersMatchOneOrMoreAnyOrder:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestFunctionSingleParameter:
+    case CSSPropertyID::TestFunctionSingleParameter:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestFunctionSingleParameterMatchOne:
+    case CSSPropertyID::TestFunctionSingleParameterMatchOne:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestFunctionSingleParameterOptional:
+    case CSSPropertyID::TestFunctionSingleParameterOptional:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestFunctionUnboundedParametersNoMin:
+    case CSSPropertyID::TestFunctionUnboundedParametersNoMin:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestFunctionUnboundedParametersWithMinimum:
+    case CSSPropertyID::TestFunctionUnboundedParametersWithMinimum:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestImage:
+    case CSSPropertyID::TestImage:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestImageNoImageSet:
+    case CSSPropertyID::TestImageNoImageSet:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestKeyword:
+    case CSSPropertyID::TestKeyword:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestKeywordWithAliasedTo:
+    case CSSPropertyID::TestKeywordWithAliasedTo:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrder:
+    case CSSPropertyID::TestMatchAllAnyOrder:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithCustomType:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptional:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptional:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndCustomType:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomType:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomTypeNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomType:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomTypeNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndPreserveOrderAndCustomType:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalWithPreserveOrder:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalWithPreserveOrder:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalWithPreserveOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalWithPreserveOrderNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrder:
+    case CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrder:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrderAndCustomType:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrderNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrdered:
+    case CSSPropertyID::TestMatchAllOrdered:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithCustomType:
+    case CSSPropertyID::TestMatchAllOrderedWithCustomType:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptional:
+    case CSSPropertyID::TestMatchAllOrderedWithOptional:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndCustomType:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndCustomType:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndCustomTypeAndNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndCustomTypeAndNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndMultipleRequired:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndMultipleRequired:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndMultipleRequiredAndCustomType:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndMultipleRequiredAndCustomType:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalSingleItemOpt:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOne:
+    case CSSPropertyID::TestMatchOne:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrder:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrder:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithCustomType:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithCustomType:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithCustomTypeNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrder:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrder:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomType:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomTypeNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithGroupWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithGroupWithSettingsFlag:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithKeywordWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithKeywordWithSettingsFlag:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithMultipleKeywords:
+    case CSSPropertyID::TestMatchOneWithMultipleKeywords:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithReferenceWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithReferenceWithSettingsFlag:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithSettingsFlag:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestNumericValueRange:
+    case CSSPropertyID::TestNumericValueRange:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestProperty:
+    case CSSPropertyID::TestProperty:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestRenderStyleGetterNodeleteFalse:
+    case CSSPropertyID::TestRenderStyleGetterNodeleteFalse:
         return ExtractorFunctions::extractTestRenderStyleGetterNodeleteFalse(extractorState);
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin:
         return ExtractorFunctions::extractTestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin(extractorState);
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllBorderRadius:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllBorderRadius:
         return ExtractorFunctions::extractTestRenderStyleHasExplicitlySetPolicyAllBorderRadius(extractorState);
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyValueOnly:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyValueOnly:
         return ExtractorFunctions::extractTestRenderStyleHasExplicitlySetPolicyValueOnly(extractorState);
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelEnum:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelEnum:
         return ExtractorFunctions::extractTestRenderStyleStorageOneLevelEnum(extractorState);
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelRaw:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelRaw:
         return ExtractorFunctions::extractTestRenderStyleStorageOneLevelRaw(extractorState);
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelReference:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelReference:
         return ExtractorFunctions::extractTestRenderStyleStorageOneLevelReference(extractorState);
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelValue:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelValue:
         return ExtractorFunctions::extractTestRenderStyleStorageOneLevelValue(extractorState);
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelEnum:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelEnum:
         return ExtractorFunctions::extractTestRenderStyleStorageTwoLevelEnum(extractorState);
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelRaw:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelRaw:
         return ExtractorFunctions::extractTestRenderStyleStorageTwoLevelRaw(extractorState);
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelReference:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelReference:
         return ExtractorFunctions::extractTestRenderStyleStorageTwoLevelReference(extractorState);
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelValue:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelValue:
         return ExtractorFunctions::extractTestRenderStyleStorageTwoLevelValue(extractorState);
-    case CSSPropertyID::CSSPropertyTestSettingsOne:
+    case CSSPropertyID::TestSettingsOne:
         return ExtractorFunctions::extractTestSettingsOne(extractorState);
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMin:
+    case CSSPropertyID::TestUnboundedRepetitionWithCommasWithMin:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMinNoSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithCommasWithMinNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMinSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithCommasWithMinSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesNoMin:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesNoMin:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesNoMinNoSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesNoMinNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMin:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMin:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMinNoSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMinNoSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMinSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMinSingleItemOpt:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestUrlWithModifiers:
+    case CSSPropertyID::TestUrlWithModifiers:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestUrlWithNoModifiers:
+    case CSSPropertyID::TestUrlWithNoModifiers:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestUsingSharedRule:
+    case CSSPropertyID::TestUsingSharedRule:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestUsingSharedRuleExported:
+    case CSSPropertyID::TestUsingSharedRuleExported:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestUsingSharedRuleWithOverrideFunction:
+    case CSSPropertyID::TestUsingSharedRuleWithOverrideFunction:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestSinkPriority:
+    case CSSPropertyID::TestSinkPriority:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalHorizontal:
+    case CSSPropertyID::TestLogicalPropertyGroupPhysicalHorizontal:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalVertical:
+    case CSSPropertyID::TestLogicalPropertyGroupPhysicalVertical:
         return ExtractorFunctions::extractTestLogicalPropertyGroupPhysicalVertical(extractorState);
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalBlock:
+    case CSSPropertyID::TestLogicalPropertyGroupLogicalBlock:
         // Logical properties are handled by recursing using the direction resolved property.
-        return extractValue(extractorState, CSSProperty::resolveDirectionAwareProperty(id, extractorState.style.writingMode()));
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalInline:
+        return extractValue(extractorState, CSSProperty::resolveDirectionAwareProperty(id, extractorState.style->writingMode()));
+    case CSSPropertyID::TestLogicalPropertyGroupLogicalInline:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyAll:
+    case CSSPropertyID::All:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyFont:
+    case CSSPropertyID::Font:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestShorthandOne:
+    case CSSPropertyID::TestShorthandOne:
         // Skipped - Not computable
         return nullptr;
-    case CSSPropertyID::CSSPropertyTestShorthandTwo:
+    case CSSPropertyID::TestShorthandTwo:
         // Skipped - Not computable
         return nullptr;
     }
@@ -564,367 +564,367 @@ RefPtr<CSSValue> ExtractorGenerated::extractValue(ExtractorState& extractorState
 void ExtractorGenerated::extractValueSerialization(ExtractorState& extractorState, StringBuilder& builder, const CSS::SerializationContext& context, CSSPropertyID id)
 {
     switch (id) {
-    case CSSPropertyID::CSSPropertyInvalid:
+    case CSSPropertyID::Invalid:
         break;
-    case CSSPropertyID::CSSPropertyCustom:
+    case CSSPropertyID::Custom:
         ASSERT_NOT_REACHED();
         break;
-    case CSSPropertyID::CSSPropertyTestTopPriority:
+    case CSSPropertyID::TestTopPriority:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestHighPriority:
+    case CSSPropertyID::TestHighPriority:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMediumPriority:
+    case CSSPropertyID::TestMediumPriority:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete:
+    case CSSPropertyID::BackgroundCoordinatedValueListPropertyTestDiscrete:
         ExtractorFunctions::extractBackgroundCoordinatedValueListPropertyTestDiscreteSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestTwo:
+    case CSSPropertyID::BackgroundCoordinatedValueListPropertyTestTwo:
         ExtractorFunctions::extractBackgroundCoordinatedValueListPropertyTestTwoSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyFirstTestDescriptorForFirstDescriptor:
+    case CSSPropertyID::FirstTestDescriptorForFirstDescriptor:
         // Skipped - Descriptor-only property
         return;
-    case CSSPropertyID::CSSPropertyFirstTestDescriptorForSecondDescriptor:
+    case CSSPropertyID::FirstTestDescriptorForSecondDescriptor:
         // Skipped - Descriptor-only property
         return;
-    case CSSPropertyID::CSSPropertyTestAnimationWrapper:
+    case CSSPropertyID::TestAnimationWrapper:
         ExtractorFunctions::extractTestAnimationWrapperSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestAnimationWrapperAccelerationAlways:
+    case CSSPropertyID::TestAnimationWrapperAccelerationAlways:
         ExtractorFunctions::extractTestAnimationWrapperAccelerationAlwaysSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestAnimationWrapperAccelerationThreadedOnly:
+    case CSSPropertyID::TestAnimationWrapperAccelerationThreadedOnly:
         ExtractorFunctions::extractTestAnimationWrapperAccelerationThreadedOnlySerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommas:
+    case CSSPropertyID::TestBoundedRepetitionWithCommas:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasFixed:
+    case CSSPropertyID::TestBoundedRepetitionWithCommasFixed:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasNoSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithCommasNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithCommasSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpaces:
+    case CSSPropertyID::TestBoundedRepetitionWithSpaces:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesFixed:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesFixed:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesNoSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithType:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithType:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeNoSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeWithDefaultPrevious:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeWithDefaultPrevious:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeWithDefaultPreviousTwo:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeWithDefaultPreviousTwo:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestColor:
+    case CSSPropertyID::TestColor:
         ExtractorFunctions::extractTestColorSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestColorAllowsTypesAbsolute:
+    case CSSPropertyID::TestColorAllowsTypesAbsolute:
         ExtractorFunctions::extractTestColorAllowsTypesAbsoluteSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestColorPropertyWithVisitedLinkSupport:
+    case CSSPropertyID::TestColorPropertyWithVisitedLinkSupport:
         ExtractorFunctions::extractTestColorPropertyWithVisitedLinkSupportSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestCustomExtractor:
+    case CSSPropertyID::TestCustomExtractor:
         ExtractorCustom::extractTestCustomExtractorSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionBoundedParameters:
+    case CSSPropertyID::TestFunctionBoundedParameters:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionFixedParameters:
+    case CSSPropertyID::TestFunctionFixedParameters:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionNoParameters:
+    case CSSPropertyID::TestFunctionNoParameters:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllAnyOrder:
+    case CSSPropertyID::TestFunctionParametersMatchAllAnyOrder:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllAnyOrderWithOptional:
+    case CSSPropertyID::TestFunctionParametersMatchAllAnyOrderWithOptional:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllOrdered:
+    case CSSPropertyID::TestFunctionParametersMatchAllOrdered:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllOrderedWithOptional:
+    case CSSPropertyID::TestFunctionParametersMatchAllOrderedWithOptional:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchOneOrMoreAnyOrder:
+    case CSSPropertyID::TestFunctionParametersMatchOneOrMoreAnyOrder:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionSingleParameter:
+    case CSSPropertyID::TestFunctionSingleParameter:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionSingleParameterMatchOne:
+    case CSSPropertyID::TestFunctionSingleParameterMatchOne:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionSingleParameterOptional:
+    case CSSPropertyID::TestFunctionSingleParameterOptional:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionUnboundedParametersNoMin:
+    case CSSPropertyID::TestFunctionUnboundedParametersNoMin:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestFunctionUnboundedParametersWithMinimum:
+    case CSSPropertyID::TestFunctionUnboundedParametersWithMinimum:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestImage:
+    case CSSPropertyID::TestImage:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestImageNoImageSet:
+    case CSSPropertyID::TestImageNoImageSet:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestKeyword:
+    case CSSPropertyID::TestKeyword:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestKeywordWithAliasedTo:
+    case CSSPropertyID::TestKeywordWithAliasedTo:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrder:
+    case CSSPropertyID::TestMatchAllAnyOrder:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithCustomType:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptional:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptional:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndCustomType:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomType:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomTypeNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomType:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomTypeNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndPreserveOrderAndCustomType:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalWithPreserveOrder:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalWithPreserveOrder:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalWithPreserveOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalWithPreserveOrderNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrder:
+    case CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrder:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrderAndCustomType:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrderNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrdered:
+    case CSSPropertyID::TestMatchAllOrdered:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithCustomType:
+    case CSSPropertyID::TestMatchAllOrderedWithCustomType:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptional:
+    case CSSPropertyID::TestMatchAllOrderedWithOptional:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndCustomType:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndCustomType:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndCustomTypeAndNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndCustomTypeAndNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndMultipleRequired:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndMultipleRequired:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndMultipleRequiredAndCustomType:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndMultipleRequiredAndCustomType:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalSingleItemOpt:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOne:
+    case CSSPropertyID::TestMatchOne:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrder:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrder:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithCustomType:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithCustomType:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithCustomTypeNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrder:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrder:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomType:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomTypeNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithGroupWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithGroupWithSettingsFlag:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithKeywordWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithKeywordWithSettingsFlag:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithMultipleKeywords:
+    case CSSPropertyID::TestMatchOneWithMultipleKeywords:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithReferenceWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithReferenceWithSettingsFlag:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithSettingsFlag:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestNumericValueRange:
+    case CSSPropertyID::TestNumericValueRange:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestProperty:
+    case CSSPropertyID::TestProperty:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestRenderStyleGetterNodeleteFalse:
+    case CSSPropertyID::TestRenderStyleGetterNodeleteFalse:
         ExtractorFunctions::extractTestRenderStyleGetterNodeleteFalseSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin:
         ExtractorFunctions::extractTestRenderStyleHasExplicitlySetPolicyAllAuthorOriginSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllBorderRadius:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllBorderRadius:
         ExtractorFunctions::extractTestRenderStyleHasExplicitlySetPolicyAllBorderRadiusSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyValueOnly:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyValueOnly:
         ExtractorFunctions::extractTestRenderStyleHasExplicitlySetPolicyValueOnlySerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelEnum:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelEnum:
         ExtractorFunctions::extractTestRenderStyleStorageOneLevelEnumSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelRaw:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelRaw:
         ExtractorFunctions::extractTestRenderStyleStorageOneLevelRawSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelReference:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelReference:
         ExtractorFunctions::extractTestRenderStyleStorageOneLevelReferenceSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelValue:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelValue:
         ExtractorFunctions::extractTestRenderStyleStorageOneLevelValueSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelEnum:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelEnum:
         ExtractorFunctions::extractTestRenderStyleStorageTwoLevelEnumSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelRaw:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelRaw:
         ExtractorFunctions::extractTestRenderStyleStorageTwoLevelRawSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelReference:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelReference:
         ExtractorFunctions::extractTestRenderStyleStorageTwoLevelReferenceSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelValue:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelValue:
         ExtractorFunctions::extractTestRenderStyleStorageTwoLevelValueSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestSettingsOne:
+    case CSSPropertyID::TestSettingsOne:
         ExtractorFunctions::extractTestSettingsOneSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMin:
+    case CSSPropertyID::TestUnboundedRepetitionWithCommasWithMin:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMinNoSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithCommasWithMinNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMinSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithCommasWithMinSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesNoMin:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesNoMin:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesNoMinNoSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesNoMinNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMin:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMin:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMinNoSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMinNoSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMinSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMinSingleItemOpt:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestUrlWithModifiers:
+    case CSSPropertyID::TestUrlWithModifiers:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestUrlWithNoModifiers:
+    case CSSPropertyID::TestUrlWithNoModifiers:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestUsingSharedRule:
+    case CSSPropertyID::TestUsingSharedRule:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestUsingSharedRuleExported:
+    case CSSPropertyID::TestUsingSharedRuleExported:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestUsingSharedRuleWithOverrideFunction:
+    case CSSPropertyID::TestUsingSharedRuleWithOverrideFunction:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestSinkPriority:
+    case CSSPropertyID::TestSinkPriority:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalHorizontal:
+    case CSSPropertyID::TestLogicalPropertyGroupPhysicalHorizontal:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalVertical:
+    case CSSPropertyID::TestLogicalPropertyGroupPhysicalVertical:
         ExtractorFunctions::extractTestLogicalPropertyGroupPhysicalVerticalSerialization(extractorState, builder, context);
         return;
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalBlock:
+    case CSSPropertyID::TestLogicalPropertyGroupLogicalBlock:
         // Logical properties are handled by recursing using the direction resolved property.
-        extractValueSerialization(extractorState, builder, context, CSSProperty::resolveDirectionAwareProperty(id, extractorState.style.writingMode()));
+        extractValueSerialization(extractorState, builder, context, CSSProperty::resolveDirectionAwareProperty(id, extractorState.style->writingMode()));
         return;
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalInline:
+    case CSSPropertyID::TestLogicalPropertyGroupLogicalInline:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyAll:
+    case CSSPropertyID::All:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyFont:
+    case CSSPropertyID::Font:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestShorthandOne:
+    case CSSPropertyID::TestShorthandOne:
         // Skipped - Not computable
         return;
-    case CSSPropertyID::CSSPropertyTestShorthandTwo:
+    case CSSPropertyID::TestShorthandTwo:
         // Skipped - Not computable
         return;
     }

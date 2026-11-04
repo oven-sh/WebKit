@@ -42,13 +42,11 @@ bool detectTextEncoding(std::span<const uint8_t> data, ASCIILiteral hintEncoding
 {
     *detectedEncoding = TextEncoding();
     UErrorCode status = U_ZERO_ERROR;
-    // UCharsetDetector is declared in <unicode/ucsdet.h> as:
-    // `typedef struct UCharsetDetector UCharsetDetector;`
-    SUPPRESS_FORWARD_DECL_MEMBER UCharsetDetector* detector = ucsdet_open(&status);
+    UCharsetDetector* detector = ucsdet_open(&status);
     if (U_FAILURE(status))
         return false;
-    SUPPRESS_FORWARD_DECL_ARG ucsdet_enableInputFilter(detector, true);
-    SUPPRESS_FORWARD_DECL_ARG ucsdet_setText(detector, byteCast<char>(data.data()), static_cast<int32_t>(data.size()), &status);
+    ucsdet_enableInputFilter(detector, true);
+    ucsdet_setText(detector, byteCast<char>(data.data()), static_cast<int32_t>(data.size()), &status);
     if (U_FAILURE(status))
         return false;
 
@@ -62,9 +60,9 @@ bool detectTextEncoding(std::span<const uint8_t> data, ASCIILiteral hintEncoding
     // limited set of candidate encodings.
     // Below is a partial implementation of the first part of what's outlined
     // above.
-    SUPPRESS_FORWARD_DECL_ARG auto matches = ucsdet_detectAll_span(detector, &status);
+    auto matches = ucsdet_detectAll_span(detector, &status);
     if (U_FAILURE(status)) {
-        SUPPRESS_FORWARD_DECL_ARG ucsdet_close(detector);
+        ucsdet_close(detector);
         return false;
     }
 
@@ -107,10 +105,10 @@ bool detectTextEncoding(std::span<const uint8_t> data, ASCIILiteral hintEncoding
         encoding = ucsdet_getName(matches[0], &status);
     if (U_SUCCESS(status)) {
         *detectedEncoding = TextEncoding(StringView::fromLatin1(encoding));
-        SUPPRESS_FORWARD_DECL_ARG ucsdet_close(detector);
+        ucsdet_close(detector);
         return true;
     }    
-    SUPPRESS_FORWARD_DECL_ARG ucsdet_close(detector);
+    ucsdet_close(detector);
     return false;
 }
 

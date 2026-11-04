@@ -75,7 +75,7 @@ public:
         return m_length;
     }
     
-    uint32_t length(JSGlobalObject*) const;
+    uint64_t length(JSGlobalObject*) const;
     
     bool isMappedArgument(uint32_t i) const
     {
@@ -174,7 +174,7 @@ private:
         return std::bit_cast<WriteBarrier<Unknown>*>(std::bit_cast<char*>(this) + storageOffset());
     }
     
-    unsigned NODELETE mappedArgumentsSize();
+    unsigned LEGACY_NODELETE mappedArgumentsSize();
     
     WriteBarrier<JSFunction> m_callee;
     uint32_t m_length; // Always the actual length of captured arguments and never what was stored into the length property.

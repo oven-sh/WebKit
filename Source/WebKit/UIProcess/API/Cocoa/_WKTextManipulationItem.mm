@@ -26,15 +26,55 @@
 #import "config.h"
 #import "_WKTextManipulationItem.h"
 
+#import "_WKTextManipulationItemInternal.h"
 #import "_WKTextManipulationToken.h"
 #import <wtf/RetainPtr.h>
+#import <wtf/WeakObjCPtr.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 NSString * const _WKTextManipulationItemErrorDomain = @"WKTextManipulationItemErrorDomain";
 NSString * const _WKTextManipulationItemErrorItemKey = @"item";
 
+static ASCIILiteral descriptionForViewportRelation(_WKTextManipulationViewportRelation relation)
+{
+    switch (relation) {
+    case _WKTextManipulationViewportRelationIntersecting:
+        return "intersecting"_s;
+    case _WKTextManipulationViewportRelationOffscreen:
+        return "offscreen"_s;
+    case _WKTextManipulationViewportRelationClippedByAncestor:
+        return "clipped-by-ancestor"_s;
+    }
+    ASSERT_NOT_REACHED();
+    return "unknown"_s;
+}
+
+@implementation _WKTextManipulationViewportProximityInfo
+
+- (instancetype)initWithRelation:(_WKTextManipulationViewportRelation)relation viewportSizedDistance:(CGFloat)viewportSizedDistance viewportCoverage:(CGFloat)viewportCoverage
+{
+    if (!(self = [super init]))
+        return nil;
+
+    _relation = relation;
+    _viewportSizedDistance = viewportSizedDistance;
+    _viewportCoverage = viewportCoverage;
+    return self;
+}
+
+- (NSString *)description
+{
+    return [NSString stringWithFormat:@"<%@: %p; relation = %s viewportSizedDistance = %.3f viewportCoverage = %.3f>", self.class, self, descriptionForViewportRelation(self.relation).characters(), self.viewportSizedDistance, self.viewportCoverage];
+}
+
+@end
+
 @implementation _WKTextManipulationItem {
     RetainPtr<NSString> _identifier;
     RetainPtr<NSArray<_WKTextManipulationToken *>> _tokens;
+    RetainPtr<_WKTextManipulationViewportProximityInfo> _viewportProximityInfo;
+    WeakObjCPtr<WKWebView> _webView;
+    CGRect _mainFrameBoundingRect;
 }
 
 - (instancetype)initWithIdentifier:(NSString *)identifier tokens:(NSArray<_WKTextManipulationToken *> *)tokens
@@ -44,6 +84,7 @@ NSString * const _WKTextManipulationItemErrorItemKey = @"item";
 
     _identifier = identifier;
     _tokens = tokens;
+    _mainFrameBoundingRect = CGRectNull;
     return self;
 }
 
@@ -56,6 +97,16 @@ NSString * const _WKTextManipulationItemErrorItemKey = @"item";
     _tokens = tokens;
     _isSubframe = isSubframe;
     _isCrossSiteSubframe = isCrossSiteSubframe;
+    _mainFrameBoundingRect = CGRectNull;
+    return self;
+}
+
+- (instancetype)initWithIdentifier:(NSString *)identifier tokens:(NSArray<_WKTextManipulationToken *> *)tokens isSubframe:(BOOL)isSubframe isCrossSiteSubframe:(BOOL)isCrossSiteSubframe viewportProximityInfo:(_WKTextManipulationViewportProximityInfo *)viewportProximityInfo
+{
+    if (!(self = [self initWithIdentifier:identifier tokens:tokens isSubframe:isSubframe isCrossSiteSubframe:isCrossSiteSubframe]))
+        return nil;
+
+    _viewportProximityInfo = viewportProximityInfo;
     return self;
 }
 
@@ -69,6 +120,30 @@ NSString * const _WKTextManipulationItemErrorItemKey = @"item";
     return _tokens.get();
 }
 
+- (_WKTextManipulationViewportProximityInfo *)viewportProximityInfo
+{
+    return _viewportProximityInfo.get();
+}
+
+- (CGRect)webViewBoundingRect
+{
+    RetainPtr webView = _webView.get();
+    if (!webView)
+        return CGRectNull;
+
+    return [webView _webViewRectForTextManipulationMainFrameRect:_mainFrameBoundingRect];
+}
+
+- (void)_setWebView:(WKWebView *)webView
+{
+    _webView = webView;
+}
+
+- (void)_setMainFrameBoundingRect:(CGRect)mainFrameBoundingRect
+{
+    _mainFrameBoundingRect = mainFrameBoundingRect;
+}
+
 - (BOOL)isEqual:(id)object
 {
     if (self == object)
@@ -77,7 +152,7 @@ NSString * const _WKTextManipulationItemErrorItemKey = @"item";
     if (![object isKindOfClass:[self class]])
         return NO;
 
-    return [self isEqualToTextManipulationItem:object includingContentEquality:YES];
+    return [self isEqualToTextManipulationItem:checked_objc_cast<_WKTextManipulationItem>(object) includingContentEquality:YES];
 }
 
 - (BOOL)isEqualToTextManipulationItem:(_WKTextManipulationItem *)otherItem includingContentEquality:(BOOL)includingContentEquality
@@ -119,7 +194,8 @@ NSString * const _WKTextManipulationItemErrorItemKey = @"item";
         [recursiveDescriptions addObject:description.get()];
     }];
     RetainPtr tokenDescription = adoptNS([[NSString alloc] initWithFormat:@"[\n\t%@\n]", retainPtr([recursiveDescriptions componentsJoinedByString:@",\n\t"]).get()]);
-    return [NSString stringWithFormat:@"<%@: %p; identifier = %@ tokens = %@>", self.class, self, retainPtr(self.identifier).get(), tokenDescription.get()];
+    auto rect = _mainFrameBoundingRect;
+    return [NSString stringWithFormat:@"<%@: %p; identifier = %@ viewportProximityInfo = %@ mainFrameBoundingRect = {{%.1f, %.1f}, {%.1f, %.1f}} tokens = %@>", self.class, self, retainPtr(self.identifier).get(), retainPtr(self.viewportProximityInfo).get(), rect.origin.x, rect.origin.y, rect.size.width, rect.size.height, tokenDescription.get()];
 }
 
 @end

@@ -110,7 +110,7 @@ public:
     void transferImageBuffer(std::unique_ptr<RemoteSerializedImageBufferProxy>, WebCore::ImageBuffer&);
     std::unique_ptr<RemoteSerializedImageBufferProxy> moveToSerializedBuffer(RemoteImageBufferProxy&);
     RefPtr<RemoteImageBufferProxy> moveToImageBuffer(RemoteSerializedImageBufferProxy&);
-    void moveSerializedBufferToTransferHeap(RemoteSerializedImageBufferProxy&, WebCore::ImageBufferTransferIdentifier);
+    std::optional<WebCore::ImageBufferTransferIdentifier> moveSerializedBufferToTransferHeap(RemoteSerializedImageBufferProxy&);
     RefPtr<RemoteImageBufferProxy> takeTransferredBuffer(const WebCore::ImageBufferTransferHandle&);
 
     RefPtr<RemoteImageBufferProxy> cachedImageBuffer(const WebCore::ImageBuffer&) const;
@@ -143,7 +143,8 @@ public:
     void releaseImageBufferSet(RemoteImageBufferSetProxy&);
     void getImageBufferResourceLimitsForTesting(CompletionHandler<void(WebCore::ImageBufferResourceLimits)>&&);
 
-    UniqueRef<RemoteSnapshotRecorderProxy> createSnapshotRecorder(const WebCore::FloatRect& initialClip, RemoteSnapshotIdentifier);
+    void createSnapshot(RemoteSnapshotIdentifier, WebCore::FrameIdentifier rootFrameIdentifier, const WebCore::FloatSize&);
+    UniqueRef<RemoteSnapshotRecorderProxy> createSnapshotRecorder(const WebCore::FloatRect& initialClip, RemoteSnapshotIdentifier, WebCore::RenderingMode);
     void sinkSnapshotRecorderIntoSnapshotFrame(UniqueRef<RemoteSnapshotRecorderProxy>&&, WebCore::FrameIdentifier, CompletionHandler<void(bool)>&&);
 
     Ref<ShapeDetection::RemoteBarcodeDetectorProxy> createBarcodeDetector(const WebCore::ShapeDetection::BarcodeDetectorOptions&);
@@ -173,7 +174,7 @@ public:
         bool requiresClearedPixels { true };
     };
 
-    void NODELETE startPreparingImageBufferSetsForDisplay();
+    void LEGACY_NODELETE startPreparingImageBufferSetsForDisplay();
     void endPreparingImageBufferSetsForDisplay();
 
     void prepareImageBufferSetForDisplay(LayerPrepareBuffersData&&);
@@ -185,7 +186,7 @@ public:
     RenderingUpdateID renderingUpdateID() const { return m_renderingUpdateID; }
     unsigned delayedRenderingUpdateCount() const { return m_renderingUpdateID - m_didRenderingUpdateID; }
 
-    RemoteRenderingBackendIdentifier NODELETE renderingBackendIdentifier() const;
+    RemoteRenderingBackendIdentifier LEGACY_NODELETE renderingBackendIdentifier() const;
 
     RemoteRenderingBackendIdentifier ensureBackendCreated();
 
@@ -200,7 +201,7 @@ public:
 
     static constexpr Seconds defaultTimeout = 15_s;
 
-    unsigned NODELETE nativeImageCountForTesting() const;
+    unsigned LEGACY_NODELETE nativeImageCountForTesting() const;
 private:
     explicit RemoteRenderingBackendProxy(SerialFunctionDispatcher&);
 
@@ -222,7 +223,7 @@ private:
     void ensureGPUProcessConnection();
 
     bool dispatchMessage(IPC::Connection&, IPC::Decoder&);
-    bool NODELETE dispatchSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
+    bool LEGACY_NODELETE dispatchSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
     // Returns std::nullopt if no update is needed or allocation failed.
     // Returns handle if that should be sent to the receiver process.

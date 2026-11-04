@@ -1,0 +1,478 @@
+# A store of an array element under a proven storage kind has code for values that fit the kind, may fit and never fit, in strict and sloppy code, in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-12: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+# RUN(R): pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="strictStoresInInt32Storage" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v2 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Int32 level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v2 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Int32 level=Proven
+    Branch v10 -> taken b1(), notTaken b2()
+  b2():
+    Branch v10 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v2 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Int32 level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b1 Fast
+# S: f0 b3 Compact
+# R-LABEL: function f0 name="strictStoresInInt32Storage"
+# R: PutArrayElement v0, v1, v2 arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, v9 arrayStorage=Int32
+function f1 name="sloppyStoresInInt32Storage" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v2 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Int32 mode=Sloppy level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v2 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Int32 mode=Sloppy level=Proven
+    Branch v10 -> taken b1(), notTaken b2()
+  b2():
+    Branch v10 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v2 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Int32 mode=Sloppy level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b1 Fast
+# S: f1 b3 Compact
+# R-LABEL: function f1 name="sloppyStoresInInt32Storage"
+# R: PutArrayElement v0, v1, v2 arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Int32
+# R: PutArrayElement v0, v1, v9 arrayStorage=Int32
+function f2 name="strictStoresAtPositionsInInt32Storage" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v5 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Int32 level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v5 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Int32 level=Proven
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Branch v7 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v5 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Int32 level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Int32 level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b1 Fast
+# S: f2 b3 Compact
+function f3 name="sloppyStoresAtPositionsInInt32Storage" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v5 arrayStorage=Int32 mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Int32 mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Int32 mode=Sloppy level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v5 arrayStorage=Int32 mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Int32 mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Int32 mode=Sloppy level=Proven
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Branch v7 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v5 arrayStorage=Int32 mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Int32 mode=Sloppy level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Int32 mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Int32 mode=Sloppy level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b1 Fast
+# S: f3 b3 Compact
+function f4 name="strictStoresInDoubleStorage" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v2 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Double level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v2 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Double level=Proven
+    Branch v10 -> taken b1(), notTaken b2()
+  b2():
+    Branch v10 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v2 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Double level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Double level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f4 b0 Balanced
+# S: f4 b1 Fast
+# S: f4 b3 Compact
+# R-LABEL: function f4 name="strictStoresInDoubleStorage"
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, v4 arrayStorage=Double
+# R: PutArrayElement v0, v1, v5 arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, v9 arrayStorage=Double
+function f5 name="sloppyStoresInDoubleStorage" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v2 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Double mode=Sloppy level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v2 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Double mode=Sloppy level=Proven
+    Branch v10 -> taken b1(), notTaken b2()
+  b2():
+    Branch v10 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v2 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Double mode=Sloppy level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f5 b0 Balanced
+# S: f5 b1 Fast
+# S: f5 b3 Compact
+# R-LABEL: function f5 name="sloppyStoresInDoubleStorage"
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, v4 arrayStorage=Double
+# R: PutArrayElement v0, v1, v5 arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Double
+# R: PutArrayElement v0, v1, v9 arrayStorage=Double
+function f6 name="strictStoresAtPositionsInDoubleStorage" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v5 arrayStorage=Double level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Double level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Double level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Double level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Double level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v5 arrayStorage=Double level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Double level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Double level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Double level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Double level=Proven
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Branch v7 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v5 arrayStorage=Double level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Double level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Double level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Double level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Double level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f6 b0 Balanced
+# S: f6 b1 Fast
+# S: f6 b3 Compact
+function f7 name="sloppyStoresAtPositionsInDoubleStorage" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v5 arrayStorage=Double mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Double mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Double mode=Sloppy level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v5 arrayStorage=Double mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Double mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Double mode=Sloppy level=Proven
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Branch v7 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v5 arrayStorage=Double mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Double mode=Sloppy level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Double mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Double mode=Sloppy level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f7 b0 Balanced
+# S: f7 b1 Fast
+# S: f7 b3 Compact
+function f8 name="strictStoresInContiguousStorage" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v2 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Contiguous level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v2 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Contiguous level=Proven
+    Branch v10 -> taken b1(), notTaken b2()
+  b2():
+    Branch v10 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v2 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Contiguous level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f8 b0 Balanced
+# S: f8 b1 Fast
+# S: f8 b3 Compact
+# R-LABEL: function f8 name="strictStoresInContiguousStorage"
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, v9 arrayStorage=Contiguous
+function f9 name="sloppyStoresInContiguousStorage" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v2 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Contiguous mode=Sloppy level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v2 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Contiguous mode=Sloppy level=Proven
+    Branch v10 -> taken b1(), notTaken b2()
+  b2():
+    Branch v10 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v2 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v3 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v4 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v5 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v6 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v7 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v8 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v9 arrayStorage=Contiguous mode=Sloppy level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f9 b0 Balanced
+# S: f9 b1 Fast
+# S: f9 b3 Compact
+# R-LABEL: function f9 name="sloppyStoresInContiguousStorage"
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, {{*}} arrayStorage=Contiguous
+# R: PutArrayElement v0, v1, v9 arrayStorage=Contiguous
+function f10 name="strictStoresAtPositionsInContiguousStorage" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v5 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Contiguous level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v5 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Contiguous level=Proven
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Branch v7 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v5 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Contiguous level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Contiguous level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f10 b0 Balanced
+# S: f10 b1 Fast
+# S: f10 b3 Compact
+function f11 name="sloppyStoresAtPositionsInContiguousStorage" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v5 arrayStorage=Contiguous mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Contiguous mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Contiguous mode=Sloppy level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v5 arrayStorage=Contiguous mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Contiguous mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Contiguous mode=Sloppy level=Proven
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Branch v7 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v5 arrayStorage=Contiguous mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v3, v5 arrayStorage=Contiguous mode=Sloppy level=Proven
+    PutArrayElement v0, v4, v5 arrayStorage=Contiguous mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 arrayStorage=Contiguous mode=Sloppy level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f11 b0 Balanced
+# S: f11 b1 Fast
+# S: f11 b3 Compact

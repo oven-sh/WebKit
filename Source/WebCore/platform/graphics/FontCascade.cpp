@@ -247,13 +247,13 @@ RefPtr<const DisplayList::DisplayList> FontCascade::displayListForGlyphBuffer(Gr
     constexpr auto drawGlyphsMode = DisplayList::Recorder::DrawGlyphsMode::Deconstruct;
 #endif
 
-    DisplayList::RecorderImpl recordingContext(context.state().clone(GraphicsContextState::Purpose::Initial), { },
+    Ref recordingContext = DisplayList::RecorderImpl::create(context.state().clone(GraphicsContextState::Purpose::Initial), { },
         context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale), context.colorSpace(), drawGlyphsMode);
 
     FloatPoint startPoint = toFloatPoint(WebCore::size(glyphBuffer.initialAdvance()));
     drawGlyphBuffer(recordingContext, glyphBuffer, startPoint, customFontNotReadyAction);
 
-    return recordingContext.takeDisplayList();
+    return recordingContext->takeDisplayList();
 }
 
 float FontCascade::widthOfTextRange(const TextRun& run, unsigned from, unsigned to, float& outWidthBeforeRange, float& outWidthAfterRange) const
@@ -1107,7 +1107,7 @@ bool FontCascade::isCJKIdeographOrSymbol(char32_t c)
     if (c >= 0x2672 && c <= 0x267D)
         return true;
 
-    if ((c == 0x26A0) || (c == 0x26BD) || (c == 0x26BE) || (c == 0x2713) || (c == 0x271A) || (c == 0x273F) || (c == 0x2740) || (c == 0x2756))
+    if ((c == 0x26A0) || (c == 0x26BD) || (c == 0x26BE) || (c == checkMarkCharacter) || (c == 0x271A) || (c == 0x273F) || (c == 0x2740) || (c == 0x2756))
         return true;
 
     if (c >= 0x2776 && c <= 0x277F)
@@ -1558,7 +1558,7 @@ TextShapingResult FontCascade::layoutComplexText(const TextRun& run, unsigned fr
     return result;
 }
 
-inline bool NODELETE shouldDrawIfLoading(const Font& font, FontCascade::CustomFontNotReadyAction customFontNotReadyAction)
+inline bool LEGACY_NODELETE shouldDrawIfLoading(const Font& font, FontCascade::CustomFontNotReadyAction customFontNotReadyAction)
 {
     // Don't draw anything while we are using custom fonts that are in the process of loading,
     // except if the 'customFontNotReadyAction' argument is set to UseFallbackIfFontNotReady
@@ -1755,8 +1755,9 @@ int FontCascade::offsetForPositionForComplexText(const TextRun& run, float x, bo
 
 #if !PLATFORM(COCOA) && !USE(HARFBUZZ)
 // FIXME: Unify this with the macOS and iOS implementation.
-RefPtr<const Font> FontCascade::fontForCombiningCharacterSequence(StringView stringView) const
+RefPtr<const Font> FontCascade::fontForCombiningCharacterSequence(StringView stringView, std::optional<char32_t>& matchedPrecomposedCharacter) const
 {
+    matchedPrecomposedCharacter = std::nullopt;
     ASSERT(stringView.length() > 0);
     char32_t baseCharacter = *stringView.codePoints().begin();
     GlyphData baseCharacterGlyphData = glyphDataForCharacter(baseCharacter, false, FontVariant::Normal);
@@ -1776,14 +1777,14 @@ struct GlyphIterationState {
     float maxX;
 };
 
-static std::optional<float> NODELETE findIntersectionPoint(float y, FloatPoint p1, FloatPoint p2)
+static std::optional<float> LEGACY_NODELETE findIntersectionPoint(float y, FloatPoint p1, FloatPoint p2)
 {
     if ((p1.y() < y && p2.y() > y) || (p1.y() > y && p2.y() < y))
         return p1.x() + (y - p1.y()) * (p2.x() - p1.x()) / (p2.y() - p1.y());
     return std::nullopt;
 }
 
-static void updateX(GlyphIterationState& state, float x)
+static void LEGACY_NODELETE updateX(GlyphIterationState& state, float x)
 {
     state.minX = std::min(state.minX, x);
     state.maxX = std::max(state.maxX, x);
@@ -1796,7 +1797,7 @@ static void updateX(GlyphIterationState& state, float x)
 // GlyphIterationState::y1 and GlyphIterationState::y2. It keeps track of the
 // leftmost and rightmost intersection in GlyphIterationState::minX and
 // GlyphIterationState::maxX.
-static void findPathIntersections(GlyphIterationState& state, const PathElement& element)
+static void LEGACY_NODELETE findPathIntersections(GlyphIterationState& state, const PathElement& element)
 {
     bool doIntersection = false;
     FloatPoint point = FloatPoint();
@@ -1847,7 +1848,7 @@ public:
 #endif
     }
 
-    bool NODELETE containsMorePaths() { return m_index != m_glyphBuffer.size(); }
+    bool LEGACY_NODELETE containsMorePaths() { return m_index != m_glyphBuffer.size(); }
     Path path();
     std::pair<float, float> extents();
     GlyphUnderlineType underlineType();

@@ -1,0 +1,63 @@
+# The instances of a base class and of its two subclasses get consecutive shape numbers, so instanceof the base class is one range and instanceof a leaf class one shape
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveCalls,PlaceTypeTests
+# RUN: place shapes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1
+layout L1 name="Other" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="Left" base=L0 constructor=f2 flags=[HasHeritage]
+layout L3 kind=Instance name="Right" base=L0 constructor=f3 flags=[HasHeritage]
+variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    PutModuleVariable v4 variable=g0
+    v6 = ResolveHeritage v4
+    v7 = NewClosure function=f2
+    v8 = NewClass v7, v4, v6 layout=L2
+    v9 = FinishClass v8 layout=L2
+    v10 = ResolveHeritage v4
+    v11 = NewClosure function=f3
+    v12 = NewClass v11, v4, v10 layout=L3
+    v13 = FinishClass v12 layout=L3
+    v14 = Construct v4
+    v15 = Construct v9
+    v16 = Construct v13
+    v17 = ToNumber v1
+    v18 = NewObject -, v17 layout=L1 fields=[0]
+    v19 = FinishObject v18
+    v20 = InstanceOf v1, v4
+    v21 = InstanceOf v1, v9
+    v22 = InstanceOf v1, v13
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="Left" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = SuperConstruct v1, v0 layout=L2
+    Return v2
+}
+function f3 name="Right" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = SuperConstruct v1, v0 layout=L3
+    Return v2
+}
+# The record is declared between the classes and is numbered behind them.
+# CHECK: L0 shapes 1..1
+# CHECK: L1 shapes 4..4
+# CHECK: L2 shapes 2..2
+# CHECK: L3 shapes 3..3
+# CHECK: set [L0, L2, L3] upto 3 cost=2
+# CHECK-NEXT: set [L2] one 2 cost=2
+# CHECK-NEXT: set [L3] one 3 cost=2
+# CHECK-NOT: set

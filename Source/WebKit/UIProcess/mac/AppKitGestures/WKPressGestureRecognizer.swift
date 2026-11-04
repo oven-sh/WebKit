@@ -32,6 +32,27 @@ extension WKPressGestureRecognizer {
     @nonobjc
     private var lastDeliveredLocationInWindow: CGPoint = .zero
 
+    var refusesToBeFailureRequirement = false
+
+    weak var pressDelegate: (any WKPressGestureRecognizerDelegate)?
+
+    // A press fails without invoking its action (e.g. on moving past `allowableMovement` before
+    // `minimumPressDuration`), so observe the transition itself.
+    @_implementationOnly
+    open override var state: NSGestureRecognizer.State {
+        get {
+            super.state
+        }
+        set {
+            let previousState = super.state
+            super.state = newValue
+
+            if state != previousState && state == .failed {
+                pressDelegate?.pressGestureRecognizerDidFail(self)
+            }
+        }
+    }
+
     @_implementationOnly
     open override func reset() {
         lastDeliveredLocationInWindow = .zero
@@ -77,6 +98,13 @@ extension WKPressGestureRecognizer {
         // would only serialize them, holding the shorter drag behind the longer secondary click.
 
         false
+    }
+
+    // swift-format-ignore: NoLeadingUnderscores
+    @_implementationOnly
+    @objc(_acceptsBeingFailureRequirementForGestureRecognizer:)
+    open override func _acceptsBeingFailureRequirement(for gestureRecognizer: NSGestureRecognizer) -> Bool {
+        !refusesToBeFailureRequirement && super._acceptsBeingFailureRequirement(for: gestureRecognizer)
     }
 }
 

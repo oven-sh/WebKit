@@ -26,6 +26,7 @@
 #import "config.h"
 #import "CoreIPCDDScannerResult.h"
 
+#import <wtf/Borrow.h>
 #import <pal/cocoa/DataDetectorsCoreSoftLink.h>
 
 #if ENABLE(DATA_DETECTION) && HAVE(WK_SECURE_CODING_DATA_DETECTORS)
@@ -61,7 +62,8 @@ CoreIPCDDScannerResult::CoreIPCDDScannerResult(DDScannerResult *d)
     if (auto *SR = dynamic_objc_cast<NSArray>([dictionary objectForKey:@"SR"])) {
         Vector<RetainPtr<DDScannerResult>> result;
         result.reserveInitialCapacity(SR.count);
-        for (id item in SR) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL id item in SR) {
             if ([item isKindOfClass:PAL::getDDScannerResultClassSingleton()])
                 result.append((DDScannerResult *)item);
         }
@@ -119,7 +121,7 @@ RetainPtr<id> CoreIPCDDScannerResult::toID() const
 
     if (m_data.SR) {
         RetainPtr arr = [NSMutableArray arrayWithCapacity:m_data.SR->size()];
-        for (auto& element : *m_data.SR)
+        for (auto& element : borrow(*m_data.SR))
             [arr addObject:element.get()];
         propertyList.get()[@"SR"] = arr.get();
     }

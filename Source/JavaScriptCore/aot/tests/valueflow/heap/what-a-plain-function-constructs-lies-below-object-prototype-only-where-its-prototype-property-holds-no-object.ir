@@ -1,0 +1,32 @@
+# function kept() {}  function cleared() {}  cleared.prototype = null; Object.getPrototypeOf(new kept()).x; Object.getPrototypeOf(new cleared()).x
+# What a construction makes lies directly below Object.prototype only where the prototype property of new.target holds no object. A program that defines members on what lies above
+# an instance of `kept` defines them on the prototype object of `kept`, and on nothing that every object inherits from.
+# RUN: valueflow-why values=f0:v8 values=f0:v11
+# CHECK: values=f0:v8
+# CHECK: operand 0 {{*}} 1 members: prototype@f1
+# CHECK: values=f0:v11
+# CHECK: operand 0 {{*}} ObjectPrototype
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Null
+    PropSet v1, v2 key="prototype"
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectGetPrototypeOf
+    v6 = Construct v0
+    v7 = Call v5, v4, v6
+    v8 = PropGet v7 key="x"
+    v9 = Construct v1
+    v10 = Call v5, v4, v9
+    v11 = PropGet v10 key="x"
+    Return
+}
+function f1 name="kept" module=m0 results=[{type=anything}] {
+    Return
+}
+function f2 name="cleared" module=m0 results=[{type=anything}] {
+    Return
+}

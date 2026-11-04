@@ -92,7 +92,6 @@ static inline bool shouldKeepInConstraintSet(Visitor& visitor, CodeBlock* codeBl
 template<typename Visitor>
 void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    VM& vm = visitor.vm();
     FunctionExecutable* thisObject = uncheckedDowncast<FunctionExecutable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
@@ -120,7 +119,7 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitCodeBlockEdge(visitor, codeBlockForConstruct);
 
     if (shouldKeepInConstraintSet(visitor, codeBlockForCall, codeBlockForConstruct))
-        vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.add(thisObject);
+        thisObject->vm().heap.functionExecutableSpaceAndSet.outputConstraintsSet.add(thisObject);
 }
 
 DEFINE_VISIT_CHILDREN(FunctionExecutable);
@@ -128,7 +127,6 @@ DEFINE_VISIT_CHILDREN(FunctionExecutable);
 template<typename Visitor>
 void FunctionExecutable::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
-    VM& vm = visitor.vm();
     auto* executable = uncheckedDowncast<FunctionExecutable>(cell);
     auto* codeBlockForCall = executable->m_codeBlockForCall.get();
     if (codeBlockForCall) {
@@ -142,12 +140,12 @@ void FunctionExecutable::visitOutputConstraintsImpl(JSCell* cell, Visitor& visit
     }
 
     if (!shouldKeepInConstraintSet(visitor, codeBlockForCall, codeBlockForConstruct))
-        vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.remove(executable);
+        executable->vm().heap.functionExecutableSpaceAndSet.outputConstraintsSet.remove(executable);
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(FunctionExecutable);
 
-FunctionExecutable* FunctionExecutable::fromGlobalCode(const Identifier& name, JSGlobalObject* globalObject, String&& program, const SourceOrigin& sourceOrigin, SourceTaintedOrigin taintedOrigin, const String& sourceURL, const TextPosition& position, LexicallyScopedFeatures lexicallyScopedFeatures, JSObject*& exception, int overrideLineNumber, std::optional<int> functionConstructorParametersEndPosition, FunctionConstructionMode functionConstructionMode)
+FunctionExecutable* FunctionExecutable::fromGlobalCode(const Identifier& name, JSGlobalObject* globalObject, String&& program, const SourceOrigin& sourceOrigin, SourceTaintedness taintedOrigin, const String& sourceURL, const TextPosition& position, LexicallyScopedFeatures lexicallyScopedFeatures, JSObject*& exception, int overrideLineNumber, std::optional<int> functionConstructorParametersEndPosition, FunctionConstructionMode functionConstructionMode)
 {
     if (overrideLineNumber == overrideLineNumberNotFound) {
         if (auto* executable = globalObject->tryGetCachedFunctionExecutableForFunctionConstructor(name, program, sourceOrigin, taintedOrigin, sourceURL, position, lexicallyScopedFeatures, functionConstructionMode))
@@ -205,6 +203,25 @@ JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
     if (isBuiltinFunction())
 #endif
         return cacheIfNoException(jsMakeNontrivialString(globalObject, "function "_s, name().string(), "() { [native code] }"_s));
+
+#if ENABLE(FUZZILLI)
+    // What a program that was built without its source text says.
+    static const bool hidesText = getenv("BUN_FUZZILLI_HIDES_FUNCTION_TEXT");
+    if (hidesText && !isBuiltinFunction()) {
+        SourceParseMode mode = parseMode();
+        ASCIILiteral async = isAsyncFunctionParseMode(mode) ? "async "_s : ""_s;
+        if (isArrowFunctionParseMode(mode))
+            return cacheIfNoException(jsMakeNontrivialString(globalObject, async, "() => { [native code] }"_s));
+        ASCIILiteral accessor = mode == SourceParseMode::GetterMode ? "get "_s : mode == SourceParseMode::SetterMode ? "set "_s : ""_s;
+        String name = ecmaName().string();
+        if (isClass())
+            return cacheIfNoException(jsMakeNontrivialString(globalObject, "class "_s, name, name.isEmpty() ? ""_s : " "_s, "{ [native code] }"_s));
+        bool isGenerator = isGeneratorParseMode(mode) || isAsyncGeneratorParseMode(mode);
+        if (isMethodParseMode(mode))
+            return cacheIfNoException(jsMakeNontrivialString(globalObject, async, isGenerator ? "*"_s : ""_s, accessor, name, "() { [native code] }"_s));
+        return cacheIfNoException(jsMakeNontrivialString(globalObject, async, isGenerator ? "function* "_s : "function "_s, name, "() { [native code] }"_s));
+    }
+#endif
 
     if (isClass())
         return cache(jsString(vm, classSource().view()));

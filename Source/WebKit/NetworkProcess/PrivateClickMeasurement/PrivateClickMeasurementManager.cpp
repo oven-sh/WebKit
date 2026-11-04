@@ -39,6 +39,7 @@
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ResourceResponse.h>
 #include <pal/crypto/CryptoDigest.h>
+#include <wtf/Borrow.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -147,7 +148,7 @@ void PrivateClickMeasurementManager::getTokenPublicKey(PrivateClickMeasurement&&
     if (tokenPublicKeyURL.isEmpty() || !tokenPublicKeyURL.isValid())
         return;
 
-    if (debugModeEnabled())
+    if (shouldBypassPrivateRelay())
         pcmDataCarried = PrivateClickMeasurement::PcmDataCarried::PersonallyIdentifiable;
 
     RELEASE_LOG_INFO(PrivateClickMeasurement, "About to fire a token public key request.");
@@ -196,7 +197,7 @@ void PrivateClickMeasurementManager::getTokenPublicKey(AttributionTriggerData&& 
     if (tokenPublicKeyURL.isEmpty() || !tokenPublicKeyURL.isValid())
         return;
 
-    if (debugModeEnabled())
+    if (shouldBypassPrivateRelay())
         pcmDataCarried = PrivateClickMeasurement::PcmDataCarried::PersonallyIdentifiable;
 
     RELEASE_LOG_INFO(PrivateClickMeasurement, "About to fire a token public key request.");
@@ -230,7 +231,7 @@ void PrivateClickMeasurementManager::configureForTokenSigning(PrivateClickMeasur
     if (m_tokenSignatureURLForTesting) {
         tokenSignatureURL = *m_tokenSignatureURLForTesting;
         // FIXME(225364)
-        if (!debugModeEnabled())
+        if (!shouldBypassPrivateRelay())
             pcmDataCarried = PrivateClickMeasurement::PcmDataCarried::NonPersonallyIdentifiable;
     } else if (givenTokenSignatureURL)
         tokenSignatureURL = *givenTokenSignatureURL;
@@ -371,6 +372,12 @@ void PrivateClickMeasurementManager::setDebugModeIsEnabled(bool enabled)
     m_client->broadcastConsoleMessage(MessageLevel::Info, message);
 }
 
+void PrivateClickMeasurementManager::setPrivateRelayEnforcementIsEnabled(bool enabled)
+{
+    auto message = enabled ? "[Private Click Measurement] Turned Private Relay Enforcement on."_s : "[Private Click Measurement] Turned Private Relay Enforcement off."_s;
+    m_client->broadcastConsoleMessage(MessageLevel::Info, message);
+}
+
 void PrivateClickMeasurementManager::handleAttribution(AttributionTriggerData&& attributionTriggerData, const URL& requestURL, WebCore::RegistrableDomain&& redirectDomain, const URL& firstPartyURL, const ApplicationBundleIdentifier& applicationBundleIdentifier)
 {
     if (!featureEnabled())
@@ -472,7 +479,7 @@ void PrivateClickMeasurementManager::attribute(SourceSite&& sourceSite, Attribut
             return;
 
         if (protectedThis->debugModeEnabled()) [[unlikely]] {
-            for (auto& message : debugInfo.messages)
+            for (auto& message : borrow(debugInfo.messages))
                 protectedThis->m_client->broadcastConsoleMessage(message.messageLevel, message.message);
         }
 
@@ -515,7 +522,7 @@ void PrivateClickMeasurementManager::fireConversionRequest(const PrivateClickMea
             if (!protectedThis)
                 return;
 
-            auto publicKeyData = base64URLDecode(publicKeyBase64URL);
+            const auto publicKeyData = base64URLDecode(publicKeyBase64URL);
             if (!publicKeyData)
                 return;
 
@@ -535,7 +542,7 @@ void PrivateClickMeasurementManager::fireConversionRequest(const PrivateClickMea
                     if (!protectedThis)
                         return;
 
-                    auto publicKeyData = base64URLDecode(publicKeyBase64URL);
+                    const auto publicKeyData = base64URLDecode(publicKeyBase64URL);
                     if (!publicKeyData)
                         return;
 
@@ -561,7 +568,7 @@ void PrivateClickMeasurementManager::fireConversionRequest(const PrivateClickMea
         if (!protectedThis)
             return;
 
-        auto publicKeyData = base64URLDecode(publicKeyBase64URL);
+        const auto publicKeyData = base64URLDecode(publicKeyBase64URL);
         if (!publicKeyData)
             return;
 
@@ -590,7 +597,12 @@ void PrivateClickMeasurementManager::fireConversionRequestImpl(const PrivateClic
     if (attributionURL.isEmpty() || !attributionURL.isValid())
         return;
 
-    auto pcmDataCarried = debugModeEnabled() ? PrivateClickMeasurement::PcmDataCarried::PersonallyIdentifiable : PrivateClickMeasurement::PcmDataCarried::NonPersonallyIdentifiable;
+    auto pcmDataCarried = shouldBypassPrivateRelay() ? PrivateClickMeasurement::PcmDataCarried::PersonallyIdentifiable : PrivateClickMeasurement::PcmDataCarried::NonPersonallyIdentifiable;
+
+    if (debugModeEnabled()) [[unlikely]] {
+        auto message = shouldBypassPrivateRelay() ? "[Private Click Measurement] Private Relay is not required for the attribution request because Debug Mode is enabled."_s : "[Private Click Measurement] Private Relay is required for the attribution request."_s;
+        m_client->broadcastConsoleMessage(MessageLevel::Log, message);
+    }
 
     RELEASE_LOG_INFO(PrivateClickMeasurement, "About to fire an attribution request.");
     m_client->broadcastConsoleMessage(MessageLevel::Log, "[Private Click Measurement] About to fire an attribution request."_s);
@@ -633,7 +645,7 @@ void PrivateClickMeasurementManager::firePendingAttributionRequests()
         auto nextTimeToFire = Seconds::infinity();
         bool hasSentAttribution = false;
 
-        for (auto& attribution : attributions) {
+        for (auto& attribution : borrow(attributions)) {
             std::optional<WallTime> earliestTimeToSend = attribution.timesToSend().earliestTimeToSend();
             std::optional<WebCore::PCM::AttributionReportEndpoint> attributionReportEndpoint = attribution.timesToSend().attributionReportEndpoint();
 
@@ -762,6 +774,11 @@ bool PrivateClickMeasurementManager::featureEnabled() const
 bool PrivateClickMeasurementManager::debugModeEnabled() const
 {
     return m_client->debugModeEnabled();
+}
+
+bool PrivateClickMeasurementManager::shouldBypassPrivateRelay() const
+{
+    return debugModeEnabled() && !m_client->privateRelayEnforcementEnabled();
 }
 
 void PrivateClickMeasurementManager::markAttributedPrivateClickMeasurementsAsExpiredForTesting(CompletionHandler<void()>&& completionHandler)

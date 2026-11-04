@@ -1,0 +1,107 @@
+# An object is the guard of its own slots and integrity right after its allocation, so an access there needs no test
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# RUN(TESTS): pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Unrelated"
+layout L1 name="Scanner" fields=[{key="pos" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="late" declared={type=string}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Freezable" fields=[{key="pos" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangePrototype]}
+
+function f0 name="fresh-object-is-not-frozen" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    PropSet v1, v0 key="pos"
+    Return v1
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: L2 = NewObject -, v0 layout=L2 fields=[0]
+# CHECK-NEXT: PutSlot v1, v1, v0 key="pos" receivers=[L2] level=Expected
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f1 name="two-stores" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    PropSet v1, v0 key="pos"
+    PropSet v1, v0 key="pos"
+    Return v1
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: = NewObject
+# CHECK-NEXT: PutSlot v1, v1, v0 key="pos" receivers=[L2] level=Expected
+# CHECK-NEXT: PutSlot v1, v1, v0 key="pos" receivers=[L2] level=Expected
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f2 name="through-upcast" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = Upcast v1 castType=anything
+    PropSet v2, v0 key="pos"
+    Return v2
+# CHECK: = Upcast v1
+# CHECK-NEXT: PutSlot v2, v1, v0 key="pos" receivers=[L2] level=Expected
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}
+function f3 name="store-that-needs-no-test" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    PropSet v1, v0 key="pos"
+    Return v1
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: L1 = NewObject
+# CHECK-NEXT: PropSet v1, v0 key="pos"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f4 name="slot-filled-at-creation" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    v3 = PropGet v2 key="late"
+    Return v3
+# CHECK-NOT: IsSlotFilled
+# CHECK-NOT: Branch
+# CHECK: v3: string = GetSlot v2, [[guards4]] key="late" receivers=[L1] level=Expected
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+}
+function f5 name="slot-empty-at-creation" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = PropGet v1 key="late"
+    Return v2
+# CHECK: [[filled5]]: boolean = IsSlotFilled v1 key="late" receivers=[L1] level=Expected
+# CHECK-NEXT: Branch [[filled5]] -> taken
+# CHECK: = GetSlot v1, [[guards5]] key="late" receivers=[L1] level=Expected
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v1 key="late"
+}
+function f6 name="call-gets-the-object" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    v3 = Call v1, -, v2
+    PropSet v2, v0 key="pos"
+    Return v2
+# CHECK: = Call v1, -, v2
+# CHECK-NOT: PutSlot v2, v2,
+# CHECK: PutSlot v2, [[guard6]], v0 key="pos" receivers=[L2] level=Expected
+# CHECK-NOT: PutSlot v2, v2,
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PropSet v2, v0 key="pos"
+# TESTS: = Call v1, -, v2
+# TESTS: [[test6]]: boolean = IsNotFrozen v2
+# TESTS-NEXT: Branch [[test6]] -> taken
+}
+function f7 name="one-of-two-allocations" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    Jump -> next b3(v2)
+  b2():
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    Jump -> next b3(v3)
+  b3(v4):
+    PropSet v4, v0 key="pos"
+    Return v4
+}
+# CHECK-LABEL: function f7 name="one-of-two-allocations"
+# TESTS-LABEL: function f7 name="one-of-two-allocations"
+# CHECK: [[test7]]: boolean = IsNotFrozen v4
+# CHECK-NEXT: Branch [[test7]] -> taken
+# CHECK: PutSlot v4, [[guard7]], v0 key="pos" receivers=[L2] level=Expected
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PropSet v4, v0 key="pos"

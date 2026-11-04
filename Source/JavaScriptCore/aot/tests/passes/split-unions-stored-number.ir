@@ -1,0 +1,95 @@
+# A store into a view of numbers of a value that is a number, undefined, null or a boolean is copied once for the number, which is stored as it is. What else the value may be becomes a number
+# without running code, so that copy is a store of an element too, in a block that is unlikely, or rare where a number is expected
+# FORM: Prepared
+# RUN: pass SplitUnions
+# RUN(RESOLVED): pass SplitUnions ResolveAccesses
+# STATISTIC: UnionsSplit = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="optional" parameters=[{type=Float64Array}, {type=int[0, 9]}, {type=undefined|number}] results=[{type=undefined}] {
+    ElemSet v0, v1, v2
+    Return
+# CHECK: = TypeTest v2 testedType=number
+# CHECK: ([[number0]]: number):
+# CHECK-NEXT: ElemSet v0, v1, [[number0]]
+# CHECK: ([[other0]]: undefined) frequency=Unlikely:
+# CHECK-NEXT: ElemSet v0, v1, [[other0]]
+# RESOLVED: ([[number0]]: number):
+# RESOLVED-NEXT: PutTypedArrayElement v0, v1, [[number0]] typedArrayType=
+# RESOLVED: ([[other0]]: undefined) frequency=Unlikely:
+# RESOLVED-NEXT: [[converted0]]: number = ToNumber [[other0]]
+# RESOLVED-NEXT: PutTypedArrayElement v0, v1, [[converted0]] typedArrayType=
+# RESOLVED-NOT: ElemSet
+}
+
+function f1 name="expectedNumber" parameters=[{type=Uint8Array}, {type=int[0, 9]}, {type=undefined|null|number}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: int[0, 9], v2: undefined|null|number ~ number):
+    ElemSet v0, v1, v2
+    Return
+# CHECK: = TypeTest v2 testedType=number
+# CHECK: ([[other1]]: undefined|null) frequency=Rare:
+# CHECK-NEXT: ElemSet v0, v1, [[other1]]
+# RESOLVED: ([[other1]]: undefined|null) frequency=Rare:
+# RESOLVED-NEXT: [[converted1]]: number = ToNumber [[other1]]
+# RESOLVED-NEXT: PutTypedArrayElement v0, v1, [[converted1]] typedArrayType=
+# RESOLVED-NOT: ElemSet
+}
+
+function f2 name="flagOrInteger" parameters=[{type=Int32Array}, {type=int[0, 9]}, {type=boolean|int[0, 255]}] results=[{type=undefined}] {
+    ElemSet v0, v1, v2
+    Return
+# CHECK: = TypeTest v2 testedType=int[0, 255]
+# CHECK: ([[other2]]: boolean) frequency=Unlikely:
+# RESOLVED: [[converted2]]: int[0, 1] = ToNumber
+# RESOLVED-NEXT: PutTypedArrayElement v0, v1, [[converted2]] typedArrayType=
+# RESOLVED-NOT: ElemSet
+}
+
+function f3 name="noNumberAtAll" parameters=[{type=Float32Array}, {type=int[0, 9]}, {type=undefined}] results=[{type=undefined}] {
+    ElemSet v0, v1, v2
+    Return
+# Nothing is left to ask.
+# CHECK-NOT: TypeTest
+# RESOLVED: [[converted3]]: number = ToNumber v2
+# RESOLVED-NEXT: PutTypedArrayElement v0, v1, [[converted3]] typedArrayType=
+}
+
+function f4 name="conversionsThatRunCode" parameters=[{type=Float64Array}, {type=int[0, 9]}, {type=number|string}, {type=number|object}, {type=number|bigint}, {type=number|symbol}] results=[{type=undefined}] {
+    ElemSet v0, v1, v2
+    ElemSet v0, v1, v3
+    ElemSet v0, v1, v4
+    ElemSet v0, v1, v5
+    Return
+# A text is read, an object is asked, and a BigInt or a symbol throws.
+# CHECK-NOT: TypeTest
+# RESOLVED-NOT: PutTypedArrayElement
+}
+
+function f5 name="otherReceivers" parameters=[{type=BigInt64Array}, {type=Array<number, pristine[Storage, Names]>}, {type=int[0, 9]}, {type=undefined|number}] results=[{type=undefined}] {
+    ElemSet v0, v2, v3
+    ElemSet v1, v2, v3
+    Return
+# A view of BigInts throws for all of them, and a list keeps undefined.
+# CHECK-NOT: TypeTest
+# CHECK: ElemSet v0, v2, v3
+# CHECK-NEXT: ElemSet v1, v2, v3
+}
+
+function f6 name="inARareBlock" parameters=[{type=Float64Array}, {type=int[0, 9]}, {type=undefined|number}, {type=boolean}] results=[{type=undefined}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    ElemSet v0, v1, v2
+    Jump -> next b2()
+  b2():
+    Return
+# CHECK-NOT: TypeTest
+}
+
+function f7 name="nullable" parameters=[{type=Float64Array}, {type=int[0, 9]}, {type=null|number}] results=[{type=undefined}] {
+    ElemSet v0, v1, v2
+    Return
+# CHECK: ([[other7]]: null) frequency=Unlikely:
+# RESOLVED: = ToNumber
+}

@@ -62,7 +62,7 @@ private:
     { }
 
 public:
-    static std::optional<SignalContext> NODELETE tryCreate(PlatformRegisters& registers)
+    static std::optional<SignalContext> LEGACY_NODELETE tryCreate(PlatformRegisters& registers)
     {
         auto instructionPointer = MachineContext::instructionPointer(registers);
         if (!instructionPointer)
@@ -76,12 +76,12 @@ public:
     void* framePointer;
 };
 
-inline static bool NODELETE vmIsInactive(VM& vm)
+inline static bool LEGACY_NODELETE vmIsInactive(VM& vm)
 {
     return !vm.entryScope && !vm.ownerThread();
 }
 
-static bool NODELETE isSaneFrame(CallFrame* frame, CallFrame* calleeFrame, EntryFrame* entryFrame, StackBounds stackBounds)
+static bool LEGACY_NODELETE isSaneFrame(CallFrame* frame, CallFrame* calleeFrame, EntryFrame* entryFrame, StackBounds stackBounds)
 {
     if (reinterpret_cast<void*>(frame) >= reinterpret_cast<void*>(entryFrame))
         return false;
@@ -261,7 +261,7 @@ public:
         });
     }
 
-    VMTraps& NODELETE traps() { return m_vm.traps(); }
+    VMTraps& LEGACY_NODELETE traps() { return m_vm.traps(); }
 
 
     void notify(AbstractLocker&)
@@ -274,7 +274,7 @@ public:
         });
     }
 
-    bool NODELETE isStopped(AbstractLocker&)
+    bool LEGACY_NODELETE isStopped(AbstractLocker&)
     {
         return !m_scheduled;
     }
@@ -428,6 +428,11 @@ CONCURRENT_SAFE void VMTraps::updateThreadStopRequestIfNeeded()
     Locker locker { *m_trapSignalingLock };
 
     bool shouldStop = needHandling(AsyncEvents);
+#if ENABLE(AOT)
+    // Compiled code polls the stop request alone, and looks at no trap bit. Native code that clears whatever was thrown may clear a TerminationException,
+    // whose bit is spent by then. So the polls stay armed for as long as the termination is asked for, and throw it again.
+    shouldStop |= vm().hasCompiledCode() && vm().hasTerminationRequest();
+#endif
 
     if (shouldStop == m_threadStopRequested)
         return; // State already matches, nothing to do.

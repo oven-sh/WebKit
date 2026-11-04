@@ -84,7 +84,7 @@ ScreenOrientationManager* ScreenOrientation::manager() const
     return page ? page->screenOrientationManager() : nullptr;
 }
 
-static bool NODELETE isSupportedLockType(ScreenOrientationLockType lockType)
+static bool LEGACY_NODELETE isSupportedLockType(ScreenOrientationLockType lockType)
 {
     switch (lockType) {
     case ScreenOrientationLockType::Any:
@@ -144,7 +144,7 @@ void ScreenOrientation::lock(LockType lockType, Ref<DeferredPromise>&& promise)
     manager->setLockPromise(*this, WTF::move(promise));
     manager->lock(lockType, [pendingActivity = makePendingActivity(*this)](std::optional<Exception>&& exception) mutable {
         queueTaskKeepingObjectAlive(pendingActivity->object(), TaskSource::DOMManipulation, [exception = WTF::move(exception)](auto& orientation) mutable {
-            auto* manager = orientation.manager();
+            RefPtr manager = orientation.manager();
             if (!manager)
                 return;
 

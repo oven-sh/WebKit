@@ -36,6 +36,7 @@
 #import "_WKErrorRecoveryAttempting.h"
 #import "_WKRemoteObjectInterfaceInternal.h"
 #import <objc/runtime.h>
+#import <wtf/Borrow.h>
 #import <wtf/ObjCRuntimeExtras.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/Scope.h>
@@ -43,6 +44,7 @@
 #import <wtf/StdLibExtras.h>
 #import <wtf/cocoa/NSStringExtras.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/darwin/DarwinExtras.h>
 #import <wtf/spi/cocoa/SecuritySPI.h>
 #import <wtf/text/CString.h>
 
@@ -96,7 +98,7 @@ bool methodSignaturesAreCompatible(NSString *wire, NSString *local)
     RefPtr<API::Array> _objectStream;
 
     RefPtr<API::Dictionary> _currentDictionary;
-    HashSet<RetainPtr<NSObject>> _objectsBeingEncoded; // Used to detect cycles.
+    HashSet<RetainPtr<id>> _objectsBeingEncoded; // Used to detect cycles.
 }
 
 - (id)init
@@ -278,7 +280,8 @@ static void encodeInvocationArguments(WKRemoteObjectEncoder *encoder, NSInvocati
 
         // Objective-C object
         case '@': {
-            id value;
+            // This is an out-parameter of -getArgument:atIndex:; the argument is kept alive by the invocation.
+            SUPPRESS_UNRETAINED_LOCAL id value;
             [invocation getArgument:&value atIndex:i];
 
             @try {
@@ -361,7 +364,8 @@ static constexpr NSString *clientCertificateKey = @"NSErrorClientCertificateChai
 static RetainPtr<NSArray<NSData *>> transformCertificatesToData(NSArray *input)
 {
     auto dataArray = adoptNS([[NSMutableArray alloc] initWithCapacity:input.count]);
-    for (id certificate in input) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id certificate in input) {
         if (CFGetTypeID(certificate) != SecCertificateGetTypeID())
             [NSException raise:NSInvalidArgumentException format:@"Error encoding invalid certificate in chain"];
         [dataArray addObject:(NSData *)adoptCF(SecCertificateCopyData((SecCertificateRef)certificate)).get()];
@@ -398,7 +402,7 @@ static void encodeError(WKRemoteObjectEncoder *encoder, NSError *error)
             copy = adoptNS([error.userInfo mutableCopy]);
         [copy removeObjectForKey:clientCertificateKey];
     }
-    if (RetainPtr<NSArray> certificateChain = error.userInfo[peerCertificateKey]) {
+    if (RetainPtr certificateChain = dynamic_objc_cast<NSArray>(error.userInfo[peerCertificateKey])) {
         if (!copy)
             copy = adoptNS([error.userInfo mutableCopy]);
         copy.get()[peerCertificateKey] = transformCertificatesToData(certificateChain).get();
@@ -417,7 +421,8 @@ static void encodeError(WKRemoteObjectEncoder *encoder, NSError *error)
 static RetainPtr<NSArray> transformDataToCertificates(NSArray *input)
 {
     auto array = adoptNS([[NSMutableArray alloc] initWithCapacity:input.count]);
-    for (NSData *data in input) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSData *data in input) {
         if (CFGetTypeID(data) != CFDataGetTypeID())
             [NSException raise:NSInvalidUnarchiveOperationException format:@"Error decoding certificate from object that is not data %@", NSStringFromClass([data class])];
         auto certificate = adoptCF(SecCertificateCreateWithData(nullptr, (CFDataRef)data));
@@ -449,11 +454,11 @@ static RetainPtr<NSError> decodeError(WKRemoteObjectDecoder *decoder)
 {
     RetainPtr<NSError> error = decodeObjCObject(decoder, [NSError class]);
     RetainPtr<NSMutableDictionary> copy;
-    if (RetainPtr<NSArray> certificateChain = error.get().userInfo[peerCertificateKey]) {
+    if (RetainPtr certificateChain = dynamic_objc_cast<NSArray>(error.get().userInfo[peerCertificateKey])) {
         copy = adoptNS([error.get().userInfo mutableCopy]);
         copy.get()[peerCertificateKey] = transformDataToCertificates(certificateChain).get();
     }
-    if (RetainPtr<NSData> trust = error.get().userInfo[peerTrustKey]) {
+    if (RetainPtr trust = dynamic_objc_cast<NSData>(error.get().userInfo[peerTrustKey])) {
         if (!copy)
             copy = adoptNS([error.get().userInfo mutableCopy]);
         copy.get()[peerTrustKey] = bridge_id_cast(transformDataToTrust(trust).get());
@@ -492,19 +497,19 @@ static void encodeObject(WKRemoteObjectEncoder *encoder, id object)
 
     Ref { *encoder->_currentDictionary }->set(classNameKey, API::String::create(String::fromLatin1(class_getName(objectClass))));
 
-    if ([object isKindOfClass:[NSInvocation class]]) {
+    if (RetainPtr invocation = dynamic_objc_cast<NSInvocation>(object)) {
         // We have to special case NSInvocation since we don't want to encode the target.
-        encodeInvocation(encoder, object);
+        encodeInvocation(encoder, invocation);
         return;
     }
 
     if (objectClass == [NSString class] || objectClass == [NSMutableString class]) {
-        encodeString(encoder, object);
+        encodeString(encoder, checked_objc_cast<NSString>(object));
         return;
     }
 
     if (objectClass == [NSError class])
-        return encodeError(encoder, object);
+        return encodeError(encoder, checked_objc_cast<NSError>(object));
     
     [object encodeWithCoder:encoder];
 }
@@ -980,9 +985,7 @@ static void decodeInvocationArguments(WKRemoteObjectDecoder *decoder, NSInvocati
             
         // Objective-C object
         case '@': {
-            auto& allowedClasses = allowedArgumentClasses[i - firstArgument];
-
-            RetainPtr value = decodeObjectFromObjectStream(decoder, allowedClasses);
+            RetainPtr value = decodeObjectFromObjectStream(decoder, borrow(allowedArgumentClasses)[i - firstArgument]);
             SUPPRESS_UNRETAINED_LOCAL id valueId = value.get();
             [invocation setArgument:&valueId atIndex:i];
 
@@ -1029,7 +1032,7 @@ static RetainPtr<NSInvocation> decodeInvocation(WKRemoteObjectDecoder *decoder)
         if (decoder->_replyToSelector)
             [NSException raise:NSInvalidUnarchiveOperationException format:@"%@: Expected reply block but received isReplyBlock false", decoder];
 
-        RetainPtr<NSString> selectorString = [decoder decodeObjectOfClass:[NSString class] forKey:selectorKey];
+        RetainPtr selectorString = dynamic_objc_cast<NSString>([decoder decodeObjectOfClass:[NSString class] forKey:selectorKey]);
         if (!selectorString)
             [NSException raise:NSInvalidUnarchiveOperationException format:@"Invocation had no selector"];
 
@@ -1041,7 +1044,7 @@ static RetainPtr<NSInvocation> decodeInvocation(WKRemoteObjectDecoder *decoder)
             [NSException raise:NSInvalidUnarchiveOperationException format:@"Selector \"%@\" is not defined in the local interface", selectorString.get()];
     }
 
-    RetainPtr<NSString> typeSignature = [decoder decodeObjectOfClass:[NSString class] forKey:typeStringKey];
+    RetainPtr typeSignature = dynamic_objc_cast<NSString>([decoder decodeObjectOfClass:[NSString class] forKey:typeStringKey]);
     if (!typeSignature)
         [NSException raise:NSInvalidUnarchiveOperationException format:@"Invocation had no type signature"];
 
@@ -1079,7 +1082,7 @@ static RetainPtr<id> decodeObject(WKRemoteObjectDecoder *decoder)
 
     auto className = classNameString->string().utf8();
 
-    RetainPtr<Class> objectClass = objc_lookUpClass(className.legacyCStringPointer());
+    RetainPtr<Class> objectClass = objcLookUpClass(className);
     if (!objectClass)
         crashWithClassName(className.span());
 
@@ -1188,7 +1191,8 @@ static RetainPtr<id> decodeObject(WKRemoteObjectDecoder *decoder, const API::Dic
 - (id)decodeObjectOfClasses:(NSSet *)classes forKey:(NSString *)key
 {
     HashSet<CFTypeRef> allowedClasses;
-    for (Class allowedClass in classes)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL Class allowedClass in classes)
         allowedClasses.add((__bridge CFTypeRef)allowedClass);
 
     RefPtr dictionary = Ref { *_currentDictionary }->get<API::Dictionary>(escapeKey(key));

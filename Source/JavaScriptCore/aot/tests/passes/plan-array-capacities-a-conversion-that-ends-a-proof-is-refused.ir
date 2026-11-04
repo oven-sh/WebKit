@@ -1,0 +1,27 @@
+# The failing side of the test for Double storage comes back in front of a read that relies on the kind of another array, which may be the same one.
+# The lie: sabotage=ConversionsOfStorageEndNoProofs has the pass convert on that edge all the same. The verifier refuses the read: the conversion may write what its guard depends on.
+# FORM: Prepared
+# OPTIONS: sabotage=ConversionsOfStorageEndNoProofs check=VerifyEachPass
+# RUN: pass PlanArrayCapacities
+# DIAGNOSTIC: GuardNotAvailable 1
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="proofAboutAnotherArrayIsUsedBehindTheEdge" parameters=[{type=Array<number, pristine[Storage]>}, {type=Array<number, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v3 -> taken b1(| 0), notTaken b4()
+  b1(v4):
+    v5 = HasArrayStorage v1 arrayStorage=Double
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    Jump -> next b3()
+  b3():
+    v7 = GetArrayElement v0, v2, v4 arrayStorage=Int32 level=Expected [keyIsIntegral]
+    v8 = ElemGet v1, v2
+    v9 = StrictEq v7, v8
+    Return v9
+  b4() frequency=Unlikely:
+    v10 = ElemGet v0, v2
+    Return v10
+}

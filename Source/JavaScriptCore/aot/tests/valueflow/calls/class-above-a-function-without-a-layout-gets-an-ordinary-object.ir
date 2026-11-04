@@ -1,0 +1,62 @@
+# function base() {}  class Wide extends base { x = 1 }  made = new Wide()
+# ClassTable::createThis() gives `this` the shape of new.target only where the class of new.target is below the class of the function that is constructed. A function without a layout has no class:
+# whatever new.target is, the run time makes an ordinary object for it. The rules hand the function the instance of new.target all the same, so that instance stands for an ordinary object too:
+# what super() answers is not proven to have the layout of the class, and neither is what the construction answers.
+# Below a constructor function with a layout of its own the class gets its shape.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f0
+# CHECK: v5: anything ~ object = Construct
+# CHECK-NEXT: : object = AssumeType v5 provenType=object
+# CHECK: v11:{{*}}= Construct
+# CHECK: AssumeType v11 provenType=L1
+# CHECK-LABEL: function f2
+# CHECK: v3:{{*}}= SuperConstruct
+# CHECK-NOT: AssumeType v3
+# CHECK: Return
+# CHECK-LABEL: function f4
+# CHECK: v3:{{*}}= SuperConstruct
+# CHECK: AssumeType v3 provenType=L1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Wide" constructor=f2 fields=[{key="x" declared={type=anything}}] flags=[HasHeritage]
+layout L1 kind=Instance name="Shaped" base=L2 constructor=f4 fields=[{key="x" declared={type=anything}}] flags=[HasHeritage]
+layout L2 kind=Instance name="Base" constructor=f3 flags=[IsConstructorFunction]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f2
+    v3 = NewClass v2, v0, v1 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f3
+    v7 = ResolveHeritage v6
+    v8 = NewClosure function=f4
+    v9 = NewClass v8, v6, v7 layout=L1
+    v10 = FinishClass v9 layout=L1
+    v11 = Construct v10
+    v12 = PropGet v5 key="x"
+    v13 = PropGet v11 key="x"
+    Return v12
+}
+function f1 name="base" module=m0 results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f2 name="Wide" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L0
+    v4 = Integer integer=1
+    PropDefine v3, v4 key="x"
+    Return v3
+}
+function f3 name="Base" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+function f4 name="Shaped" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    v4 = Integer integer=1
+    PropDefine v3, v4 key="x"
+    Return v3
+}

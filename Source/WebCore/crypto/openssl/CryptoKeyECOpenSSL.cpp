@@ -28,6 +28,7 @@
 
 #include "JsonWebKey.h"
 #include "OpenSSLUtilities.h"
+#include <openssl/asn1.h>
 #include <wtf/text/Base64.h>
 
 namespace WebCore {
@@ -414,7 +415,7 @@ bool CryptoKeyEC::platformAddFieldElements(JsonWebKey& jwk) const
     if (type() == Type::Private) {
         const BIGNUM* privateKey = EC_KEY_get0_private_key(key);
         if (privateKey)
-            jwk.d = base64URLEncodeToString(convertToBytes(privateKey));
+            jwk.d = base64URLEncodeToString(convertToBytesExpand(privateKey, keySizeInBytes));
     }
     return true;
 }

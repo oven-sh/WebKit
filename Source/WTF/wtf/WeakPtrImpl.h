@@ -92,7 +92,7 @@ public:
 
     // DefaultWeakPtrImpl is an implementation detail of WeakPtr.
     // Deleting this object does not logically result in destruction of a user object.
-    SUPPRESS_NODELETE void NODELETE deref() const {
+    SUPPRESS_NODELETE void LEGACY_NODELETE deref() const {
         WeakPtrImplBase<DefaultWeakPtrImpl>::deref();
     }
 };
@@ -144,7 +144,8 @@ public:
     {
         uint32_t tempRefCount = m_refCount - 1;
         if (!tempRefCount) {
-            delete const_cast<Derived*>(static_cast<const Derived*>(this));
+            // Derived derives from this class (CRTP), so this is always a Derived.
+            SUPPRESS_MEMORY_UNSAFE_CAST delete const_cast<Derived*>(static_cast<const Derived*>(this));
             return;
         }
         m_refCount = tempRefCount;
@@ -164,6 +165,12 @@ public:
     explicit SingleThreadWeakPtrImpl(T* ptr)
         : WeakPtrImplBaseSingleThread<SingleThreadWeakPtrImpl>(ptr)
     {
+    }
+
+    // SingleThreadWeakPtrImpl is an implementation detail of SingleThreadWeakPtr.
+    // Deleting this object does not logically result in destruction of a user object.
+    SUPPRESS_NODELETE void LEGACY_NODELETE deref() const {
+        WeakPtrImplBaseSingleThread<SingleThreadWeakPtrImpl>::deref();
     }
 };
 

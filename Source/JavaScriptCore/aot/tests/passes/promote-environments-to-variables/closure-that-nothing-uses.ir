@@ -1,0 +1,53 @@
+# A closure that nothing uses holds what it captures for nobody. A value and an environment that only such closures capture stay what they are: a variable would hold them as long as the program runs.
+# What a closure in use captures beside them becomes a variable as ever
+# FORM: AsRead
+# RUN: pipeline PromoteEnvironmentsToVariables
+# OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass
+# STATISTIC: EnvironmentsPromotedToVariables = 0
+# STATISTIC: CapturesPromotedToVariables = 1
+# CHECK: variable g0 module=m0
+# CHECK-NOT: variable g1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="ofTheModule" fields=[{key=@"x.0" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Call v1
+    v3 = NewClosure v2 function=f1
+    v4 = Call v1
+    v5 = NewObject -, v4 layout=L0 fields=[0] @10
+    v6 = NewClosure v5 function=f2
+    v7 = Call v1
+    v8 = NewClosure v7 function=f3
+    v9 = PropGet v0 key="publish" [isFreeName]
+    v10 = Call v9, -, v8
+    Return
+# CHECK: [[value]]: anything = Call v1
+# CHECK-NEXT: = NewClosure [[value]] function=f1
+# CHECK: [[environment]]: env L0 = NewObject
+# CHECK-NEXT: = NewClosure [[environment]] function=f2
+# CHECK: [[published]]: anything = Call v1
+# CHECK-NEXT: PutModuleVariable [[published]] variable=g0
+# CHECK-NEXT: = NewClosure function=f3
+}
+
+function f1 name="copiesAValue" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+# CHECK: captures=[{type=anything}]
+}
+
+function f2 name="readsAnEnvironment" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+# CHECK: captures=[{type=env L0}]
+}
+
+function f3 name="isPublished" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+# CHECK-NOT: captures=
+# CHECK: = GetModuleVariable variable=g0
+}

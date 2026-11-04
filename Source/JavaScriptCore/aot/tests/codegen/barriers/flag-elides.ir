@@ -1,0 +1,20 @@
+# A store flagged ownerCannotBeMarked gets no barrier. The same store without the flag gets one. The pass that sets a flag counts it, so code generation counts only the barrier it emits
+# FORM: Selected
+# OPTIONS: disable=pass:RemoveRedundantBarriers
+# RUN: generate-code
+# STATISTIC: BarriersEmitted = 1
+# STATISTIC: BarriersOnUnmarkableOwners = 0
+# STATISTIC: BarriersCoveredLater = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}]
+function f0 name="flagged" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewObject layout=L0 fields=[]
+    PutEnvironmentField v1, v0 layout=L0 field=0 [ownerCannotBeMarked]
+    Return
+}
+function f1 name="unflagged" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewObject layout=L0 fields=[]
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    Return
+}

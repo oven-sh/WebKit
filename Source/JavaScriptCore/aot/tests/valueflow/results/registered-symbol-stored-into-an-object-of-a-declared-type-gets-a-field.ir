@@ -1,0 +1,28 @@
+# const kState = Symbol.for("state"); interface MessageType { a: number }
+# const message: MessageType = { a: 1 }; message[kState] = 2; (message as any).other = 2
+# Where the program declares a type for the objects, a name that the type does not have gets no room: it is an extra property.
+# The type of Symbol.for("state") is `symbol`, so no declared type has a member under that key, and its absence there says nothing: the key gets a field, like a symbol that the program creates
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Message" fields=[{key="a"
+# CHECK-NOT: key="other"
+# CHECK: {key=Symbol.for("state") declared={type=2} flags=[IsAddedLate
+# CHECK-NOT: key="other"
+# CHECK: layout L1 name="MessageType"
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Message" fields=[{key="a" declared={type=number}}] supertypes=[L1]
+layout L1 name="MessageType" fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Symbol
+    v1 = Builtin builtin=SymbolFor
+    v2 = String string="state"
+    v3 = Call v1, v0, v2 @100
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = Integer integer=2
+    ElemSet v5, v3, v6 mode=Strict
+    PropSet v5, v6 key="other" mode=Strict
+    v9 = ElemGet v5, v3
+    Return v9
+}

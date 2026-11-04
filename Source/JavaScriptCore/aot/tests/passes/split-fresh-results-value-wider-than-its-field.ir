@@ -1,0 +1,29 @@
+# function next(sum, count) { return { sum, count: count + 1 }; }
+# `count` is an int32 field and the stored value may be any whole number. Before type tests are placed the result is still returned in parts:
+# a part has no slot to fit. The wrapper rebuilds the object and stores `count` by name, on its normal path, where a type test can still be placed.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SplitFreshResults VerifyProgram
+# STATISTIC: FreshResultsSplit = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Totals" fields=[{key="count" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced] flow={stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="sum" declared={type=int|whole} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+function f0 name="next" parameters=[{type=int|whole}, {type=int|whole}] results=[{type=L0}] {
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = NewObject -, v0 layout=L0 fields=[1]
+    PropDefine v4, v3 key="count" receivers=[L0]
+    v6 = FinishObject v4
+    Return v6
+# CHECK: [[call]]:{{*}}= CallDirect v0, v1 function=
+# CHECK: [[cell]]: L0 = NewObject
+# CHECK-NEXT: PropSet [[cell]], {{*}} key="count"
+# CHECK-NOT: frequency=Rare
+}
+
+function f1 name="caller" parameters=[{type=int|whole}] results=[{type=anything}] {
+    v1 = CallDirect v0, v0 function=f0
+    v2 = PropGet v1 key="count" receivers=[L0]
+    Return v2
+}

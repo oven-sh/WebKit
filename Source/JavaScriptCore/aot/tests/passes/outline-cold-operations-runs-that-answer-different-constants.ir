@@ -1,0 +1,40 @@
+# A constant leaves nothing in the normal form where it stands. Where it is what the run answers, two runs with different constants are different runs: all fractions have one type.
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 5
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="a" module=m0 declared={type=anything}
+variable g1 name="b" module=m0 declared={type=anything}
+variable g2 name="c" module=m0 declared={type=anything}
+variable g3 name="d" module=m0 declared={type=anything}
+variable g4 name="e" module=m0 declared={type=anything}
+
+function f0 name="answersDiffer" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), otherwise b8()
+# REPEAT: i = 1..7; a = 3 21 3 24 3 3 3
+  b%(i)() frequency=Rare:
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v1 variable=g2
+    PutModuleVariable v1 variable=g3
+    PutModuleVariable v1 variable=g4
+    v%(i*6+1) = Double number=%(a).5
+    Return v%(i*6+1)
+# END REPEAT
+  b8():
+    Return v0
+}
+# CHECK-LABEL: function f0
+# CHECK: b1()
+# CHECK: = CallDirect v1 function=f1
+# CHECK: b2()
+# CHECK: Double number=21.5
+# CHECK: b3()
+# CHECK: = CallDirect v1 function=f1
+# CHECK: b4()
+# CHECK: Double number=24.5
+# CHECK: function f1 {{*}}role=OutlinedBody
+# CHECK: Double number=3.5

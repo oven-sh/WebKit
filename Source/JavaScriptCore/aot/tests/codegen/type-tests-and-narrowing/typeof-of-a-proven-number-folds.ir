@@ -1,0 +1,82 @@
+# function double(value: number): number {
+#   if (typeof value === "number") return value + value;
+#   return String(value).length;
+# }
+# declare const input: any;
+# (globalThis as any).answer = double(+input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=16 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=184 kind=CallResult
+typesite w3 module=m0 position=105 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = ToNumber v8
+    v10 = Call v1, -, v9 calleeName="double"
+    v11 = Convert v10 declared={type=number site=w2}
+    PropSet v5, v11 key="answer"
+    v13 = Undefined
+    Return v13
+}
+function f1 name="double" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v2):
+    Jump -> next b3()
+  b3():
+    v3 = Add v2, v2
+    v4 = Convert v3 declared={type=number site=w1}
+    Return v4
+  b4(v5):
+    Jump -> next b5()
+  b5():
+    v6 = Builtin builtin=String
+    v7 = Call v6, -, v5 calleeName="String"
+    v8 = Convert v7 declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v9 = PropGet v8 key="length"
+    v10 = Convert v9 declared={type=number site=w1}
+    Return v10
+}
+
+# The value is proven to be a number, so the test is decided at build time: the value arrives in a floating-point register, nothing is branched on in front of the addition, and the arm that calls String is gone. With that arm gone every way out returns a number, so the sum is returned as the double that it is.
+# CHECK-LABEL: name="double" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Double b@[[value]] = ArgumentReg(
+# CHECK-NEXT: Double b@[[sum]] = Add(b@[[value]], b@[[value]], {{*}}:Add)
+# CHECK-NEXT: Return(b@[[sum]], Terminal)
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="double" role=Source
+# NONE-NOT: ExitsSideways
+# NONE-NOT: JSRopeString
+# NONE-NOT: :TypeTest)
+# NONE-LABEL: end of function
+# X64-LABEL: name="double" role=Source
+# X64-NEXT: instructions: 2, patchpoints: 0
+# ARM64-LABEL: name="double" role=Source
+# ARM64-NEXT: instructions: 2, patchpoints: 0

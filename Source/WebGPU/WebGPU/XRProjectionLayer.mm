@@ -76,14 +76,14 @@ SOFT_LINK_FUNCTION_FOR_SOURCE(WebCore, CompositorServices, cp_rasterization_rate
 #endif
 
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
-XRProjectionLayer::XRProjectionLayer(WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsage flags, double scale, Device& device)
+XRProjectionLayer::XRProjectionLayer(const WebGPU::XRProjectionLayerDescriptor& descriptor, Device& device)
     : m_sharedEvent(std::make_pair(nil, 0))
-    , m_colorFormat(colorFormat)
-    , m_optionalDepthStencilFormat(optionalDepthStencilFormat ? *optionalDepthStencilFormat : std::optional<WGPUTextureFormat> { std::nullopt })
-    , m_flags(flags)
-    , m_scale(scale)
+    , m_colorFormat(descriptor.colorFormat)
+    , m_optionalDepthStencilFormat(descriptor.depthStencilFormat)
+    , m_flags(descriptor.textureUsage)
+    , m_scale(descriptor.scaleFactor)
     , m_device(device)
 {
     m_colorTextures = [NSMutableDictionary dictionary];
@@ -97,6 +97,50 @@ XRProjectionLayer::XRProjectionLayer(Device& device)
 }
 
 XRProjectionLayer::~XRProjectionLayer() = default;
+
+void XRProjectionLayer::clearDepthTexture()
+{
+    id<MTLTexture> depthTexture = m_depthTexture;
+    if (!depthTexture)
+        return;
+
+    Ref queue = m_device->getQueue();
+    queue->finalizeBlitCommandEncoder();
+    id<MTLCommandBuffer> commandBuffer = queue->commandBufferWithDescriptor([MTLCommandBufferDescriptor new]);
+    if (!commandBuffer)
+        return;
+
+    bool hasStencilAspect = depthTexture.pixelFormat == MTLPixelFormatDepth32Float_Stencil8;
+    for (NSUInteger slice = 0; slice < depthTexture.arrayLength; ++slice) {
+        MTLRenderPassDescriptor *descriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+        descriptor.depthAttachment.texture = depthTexture;
+        descriptor.depthAttachment.slice = slice;
+        descriptor.depthAttachment.loadAction = MTLLoadActionClear;
+        descriptor.depthAttachment.storeAction = MTLStoreActionStore;
+        // The compositor renders reverse-Z, so the far plane is 0, not 1. Do not use 0.0 here:
+        // CompositorServices skips pixels at depth 0.0 and composites them as transparent, which
+        // would punch a hole through the layer. FLT_MIN is the nearest usable far value, and is
+        // what CompositorCoordinator::setUpDepthTextures() clears these same textures to at
+        // session start.
+        descriptor.depthAttachment.clearDepth = FLT_MIN;
+        if (hasStencilAspect) {
+            descriptor.stencilAttachment.texture = depthTexture;
+            descriptor.stencilAttachment.slice = slice;
+            descriptor.stencilAttachment.loadAction = MTLLoadActionLoad;
+            descriptor.stencilAttachment.storeAction = MTLStoreActionStore;
+        }
+        descriptor.renderTargetWidth = depthTexture.width;
+        descriptor.renderTargetHeight = depthTexture.height;
+        descriptor.defaultRasterSampleCount = depthTexture.sampleCount;
+
+        if (id<MTLRenderCommandEncoder> clearEncoder = [commandBuffer renderCommandEncoderWithDescriptor:descriptor]) {
+            queue->setEncoderForBuffer(commandBuffer, clearEncoder);
+            queue->endEncoding(clearEncoder, commandBuffer);
+        }
+    }
+
+    queue->commitMTLCommandBuffer(commandBuffer);
+}
 
 void XRProjectionLayer::setLabel(String&&)
 {
@@ -147,6 +191,12 @@ void XRProjectionLayer::startFrame(size_t frameIndex, WTF::MachSendRight&& color
     } else
         m_depthTexture = [m_depthTextures objectForKey:textureKey];
 
+    // Only a layer without a depthStencilFormat needs this. With one, XRSubImage::update hands the
+    // page a view onto this same texture, so the page owns its contents and clearing would both be
+    // wrong and cost a command buffer and a render pass per slice every frame.
+    if (!m_optionalDepthStencilFormat)
+        clearDepthTexture();
+
     if (completionSyncEvent.sendRight())
         m_sharedEvent = std::make_pair([(id<MTLDeviceSPI>)device newSharedEventWithMachPort:completionSyncEvent.sendRight()], frameIndex);
 
@@ -191,26 +241,11 @@ void XRProjectionLayer::startFrame(size_t frameIndex, WTF::MachSendRight&& color
 #endif
 }
 
-Ref<XRProjectionLayer> XRBinding::createXRProjectionLayer(WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsage flags, double scale)
+RefPtr<WebGPU::XRProjectionLayer> XRBinding::createProjectionLayer(const WebGPU::XRProjectionLayerDescriptor& descriptor)
 {
-    return XRProjectionLayer::create(colorFormat, optionalDepthStencilFormat, flags, scale, m_device);
+    return XRProjectionLayer::create(descriptor, m_device);
 }
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
-
-void NODELETE wgpuXRProjectionLayerAddRef(WGPUXRProjectionLayer projectionLayer)
-{
-    WebGPU::fromAPI(projectionLayer).ref();
-}
-
-void wgpuXRProjectionLayerRelease(WGPUXRProjectionLayer projectionLayer)
-{
-    WebGPU::fromAPI(projectionLayer).deref();
-}
-
-void wgpuXRProjectionLayerStartFrame(WGPUXRProjectionLayer layer, size_t frameIndex, WTF::MachSendRight&& colorBuffer, WTF::MachSendRight&& depthBuffer, WTF::MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples)
-{
-    WebGPU::fromAPI(layer).startFrame(frameIndex, WTF::move(colorBuffer), WTF::move(depthBuffer), WTF::move(completionSyncEvent), reusableTextureIndex, screenWidth, screenHeight, WTF::move(horizontalSamplesLeft), WTF::move(horizontalSamplesRight), WTF::move(verticalSamples));
-}

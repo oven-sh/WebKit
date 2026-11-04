@@ -843,6 +843,11 @@ angle::CallCapture CaptureGetTranslatedShaderSourceANGLE(const State &glState,
                                                          GLsizei *length,
                                                          GLchar *source);
 
+// GL_ANGLE_trim_memory
+angle::CallCapture CaptureTrimMemoryANGLE(const State &glState,
+                                          bool isCallValid,
+                                          MemoryTrimLevel trimLevelPacked);
+
 // GL_ANGLE_variable_rasterization_rate_metal
 angle::CallCapture CaptureBindMetalRasterizationRateMapANGLE(const State &glState,
                                                              bool isCallValid,

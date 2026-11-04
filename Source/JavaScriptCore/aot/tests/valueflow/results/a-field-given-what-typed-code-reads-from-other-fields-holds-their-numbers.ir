@@ -1,0 +1,52 @@
+# interface Whole { a: number; b: number }   const whole: Whole = { a: 1, b: 2 };   const some: Partial<Whole> = { b: 5 };
+# kept[0] = { first: whole.a, second: some.b ?? whole.b, third: some.b ?? 7 };
+# FORM: AsRead
+# RUN: valueflow-apply
+
+# CHECK: layout L2 name="Made" {{*}}{key="first" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced] {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="second" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced] {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="third" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced] {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Whole" module=m0 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Some" module=m0 fields=[{key="a" declared={type=undefined|number}}, {key="b" declared={type=undefined|number}}]
+layout L2 name="Made" module=m0 fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="second" declared={type=number} flags=[IsRequired]}, {key="third" declared={type=number} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=2}}]}
+data d1 root=Object{layout=L1 members=[{key="b" value=Number{value=5}}]}
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    v1 = Data data=d1
+    v2 = Integer
+    v3 = NewArray contents=anything
+    v4 = PropGet v0 key="a"
+    v5 = Check v4 expectedType=number
+    v6 = PropGet v1 key="b"
+    v7 = Check v6 expectedType=undefined|number
+    v8 = TypeTest v7 testedType=undefined|null
+    Branch v8 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v9: undefined):
+    v10 = PropGet v0 key="b"
+    Jump -> next b3(v10)
+  b2(v11: number):
+    Jump -> next b3(v11)
+  b3(v12: anything):
+    v13 = Check v12 expectedType=number
+    v14 = PropGet v1 key="b"
+    v15 = Check v14 expectedType=undefined|number
+    v16 = TypeTest v15 testedType=undefined|null
+    Branch v16 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v17: undefined):
+    v18 = Integer integer=7
+    Jump -> next b6(v18)
+  b5(v19: number):
+    Jump -> next b6(v19)
+  b6(v20: anything):
+    v21 = Check v20 expectedType=number
+    v22 = NewObject -, v5, v13, v21 layout=L2 fields=[0, 1, 2]
+    v23 = FinishObject v22
+    ElemSet v3, v2, v23
+    v25 = PropGet v23 key="first"
+    v26 = PropGet v23 key="second"
+    v27 = PropGet v23 key="third"
+    Return
+}

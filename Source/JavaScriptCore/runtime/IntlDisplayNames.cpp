@@ -26,6 +26,7 @@
 #include "config.h"
 #include "IntlDisplayNames.h"
 
+#include "AOTRemovableFeature.h"
 #include "IntlCache.h"
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
@@ -38,6 +39,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 const ClassInfo IntlDisplayNames::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlDisplayNames) };
+
+NEVER_INLINE void IntlDisplayNames::destroy(JSCell* cell)
+{
+    JSC_REMOVABLE_DEFINITION(IntlDisplayNames, &IntlDisplayNames::destroy);
+    static_cast<IntlDisplayNames*>(cell)->IntlDisplayNames::~IntlDisplayNames();
+}
 
 IntlDisplayNames* IntlDisplayNames::create(VM& vm, Structure* structure)
 {

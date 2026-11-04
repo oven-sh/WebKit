@@ -1,0 +1,42 @@
+# "use strict"; function Helper() { this.tag = "h"; }   Helper.prototype.define = function (target, key) { const tag = this.tag; target[key] = function () { return tag; }; };
+# new Helper().define(target, "alpha");
+# The copy begins with the read that it tests. Every value of the copy gets its type behind the pass, as in a function that nothing was added to.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories TypeValues VerifyProgram
+# CHECK-LABEL: function f5 name="define"
+# CHECK: [[read]]: anything = PropGet v0 key="tag"
+# CHECK: [[same]]: boolean = StrictEq [[read]], [[text]]
+# CHECK-NEXT: Branch [[same]]
+# CHECK: {{*}}: f4 = NewClosure [[text]] function=f4
+# CHECK: {{*}}: f3 = NewClosure [[read]] function=f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="define" mode=Strict
+    v4 = NewObject layout=L0
+    v5 = FinishObject v4
+    v6 = Construct v0
+    v7 = PropGet v6 key="define"
+    v8 = String string="alpha"
+    v9 = Call v7, v6, v5, v8
+    Return
+}
+function f1 name="Helper" module=m0 position=10 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = String string="h"
+    PropSet v0, v1 key="tag" mode=Strict
+    Return
+}
+function f2 name="define" module=m0 position=20 flags=[HasThis] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = PropGet v0 key="tag"
+    v4 = NewClosure v3 function=f3
+    ElemSet v1, v2, v4 mode=Strict
+    Return
+}
+function f3 name="member" module=m0 position=30 captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

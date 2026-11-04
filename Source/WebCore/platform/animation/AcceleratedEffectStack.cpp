@@ -83,6 +83,36 @@ void AcceleratedEffectStack::setBaseValues(AcceleratedEffectValues&& values)
     m_baseValues = WTF::move(values);
 }
 
+TextStream& operator<<(TextStream& ts, const AcceleratedEffectStack& effectStack)
+{
+    OptionSet<AcceleratedEffectProperty> animatedProperties;
+    for (Ref effect : effectStack.primaryLayerEffects())
+        animatedProperties.add(effect->animatedProperties());
+    for (Ref effect : effectStack.backdropLayerEffects())
+        animatedProperties.add(effect->animatedProperties());
+    ts << indent << "(base values";
+    auto& baseValues = effectStack.baseValues();
+    for (auto property : animatedProperties)
+        ts << ", " << baseValues.dumpProperty(property);
+    ts << ")\n"_s;
+
+    auto dumpEffects = [&](const String label, const AcceleratedEffects& effects) {
+        if (effects.isEmpty())
+            return;
+        ts << indent << "(" << label << "\n";
+        {
+            TextStream::IndentScope indentScope(ts);
+            for (Ref effect : effects)
+                ts << effect << "\n";
+        }
+        ts << indent << ")\n"_s;
+    };
+
+    dumpEffects("effect stack"_s, effectStack.primaryLayerEffects());
+    dumpEffects("backdrop effect stack"_s, effectStack.backdropLayerEffects());
+    return ts;
+}
+
 } // namespace WebCore
 
 #endif // ENABLE(THREADED_ANIMATIONS)

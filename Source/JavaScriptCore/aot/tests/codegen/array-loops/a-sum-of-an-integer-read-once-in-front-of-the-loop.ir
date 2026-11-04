@@ -1,0 +1,80 @@
+# function sum(step: number, turns: number): number {
+#   const integer = step | 0;
+#   const count = turns | 0;
+#   let total = 0;
+#   for (let k = 0; k < count; k++) total += integer;
+#   return total;
+# }
+# declare const input: any;
+# (globalThis as any).answer = sum(input, input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# What the loop adds does not change from turn to turn, so it stands in front of the loop. An addition of doubles waits for the one before it: the turns that are written out add integers.
+# CHECK-LABEL: name="sum" role=Source
+# CHECK: Int64 b@{{*}} = SExt32(
+# CHECK-NOT: Double b@{{*}} = Add(
+# CHECK: Double b@{{*}} = IToD(
+# CHECK: Double b@{{*}} = Add(
+# CHECK-LABEL: end of function
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=13 kind=Parameter function=f1
+typesite w1 module=m0 position=27 kind=Parameter function=f1
+typesite w2 module=m0 kind=Result
+typesite w3 module=m0 position=200 kind=CallResult
+typesite w4 module=m0 position=43 kind=Variable
+typesite w5 module=m0 position=65 kind=Variable
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number site=w0} illTypedCause=FromLooseType
+    v9 = Call v1, -, v8, v8 calleeName="sum"
+    v10 = Convert v9 declared={type=number site=w3}
+    PropSet v5, v10 key="answer"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="sum" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = BitOr v0, v2
+    v4 = BitOr v1, v2
+    v5 = Integer
+    v6 = Convert v5 declared={type=number site=w4}
+    v7 = Integer
+    v8 = Convert v7 declared={type=number site=w5}
+    Jump -> next b2(v6, v8)
+  b2(v9: number, v10: number):
+    LoopHint
+    v12 = Less v10, v4
+    Branch v12 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v13):
+    Jump -> next b4()
+  b4():
+    v14 = Add v9, v3
+    v15 = Convert v14 declared={type=number site=w4}
+    Jump -> next b5()
+  b5():
+    v16 = Increment v13
+    v17 = Convert v16 declared={type=number site=w5}
+    Jump -> next b2(v15, v17)
+  b6(v18):
+    Jump -> next b7()
+  b7():
+    v19 = Convert v9 declared={type=number site=w2}
+    Return v19
+}

@@ -37,14 +37,14 @@
 namespace WebCore {
 namespace Style {
 
-static NODELETE TextEmphasisMark defaultTextEmphasisMark(WritingMode mode)
+static LEGACY_NODELETE TextEmphasisMark defaultTextEmphasisMark(WritingMode mode)
 {
     // "If only filled or open is specified, the shape keyword computes to circle in horizontal typographic modes and sesame in vertical typographic modes." - https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style
 
     return mode.isVerticalTypographic() ? TextEmphasisMark::Sesame : TextEmphasisMark::Circle;
 }
 
-static NODELETE TextEmphasisStyle::Shape defaultTextEmphasisShape(WritingMode writingMode, TextEmphasisFill fill)
+static LEGACY_NODELETE TextEmphasisStyle::Shape defaultTextEmphasisShape(WritingMode writingMode, TextEmphasisFill fill)
 {
     return { .fill = fill, .mark = defaultTextEmphasisMark(writingMode) };
 }
@@ -104,11 +104,11 @@ auto CSSValueConversion<TextEmphasisStyle>::operator()(BuilderState& state, cons
 {
     if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
         switch (auto valueID = keywordValue->valueID(); valueID) {
-        case CSSValueNone:
+        case CSSValueID::None:
             return CSS::Keyword::None { };
 
-        case CSSValueFilled:
-        case CSSValueOpen:
+        case CSSValueID::Filled:
+        case CSSValueID::Open:
             return defaultTextEmphasisShape(state.style().writingMode(), fromCSSValueID<TextEmphasisFill>(valueID));
 
         default:
@@ -130,8 +130,8 @@ auto CSSValueConversion<TextEmphasisStyle>::operator()(BuilderState& state, cons
                 return CSS::Keyword::None { };
 
             switch (auto valueID = keywordValue->valueID(); valueID) {
-            case CSSValueFilled:
-            case CSSValueOpen:
+            case CSSValueID::Filled:
+            case CSSValueID::Open:
                 fill = fromCSSValueID<TextEmphasisFill>(valueID);
                 break;
             default:

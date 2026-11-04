@@ -25,12 +25,14 @@
 
 #pragma once
 
+#include "BrowsingContextGroup.h"
 #include "EditorState.h"
 #include "MessageReceiver.h"
 #include "NavigationActionData.h"
 #include "ProcessActivityGroup.h"
 #include "WebPageProxyMessageReceiverRegistration.h"
 #include "WebProcessProxy.h"
+#include <WebCore/FrameGeometrySyncData.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/PageIdentifier.h>
@@ -99,7 +101,7 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    WebPageProxy* NODELETE page() const;
+    WebPageProxy* LEGACY_NODELETE page() const;
 
     void injectPageIntoNewProcess();
     void processDidTerminate(WebProcessProxy&, ProcessTerminationReason);
@@ -112,17 +114,20 @@ public:
     WebCore::PageIdentifier identifierInSiteIsolatedProcess() const { return m_webPageID; }
     const WebCore::Site& site() const LIFETIME_BOUND { return m_site; }
 
-    WebProcessActivityState& NODELETE processActivityState();
+    WebProcessActivityState& LEGACY_NODELETE processActivityState();
 
     WebCore::MediaProducerMediaStateFlags mediaState() const { return m_mediaState; }
     void setDrawingArea(DrawingAreaProxy*);
+
+    const std::optional<WebCore::FrameViewportInfo>& lastSentMainFrameViewportInfo() const LIFETIME_BOUND { return m_lastSentMainFrameViewportInfo; }
+    void setLastSentMainFrameViewportInfo(const WebCore::FrameViewportInfo& viewportInfo) { m_lastSentMainFrameViewportInfo = viewportInfo; }
 
     void setCurrentOrientation(WebCore::ScreenOrientationType);
 
     bool hasNetworkRequestsInProgress() const { return m_hasNetworkRequestsInProgress; }
     bool canShortCircuitHorizontalWheelEvents() const { return m_canShortCircuitHorizontalWheelEvents; }
 
-    void disconnect();
+    void disconnect(ShouldSendCloseMessage = ShouldSendCloseMessage::Yes);
 
 #if ENABLE(DEVICE_ORIENTATION)
     void clearDeviceOrientationAndMotionPermissions();
@@ -153,6 +158,7 @@ private:
     const WebCore::Site m_site;
     const UniqueRef<WebProcessActivityState> m_processActivityState;
     RefPtr<RemotePageDrawingAreaProxy> m_drawingArea;
+    std::optional<WebCore::FrameViewportInfo> m_lastSentMainFrameViewportInfo;
 #if ENABLE(FULLSCREEN_API)
     RefPtr<RemotePageFullscreenManagerProxy> m_fullscreenManager;
 #endif
@@ -171,6 +177,9 @@ private:
     RefPtr<RemotePageScreenOrientationManagerProxy> m_screenOrientationManager;
 #if ENABLE(WEB_AUTHN)
     RefPtr<RemotePageWebAuthenticatorCoordinatorProxy> m_webAuthenticatorCoordinator;
+#endif
+#if ENABLE(WEBXR)
+    bool m_isReceivingXRMessages { false };
 #endif
     bool m_hasNetworkRequestsInProgress { false };
     bool m_canShortCircuitHorizontalWheelEvents { true };

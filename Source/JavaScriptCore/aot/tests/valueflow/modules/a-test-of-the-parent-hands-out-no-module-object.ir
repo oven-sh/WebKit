@@ -1,0 +1,29 @@
+# main.cjs: require("./child.cjs"); !module.parent        child.cjs: module.exports = exportedByChild
+# A file that asks whether it has a parent hands nobody a module object: what the required file exports stays in the program.
+# RUN: valueflow-why escaped=f2
+# CHECK: escaped=f2
+# CHECK-NEXT: not held
+# RUN(APPLY): valueflow-apply
+# APPLY: variable g1 name="exports" {{*}}writers=AllKnown
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    RecordRequire module=m1 referrer=m0
+    v2 = ModuleBuiltin builtin=ModuleObject module=m0
+    v3 = PropGet v2 key="parent"
+    v4 = ToBoolean v3
+    Return
+}
+function f1 name="child" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="exportedByChild" module=m1 results=[{type=anything}] {
+    Return
+}

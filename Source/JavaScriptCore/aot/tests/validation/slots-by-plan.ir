@@ -1,0 +1,64 @@
+# interface Coin { value: number }  interface Box { required: number; kind: 1 | 2; content: Coin; late0?: Coin .. late15?: Coin }
+# What a collection asks of the slots of an object is worked out once for its layout: the slots of the cell first, then those of the Extension, and of those only what this object holds.
+# A writer that nobody listed (`storeInSlotWithoutTest` of the shell) is found on each road: a slot of the Extension, an integer that the type does not list, and undefined where the type has none.
+# The report names the field as it did when the fields were asked one by one. With two slots at fault it names the first in the order of the layout: late3, of the Extension, though late9, of the cell, is looked at first.
+# And nothing is found where nothing is wrong: with the Extension filled by ordinary stores, and with no Extension at all.
+# FORM: AsRead
+# RUN(SLOTS): plan-slots layouts
+# RUN(EXTENSION): run-in-shell globalThis.register = (box, bare, coin, stone) => { storeInSlotWithoutTest(box, "late12", stone); print("stored"); gc(); print("collected"); };
+# RUN(INTEGER): run-in-shell globalThis.register = (box, bare, coin, stone) => { storeInSlotWithoutTest(box, "kind", 7); print("stored"); gc(); print("collected"); };
+# RUN(MARKER): run-in-shell globalThis.register = (box, bare, coin, stone) => { storeInSlotWithoutTest(box, "content", undefined); print("stored"); gc(); print("collected"); };
+# RUN(TWO): run-in-shell globalThis.register = (box, bare, coin, stone) => { storeInSlotWithoutTest(box, "late9", stone); storeInSlotWithoutTest(box, "late3", stone); print("stored"); gc(); print("collected"); };
+# RUN(SOUND): run-in-shell globalThis.register = (box, bare, coin, stone) => { box.late3 = coin; box.late12 = coin; gc(); edenGC(); print("collected", box.late9.value, box.late12.value, bare.late9); };
+# OPTIONS: testing=CheckProofsAtRunTime testing=NoLayoutIsMadeSeldom
+# SLOTS: "kind" OptionalInt32 @
+# SLOTS: "late3" JSValue out@
+# SLOTS: "late9" JSValue @
+# SLOTS: "late12" JSValue out@
+# EXTENSION: stored
+# EXTENSION-NOT: collected
+# EXTENSION: (late12) of layout {{*}}, holds a value outside its type
+# EXTENSION: AOT validation: HeapSlotType f- v-
+# EXTENSION: crashed with
+# INTEGER: stored
+# INTEGER-NOT: collected
+# INTEGER: (kind) of layout {{*}}, a slot of the kind OptionalInt32 at {{*}}, holds a value outside its type
+# INTEGER: AOT validation: HeapSlotType f- v-
+# INTEGER: crashed with
+# MARKER: stored
+# MARKER-NOT: collected
+# MARKER: (content) of layout {{*}}, holds a value outside its type
+# MARKER: AOT validation: HeapSlotType f- v-
+# MARKER: crashed with
+# TWO: stored
+# TWO-NOT: collected
+# TWO: (late3) of layout {{*}}, holds a value outside its type
+# TWO: AOT validation: HeapSlotType f- v-
+# TWO: crashed with
+# SOUND-NOT: AOT validation
+# SOUND: collected 1.5 1.5 undefined
+# SOUND-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Box" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=1|2} flags=[IsRequired]}, {key="content" declared={type=L1} flags=[IsRequired]}, {key="late0" declared={type=L1}}, {key="late1" declared={type=L1}}, {key="late2" declared={type=L1}}, {key="late3" declared={type=L1}}, {key="late4" declared={type=L1}}, {key="late5" declared={type=L1}}, {key="late6" declared={type=L1}}, {key="late7" declared={type=L1}}, {key="late8" declared={type=L1}}, {key="late9" declared={type=L1}}, {key="late10" declared={type=L1}}, {key="late11" declared={type=L1}}, {key="late12" declared={type=L1}}, {key="late13" declared={type=L1}}, {key="late14" declared={type=L1}}, {key="late15" declared={type=L1}}]
+layout L1 name="Coin" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Stone" fields=[{key="weight" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Double number=1.5
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = Integer integer=1
+    v4 = NewObject -, v0, v3, v2 layout=L0 fields=[0, 1, 2]
+    v5 = FinishObject v4
+    PropSet v5, v2 key="late9"
+    v7 = NewObject -, v0, v3, v2 layout=L0 fields=[0, 1, 2]
+    v8 = FinishObject v7
+    v9 = Double number=2.5
+    v10 = NewObject -, v9 layout=L2 fields=[0]
+    v11 = FinishObject v10
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="register" [isFreeName]
+    v14 = Call v13, -, v5, v8, v2, v11
+    Return
+}

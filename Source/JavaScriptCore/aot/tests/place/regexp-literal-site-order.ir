@@ -1,0 +1,35 @@
+# The cells of RegExp literal sites are in site order, by function and then by position, and equal literals in two functions do not share one
+# FORM: AsRead
+# OPTIONS: only-passes=ShareRegExpLiterals,ResolveCalls,ResolveAccesses
+# RUN: place statics program
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewRegExp pattern="a+" regExpFlags=[Global] @30
+    PutModuleVariable v0 variable=g0
+    v2 = CallDirect function=f1
+    Return
+}
+function f1 name="other" results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToString v1
+    v3 = NewRegExp pattern="a+" regExpFlags=[Global] @20
+    PutModuleVariable v3 variable=g0
+    v5 = NewRegExp pattern="a+" regExpFlags=[HasIndices] @10
+    v6 = PropGet v5 key="exec"
+    v7 = Call v6, v5, v2 calleeKey="exec"
+    Return v7
+}
+
+# CHECK: statics size=32
+# CHECK: site-cell NewRegExp @8
+# CHECK-NEXT: site-cell SharedRegExpLiteral @16
+# CHECK-NEXT: site-cell NewRegExp @24
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = NewRegExp {{*}}staticsOffset=8 @30
+# CHECK-LABEL: function f1 name="other"
+# CHECK: = NewRegExp {{*}}staticsOffset=24 @20
+# CHECK: = SharedRegExpLiteral {{*}}staticsOffset=16 @10

@@ -84,7 +84,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioContext);
 static unsigned hardwareContextCount;
 #endif
 
-static std::optional<float>& NODELETE defaultSampleRateForTesting()
+static std::optional<float>& LEGACY_NODELETE defaultSampleRateForTesting()
 {
     static std::optional<float> sampleRate;
     return sampleRate;
@@ -94,8 +94,7 @@ static bool shouldDocumentAllowWebAudioToAutoPlay(const Document& document)
 {
     if (document.isCapturing())
         return true;
-    RefPtr mainDocument = document.mainFrameDocument();
-    if (document.quirks().shouldAutoplayWebAudioForArbitraryUserGesture() && mainDocument && mainDocument->hasHadUserInteraction())
+    if (document.quirks().shouldAutoplayWebAudioForArbitraryUserGesture() && document.mainFrameDocumentHasHadUserInteraction())
         return true;
     RefPtr window = document.window();
     return window && window->hasTransientActivation();
@@ -146,9 +145,10 @@ AudioContext::AudioContext(Document& document, const AudioContextOptions& contex
     // Unlike OfflineAudioContext, AudioContext does not require calling resume() to start rendering.
     // Lazy initialization starts rendering so we schedule a task here to make sure lazy initialization
     // ends up happening, even if no audio node gets constructed.
-    postTask([this, pendingActivity = makePendingActivity(*this)] {
-        if (!isStopped())
-            lazyInitialize();
+    postTask([pendingActivity = makePendingActivity(*this)] {
+        Ref protectedThis = pendingActivity->object();
+        if (!protectedThis->isStopped())
+            protectedThis->lazyInitialize();
     });
 }
 
@@ -712,7 +712,7 @@ WeakPtr<PlatformMediaSessionInterface> AudioContext::selectBestMediaSession(cons
         if (!audibleSession)
             audibleSession = session;
 
-        if (session->isPlaying())
+        if (protect(session)->isPlaying())
             return session;
     }
 

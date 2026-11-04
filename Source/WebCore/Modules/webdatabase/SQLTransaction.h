@@ -58,7 +58,7 @@ public:
 
 class SQLTransaction : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<SQLTransaction>, public SQLTransactionStateMachine<SQLTransaction> {
 public:
-    static Ref<SQLTransaction> create(Ref<Database>&&, RefPtr<SQLTransactionCallback>&&, RefPtr<VoidCallback>&& successCallback, RefPtr<SQLTransactionErrorCallback>&&, RefPtr<SQLTransactionWrapper>&&, bool readOnly);
+    static Ref<SQLTransaction> LEGACY_NODELETE create(Ref<Database>&&, RefPtr<SQLTransactionCallback>&&, RefPtr<VoidCallback>&& successCallback, RefPtr<SQLTransactionErrorCallback>&&, RefPtr<SQLTransactionWrapper>&&, bool readOnly);
     ~SQLTransaction();
 
     ExceptionOr<void> executeSql(const String& sqlStatement, std::optional<Vector<SQLValue>>&& arguments, RefPtr<SQLStatementCallback>&&, RefPtr<SQLStatementErrorCallback>&&);
@@ -88,7 +88,7 @@ private:
     void scheduleCallback(void (SQLTransaction::*)());
 
     // State Machine functions:
-    StateFunction NODELETE stateFunctionFor(SQLTransactionState) override;
+    StateFunction LEGACY_NODELETE stateFunctionFor(SQLTransactionState) override;
     void computeNextStateAndCleanupIfNeeded();
 
     // State functions:
@@ -103,7 +103,7 @@ private:
     void deliverQuotaIncreaseCallback();
     void deliverSuccessCallback();
 
-    NO_RETURN_DUE_TO_ASSERT void NODELETE unreachableState();
+    NO_RETURN_DUE_TO_ASSERT void LEGACY_NODELETE unreachableState();
 
     void callErrorCallbackDueToInterruption();
 
@@ -150,3 +150,8 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::SQLTransaction)
+    // SQLTransaction derives from SQLTransactionStateMachine<SQLTransaction> (CRTP).
+    static bool isType(const WebCore::SQLTransactionStateMachine<WebCore::SQLTransaction>&) { return true; }
+SPECIALIZE_TYPE_TRAITS_END()

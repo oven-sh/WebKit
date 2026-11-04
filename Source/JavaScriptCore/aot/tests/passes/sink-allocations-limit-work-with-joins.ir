@@ -1,0 +1,50 @@
+# The parameters that can only carry objects for which nothing can be gained are no candidates, so the search for an allocation that pays fits into this limit
+# FORM: Prepared
+# OPTIONS: limit=MaxSinkingWork:65
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsSunk = 1
+# STATISTIC: AllocationsMergedAtJoins = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="theWorkRunsOutWithTheJoins" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=L0}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    v6 = NewObject -, v0 layout=L0 fields=[0]
+    v7 = Call v0, -, v6
+    v8 = NewObject -, v1 layout=L0 fields=[0]
+    PropDefine v8, v0 key="y" receivers=[L0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v10 = Call v0, -, v8
+    Jump -> next b3(v6)
+  b2():
+    Jump -> next b3(v3)
+  b3(v11: L0):
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    v12 = Call v0
+    Jump -> next b6(v11)
+  b5():
+    Jump -> next b6(v3)
+  b6(v13: L0):
+    Branch v5 -> taken b7(), notTaken b8()
+  b7():
+    v14 = Call v1
+    Jump -> next b9(v13)
+  b8():
+    Jump -> next b9(v3)
+  b9(v15: L0):
+    v16 = Call v1, -, v15, v13, v11
+    Return v16
+# CHECK: b0(
+# CHECK-NEXT: v6:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = Call v0, -, v6
+# CHECK-NEXT: Branch v2
+# CHECK: b1():
+# CHECK-NEXT: [[cell]]:{{*}}= NewObject -, v1, v0 layout=L0 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[cell]]
+# CHECK: b3(v11: L0):
+# CHECK: b6(v13: L0):
+# CHECK: b9(v15: L0):
+# CHECK-NEXT: = Call v1, -, v15, v13, v11
+}

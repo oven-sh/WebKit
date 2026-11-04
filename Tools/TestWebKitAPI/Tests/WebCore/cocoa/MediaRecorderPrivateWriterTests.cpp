@@ -64,7 +64,7 @@ private:
 static UniqueRef<MediaSamplesBlock> makeSampleBlock(const MediaTime& presentationTime)
 {
     MediaSamplesBlock::SamplesVector items;
-    items.append({ .presentationTime = presentationTime });
+    items.append({ .presentationTime = presentationTime, .data = nullptr });
     return makeUniqueRef<MediaSamplesBlock>(nullptr, WTF::move(items));
 }
 

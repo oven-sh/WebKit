@@ -1,0 +1,30 @@
+# interface Options { verbose?: boolean; depth?: number }  interface Empty {}  const literal = { verbose: true, depth: 1 }  const converted: Options = { verbose: true, depth: 1 }
+# A type that requires no name says nothing about the names of an object, so names put no layout into its family: Literal has every name of Options and is no Options, and nothing is an Empty.
+# What the program converts is in the family as ever: Converted has the names of Literal, and a supertype.
+# A hidden field is no name that a program can write in a type, so a type that requires nothing else requires no name (Sealed).
+# Beside them: with one of the two names required, the same type takes every layout that has that name (Strict)
+# FORM: AsRead
+# RUN: members
+# RUN(READ): print
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+layout L0 name="Options" fields=[{key="verbose" declared={type=boolean}}, {key="depth" declared={type=number}}]
+layout L1 name="Empty"
+layout L2 name="Literal" fields=[{key="verbose" declared={type=boolean}}, {key="depth" declared={type=number}}]
+layout L3 name="Converted" fields=[{key="verbose" declared={type=boolean}}, {key="depth" declared={type=number}}] supertypes=[L0]
+layout L4 name="Strict" fields=[{key="verbose" declared={type=boolean}}, {key="depth" declared={type=number} flags=[IsRequired]}]
+layout L5 name="Sealed" fields=[{key="seal" declared={type=number} flags=[IsRequired, IsHidden]}]
+layout L6 name="AlsoSealed" fields=[{key="seal" declared={type=number} flags=[IsRequired, IsHidden]}]
+# CHECK: L0: members [L0, L3]
+# CHECK-NEXT: L1: members [L1]
+# CHECK-NEXT: L2: members [L2]
+# CHECK-NEXT: L3: members [L3]
+# CHECK-NEXT: L4: members [L0, L2, L3, L4]
+# CHECK-NEXT: L5: members [L5]
+# CHECK-NEXT: L6: members [L6]
+
+function f0 name="take" parameters=[{type=L0}, {type=L1}, {type=L4}] results=[{type=anything}] {
+    Return
+# READ: parameters=[{type=L0|L3}, {type=L1}, {type=L0|L2|L3|L4}]
+}

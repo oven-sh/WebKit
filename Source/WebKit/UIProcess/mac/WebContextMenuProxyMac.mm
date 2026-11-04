@@ -55,6 +55,7 @@
 #import <pal/spi/mac/NSSharingServicePickerSPI.h>
 #import <pal/spi/mac/NSWindowSPI.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/cocoa/SpanCocoa.h>
 
@@ -338,14 +339,17 @@ void WebContextMenuProxyMac::setupServicesMenu()
     appendRemoveBackgroundItemToControlledImageMenuIfNeeded();
 
     // Explicitly add a menu item for each telephone number that is in the selection.
-    Vector<RetainPtr<NSMenuItem>> telephoneNumberMenuItems;
+    const Vector telephoneNumberMenuItems = [&] {
+        Vector<RetainPtr<NSMenuItem>> telephoneNumberMenuItems;
 
-    for (auto& telephoneNumber : m_context.selectedTelephoneNumbers()) {
-        if (RetainPtr item = menuItemForTelephoneNumber(telephoneNumber)) {
-            [item setIndentationLevel:1];
-            telephoneNumberMenuItems.append(WTF::move(item));
+        for (auto& telephoneNumber : m_context.selectedTelephoneNumbers()) {
+            if (RetainPtr item = menuItemForTelephoneNumber(telephoneNumber)) {
+                [item setIndentationLevel:1];
+                telephoneNumberMenuItems.append(WTF::move(item));
+            }
         }
-    }
+        return telephoneNumberMenuItems;
+    }();
 
     if (!telephoneNumberMenuItems.isEmpty()) {
         if (m_menu)
@@ -820,7 +824,7 @@ void WebContextMenuProxyMac::getContextMenuFromItems(const Vector<WebContextMenu
     std::optional<WebContextMenuItemData> lookUpImageItem;
 
 #if ENABLE(IMAGE_ANALYSIS)
-    for (auto& item : filteredItems) {
+    for (auto& item : borrow(filteredItems)) {
         switch (item.action()) {
         case ContextMenuItemTagLookUpImage: {
             ASSERT(!lookUpImageItem);
@@ -918,9 +922,10 @@ void WebContextMenuProxyMac::getContextMenuFromItems(const Vector<WebContextMenu
         completionHandler(menu.get());
     });
 
-    for (size_t i = 0; i < filteredItems.size(); ++i) {
+    Borrow borrowedItems = filteredItems;
+    for (size_t i = 0; i < borrowedItems->size(); ++i) {
         [sparseMenuItems addPointer:nullptr];
-        getContextMenuItem(filteredItems[i], [insertMenuItem, i](NSMenuItem *menuItem) {
+        getContextMenuItem(borrowedItems[i], [insertMenuItem, i](NSMenuItem *menuItem) {
             insertMenuItem(menuItem, i);
         });
     }
@@ -1121,7 +1126,8 @@ static RetainPtr<NSDictionary> contentsOfContextMenuItem(NSMenuItem *item)
 
     if (RetainPtr<NSArray<NSMenuItem *>> submenuItems = item.submenu.itemArray) {
         RetainPtr children = adoptNS([[NSMutableArray alloc] initWithCapacity:[submenuItems count]]);
-        for (NSMenuItem *submenuItem : submenuItems.get())
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSMenuItem *submenuItem : submenuItems.get())
             [children addObject:contentsOfContextMenuItem(submenuItem).get()];
         result.get()[@"children"] = children.get();
     }
@@ -1135,7 +1141,8 @@ RetainPtr<NSArray> WebContextMenuProxyMac::platformData() const
 
     if (RetainPtr<NSArray<NSMenuItem *>> submenuItems = [m_menu itemArray]) {
         RetainPtr children = adoptNS([[NSMutableArray alloc] initWithCapacity:[submenuItems count]]);
-        for (NSMenuItem *submenuItem : submenuItems.get())
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSMenuItem *submenuItem : submenuItems.get())
             [children addObject:contentsOfContextMenuItem(submenuItem).get()];
         [result addObject:@{ @"children": children.get() }];
     }
@@ -1146,7 +1153,7 @@ RetainPtr<NSArray> WebContextMenuProxyMac::platformData() const
 WKCaptionStyleMenuController *WebContextMenuProxyMac::captionStyleMenuController()
 {
     if (!m_captionStyleMenuController) {
-        m_captionStyleMenuController = [WKCaptionStyleMenuController menuController];
+        lazyInitialize(m_captionStyleMenuController, retainPtr([WKCaptionStyleMenuController menuController]));
         [m_captionStyleMenuController setDelegate:RetainPtr { menuDelegate() }.get()];
     }
     return m_captionStyleMenuController.get();
@@ -1155,7 +1162,7 @@ WKCaptionStyleMenuController *WebContextMenuProxyMac::captionStyleMenuController
 WKMenuDelegate *WebContextMenuProxyMac::menuDelegate()
 {
     if (!m_menuDelegate)
-        m_menuDelegate = adoptNS([[WKMenuDelegate alloc] initWithMenuProxy:*this]);
+        lazyInitialize(m_menuDelegate, adoptNS([[WKMenuDelegate alloc] initWithMenuProxy:*this]));
     return m_menuDelegate.get();
 }
 
@@ -1166,7 +1173,7 @@ void WebContextMenuProxyMac::didShowContextMenu(NSMenu *)
 
 void WebContextMenuProxyMac::didDismissContextMenu(NSMenu *menu)
 {
-    protect(page())->didDismissContextMenu();
+    protect(page())->didDismissContextMenu(frameInfo());
 
     if (m_captionStyleMenuController && [m_captionStyleMenuController hasAncestor:menu])
         captionStyleMenuDidClose();
@@ -1174,19 +1181,24 @@ void WebContextMenuProxyMac::didDismissContextMenu(NSMenu *menu)
 
 void WebContextMenuProxyMac::captionStyleMenuSetPreviewProfileID(const String& profileID)
 {
-    protect(page())->setCaptionDisplaySettingsPreviewProfileID(m_frameInfo, profileID);
+    RefPtr page = this->page();
+    page->setCaptionDisplaySettingsPreviewProfileID(page->processContainingFrame(m_frameInfo.frameID), profileID);
 }
 
 void WebContextMenuProxyMac::captionStyleMenuWillOpen()
 {
-    if (auto identifier = m_context.mediaElementIdentifier())
-        protect(page())->showCaptionDisplaySettingsPreview(m_frameInfo, *identifier);
+    if (auto identifier = m_context.mediaElementIdentifier()) {
+        RefPtr page = this->page();
+        page->showCaptionDisplaySettingsPreview(page->processContainingFrame(m_frameInfo.frameID), *identifier);
+    }
 }
 
 void WebContextMenuProxyMac::captionStyleMenuDidClose()
 {
-    if (auto identifier = m_context.mediaElementIdentifier())
-        protect(page())->hideCaptionDisplaySettingsPreview(m_frameInfo, *identifier);
+    if (auto identifier = m_context.mediaElementIdentifier()) {
+        RefPtr page = this->page();
+        page->hideCaptionDisplaySettingsPreview(page->processContainingFrame(m_frameInfo.frameID), *identifier);
+    }
 }
 
 } // namespace WebKit

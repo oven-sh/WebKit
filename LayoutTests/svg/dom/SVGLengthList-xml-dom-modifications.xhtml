@@ -1,6 +1,5 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
-<script>window.enablePixelTesting = true;</script>
 <script src="../../resources/js-test-pre.js"></script>
 </head>
 <body>
@@ -42,13 +41,13 @@
     text1.setAttribute("x", "50 100");
 
     debug("");
-    debug("Assure that the wrappers still point to the OLD values");
-    shouldBe("text1XBaseValGetItem0.value", "250");
-    shouldBe("text1XBaseValGetItem1.value", "750");
+    debug("Assure that the wrappers still in range now hold the NEW values, and the truncated one keeps its OLD value");
+    shouldBe("text1XBaseValGetItem0.value", "50");
+    shouldBe("text1XBaseValGetItem1.value", "100");
     shouldBe("text1XBaseValGetItem2.value", "1250");
 
     debug("");
-    debug("Assure that obtaining new wrappers will give the right NEW values");
+    debug("Assure that obtaining wrappers again gives the same NEW values");
     shouldBe("text1.x.baseVal.numberOfItems", "2");
     shouldBe("text1.x.baseVal.getItem(0).value", "50");
     shouldBe("text1.x.baseVal.getItem(1).value", "100");
@@ -60,19 +59,19 @@
     text1XBaseValGetItem2.value += 100;
 
     debug("");
-    debug("Assure that the old wrappers can still be modified, but don't influence the new wrappers");
-    shouldBe("text1XBaseValGetItem0.value", "350");
-    shouldBe("text1XBaseValGetItem1.value", "850");
+    debug("Assure that all old wrappers can still be modified");
+    shouldBe("text1XBaseValGetItem0.value", "150");
+    shouldBe("text1XBaseValGetItem1.value", "200");
     shouldBe("text1XBaseValGetItem2.value", "1350");
 
     debug("");
-    debug("Assure that the new wrappers stayed the same");
+    debug("Assure that the wrappers still in range modified the list, and the truncated one did not");
     shouldBe("text1.x.baseVal.numberOfItems", "2");
-    shouldBe("text1.x.baseVal.getItem(0).value", "50");
-    shouldBe("text1.x.baseVal.getItem(1).value", "100");
+    shouldBe("text1.x.baseVal.getItem(0).value", "150");
+    shouldBe("text1.x.baseVal.getItem(1).value", "200");
 
     debug("");
-    debug("The test passes if you only see 'PASS' messages, and both elements on top look the same");
+    debug("The test passes if you only see 'PASS' messages");
     debug("");
  
 ]]>

@@ -1,0 +1,30 @@
+# A string that is also used as a property key in the loop is flattened on the entry: the characters of a flat string stay valid while the string is live
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: HoistStringCharactersGroups = 1
+
+# CHECK-NOT: LoopHint
+# CHECK: [[flat]]: flatstring = FlattenString v0
+# CHECK: LoopHint
+# CHECK-NOT: FlattenString
+# CHECK: v10: number = StringRangeCodeUnitOrNaN [[flat]], -, -, v6
+# CHECK-NEXT: v11: anything = ElemGet v2, v0
+# CHECK-NOT: FlattenString
+module m0 path="main.js" displayPath="main.js"
+function f0 name="string-used-as-key" parameters=[{type=string}, {type=number}, {type=object}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    v5 = Undefined
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v6, v1
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = CallBuiltin v0, v6 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v11 = ElemGet v2, v0
+    v12 = Add v6, v4
+    Jump -> next b1(v12, v10)
+  b3():
+    Return v7
+}

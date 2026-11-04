@@ -1,0 +1,32 @@
+# holder = { kept: stored, other: beside }; Object.getOwnPropertyDescriptor(holder, "kept"); Reflect.getOwnPropertyDescriptor(holder, "kept"); Object.getOwnPropertyDescriptor(holder, handedOver())
+# Native code reads what lies under the key and puts it into a new record, which the program holds. Under a key nobody knows that is whatever the object holds. Nobody else gets anything of the object,
+# so a function that lies there and that the program never calls is not entered. a-descriptor-holds-what-the-property-holds.ir calls what comes out of the record
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NEXT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="kept" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = String string="kept"
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v6 = Call v5, v4, v2, v3
+    v7 = Builtin builtin=ReflectGetOwnPropertyDescriptor
+    v8 = Call v7, -, v2, v3
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="handedOver" [isFreeName]
+    v11 = Call v10
+    v12 = Call v5, v4, v2, v11
+    Return
+}
+function f1 name="stored" results=[{type=anything}] {
+    Return
+}
+function f2 name="beside" results=[{type=anything}] {
+    Return
+}

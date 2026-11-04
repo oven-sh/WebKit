@@ -60,7 +60,7 @@ class SampleBufferDisplayLayer : public ThreadSafeRefCountedAndCanMakeThreadSafe
 public:
     WEBCORE_EXPORT static RefPtr<SampleBufferDisplayLayer> create(SampleBufferDisplayLayerClient&);
     using LayerCreator = RefPtr<SampleBufferDisplayLayer> (*)(SampleBufferDisplayLayerClient&);
-    WEBCORE_EXPORT static void NODELETE setCreator(LayerCreator);
+    WEBCORE_EXPORT static void LEGACY_NODELETE setCreator(LayerCreator);
 
     virtual ~SampleBufferDisplayLayer() = default;
 
@@ -110,7 +110,8 @@ inline SampleBufferDisplayLayer::SampleBufferDisplayLayer(SampleBufferDisplayLay
 inline bool SampleBufferDisplayLayer::canShowWhileLocked()
 {
 #if PLATFORM(IOS_FAMILY)
-    return m_client && m_client->canShowWhileLocked();
+    RefPtr client = m_client;
+    return client && client->canShowWhileLocked();
 #else
     return false;
 #endif

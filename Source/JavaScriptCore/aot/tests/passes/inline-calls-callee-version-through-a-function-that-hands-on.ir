@@ -1,0 +1,89 @@
+# `carry` of the library calls no function: it hands its parameter to `compareAll`, which calls it in a loop in a loop. A call that passes one short function to `carry` goes to a copy
+# of `carry` for that function, which calls a copy of `compareAll` for it. The site need not be hot: a loop there would be. The caller keeps its one call: `carry` is not copied into it.
+# A long function gets no copies.
+# FORM: Prepared
+# RUN: pass InlineCalls
+# LOSS: MaxInlineHeadBytes
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" body=f6
+entry module=m0
+function f0 name="short" kind=Arrow parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Sub v0, v1
+    Return v2
+}
+function f1 name="long" kind=Arrow parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Sub v0, v1
+# REPEAT: i = 2..41
+    v%(i+1) = Add v%(i), v1
+# END REPEAT
+    Return v42
+}
+function f2 name="compareAll" role=Library parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b5()
+  b2():
+    Jump -> next b3(v2)
+  b3(v6):
+    LoopHint
+    v8 = Less v6, v3
+    Branch v8 -> taken b4(), notTaken b6()
+  b4():
+    v9 = Call v1, -, v3, v6
+    v10 = Integer integer=1
+    v11 = Add v6, v10
+    Jump -> next b3(v11)
+  b5():
+    Return v3
+  b6():
+    v12 = Integer integer=1
+    v13 = Add v3, v12
+    Jump -> next b1(v13)
+}
+function f3 name="carry" role=Library parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+    v2 = CallDirect v0, v1 function=f2
+    Return v2
+}
+
+function f4 name="turn" parameters=[{type=number}] results=[{type=number}] {
+    v1 = NewClosure function=f0
+    v2 = NewClosure function=f1
+    v3 = CallDirect v0, v1 function=f3
+    v4 = CallDirect v0, v2 function=f3
+    v5 = Add v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f4 name="turn"
+# CHECK: v3{{*}}= CallDirect v0, v1 function=[[carryForShort]] [isNeverInlined]
+# CHECK-NEXT: v4{{*}}= CallDirect v0, v2 function=f3
+
+function f5 name="drive" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v0 function=f4 [isNeverInlined]
+    v4 = CallDirect v0 function=f7 [isNeverInlined]
+    v5 = CallDirect v0 function=f7 [isNeverInlined]
+    v6 = CallDirect v0 function=f7 [isNeverInlined]
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+function f6 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=9
+    v1 = Boolean boolean=true
+    v2 = CallDirect v0, v1 function=f5 [isNeverInlined]
+    Return v2
+}
+# Entered three times as often as `turn`, and most of the program: `turn` is not hot
+function f7 name="hotter" parameters=[{type=number}] results=[{type=number}] {
+# REPEAT: i = 0..238
+    v%(i+1) = Add v%(i), v0
+# END REPEAT
+    Return v239
+}
+# CHECK: function [[carryForShort]] name="carry" {{*}}role=CalleeVersion {{*}}parameters=[{type=number}, {type=f0}]

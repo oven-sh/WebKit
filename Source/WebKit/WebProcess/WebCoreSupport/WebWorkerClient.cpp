@@ -31,6 +31,7 @@
 #include "ModelDowncastConvertToBackingContext.h"
 #include "RemoteGPUProxy.h"
 #include "RemoteImageBufferProxy.h"
+#include "RemotePlaceholderRenderingContextSource.h"
 #include "RemoteRenderingBackendProxy.h"
 #include "WebGPUDowncastConvertToBackingContext.h"
 #include "WebPage.h"
@@ -58,12 +59,15 @@ public:
     UniqueRef<WorkerClient> createNestedWorkerClient(SerialFunctionDispatcher&) final;
     RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<WebCore::SerializedImageBuffer>) final;
     RefPtr<WebCore::ImageBuffer> createImageBufferFromTransferHandle(const WebCore::ImageBufferTransferHandle&) final;
+#if ENABLE(OFFSCREEN_CANVAS)
+    RefPtr<WebCore::PlaceholderRenderingContextSource> createPlaceholderRenderingContextSource(const WebCore::RemotePlaceholderRenderingContextIdentifier&) final;
+#endif
     RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, WebCore::RenderingMode, WebCore::RenderingPurpose, float resolutionScale, const WebCore::ColorSpace&, WebCore::ImageBufferFormat) const final;
 #if ENABLE(WEBGL)
     RefPtr<WebCore::GraphicsContextGL> createGraphicsContextGL(const WebCore::GraphicsContextGLAttributes&) const final;
 #endif
 #if HAVE(WEBGPU_IMPLEMENTATION)
-    RefPtr<WebCore::WebGPU::GPU> createGPUForWebGPU() const override;
+    RefPtr<WebCore::WebGPUIntegration> createGPUForWebGPU() const override;
 #endif
 private:
     RemoteRenderingBackendProxy& ensureRenderingBackend() const;
@@ -109,6 +113,13 @@ RefPtr<ImageBuffer> GPUProcessWebWorkerClient::createImageBufferFromTransferHand
     return protect(ensureRenderingBackend())->takeTransferredBuffer(handle);
 }
 
+#if ENABLE(OFFSCREEN_CANVAS)
+RefPtr<PlaceholderRenderingContextSource> GPUProcessWebWorkerClient::createPlaceholderRenderingContextSource(const RemotePlaceholderRenderingContextIdentifier& identifier)
+{
+    return RemotePlaceholderRenderingContextSource::create(identifier);
+}
+#endif
+
 RefPtr<ImageBuffer> GPUProcessWebWorkerClient::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const ColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
 {
     if (RefPtr dispatcher = this->dispatcher())
@@ -139,7 +150,7 @@ RefPtr<GraphicsContextGL> GPUProcessWebWorkerClient::createGraphicsContextGL(con
 #endif
 
 #if HAVE(WEBGPU_IMPLEMENTATION)
-RefPtr<WebCore::WebGPU::GPU> GPUProcessWebWorkerClient::createGPUForWebGPU() const
+RefPtr<WebCore::WebGPUIntegration> GPUProcessWebWorkerClient::createGPUForWebGPU() const
 {
     RefPtr dispatcher = this->dispatcher();
     if (!dispatcher)
@@ -211,7 +222,7 @@ RefPtr<GraphicsContextGL> WebWorkerClient::createGraphicsContextGL(const Graphic
 #endif
 
 #if HAVE(WEBGPU_IMPLEMENTATION)
-RefPtr<WebCore::WebGPU::GPU> WebWorkerClient::createGPUForWebGPU() const
+RefPtr<WebCore::WebGPUIntegration> WebWorkerClient::createGPUForWebGPU() const
 {
     return nullptr;
 }

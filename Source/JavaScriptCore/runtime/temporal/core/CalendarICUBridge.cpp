@@ -35,10 +35,11 @@
 #include <wtf/Lock.h>
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/TZoneMalloc.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/TinyLRUCache.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/icu/UnicodeExtras.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
 
 namespace JSC {
@@ -57,7 +58,7 @@ CalendarID calendarIDFromString(StringView identifier)
 }
 
 // buildICULocale — internal: maps BCP47 calendar ID to ICU locale string
-static CString buildICULocale(StringView calendarId)
+static UTF8CString buildICULocale(StringView calendarId)
 {
     String bcp47(calendarId.toString());
     auto mapped = mapBCP47ToICUCalendarKeyword(bcp47);
@@ -72,18 +73,16 @@ static std::unique_ptr<UCalendar, ICUDeleter<ucal_close>> buildCalendarTemplate(
     auto str = calendarIDToString(calendarId);
     auto locale = buildICULocale(str);
     UErrorCode status = U_ZERO_ERROR;
-    auto cal = std::unique_ptr<UCalendar, ICUDeleter<ucal_close>>(ucal_open(u"UTC", 3, locale.data(), UCAL_DEFAULT, &status));
+    auto cal = std::unique_ptr<UCalendar, ICUDeleter<ucal_close>>(ucalOpen(u"UTC", 3, locale, UCAL_DEFAULT, &status));
     if (U_FAILURE(status)) [[unlikely]]
         return nullptr;
-    // Set to ExactTime::minValue in ms — the minimum representable Temporal instant — making ICU
-    // use proleptic Gregorian for all valid dates (effectively -infinity for our purposes).
+    // Make ICU use proleptic Gregorian for all valid dates.
     // ucal_setGregorianChange is only supported on the base Gregorian calendar; ICU returns
     // U_UNSUPPORTED_ERROR for derived calendars (Japanese, Buddhist, ROC). Those derived
     // calendars cannot be configured this way, so Gregorian-arithmetic accessors route through
     // the base Gregorian calendar below.
     if (calendarId == gregoryCalendarID() || calendarIsISO(calendarId)) {
-        const double prolepticGregorianChangeMs = -8.64e15; // ExactTime::minValue / nsPerMillisecond
-        ucal_setGregorianChange(cal.get(), prolepticGregorianChangeMs, &status);
+        ucal_setGregorianChange(cal.get(), prolepticGregorianChangeDate, &status);
         if (U_FAILURE(status)) [[unlikely]]
             return nullptr;
     }
@@ -169,7 +168,7 @@ static RefPtr<CalendarCacheEntry> calendarCacheEntry(CalendarID calendarId)
 }
 
 template<typename F>
-static auto withCalendar(CalendarID calendarId, F&& fn) -> decltype(fn(static_cast<UCalendar*>(nullptr)))
+static auto withCalendar(CalendarID calendarId, NOESCAPE const F& fn) -> decltype(fn(static_cast<UCalendar*>(nullptr)))
 {
     auto entry = calendarCacheEntry(calendarId);
     ASSERT(entry);
@@ -216,7 +215,7 @@ static std::optional<ISO8601::PlainDate> isoDateFromCalendarChecked(UCalendar* c
 }
 
 template<typename F>
-static auto withCalendarSetToDate(CalendarID calendarId, const ISO8601::PlainDate& isoDate, F&& body) -> decltype(body(static_cast<UCalendar*>(nullptr)))
+static auto withCalendarSetToDate(CalendarID calendarId, const ISO8601::PlainDate& isoDate, NOESCAPE const F& body) -> decltype(body(static_cast<UCalendar*>(nullptr)))
 {
     return withCalendar(calendarId, [&](UCalendar* cal) -> decltype(body(cal)) {
         if (!cal) [[unlikely]]

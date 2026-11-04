@@ -66,14 +66,20 @@ VP9TestingOverrides& VP9TestingOverrides::singleton()
 
 void VP9TestingOverrides::setHardwareDecoderDisabled(std::optional<bool>&& disabled)
 {
-    m_hardwareDecoderDisabled = WTF::move(disabled);
+    {
+        Locker locker { m_hardwareDecoderLock };
+        m_hardwareDecoderDisabled = WTF::move(disabled);
+    }
     if (m_configurationChangedCallback)
         m_configurationChangedCallback(false);
 }
 
 void VP9TestingOverrides::setVP9HardwareDecoderEnabledOverride(std::optional<bool>&& enabled)
 {
-    m_vp9HardwareDecoderEnabledOverride = WTF::move(enabled);
+    {
+        Locker locker { m_hardwareDecoderLock };
+        m_vp9HardwareDecoderEnabledOverride = WTF::move(enabled);
+    }
     if (m_configurationChangedCallback)
         m_configurationChangedCallback(false);
 }
@@ -132,7 +138,7 @@ enum class ResolutionCategory : uint8_t {
     R_12K,
 };
 
-static ResolutionCategory NODELETE resolutionCategory(const FloatSize& size)
+static ResolutionCategory LEGACY_NODELETE resolutionCategory(const FloatSize& size)
 {
     auto pixels = size.area();
     if (pixels > 7680 * 4320)
@@ -157,19 +163,18 @@ void registerWebKitVP9Decoder()
 #endif
 }
 
-static std::optional<bool> s_vp9HardwareDecoderAvailableInProcess = { };
+static Lock s_vp9HardwareDecoderAvailableInProcessLock;
+static std::optional<bool> s_vp9HardwareDecoderAvailableInProcess WTF_GUARDED_BY_LOCK(s_vp9HardwareDecoderAvailableInProcessLock) = { };
 void setVP9HardwareDecoderAvailableInProcess(bool value)
 {
-    ASSERT(isMainThread());
-
+    Locker locker { s_vp9HardwareDecoderAvailableInProcessLock };
     ASSERT(!s_vp9HardwareDecoderAvailableInProcess || *s_vp9HardwareDecoderAvailableInProcess == value);
     s_vp9HardwareDecoderAvailableInProcess = value;
 }
 
 static bool internalVP9HardwareDecoderAvailableInProcess()
 {
-    ASSERT(isMainThread() || !!s_vp9HardwareDecoderAvailableInProcess);
-
+    Locker locker { s_vp9HardwareDecoderAvailableInProcessLock };
     if (!s_vp9HardwareDecoderAvailableInProcess)
         s_vp9HardwareDecoderAvailableInProcess = canLoad_VideoToolbox_VTIsHardwareDecodeSupported() && VTIsHardwareDecodeSupported(kCMVideoCodecType_VP9);
     return *s_vp9HardwareDecoderAvailableInProcess;
@@ -185,16 +190,17 @@ void registerSupplementalVP9Decoder()
     if (canLoad_VideoToolbox_VTRegisterSupplementalVideoDecoderIfAvailable())
         softLink_VideoToolbox_VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9);
 
+    Locker locker { s_vp9HardwareDecoderAvailableInProcessLock };
     if (s_vp9HardwareDecoderAvailableInProcess && !*s_vp9HardwareDecoderAvailableInProcess)
         s_vp9HardwareDecoderAvailableInProcess = { };
 }
 
-bool shouldEnableVP9Decoder()
+bool LEGACY_NODELETE shouldEnableVP9Decoder()
 {
     return VP9TestingOverrides::singleton().shouldEnableVP9Decoder();
 }
 
-static bool isSWDecodersAlwaysEnabled()
+static bool LEGACY_NODELETE isSWDecodersAlwaysEnabled()
 {
     return VP9TestingOverrides::singleton().swVPDecodersAlwaysEnabled();
 }
@@ -204,7 +210,7 @@ bool shouldEnableSWVP9Decoder()
     return isSWDecodersAlwaysEnabled() || (!vp9HardwareDecoderAvailable() && !systemHasBattery());
 }
 
-static bool isVP9HardwareDecoderAvailabilityKnown()
+static bool LEGACY_NODELETE isVP9HardwareDecoderAvailabilityKnown()
 {
     return VP9TestingOverrides::singleton().hardwareDecoderDisabled() || VP9TestingOverrides::singleton().vp9HardwareDecoderEnabledOverride();
 }
@@ -441,7 +447,7 @@ std::optional<PlatformMediaCapabilitiesInfo> computeVPParameters(const PlatformM
     return info;
 }
 
-static uint8_t NODELETE convertToColorPrimaries(const Primaries& coefficients)
+static uint8_t LEGACY_NODELETE convertToColorPrimaries(const Primaries& coefficients)
 {
     switch (coefficients) {
     case Primaries::kBt709:
@@ -471,7 +477,7 @@ static uint8_t NODELETE convertToColorPrimaries(const Primaries& coefficients)
     }
 }
 
-static uint8_t NODELETE convertToTransferCharacteristics(const TransferCharacteristics& characteristics)
+static uint8_t LEGACY_NODELETE convertToTransferCharacteristics(const TransferCharacteristics& characteristics)
 {
     switch (characteristics) {
     case TransferCharacteristics::kBt709:
@@ -511,7 +517,7 @@ static uint8_t NODELETE convertToTransferCharacteristics(const TransferCharacter
     }
 }
 
-static uint8_t NODELETE convertToMatrixCoefficients(const MatrixCoefficients& coefficients)
+static uint8_t LEGACY_NODELETE convertToMatrixCoefficients(const MatrixCoefficients& coefficients)
 {
     switch (coefficients) {
     case MatrixCoefficients::kRgb:
@@ -536,7 +542,7 @@ static uint8_t NODELETE convertToMatrixCoefficients(const MatrixCoefficients& co
         return VPConfigurationMatrixCoefficients::BT_2020_Constant_Luminance;
     }
 }
-static uint8_t NODELETE convertSubsamplingXYToChromaSubsampling(uint64_t x, uint64_t y)
+static uint8_t LEGACY_NODELETE convertSubsamplingXYToChromaSubsampling(uint64_t x, uint64_t y)
 {
     if (x & y)
         return VPConfigurationChromaSubsampling::Subsampling_420_Colocated;
@@ -716,6 +722,26 @@ Ref<VideoInfo> createVideoInfoFromVPCodecConfigurationRecord(const VPCodecConfig
 {
     FloatSize size { static_cast<float>(record.frameWidth), static_cast<float>(record.frameHeight) };
     return createVideoInfoFromVPCodecConfigurationRecord(record, size, size, colorSpaceOverride);
+}
+
+RefPtr<VideoInfo> createVideoInfoFromVP9Stream(std::span<const uint8_t> data, uint16_t width, uint16_t height)
+{
+    auto parsedRecord = vpCodecConfigurationRecordFromVPXByteStream(VPXCodec::Vp9, data);
+    if (!parsedRecord)
+        return { };
+
+    if (width)
+        parsedRecord->frameWidth = width;
+    if (height)
+        parsedRecord->frameHeight = height;
+
+    if (parsedRecord->colorPrimaries == VPConfigurationColorPrimaries::Unspecified && parsedRecord->transferCharacteristics == VPConfigurationTransferCharacteristics::Unspecified && parsedRecord->matrixCoefficients == VPConfigurationMatrixCoefficients::Unspecified) {
+        parsedRecord->colorPrimaries = VPConfigurationColorPrimaries::BT_709_6;
+        parsedRecord->transferCharacteristics = VPConfigurationTransferCharacteristics::BT_709_6;
+        parsedRecord->matrixCoefficients = VPConfigurationMatrixCoefficients::BT_709_6;
+    }
+
+    return createVideoInfoFromVPCodecConfigurationRecord(*parsedRecord);
 }
 
 }

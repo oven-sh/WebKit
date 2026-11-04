@@ -25,18 +25,18 @@
 
 #pragma once
 
-#include "WebGPUExternalTextureBindingLayout.h"
+#include <WebCore/WebGPUCppAPI.h>
 #include <wtf/Forward.h>
 
 namespace WebCore {
 
 struct GPUExternalTextureBindingLayout {
-    WebGPU::ExternalTextureBindingLayout convertToBacking() const
+    ::WebGPU::ExternalTextureBindingLayout convertToBacking() const
     {
         return { };
     }
 
-    Ref<JSON::Object> toJSON() const;
+    Ref<JSON::Object> LEGACY_NODELETE toJSON() const;
 };
 
 }

@@ -33,6 +33,9 @@
 #include "StyleGeneratedImage.h"
 
 namespace WebCore {
+
+class BitmapImage;
+
 namespace Style {
 
 class FilterImage final : public GeneratedImage, private CachedImageClient {
@@ -55,8 +58,6 @@ public:
     RefPtr<Image> inputImage() const { return m_image; }
     const Filter& filter() const LIFETIME_BOUND { return m_filter; }
 
-    static constexpr bool isFixedSize = true;
-
 private:
     explicit FilterImage(RefPtr<Image>&&, Filter&&);
 
@@ -64,14 +65,23 @@ private:
     Ref<DeprecatedCSSOMValue> computedStyleDeprecatedCSSOMValue(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&) const final;
     bool isPending() const final;
     void load(CachedResourceLoader&, const ResourceLoaderOptions&) final;
-    RefPtr<WebCore::Image> image(const RenderElement*, const FloatSize&, const GraphicsContext& destinationContext, bool isForFirstLine) const final;
+    ImageDrawResult draw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawTiled(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawNinePiece(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const NinePieceGeometry&, ImageDrawingOptions) const final;
     bool knownToBeOpaque(const RenderElement&) const final;
-    FloatSize fixedSize(const RenderElement&) const final;
+    bool containsCurrentColor() const final;
+    bool canDrawAtSize(const RenderElement&, const FloatSize&) const final;
+    DecodingMode decodingModeForImageDraw(const RenderBoxModelObject&, const PaintInfo&) const final;
+    InterpolationQuality interpolationQualityForImageDraw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const void* layer, const LayoutSize&) const final;
+    NaturalDimensions naturalDimensions(const RenderElement&, const ImageSizingContext&) const final;
     void didAddClient(RenderElement&) final { }
     void didRemoveClient(RenderElement&) final { }
 
     // CachedImageClient.
     void imageChanged(WebCore::CachedImage*, const IntRect* = nullptr) final;
+
+    RefPtr<BitmapImage> resolvedImage(const RenderElement&, const FloatSize&, const GraphicsContext& destinationContext, bool isForFirstLine) const;
 
     RefPtr<Image> m_image;
     Filter m_filter;

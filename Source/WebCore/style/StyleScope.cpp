@@ -703,8 +703,9 @@ void Scope::flushPendingDescendantUpdates()
 {
     ASSERT(m_hasDescendantWithPendingUpdate);
     ASSERT(!m_shadowRoot);
-    for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots())
+    for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots()) {
         const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().flushPendingUpdate();
+    }
     m_hasDescendantWithPendingUpdate = false;
 }
 
@@ -810,8 +811,9 @@ void Scope::didChangeViewportSize()
 void Scope::invalidateMatchedDeclarationsCache()
 {
     if (!m_shadowRoot) {
-        for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots())
+        for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots()) {
             const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().invalidateMatchedDeclarationsCache();
+        }
     }
 
     if (RefPtr resolver = resolverIfExists())

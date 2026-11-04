@@ -28,6 +28,7 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/spi/darwin/XPCSPI.h>
 #include <wtf/text/ASCIILiteral.h>
+#include <wtf/text/UTF8CStringView.h>
 #include <wtf/text/WTFString.h>
 
 #if OS(DARWIN)
@@ -57,10 +58,38 @@ inline String xpcStringGetString(xpc_object_t xvalue)
     return String::fromUTF8(unsafeMakeSpan(xpc_string_get_string_ptr(xvalue), xpc_string_get_length(xvalue))); // NOLINT
 }
 
+// Wrappers for XPC functions that take UTF-8 strings, so that callers can pass typed strings instead of
+// unwrapping them with legacyCStringPointer(). Like the functions they wrap, they return raw pointers,
+// which the caller adopts as before.
+
+inline void xpcDictionarySetString(xpc_object_t xdict, UTF8CStringView key, UTF8CStringView value)
+{
+    xpc_dictionary_set_string(xdict, key.utf8(), value.utf8());
+}
+
+inline void xpcArraySetString(xpc_object_t xarray, size_t index, UTF8CStringView value)
+{
+    xpc_array_set_string(xarray, index, value.utf8());
+}
+
+OS_OBJECT_RETURNS_RETAINED inline xpc_connection_t xpcConnectionCreateMachService(UTF8CStringView name, dispatch_queue_t targetQueue, uint64_t flags)
+{
+    return xpc_connection_create_mach_service(name.utf8(), targetQueue, flags);
+}
+
+OS_OBJECT_RETURNS_RETAINED inline xpc_object_t xpcConnectionCopyEntitlementValue(xpc_connection_t connection, UTF8CStringView entitlement)
+{
+    return xpc_connection_copy_entitlement_value(connection, entitlement.utf8());
+}
+
 } // namespace WTF
 
+using WTF::xpcArraySetString;
+using WTF::xpcConnectionCopyEntitlementValue;
+using WTF::xpcConnectionCreateMachService;
 using WTF::xpcDictionaryGetData;
 using WTF::xpcDictionaryGetString;
+using WTF::xpcDictionarySetString;
 using WTF::xpcErrorDescriptionKey;
 using WTF::xpcStringGetString;
 

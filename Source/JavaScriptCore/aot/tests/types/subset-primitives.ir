@@ -1,0 +1,25 @@
+# Primitive kinds are disjoint. never is inside everything and overlaps nothing, anything holds every JavaScript value, and absent is none.
+# RUN: subset
+# CHECK: t0 <= t0: yes overlaps: yes
+# CHECK: t0 <= t1: no overlaps: no
+# CHECK: t0 <= t10: yes overlaps: yes
+# CHECK: t0 <= t12: no overlaps: no
+# CHECK: t2 <= t3: no overlaps: yes
+# CHECK: t3 <= t2: yes overlaps: yes
+# CHECK: t4 <= t5: no overlaps: yes
+# CHECK: t4 <= t6: no overlaps: yes
+# CHECK: t5 <= t4: yes overlaps: yes
+# CHECK: t5 <= t6: no overlaps: no
+# CHECK: t6 <= t4: yes overlaps: yes
+# CHECK: t7 <= t8: no overlaps: no
+# CHECK: t10 <= t0: no overlaps: yes
+# CHECK: t10 <= t10: yes overlaps: yes
+# CHECK: t10 <= t12: no overlaps: no
+# CHECK: t11 <= t0: yes overlaps: no
+# CHECK: t11 <= t11: yes overlaps: no
+# CHECK: t12 <= t10: no overlaps: no
+# CHECK: t12 <= t12: yes overlaps: yes
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=undefined}, {type=null}, {type=boolean}, {type=true}, {type=number}, {type=int}, {type=double}, {type=string}, {type=symbol}, {type=bigint}, {type=anything}, {type=never}, {type=absent}] results=[{type=undefined}]

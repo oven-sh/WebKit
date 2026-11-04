@@ -1,0 +1,60 @@
+# for (const key of Array.prototype.keys.call({ get length() {} })); [...Array.prototype.values.call({ length: { valueOf() {} } })]; for (const pair of { length: { toString() {} }, [Symbol.iterator]: Array.prototype.entries });
+# An array iterator asks the object that it goes over for `length` and converts the answer to a number, whichever of keys, values and entries it hands out.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+# CHECK: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Counted"
+layout L1 name="Measured"
+layout L2 name="Length"
+layout L3 name="Borrowed"
+layout L4 name="OtherLength"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f1
+    DefineGetter v0, v1 key="length"
+    v3 = Builtin builtin=ArrayPrototypeKeys
+    v4 = Call v3, v0
+    v5 = IteratorOpen v4
+    v6 = IteratorResume v5
+    v7 = NewObject layout=L2 fields=[]
+    v8 = NewClosure function=f2
+    PropSet v7, v8 key="valueOf" mode=Strict
+    v10 = NewObject layout=L1 fields=[]
+    PropSet v10, v7 key="length" mode=Strict
+    v12 = Builtin builtin=ArrayPrototypeValues
+    v13 = Call v12, v10
+    v14 = NewArray contents=anything
+    AppendSpread v14, v13
+    v16 = NewObject layout=L4 fields=[]
+    v17 = NewClosure function=f3
+    PropSet v16, v17 key="toString" mode=Strict
+    v19 = NewClosure function=f4
+    PropSet v16, v19 key="other" mode=Strict
+    v21 = NewObject layout=L3 fields=[]
+    PropSet v21, v16 key="length" mode=Strict
+    v23 = Builtin builtin=ArrayPrototypeEntries
+    PropSet v21, v23 key=@@iterator mode=Strict
+    v25 = IteratorOpen v21
+    v26 = IteratorResume v25
+    Return
+}
+function f1 name="length" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=2
+    Return v1
+}
+function f2 name="valueOf" results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}
+function f3 name="toString" results=[{type=anything}] {
+    v0 = String string="2"
+    Return v0
+}
+function f4 name="other" results=[{type=anything}] {
+    Return
+}

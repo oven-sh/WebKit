@@ -226,25 +226,25 @@ template<typename T> struct IDLWrapper : IDLType<Ref<T>> {
     template<std::derived_from<T> U>
     static inline Ref<U> extractValueFromNullable(Ref<U>&& value) { return value; }
     template<std::derived_from<T> U>
-    static inline U& extractValueFromNullable(Ref<U>& value) { return value; }
+    static inline U& CLANG_POINTER_CONVERSION extractValueFromNullable(Ref<U>& value) { return value; }
     template<std::derived_from<T> U>
-    static inline U& extractValueFromNullable(U& value) { return value; }
+    static inline U& CLANG_POINTER_CONVERSION extractValueFromNullable(U& value) { return value; }
 
     template<std::derived_from<T> U>
     static inline Ref<U> extractValueFromNullable(RefPtr<U>&& value) { return value.releaseNonNull(); }
     template<std::derived_from<T> U>
-    static inline U& extractValueFromNullable(const RefPtr<U>& value) { return *value; }
+    static inline U& CLANG_POINTER_CONVERSION extractValueFromNullable(const RefPtr<U>& value) { return *value; }
     template<std::derived_from<T> U, typename WeakTraits>
     static inline Ref<U> extractValueFromNullable(WeakPtr<U, WeakTraits>&& value) { return value.releaseNonNull(); }
     template<std::derived_from<T> U, typename WeakTraits>
-    static inline U& extractValueFromNullable(const WeakPtr<U, WeakTraits>& value) { return *value; }
+    static inline U& CLANG_POINTER_CONVERSION extractValueFromNullable(const WeakPtr<U, WeakTraits>& value) { return *value; }
     template<std::derived_from<T> U>
-    static inline U& extractValueFromNullable(U* value) { return *value; }
+    static inline U& CLANG_POINTER_CONVERSION extractValueFromNullable(U* value) { return *value; }
 };
 
 template<typename T> struct IDLInterface : IDLWrapper<T> {
-    using ConversionResultType = T&;
-    using NullableConversionResultType = T*;
+    using ConversionResultType = Ref<T>;
+    using NullableConversionResultType = RefPtr<T>;
 };
 
 template<typename T> struct IDLCallbackInterface : IDLWrapper<T> {

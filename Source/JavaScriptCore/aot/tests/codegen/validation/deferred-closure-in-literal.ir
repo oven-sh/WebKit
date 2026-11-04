@@ -1,0 +1,36 @@
+# A closure that is the initial value of a deferred closure slot of an object literal has no code, and a read of the slot creates it. Validation passes over both, and the build succeeds
+# FORM: AsRead
+# RUN: compile
+# RUN(PLACED): pipeline CheckPlacement
+# OPTIONS: validate check=validate-back-end references=narrow disable=pass:InlineCalls,pass:SinkAllocations
+# STATISTIC: FieldsDeferringClosures = 1
+# STATISTIC: DeferredClosureSlots = 1
+# CHECK: image not empty
+# PLACED: [[closure]]: f1 = NewClosure function=f1 {{*}}closureForm=Deferred
+# PLACED-NEXT: = NewObject -, [[closure]] layout=L0
+# PLACED: = GetDeferredClosureSlot
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Widget" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+variable g0 name="widget" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f2
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="register" [isFreeName]
+    v7 = Call v6, -, v4
+    Return v7
+}
+function f1 name="run" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="later" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="run"
+    Return v1
+}

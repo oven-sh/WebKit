@@ -268,7 +268,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     protect(*_preferences)->setTelephoneNumberParsingEnabled(telephoneNumberDetectionIsEnabled);
 }
 
-static WebCore::StorageBlockingPolicy NODELETE toStorageBlockingPolicy(_WKStorageBlockingPolicy policy)
+static WebCore::StorageBlockingPolicy LEGACY_NODELETE toStorageBlockingPolicy(_WKStorageBlockingPolicy policy)
 {
     switch (policy) {
     case _WKStorageBlockingPolicyAllowAll:
@@ -283,7 +283,7 @@ static WebCore::StorageBlockingPolicy NODELETE toStorageBlockingPolicy(_WKStorag
     return WebCore::StorageBlockingPolicy::AllowAll;
 }
 
-static _WKStorageBlockingPolicy NODELETE toAPI(WebCore::StorageBlockingPolicy policy)
+static _WKStorageBlockingPolicy LEGACY_NODELETE toAPI(WebCore::StorageBlockingPolicy policy)
 {
     switch (policy) {
     case WebCore::StorageBlockingPolicy::AllowAll:
@@ -436,6 +436,16 @@ static _WKStorageBlockingPolicy NODELETE toAPI(WebCore::StorageBlockingPolicy po
 - (void)_setAnimatedImageAsyncDecodingEnabled:(BOOL)_animatedImageAsyncDecodingEnabled
 {
     protect(*_preferences)->setAnimatedImageAsyncDecodingEnabled(_animatedImageAsyncDecodingEnabled);
+}
+
+- (BOOL)_contentSizeCategoryTextScaleEnabled
+{
+    return protect(*_preferences)->contentSizeCategoryTextScaleEnabled();
+}
+
+- (void)_setContentSizeCategoryTextScaleEnabled:(BOOL)enabled
+{
+    protect(*_preferences)->setContentSizeCategoryTextScaleEnabled(enabled);
 }
 
 - (BOOL)_textAutosizingEnabled
@@ -807,7 +817,7 @@ static _WKStorageBlockingPolicy NODELETE toAPI(WebCore::StorageBlockingPolicy po
     protect(*_preferences)->setShouldAllowUserInstalledFonts(_shouldAllowUserInstalledFonts);
 }
 
-static _WKEditableLinkBehavior NODELETE toAPI(WebCore::EditableLinkBehavior behavior)
+static _WKEditableLinkBehavior LEGACY_NODELETE toAPI(WebCore::EditableLinkBehavior behavior)
 {
     switch (behavior) {
     case WebCore::EditableLinkBehavior::Default:
@@ -826,7 +836,7 @@ static _WKEditableLinkBehavior NODELETE toAPI(WebCore::EditableLinkBehavior beha
     return _WKEditableLinkBehaviorNeverLive;
 }
 
-static WebCore::EditableLinkBehavior NODELETE toEditableLinkBehavior(_WKEditableLinkBehavior wkBehavior)
+static WebCore::EditableLinkBehavior LEGACY_NODELETE toEditableLinkBehavior(_WKEditableLinkBehavior wkBehavior)
 {
     switch (wkBehavior) {
     case _WKEditableLinkBehaviorDefault:

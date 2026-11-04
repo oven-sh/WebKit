@@ -1,0 +1,62 @@
+# The declared effects of a row as they are printed, one row for each kind of item: no effect, a flag, an entire heap, a location from the payload, unknown code
+# FORM: Prepared
+# RUN: effects
+# RUN(ONLY): effects
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="A" fields=[{key="x" declared={type=number}}]
+layout L1 name="B" fields=[{key="y" declared={type=number}}]
+layout L2 kind=Environment fields=[{key="c" declared={type=anything}}]
+variable g0 name="kept" declared={type=anything} initialization=Undefined
+function f0 name="items" captures=[{type=env L2}] parameters=[{type=object}, {type=Array<number, pristine[Storage, Names]>}, {type=Array<string, pristine[Storage, Names]>}] results=[{type=undefined}] {
+  b0(v0: env L2, v1: object, v2: Array<number, pristine[Storage, Names]>, v3: Array<string, pristine[Storage, Names]>):
+    v4 = Integer integer=1
+    v5 = String string="a"
+    v6 = NewObject -, v4 layout=L0 fields=[0]
+    v7 = GetModuleVariable variable=g0
+    PutEnvironmentField v0, v4 layout=L2 field=0
+    v9 = MaterializeEnvironment v0 layout=L2
+    v10 = ShapeTest v1 layouts=[L0, L1]
+    v11 = GetArrayLength v2
+    v12 = GetArrayLength v3
+    AppendElement v2, v4
+    LoopHint
+    v15 = ScopeHasBinding v1 key="x"
+    Throw v4
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v4 Integer: none
+# CHECK-NEXT: v5 String: reads(AllocatorState) writes(AllocatorState)
+# CHECK-NEXT: v6 NewObject: reads(AllocatorState) writes(AllocatorState) collects
+# CHECK-NEXT: v7 GetModuleVariable: reads(ModuleVariables/1)
+# CHECK-NEXT: v8 PutEnvironmentField: writes(EnvironmentFields/1)
+# CHECK-NEXT: v9 MaterializeEnvironment: reads(EnvironmentFields, AllocatorState) writes(AllocatorState) collects
+# CHECK-NEXT: v10 ShapeTest: reads(ShapeWords/2)
+# CHECK-NEXT: v11 GetArrayLength: reads(ArrayStorage)
+# CHECK-NEXT: v12 GetArrayLength: reads(ArrayStorage)
+# CHECK-NEXT: v13 AppendElement: reads(Elements/1, ArrayStorage, AllocatorState) writes(Elements/1, ArrayStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v14 LoopHint: reads(RuntimeState) writes(RuntimeState) throwsForLackOfMemory collects terminates
+# CHECK-NEXT: v15 ScopeHasBinding: unknownCode
+# CHECK-NEXT: b0 Throw: throws
+function f1 name="generator" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+    InitialYield
+    v2 = Undefined
+    v3 = Yield v2
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v1 InitialYield: unknownCode suspends
+# CHECK-NEXT: v2 Undefined: none
+# CHECK-NEXT: v3 Yield: unknownCode suspends
+# CHECK-NEXT: b0 Return: none
+# ONLY-NOT: String:{{*}}collects
+# ONLY-NOT: String:{{*}}throws
+# ONLY-NOT: GetModuleVariable:{{*}}writes
+# ONLY-NOT: PutEnvironmentField:{{*}}reads
+# ONLY-NOT: ShapeTest:{{*}}writes
+# ONLY-NOT: GetArrayLength:{{*}}, 
+# ONLY-NOT: GetArrayLength:{{*}}writes
+# ONLY-NOT: AppendElement:{{*}}terminates
+# ONLY-NOT: LoopHint:{{*}}throws collects
+# ONLY-NOT: ScopeHasBinding:{{*}}suspends
+# ONLY-NOT: Throw:{{*}}collects

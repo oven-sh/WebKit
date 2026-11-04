@@ -1,0 +1,38 @@
+# `style.wrap ??= "nowrap"` in a function that reads four optional fields of such records: the read takes the empty slot for undefined, so no test of the slot has failed in front of the store
+# that fills it. The store expects the slot empty as well: it creates the field or overwrites it under the tests the reads have passed, and the code behind it stays typed code
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="/application.js" displayPath="application.js" body=f0
+entry module=m0
+layout L0 name="Style" module=m0 fields=[{key="children" declared={type=anything}}, {key="color" declared={type=undefined|string}}, {key="bold" declared={type=undefined|boolean}}, {key="dim" declared={type=undefined|boolean}}, {key="wrap" declared={type=undefined|string}}]
+
+function f0 name="" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = String string="a"
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewClosure function=f1
+    v5 = Call v1, -, v3, v4
+    Return v5
+}
+
+function f1 name="fillsAnOption" module=m0 parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="color"
+    v2 = PropGet v0 key="bold"
+    v3 = PropGet v0 key="dim"
+    v4 = PropGet v0 key="wrap"
+    v5 = TypeTest v4 testedType=undefined|null
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = String string="nowrap"
+    PropSet v0, v6 key="wrap"
+    Jump -> next b2()
+  b2():
+    v8 = NewArray v1, v2, v3
+    Return v8
+}
+# CHECK-LABEL: name="fillsAnOption"
+# CHECK: = GetSlotOrUndefined {{*}} key="wrap"
+# CHECK-NOT: IsSlotFilled
+# CHECK: PutSlotOrAdd {{*}} key="wrap"

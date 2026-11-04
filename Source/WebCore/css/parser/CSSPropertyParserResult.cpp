@@ -44,7 +44,7 @@ void PropertyParserResult::addProperty([[maybe_unused]] CSS::PropertyParserState
     int shorthandIndex = 0;
     bool setFromShorthand = false;
 
-    if (currentShorthand) {
+    if (currentShorthand != CSSPropertyID::Invalid) {
         auto shorthands = matchingShorthandsForLonghand(property);
         setFromShorthand = true;
         if (shorthands.size() > 1)

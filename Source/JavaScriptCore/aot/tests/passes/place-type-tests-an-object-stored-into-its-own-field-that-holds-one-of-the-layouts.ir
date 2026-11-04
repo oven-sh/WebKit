@@ -1,0 +1,40 @@
+# An unknown value, a note and a link are each stored into their own field "next". Two layouts have such a field: a note may hold anything there, a link only a link. A link is seen to arrive, so links are tested for;
+# the stored value is the receiver, so the store behind both tests is planned for links alone: their field is always filled, and nothing is added
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Note" fields=[{key="text" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Link" fields=[{key="next" declared={type=undefined|L1} flags=[IsRequired]}, {key="n" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=5
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Undefined
+    v6 = NewObject -, v5, v2 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = NewObject -, v7, v2 layout=L1 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = PropGet v9 key="next"
+    v11 = PropGet v10 key="n"
+    v12 = CallDirect v1 function=f1
+    v13 = CallDirect v4 function=f1
+    v14 = Builtin builtin=ObjectKeys
+    v15 = Call v14, -, v4
+    v16 = CallDirect v9 function=f1
+    v17 = NewArray v11, v15
+    Return v17
+}
+function f1 name="mark" parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v0 key="next"
+    Return v0
+# CHECK: = TypeTest v0 testedType=L1
+# CHECK: ([[link]]: L1):
+# CHECK-NEXT: PutSlot [[link]], {{*}}, [[link]] key="next" receivers=[L1] level=Expected
+# CHECK: PropSet v0, v0 key="next"
+}

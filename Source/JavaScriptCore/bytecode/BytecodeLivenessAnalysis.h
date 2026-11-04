@@ -51,14 +51,14 @@ enum class LivenessCalculationPoint : uint8_t {
 class BytecodeLivenessPropagation {
 public:
     template<typename CodeBlockType, typename UseFunctor>
-    static void stepOverBytecodeIndexUse(CodeBlockType*, const JSInstructionStream&, BytecodeGraph&, BytecodeIndex, const UseFunctor&);
+    static void stepOverBytecodeIndexUse(CodeBlockType*, const JSInstructionStream&, BytecodeGraph&, BytecodeIndex, NOESCAPE const UseFunctor&);
     template<typename CodeBlockType, typename UseFunctor>
-    static void stepOverBytecodeIndexUseInExceptionHandler(CodeBlockType*, const JSInstructionStream&, BytecodeGraph&, BytecodeIndex, const UseFunctor&);
+    static void stepOverBytecodeIndexUseInExceptionHandler(CodeBlockType*, const JSInstructionStream&, BytecodeGraph&, BytecodeIndex, NOESCAPE const UseFunctor&);
     template<typename CodeBlockType, typename DefFunctor>
-    static void stepOverBytecodeIndexDef(CodeBlockType*, const JSInstructionStream&, BytecodeGraph&, BytecodeIndex, const DefFunctor&);
+    static void stepOverBytecodeIndexDef(CodeBlockType*, const JSInstructionStream&, BytecodeGraph&, BytecodeIndex, NOESCAPE const DefFunctor&);
 
     template<typename CodeBlockType, typename UseFunctor, typename DefFunctor>
-    static void stepOverBytecodeIndex(CodeBlockType*, const JSInstructionStream&, BytecodeGraph&, BytecodeIndex, const UseFunctor&, const DefFunctor&);
+    static void stepOverBytecodeIndex(CodeBlockType*, const JSInstructionStream&, BytecodeGraph&, BytecodeIndex, NOESCAPE const UseFunctor&, NOESCAPE const DefFunctor&);
 
     template<typename CodeBlockType>
     static void stepOverInstruction(CodeBlockType*, const JSInstructionStream&, BytecodeGraph&, BytecodeIndex, FastBitVector& out);
@@ -95,7 +95,7 @@ private:
     BytecodeGraph m_graph;
 };
 
-WTF::BitSet<maxNumCheckpointTmps> NODELETE tmpLivenessForCheckpoint(const CodeBlock&, BytecodeIndex);
+WTF::BitSet<maxNumCheckpointTmps> LEGACY_NODELETE tmpLivenessForCheckpoint(const CodeBlock&, BytecodeIndex);
 
 inline bool operandIsAlwaysLive(int operand);
 inline bool operandThatIsNotAlwaysLiveIsLive(const FastBitVector& out, int operand);

@@ -108,10 +108,8 @@ RemoteAudioVideoRendererProxyManager::~RemoteAudioVideoRendererProxyManager()
 {
     ALWAYS_LOG(LOGIDENTIFIER);
     for (auto& keyValuePair : std::exchange(m_renderers, { })) {
-        if (RefPtr renderer = keyValuePair.value.renderer) {
-            renderer->pause();
-            renderer->flush();
-        }
+        if (RefPtr renderer = keyValuePair.value.renderer)
+            renderer->shutdown();
     }
 }
 
@@ -119,10 +117,8 @@ void RemoteAudioVideoRendererProxyManager::connectionToWebProcessClosed()
 {
     ALWAYS_LOG(LOGIDENTIFIER);
     for (auto& keyValuePair : std::exchange(m_renderers, { })) {
-        if (RefPtr renderer = keyValuePair.value.renderer) {
-            renderer->pause();
-            renderer->flush();
-        }
+        if (RefPtr renderer = keyValuePair.value.renderer)
+            renderer->shutdown();
     }
 }
 
@@ -210,11 +206,18 @@ void RemoteAudioVideoRendererProxyManager::shutdown(RemoteAudioVideoRendererIden
     MESSAGE_CHECK(m_renderers.contains(identifier));
     ALWAYS_LOG(LOGIDENTIFIER, identifier.loggingString());
 
+    if (RefPtr renderer = rendererFor(identifier))
+        renderer->shutdown();
+}
+
+void RemoteAudioVideoRendererProxyManager::destroy(RemoteAudioVideoRendererIdentifier identifier)
+{
+    MESSAGE_CHECK(m_renderers.contains(identifier));
+    ALWAYS_LOG(LOGIDENTIFIER, identifier.loggingString());
+
     if (auto iterator = m_renderers.find(identifier); iterator != m_renderers.end()) {
-        if (RefPtr renderer = iterator->value.renderer) {
-            renderer->pause();
-            renderer->flush();
-        }
+        if (RefPtr renderer = iterator->value.renderer)
+            renderer->shutdown();
         m_renderers.remove(iterator);
     }
 }
@@ -304,7 +307,7 @@ MediaSampleConverter& RemoteAudioVideoRendererProxyManager::converterFor(Rendere
     }).iterator->value;
 }
 
-void RemoteAudioVideoRendererProxyManager::newTrackInfoForTrack(RemoteAudioVideoRendererIdentifier identifier, TrackIdentifier trackIdentifier, Ref<WebCore::TrackInfo>&& info)
+void RemoteAudioVideoRendererProxyManager::newTrackInfoForTrack(RemoteAudioVideoRendererIdentifier identifier, TrackIdentifier trackIdentifier, Ref<const WebCore::TrackInfo>&& info)
 {
     ALWAYS_LOG(LOGIDENTIFIER, identifier.loggingString());
 
@@ -673,7 +676,7 @@ void RemoteAudioVideoRendererProxyManager::currentBitmapImage(RemoteAudioVideoRe
             completionHandler(std::nullopt);
             return;
         }
-        completionHandler((*result)->createHandle());
+        completionHandler(protect(*result)->createHandle());
     });
 }
 

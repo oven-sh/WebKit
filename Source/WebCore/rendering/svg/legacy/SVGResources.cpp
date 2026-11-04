@@ -73,13 +73,11 @@ static const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& clipperFilterM
         &SVGNames::aTag,
         &SVGNames::circleTag,
         &SVGNames::ellipseTag,
-        &SVGNames::glyphTag,
         &SVGNames::gTag,
         &SVGNames::imageTag,
         &SVGNames::lineTag,
         &SVGNames::markerTag,
         &SVGNames::maskTag,
-        &SVGNames::missing_glyphTag,
         &SVGNames::pathTag,
         &SVGNames::polygonTag,
         &SVGNames::polylineTag,
@@ -97,7 +95,6 @@ static const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& clipperFilterM
 
         // Not listed in the definitions are the text content elements, though filter/clipper/masker on tspan/text/.. is allowed.
         // (Already mailed SVG WG, waiting for a solution)
-        &SVGNames::altGlyphTag,
         &SVGNames::textPathTag,
         &SVGNames::trefTag,
         &SVGNames::tspanTag,
@@ -129,7 +126,6 @@ static const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& markerTags()
 static const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& fillAndStrokeTags()
 {
     static constexpr std::array tags {
-        &SVGNames::altGlyphTag,
         &SVGNames::circleTag,
         &SVGNames::ellipseTag,
         &SVGNames::lineTag,
@@ -173,7 +169,7 @@ static inline String targetReferenceFromResource(SVGElement& element)
     return SVGURIReference::fragmentIdentifierFromIRIString(target, protect(element.document()));
 }
 
-static inline bool NODELETE isChainableResource(const SVGElement& element, const SVGElement& linkedResource)
+static inline bool LEGACY_NODELETE isChainableResource(const SVGElement& element, const SVGElement& linkedResource)
 {
     if (is<SVGPatternElement>(element))
         return is<SVGPatternElement>(linkedResource);
@@ -568,7 +564,7 @@ bool SVGResources::setClipper(LegacyRenderSVGResourceClipper* clipper)
     ASSERT(clipper->resourceType() == ClipperResourceType);
 
     if (!m_clipperFilterMaskerData)
-        m_clipperFilterMaskerData = makeUnique<ClipperFilterMaskerData>();
+        lazyInitialize(m_clipperFilterMaskerData, makeUnique<ClipperFilterMaskerData>());
 
     m_clipperFilterMaskerData->clipper = clipper;
     return true;
@@ -587,7 +583,7 @@ bool SVGResources::setFilter(LegacyRenderSVGResourceFilter* filter)
     ASSERT(filter->resourceType() == FilterResourceType);
 
     if (!m_clipperFilterMaskerData)
-        m_clipperFilterMaskerData = makeUnique<ClipperFilterMaskerData>();
+        lazyInitialize(m_clipperFilterMaskerData, makeUnique<ClipperFilterMaskerData>());
 
     m_clipperFilterMaskerData->filter = filter;
     return true;
@@ -606,7 +602,7 @@ bool SVGResources::setMarkerStart(LegacyRenderSVGResourceMarker* markerStart)
     ASSERT(markerStart->resourceType() == MarkerResourceType);
 
     if (!m_markerData)
-        m_markerData = makeUnique<MarkerData>();
+        lazyInitialize(m_markerData, makeUnique<MarkerData>());
 
     m_markerData->markerStart = markerStart;
     return true;
@@ -625,7 +621,7 @@ bool SVGResources::setMarkerMid(LegacyRenderSVGResourceMarker* markerMid)
     ASSERT(markerMid->resourceType() == MarkerResourceType);
 
     if (!m_markerData)
-        m_markerData = makeUnique<MarkerData>();
+        lazyInitialize(m_markerData, makeUnique<MarkerData>());
 
     m_markerData->markerMid = markerMid;
     return true;
@@ -644,7 +640,7 @@ bool SVGResources::setMarkerEnd(LegacyRenderSVGResourceMarker* markerEnd)
     ASSERT(markerEnd->resourceType() == MarkerResourceType);
 
     if (!m_markerData)
-        m_markerData = makeUnique<MarkerData>();
+        lazyInitialize(m_markerData, makeUnique<MarkerData>());
 
     m_markerData->markerEnd = markerEnd;
     return true;
@@ -663,7 +659,7 @@ bool SVGResources::setMasker(LegacyRenderSVGResourceMasker* masker)
     ASSERT(masker->resourceType() == MaskerResourceType);
 
     if (!m_clipperFilterMaskerData)
-        m_clipperFilterMaskerData = makeUnique<ClipperFilterMaskerData>();
+        lazyInitialize(m_clipperFilterMaskerData, makeUnique<ClipperFilterMaskerData>());
 
     m_clipperFilterMaskerData->masker = masker;
     return true;
@@ -682,7 +678,7 @@ bool SVGResources::setFill(LegacyRenderSVGResourceContainer* fill)
     ASSERT(fill->resourceType() == PatternResourceType || fill->resourceType() == LinearGradientResourceType || fill->resourceType() == RadialGradientResourceType);
 
     if (!m_fillStrokeData)
-        m_fillStrokeData = makeUnique<FillStrokeData>();
+        lazyInitialize(m_fillStrokeData, makeUnique<FillStrokeData>());
 
     m_fillStrokeData->fill = fill;
     return true;
@@ -701,7 +697,7 @@ bool SVGResources::setStroke(LegacyRenderSVGResourceContainer* stroke)
     ASSERT(stroke->resourceType() == PatternResourceType || stroke->resourceType() == LinearGradientResourceType || stroke->resourceType() == RadialGradientResourceType);
 
     if (!m_fillStrokeData)
-        m_fillStrokeData = makeUnique<FillStrokeData>();
+        lazyInitialize(m_fillStrokeData, makeUnique<FillStrokeData>());
 
     m_fillStrokeData->stroke = stroke;
     return true;

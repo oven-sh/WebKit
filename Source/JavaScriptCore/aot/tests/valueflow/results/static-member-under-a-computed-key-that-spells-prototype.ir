@@ -1,0 +1,42 @@
+# const k = "prototype";  class Both { static [k]() {} static get [k]() {} [k]() {} }
+# The prototype property of a class cannot be redefined: a static definition under that key throws where it runs. It keeps its operand, as a definition under a key nobody knows.
+# The prototype object has no such property: there the key is the name of the member.
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}members=[{side=Static function=f2{{*}}{side=Static kind=Getter function=f3{{*}}{key="prototype" function=f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Both" constructor=f1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = String string="prototype"
+    v1 = NewClosure function=f1
+    v2 = NewClass v1 layout=L0
+    v3 = ToPropertyKey v0
+    v4 = NewClosure function=f2
+    DefineMethod v2, v4, v3 layout=L0 side=Static
+    v6 = ToPropertyKey v0
+    v7 = NewClosure function=f3
+    DefineMethod v2, v7, v6 layout=L0 side=Static methodKind=Getter index=1
+    v9 = ToPropertyKey v0
+    v10 = NewClosure function=f4
+    DefineMethod v2, v10, v9 layout=L0 index=2
+    v12 = FinishClass v2 layout=L0
+    Return
+# CHECK: DefineMethod v2, v4, {{*}} layout=L0 side=Static
+# CHECK: DefineMethod v2, v7, {{*}} layout=L0 side=Static methodKind=Getter index=1
+# CHECK: DefineMethod v2, v10 layout=L0 index=2 key="prototype"
+}
+function f1 name="Both" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="prototype" module=m0 kind=Method results=[{type=anything}] {
+    Return
+}
+function f3 name="prototype" module=m0 kind=Method results=[{type=anything}] {
+    Return
+}
+function f4 name="prototype" module=m0 kind=Method results=[{type=anything}] {
+    Return
+}

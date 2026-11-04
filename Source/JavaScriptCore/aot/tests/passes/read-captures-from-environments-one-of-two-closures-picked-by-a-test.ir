@@ -1,0 +1,59 @@
+# Where the closures of two fields meet in one value and a test picks one of them out, each is read as a value: it is made at its first use, and what the test proves counts for neither field.
+# FORM: Prepared
+# RUN: pass ReadCapturesFromEnvironments RemoveUnreadFields
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="first" declared={type=f1}}, {key="second" declared={type=f2}}, {key="count" declared={type=number}}]
+
+function f0 name="scope" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[2]
+    v3 = NewClosure v2 function=f1
+    PutEnvironmentField v2, v3 layout=L0 field=0
+    v5 = NewClosure v2 function=f2
+    PutEnvironmentField v2, v5 layout=L0 field=1
+    v7 = CallDirect v2, v1 function=f3
+    Return v7
+# CHECK-NOT: NewClosure
+# CHECK: [[scope]]: env L0 = NewObject -, v0 layout=L0
+# CHECK-NEXT: = CallDirect [[scope]], v1 function=f3
+}
+
+function f1 name="first" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=2
+    Return v1
+}
+
+function f2 name="second" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=2
+    v2 = Add v1, v1
+    Return v2
+}
+
+function f3 name="picks" captures=[{type=env L0}] parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: env L0, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    Jump -> next b3(v2)
+  b2():
+    v3 = GetEnvironmentField v0 layout=L0 field=1
+    Jump -> next b3(v3)
+  b3(v4: f1|f2):
+    v5 = TypeTest v4 testedType=f2
+    Branch v5 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v6: f2):
+    v7 = GetCapture v6 function=f2
+    v8 = CallDirect v7 function=f2
+    Return v8
+  b5(v9: f1):
+    v10 = GetCapture v9 function=f1
+    v11 = CallDirect v10 function=f1
+    Return v11
+# CHECK: = TypeTest {{*}} testedType=f2
+# CHECK: = GetCapture {{*}} function=f2
+# CHECK: = GetCapture {{*}} function=f1
+# CHECK: = NewClosure v0 function=f1
+# CHECK: = NewClosure v0 function=f2
+}

@@ -21,8 +21,23 @@ pub fn generate(ir: &mut IR, options: &compile::Options) {
     transform::run!(rewrite_struct_samplers, ir);
     transform::run!(rewrite_array_of_array_of_opaque_uniforms, ir);
 
+    let driver_uniforms = {
+        let transform_options = transform::add_driver_uniforms::Options {
+            // Always declared for SPIR-V for simplicity, though used only with the
+            // prefer_precomputed_vertex_transform option.
+            add_transform_xy: true,
+            // Only declared if transform feedback needs emulation
+            add_xfb_emulation: options.add_vulkan_xfb_emulation_support_code,
+            // Only needed for MSL
+            declare_as_struct: false,
+            add_coverage_mask: false,
+        };
+        transform::run!(add_driver_uniforms, ir, &transform_options)
+    };
+
     {
-        let transform_options = transform::spirv::pass1::Options {};
+        let transform_options =
+            transform::spirv::pass1::Options { driver_uniforms: &driver_uniforms };
         transform::run!(spirv::pass1, ir, &transform_options);
     }
 }

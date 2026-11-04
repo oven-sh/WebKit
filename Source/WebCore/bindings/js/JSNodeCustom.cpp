@@ -88,7 +88,8 @@ bool JSNodeOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, v
 template<typename Visitor>
 void JSNode::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    addWebCoreOpaqueRoot(visitor, wrapped());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG addWebCoreOpaqueRoot(visitor, wrapped());
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSNode);
@@ -100,7 +101,8 @@ JSDOMGlobalObject* globalObjectForNode(Node& node, JSDOMGlobalObject* globalObje
     if (window && window->cachedMainWorldGlobalObject() == globalObject) [[likely]]
         return globalObject;
 
-    if (auto* documentGlobalObject = toJSDOMGlobalObject(node.document(), globalObject->world()))
+    // node keeps its document alive.
+    SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG if (auto* documentGlobalObject = toJSDOMGlobalObject(node.document(), globalObject->world()))
         return documentGlobalObject;
     return globalObject;
 }

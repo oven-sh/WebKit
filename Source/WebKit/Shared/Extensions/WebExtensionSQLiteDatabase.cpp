@@ -32,6 +32,7 @@
 #include "APIError.h"
 #include "Logging.h"
 #include "WebExtensionSQLiteHelpers.h"
+#include <WebCore/SQLiteExtras.h>
 #include <sqlite3.h>
 #include <wtf/FileSystem.h>
 #include <wtf/RefPtr.h>
@@ -63,7 +64,7 @@ int WebExtensionSQLiteDatabase::close()
 
     int result = sqlite3_close_v2(m_db);
     if (result != SQLITE_OK) {
-        RELEASE_LOG_ERROR(Extensions, "Failed to close database: %s (%d)", m_lastErrorMessage.data(), result);
+        RELEASE_LOG_ERROR(Extensions, "Failed to close database: %s (%d)", m_lastErrorMessage, result);
         return result;
     }
 
@@ -171,7 +172,8 @@ bool WebExtensionSQLiteDatabase::openWithAccessType(AccessType accessType, RefPt
         }
     }
 
-    int result = sqlite3_open_v2(FileSystem::fileSystemRepresentation(databasePath).legacyCStringPointer(), &m_db, flags, vfs.isEmpty() ? nullptr : vfs.utf8().legacyCStringPointer());
+    auto vfsUTF8 = vfs.isEmpty() ? UTF8CString { } : vfs.utf8();
+    int result = WebCore::sqliteOpen(FileSystem::fileSystemRepresentation(databasePath), &m_db, flags, vfsUTF8);
     if (result == SQLITE_OK)
         return true;
 

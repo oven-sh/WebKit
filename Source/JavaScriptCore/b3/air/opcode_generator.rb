@@ -370,6 +370,12 @@ class Parser
         }
     end
 
+    def setPreservesFlags(opcode, archs)
+        previousArchs = opcode.attributes[:preservesFlags]
+        parseError("Conflicting directives on preserving flags") if previousArchs and previousArchs != archs
+        opcode.attributes[:preservesFlags] = archs
+    end
+
     def parse
         result = {}
         
@@ -429,6 +435,18 @@ class Parser
                         opcode.attributes[:terminal] = true
                     when "nocode"
                         opcode.attributes[:nocode] = true
+                    when "definesFlags"
+                        opcode.attributes[:definesFlags] = true
+                    when "usesFlags"
+                        opcode.attributes[:usesFlags] = true
+                    when "preservesFlags"
+                        setPreservesFlags(opcode, :everywhere)
+                    when "preservesFlagsOnARM64"
+                        setPreservesFlags(opcode, :arm64)
+                    when "accessesMemoryFirst"
+                        opcode.attributes[:accessesMemoryFirst] = true
+                    when "mayFault"
+                        opcode.attributes[:mayFault] = true
                     else
                         parseError("Bad / directive")
                     end
@@ -441,6 +459,13 @@ class Parser
                     parseError("/nocode opcode cannot take arguments") unless signature.empty?
                     parseError("/nocode opcode cannot be a terminal") if opcode.attributes[:terminal]
                     parseError("/nocode opcode cannot be restricted to an architecture") if opcodeArchs
+                end
+
+                if opcode.attributes[:definesFlags] or opcode.attributes[:usesFlags]
+                    parseError("/definesFlags and /usesFlags need /effects") unless opcode.attributes[:effects]
+                end
+                if opcode.attributes[:definesFlags] and opcode.attributes[:preservesFlags]
+                    parseError("An opcode cannot define and preserve the flags")
                 end
 
                 parseArchs
@@ -691,6 +716,29 @@ $runTimeArchs = {
     "ARM64_SHA3" => "ARM64",
     "X86_64_AVX" => "X86_64"
 }
+$runTimeArchQueries = {
+    "ARM64_LSE" => "supportsLSE",
+    "ARM64_SHA3" => "supportsSHA3",
+    "X86_64_AVX" => "supportsAVX"
+}
+
+# A form of a run-time arch is valid when the CPU the code is generated for has the feature,
+# so a generated function that tests such a form needs a CPUFeatureSet named features in scope.
+def writeRunTimeArchQueries(outp)
+    $runTimeArchs.each_pair {
+        | arch, compileTimeArch |
+        outp.puts "inline bool is#{arch}(CPUFeatureSet features)"
+        outp.puts "{"
+        outp.puts "#if CPU(#{compileTimeArch})"
+        outp.puts "return MacroAssembler::#{$runTimeArchQueries[arch]}(features);"
+        outp.puts "#else"
+        outp.puts "UNUSED_PARAM(features);"
+        outp.puts "return false;"
+        outp.puts "#endif"
+        outp.puts "}"
+    }
+end
+
 def beginArchs(outp, archs)
     return unless archs
     if archs.empty?
@@ -716,7 +764,7 @@ def beginArchs(outp, archs)
     end
     outp.puts("if (" + archs.map {
                   | arch |
-                  "is#{arch}()"
+                  $runTimeArchs.has_key?(arch) ? "is#{arch}(features)" : "is#{arch}()"
               }.join(" || ") + ") {")
 end
 
@@ -724,6 +772,33 @@ def endArchs(outp, archs)
     return unless archs
     outp.puts "}"
     outp.puts "#endif"
+end
+
+def opcodesWithAttribute(attribute, value)
+    $opcodes.values.select {
+        | opcode |
+        opcode.attributes[attribute] == value
+    }
+end
+
+def writeTrueCases(outp, opcodes)
+    return if opcodes.empty?
+    opcodes.each {
+        | opcode |
+        outp.puts "case Opcode::#{opcode.name}:"
+    }
+    outp.puts "return true;"
+end
+
+def writeOpcodePredicate(outp, name)
+    outp.puts "inline bool #{name}(Opcode opcode)"
+    outp.puts "{"
+    outp.puts "switch (opcode) {"
+    yield
+    outp.puts "default:"
+    outp.puts "return false;"
+    outp.puts "}"
+    outp.puts "}"
 end
 
 maxNumOperands = 0
@@ -777,8 +852,19 @@ writeH("OpcodeUtils") {
     outp.puts "} while (false)"
 
     outp.puts "template<typename Functor>"
-    outp.puts "ALWAYS_INLINE void Inst::forEachArg(const Functor& functor)"
+    outp.puts "ALWAYS_INLINE void Inst::forEachArg(NOESCAPE const Functor& functor)"
     outp.puts "{"
+    outp.puts "if (kind.opcode == Opcode::Patch) {"
+    outp.puts "    if (const uint8_t* forms = patchForms()) {"
+    outp.puts "        auto args = this->args();"
+    outp.puts "        functor(args[0], Arg::Use, GP, pointerWidth());"
+    outp.puts "        for (size_t i = 1; i < args.size(); ++i) {"
+    outp.puts "            uint8_t form = forms[i - 1];"
+    outp.puts "            functor(args[i], decodeFormRole(form), decodeFormBank(form), decodeFormWidth(form));"
+    outp.puts "        }"
+    outp.puts "        return;"
+    outp.puts "    }"
+    outp.puts "}"
     outp.puts "switch (kind.opcode) {"
     $opcodes.values.each {
         | opcode |
@@ -795,7 +881,7 @@ writeH("OpcodeUtils") {
     outp.puts "}"
     
     outp.puts "template<typename Func>"
-    outp.puts "ALWAYS_INLINE void Inst::forEachArgSimple(const Func& func)"
+    outp.puts "ALWAYS_INLINE void Inst::forEachArgSimple(NOESCAPE const Func& func)"
     outp.puts "{"
     outp.puts "    auto args = this->args();"
     outp.puts "    size_t numOperands = args.size();"
@@ -807,9 +893,35 @@ writeH("OpcodeUtils") {
     outp.puts "    }"
     outp.puts "}"
 
-    outp.puts "template<typename... Arguments>"
-    outp.puts "ALWAYS_INLINE bool isValidForm(Opcode opcode, Arguments... arguments)"
+    outp.puts "ALWAYS_INLINE const uint8_t* Inst::fixedForms(unsigned& firstArgWithForm)"
     outp.puts "{"
+    outp.puts "    switch (kind.opcode) {"
+    outp.puts "    case Opcode::Patch: {"
+    outp.puts "        const uint8_t* forms = patchForms();"
+    outp.puts "        firstArgWithForm = 1;"
+    outp.puts "        return forms ? forms - 1 : nullptr;"
+    outp.puts "    }"
+    $opcodes.values.each {
+        | opcode |
+        if opcode.custom and opcode.name != "Patch"
+            outp.puts "    case Opcode::#{opcode.name}:"
+        end
+    }
+    outp.puts "        return nullptr;"
+    outp.puts "    default: {"
+    outp.puts "        size_t numOperands = m_size;"
+    outp.puts "        firstArgWithForm = 0;"
+    outp.puts "        return g_formTable + kind.opcode * #{formTableWidth} + (numOperands - 1) * numOperands / 2;"
+    outp.puts "    }"
+    outp.puts "    }"
+    outp.puts "}"
+
+    writeRunTimeArchQueries(outp)
+
+    outp.puts "template<typename... Arguments>"
+    outp.puts "ALWAYS_INLINE bool isValidForm(CPUFeatureSet features, Opcode opcode, Arguments... arguments)"
+    outp.puts "{"
+    outp.puts "UNUSED_PARAM(features);"
     outp.puts "Arg::Kind kinds[sizeof...(Arguments)] = { arguments... };"
     outp.puts "switch (opcode) {"
     $opcodes.values.each {
@@ -897,6 +1009,42 @@ writeH("OpcodeUtils") {
     outp.puts "return false;"
     outp.puts "}"
     outp.puts "}"
+
+    writeOpcodePredicate(outp, "definesFlags") {
+        writeTrueCases(outp, opcodesWithAttribute(:definesFlags, true))
+    }
+
+    writeOpcodePredicate(outp, "usesFlags") {
+        writeTrueCases(outp, opcodesWithAttribute(:usesFlags, true))
+    }
+
+    writeOpcodePredicate(outp, "preservesFlags") {
+        writeTrueCases(outp, opcodesWithAttribute(:preservesFlags, :everywhere))
+        outp.puts "#if CPU(ARM64)"
+        writeTrueCases(outp, opcodesWithAttribute(:preservesFlags, :arm64))
+        outp.puts "#endif"
+    }
+
+    writeOpcodePredicate(outp, "accessesMemoryFirst") {
+        writeTrueCases(outp, opcodesWithAttribute(:accessesMemoryFirst, true))
+    }
+
+    writeOpcodePredicate(outp, "mayFault") {
+        writeTrueCases(outp, opcodesWithAttribute(:mayFault, true))
+    }
+
+    writeOpcodePredicate(outp, "mayZeroExtendWord") {
+        writeTrueCases(outp, $opcodes.values.select {
+            | opcode |
+            !opcode.custom and opcode.overloads.any? {
+                | overload |
+                overload.signature.any? {
+                    | arg |
+                    ["ZD", "UZD", "EZD"].include?(arg.role) and arg.bank == "G" and ["8", "16", "32"].include?(arg.width)
+                }
+            }
+        })
+    }
     
     outp.puts "} } } // namespace JSC::B3::Air"
 
@@ -1007,8 +1155,9 @@ writeH("OpcodeGenerated") {
     outp.puts "}"
     outp.puts "}"
     
-    outp.puts "bool Inst::isValidForm()"
+    outp.puts "bool Inst::isValidForm(CPUFeatureSet features)"
     outp.puts "{"
+    outp.puts "UNUSED_PARAM(features);"
     outp.puts "auto args = this->args();"
     matchInstOverloadForm(outp, :safe, "this") {
         | opcode, overload, form |
@@ -1278,6 +1427,21 @@ writeH("OpcodeGenerated") {
     outp.puts "return false;"
     outp.puts "}"
     outp.puts "}"
+
+    outp.puts "bool Inst::needsFrame()"
+    outp.puts "{"
+    outp.puts "switch (kind.opcode) {"
+    $opcodes.values.each {
+        | opcode |
+        if opcode.custom
+            outp.puts "case Opcode::#{opcode.name}:"
+            outp.puts "return #{opcode.name}Custom::needsFrame(*this);"
+        end
+    }
+    outp.puts "default:"
+    outp.puts "return false;"
+    outp.puts "}"
+    outp.puts "}"
     
     outp.puts "bool Inst::hasNonArgNonControlEffects()"
     outp.puts "{"
@@ -1340,6 +1504,8 @@ writeH("OpcodeGenerated") {
     outp.puts "auto args = this->args();"
     outp.puts "UNUSED_PARAM(jit);"
     outp.puts "UNUSED_PARAM(context);"
+    outp.puts "CPUFeatureSet features = jit.policy().features;"
+    outp.puts "UNUSED_VARIABLE(features);"
     outp.puts "CCallHelpers::Jump result;"
     matchInstOverloadForm(outp, :fast, "this") {
         | opcode, overload, form |

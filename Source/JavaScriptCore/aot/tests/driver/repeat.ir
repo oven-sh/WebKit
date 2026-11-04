@@ -1,0 +1,24 @@
+# the lines of a REPEAT are written once for each value of its names: numbers of a range, words of a list, one REPEAT inside another, check lines too
+# RUN: print
+# REPEAT: i = 0..2; operation = Add Sub Mul
+# CHECK-LABEL: function f%(i) name="f%(i:3)"
+# CHECK: v2{{*}}= %(operation) v0, v1
+# CHECK-NEXT: v3{{*}}= Integer integer=%(i*-2+7)
+# CHECK-NEXT: v4{{*}}= Integer integer=%(i*10+10)
+# CHECK-NEXT: v5{{*}}= Integer integer=%(i*10+10)
+# CHECK-NEXT: Return v%(i+3)
+# END REPEAT
+# CHECK-NOT: function f3
+
+module m0 path="main.js" displayPath="main.js"
+# REPEAT: i = 0..2; operation = Add Sub Mul
+function f%(i) name="f%(i:3)" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    v2 = %(operation) v0, v1
+    v3 = Integer integer=%(i*-2+7)
+# REPEAT: j = 4..5
+    v%(j) = Integer integer=%(i*10+10)
+# END REPEAT
+    Return v%(i+3)
+}
+# END REPEAT

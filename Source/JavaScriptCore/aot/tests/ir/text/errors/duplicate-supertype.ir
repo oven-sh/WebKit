@@ -1,0 +1,7 @@
+# A supertype listed twice
+# RUN: print
+# DIAGNOSTIC: DuplicateListEntry
+
+layout L0
+layout L1
+layout L2 supertypes=[L0, L0]

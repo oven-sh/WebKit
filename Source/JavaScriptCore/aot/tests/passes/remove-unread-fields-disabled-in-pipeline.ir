@@ -1,0 +1,35 @@
+# With the pass disabled in a whole pipeline, a field that is only called and a field that is never read stay
+# FORM: AsRead
+# RUN: pipeline RemoveUnusedResults
+# OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,EliminateDeadCode,RemoveUnreadFields,RemoveUnusedResults
+# OPTIONS: disable=pass:RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="retained" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Record" fields=[{key="run" declared={type=anything} flags=[IsRequired]}, {key="unread" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = NewObject -, v2, v1, v1 layout=L0 fields=[0, 1, 2]
+    PutModuleVariable v3 variable=g0
+    v5 = CallDirect function=f1
+    Return
+# CHECK: function=f2
+# CHECK: layout=L0 fields=[0, 1, 2]
+}
+
+function f1 name="uses" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="n"
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0
+    Return v1
+}
+
+function f2 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}

@@ -30,6 +30,7 @@ WI.RuntimeManager = class RuntimeManager extends WI.Object
         super();
 
         this._activeExecutionContext = null;
+        this._useActiveCallFrame = true;
 
         WI.settings.consoleSavedResultAlias.addEventListener(WI.Setting.Event.Changed, function(event) {
             for (let target of WI.targets) {
@@ -48,6 +49,13 @@ WI.RuntimeManager = class RuntimeManager extends WI.Object
         if (!InspectorBackend.hasCommand("Runtime.setSavedResultAlias"))
             return "$";
         return WI.settings.consoleSavedResultAlias.value || "$";
+    }
+
+    static wrapLiteralExpression(expression)
+    {
+        if (/^\s*\{/.test(expression) && /\}\s*$/.test(expression))
+            return "(" + expression + ")";
+        return expression;
     }
 
     // Target
@@ -84,14 +92,27 @@ WI.RuntimeManager = class RuntimeManager extends WI.Object
         this.dispatchEventToListeners(WI.RuntimeManager.Event.ActiveExecutionContextChanged);
     }
 
-    evaluateInInspectedWindow(expression, options, callback)
+    get useActiveCallFrame()
+    {
+        return this._useActiveCallFrame;
+    }
+
+    set useActiveCallFrame(useActiveCallFrame)
+    {
+        if (this._useActiveCallFrame === useActiveCallFrame)
+            return;
+
+        this._useActiveCallFrame = useActiveCallFrame;
+
+        this.dispatchEventToListeners(WI.RuntimeManager.Event.ActiveExecutionContextChanged);
+    }
+
+    evaluateInInspectedWindow(expression, {objectGroup, includeCommandLineAPI, doNotPauseOnExceptionsAndMuteConsole, returnByValue, generatePreview, saveResult, emulateUserGesture, sourceURLAppender, disableAwaitConvenience}, callback)
     {
         if (!this._activeExecutionContext) {
             callback(null, false);
             return;
         }
-
-        let {objectGroup, includeCommandLineAPI, doNotPauseOnExceptionsAndMuteConsole, returnByValue, generatePreview, saveResult, emulateUserGesture, sourceURLAppender} = options;
 
         includeCommandLineAPI = includeCommandLineAPI || false;
         doNotPauseOnExceptionsAndMuteConsole = doNotPauseOnExceptionsAndMuteConsole || false;
@@ -107,23 +128,20 @@ WI.RuntimeManager = class RuntimeManager extends WI.Object
         if (!expression) {
             // There is no expression, so the completion should happen against global properties.
             expression = "this";
-        } else if (/^\s*\{/.test(expression) && /\}\s*$/.test(expression)) {
-            // Transform {a:1} to ({a:1}) so it is treated like an object literal instead of a block with a label.
-            expression = "(" + expression + ")";
-        } else if (/\bawait\b/.test(expression)) {
-            // Transform `await <expr>` into an async function assignment.
-            expression = this._tryApplyAwaitConvenience(expression);
+        } else {
+            let wrappedExpression = WI.RuntimeManager.wrapLiteralExpression(expression);
+            if (wrappedExpression !== expression)
+                expression = wrappedExpression;
+            else if (!disableAwaitConvenience && /\bawait\b/.test(expression)) {
+                // Transform `await <expr>` into an async function assignment.
+                expression = this._tryApplyAwaitConvenience(expression);
+            }
         }
 
         expression = sourceURLAppender(expression);
 
-        let target = this._activeExecutionContext.target;
-        let executionContextId = this._activeExecutionContext.id;
-
-        if (WI.debuggerManager.activeCallFrame) {
-            target = WI.debuggerManager.activeCallFrame.target;
-            executionContextId = target.executionContext.id;
-        }
+        let activeCallFrame = this._useActiveCallFrame ? WI.debuggerManager.activeCallFrame : null;
+        let target = activeCallFrame?.target || this._activeExecutionContext.target;
 
         function evalCallback(error, result, wasThrown, savedResultIndex)
         {
@@ -141,9 +159,9 @@ WI.RuntimeManager = class RuntimeManager extends WI.Object
                 callback(WI.RemoteObject.fromPayload(result, target), wasThrown, savedResultIndex);
         }
 
-        if (WI.debuggerManager.activeCallFrame) {
+        if (activeCallFrame) {
             target.DebuggerAgent.evaluateOnCallFrame.invoke({
-                callFrameId: WI.debuggerManager.activeCallFrame.id,
+                callFrameId: activeCallFrame.id,
                 expression,
                 objectGroup,
                 includeCommandLineAPI,
@@ -161,7 +179,7 @@ WI.RuntimeManager = class RuntimeManager extends WI.Object
             objectGroup,
             includeCommandLineAPI,
             doNotPauseOnExceptionsAndMuteConsole,
-            contextId: executionContextId,
+            contextId: this._activeExecutionContext.id,
             returnByValue,
             generatePreview,
             saveResult,
@@ -173,35 +191,66 @@ WI.RuntimeManager = class RuntimeManager extends WI.Object
     {
         console.assert(remoteObject instanceof WI.RemoteObject);
 
-        let target = this._activeExecutionContext.target;
-        let executionContextId = this._activeExecutionContext.id;
-
         function mycallback(error, savedResultIndex)
         {
             callback(savedResultIndex);
         }
 
-        if (remoteObject.objectId)
-            target.RuntimeAgent.saveResult(remoteObject.asCallArgument(), mycallback);
-        else
-            target.RuntimeAgent.saveResult(remoteObject.asCallArgument(), executionContextId, mycallback);
+        if (remoteObject.objectId) {
+            remoteObject.target.RuntimeAgent.saveResult(remoteObject.asCallArgument(), mycallback);
+            return;
+        }
+
+        let activeCallFrame = this._useActiveCallFrame ? WI.debuggerManager.activeCallFrame : null;
+        let executionContext = activeCallFrame?.target.executionContext || this._activeExecutionContext;
+        executionContext.target.RuntimeAgent.saveResult(remoteObject.asCallArgument(), executionContext.id, mycallback);
     }
 
     // Private
 
     _tryApplyAwaitConvenience(originalExpression)
     {
-        let esprimaSyntaxTree;
+        function containsTopLevelAwait(node) {
+            if (!node)
+                return false;
 
-        // Do not transform if the original code parses just fine.
+            switch (node.type) {
+            case "AssignmentExpression":
+            case "BinaryExpression":
+                return containsTopLevelAwait(node.left)
+                    || containsTopLevelAwait(node.right);
+            case "CallExpression":
+                return (node.callee.type === "Identifier" && node.callee.name === "await")
+                    || containsTopLevelAwait(node.callee)
+                    || node.arguments.some(containsTopLevelAwait);
+            case "ExpressionStatement":
+                return containsTopLevelAwait(node.expression);
+            case "VariableDeclaration":
+                if (node.declarations.length === 1) {
+                    let declaration = node.declarations[0];
+                    return declaration.id.type === "Identifier"
+                        && declaration.init?.type === "CallExpression"
+                        && declaration.init.callee.type === "Identifier"
+                        && declaration.init.callee.name === "await";
+                }
+                break;
+            }
+            return false;
+        }
+
+        let esprimaSyntaxTree = null;
+
+        // Do not transform if the original code parses just fine, unless `await(<expr>)` was parsed as a call to an identifier.
         try {
-            esprima.parse(originalExpression, {ecmaVersion: "latest"});
-            return originalExpression;
+            esprimaSyntaxTree = esprima.parse(originalExpression, {ecmaVersion: "latest"}).body[0];
         } catch { }
+        if (esprimaSyntaxTree && !containsTopLevelAwait(esprimaSyntaxTree))
+            return originalExpression;
 
         // Do not transform if the async function version does not parse.
+        let wrappedExpression = `(async function(){${originalExpression}})`;
         try {
-            esprimaSyntaxTree = esprima.parse("(async function(){" + originalExpression + "})");
+            esprimaSyntaxTree = esprima.parse(wrappedExpression, {range: true});
         } catch {
             return originalExpression;
         }
@@ -219,59 +268,74 @@ WI.RuntimeManager = class RuntimeManager extends WI.Object
         if (asyncFunctionBlock.body.length !== 1)
             return originalExpression;
 
-        // Extract the variable name for transformation.
-        let variableName;
-        let anonymous = false;
-        let declarationKind = "var";
-        let awaitPortion;
         let statement = asyncFunctionBlock.body[0];
-        if (statement.type === "ExpressionStatement"
-            && statement.expression.type === "AwaitExpression") {
-            // await <expr>
-            anonymous = true;
-        } else if (statement.type === "ExpressionStatement"
-            && statement.expression.type === "AssignmentExpression"
-            && statement.expression.right.type === "AwaitExpression"
-            && statement.expression.left.type === "Identifier") {
-            // x = await <expr>
-            variableName = statement.expression.left.name;
-            awaitPortion = originalExpression.substring(originalExpression.indexOf("await"));
-        } else if (statement.type === "VariableDeclaration"
-            && statement.declarations.length === 1
-            && statement.declarations[0].init.type === "AwaitExpression"
-            && statement.declarations[0].id.type === "Identifier") {
-            // var x = await <expr>
-            variableName = statement.declarations[0].id.name;
-            declarationKind = statement.kind;
-            awaitPortion = originalExpression.substring(originalExpression.indexOf("await"));
-        } else {
-            // Do not transform if this was not one of the simple supported syntaxes.
+
+        function getTopLevelAwait(node) {
+            if (!node)
+                return null;
+
+            switch (node.type) {
+            case "AssignmentExpression":
+                if (node.operator === "="
+                    && node.left.type === "Identifier"
+                    && node.right.type === "AwaitExpression")
+                    return {
+                        variable: node.left.name,
+                        declaration: "var",
+                        expression: node.right,
+                    };
+                if (getTopLevelAwait(node.left) || getTopLevelAwait(node.right))
+                    return {};
+                break;
+            case "BinaryExpression":
+                if (getTopLevelAwait(node.left) || getTopLevelAwait(node.right))
+                    return {};
+                break;
+            case "AwaitExpression":
+                return {};
+            case "CallExpression":
+                if (getTopLevelAwait(node.callee) || node.arguments.some(getTopLevelAwait))
+                    return {};
+                break;
+            case "ExpressionStatement":
+                return getTopLevelAwait(node.expression);
+            case "VariableDeclaration":
+                if (node.declarations.length === 1) {
+                    let declaration = node.declarations[0];
+                    if (declaration.init
+                        && declaration.init.type === "AwaitExpression"
+                        && declaration.id.type === "Identifier") {
+                        return {
+                            variable: declaration.id.name,
+                            declaration: node.kind === "const" ? "let" : node.kind,
+                            expression: declaration.init,
+                        };
+                    }
+                }
+                break;
+            }
+            return null;
+        }
+        let found = getTopLevelAwait(statement);
+        if (!found)
             return originalExpression;
-        }
 
-        if (anonymous) {
-            return `
-(async function() {
-    try {
-        let result = ${originalExpression};
-        console.info("%o", result);
-    } catch (e) {
-        console.error(e);
-    }
-})();
-undefined`;
-        }
+        let expressionNode = found.expression || statement.expression;
+        let expressionText = wrappedExpression.substring(expressionNode.range[0], expressionNode.range[1]);
 
-        return `${declarationKind} ${variableName};
-(async function() {
-    try {
-        ${variableName} = ${awaitPortion};
-        console.info("%o", ${variableName});
-    } catch (e) {
-        console.error(e);
-    }
-})();
-undefined;`;
+        let external = "";
+        let internal = "";
+        if (found.variable) {
+            console.assert(found.declaration);
+            external = `${found.declaration} ${found.variable}; `;
+            internal = `${found.variable} = ${expressionText}; console.info("%o", ${found.variable})`;
+        } else {
+            // Nothing to do externally as it's an anonymous expression.
+            // Preserve evaluation order without introducing a binding.
+            internal = `(function(result){ console.info("%o", result); })(${expressionText})`;
+        }
+        console.assert(internal);
+        return `${external}(async () => { try { ${internal}; } catch (e) { console.error(e); } })(); undefined`;
     }
 };
 

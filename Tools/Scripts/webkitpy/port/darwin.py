@@ -30,6 +30,7 @@ from webkitpy.common.system.crashlogs import CrashLogs
 from webkitpy.common.system.executive import ScriptError
 from webkitpy.common.version_name_map import PUBLIC_TABLE, VersionNameMap
 from webkitpy.port.apple import ApplePort
+from webkitpy.port.driver import DriverInput
 from webkitpy.port.leakdetector import LeakDetector
 
 from webkitcorepy import decorators, Version
@@ -60,7 +61,7 @@ class DarwinPort(ApplePort):
             self.set_option_default("batch_size", 1000)
 
     def _load_api_test_suite_allowlist(self):
-        """Load the allowlist of test suites that should not go to the system shard.
+        """Load the allowlist entries for this port's configuration, whose tests and suites should not go to the system shard.
 
         Accepts optional configuration gates at the start of a line, e.g.:
             TestIPC.PortableTest            # applies to every port
@@ -85,7 +86,7 @@ class DarwinPort(ApplePort):
         version_order = self.api_test_version_order()
 
         parser = ExpectationParser(APITestSuite())
-        patterns = set()
+        entries = []
         for expectation, warnings in parser.parse(allowlist_path, content):
             for warning in warnings:
                 _log.warning(str(warning))
@@ -93,29 +94,29 @@ class DarwinPort(ApplePort):
                 continue
             if not expectation.matches_configuration(current_tokens, current_version, version_order):
                 continue
-            patterns.add(expectation.test_pattern)
+            entries.append(expectation)
 
-        return sorted(patterns)
+        return entries
 
     @memoized
-    def _allowlist_as_set(self):
-        """Return the allowlist as a set for efficient lookups."""
-        return set(self._load_api_test_suite_allowlist())
+    def _allowlist_entries(self):
+        """Map each allowlisted test or suite name to its first matching entry."""
+        entries = {}
+        for entry in self._load_api_test_suite_allowlist():
+            entries.setdefault(entry.test_pattern, entry)
+        return entries
 
     def is_test_allowlisted(self, test_name):
-        """Check if a test is allowlisted (exact match or suite match).
+        """Return the allowlist entry for a test, or None if it is not allowlisted.
 
         A test is allowlisted if:
         1. Its full name (BINARY.SUITE.TESTCASE) is in the allowlist, OR
         2. Its suite prefix (BINARY.SUITE) is in the allowlist
+        The entry's configurations and version_specifiers are its gate, and its line_number is its line in the allowlist.
         """
-        allowlist = self._allowlist_as_set()
-        # Check exact match (test name in allowlist)
-        if test_name in allowlist:
-            return True
-        # Check suite match (BINARY.SUITE prefix in allowlist)
+        entries = self._allowlist_entries()
         suite_prefix = '.'.join(test_name.split('.')[:-1])
-        return suite_prefix in allowlist
+        return entries.get(test_name) or entries.get(suite_prefix)
 
     def filter_api_tests_by_allowlist(self, tests):
         """Split API tests into allowlisted (parallel) and non-allowlisted (system) groups."""
@@ -137,6 +138,14 @@ class DarwinPort(ApplePort):
         if self.get_option('guard_malloc'):
             return 350 * 1000
         return super(DarwinPort, self).default_timeout_ms()
+
+    def _warm_up_runner(self, worker_number=0):
+        # Skipped under --no-timeout so `lldb --wait-for --attach-name ...` doesn't latch onto the warmup process.
+        if self.get_option('no_timeout'):
+            return
+        _log.debug('Warming up the runner for worker {} ...'.format(worker_number))
+        warmup_driver = self.create_driver(worker_number)
+        warmup_driver.run_test(DriverInput('file:///warmup-does-not-exist', 60000., None, should_run_pixel_test=False), stop_when_done=True)
 
     def _api_test_version_name(self, version, table=PUBLIC_TABLE):
         name = VersionNameMap.map(self.host.platform).to_name(version, platform=self.port_name, table=table)

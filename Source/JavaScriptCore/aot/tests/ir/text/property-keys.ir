@@ -1,0 +1,76 @@
+# Every kind of property key of the wire, in a field, a static field, a payload field, a list and a data member
+# RUN: round-trip
+# CHECK: layout L0 kind=Instance name="C" module=m0 fields=[{key="x" declared={type=anything}}, {key="" declared={type=anything}}, {key="a\"\u{e9}" declared={type=anything}}, {key=@"internal" declared={type=anything}}, {key=#"p"@L0 declared={type=anything} flags=[IsPrivate]}, {key=@@iterator declared={type=anything}}, {key=symbol@m0:120 declared={type=anything}}, {key=symbol("d")@m1:7 declared={type=anything}}] staticFields=[{key=@@species variable=g0}]
+# CHECK-NEXT: layout L1 kind=Instance name="D" module=m0 fields=[{key=#"p"@L1 declared={type=anything} flags=[IsPrivate]}]
+# CHECK-NEXT: variable g0 module=m0 declared={type=anything} owner=L0
+# CHECK-NEXT: module m0 path="/a.js" displayPath="a.js" body=f0
+# CHECK-NEXT: module m1 path="/b.js" displayPath="b.js"
+# CHECK-NEXT: function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f1 name="keys" module=m0 thisType={type=anything} parameters=[{type=object}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: v1 = PropGet v0 key=@@asyncDispose
+# CHECK-NEXT: v2 = PropGet v0 key=@@asyncIterator
+# CHECK-NEXT: v3 = PropGet v0 key=@@dispose
+# CHECK-NEXT: v4 = PropGet v0 key=@@hasInstance
+# CHECK-NEXT: v5 = PropGet v0 key=@@isConcatSpreadable
+# CHECK-NEXT: v6 = PropGet v0 key=@@iterator
+# CHECK-NEXT: v7 = PropGet v0 key=@@match
+# CHECK-NEXT: v8 = PropGet v0 key=@@matchAll
+# CHECK-NEXT: v9 = PropGet v0 key=@@replace
+# CHECK-NEXT: v10 = PropGet v0 key=@@search
+# CHECK-NEXT: v11 = PropGet v0 key=@@species
+# CHECK-NEXT: v12 = PropGet v0 key=@@split
+# CHECK-NEXT: v13 = PropGet v0 key=@@toPrimitive
+# CHECK-NEXT: v14 = PropGet v0 key=@@toStringTag
+# CHECK-NEXT: v15 = PropGet v0 key=@@unscopables
+# CHECK-NEXT: v16 = PropGet v0 key="x"
+# CHECK-NEXT: v17 = PropGet v0 key=@"internal"
+# CHECK-NEXT: v18 = PropGet v0 key=symbol@m0:120
+# CHECK-NEXT: v19 = PropGet v0 key=symbol("d")@m1:7
+# CHECK-NEXT: v20 = Call v16, v0 calleeKey=@@iterator
+# CHECK-NEXT: CopyDataProperties v0, v1 excludedKeys=["x", @"internal", @@iterator, symbol@m0:120]
+# CHECK-NEXT: Return v20
+# CHECK-NEXT: }
+# CHECK-NEXT: data d0 root=Object{layout=L0 members=[{key="x" value=Null}, {key=@@iterator value=Null}]}
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: round trip: same
+# RUN(V): verify
+# V: valid
+
+layout L0 kind=Instance name="C" module=m0 fields=[{key="x" declared={type=anything}}, {key="" declared={type=anything}}, {key="a\"\u{e9}" declared={type=anything}}, {key=@"internal" declared={type=anything}}, {key=#"p"@L0 declared={type=anything} flags=[IsPrivate]}, {key=@@iterator declared={type=anything}}, {key=symbol@m0:120 declared={type=anything}}, {key=symbol("d")@m1:7 declared={type=anything}}] staticFields=[{key=@@species variable=g0}]
+layout L1 kind=Instance name="D" module=m0 fields=[{key=#"p"@L1 declared={type=anything} flags=[IsPrivate]}]
+variable g0 module=m0 declared={type=anything} owner=L0
+module m0 path="/a.js" displayPath="a.js" body=f0
+module m1 path="/b.js" displayPath="b.js"
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f1 name="keys" module=m0 thisType={type=anything} parameters=[{type=object}] results=[{type=anything}] {
+    v1 = PropGet v0 key=@@asyncDispose
+    v2 = PropGet v0 key=@@asyncIterator
+    v3 = PropGet v0 key=@@dispose
+    v4 = PropGet v0 key=@@hasInstance
+    v5 = PropGet v0 key=@@isConcatSpreadable
+    v6 = PropGet v0 key=@@iterator
+    v7 = PropGet v0 key=@@match
+    v8 = PropGet v0 key=@@matchAll
+    v9 = PropGet v0 key=@@replace
+    v10 = PropGet v0 key=@@search
+    v11 = PropGet v0 key=@@species
+    v12 = PropGet v0 key=@@split
+    v13 = PropGet v0 key=@@toPrimitive
+    v14 = PropGet v0 key=@@toStringTag
+    v15 = PropGet v0 key=@@unscopables
+    v16 = PropGet v0 key="x"
+    v17 = PropGet v0 key=@"internal"
+    v18 = PropGet v0 key=symbol@m0:120
+    v19 = PropGet v0 key=symbol("d")@m1:7
+    v20 = Call v16, v0 calleeKey=@@iterator
+    CopyDataProperties v0, v1 excludedKeys=["x", @"internal", @@iterator, symbol@m0:120]
+    Return v20
+}
+data d0 root=Object{layout=L0 members=[{key="x" value=Null}, {key=@@iterator value=Null}]}
+entry module=m0

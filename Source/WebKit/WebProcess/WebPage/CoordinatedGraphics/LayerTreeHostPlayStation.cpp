@@ -37,6 +37,7 @@
 #include "WebProcess.h"
 #include <WebCore/AsyncScrollingCoordinator.h>
 #include <WebCore/Chrome.h>
+#include <WebCore/CoordinatedTileManager.h>
 #include <WebCore/Damage.h>
 #include <WebCore/GraphicsLayerCoordinated.h>
 #include <WebCore/LocalFrame.h>
@@ -51,12 +52,6 @@
 #include <wtf/SetForScope.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/TZoneMallocInlines.h>
-
-#if USE(CAIRO)
-#include <WebCore/CairoPaintingEngine.h>
-#elif USE(SKIA)
-#include <WebCore/SkiaPaintingEngine.h>
-#endif
 
 namespace WebKit {
 using namespace WebCore;
@@ -75,9 +70,9 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage, WebCore::PlatformDisplayID displa
     , m_displayID(displayID)
 #endif
 #if USE(CAIRO)
-    , m_paintingEngine(Cairo::PaintingEngine::create())
+    , m_tileManager(CoordinatedTileManager::create())
 #elif USE(SKIA)
-    , m_skiaPaintingEngine(SkiaPaintingEngine::create())
+    , m_tileManager(CoordinatedTileManager::create(nullptr))
 #endif
 {
     {
@@ -97,9 +92,9 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage, WebCore::PlatformDisplayID displa
     scheduleRenderingUpdate();
 
 #if HAVE(DISPLAY_LINK)
-    m_compositor = ThreadedCompositor::create(*this);
+    lazyInitialize(m_compositor, ThreadedCompositor::create(*this));
 #else
-    m_compositor = ThreadedCompositor::create(*this, *this, displayID);
+    lazyInitialize(m_compositor, ThreadedCompositor::create(*this, *this, displayID));
 #endif
 #if ENABLE(DAMAGE_TRACKING)
     std::optional<OptionSet<ThreadedCompositor::DamagePropagationFlags>> damagePropagationFlags;
@@ -123,9 +118,7 @@ LayerTreeHost::~LayerTreeHost()
 
     cancelRenderingUpdate();
 
-#if USE(SKIA)
-    m_skiaPaintingEngine = nullptr;
-#endif
+    m_tileManager = nullptr;
 
     // ThreadedCompositor must be invalidated before invalidating CoordinatedSceneState
     // to invalidate pending layers in the compositor thread.
@@ -209,9 +202,9 @@ void LayerTreeHost::flushLayers()
         return it.value->hasOneRef();
     });
 
-    if (m_waitUntilPaintingComplete) {
-        m_sceneState->waitUntilPaintingComplete();
-        m_waitUntilPaintingComplete = false;
+    if (m_waitUntilPaintingFinished) {
+        m_sceneState->waitUntilPaintingFinished();
+        m_waitUntilPaintingFinished = false;
     }
 }
 
@@ -296,10 +289,10 @@ void LayerTreeHost::updateRenderingWithForcedRepaint()
     m_webPage.corePage()->forceRepaintAllFrames();
     m_forceFrameSync = true;
 
-    // Make sure `m_sceneState->waitUntilPaintingComplete()` is invoked at the
+    // Make sure `m_sceneState->waitUntilPaintingFinished()` is invoked at the
     // end of the currently running layer flush, or after the next one if there
     // is none ongoing at present.
-    m_waitUntilPaintingComplete = true;
+    m_waitUntilPaintingFinished = true;
 
     // If updateRenderingWithForcedRepaint() is invoked via JS through e.g. a rAF() callback, a call
     // to `page->updateRendering()` _during_ a layer flush is responsible for that.
@@ -428,13 +421,6 @@ int LayerTreeHost::maxTextureSize() const
 {
     return m_compositor->maxTextureSize();
 }
-
-#if USE(CAIRO)
-Cairo::PaintingEngine& LayerTreeHost::paintingEngine()
-{
-    return *m_paintingEngine;
-}
-#endif
 
 Ref<CoordinatedImageBackingStore> LayerTreeHost::imageBackingStore(Ref<NativeImage>&& nativeImage)
 {
@@ -579,7 +565,7 @@ void LayerTreeHost::resetDamageHistoryForTesting()
     m_compositor->enableFrameDamageNotificationForTesting();
 }
 
-void LayerTreeHost::foreachRegionInDamageHistoryForTesting(Function<void(const Region&)>&& callback)
+void LayerTreeHost::foreachRegionInDamageHistoryForTesting(NOESCAPE const Function<void(const Region&)>& callback)
 {
     Locker locker { m_frameDamageHistoryForTestingLock };
     for (const auto& region : m_frameDamageHistoryForTesting)

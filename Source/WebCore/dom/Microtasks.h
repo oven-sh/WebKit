@@ -49,7 +49,7 @@ public:
         return currentRunnability() == JSC::QueuedTask::Result::Executed;
     }
 
-    JSC::QueuedTask::Result NODELETE currentRunnability() const;
+    JSC::QueuedTask::Result LEGACY_NODELETE currentRunnability() const;
 
 private:
     WeakPtr<EventLoopTaskGroup> m_group;
@@ -58,7 +58,7 @@ private:
 class MicrotaskQueue final : public JSC::MicrotaskQueue {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(MicrotaskQueue, WEBCORE_EXPORT);
 public:
-    WEBCORE_EXPORT static Ref<MicrotaskQueue> create(JSC::VM&, EventLoop&);
+    WEBCORE_EXPORT static Ref<MicrotaskQueue> LEGACY_NODELETE create(JSC::VM&, EventLoop&);
     WEBCORE_EXPORT ~MicrotaskQueue();
 
     WEBCORE_EXPORT void performMicrotaskCheckpoint(JSC::VM&);

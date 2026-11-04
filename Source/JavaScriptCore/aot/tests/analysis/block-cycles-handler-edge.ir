@@ -1,0 +1,105 @@
+# A landing block that goes on with the loop is in the cycle through the handler edge, and one that returns is not
+# FORM: Prepared
+# RUN: analyses cycles natural-loops
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="catchContinues" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b4()
+  b2() handler=b3():
+    v3 = Call v0
+    Jump -> next b1()
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Jump -> next b1()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: natural-loops:
+# CHECK-NEXT: loop headers: [b1]
+# CHECK-NEXT: b1 loop blocks: [b1 b2 b3]
+# CHECK-NEXT: b1 outer loop header: none
+# CHECK-NEXT: cycles:
+# CHECK-NEXT: b0 in cycle: no
+# CHECK-NEXT: b0 depth: 0
+# CHECK-NEXT: b0 outermost cycle: none
+# CHECK-NEXT: b1 in cycle: yes
+# CHECK-NEXT: b1 depth: 1
+# CHECK-NEXT: b1 outermost cycle: b1
+# CHECK-NEXT: b2 in cycle: yes
+# CHECK-NEXT: b2 depth: 1
+# CHECK-NEXT: b2 outermost cycle: b1
+# CHECK-NEXT: b3 in cycle: yes
+# CHECK-NEXT: b3 depth: 1
+# CHECK-NEXT: b3 outermost cycle: b1
+# CHECK-NEXT: b4 in cycle: no
+# CHECK-NEXT: b4 depth: 0
+# CHECK-NEXT: b4 outermost cycle: none
+function f1 name="onlyTheCatchContinues" parameters=[{type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2() handler=b3():
+    v2 = Call v0
+    Return
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    Jump -> next b1()
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: natural-loops:
+# CHECK-NEXT: loop headers: [b1]
+# CHECK-NEXT: b1 loop blocks: [b1 b2 b3]
+# CHECK-NEXT: b1 outer loop header: none
+# CHECK-NEXT: cycles:
+# CHECK-NEXT: b0 in cycle: no
+# CHECK-NEXT: b0 depth: 0
+# CHECK-NEXT: b0 outermost cycle: none
+# CHECK-NEXT: b1 in cycle: yes
+# CHECK-NEXT: b1 depth: 1
+# CHECK-NEXT: b1 outermost cycle: b1
+# CHECK-NEXT: b2 in cycle: yes
+# CHECK-NEXT: b2 depth: 1
+# CHECK-NEXT: b2 outermost cycle: b1
+# CHECK-NEXT: b3 in cycle: yes
+# CHECK-NEXT: b3 depth: 1
+# CHECK-NEXT: b3 outermost cycle: b1
+function f2 name="catchReturns" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b4()
+  b2() handler=b3():
+    v3 = Call v0
+    Jump -> next b1()
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Return
+  b4():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: natural-loops:
+# CHECK-NEXT: loop headers: [b1]
+# CHECK-NEXT: b1 loop blocks: [b1 b2]
+# CHECK-NEXT: b1 outer loop header: none
+# CHECK-NEXT: cycles:
+# CHECK-NEXT: b0 in cycle: no
+# CHECK-NEXT: b0 depth: 0
+# CHECK-NEXT: b0 outermost cycle: none
+# CHECK-NEXT: b1 in cycle: yes
+# CHECK-NEXT: b1 depth: 1
+# CHECK-NEXT: b1 outermost cycle: b1
+# CHECK-NEXT: b2 in cycle: yes
+# CHECK-NEXT: b2 depth: 1
+# CHECK-NEXT: b2 outermost cycle: b1
+# CHECK-NEXT: b3 in cycle: no
+# CHECK-NEXT: b3 depth: 0
+# CHECK-NEXT: b3 outermost cycle: none
+# CHECK-NEXT: b4 in cycle: no
+# CHECK-NEXT: b4 depth: 0
+# CHECK-NEXT: b4 outermost cycle: none

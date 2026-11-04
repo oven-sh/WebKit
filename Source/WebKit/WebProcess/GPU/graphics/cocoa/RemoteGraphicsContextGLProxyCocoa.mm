@@ -29,106 +29,18 @@
 #import "RemoteRenderingBackendProxy.h"
 
 #if ENABLE(GPU_PROCESS) && ENABLE(WEBGL)
+#import "DisplayBufferDisplayDelegate.h"
 #import "GPUConnectionToWebProcess.h"
 #import "GPUProcessConnection.h"
 #import "RemoteGraphicsContextGLMessages.h"
 #import "WebProcess.h"
 #import <WebCore/CVUtilities.h>
 #import <WebCore/GraphicsLayerContentsDisplayDelegate.h>
-#import <WebCore/GraphicsLayerEnums.h>
 #import <WebCore/IOSurface.h>
-#import <WebCore/PlatformCALayer.h>
-#import <WebCore/PlatformCALayerDelegatedContents.h>
 
 namespace WebKit {
 
 namespace {
-
-class DisplayBufferFence final : public WebCore::PlatformCALayerDelegatedContentsFence {
-public:
-    static Ref<DisplayBufferFence> create(IPC::Semaphore&& finishedFenceSemaphore)
-    {
-        return adoptRef(*new DisplayBufferFence(WTF::move(finishedFenceSemaphore)));
-    }
-
-    bool waitFor(Seconds timeout) final
-    {
-        Locker locker { m_lock };
-        if (m_signaled)
-            return true;
-        m_signaled = m_semaphore.waitFor(timeout);
-        return m_signaled;
-    }
-
-    void forceSignal()
-    {
-        Locker locker { m_lock };
-        if (m_signaled)
-            return;
-        m_signaled = true;
-        m_semaphore.signal();
-    }
-
-private:
-    DisplayBufferFence(IPC::Semaphore&& finishedFenceSemaphore)
-        : m_semaphore(WTF::move(finishedFenceSemaphore))
-    {
-    }
-
-    Lock m_lock;
-    bool m_signaled WTF_GUARDED_BY_LOCK(m_lock) { false };
-    IPC::Semaphore m_semaphore;
-};
-
-class DisplayBufferDisplayDelegate final : public WebCore::GraphicsLayerContentsDisplayDelegate {
-public:
-    static Ref<DisplayBufferDisplayDelegate> create(bool isOpaque)
-    {
-        return adoptRef(*new DisplayBufferDisplayDelegate(isOpaque));
-    }
-
-    // WebCore::GraphicsLayerContentsDisplayDelegate overrides.
-    void prepareToDelegateDisplay(WebCore::PlatformCALayer& layer) final
-    {
-        layer.setOpaque(m_isOpaque);
-    }
-
-    void display(WebCore::PlatformCALayer& layer) final
-    {
-        if (m_displayBuffer)
-            layer.setDelegatedContents({ MachSendRight { m_displayBuffer }, m_finishedFence, std::nullopt });
-        else
-            layer.clearContents();
-    }
-
-    WebCore::GraphicsLayerCompositingCoordinatesOrientation orientation() const final
-    {
-        return WebCore::GraphicsLayerCompositingCoordinatesOrientation::BottomUp;
-    }
-
-    void setDisplayBuffer(MachSendRight&& displayBuffer, RefPtr<DisplayBufferFence> finishedFence)
-    {
-        if (!displayBuffer) {
-            m_finishedFence = nullptr;
-            m_displayBuffer = { };
-            return;
-        }
-        if (m_displayBuffer && displayBuffer.sendRight() == m_displayBuffer.sendRight())
-            return;
-        m_finishedFence = WTF::move(finishedFence);
-        m_displayBuffer = WTF::move(displayBuffer);
-    }
-
-private:
-    DisplayBufferDisplayDelegate(bool isOpaque)
-        : m_isOpaque(isOpaque)
-    {
-    }
-
-    MachSendRight m_displayBuffer;
-    RefPtr<DisplayBufferFence> m_finishedFence;
-    const bool m_isOpaque;
-};
 
 class RemoteGraphicsContextGLProxyCocoa final : public RemoteGraphicsContextGLProxy {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(RemoteGraphicsContextGLProxyCocoa);
@@ -142,7 +54,7 @@ public:
 private:
     explicit RemoteGraphicsContextGLProxyCocoa(const WebCore::GraphicsContextGLAttributes& attributes, RemoteRenderingBackendProxy& renderingBackend)
         : RemoteGraphicsContextGLProxy(attributes, renderingBackend)
-        , m_layerContentsDisplayDelegate(DisplayBufferDisplayDelegate::create(!attributes.alpha))
+        , m_layerContentsDisplayDelegate(DisplayBufferDisplayDelegate::create(!attributes.alpha, WebCore::GraphicsLayerCompositingCoordinatesOrientation::BottomUp))
     {
     }
 

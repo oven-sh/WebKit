@@ -127,7 +127,7 @@ struct BackgroundLayer {
 
     // CoordinatedValueList interface.
 
-    static constexpr auto baseProperty = PropertyNameConstant<CSSPropertyBackgroundImage> { };
+    static constexpr auto baseProperty = PropertyNameConstant<CSSPropertyID::BackgroundImage> { };
     static constexpr auto properties = std::tuple { FOR_EACH_BACKGROUND_LAYER_PROPERTY(DECLARE_COORDINATED_VALUE_LIST_PROPERTY) };
     static BackgroundLayer clone(const BackgroundLayer& other) { return other; }
     bool isInitial() const { return m_image.isNone(); }
@@ -160,7 +160,7 @@ FOR_EACH_BACKGROUND_LAYER_SHORTHAND(DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCE
 // MARK: - Blending
 
 template<> struct Blending<BackgroundLayer> {
-    bool NODELETE canBlend(const BackgroundLayer&, const BackgroundLayer&);
+    bool LEGACY_NODELETE canBlend(const BackgroundLayer&, const BackgroundLayer&);
 };
 
 // MARK: - Logging

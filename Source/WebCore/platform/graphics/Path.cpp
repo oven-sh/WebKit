@@ -87,7 +87,8 @@ bool Path::definitelyEqual(const Path& other) const
 
 PathImpl& Path::setImpl(Ref<PathImpl>&& impl)
 {
-    auto& platformPathImpl = impl.get();
+    // We can't use Ref here since we return a reference to PathImpl after moving impl into m_data, which keeps it alive.
+    SUPPRESS_UNCOUNTED_LOCAL auto& platformPathImpl = impl.get();
     m_data = WTF::move(impl);
     return platformPathImpl;
 }
@@ -245,7 +246,7 @@ void Path::addPath(const Path& path, const AffineTransform& transform)
     protect(ensurePlatformPathImpl())->addPath(protect(const_cast<Path&>(path).ensurePlatformPathImpl()), transform);
 }
 
-void Path::applySegments(const PathSegmentApplier& applier) const
+void Path::applySegments(NOESCAPE const PathSegmentApplier& applier) const
 {
     if (auto segment = asSingle())
         applier(*segment);
@@ -253,7 +254,7 @@ void Path::applySegments(const PathSegmentApplier& applier) const
         impl->applySegments(applier);
 }
 
-void Path::applyElements(const PathElementApplier& applier) const
+void Path::applyElements(NOESCAPE const PathElementApplier& applier) const
 {
     if (isEmpty())
         return;

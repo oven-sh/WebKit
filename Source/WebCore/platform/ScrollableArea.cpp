@@ -77,16 +77,18 @@ ScrollableArea::~ScrollableArea() = default;
 
 ScrollAnimator& ScrollableArea::scrollAnimator() const
 {
-    if (!m_scrollAnimator)
+    if (!m_scrollAnimator) {
         m_scrollAnimator = ScrollAnimator::create(const_cast<ScrollableArea&>(*this));
+    }
 
     return *m_scrollAnimator.get();
 }
 
 ScrollbarsController& ScrollableArea::scrollbarsController() const
 {
-    if (!m_scrollbarsController)
+    if (!m_scrollbarsController) {
         const_cast<ScrollableArea&>(*this).internalCreateScrollbarsController();
+    }
     RELEASE_ASSERT(m_scrollbarsController);
     return *m_scrollbarsController.get();
 }
@@ -94,8 +96,9 @@ ScrollbarsController& ScrollableArea::scrollbarsController() const
 void ScrollableArea::internalCreateScrollbarsController()
 {
     if (mockScrollbarsControllerEnabled()) {
-        auto mockController = makeUnique<ScrollbarsControllerMock>(const_cast<ScrollableArea&>(*this), [this](const String& message) {
-            logMockScrollbarsControllerMessage(message);
+        auto mockController = makeUnique<ScrollbarsControllerMock>(const_cast<ScrollableArea&>(*this), [weakThis = WeakPtr { *this }](const String& message) {
+            if (CheckedPtr protectedThis = weakThis)
+                protectedThis->logMockScrollbarsControllerMessage(message);
         });
         setScrollbarsController(WTF::move(mockController));
     } else

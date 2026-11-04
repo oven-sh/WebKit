@@ -116,6 +116,12 @@ bool experimentalFeatureEnabled(const String& key, bool defaultValue)
     return *optionalExperimentalFeatureEnabled(key, defaultValue);
 }
 
+static bool internalDebugFeatureEnabled(const String& key)
+{
+    RetainPtr defaultsKey = adoptNS([[NSString alloc] initWithFormat:@"InternalDebug%@", key.createNSString().get()]);
+    return [[NSUserDefaults standardUserDefaults] boolForKey:defaultsKey.get()];
+}
+
 static RetainPtr<NSString> applicationOrProcessIdentifier()
 {
     RetainPtr<NSString> identifier = [NSBundle mainBundle].bundleIdentifier;
@@ -233,6 +239,7 @@ void WebsiteDataStore::platformSetNetworkParameters(WebsiteDataStoreParameters& 
     parameters.networkSessionParameters.resourceLoadStatisticsParameters.firstPartyWebsiteDataRemovalMode = firstPartyWebsiteDataRemovalMode;
     parameters.networkSessionParameters.resourceLoadStatisticsParameters.standaloneApplicationDomain = WebCore::RegistrableDomain { m_configuration->standaloneApplicationURL() };
     parameters.networkSessionParameters.resourceLoadStatisticsParameters.manualPrevalentResource = WTF::move(resourceLoadStatisticsManualPrevalentResource);
+    parameters.networkSessionParameters.resourceLoadStatisticsParameters.exemptAllowlistedCookiesFromITP = internalDebugFeatureEnabled(WebPreferencesKey::exemptAllowlistedCookiesFromItpKey());
 
     auto cookieFile = directories.cookieStorageFile;
 #if PLATFORM(MAC)
@@ -255,6 +262,7 @@ void WebsiteDataStore::platformSetNetworkParameters(WebsiteDataStoreParameters& 
 
     parameters.uiProcessCookieStorageIdentifier = m_uiProcessCookieStorageIdentifier;
     parameters.networkSessionParameters.enablePrivateClickMeasurementDebugMode = experimentalFeatureEnabled(WebPreferencesKey::privateClickMeasurementDebugModeEnabledKey());
+    parameters.networkSessionParameters.enablePrivateClickMeasurementPrivateRelayEnforcement = experimentalFeatureEnabled(WebPreferencesKey::privateClickMeasurementPrivateRelayEnforcementEnabledKey());
 }
 
 void WebsiteDataStore::platformInitialize()
@@ -305,8 +313,10 @@ void WebsiteDataStore::removeDataStoreWithIdentifierImpl(const WTF::UUID& identi
     websiteDataStoreIOQueueSingleton().dispatch([completionHandler = WTF::move(completionHandler), identifier, directory = defaultWebsiteDataStoreDirectory(identifier).isolatedCopy()]() mutable {
         RetainPtr nsCredentialStorage = adoptNS([[NSURLCredentialStorage alloc] _initWithIdentifier:identifier.toString().createNSString().get() private:NO]);
         RetainPtr credentials = [nsCredentialStorage allCredentials];
-        for (NSURLProtectionSpace *space in credentials.get()) {
-            for (NSURLCredential *credential in [credentials.get()[space] allValues])
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSURLProtectionSpace *space in credentials.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSURLCredential *credential in [credentials.get()[space] allValues])
                 [nsCredentialStorage removeCredential:credential forProtectionSpace:space];
         }
 
@@ -393,7 +403,8 @@ String WebsiteDataStore::defaultGeneralStorageDirectory(const String& baseDirect
         RetainPtr fileManager = [NSFileManager defaultManager];
         RetainPtr<NSArray> files = [fileManager contentsOfDirectoryAtPath:oldDirectory.get() error:0];
         if (files) {
-            for (NSString *fileName in files.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSString *fileName in files.get()) {
                 if (![fileName length])
                     continue;
 
@@ -771,7 +782,7 @@ void WebsiteDataStore::reinitializeAppBoundDomains()
 
 
 #if ENABLE(MANAGED_DOMAINS)
-static HashSet<WebCore::RegistrableDomain>& NODELETE managedDomains()
+static HashSet<WebCore::RegistrableDomain>& LEGACY_NODELETE managedDomains()
 {
     ASSERT(RunLoop::isMain());
     static NeverDestroyed<HashSet<WebCore::RegistrableDomain>> managedDomains;
@@ -846,7 +857,8 @@ void WebsiteDataStore::initializeManagedDomains(ForceReinitialization forceReini
             if (forceReinitialization == ForceReinitialization::Yes)
                 managedDomains().clear();
 
-            for (NSString *data in crossSiteTrackingPreventionRelaxedDomains.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSString *data in crossSiteTrackingPreventionRelaxedDomains.get()) {
                 if (managedDomains().size() >= maxManagedDomainCount)
                     break;
 
@@ -1050,7 +1062,8 @@ HashSet<WebCore::RegistrableDomain> WebsiteDataStore::platformAdditionalDomainsW
     };
 
     if ([arrayOrCommaDelimitedString isKindOfClass:[NSArray class]]) {
-        for (id host in arrayOrCommaDelimitedString.get()) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL id host in arrayOrCommaDelimitedString.get()) {
             if ([host isKindOfClass:[NSString class]])
                 addHost((NSString *)host);
         }

@@ -470,6 +470,10 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
         size_t byteSize() const { return metadataSize + tableSize() * sizeof(ValueType); }
         bool isEmpty() const { return !keyCount(); }
 
+        // For generated code. The mask is found from the first bucket.
+        static constexpr ptrdiff_t offsetOfTable() { return OBJECT_OFFSETOF(HashTable, m_table); }
+        static constexpr ptrdiff_t offsetOfTableSizeMask() { return tableSizeMaskOffset * static_cast<ptrdiff_t>(sizeof(unsigned)); }
+
         // Grow now, once, if holding `keyCount` keys in total would otherwise rehash along the way.
         void reserveCapacity(unsigned keyCount)
         {
@@ -498,6 +502,14 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
             setTableSizeMask(newTableSize - 1);
             setDeletedCount(0);
             setKeyCount(0);
+        }
+
+        // Expands now if adding numberOfKeys more keys would expand the table. Returns false and leaves the table unchanged if the allocation fails.
+        bool tryReserveCapacityForAdd(unsigned numberOfKeys = 1)
+        {
+            if (m_table && !HashTableSizePolicy::shouldExpand(static_cast<uint64_t>(keyCount()) + deletedCount() + numberOfKeys, tableSize())) [[likely]]
+                return true;
+            return tryExpand(numberOfKeys);
         }
 
         template<ShouldValidateKey shouldValidateKey = ShouldValidateKey::Yes> AddResult add(const ValueType& value) LIFETIME_BOUND { return add<IdentityTranslatorType, shouldValidateKey>(Extractor::extract(value), [&]() ALWAYS_INLINE_LAMBDA { return value; }); }
@@ -577,6 +589,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
 
     private:
         static ValueType* allocateTable(unsigned size);
+        static ValueType* tryAllocateTable(unsigned size);
         static void deallocateTable(ValueType* table);
 
         typedef std::pair<ValueType*, bool> LookupType;
@@ -599,6 +612,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
         bool mustRehashInPlace() const { return keyCount() * minLoad < tableSize() * 2; }
         bool shouldShrink() const { return keyCount() * minLoad < tableSize() && tableSize() > KeyTraits::minimumTableSize; }
         ValueType* expand(ValueType* entry = nullptr);
+        bool tryExpand(unsigned numberOfKeys);
         void shrink() { rehash(tableSize() / 2, nullptr); }
         void shrinkToBestSize();
 
@@ -1252,6 +1266,21 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
     }
 
     template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename Malloc>
+    auto HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Malloc>::tryAllocateTable(unsigned size) -> ValueType*
+    {
+        size_t sizeInBytes = metadataSize + size * sizeof(ValueType);
+        char* memory = static_cast<char*>(Traits::emptyValueIsZero ? Malloc::tryZeroedMalloc(sizeInBytes) : Malloc::tryMalloc(sizeInBytes));
+        if (!memory)
+            return nullptr;
+        ValueType* result = reinterpret_cast_ptr<ValueType*>(memory + metadataSize);
+        if constexpr (!Traits::emptyValueIsZero) {
+            for (unsigned i = 0; i < size; i++)
+                initializeBucket(result[i]);
+        }
+        return result;
+    }
+
+    template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename Malloc>
     void HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Malloc>::deallocateTable(ValueType* table)
     {
         if constexpr (!std::is_trivially_destructible_v<ValueType>) {
@@ -1280,6 +1309,38 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
             newSize = oldSize * 2;
 
         return rehash(newSize, entry);
+    }
+
+    template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename Malloc>
+    NEVER_INLINE bool HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Malloc>::tryExpand(unsigned numberOfKeys)
+    {
+        static_assert(!KeyTraits::hasIsWeakNullValueFunction);
+
+        Checked<unsigned> newSize;
+        Checked<unsigned> oldSize = tableSize();
+        if (!oldSize)
+            newSize = KeyTraits::minimumTableSize;
+        else if (mustRehashInPlace())
+            newSize = oldSize;
+        else
+            newSize = oldSize * 2;
+        while (HashTableSizePolicy::shouldExpand(static_cast<uint64_t>(keyCount()) + numberOfKeys, newSize.value()))
+            newSize *= 2;
+
+        HashTable newTable;
+        newTable.m_table = tryAllocateTable(newSize);
+        if (!newTable.m_table)
+            return false;
+        newTable.setTableSize(newSize);
+        newTable.setTableSizeMask(newSize - 1);
+        newTable.setDeletedCount(0);
+        newTable.setKeyCount(keyCount());
+        for (unsigned i = 0; i != oldSize; ++i) {
+            if (!isEmptyOrDeletedBucket(m_table[i]))
+                newTable.reinsert(WTF::move(m_table[i]));
+        }
+        swap(newTable);
+        return true;
     }
 
     template<typename Key, typename Value, typename Extractor, typename HashFunctions, typename Traits, typename KeyTraits, typename Malloc>

@@ -33,6 +33,7 @@
 #import <wtf/OSObjectPtr.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/cf/TypeCastsCF.h>
+#import <wtf/darwin/XPCExtras.h>
 #import <wtf/darwin/XPCObjectPtr.h>
 #import <wtf/text/WTFString.h>
 
@@ -56,7 +57,7 @@ bool hasEntitlement(audit_token_t token, ASCIILiteral entitlement)
 
 bool hasEntitlement(xpc_connection_t connection, StringView entitlement)
 {
-    xpc_object_t value = xpc_connection_copy_entitlement_value(connection, entitlement.utf8().legacyCStringPointer());
+    xpc_object_t value = xpcConnectionCopyEntitlementValue(connection, entitlement.utf8());
     return value && xpc_get_type(value) == XPC_TYPE_BOOL && xpc_bool_get_value(value);
 }
 

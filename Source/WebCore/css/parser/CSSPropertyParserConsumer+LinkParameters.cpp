@@ -34,8 +34,10 @@
 #include "CSSPropertyParserConsumer+Primitives.h"
 #include "CSSPropertyParserState.h"
 #include "CSSSubstitutionParser.h"
+#include "CSSTokenizer.h"
 #include "CSSValueKeywords.h"
 #include "CSSVariableData.h"
+#include <pal/text/TextEncoding.h>
 
 namespace WebCore {
 namespace CSSPropertyParserHelpers {
@@ -46,10 +48,10 @@ namespace CSSPropertyParserHelpers {
 static std::optional<CSS::ParamSpec> consumeParamSpec(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
     switch (range.peek().id()) {
-    case CSSValueColor:
+    case CSSValueID::Color:
         range.consumeIncludingWhitespace();
         return CSS::ParamSpec { CSS::Keyword::Color { } };
-    case CSSValueAccentColor:
+    case CSSValueID::AccentColor:
         range.consumeIncludingWhitespace();
         return CSS::ParamSpec { CSS::Keyword::AccentColor { } };
     default:
@@ -73,7 +75,7 @@ static std::optional<CSS::ParamSpec> consumeParamSpec(CSSParserTokenRange& range
 
 std::optional<CSS::ParamFunction> consumeParamFunctionRaw(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
-    if (range.peek().functionId() != CSSValueParam)
+    if (range.peek().functionId() != CSSValueID::Param)
         return { };
 
     auto arguments = consumeFunction(range);
@@ -101,6 +103,29 @@ RefPtr<CSSValue> consumeParamFunction(CSSParserTokenRange& range, CSS::PropertyP
     if (auto parameter = consumeParamFunctionRaw(range, state))
         return CSSParamValue::create(WTF::move(*parameter));
     return nullptr;
+}
+
+Vector<CSS::ParamFunction> parseLinkParametersFromFragmentDirective(StringView fragmentDirective, const CSSParserContext& context)
+{
+    if (!context.cssLinkParametersEnabled || fragmentDirective.isEmpty())
+        return { };
+
+    CSS::PropertyParserState state { .context = context };
+
+    Vector<CSS::ParamFunction> parameters;
+    for (auto directive : fragmentDirective.split('&')) {
+        auto decodedDirective = PAL::decodeURLEscapeSequences(directive);
+        CSSTokenizer tokenizer { decodedDirective };
+        auto range = tokenizer.tokenRange();
+
+        auto parameter = consumeParamFunctionRaw(range, state);
+        if (!parameter || !range.atEnd())
+            continue;
+
+        parameters.append(WTF::move(*parameter));
+    }
+
+    return parameters;
 }
 
 } // namespace CSSPropertyParserHelpers

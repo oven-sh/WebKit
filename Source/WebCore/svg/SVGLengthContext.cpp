@@ -108,7 +108,7 @@ float SVGLengthContext::resolveLength(const SVGElement* context, SVGUnitTypes::S
     return x.valueAsPercentage();
 }
 
-static inline float NODELETE dimensionForLengthMode(SVGLengthMode mode, FloatSize viewportSize)
+static inline float LEGACY_NODELETE dimensionForLengthMode(SVGLengthMode mode, FloatSize viewportSize)
 {
     switch (mode) {
     case SVGLengthMode::Width:
@@ -295,7 +295,7 @@ double SVGLengthContext::convertValueFromPercentageToUserUnits(double value, SVG
     return value * dimensionForLengthMode(lengthMode, viewportSize);
 }
 
-static inline const Style::ComputedStyle* NODELETE renderStyleForLengthResolving(const SVGElement* context)
+static inline const Style::ComputedStyle* LEGACY_NODELETE renderStyleForLengthResolving(const SVGElement* context)
 {
     if (!context)
         return nullptr;
@@ -310,7 +310,7 @@ static inline const Style::ComputedStyle* NODELETE renderStyleForLengthResolving
     return nullptr;
 }
 
-static inline const Style::ComputedStyle* NODELETE rootRenderStyleForLengthResolving(const SVGElement* svgElement)
+static inline const Style::ComputedStyle* LEGACY_NODELETE rootRenderStyleForLengthResolving(const SVGElement* svgElement)
 {
     if (!svgElement)
         return nullptr;
@@ -324,32 +324,32 @@ static inline const Style::ComputedStyle* NODELETE rootRenderStyleForLengthResol
 
 std::optional<CSSToLengthConversionData> SVGLengthContext::cssConversionData() const
 {
-    auto element = m_context;
+    RefPtr element = m_context.get();
     if (!element)
         return std::nullopt;
 
-    auto* currentStyle = renderStyleForLengthResolving(element.get());
+    CheckedPtr currentStyle = renderStyleForLengthResolving(element.get());
     if (!currentStyle)
         return std::nullopt;
 
-    auto* rootStyle = rootRenderStyleForLengthResolving(element.get());
+    CheckedPtr rootStyle = rootRenderStyleForLengthResolving(element.get());
 
-    const Style::ComputedStyle* parentStyle = nullptr;
-    if (auto* renderer = element->renderer())
+    CheckedPtr<const Style::ComputedStyle> parentStyle;
+    if (CheckedPtr renderer = element->renderer())
         parentStyle = renderer->parentStyle();
 
     return CSSToLengthConversionData {
         *currentStyle,
         rootStyle,
         parentStyle,
-        element->document().renderView(),
+        protect(element->document().renderView()),
         element.get(),
     };
 }
 
 ExceptionOr<float> SVGLengthContext::convertValueFromUserUnitsToEXS(float value) const
 {
-    auto* style = renderStyleForLengthResolving(m_context.get());
+    CheckedPtr style = renderStyleForLengthResolving(m_context.get());
     if (!style) {
         // No associated element: x-height falls back to 0.5em per CSS Values spec.
         if (m_context)
@@ -367,7 +367,7 @@ ExceptionOr<float> SVGLengthContext::convertValueFromUserUnitsToEXS(float value)
 
 ExceptionOr<float> SVGLengthContext::convertValueFromEXSToUserUnits(float value) const
 {
-    auto* style = renderStyleForLengthResolving(m_context.get());
+    CheckedPtr style = renderStyleForLengthResolving(m_context.get());
     if (!style) {
         // No associated element: x-height falls back to 0.5em per CSS Values spec.
         if (m_context)

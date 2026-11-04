@@ -1,0 +1,82 @@
+# The size estimate counts a chain of three or more integer comparisons like a switch, and counts constant expressions as free.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SummarizeForInlining
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="isOneOfFive" parameters=[{type=int}] results=[{type=boolean}] {
+    v1 = Integer integer=10
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b5(), notTaken b1()
+  b1():
+    v3 = Integer integer=14
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b5(), notTaken b2()
+  b2():
+    v5 = Integer integer=11
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(), notTaken b3()
+  b3():
+    v7 = Integer integer=13
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b5(), notTaken b4()
+  b4():
+    v9 = Integer integer=12
+    v10 = StrictEq v0, v9
+    Branch v10 -> taken b5(), notTaken b6()
+  b5():
+    v11 = Boolean boolean=true
+    Return v11
+  b6():
+    v12 = Boolean boolean=false
+    Return v12
+}
+# CHECK: f0: barrier=None bytes=32
+
+function f1 name="isOneOfTwo" parameters=[{type=int}] results=[{type=boolean}] {
+    v1 = Integer integer=10
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b2(), notTaken b1()
+  b1():
+    v3 = Integer integer=14
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Boolean boolean=true
+    Return v5
+  b3():
+    v6 = Boolean boolean=false
+    Return v6
+}
+# CHECK: f1: barrier=None bytes=40
+
+function f2 name="isFarApart" parameters=[{type=int}] results=[{type=boolean}] {
+    v1 = Integer integer=10
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b3(), notTaken b1()
+  b1():
+    v3 = Integer integer=1000
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b2()
+  b2():
+    v5 = Integer integer=100000
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Boolean boolean=true
+    Return v7
+  b4():
+    v8 = Boolean boolean=false
+    Return v8
+}
+# CHECK: f2: barrier=None bytes=40
+
+function f3 name="hasOneOfTwoFlags" parameters=[{type=int}] results=[{type=int}] {
+    v1 = Integer integer=3
+    v2 = Integer integer=4
+    v3 = BitOr v1, v2
+    v4 = BitAnd v0, v3
+    Return v4
+}
+# CHECK: f3: barrier=None bytes=12

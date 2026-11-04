@@ -1,0 +1,40 @@
+# The positions inside a range whose bounds have the type of every integer are integers too
+# FORM: Prepared
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="element-of-range" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=undefined|string}] {
+    v3 = Substring v0, v1, v2
+    v4 = Integer
+    v5 = ElemGet v3, v4
+    Return v5
+# CHECK-NOT: = Substring
+# CHECK: [[difference0]]: {{*}} = Sub v2, v1
+# CHECK-NEXT: [[length0]]: i32 = ToInt32 [[difference0]]
+# CHECK-NEXT: [[range0]]: {{*}} = StringRange [[length0]], {{*}} method=SingleIndex
+# CHECK-NEXT: [[relativeFrom0]]: {{*}} = ResultAt [[range0]]
+# CHECK-NEXT: [[relativeTo0]]: {{*}} = ResultAt [[range0]] index=1
+# CHECK-NEXT: [[sumFrom0]]: {{*}} = Add v1, [[relativeFrom0]]
+# CHECK-NEXT: [[from0]]: i32 = ToInt32 [[sumFrom0]]
+# CHECK-NEXT: [[sumTo0]]: {{*}} = Add v1, [[relativeTo0]]
+# CHECK-NEXT: [[to0]]: i32 = ToInt32 [[sumTo0]]
+# CHECK-NEXT: [[result0]]: undefined|string = StringRangeSubstringOrUndefined v0, [[from0]], [[to0]]
+# CHECK-NEXT: Return [[result0]]
+}
+
+function f1 name="slice-of-range" parameters=[{type=string}, {type=int}, {type=int}, {type=int}] results=[{type=string}] {
+    v4 = Substring v0, v1, v2
+    v5 = GetStringLength v4
+    v6 = StringRange v5, v3
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    v9 = Substring v4, v7, v8
+    Return v9
+# CHECK-NOT: = Substring
+# CHECK: [[sumFrom1]]: {{*}} = Add v1,
+# CHECK-NEXT: [[from1]]: i32 = ToInt32 [[sumFrom1]]
+# CHECK-NEXT: [[sumTo1]]: {{*}} = Add v1,
+# CHECK-NEXT: [[to1]]: i32 = ToInt32 [[sumTo1]]
+# CHECK-NEXT: [[result1]]: string = Substring v0, [[from1]], [[to1]]
+# CHECK-NEXT: Return [[result1]]
+}

@@ -1,0 +1,242 @@
+# Terminators that a constant or a type decides, a throw into a handler that ignores what was thrown, unreachable blocks, chains of blocks
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# STATISTIC: SimplifyControlFlowChanges = 16
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="branchOnConstant" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Boolean boolean=true
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Return v1
+# CHECK-NOT: Branch
+# CHECK: Return v0
+# CHECK-NOT: Return v1
+}
+
+function f1 name="branchDecidedByType" parameters=[{type=false}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return v2
+# CHECK-NOT: Branch
+# CHECK-NOT: Return v1
+# CHECK: Return v2
+}
+
+function f2 name="branchOnDoubleNegation" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    v3 = LogicalNot v0
+    v4 = LogicalNot v3
+    v5 = LogicalNot v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return v2
+# CHECK: Branch v0 -> taken b2(), notTaken b1()
+}
+
+function f3 name="bothTargetsEqual" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b1()
+  b1():
+    Return v1
+# CHECK-NOT: Branch
+# CHECK: Return v1
+}
+
+function f4 name="switchOnConstant" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+    v3 = Integer integer=1
+    Switch v3 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+# CHECK-NOT: Switch
+# CHECK-NOT: Return v0
+# CHECK: Return v1
+# CHECK-NOT: Return v2
+}
+
+function f5 name="switchOnNegativeZero" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+    v3 = Double number=-0
+    Switch v3 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+# CHECK-NOT: Switch
+# CHECK: Return v0
+}
+
+function f6 name="switchSubjectOfOtherType" parameters=[{type=number}, {type=number}, {type=number}, {type=string}] results=[{type=number}] {
+    Switch v3 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+# CHECK-NOT: Switch
+# CHECK-NOT: Return v1
+# CHECK: Return v2
+}
+
+function f7 name="switchPrunedByRange" parameters=[{type=number}, {type=number}, {type=number}, {type=int[0, 1]}] results=[{type=number}] {
+    Switch v3 cases=[0, 5] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+# CHECK: Switch v3 cases=[0] -> case b1(), otherwise b3()
+# CHECK-NOT: Return v1
+}
+
+function f8 name="caseZeroStaysForDoubles" parameters=[{type=number}, {type=number}, {type=number}, {type=int[1, 2]|double}] results=[{type=number}] {
+    Switch v3 cases=[0, 5] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+# CHECK: Switch v3 cases=[0] -> case b1(), otherwise b3()
+# CHECK: Return v0
+# CHECK-NOT: Return v1
+}
+
+function f9 name="switchStringOnConstant" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+    v3 = String string="b"
+    SwitchString v3 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+# CHECK-NOT: SwitchString
+# CHECK: Return v1
+}
+
+function f10 name="switchStringOnLiteralType" parameters=[{type=number}, {type=number}, {type=number}, {type="a"|"c"}] results=[{type=number}] {
+    SwitchString v3 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+# CHECK: SwitchString v3 strings=["a"] -> case b1(), otherwise b3()
+# CHECK-NOT: Return v1
+}
+
+function f11 name="throwToHandlerWithoutCatchValue" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: anything, v1: number) handler=b1():
+    Throw v0
+  b1() role=CatchHandler:
+    Return v1
+# CHECK: b0(v0: anything, v1: number) handler=b1():
+# CHECK-NEXT: Jump -> next [[body]]()
+# CHECK: b1() role=CatchHandler:
+# CHECK-NEXT: Jump -> next [[body]]()
+# CHECK: [[body]]():
+# CHECK-NEXT: Return v1
+}
+
+function f12 name="throwToHandlerWithCatchValue" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b1():
+    Throw v0
+  b1() role=CatchHandler:
+    v1 = CatchValue
+    Return v1
+# CHECK: b0(v0: anything) handler=b1():
+# CHECK-NEXT: Throw v0
+}
+
+function f13 name="chainOfThreeBlocks" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b1(v0)
+  b1(v1) frequency=Rare:
+    Jump -> next b2()
+  b2():
+    Return v1
+# CHECK: b0(v0: number) frequency=Rare:
+# CHECK-NEXT: Return v0
+}
+
+function f14 name="mergePointWithTwoIncomingEdges" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Negate v0
+    Jump -> next b3(v2)
+  b2():
+    v3 = Add v0, v0
+    Jump -> next b3(v3)
+  b3(v4):
+    Return v4
+# CHECK: Branch v1 -> taken b1(), notTaken b2()
+# CHECK: Jump -> next b3(v2)
+# CHECK: Jump -> next b3(v3)
+# CHECK: b3(v4: number):
+# CHECK-NEXT: Return v4
+}
+
+function f15 name="selfLoop" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v0
+# CHECK: Jump -> next b1()
+# CHECK: b1():
+# CHECK: Branch v1 -> taken b1(), notTaken b2()
+}
+
+function f16 name="caseEqualToDefault" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+    Switch v2 cases=[0, 1] -> case b1(), case b2(), otherwise b2()
+  b1():
+    Return v0
+  b2():
+    Return v1
+# CHECK: Switch v2 cases=[0] -> case b1(), otherwise b2()
+}
+
+function f17 name="rethrowToHandlerWithoutCaughtValue" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: anything, v1: number) handler=b2():
+    v2 = Call v0
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler handler=b3():
+    v3 = CatchException
+    Rethrow v3
+  b3() role=CatchHandler:
+    Return v1
+# CHECK: b2() role=CatchHandler
+# CHECK-NEXT: Jump -> next [[outerBody]]()
+# CHECK: b3() role=CatchHandler:
+# CHECK-NEXT: Jump -> next [[outerBody]]()
+# CHECK: [[outerBody]]():
+# CHECK-NEXT: Return v1
+# CHECK-NOT: Rethrow
+}
+
+function f18 name="testDecidedByTypeWithProof" parameters=[{type=number}] results=[{type=number}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v2
+  b2():
+    Return v0
+# CHECK-NOT: Branch
+# CHECK: Return v0
+}

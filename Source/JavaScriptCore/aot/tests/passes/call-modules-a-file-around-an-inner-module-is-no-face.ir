@@ -1,0 +1,31 @@
+# What a bundler's `__commonJS` wraps is a CommonJS record with the display path of the file around it. Nobody imports it, so it has no rule for what importers see of it.
+# The file around it is an ES module like any other, though its first request is a require of that record: it is no face of a CommonJS file.
+# So it does not run while the entry point is loaded, with what it queues in front of the body of the entry point.
+# FORM: Prepared
+# RUN: pass CallModules
+# CHECK: outcome: Changed
+
+variable g0 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g1 name="x" module=m1 declared={type=anything}
+module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/owner.mjs" displayPath="owner.mjs" body=f1 requests=[{target=m2 kind=Require completes=true}] exports=[{name="x" variable=g1}]
+module m2 path="#2" displayPath="owner.mjs" kind=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
+entry module=m0
+# CHECK-NOT: StopLoadingBehindFile
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f1 name="owner" module=m1 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m2 referrer=m1 [isBare]
+    v1 = GetModuleVariable variable=g0
+    PutModuleVariable v1 variable=g1
+    Return
+}
+function f2 name="inner" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=7
+    PutModuleVariable v0 variable=g0
+    Return
+}

@@ -248,7 +248,8 @@ WI.LogContentView = class LogContentView extends WI.ContentView
 
         // Some results don't populate until further backend dispatches occur (like the DOM tree).
         // We want to remove focusable children after those pending dispatches too.
-        let target = messageView.message ? messageView.message.target : WI.runtimeManager.activeExecutionContext.target;
+        let activeCallFrame = WI.runtimeManager.useActiveCallFrame ? WI.debuggerManager.activeCallFrame : null;
+        let target = messageView.message?.target || activeCallFrame?.target || WI.runtimeManager.activeExecutionContext.target;
         target.connection.runAfterPendingDispatches(clearFocusableChildren);
 
         if (!this._scopeBar.item(WI.LogContentView.Scopes.All).selected) {
@@ -1209,12 +1210,10 @@ WI.LogContentView = class LogContentView extends WI.ContentView
         this._unfilteredMessageElements().forEach(function(message) {
             let matchRanges = [];
             let text = message.textContent;
-            let match = searchRegex.exec(text);
-            while (match) {
+            WI.SearchUtilities.forEachMatch(searchRegex, text, (match) => {
                 numberOfResults++;
                 matchRanges.push({offset: match.index, length: match[0].length});
-                match = searchRegex.exec(text);
-            }
+            });
 
             if (!isEmptyObject(matchRanges))
                 this._highlightRanges(message, matchRanges);
@@ -1300,8 +1299,14 @@ WI.LogContentView = class LogContentView extends WI.ContentView
 
         this._startedProvisionalLoad = false;
 
-        for (let provisionalMessage of this._provisionalMessages)
+        for (let provisionalMessage of this._provisionalMessages) {
+            let scope = this._scopeFromMessageLevel(provisionalMessage.level);
+            this._scopesWithMessages.add(scope);
+
             this._logViewController.appendConsoleMessage(provisionalMessage);
+        }
+
+        this._showOrHideConditionallyVisibleScopeBarItemsAsNeeded();
 
         this._provisionalMessages = [];
     }

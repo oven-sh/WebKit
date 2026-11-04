@@ -78,13 +78,17 @@ enum class SignalAction {
 
 struct SigInfo {
     void* faultingAddress { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    // No instruction raised the signal, so there is no faulting address.
+    bool isSentByProcess { false };
+#endif
 };
 
 using SignalHandler = Function<SignalAction(Signal, SigInfo&, PlatformRegisters&)>;
 using SignalHandlerMemory = AlignedStorage<SignalHandler>;
 
 struct SignalHandlers {
-    static void NODELETE initialize();
+    static void LEGACY_NODELETE initialize();
     static void finalize();
 
     void add(Signal, SignalHandler&&);

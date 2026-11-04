@@ -30,6 +30,7 @@
 #import "WKSecurityOriginInternal.h"
 #import "WKWebViewInternal.h"
 #import <WebKit/WKError.h>
+#import <wtf/Borrow.h>
 #import <wtf/HashSet.h>
 #import <wtf/RetainPtr.h>
 
@@ -56,6 +57,8 @@
     _eventListenerCategories = _WKTextExtractionEventListenerCategoryAll;
     _includeAccessibilityAttributes = YES;
     _includeTextInAutoFilledControls = NO;
+    _includeSameOriginSubframes = YES;
+    _includeClippedContent = YES;
     _skipNearlyTransparentContent = YES;
     _targetRect = CGRectNull;
     _maxWordsPerParagraph = NSUIntegerMax;
@@ -201,7 +204,7 @@
         return { containers.first() };
 
     std::optional<WebKit::ExtractedNodeInfo> interactiveContainer;
-    for (auto& container : containers) {
+    for (auto& container : borrow(containers)) {
         if (container.interactivity != WebKit::ExtractedNodeInfo::IsInteractive::Yes)
             continue;
 

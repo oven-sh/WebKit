@@ -1,0 +1,5 @@
+# objects-that-three-functions-make-are-listed-by-their-numbers.ir with the objects numbered in another order: the same members.
+# OPTIONS: testing=ShuffleObjects:2
+# RUN: valueflow-why values=f0:v10
+# CHECK: operand 0 n{{*}} 4 members: primitive0 object{{*}}@f3 object{{*}}@f1 object{{*}}@f2
+# PROGRAM-OF: objects-that-three-functions-make-are-listed-by-their-numbers.ir

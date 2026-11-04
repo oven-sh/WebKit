@@ -1,0 +1,76 @@
+# Three functions called with new store the same names in another order, and what reads an object of any of them reads each name at one location.
+# "text" holds a string in one and nothing but undefined in another: both get the slot of a string that may be undefined. The third never stores it and keeps the bytes of that slot zero, so the read needs no test of the shape
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots layouts accesses
+# STATISTIC: SharesRefused = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Node" constructor=f1 fields=[{key="pos" declared={type=number} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=number} flags=[IsRequired]}, {key="parent" declared={type=undefined|object} flags=[IsRequired]}, {key="text" declared={type=undefined|string} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Token" constructor=f2 fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}, {key="parent" declared={type=undefined|object} flags=[IsRequired]}, {key="text" declared={type=undefined|string}}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Identifier" constructor=f3 fields=[{key="text" declared={type=undefined|string} flags=[IsRequired]}, {key="parent" declared={type=undefined|object} flags=[IsRequired]}, {key="kind" declared={type=number} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction]
+variable g0 name="node" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = NewClosure function=f1
+    v5 = Construct v4, -, v2
+    PutModuleVariable v5 variable=g0
+    v7 = NewClosure function=f2
+    v8 = Construct v7, -, v2
+    PutModuleVariable v8 variable=g0
+    v10 = NewClosure function=f3
+    v11 = Construct v10, -, v2, v3
+    PutModuleVariable v11 variable=g0
+    v13 = GetModuleVariable variable=g0
+    PropSet v13, v5 key="parent"
+    v15 = PropGet v13 key="kind"
+    v16 = PropGet v13 key="pos"
+    v17 = PropGet v13 key="end"
+    v18 = PropGet v13 key="parent"
+    v19 = PropGet v13 key="text"
+    Return
+}
+function f1 name="Node" flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
+    v2 = Undefined
+    PropSet v0, v1 key="pos"
+    PropSet v0, v1 key="end"
+    PropSet v0, v1 key="kind"
+    PropSet v0, v2 key="parent"
+    PropSet v0, v2 key="text"
+    Return
+}
+function f2 name="Token" flags=[HasThis] thisType={type=L1} parameters=[{type=number}] results=[{type=anything}] {
+    v2 = Undefined
+    PropSet v0, v1 key="kind"
+    PropSet v0, v1 key="pos"
+    PropSet v0, v1 key="end"
+    PropSet v0, v2 key="parent"
+    Return
+}
+function f3 name="Identifier" flags=[HasThis] thisType={type=L2} parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v3 = Undefined
+    PropSet v0, v2 key="text"
+    PropSet v0, v3 key="parent"
+    PropSet v0, v1 key="kind"
+    PropSet v0, v1 key="end"
+    PropSet v0, v1 key="pos"
+    Return
+}
+# CHECK: L0 CompiledObject size=48
+# CHECK: L1 CompiledObject size=48
+# CHECK: L2 CompiledObject size=48
+# CHECK: "parent" {L0 L1 L2} read+store
+# CHECK-NEXT: one location OptionalCell32 @16
+# CHECK: "pos" {L0 L1 L2} read
+# CHECK-NEXT: one location Double @
+# CHECK: "end" {L0 L1 L2} read
+# CHECK-NEXT: one location Double @
+# CHECK: "kind" {L0 L1 L2} read
+# CHECK-NEXT: one location Double @
+# CHECK: "text" {L0 L1 L2} read
+# CHECK-NEXT: one location OptionalCell32 @20
+# CHECK-NEXT: without slot {L1} zero

@@ -44,12 +44,12 @@ void genericUnwind(VM& vm, CallFrame* callFrame)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     CallFrame* topJSCallFrame = vm.topJSCallFrame();
     if (Options::breakOnThrow()) [[unlikely]] {
-        CodeBlock* codeBlock = topJSCallFrame->isNativeCalleeFrame() ? nullptr : topJSCallFrame->codeBlock();
+        CodeBlock* codeBlock = !topJSCallFrame || topJSCallFrame->isNativeCalleeFrame() ? nullptr : topJSCallFrame->codeBlock();
         dataLog("In call frame ", RawPointer(topJSCallFrame), " for code block ", codeBlock, "\n");
         WTFBreakpointTrap();
     }
     
-    if (auto* shadowChicken = vm.shadowChicken())
+    if (auto* shadowChicken = vm.shadowChicken(); shadowChicken && topJSCallFrame)
         shadowChicken->log(vm, topJSCallFrame, ShadowChicken::Packet::throwPacket());
 
     Exception* exception = scope.exception();
@@ -65,7 +65,7 @@ void genericUnwind(VM& vm, CallFrame* callFrame)
         catchPCForInterpreter = handler.m_catchPCForInterpreter;
         catchMetadataPCForInterpreter = handler.m_catchMetadataPCForInterpreter;
         tryDepthForThrow = handler.m_tryDepthForThrow;
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
         catchRoutine = handler.m_nativeCode.taggedPtr();
         if (handler.m_nativeCodeForDispatchAndCatch)
             dispatchAndCatchRoutine = handler.m_nativeCodeForDispatchAndCatch.taggedPtr();

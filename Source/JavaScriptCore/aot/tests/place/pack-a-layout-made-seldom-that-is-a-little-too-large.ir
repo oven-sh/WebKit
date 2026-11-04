@@ -1,0 +1,48 @@
+# Few objects of this layout are made, and with every field in the cell it is a little larger than the largest cell for such a layout. Only the rows that this cell has no room for lie in the Extension
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,PlaceTypeTests references=narrow disable=flow:NarrowedTypes
+# RUN: plan-slots layouts
+# STATISTIC: FieldsOutOfLine = 4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Settings" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="option0" declared={type=undefined|number}}, {key="option1" declared={type=undefined|number}}, {key="option2" declared={type=undefined|number}}, {key="option3" declared={type=undefined|number}}, {key="option4" declared={type=undefined|number}}, {key="option5" declared={type=undefined|number}}, {key="option6" declared={type=undefined|number}}, {key="option7" declared={type=undefined|number}}, {key="option8" declared={type=undefined|number}}, {key="option9" declared={type=undefined|number}}, {key="option10" declared={type=undefined|number}}, {key="option11" declared={type=undefined|number}}, {key="option12" declared={type=undefined|number}}, {key="option13" declared={type=undefined|number}}, {key="option14" declared={type=undefined|number}}, {key="option15" declared={type=undefined|number}}, {key="option16" declared={type=undefined|number}}, {key="option17" declared={type=undefined|number}}, {key="option18" declared={type=undefined|number}}, {key="option19" declared={type=undefined|number}}, {key="option20" declared={type=undefined|number}}, {key="option21" declared={type=undefined|number}}, {key="option22" declared={type=undefined|number}}, {key="option23" declared={type=undefined|number}}, {key="option24" declared={type=undefined|number}}, {key="option25" declared={type=undefined|number}}, {key="option26" declared={type=undefined|number}}, {key="option27" declared={type=undefined|number}}, {key="option28" declared={type=undefined|number}}, {key="option29" declared={type=undefined|number}}, {key="option30" declared={type=undefined|number}}, {key="option31" declared={type=undefined|number}}, {key="option32" declared={type=undefined|number}}, {key="option33" declared={type=undefined|number}}, {key="option34" declared={type=undefined|number}}, {key="option35" declared={type=undefined|number}}, {key="option36" declared={type=undefined|number}}, {key="option37" declared={type=undefined|number}}, {key="option38" declared={type=undefined|number}}, {key="option39" declared={type=undefined|number}}, {key="option40" declared={type=undefined|number}}, {key="option41" declared={type=undefined|number}}, {key="option42" declared={type=undefined|number}}, {key="option43" declared={type=undefined|number}}, {key="option44" declared={type=undefined|number}}, {key="option45" declared={type=undefined|number}}, {key="option46" declared={type=undefined|number}}, {key="option47" declared={type=undefined|number}}, {key="option48" declared={type=undefined|number}}, {key="option49" declared={type=undefined|number}}, {key="option50" declared={type=undefined|number}}, {key="option51" declared={type=undefined|number}}, {key="option52" declared={type=undefined|number}}, {key="option53" declared={type=undefined|number}}, {key="option54" declared={type=undefined|number}}, {key="option55" declared={type=undefined|number}}, {key="option56" declared={type=undefined|number}}, {key="option57" declared={type=undefined|number}}, {key="option58" declared={type=undefined|number}}, {key="option59" declared={type=undefined|number}}, {key="option60" declared={type=undefined|number}}, {key="option61" declared={type=undefined|number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = String string="text"
+    v4 = NewObject -, v2 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = ForInOpen v5
+# REPEAT: i = 7 9 11 13 15 17 19; j = 8 10 12 14 16 18 20
+    v%(i) = NewObject -, v2 layout=L0 fields=[0]
+    v%(j) = FinishObject v%(i)
+# END REPEAT
+    v21 = Call v0
+    v22 = ToBoolean v21
+    Branch v22 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v23 = CallDirect v5, v2 function=f1
+    v24 = CallDirect v5, v3 function=f2
+    Jump -> next b2()
+  b2():
+    Return
+}
+function f1 name="storeNumbers" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+# REPEAT: i = 0..61
+    PropSet v0, v1 key="option%(i)"
+# END REPEAT
+    Return
+}
+function f2 name="storeStrings" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+# REPEAT: i = 0..61
+    PropSet v0, v1 key="option%(i)"
+# END REPEAT
+    Return
+}
+
+# CHECK: L0 CompiledObject size=496 extension=40
+# CHECK: .58 "option57" OptionalDouble @488
+# CHECK-NEXT: .59 "option58" JSValue out@8
+# CHECK: .62 "option61" JSValue out@32

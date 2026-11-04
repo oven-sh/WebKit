@@ -39,8 +39,9 @@ inline DocumentMarkerController& Document::markers()
 
 inline const DocumentMarkerController& Document::markers() const
 {
-    if (!m_markers)
+    if (!m_markers) {
         return const_cast<Document&>(*this).ensureMarkers();
+    }
     return *m_markers;
 }
 

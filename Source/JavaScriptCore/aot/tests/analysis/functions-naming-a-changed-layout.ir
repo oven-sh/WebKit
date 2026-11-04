@@ -1,0 +1,162 @@
+# When a program pass edits the record of a layout, what is kept of a body (its effect summary, its borrowed parameters, its call-graph references) is dropped only where the body can see that record:
+# it names the layout in a type or an operation, or a layout that inherits from it, or a layout that stands for it. The other layouts below a common supertype have nothing to do with the edited one,
+# and neither has a layout that only holds such an object in a field: whoever reads the field and takes what it read for such an object says so in its own body.
+# One kind of body says nothing and sees the record all the same: a built-in that runs on all that its operand reaches is described by going from field to field.
+# FORM: Prepared
+# RUN: functions-seeing layouts=L0
+# CHECK: f0
+# REPEAT: i = 0..16; a = 1 2 5 6 9 12 13 14 15 16 17 18 20 21 22 23 24
+# CHECK-NEXT: f%(a)
+# END REPEAT
+# CHECK-NOT: f
+# RUN(VARIABLE): functions-seeing variables=g0
+# VARIABLE: f8
+# VARIABLE-NEXT: f10
+# VARIABLE-NOT: f
+
+# Where a pass says that it edits one field, the record of the field is seen by fewer still: by an operation that looks for the key of the field in such a layout, or for a key that is an operand,
+# by one that names the layout itself, and by the built-in that goes from field to field. To have a value of the layout, to hand it on, to look for another key in it or for the same key elsewhere is not to see it.
+# RUN(FIELD): functions-seeing fields=L0:0
+# FIELD: f9
+# FIELD-NEXT: f12
+# FIELD-NEXT: f13
+# FIELD-NEXT: f14
+# FIELD-NEXT: f15
+# FIELD-NEXT: f16
+# FIELD-NEXT: f17
+# FIELD-NOT: f
+
+# A protocol or a built-in looks for names of its own in what it is handed, and no operation says which. A field under such a name is also seen by every operation that runs a protocol on a value of the layout
+# and by every call that hands one to a built-in. A call that hands it to a function of the program sees nothing: what that function does with it is in its own body.
+# RUN(KNOWN): functions-seeing fields=L0:1
+# KNOWN: f9
+# KNOWN-NEXT: f16
+# KNOWN-NEXT: f17
+# KNOWN-NEXT: f22
+# KNOWN-NEXT: f23
+# KNOWN-NEXT: f24
+# KNOWN-NOT: f
+
+module m0 path="main.js" displayPath="main.js" body=f25
+entry module=m0
+layout L0 name="Edited" fields=[{key="amount" declared={type=number}}, {key="toString" declared={type=number}}] supertypes=[L2]
+layout L1 name="Heir" fields=[{key="amount" declared={type=number}}, {key="toString" declared={type=number}}, {key="bonus" declared={type=number}}] supertypes=[L0, L2]
+layout L2 name="Above"
+layout L3 name="Sibling" fields=[{key="c" declared={type=number}}] supertypes=[L2]
+layout L4 name="Holder" fields=[{key="held" declared={type=L0}}, {key="count" declared={type=number}}]
+layout L5 name="Unrelated" fields=[{key="d" declared={type=number}}, {key="amount" declared={type=number}}]
+layout L6 name="ProvenHolder" fields=[{key="held" declared={type=L0} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L7 name="HolderOfHolder" fields=[{key="inner" declared={type=L6} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L8 name="HolderOfUnrelated" fields=[{key="held" declared={type=L5} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+variable g0 name="edited" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="other" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="namesEdited" parameters=[{type=L0}] results=[{type=anything}] {
+    Return
+}
+function f1 name="namesHeir" parameters=[{type=L1}] results=[{type=anything}] {
+    Return
+}
+function f2 name="namesAbove" parameters=[{type=L2}] results=[{type=anything}] {
+    Return
+}
+function f3 name="namesSibling" parameters=[{type=L3}] results=[{type=anything}] {
+    Return
+}
+function f4 name="namesHolder" parameters=[{type=L4}] results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+function f5 name="readsHeldObject" parameters=[{type=L4}] results=[{type=anything}] {
+    v1 = PropGet v0 key="held"
+    v2 = Check v1 expectedType=L0
+    Return v2
+}
+function f6 name="namesArrayOfEdited" parameters=[{type=Array<L0>}] results=[{type=anything}] {
+    Return
+}
+function f7 name="namesUnrelated" parameters=[{type=L5}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g1
+    Return v1
+}
+function f8 name="readsEditedVariable" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f9 name="serializesHolderOfHolder" parameters=[{type=L7}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
+    Return v2
+}
+function f10 name="serializesHolderOfUnrelated" parameters=[{type=L8}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
+    v3 = GetModuleVariable variable=g0
+    Return v3
+}
+function f11 name="namesHolderOfHolder" parameters=[{type=L7}] results=[{type=anything}] {
+    v1 = PropGet v0 key="inner"
+    Return v1
+}
+function f12 name="readsFieldOfEdited" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="amount"
+    Return v1
+}
+function f13 name="readsFieldOfHeir" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="amount"
+    Return v1
+}
+function f14 name="readsFieldOfAbove" parameters=[{type=L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="amount"
+    Return v1
+}
+function f15 name="storesFieldOfEdited" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="amount"
+    Return v1
+}
+function f16 name="readsUnderKeyThatIsAnOperand" parameters=[{type=L0}, {type=string}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f17 name="makesEdited" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Return v1
+}
+function f18 name="readsOtherFieldOfHeir" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="bonus"
+    Return v1
+}
+function f19 name="readsSameKeyElsewhere" parameters=[{type=L5}] results=[{type=anything}] {
+    v1 = PropGet v0 key="amount"
+    Return v1
+}
+function f20 name="handsOnEdited" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+function f21 name="readsSameKeyElsewhereAndHasEdited" parameters=[{type=L5}, {type=L0}] results=[{type=anything}] {
+    v2 = PropGet v0 key="amount"
+    Return v2
+}
+function f22 name="convertsEdited" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = ToString v0
+    Return v1
+}
+function f23 name="handsEditedToBuiltin" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
+    Return v2
+}
+function f24 name="readsFieldThatBuiltinsKnow" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="toString"
+    Return v1
+}
+function f25 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+# REPEAT: i = 0..24
+    v%(i+2) = NewClosure function=f%(i)
+# END REPEAT
+    v27 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26
+    Return v27
+}

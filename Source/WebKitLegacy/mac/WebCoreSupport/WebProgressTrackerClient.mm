@@ -41,31 +41,32 @@ WebProgressTrackerClient::WebProgressTrackerClient(WebView *webView)
 #if !PLATFORM(IOS_FAMILY)
 void WebProgressTrackerClient::willChangeEstimatedProgress()
 {
-    [m_webView _willChangeValueForKey:_WebEstimatedProgressKey];
+    [protect(m_webView) _willChangeValueForKey:_WebEstimatedProgressKey];
 }
 
 void WebProgressTrackerClient::didChangeEstimatedProgress()
 {
-    [m_webView _didChangeValueForKey:_WebEstimatedProgressKey];
+    [protect(m_webView) _didChangeValueForKey:_WebEstimatedProgressKey];
 }
 #endif
 
 void WebProgressTrackerClient::progressStarted(WebCore::LocalFrame& originatingProgressFrame)
 {
 #if !PLATFORM(IOS_FAMILY)
-    [[NSNotificationCenter defaultCenter] postNotificationName:WebViewProgressStartedNotification object:m_webView];
+    [[NSNotificationCenter defaultCenter] postNotificationName:WebViewProgressStartedNotification object:protect(m_webView)];
 #else
-    WebThreadPostNotification(WebViewProgressStartedNotification, m_webView, nil);
+    WebThreadPostNotification(WebViewProgressStartedNotification, protect(m_webView), nil);
 #endif
 }
 
 void WebProgressTrackerClient::progressEstimateChanged(WebCore::LocalFrame&)
 {
 #if !PLATFORM(IOS_FAMILY)
-    [[NSNotificationCenter defaultCenter] postNotificationName:WebViewProgressEstimateChangedNotification object:m_webView];
+    [[NSNotificationCenter defaultCenter] postNotificationName:WebViewProgressEstimateChangedNotification object:protect(m_webView)];
 #else
-    NSNumber *progress = [NSNumber numberWithFloat:[m_webView estimatedProgress]];
-    CGColorRef bodyBackgroundColor = [[m_webView mainFrame] _bodyBackgroundColor];
+    RetainPtr webView = m_webView;
+    NSNumber *progress = [NSNumber numberWithFloat:[webView estimatedProgress]];
+    RetainPtr bodyBackgroundColor = [[webView mainFrame] _bodyBackgroundColor];
     
     // Use a CFDictionary so we can add the CGColorRef without compile errors. And then thanks to
     // toll-free bridging we can pass the CFDictionary as an NSDictionary to postNotification.
@@ -74,13 +75,13 @@ void WebProgressTrackerClient::progressEstimateChanged(WebCore::LocalFrame&)
     if (bodyBackgroundColor)
         CFDictionaryAddValue(userInfo.get(), WebViewProgressBackgroundColorKey, bodyBackgroundColor);
     
-    WebThreadPostNotification(WebViewProgressEstimateChangedNotification, m_webView, (NSDictionary *)userInfo.get());
+    WebThreadPostNotification(WebViewProgressEstimateChangedNotification, webView, (NSDictionary *)userInfo.get());
 #endif
 }
 
 void WebProgressTrackerClient::progressFinished(WebCore::LocalFrame&)
 {
 #if !PLATFORM(IOS_FAMILY)
-    [[NSNotificationCenter defaultCenter] postNotificationName:WebViewProgressFinishedNotification object:m_webView];
+    [[NSNotificationCenter defaultCenter] postNotificationName:WebViewProgressFinishedNotification object:protect(m_webView)];
 #endif
 }

@@ -69,7 +69,7 @@ static JSC_DECLARE_HOST_FUNCTION(callTemporalPlainMonthDay);
 static JSC_DECLARE_HOST_FUNCTION(constructTemporalPlainMonthDay);
 
 TemporalPlainMonthDayConstructor::TemporalPlainMonthDayConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callTemporalPlainMonthDay, constructTemporalPlainMonthDay)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callTemporalPlainMonthDay), JSC_REGISTERED_HOST_FUNCTION(constructTemporalPlainMonthDay))
 {
 }
 

@@ -38,13 +38,13 @@ public:
     AncestorSubgridIterator();
     AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, Style::GridTrackSizingDirection);
 
-    RenderGrid& NODELETE operator*();
+    RenderGrid& LEGACY_NODELETE operator*();
 
-    bool NODELETE operator==(const AncestorSubgridIterator&) const;
+    bool LEGACY_NODELETE operator==(const AncestorSubgridIterator&) const;
 
     AncestorSubgridIterator& operator++();
-    AncestorSubgridIterator NODELETE begin();
-    AncestorSubgridIterator NODELETE end();
+    AncestorSubgridIterator begin();
+    AncestorSubgridIterator end();
 private:
     AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestor, Style::GridTrackSizingDirection);
     AncestorSubgridIterator(SingleThreadWeakPtr<RenderGrid> firstAncestorSubgrid, SingleThreadWeakPtr<RenderGrid> currentAncestor, std::optional<Style::GridTrackSizingDirection>);

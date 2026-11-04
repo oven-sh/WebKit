@@ -71,4 +71,8 @@ ALWAYS_INLINE void ExternalStringImpl::freeExternalBuffer(void* buffer, unsigned
 
 } // namespace WTF
 
+SPECIALIZE_TYPE_TRAITS_BEGIN(WTF::ExternalStringImpl)
+    static bool isType(const WTF::StringImpl& impl) { return impl.isExternal(); }
+SPECIALIZE_TYPE_TRAITS_END()
+
 using WTF::ExternalStringImpl;

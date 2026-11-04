@@ -50,7 +50,7 @@ struct TextAutospace {
     constexpr bool hasIdeographNumeric() const { return m_value.hasIdeographNumeric(); }
     constexpr bool hasInsert() const { return m_value.hasInsert(); }
 
-    template<typename... F> constexpr decltype(auto) switchOn(F&&... f) const
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -97,7 +97,7 @@ private:
 
 // MARK: - Conversion
 
-template<> struct CSSValueConversion<TextAutospace> { auto operator()(BuilderState&, const CSSValue&) -> TextAutospace; };
+template<> struct CSSValueConversion<TextAutospace> { TextAutospace LEGACY_NODELETE operator()(BuilderState&, const CSSValue&); };
 
 // MARK: - Platform
 

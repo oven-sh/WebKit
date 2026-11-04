@@ -28,10 +28,13 @@
 #include "WebKitScriptDialogImpl.h"
 #include "WebKitWebViewBasePrivate.h"
 #include "WebKitWebViewPrivate.h"
+#include <WebCore/CSSValueKeywords.h>
 #include <WebCore/Color.h>
+#include <WebCore/PlatformRenderTheme.h>
 #include <WebCore/PlatformScreen.h>
 #include <glib/gi18n-lib.h>
 #include <gtk/gtk.h>
+#include <wtf/text/MakeString.h>
 
 struct WindowStateEvent;
 
@@ -66,10 +69,10 @@ gboolean webkitWebViewAuthenticate(WebKitWebView* webView, WebKitAuthenticationR
 
 gboolean webkitWebViewScriptDialog(WebKitWebView* webView, WebKitScriptDialog* scriptDialog)
 {
-    GUniquePtr<char> title(g_strdup_printf("JavaScript - %s", webkitWebViewGetPage(webView).pageLoadState().url().string().utf8().legacyCStringPointer()));
+    auto title = makeString("JavaScript - "_s, webkitWebViewGetPage(webView).pageLoadState().url().string()).utf8();
     // Limit script dialog size to 80% of the web view size.
     GtkRequisition maxSize = { static_cast<int>(gtk_widget_get_allocated_width(GTK_WIDGET(webView)) * 0.80), static_cast<int>(gtk_widget_get_allocated_height(GTK_WIDGET(webView)) * 0.80) };
-    webkitWebViewBaseAddDialog(WEBKIT_WEB_VIEW_BASE(webView), webkitScriptDialogImplNew(scriptDialog, title.get(), &maxSize));
+    webkitWebViewBaseAddDialog(WEBKIT_WEB_VIEW_BASE(webView), webkitScriptDialogImplNew(scriptDialog, title.legacyCStringPointer(), &maxSize));
 
     return TRUE;
 }
@@ -444,10 +447,12 @@ GtkWidget* webkit_web_view_new_with_user_content_manager(WebKitUserContentManage
 void webkit_web_view_set_background_color(WebKitWebView* webView, const GdkRGBA* rgba)
 {
     g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
-    g_return_if_fail(rgba);
 
     auto& page = *webkitWebViewBaseGetPage(reinterpret_cast<WebKitWebViewBase*>(webView));
-    page.setBackgroundColor(WebKit::gdkRGBAToColor(*rgba));
+    if (rgba)
+        page.setBackgroundColor(WebKit::gdkRGBAToColor(*rgba));
+    else
+        page.setBackgroundColor(std::nullopt);
 }
 
 /**
@@ -458,7 +463,8 @@ void webkit_web_view_set_background_color(WebKitWebView* webView, const GdkRGBA*
  * Gets the color that is used to draw the @web_view background.
  *
  * Gets the color that is used to draw the @web_view background before
- * the actual contents are rendered.
+ * the actual contents are rendered. By default the @web_view background
+ * color is based on the system appearance.
  * For more information see also webkit_web_view_set_background_color()
  *
  * Since: 2.8
@@ -469,7 +475,15 @@ void webkit_web_view_get_background_color(WebKitWebView* webView, GdkRGBA* rgba)
     g_return_if_fail(rgba);
 
     auto& page = *webkitWebViewBaseGetPage(reinterpret_cast<WebKitWebViewBase*>(webView));
-    *rgba = WebKit::colorToGdkRGBA(page.backgroundColor().value_or(WebCore::Color::white));
+    if (auto color = page.backgroundColor()) {
+        *rgba = WebKit::colorToGdkRGBA(*color);
+        return;
+    }
+
+    OptionSet<WebCore::StyleColorOptions> styleColorOptions;
+    if (page.useDarkAppearance())
+        styleColorOptions.add(WebCore::StyleColorOptions::UseDarkAppearance);
+    *rgba = WebKit::colorToGdkRGBA(WebCore::RenderTheme::singleton().systemColor(WebCore::CSSValueID::Canvas, styleColorOptions));
 }
 
 /**

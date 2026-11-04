@@ -1,0 +1,54 @@
+# Operand, terminator, edge argument and handler argument uses with their order and use points
+# FORM: Prepared
+# RUN: analyses control-flow use-lists
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="uses" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    v2 = Add v1, v1
+    Switch v1 cases=[0] -> case b1(v1), otherwise b3(v2)
+  b1(v3) handler=b2(v1):
+    v4 = Call v0, -, v1
+    Jump -> next b3(v3)
+  b2(v5) role=CatchHandler:
+    v6 = CatchValue
+    v7 = Add v5, v1
+    Return v7
+  b3(v8):
+    v9 = Add v8, v1
+    Return v9
+}
+# CHECK: function f0
+# CHECK-NEXT: control-flow:
+# CHECK-NEXT: reverse postorder: [b0 b1 b2 b3]
+# CHECK: use-lists:
+# CHECK-NEXT: v0 location: b0 parameter 0
+# CHECK-NEXT: v0 uses: [v4(0)]
+# CHECK-NEXT: v0 use points: [b1:0]
+# CHECK-NEXT: v1 location: b0 parameter 1
+# CHECK-NEXT: v1 uses: [v2(0) v2(1) b0.terminator(0) b0.0(0) b1.handler(0) v4(2) v7(1) v9(1)]
+# CHECK-NEXT: v1 use points: [b0:0 b0:0 b0:1 b0:1 b1:0 b1:0 b2:1 b3:0]
+# CHECK-NEXT: v2 location: b0 value 0
+# CHECK-NEXT: v2 uses: [b0.1(0)]
+# CHECK-NEXT: v2 use points: [b0:1]
+# CHECK-NEXT: v3 location: b1 parameter 0
+# CHECK-NEXT: v3 uses: [b1.0(0)]
+# CHECK-NEXT: v3 use points: [b1:1]
+# CHECK-NEXT: v4 location: b1 value 0
+# CHECK-NEXT: v4 uses: []
+# CHECK-NEXT: v4 use points: []
+# CHECK-NEXT: v5 location: b2 parameter 0
+# CHECK-NEXT: v5 uses: [v7(0)]
+# CHECK-NEXT: v5 use points: [b2:1]
+# CHECK-NEXT: v6 location: b2 value 0
+# CHECK-NEXT: v6 uses: []
+# CHECK-NEXT: v6 use points: []
+# CHECK-NEXT: v7 location: b2 value 1
+# CHECK-NEXT: v7 uses: [b2.terminator(0)]
+# CHECK-NEXT: v7 use points: [b2:2]
+# CHECK-NEXT: v8 location: b3 parameter 0
+# CHECK-NEXT: v8 uses: [v9(0)]
+# CHECK-NEXT: v8 use points: [b3:0]
+# CHECK-NEXT: v9 location: b3 value 0
+# CHECK-NEXT: v9 uses: [b3.terminator(0)]
+# CHECK-NEXT: v9 use points: [b3:1]
+# CHECK-NEXT: detached: []

@@ -25,8 +25,8 @@
 
 #pragma once
 
-#include "WebGPURenderPipeline.h"
 #include <JavaScriptCore/InspectorProtocolObjects.h>
+#include <WebCore/WebGPUCppAPI.h>
 #include <cstdint>
 #include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
@@ -49,19 +49,19 @@ class WebGLProgram;
 class InspectorShaderProgram final : public RefCounted<InspectorShaderProgram> {
 public:
 #if ENABLE(WEBGL)
-    static Ref<InspectorShaderProgram> create(WebGLProgram&, InspectorCanvas&);
+    static Ref<InspectorShaderProgram> LEGACY_NODELETE create(WebGLProgram&, InspectorCanvas&);
 #endif // ENABLE(WEBGL)
-    static Ref<InspectorShaderProgram> create(GPUComputePipeline&, InspectorCanvas&);
-    static Ref<InspectorShaderProgram> create(GPURenderPipeline&, InspectorCanvas&);
+    static Ref<InspectorShaderProgram> LEGACY_NODELETE create(GPUComputePipeline&, InspectorCanvas&);
+    static Ref<InspectorShaderProgram> LEGACY_NODELETE create(GPURenderPipeline&, InspectorCanvas&);
 
     const String& identifier() const LIFETIME_BOUND { return m_identifier; }
     InspectorCanvas& canvas() const { return m_canvas; }
 
 #if ENABLE(WEBGL)
-    WebGLProgram* program() const;
+    WebGLProgram* LEGACY_NODELETE program() const;
 #endif // ENABLE(WEBGL)
-    GPUComputePipeline* computePipeline() const;
-    GPURenderPipeline* renderPipeline() const;
+    GPUComputePipeline* LEGACY_NODELETE computePipeline() const;
+    GPURenderPipeline* LEGACY_NODELETE renderPipeline() const;
 
     String requestShaderSource(Inspector::Protocol::Canvas::ShaderType);
     void updateShader(Inspector::Protocol::Canvas::ShaderType, const String& source, CompletionHandler<void(bool)>&&);
@@ -86,7 +86,7 @@ private:
     void invalidateRenderPipelinesForHighlighting();
     void prepareRenderPipelinesForHighlighting(CompletionHandler<void()>&&);
     void requestRenderPipelineForHighlighting(unsigned canvasColorAttachmentMask, CompletionHandler<void()>&&);
-    RefPtr<WebGPU::RenderPipeline> renderPipelineForHighlighting(unsigned canvasColorAttachmentMask);
+    RefPtr<::WebGPU::RenderPipeline> renderPipelineForHighlighting(unsigned canvasColorAttachmentMask);
 
     String m_identifier;
     WeakRef<InspectorCanvas> m_canvas;
@@ -99,7 +99,7 @@ private:
     > m_program;
 
     HashSet<unsigned> m_canvasColorAttachmentMasks;
-    HashMap<unsigned, Ref<WebGPU::RenderPipeline>> m_renderPipelinesForHighlighting;
+    HashMap<unsigned, Ref<::WebGPU::RenderPipeline>> m_renderPipelinesForHighlighting;
     HashMap<unsigned, uint64_t> m_renderPipelineHighlightRequestGenerations;
     uint64_t m_renderPipelineHighlightGeneration { 0 };
 

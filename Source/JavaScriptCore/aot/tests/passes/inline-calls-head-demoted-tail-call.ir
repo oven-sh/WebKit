@@ -1,0 +1,36 @@
+# After the copy of a head the full call of a tail site is a tail call again, without a mark, and the full call of a marked site keeps its mark
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=EverythingIsHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInlineHead = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+evalscope e0 mode=Strict
+
+function f0 name="evaluatesTextRarely" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3) frequency=Rare:
+    v4 = Undefined
+    v5 = DirectEval v3, v4 evalScope=e0
+    Return v5
+}
+function f1 name="tailSite" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f0 @9
+    ReturnCall v1
+# CHECK: inlineFrames=[{}, {callee=f0 callPosition=9 isTailCall=true module=m0}] {
+# CHECK-NOT: = {{*}}@{{*}} tail
+# CHECK: [[full1]]: anything = CallDirect v0 function=f0 [isAfterInlinedHead] @9
+# CHECK-NEXT: ReturnCall [[full1]]
+# CHECK-NOT: = {{*}}@{{*}} tail
+}
+
+function f2 name="markedSite" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f0 @9 tail
+    Return v1
+# CHECK: inlineFrames=[{}, {callee=f0 callPosition=9 isTailCall=true module=m0}] {
+# CHECK: anything = CallDirect v0 function=f0 [isAfterInlinedHead] @9 tail
+}

@@ -62,7 +62,7 @@ public:
 
     using TextTrackRepresentationFactory = WTF::Function<std::unique_ptr<TextTrackRepresentation>(TextTrackRepresentationClient&, HTMLMediaElement&)>;
 
-    WEBCORE_EXPORT static TextTrackRepresentationFactory& representationFactory();
+    WEBCORE_EXPORT static TextTrackRepresentationFactory& LEGACY_NODELETE representationFactory();
 
 protected:
     // TextTrackRepresentation
@@ -73,8 +73,8 @@ protected:
     TextTrackRepresentationClient& m_client;
 
 private:
-    RetainPtr<CALayer> m_layer;
-    RetainPtr<WebCoreTextTrackRepresentationCocoaHelper> m_delegate;
+    const RetainPtr<CALayer> m_layer;
+    const RetainPtr<WebCoreTextTrackRepresentationCocoaHelper> m_delegate;
 };
 
 }

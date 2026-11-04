@@ -1,0 +1,26 @@
+# Map.groupBy = one; somethingNoTableLists.constructor.groupBy = two; Map.groupBy()
+# The first store leaves Map.groupBy without a lock. The second goes through an object that nobody knows, which may be a map that the host has made: nothing refuses it, so the call may enter what it stored.
+# RUN: valueflow-solve calls
+# CHECK: f0 v9 -> {{*}}f1 f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+    v0 = Builtin builtin=Map
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="groupBy" mode=Strict
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
+    v5 = PropGet v4 key="constructor"
+    v6 = NewClosure function=f2
+    PropSet v5, v6 key="groupBy" mode=Strict
+    v8 = PropGet v0 key="groupBy"
+    v9 = Call v8, v0
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+    Return
+}

@@ -22,6 +22,7 @@
 
 """Unit test for jsonchecker.py."""
 
+import json
 import unittest
 from unittest.mock import Mock
 
@@ -464,3 +465,119 @@ class JSONImportExpectationsCheckerTest(fake_filesystem_unittest.TestCase):
             5,
             'Each value must be one of "import", "import-no-rewrite", "skip", or "skip-new-directories"',
         )
+
+
+class JSONQuirkTableCheckerTest(fake_filesystem_unittest.TestCase):
+    BEHAVIORS_YAML = '\n'.join([
+        '# A comment.',
+        'PlainQuirk:',
+        '',
+        'ScriptQuirk:',
+        '  parameters: [Script]',
+        '  conditions: [SecondaryURL]',
+        '  implementation: custom',
+        '',
+        'RequiredSelectorQuirk:',
+        '  conditions: [ElementSelector]',
+        '  conditionsRequired: true',
+    ])
+    BUILD_CONDITIONS = '# Comment.\n\nmac: PLATFORM(MAC)\niOS: PLATFORM(IOS)\n'
+    ENVIRONMENTS = 'enum class URLEnvironment : uint8_t {\n    SmallScreen,\n};\n'
+
+    def setUp(self):
+        self.setUpPyfakefs()
+        self.fs.create_file('/page/QuirkBehaviors.yaml', contents=self.BEHAVIORS_YAML)
+        self.fs.create_file('/page/QuirkBuildConditions.yaml', contents=self.BUILD_CONDITIONS)
+        self.fs.create_file('/page/QuirkMatchPattern.h', contents=self.ENVIRONMENTS)
+
+    def errors_for(self, table):
+        error_handler = Mock()
+        checker = jsonchecker.JSONQuirkTableChecker('/page/QuirkTable.json', error_handler)
+        checker.check(json.dumps(table, indent=4).split('\n'))
+        return [call[0][3] for call in error_handler.call_args_list]
+
+    def errors_for_row(self, **row):
+        row.setdefault('matches', ['*://*.example.com/*'])
+        row.setdefault('behaviors', [{'id': 'PlainQuirk'}])
+        # Passing None for a field leaves it out of the row.
+        return self.errors_for({'quirks': [{field: value for field, value in row.items() if value is not None}]})
+
+    def assert_row_error(self, expected, **row):
+        errors = self.errors_for_row(**row)
+        self.assertTrue(any(expected in error for error in errors), 'expected an error containing %r, got %r' % (expected, errors))
+
+    def test_valid_table(self):
+        self.assertEqual(self.errors_for({'quirks': [
+            {'bugs': ['rdar://1', 'https://webkit.org/b/2'], 'comment': 'Why.', 'matches': ['*://*.example.com/*'], 'available': 'mac || iOS', 'environment': 'SmallScreen', 'behaviors': [
+                {'id': 'PlainQuirk', 'bugs': ['rdar://3']},
+                {'id': 'ScriptQuirk', 'script': 'x', 'secondaryURL': ['*://cdn.example.com/*']},
+                {'id': 'RequiredSelectorQuirk', 'elementSelector': '.x'},
+            ]},
+            {'embeddedMatches': ['*://*.example.org/*'], 'behaviors': [{'id': 'ScriptQuirk', 'script': 'x'}]},
+        ]}), [])
+
+    def test_missing_sibling_file(self):
+        self.fs.remove('/page/QuirkBehaviors.yaml')
+        self.assertEqual(self.errors_for({'quirks': []}), ['Could not read QuirkBehaviors.yaml, which QuirkTable.json is checked against.'])
+
+    def assert_yaml_rejected(self, file_name, contents, expected):
+        self.fs.remove('/page/' + file_name)
+        self.fs.create_file('/page/' + file_name, contents=contents)
+        errors = self.errors_for({'quirks': []})
+        self.assertEqual(len(errors), 1, errors)
+        self.assertTrue(errors[0].startswith(expected), errors)
+
+    def test_non_flat_behaviors_yaml(self):
+        self.assert_yaml_rejected('QuirkBehaviors.yaml', 'ScriptQuirk:\n  parameters:\n    - Script\n', 'QuirkBehaviors.yaml:2: expected "BehaviorName:" or an indented "key: value"')
+        self.assert_yaml_rejected('QuirkBehaviors.yaml', '  parameters: [Script]\n', 'QuirkBehaviors.yaml:1: expected "BehaviorName:" or an indented "key: value"')
+        self.assert_yaml_rejected('QuirkBehaviors.yaml', 'ScriptQuirk:\n  parameters: Script\n', 'QuirkBehaviors.yaml:2: expected "parameters" to be an inline list')
+        self.assert_yaml_rejected('QuirkBehaviors.yaml', 'ScriptQuirk:\n  conditionsRequired: yes\n', 'QuirkBehaviors.yaml:2: expected "conditionsRequired" to be true or false')
+
+    def test_non_flat_build_conditions_yaml(self):
+        self.assert_yaml_rejected('QuirkBuildConditions.yaml', 'mac:\n  guard: PLATFORM(MAC)\n', 'QuirkBuildConditions.yaml:1: expected "name: condition"')
+        self.assert_yaml_rejected('QuirkBuildConditions.yaml', 'mac: PLATFORM(MAC)\n  iOS: PLATFORM(IOS)\n', 'QuirkBuildConditions.yaml:2: expected "name: condition"')
+
+    def test_top_level(self):
+        for table in ([], {'rows': []}, {'quirks': {}}, {'quirks': [], 'extra': 1}):
+            self.assertEqual(self.errors_for(table), ['The top level must be an object whose only key is "quirks", an array of rows.'])
+
+    def test_row_structure(self):
+        self.assert_row_error('a row must have "matches" or "embeddedMatches"', matches=None)
+        self.assert_row_error('unknown field "matchez"', matchez=[])
+        self.assert_row_error('"matches" must be a non-empty array', matches=[])
+        self.assert_row_error('"behaviors" must be a non-empty array', behaviors=[])
+        self.assert_row_error('"queryContains" must be a non-empty string', queryContains='')
+        self.assert_row_error('"environment" must name a URLEnvironment', environment='Toaster')
+
+    def test_available(self):
+        self.assertEqual(self.errors_for_row(available='mac && iOS'), [])
+        for available in ('!mac', '!!mac', '!mac && iOS', '!(mac || iOS)', '(mac || iOS) && !iOS', '((mac))', 'mac||iOS'):
+            self.assertEqual(self.errors_for_row(available=available), [], available)
+        self.assert_row_error('"available" must be', available='toaster')
+        self.assert_row_error('"available" must be', available='mac ||')
+        self.assert_row_error('"available" must be', available='')
+        for available in ('!', '(mac', 'mac)', '()', 'mac iOS', 'mac ! iOS', 'mac & iOS', 'mac &', 'mac |', '!toaster', '(' * 100 + 'mac' + ')' * 100):
+            self.assert_row_error('"available" must be', available=available)
+
+    def test_bugs_and_comment(self):
+        self.assert_row_error('"bugs" must be', bugs=[])
+        self.assert_row_error('"bugs" must be', bugs=['rdar://problem/1'])
+        self.assert_row_error('"bugs" must be', bugs=['https://bugs.webkit.org/show_bug.cgi?id=1'])
+        self.assert_row_error('"bugs" lists a bug more than once', bugs=['rdar://1', 'rdar://1'])
+        self.assert_row_error('"comment" must be a non-empty string', comment=['two', 'lines'])
+        self.assert_row_error('"bugs" must be', behaviors=[{'id': 'PlainQuirk', 'bugs': ['nope']}])
+
+    def test_behaviors(self):
+        self.assert_row_error('"NoSuchQuirk" is not a behavior', behaviors=[{'id': 'NoSuchQuirk'}])
+        self.assert_row_error('a behavior must have an "id"', behaviors=[{'comment': 'No id.'}])
+        self.assert_row_error('"id" must be a non-empty string', behaviors=[{'id': 5}])
+        self.assert_row_error('"id" must be a non-empty string', behaviors=[{'id': ['PlainQuirk']}])
+        self.assert_row_error('"behaviors" lists PlainQuirk more than once', behaviors=[{'id': 'PlainQuirk'}, {'id': 'PlainQuirk'}])
+        self.assert_row_error('"behaviors" lists ScriptQuirk more than once', behaviors=[{'id': 'ScriptQuirk', 'script': 'a'}, {'id': 'ScriptQuirk', 'script': 'b'}])
+        self.assert_row_error('unknown field "colour"', behaviors=[{'id': 'PlainQuirk', 'colour': 'red'}])
+        self.assert_row_error('ScriptQuirk: needs "script"', behaviors=[{'id': 'ScriptQuirk'}])
+        self.assert_row_error('PlainQuirk: does not take "script"', behaviors=[{'id': 'PlainQuirk', 'script': 'x'}])
+        self.assert_row_error('PlainQuirk: does not take "elementSelector"', behaviors=[{'id': 'PlainQuirk', 'elementSelector': '.x'}])
+        self.assert_row_error('RequiredSelectorQuirk: needs "elementSelector"', behaviors=[{'id': 'RequiredSelectorQuirk'}])
+        self.assert_row_error('"script" must be a non-empty string', behaviors=[{'id': 'ScriptQuirk', 'script': ''}])
+        self.assert_row_error('"secondaryURL" must be a non-empty array of strings', behaviors=[{'id': 'ScriptQuirk', 'script': 'x', 'secondaryURL': []}])

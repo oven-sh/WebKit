@@ -30,7 +30,6 @@
 #include "CairoPaintingContext.h"
 
 #if USE(CAIRO)
-#include "CairoOperationRecorder.h"
 #include "CoordinatedTileBuffer.h"
 #include "GraphicsContext.h"
 #include "GraphicsContextCairo.h"
@@ -48,11 +47,6 @@ std::unique_ptr<PaintingContext> PaintingContext::createForPainting(WebCore::Coo
     return std::unique_ptr<PaintingContext>(new PaintingContext(buffer));
 }
 
-std::unique_ptr<PaintingContext> PaintingContext::createForRecording(PaintingOperations& paintingOperations)
-{
-    return std::unique_ptr<PaintingContext>(new PaintingContext(paintingOperations));
-}
-
 PaintingContext::PaintingContext(WebCore::CoordinatedTileBuffer& baseBuffer)
 {
     // All buffers used for painting with Cairo are unaccelerated.
@@ -61,8 +55,7 @@ PaintingContext::PaintingContext(WebCore::CoordinatedTileBuffer& baseBuffer)
     // Balanced by the deref in the s_bufferKey user data destroy callback.
     buffer.ref();
 
-    m_surface = adoptRef(cairo_image_surface_create_for_data(buffer.data(),
-        CAIRO_FORMAT_ARGB32, baseBuffer.size().width(), baseBuffer.size().height(), buffer.stride()));
+    m_surface = buffer.createSurface();
 
     static cairo_user_data_key_t s_bufferKey;
     cairo_surface_set_user_data(m_surface.get(), &s_bufferKey,
@@ -83,11 +76,6 @@ PaintingContext::PaintingContext(WebCore::CoordinatedTileBuffer& baseBuffer)
     m_graphicsContext = makeUnique<WebCore::GraphicsContextCairo>(m_surface.get());
 }
 
-PaintingContext::PaintingContext(PaintingOperations& paintingOperations)
-    : m_graphicsContext(makeUnique<OperationRecorder>(paintingOperations))
-{
-}
-
 PaintingContext::~PaintingContext()
 {
     if (!m_surface)
@@ -103,14 +91,6 @@ PaintingContext::~PaintingContext()
     // be the case if the s_bufferKey user data destroy callback has been invoked upon the
     // cairo_surface_t destruction.
     ASSERT(m_deletionComplete);
-}
-
-void PaintingContext::replay(const PaintingOperations& paintingOperations)
-{
-    ASSERT(m_surface);
-    auto& context = *m_graphicsContext->platformContext();
-    for (auto& operation : paintingOperations)
-        operation->execute(context);
 }
 
 } // namespace Cairo

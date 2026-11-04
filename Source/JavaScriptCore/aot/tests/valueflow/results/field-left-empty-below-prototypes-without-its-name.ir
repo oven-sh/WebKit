@@ -1,0 +1,16 @@
+# bare = { a: 1 }; full = { a: 1, late: 1 }; bare.late; full.late
+# Some objects of the layout leave the field empty. Above them lies Object.prototype alone, which never has the name.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Options" fields=[{key="a" {{*}}occupancy=AlwaysFilled stability={{*}}{key="late" {{*}}prototypeName=AbsentOnPrototypes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="late" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = PropGet v1 key="late"
+    v4 = PropGet v2 key="late"
+    Return
+}

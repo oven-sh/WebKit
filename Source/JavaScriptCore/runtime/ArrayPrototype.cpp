@@ -40,6 +40,7 @@
 #include "JSStringJoiner.h"
 #include "ObjectConstructor.h"
 #include "ObjectPrototypeInlines.h"
+#include "OwedOutOfMemoryError.h"
 #include "StableSort.h"
 #include "StringRecursionChecker.h"
 #include "VMEntryScopeInlines.h"
@@ -57,21 +58,20 @@ static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncJoin);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncKeys);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncEntries);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncPop);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncPush);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncReverse);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncShift);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSlice);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSort);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSlice);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSort);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSplice);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncUnShift);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIndexOf);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncLastIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncConcat);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncFill);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncToReversed);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncToSorted);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncWith);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIncludes);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIncludes);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncCopyWithin);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncToSpliced);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncFlat);
@@ -239,7 +239,7 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
     return fastArrayJoin(globalObject, thisObject, separator, length, sawHoles, genericCase);
 }
 
-inline bool NODELETE canUseDefaultArrayJoinForToString(JSObject* thisObject)
+inline bool LEGACY_NODELETE canUseDefaultArrayJoinForToString(JSObject* thisObject)
 {
     JSGlobalObject* globalObject = thisObject->realmMayBeNull();
     if (!globalObject)
@@ -311,6 +311,96 @@ static JSString* toLocaleString(JSGlobalObject* globalObject, JSValue value, JSV
     RELEASE_AND_RETURN(scope, result.toString(globalObject));
 }
 
+static bool hasNoElementFrom(JSObject* object, uint64_t index)
+{
+    if (!isJSArray(object) || !hasAnyArrayStorage(object->indexingType()))
+        return false;
+    ArrayStorage* storage = object->butterfly()->arrayStorage();
+    return !storage->m_sparseMap && index >= storage->vectorLength() && !holesMustForwardToPrototype(object);
+}
+
+template<typename ElementToString>
+static JSValue slowJoin(JSGlobalObject* globalObject, JSObject* thisObject, JSString* separator, uint64_t length, const ElementToString& toString)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // 5. If len is zero, return the empty String.
+    if (!length)
+        return jsEmptyString(vm);
+
+    // 6. Let element0 be Get(O, "0").
+    JSValue element0 = thisObject->getIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    // 7. If element0 is undefined or null, let R be the empty String; otherwise, let R be ? ToString(element0).
+    JSString* r = nullptr;
+    if (element0.isUndefinedOrNull())
+        r = jsEmptyString(vm);
+    else
+        r = toString(element0);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    // The separators in front of empty elements are counted, and appended together in front of the next element that is not empty.
+    uint64_t separatorsToAppend = 0;
+    auto appendSeparators = [&] {
+        if (!separatorsToAppend)
+            return;
+        auto view = separator->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        JSString* separators = repeatSeparator(globalObject, view, static_cast<unsigned>(std::exchange(separatorsToAppend, 0)));
+        RETURN_IF_EXCEPTION(scope, void());
+        r = jsString(globalObject, r, separators);
+    };
+
+    // 8. Let k be 1.
+    // 9. Repeat, while k < len
+    // 9.e Increase k by 1..
+    for (uint64_t k = 1; k < length; ++k) {
+        // b. Let element be ? Get(O, ! ToString(k)).
+        JSValue element = thisObject->getIndex(globalObject, k);
+        RETURN_IF_EXCEPTION(scope, { });
+
+        // c. If element is undefined or null, let next be the empty String; otherwise, let next be ? ToString(element).
+        if (element.isUndefinedOrNull()) {
+            uint64_t emptyElements = hasNoElementFrom(thisObject, k) ? length - k : 1;
+            k += emptyElements - 1;
+            if (!separator->length())
+                continue;
+            separatorsToAppend += emptyElements;
+            if (separatorsToAppend > (JSString::MaxLength - r->length()) / separator->length()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return { };
+            }
+            continue;
+        }
+        JSString* next = toString(element);
+        RETURN_IF_EXCEPTION(scope, { });
+
+        appendSeparators();
+        RETURN_IF_EXCEPTION(scope, { });
+
+        // a. Let S be the String value produced by concatenating R and sep.
+        // d. Let R be a String value produced by concatenating S and next.
+        r = jsString(globalObject, r, separator, next);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (throwOutOfMemoryErrorIfOwed(vm, globalObject, scope)) [[unlikely]]
+            return { };
+    }
+    appendSeparators();
+    RETURN_IF_EXCEPTION(scope, { });
+
+    // 10. Return R.
+    return r;
+}
+
+static JSValue slowJoin(JSGlobalObject* globalObject, JSObject* thisObject, JSString* separator, uint64_t length)
+{
+    return slowJoin(globalObject, thisObject, separator, length, [&](JSValue element) {
+        return element.toString(globalObject);
+    });
+}
+
 // https://tc39.es/ecma402/#sup-array.prototype.tolocalestring
 JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncToLocaleString, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -342,99 +432,13 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncToLocaleString, (JSGlobalObject* globalOb
     JSString* separator = jsSingleCharacterString(vm, comma);
 
     // 4. Let R be the empty String.
-    if (!length)
-        return JSValue::encode(jsEmptyString(vm));
-
     // 5. Let k be 0.
-    JSValue element0 = thisObject->getIndex(globalObject, 0);
-    RETURN_IF_EXCEPTION(scope, { });
-
     // 6. Repeat, while k < len,
-    // 6.a. If k > 0, then
-    // 6.a.i. Set R to the string-concatenation of R and separator.
-
-    JSString* r = nullptr;
-    if (element0.isUndefinedOrNull())
-        r = jsEmptyString(vm);
-    else {
-        r = toLocaleString(globalObject, element0, locales, options);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-
-    // 8. Let k be 1.
-    // 9. Repeat, while k < len
-    // 9.e Increase k by 1..
-    for (uint64_t k = 1; k < length; ++k) {
-        // 6.b. Let nextElement be ? Get(array, ! ToString(k)).
-        JSValue element = thisObject->getIndex(globalObject, k);
-        RETURN_IF_EXCEPTION(scope, { });
-
-        // c. If nextElement is not undefined or null, then
-        JSString* next = nullptr;
-        if (element.isUndefinedOrNull())
-            next = jsEmptyString(vm);
-        else {
-            // i. Let S be ? ToString(? Invoke(nextElement, "toLocaleString", « locales, options »)).
-            // ii. Set R to the string-concatenation of R and S.
-            next = toLocaleString(globalObject, element, locales, options);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
-
-        // d. Increase k by 1.
-        r = jsString(globalObject, r, separator, next);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-
+    // 6.c.i. Let S be ? ToString(? Invoke(nextElement, "toLocaleString", « locales, options »)).
     // 7. Return R.
-    return JSValue::encode(r);
-}
-
-static JSValue slowJoin(JSGlobalObject* globalObject, JSObject* thisObject, JSString* separator, uint64_t length)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // 5. If len is zero, return the empty String.
-    if (!length)
-        return jsEmptyString(vm);
-
-    // 6. Let element0 be Get(O, "0").
-    JSValue element0 = thisObject->getIndex(globalObject, 0);
-    RETURN_IF_EXCEPTION(scope, { });
-
-    // 7. If element0 is undefined or null, let R be the empty String; otherwise, let R be ? ToString(element0).
-    JSString* r = nullptr;
-    if (element0.isUndefinedOrNull())
-        r = jsEmptyString(vm);
-    else
-        r = element0.toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-
-    // 8. Let k be 1.
-    // 9. Repeat, while k < len
-    // 9.e Increase k by 1..
-    for (uint64_t k = 1; k < length; ++k) {
-        // b. Let element be ? Get(O, ! ToString(k)).
-        JSValue element = thisObject->getIndex(globalObject, k);
-        RETURN_IF_EXCEPTION(scope, { });
-
-        // c. If element is undefined or null, let next be the empty String; otherwise, let next be ? ToString(element).
-        JSString* next = nullptr;
-        if (element.isUndefinedOrNull()) {
-            if (!separator->length())
-                continue;
-            next = jsEmptyString(vm);
-        } else
-            next = element.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-
-        // a. Let S be the String value produced by concatenating R and sep.
-        // d. Let R be a String value produced by concatenating S and next.
-        r = jsString(globalObject, r, separator, next);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    // 10. Return R.
-    return r;
+    RELEASE_AND_RETURN(scope, JSValue::encode(slowJoin(globalObject, thisObject, separator, length, [&](JSValue element) {
+        return toLocaleString(globalObject, element, locales, options);
+    })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncJoin, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -451,8 +455,10 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncJoin, (JSGlobalObject* globalObject, Call
             if (!separatorString->length() && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32)) {
                 auto* butterfly = array->butterfly();
                 unsigned length = butterfly->publicLength();
-                JSOnlyStringsAndInt32sJoiner joiner(StringView { });
-                auto* joined = joiner.tryJoin<ContiguousShape>(globalObject, butterfly->contiguous().data(), length);
+                JSExactLengthJoiner joiner(StringView { });
+                auto* joined = array->indexingType() == ArrayWithInt32
+                    ? joiner.tryJoin<Int32Shape>(globalObject, butterfly->contiguous().data(), length)
+                    : joiner.tryJoin<ContiguousShape>(globalObject, butterfly->contiguous().data(), length);
                 RETURN_IF_EXCEPTION(scope, { });
                 if (joined)
                     return JSValue::encode(joined);
@@ -1007,8 +1013,8 @@ static ALWAYS_INLINE std::span<EncodedJSValue> sortStableSort(JSGlobalObject* gl
     auto callData = JSC::getCallDataInline(comparator);
     ASSERT(callData.type != CallData::Type::None);
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(comparator), 2);
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, comparator, callData, 2);
         RETURN_IF_EXCEPTION(scope, compacted);
         RELEASE_AND_RETURN(scope, (arrayStableSort<MergeStrategy::Galloping>(vm, compacted, workingSet, [&](auto left, auto right) ALWAYS_INLINE_LAMBDA {
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1247,6 +1253,14 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncSplice, (JSGlobalObject* globalObject, Ca
         RETURN_IF_EXCEPTION(scope, { });
     }
 
+    if (isJSArray(thisObj)) {
+        ArgList items = itemCount ? ArgList(callFrame, 2) : ArgList();
+        bool spliced = asArray(thisObj)->fastSplice(globalObject, length, actualStart, actualDeleteCount, std::span<const EncodedJSValue> { items.data(), items.size() });
+        RETURN_IF_EXCEPTION(scope, { });
+        if (spliced)
+            return JSValue::encode(result);
+    }
+
     if (itemCount < actualDeleteCount) {
         shift<JSArray::ShiftCountForSplice>(globalObject, thisObj, actualStart, actualDeleteCount, itemCount, length);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -1348,6 +1362,26 @@ ALWAYS_INLINE JSValue fastIndexOf(JSGlobalObject* globalObject, VM& vm, JSArray*
                 auto* result = std::bit_cast<const WriteBarrier<Unknown>*>(WTF::find64(std::bit_cast<const uint64_t*>(data + index), JSValue::encode(searchElement), length - index));
                 if (result)
                     return jsNumber(result - data);
+                return jsNumber(-1);
+            }
+
+            if (searchElement.isString()) {
+                JSString* searchString = asString(searchElement);
+                unsigned searchLength = searchString->length();
+                for (; index < length; ++index) {
+                    JSValue value = data[index].get();
+                    if (!value || !value.isString())
+                        continue;
+                    JSString* string = asString(value);
+                    if (string == searchString)
+                        return jsNumber(index);
+                    if (string->length() != searchLength)
+                        continue;
+                    bool isEqual = string->equalInline(globalObject, searchString);
+                    RETURN_IF_EXCEPTION(scope, { });
+                    if (isEqual)
+                        return jsNumber(index);
+                }
                 return jsNumber(-1);
             }
 
@@ -1541,6 +1575,23 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncLastIndexOf, (JSGlobalObject* globalObjec
     return JSValue::encode(jsNumber(-1));
 }
 
+static IndexingType indexingTypeOfConcatenation(VM& vm, IndexingType type, IndexingType other)
+{
+    IndexingType merged = mergeIndexingTypesForCopying(type, other, /* allowPromotion */ true);
+    if (merged != NonArray || !vm.hasCompiledCode())
+        return merged;
+    bool joinsDoublesAndValues = (type == ArrayWithDouble && other == ArrayWithContiguous) || (type == ArrayWithContiguous && other == ArrayWithDouble);
+    return joinsDoublesAndValues ? ArrayWithContiguous : NonArray;
+}
+
+static void copyIntoContiguous(WriteBarrier<Unknown>* buffer, unsigned offset, Butterfly* source, unsigned sourceSize, IndexingType sourceType)
+{
+    if (sourceType == ArrayWithDouble)
+        copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, source->contiguousDouble().data(), 0, sourceSize, sourceType);
+    else
+        copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, source->contiguous().data(), 0, sourceSize, sourceType);
+}
+
 static JSArray* tryConcatAppendOneNonArray(JSGlobalObject* globalObject, VM& vm, JSArray* first, JSValue second)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1610,14 +1661,14 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
 
     CheckedUint32 checkedResultSize = firstArraySize;
     checkedResultSize += secondArraySize;
-    if (checkedResultSize.hasOverflowed() || checkedResultSize.value() >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+    if (checkedResultSize.hasOverflowed() || (checkedResultSize.value() >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), checkedResultSize.value()))) [[unlikely]]
         return nullptr;
 
     unsigned resultSize = checkedResultSize;
 
     IndexingType firstType = firstArray->indexingType();
     IndexingType secondType = secondArray->indexingType();
-    IndexingType type = firstArray->mergeIndexingTypeForCopying(secondType, /* allowPromotion */ true);
+    IndexingType type = indexingTypeOfConcatenation(vm, firstType, secondType);
     ASSERT(type != NonArray);
 
     if (!resultSize)
@@ -1658,8 +1709,8 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
             copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, firstArraySize, secondButterfly->contiguous().data(), 0, secondArraySize, secondType);
     } else if (type != ArrayWithUndecided) {
         WriteBarrier<Unknown>* buffer = butterfly->contiguous().data();
-        copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, 0, firstButterfly->contiguous().data(), 0, firstArraySize, firstType);
-        copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, firstArraySize, secondButterfly->contiguous().data(), 0, secondArraySize, secondType);
+        copyIntoContiguous(buffer, 0, firstButterfly, firstArraySize, firstType);
+        copyIntoContiguous(buffer, firstArraySize, secondButterfly, secondArraySize, secondType);
     }
 
     Butterfly::clearRange(type, butterfly, resultSize, vectorLength);
@@ -1673,7 +1724,7 @@ JSArray* tryConcatOneArgFast(JSGlobalObject* globalObject, VM& vm, JSArray* firs
     ASSERT(!globalObject->isHavingABadTime());
 
     if (!argumentValue.isObject()) {
-        if (firstArray->length() >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+        if (firstArray->length() >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), firstArray->length())) [[unlikely]]
             return nullptr;
         RELEASE_AND_RETURN(scope, tryConcatAppendOneNonArray(globalObject, vm, firstArray, argumentValue));
     }
@@ -1683,7 +1734,7 @@ JSArray* tryConcatOneArgFast(JSGlobalObject* globalObject, VM& vm, JSArray* firs
         return nullptr;
 
     if (!isJSArray(argumentObject)) {
-        if (firstArray->length() >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+        if (firstArray->length() >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), firstArray->length())) [[unlikely]]
             return nullptr;
         RELEASE_AND_RETURN(scope, tryConcatAppendOneNonArray(globalObject, vm, firstArray, argumentValue));
     }
@@ -1691,7 +1742,7 @@ JSArray* tryConcatOneArgFast(JSGlobalObject* globalObject, VM& vm, JSArray* firs
     JSArray* secondArray = uncheckedDowncast<JSArray>(argumentObject);
     if (!firstArray->canFastCopy(secondArray)) [[unlikely]]
         return nullptr;
-    if (firstArray->mergeIndexingTypeForCopying(secondArray->indexingType(), /* allowPromotion */ true) == NonArray) [[unlikely]]
+    if (indexingTypeOfConcatenation(vm, firstArray->indexingType(), secondArray->indexingType()) == NonArray) [[unlikely]]
         return nullptr;
     RELEASE_AND_RETURN(scope, tryConcatAppendArrayFastWithWatchpoints(globalObject, vm, firstArray, secondArray));
 }
@@ -1720,7 +1771,7 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
                 JSArray* array = uncheckedDowncast<JSArray>(argumentObject);
                 if (array->holesMustForwardToPrototype()) [[unlikely]]
                     return nullptr;
-                type = mergeIndexingTypesForCopying(type, array->indexingType(), /* allowPromotion */ true);
+                type = indexingTypeOfConcatenation(vm, type, array->indexingType());
                 if (type == NonArray) [[unlikely]]
                     return nullptr;
                 checkedResultSize += array->butterfly()->publicLength();
@@ -1730,13 +1781,13 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
             if (objectType == ProxyObjectType || objectType == DerivedArrayType) [[unlikely]]
                 return nullptr;
         }
-        type = mergeIndexingTypesForCopying(type, indexingTypeForValue(argumentValue) | IsArray, /* allowPromotion */ true);
+        type = indexingTypeOfConcatenation(vm, type, indexingTypeForValue(argumentValue) | IsArray);
         if (type == NonArray) [[unlikely]]
             return nullptr;
         checkedResultSize += 1;
     }
 
-    if (checkedResultSize.hasOverflowed() || checkedResultSize.value() >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+    if (checkedResultSize.hasOverflowed() || (checkedResultSize.value() >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), checkedResultSize.value()))) [[unlikely]]
         return nullptr;
 
     unsigned resultSize = checkedResultSize;
@@ -1772,8 +1823,7 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
             else
                 copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, sourceButterfly->contiguous().data(), 0, sourceSize, sourceType);
         } else if (type != ArrayWithUndecided) {
-            WriteBarrier<Unknown>* buffer = butterfly->contiguous().data();
-            copyArrayElements<ArrayFillMode::Empty, NeedsGCSafeOps::No>(buffer, offset, sourceButterfly->contiguous().data(), 0, sourceSize, sourceType);
+            copyIntoContiguous(butterfly->contiguous().data(), offset, sourceButterfly, sourceSize, sourceType);
         }
         offset += sourceSize;
     };

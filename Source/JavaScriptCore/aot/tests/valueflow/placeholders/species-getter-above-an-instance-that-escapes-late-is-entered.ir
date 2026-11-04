@@ -1,0 +1,55 @@
+# class List extends Array { static get [Symbol.species]() { return Array } }; Array.prototype.slice.call(input()); input(() => input(() => input(new List)))
+# slice reads `constructor` through the unknown object before any instance has escaped: the one that does is made in a function that only native code enters, from a function that only native code enters.
+# The unknown object stands for whatever has escaped by the end, so the read finds the class above that instance too.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+# CHECK-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="List" constructor=f1 flags=[HasHeritage]
+variable g0 name="List" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Array
+    v1 = NewClosure function=f1
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 side=Static methodKind=Getter key=@@species
+    v6 = FinishClass v3 layout=L0
+    PutModuleVariable v6 variable=g0
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="input" [isFreeName]
+    v10 = Call v9
+    v11 = Builtin builtin=ArrayPrototypeSlice
+    v12 = Call v11, v10
+    v13 = NewClosure function=f3
+    v14 = Call v9, -, v13
+    Return
+}
+function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
+function f2 name="species" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Builtin builtin=Array
+    Return v1
+}
+function f3 name="first" kind=Arrow results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f4
+    v3 = Call v1, -, v2
+    Return
+}
+function f4 name="second" kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Construct v0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Call v3, -, v1
+    Return
+}

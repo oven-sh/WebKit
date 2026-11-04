@@ -410,11 +410,14 @@ shouldThrow(() => Intl.Collator.prototype.resolvedOptions.call(5), TypeError);
 
 shouldBe(new Intl.Collator('de-u-kn-false-kf-upper-co-phonebk-hc-h12').resolvedOptions().locale, 'de-u-co-phonebk-kf-upper-kn-false');
 
-shouldThrow(() => {
+{
+    let reads = 0;
     Function.prototype.__defineGetter__('prototype', function () {
-        this.call(0x1234);
+        reads++;
+        return Object.prototype;
     });
-    
+
     const collator = new Intl.Collator();
-    1 instanceof collator.compare;
-}, TypeError);
+    shouldBe(1 instanceof collator.compare, false);
+    shouldBe(reads, 0);
+}

@@ -1,0 +1,61 @@
+# for await (const f of [load()]) f(); for await (const f of { [Symbol.asyncIterator]() { return { async next() { return { value: two, done: false } } } } }) f()
+# An asynchronous loop over an array awaits each element. Over an object with a method under @@asyncIterator it awaits what next answers and reads `value` of that.
+# RUN: valueflow-solve calls
+# CHECK: f1 v7 ->{{*}} f5
+# CHECK: f1 v14 ->{{*}} f6
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+# UNREACHED-NOT: unreached f5
+# UNREACHED-NOT: unreached f6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Iterable" fields=[{key=@@asyncIterator declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Iterator" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Result" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="done" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    v2 = NewArray v1 contents=anything
+    v3 = IteratorOpen v2 iteratorKind=Async
+    v4 = IteratorResume v3 iteratorKind=Async
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Call v6
+    v8 = NewClosure function=f3
+    v9 = NewObject -, v8 layout=L0 fields=[0]
+    v10 = IteratorOpen v9 iteratorKind=Async
+    v11 = IteratorResume v10 iteratorKind=Async
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    v14 = Call v13
+    Return
+}
+function f2 name="load" flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    Return v0
+}
+function f3 name="asyncIterator" kind=Method flags=[HasThis] results=[{type=anything}] {
+    v1 = NewClosure function=f4
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    Return v2
+}
+function f4 name="next" kind=Method flags=[IsAsync, HasThis] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = Boolean boolean=false
+    v3 = NewObject -, v1, v2 layout=L2 fields=[0, 1]
+    Return v3
+}
+function f5 name="one" results=[{type=anything}] {
+    Return
+}
+function f6 name="two" results=[{type=anything}] {
+    Return
+}

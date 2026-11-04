@@ -27,27 +27,11 @@
 
 #if ENABLE(GPU_PROCESS)
 
-#include "WebGPUBufferBindingLayout.h"
-#include "WebGPUExternalTextureBindingLayout.h"
-#include "WebGPUSamplerBindingLayout.h"
-#include "WebGPUStorageTextureBindingLayout.h"
-#include "WebGPUTextureBindingLayout.h"
-#include <WebCore/WebGPUIntegralTypes.h>
-#include <WebCore/WebGPUShaderStage.h>
-#include <optional>
+#include <WebCore/WebGPUCppAPI.h>
 
 namespace WebKit::WebGPU {
 
-struct BindGroupLayoutEntry {
-    WebCore::WebGPU::Index32 binding { 0 };
-    WebCore::WebGPU::ShaderStageFlags visibility;
-
-    std::optional<BufferBindingLayout> buffer;
-    std::optional<SamplerBindingLayout> sampler;
-    std::optional<TextureBindingLayout> texture;
-    std::optional<StorageTextureBindingLayout> storageTexture;
-    std::optional<ExternalTextureBindingLayout> externalTexture;
-};
+using BindGroupLayoutEntry = ::WebGPU::BindGroupLayoutEntry;
 
 } // namespace WebKit::WebGPU
 

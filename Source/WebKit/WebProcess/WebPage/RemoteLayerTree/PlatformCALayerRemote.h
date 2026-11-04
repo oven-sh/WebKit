@@ -29,6 +29,7 @@
 #include "RemoteLayerTreeContext.h"
 #include "RemoteLayerTreeTransaction.h"
 #include <WebCore/HTMLMediaElementIdentifier.h>
+#include <WebCore/PlaceholderFrameIdentifier.h>
 #include <WebCore/PlatformCALayer.h>
 #include <WebCore/PlatformCALayerDelegatedContents.h>
 #include <WebCore/PlatformLayer.h>
@@ -36,7 +37,6 @@
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
-class LayerPool;
 #if ENABLE(THREADED_ANIMATIONS)
 class AcceleratedEffect;
 struct AcceleratedEffectValues;
@@ -54,7 +54,7 @@ using LayerHostingContextID = uint32_t;
 struct PlatformCALayerRemoteDelegatedContents {
     ImageBufferBackendHandle surface;
     RefPtr<WebCore::PlatformCALayerDelegatedContentsFence> finishedFence;
-    std::optional<WebCore::RenderingResourceIdentifier> surfaceIdentifier;
+    std::optional<WebCore::PlaceholderFrameIdentifier> frameIdentifier;
 };
 
 class PlatformCALayerRemote : public WebCore::PlatformCALayer, public CanMakeWeakPtr<PlatformCALayerRemote> {
@@ -167,6 +167,7 @@ public:
     void setContents(CFTypeRef) override;
     void setDelegatedContents(const WebCore::PlatformCALayerDelegatedContents&) override;
     void setRemoteDelegatedContents(const PlatformCALayerRemoteDelegatedContents&);
+    void setDisplayOnlyImage(RemoteSnapshotIdentifier);
     void setContentsRect(const WebCore::FloatRect&) override;
 
     void setMinificationFilter(WebCore::PlatformCALayer::FilterType) override;
@@ -182,7 +183,7 @@ public:
     void setOpacity(float) override;
 
     void setFilters(const WebCore::FilterOperations&) override;
-    static bool NODELETE filtersCanBeComposited(const WebCore::FilterOperations&);
+    static bool LEGACY_NODELETE filtersCanBeComposited(const WebCore::FilterOperations&);
     void copyFiltersFrom(const WebCore::PlatformCALayer&) override;
 
     void setBlendMode(WebCore::BlendMode) override;
@@ -263,7 +264,7 @@ public:
 
     unsigned backingStoreBytesPerPixel() const override;
 
-    void NODELETE setClonedLayer(const PlatformCALayer*);
+    void LEGACY_NODELETE setClonedLayer(const PlatformCALayer*);
 
     LayerProperties& properties() LIFETIME_BOUND { return m_properties; }
     const LayerProperties& properties() const LIFETIME_BOUND { return m_properties; }
@@ -300,15 +301,13 @@ private:
     void updateBackingStore();
     void removeSublayer(PlatformCALayerRemote*);
 
-    WebCore::ColorSpace displayColorSpace() const;
+    WebCore::ColorSpace displayColorSpace(WebCore::ContentsFormat) const;
 
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     WebCore::IncludeDynamicContentScalingDisplayList shouldIncludeDisplayListInBackingStore() const;
 #endif
 
-    bool NODELETE requiresCustomAppearanceUpdateOnBoundsChange() const;
-
-    WebCore::LayerPool* layerPool() override;
+    bool LEGACY_NODELETE requiresCustomAppearanceUpdateOnBoundsChange() const;
 
     LayerProperties m_properties;
     WebCore::PlatformCALayerList m_children;

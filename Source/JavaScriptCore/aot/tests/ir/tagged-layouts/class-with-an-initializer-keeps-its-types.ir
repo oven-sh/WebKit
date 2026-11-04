@@ -1,0 +1,44 @@
+# interface Node { kind: number; pos: number }  interface Num extends Node { kind: 1; value: number }  interface Add extends Node { kind: 2; left: Node; right: Node }
+# class NodeObject implements Node { kind: number; pos = 0; constructor(kind: number) { this.kind = kind } }    new NodeObject(1) as Num    new NodeObject(2) as Add
+# Every class of a TypeScript program that declares a field has an initializer, and AllocateTaggedLayouts leaves the constructor of such a class as it is: each object has the layout of the class.
+# So the reader derives no layouts for it, and the layout of the class stays a member of the types that write the literals: an object of the class passes for Num
+# FORM: AsRead
+# RUN: pass AllocateTaggedLayouts
+# STATISTIC: TaggedLayoutsAllocated = 0
+# STATISTIC: TaggedLayoutsNeverAllocated = 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}, {key="pos" declared={type=number}}] supertypes=[L1, L2, L3]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Num" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="Add" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="left" declared={type=L1} flags=[IsRequired]}, {key="right" declared={type=L1} flags=[IsRequired]}] supertypes=[L1]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="NodeObject" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = CallDirect v3 function=f2
+    PropSet v3, v1 key="kind" mode=Strict
+    Return v3
+}
+function f2 kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="kind"
+    v3 = Integer
+    PropDefine v0, v3 key="pos"
+    v5 = Undefined
+    Return v5
+}
+function f3 name="valueOf" parameters=[{type=L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="value"
+    Return v1
+}
+
+# CHECK: layout L3 name="Add"
+# CHECK-NOT: layout L4
+# CHECK-LABEL: function f1 name="NodeObject"
+# CHECK-NOT: Switch
+# CHECK-LABEL: function f3 name="valueOf"
+# CHECK: parameters=[{type=L0|L2}]

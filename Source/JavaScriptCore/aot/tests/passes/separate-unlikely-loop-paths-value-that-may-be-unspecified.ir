@@ -1,0 +1,143 @@
+# A variable goes around the loop as a tag and a cell, and the cell is there only for some values of the tag. The way back does not test the cell: it comes back with the type it has in the copy
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 2
+# STATISTIC: LoopsWithoutWayBack = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Made" fields=[{key="value" declared={type=anything}}]
+
+function f0 name="cellBesideTag" parameters=[{type=anything}, {type=number}, {type=L0}, {type=boolean}] results=[{type=anything}] {
+    v4 = Integer integer=0
+    v5 = Integer integer=0
+    v6 = Integer integer=1
+    v7 = Unspecified valueType=null|L0
+    Jump -> next b1(v4, v5, v6, v7)
+  b1(v8, v9, v10, v11):
+    LoopHint
+    v13 = Less v9, v1
+    Branch v13 -> taken b2(), notTaken b10()
+  b2():
+    v14 = TypeTest v8 testedType=number
+    Branch v14 -> taken b3(| 0), notTaken b6()
+  b3(v15):
+    v16 = Add v15, v1
+    Branch v3 -> taken b4(), notTaken b5()
+  b4():
+    v17 = Integer integer=2
+    Jump -> next b9(v16, v17, v2)
+  b5():
+    Jump -> next b9(v16, v10, v11)
+  b6() frequency=Unlikely:
+    v18 = Add v8, v0
+    v19 = Call v0, -
+    v20 = TypeTest v19 testedType=null|string|L0
+    Branch v20 -> taken b7(| 0), notTaken b8()
+  b7(v21) frequency=Unlikely:
+    v22 = Integer integer=2
+    Jump -> next b9(v18, v22, v21)
+  b8() frequency=Unlikely:
+    Jump -> next b9(v18, v10, v11)
+  b9(v23, v24, v25):
+    v26 = Increment v9
+    Jump -> next b1(v23, v26, v24, v25)
+  b10():
+    Switch v10 cases=[2] -> case b11(), otherwise b12()
+  b11():
+    v27 = Specified
+    v28 = AssumeType v11, v27 provenType=null|string|L0
+    Return v28
+  b12():
+    Return v8
+# CHECK: b1(v8: number, v9: int|whole, v10: {{*}}, v11: null|string|unspecified|L0{{*}}):
+# CHECK: [[entry0]]({{*}}: number ~ 0, {{*}}: null|string|unspecified|L0{{*}}):
+# CHECK-NEXT: Jump -> next b1(
+# CHECK-NEXT: [[tests0]]([[sum0]]: number|string|bigint, [[counter0]]: int|whole, [[tag0]]: {{*}}, [[cell0]]: null|string|unspecified|L0{{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[test0]]: boolean = TypeTest [[sum0]] testedType=number
+# CHECK-NEXT: Branch [[test0]] -> taken [[passed0]](| 0), notTaken
+# CHECK-NEXT: [[passed0]]([[narrowed0]]: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[entry0]]([[narrowed0]], [[counter0]], [[tag0]], [[cell0]])
+# CHECK-NOT: = TypeTest
+}
+
+# The same loop with a cell that is always there
+function f1 name="cellThatIsAlwaysThere" parameters=[{type=anything}, {type=number}, {type=L0}, {type=boolean}] results=[{type=anything}] {
+    v4 = Integer integer=0
+    v5 = Integer integer=0
+    v6 = Integer integer=1
+    v7 = Null
+    Jump -> next b1(v4, v5, v6, v7)
+  b1(v8, v9, v10, v11):
+    LoopHint
+    v13 = Less v9, v1
+    Branch v13 -> taken b2(), notTaken b10()
+  b2():
+    v14 = TypeTest v8 testedType=number
+    Branch v14 -> taken b3(| 0), notTaken b6()
+  b3(v15):
+    v16 = Add v15, v1
+    Branch v3 -> taken b4(), notTaken b5()
+  b4():
+    v17 = Integer integer=2
+    Jump -> next b9(v16, v17, v2)
+  b5():
+    Jump -> next b9(v16, v10, v11)
+  b6() frequency=Unlikely:
+    v18 = Add v8, v0
+    v19 = Call v0, -
+    v20 = TypeTest v19 testedType=null|string|L0
+    Branch v20 -> taken b7(| 0), notTaken b8()
+  b7(v21) frequency=Unlikely:
+    v22 = Integer integer=2
+    Jump -> next b9(v18, v22, v21)
+  b8() frequency=Unlikely:
+    Jump -> next b9(v18, v10, v11)
+  b9(v23, v24, v25):
+    v26 = Increment v9
+    Jump -> next b1(v23, v26, v24, v25)
+  b10():
+    Switch v10 cases=[2] -> case b11(), otherwise b12()
+  b11():
+    Return v11
+  b12():
+    Return v8
+# CHECK: b1(v8: number, v9: int|whole, v10: {{*}}, v11: null|L0):
+# CHECK: = TypeTest {{*}} testedType=null|L0
+}
+
+# The cell is tested in every turn, behind the switch on the tag. On an edge into the header the test would stand in front of the switch, so it stays
+function f2 name="testOfEveryTurnStaysBehindTheTag" parameters=[{type=anything}, {type=boolean}, {type=L0}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=2
+    v4 = Upcast v2 castType=null|string|L0
+    Jump -> next b3(v3, v4)
+  b2():
+    v5 = Integer integer=1
+    v6 = Unspecified valueType=null|string|L0
+    Jump -> next b3(v5, v6)
+  b3(v7, v8):
+    LoopHint
+    Switch v7 cases=[2] -> case b4(), otherwise b8()
+  b4():
+    v10 = Specified
+    v11 = AssumeType v8, v10 provenType=null|string|L0
+    v12 = TypeTest v11 testedType=L0
+    Branch v12 -> taken b5(| 0), notTaken b6()
+  b5(v13):
+    Jump -> next b7(v13)
+  b6() frequency=Unlikely:
+    v14 = Call v0, -
+    v15 = AssumeType v14 provenType=null|string|L0
+    Jump -> next b7(v15)
+  b7(v16):
+    Branch v1 -> taken b3(v7, v16), notTaken b8()
+  b8():
+    Return
+# CHECK: b4():
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: [[v8There]]: null|string|L0 = AssumeType v8, [[filled1]] provenType=null|string|L0
+# CHECK-NEXT: v12: boolean = TypeTest [[v8There]] testedType=L0
+# CHECK-NOT: = TypeTest
+}

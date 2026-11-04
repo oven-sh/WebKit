@@ -1,0 +1,29 @@
+# More accesses than the limit are solved in several groups of whole locations, and every repeated read is replaced
+# FORM: Prepared
+# OPTIONS: limit=MaxReadsPerSolve:2
+# RUN: pass EliminateRedundantReads
+# LOSS: MaxReadsPerSolve x1 f1
+# STATISTIC: EliminateRedundantReadsChanges = 2
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="a" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="b" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="atTheLimit" results=[{type=boolean}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g0
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK: v1: anything = Upcast v0
+}
+
+function f1 name="overTheLimit" results=[{type=boolean}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g0
+    v3 = GetModuleVariable variable=g1
+    v4 = StrictEq v2, v3
+    Return v4
+# CHECK: v2: anything = Upcast v0
+# CHECK-NEXT: v3: anything = Upcast v1
+}

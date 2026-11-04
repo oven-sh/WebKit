@@ -1,0 +1,23 @@
+# `Object.setPrototypeOf(make(), prototype).method`: the object has just been handed a prototype, so a test that it still has the one of its layout would fail every time and send the rest of the
+# function into its copy. The read goes by name where it stands. An object of the same layout that comes from elsewhere keeps the test.
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Made" fields=[{key="turn" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity]}
+
+function f0 name="readsBehindSetPrototypeOf" parameters=[{type=L0}, {type=object}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0, v1 overload=ObjectSetPrototypeOf/0
+    v3 = PropGet v2 key="kindOf"
+    Return v3
+# CHECK-NOT: HasLayoutPrototype
+# CHECK: = PropGet v2 key="kindOf"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+}
+
+function f1 name="readsOffAnotherObject" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="kindOf"
+    Return v1
+# CHECK: = HasLayoutPrototype v0
+}

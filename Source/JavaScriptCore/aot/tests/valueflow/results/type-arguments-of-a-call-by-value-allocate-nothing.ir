@@ -1,0 +1,28 @@
+# interface View { a: number }; pick = flag ? JSON.parse : other; view = pick<View>(text); return view
+# The call has type arguments, and JSON.parse is one of its callees. A parser for the type is put only in the place of a call whose callee the text names, so this call answers what JSON.parse answers without a type:
+# no object has the layout of the record.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="View" {{*}}allocation=NeverAllocated
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="View" fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+expectedresult x0 type=L0 layouts=[L0]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=JSONParse
+    v1 = NewClosure function=f1
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropHas v2 key="flag"
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v4):
+    v5 = String string="{}"
+    v6 = Call v4, -, v5 calleeName="pick" expectedResult=x0
+    Return v6
+}
+function f1 name="other" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

@@ -31,21 +31,19 @@
 #include "RemotePresentationContextProxy.h"
 #include "WebGPUIdentifier.h"
 #include <WebCore/WebGPUCompositorIntegration.h>
+#include <WebCore/WebGPUDevice.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 class ImageBuffer;
 class NativeImage;
-namespace WebGPU {
-class Device;
-}
 }
 
 namespace WebKit::WebGPU {
 
 class ConvertToBackingContext;
 
-class RemoteCompositorIntegrationProxy final : public WebCore::WebGPU::CompositorIntegration {
+class RemoteCompositorIntegrationProxy final : public WebCore::WebGPUCompositorIntegration {
     WTF_MAKE_TZONE_ALLOCATED(RemoteCompositorIntegrationProxy);
 public:
     static Ref<RemoteCompositorIntegrationProxy> create(RemoteGPUProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
@@ -93,25 +91,27 @@ private:
     }
 
 #if PLATFORM(COCOA)
-    Vector<MachSendRight> recreateRenderBuffers(int width, int height, WebCore::ColorSpace&&, WebCore::AlphaPremultiplication, WebCore::WebGPU::TextureFormat, unsigned bufferCount, WebCore::WebGPU::Device&) override;
+    Vector<MachSendRight> recreateRenderBuffers(int width, int height, WebCore::ColorSpace&&, WebCore::AlphaPremultiplication, ::WebGPU::TextureFormat, unsigned bufferCount, ::WebGPU::Device&) override;
 #endif
 
     void prepareForDisplay(uint32_t frameIndex, CompletionHandler<void()>&&) override;
     void updateContentsHeadroom(float) override;
 
     Seconds lastFrameGPUCost() const final { return m_lastFrameGPUCost; }
+    Seconds lastFramePresentStall() const final { return m_lastFramePresentStall; }
 
     WebGPUIdentifier m_backing;
     const Ref<ConvertToBackingContext> m_convertToBackingContext;
     const Ref<RemoteGPUProxy> m_parent;
     RefPtr<RemotePresentationContextProxy> m_presentationContext;
     Seconds m_lastFrameGPUCost { 0_s };
+    Seconds m_lastFramePresentStall { 0_s };
 };
 
 } // namespace WebKit::WebGPU
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebGPU::RemoteCompositorIntegrationProxy)
-    static bool isType(const WebCore::WebGPU::CompositorIntegration& integration) { return integration.isRemoteCompositorIntegrationProxy(); }
+    static bool isType(const WebCore::WebGPUCompositorIntegration& integration) { return integration.isRemoteCompositorIntegrationProxy(); }
 SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(GPU_PROCESS)

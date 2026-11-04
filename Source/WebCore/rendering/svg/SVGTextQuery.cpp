@@ -23,15 +23,12 @@
 
 #include "FloatConversion.h"
 #include "FontCascadeInlines.h"
-#include "LegacyInlineFlowBox.h"
 #include "RenderBlockFlow.h"
 #include "RenderElementInlines.h"
-#include "RenderInline.h"
 #include "RenderObjectStyle.h"
 #include "RenderSVGInlineText.h"
 #include "RenderSVGText.h"
 #include "SVGElementTypeHelpers.h"
-#include "SVGInlineTextBoxInlines.h"
 #include "SVGTextBoxPainter.h"
 #include "VisiblePosition.h"
 #include <wtf/MathExtras.h>
@@ -83,8 +80,8 @@ static inline InlineIterator::InlineBoxIterator inlineBoxForRenderer(RenderObjec
         return InlineIterator::firstRootInlineBoxFor(*renderBlock);
     }
 
-    if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(*renderer))
-        return InlineIterator::lineLeftmostInlineBoxFor(*renderInline);
+    if (renderer->isInlineBox())
+        return InlineIterator::lineLeftmostInlineBoxFor(downcast<RenderBoxModelObject>(*renderer));
 
     ASSERT_NOT_REACHED();
     return { };
@@ -101,18 +98,18 @@ void SVGTextQuery::collectTextBoxesInInlineBox(InlineIterator::InlineBoxIterator
         return;
 
     auto descendants = parent->descendants();
-    for (auto box = descendants.begin(), end = descendants.end(); box != end;) {
-        if (auto* flowBox = dynamicDowncast<InlineIterator::InlineBox>(*box)) {
+    for (auto box = descendants.begin(); box;) {
+        if (box->isInlineBox()) {
             // Skip generated content.
-            if (!flowBox->renderer().element())
+            if (!downcast<InlineIterator::InlineBox>(*box).renderer().element())
                 box.traverseLineRightwardOnLineSkippingChildren();
             else
                 box.traverseLineRightwardOnLine();
             continue;
         }
 
-        if (auto* inlineTextBox = dynamicDowncast<InlineIterator::SVGTextBoxIterator>(box))
-            m_textBoxes.append(*inlineTextBox);
+        if (box->isSVGText())
+            m_textBoxes.append(*box);
 
         box.traverseLineRightwardOnLine();
     }
@@ -177,8 +174,7 @@ bool SVGTextQuery::mapStartEndPositionsIntoFragmentCoordinates(Data* queryData, 
 
 void SVGTextQuery::modifyStartEndPositionsRespectingLigatures(Data* queryData, const SVGTextFragment& fragment, unsigned& startPosition, unsigned& endPosition) const
 {
-    const SVGTextLayoutAttributes* layoutAttributes = queryData->textRenderer->layoutAttributes();
-    const Vector<SVGTextMetrics>& textMetricsValues = layoutAttributes->textMetricsValues();
+    auto& textMetrics = queryData->textRenderer->textMetrics();
 
     unsigned textMetricsOffset = fragment.metricsListOffset;
 
@@ -188,7 +184,7 @@ void SVGTextQuery::modifyStartEndPositionsRespectingLigatures(Data* queryData, c
     unsigned fragmentEndInBox = fragmentOffsetInBox + fragment.length;
     // Find the text metrics cell that start at or contain the character startPosition.
     while (fragmentOffsetInBox < fragmentEndInBox) {
-        auto& metrics = textMetricsValues[textMetricsOffset];
+        auto& metrics = textMetrics[textMetricsOffset];
         unsigned glyphEnd = fragmentOffsetInBox + metrics.length();
         if (startPosition < glyphEnd)
             break;
@@ -199,7 +195,7 @@ void SVGTextQuery::modifyStartEndPositionsRespectingLigatures(Data* queryData, c
 
     // Find the text metrics cell that contain or ends at the character endPosition.
     while (fragmentOffsetInBox < fragmentEndInBox) {
-        auto& metrics = textMetricsValues[textMetricsOffset];
+        auto& metrics = textMetrics[textMetricsOffset];
         fragmentOffsetInBox += metrics.length();
         if (fragmentOffsetInBox >= endPosition)
             break;
@@ -209,7 +205,7 @@ void SVGTextQuery::modifyStartEndPositionsRespectingLigatures(Data* queryData, c
 }
 
 // Identity for lengthAdjust="spacing", which widens the gaps rather than the glyphs.
-static inline float NODELETE lengthAdjustInlineScale(const SVGTextQuery::Data& queryData, const SVGTextFragment& fragment)
+static inline float LEGACY_NODELETE lengthAdjustInlineScale(const SVGTextQuery::Data& queryData, const SVGTextFragment& fragment)
 {
     if (fragment.lengthAdjustTransform.isIdentity())
         return 1;
@@ -584,7 +580,7 @@ bool SVGTextQuery::characterNumberAtPositionCallback(Data* queryData, const SVGT
     // Iterate through the glyphs in this fragment, and check if their extents
     // contain the query point.
     FloatRect extent;
-    auto& textMetrics = queryData->textRenderer->layoutAttributes()->textMetricsValues();
+    auto& textMetrics = queryData->textRenderer->textMetrics();
     unsigned textMetricsOffset = fragment.metricsListOffset;
     unsigned fragmentOffset = 0;
     while (fragmentOffset < fragment.length) {

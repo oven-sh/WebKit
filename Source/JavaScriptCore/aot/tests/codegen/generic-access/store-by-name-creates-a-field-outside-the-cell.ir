@@ -1,0 +1,109 @@
+# A layout keeps the fields that few of its objects get outside the cell. A store by name that knows the field, from the proven layout of its receiver or from the table of fields, creates it there:
+# it appends the granule, stores the value and lists the key, without a miss and with nothing filed. What the object or the chain above it forbids goes on as a store by name.
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot disable=pass:InlineCalls
+# RUN(GO): run-in-shell globalThis.publish = (make, other, ...stores) => { const names = ["late0", "late3", "late7", "late11", "text", "whole"]; const show = (what, object) => print(what + ":", JSON.stringify(object), Object.keys(object).join()); for (const half of [0, 6]) { for (const order of [[0, 1, 2, 3, 4, 5], [5, 4, 3, 2, 1, 0], [2, 0, 5], [3], [1, 1, 4, 4]]) { for (let round = 0; round < 2; ++round) { const object = make(1); for (const index of order) stores[half + index](true, object, index == 4 ? "t" + round : index == 5 ? round : [index]); show((half ? "unproven " : "proven ") + order.join("") + " " + round, object); } } const odd = make(2); stores[half + 4](true, odd, 5); stores[half + 5](true, odd, "five"); stores[half + 0](true, odd, undefined); stores[half + 1](true, odd, null); show("odd values", odd); stores[half + 4](true, odd, "back"); stores[half + 5](true, odd, 6); stores[half + 0](true, odd, 1); show("and back", odd); for (const [what, change] of [["frozen", Object.freeze], ["sealed", Object.seal], ["not extensible", Object.preventExtensions]]) { const object = make(3); stores[half + 1](true, object, "kept"); change(object); let outcome = ""; for (const index of [1, 2]) { try { stores[half + index](true, object, "late"); outcome += " stored"; } catch (error) { outcome += " " + error.constructor.name; } } show(what + outcome, object); } const below = make(4); let seen = ""; Object.setPrototypeOf(below, { set late7(value) { seen += "set " + value; }, get late11() { return "got"; } }); let thrown = "none"; stores[half + 2](true, below, "caught"); try { stores[half + 3](true, below, "refused"); } catch (error) { thrown = error.constructor.name; } stores[half + 0](true, below, "own"); show("below accessors " + seen + " " + thrown, below); const gone = make(5); for (const index of [0, 1, 2]) stores[half + index](true, gone, index); delete gone.late3; show("deleted", gone); stores[half + 1](true, gone, "again"); show("created again", gone); } };
+# GO: proven 012345 0: {"required":1,"late0":[0],"late3":[1],"late7":[2],"late11":[3],"text":"t0","whole":0} required,late0,late3,late7,late11,text,whole
+# GO-NEXT: proven 012345 1: {"required":1,"late0":[0],"late3":[1],"late7":[2],"late11":[3],"text":"t1","whole":1} required,late0,late3,late7,late11,text,whole
+# GO-NEXT: proven 543210 0: {"required":1,"whole":0,"text":"t0","late11":[3],"late7":[2],"late3":[1],"late0":[0]} required,whole,text,late11,late7,late3,late0
+# GO-NEXT: proven 543210 1: {"required":1,"whole":1,"text":"t1","late11":[3],"late7":[2],"late3":[1],"late0":[0]} required,whole,text,late11,late7,late3,late0
+# GO-NEXT: proven 205 0: {"required":1,"late7":[2],"late0":[0],"whole":0} required,late7,late0,whole
+# GO-NEXT: proven 205 1: {"required":1,"late7":[2],"late0":[0],"whole":1} required,late7,late0,whole
+# GO-NEXT: proven 3 0: {"required":1,"late11":[3]} required,late11
+# GO-NEXT: proven 3 1: {"required":1,"late11":[3]} required,late11
+# GO-NEXT: proven 1144 0: {"required":1,"late3":[1],"text":"t0"} required,late3,text
+# GO-NEXT: proven 1144 1: {"required":1,"late3":[1],"text":"t1"} required,late3,text
+# GO-NEXT: odd values: {"required":2,"text":5,"whole":"five","late3":null} required,text,whole,late0,late3
+# GO-NEXT: and back: {"required":2,"text":"back","whole":6,"late0":1,"late3":null} required,text,whole,late0,late3
+# GO-NEXT: frozen TypeError TypeError: {"required":3,"late3":"kept"} required,late3
+# GO-NEXT: sealed stored TypeError: {"required":3,"late3":"late"} required,late3
+# GO-NEXT: not extensible stored TypeError: {"required":3,"late3":"late"} required,late3
+# GO-NEXT: below accessors set caught TypeError: {"required":4,"late0":"own"} required,late0
+# GO-NEXT: deleted: {"required":5,"late0":0,"late7":2} required,late0,late7
+# GO-NEXT: created again: {"required":5,"late0":0,"late7":2,"late3":"again"} required,late0,late7,late3
+# GO-NEXT: unproven 012345 0: {"required":1,"late0":[0],"late3":[1],"late7":[2],"late11":[3],"text":"t0","whole":0} required,late0,late3,late7,late11,text,whole
+# GO-NEXT: unproven 012345 1: {"required":1,"late0":[0],"late3":[1],"late7":[2],"late11":[3],"text":"t1","whole":1} required,late0,late3,late7,late11,text,whole
+# GO-NEXT: unproven 543210 0: {"required":1,"whole":0,"text":"t0","late11":[3],"late7":[2],"late3":[1],"late0":[0]} required,whole,text,late11,late7,late3,late0
+# GO-NEXT: unproven 543210 1: {"required":1,"whole":1,"text":"t1","late11":[3],"late7":[2],"late3":[1],"late0":[0]} required,whole,text,late11,late7,late3,late0
+# GO-NEXT: unproven 205 0: {"required":1,"late7":[2],"late0":[0],"whole":0} required,late7,late0,whole
+# GO-NEXT: unproven 205 1: {"required":1,"late7":[2],"late0":[0],"whole":1} required,late7,late0,whole
+# GO-NEXT: unproven 3 0: {"required":1,"late11":[3]} required,late11
+# GO-NEXT: unproven 3 1: {"required":1,"late11":[3]} required,late11
+# GO-NEXT: unproven 1144 0: {"required":1,"late3":[1],"text":"t0"} required,late3,text
+# GO-NEXT: unproven 1144 1: {"required":1,"late3":[1],"text":"t1"} required,late3,text
+# GO-NEXT: odd values: {"required":2,"text":5,"whole":"five","late3":null} required,text,whole,late0,late3
+# GO-NEXT: and back: {"required":2,"text":"back","whole":6,"late0":1,"late3":null} required,text,whole,late0,late3
+# GO-NEXT: frozen TypeError TypeError: {"required":3,"late3":"kept"} required,late3
+# GO-NEXT: sealed stored TypeError: {"required":3,"late3":"late"} required,late3
+# GO-NEXT: not extensible stored TypeError: {"required":3,"late3":"late"} required,late3
+# GO-NEXT: below accessors set caught TypeError: {"required":4,"late0":"own"} required,late0
+# GO-NEXT: deleted: {"required":5,"late0":0,"late7":2} required,late0,late7
+# GO-NEXT: created again: {"required":5,"late0":0,"late7":2,"late3":"again"} required,late0,late7,late3
+# GO-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Wide" module=m0 fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="late0" declared={type=anything}}, {key="late1" declared={type=anything}}, {key="late2" declared={type=anything}}, {key="late3" declared={type=anything}}, {key="late4" declared={type=anything}}, {key="late5" declared={type=anything}}, {key="late6" declared={type=anything}}, {key="late7" declared={type=anything}}, {key="late8" declared={type=anything}}, {key="late9" declared={type=anything}}, {key="late10" declared={type=anything}}, {key="late11" declared={type=anything}}, {key="text" declared={type=string}}, {key="whole" declared={type=int}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+# REPEAT: i = 1..14
+    v%(i) = NewClosure function=f%(i)
+# END REPEAT
+    v15 = PropGet v0 key="publish" [isFreeName]
+    v16 = Call v15, -, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14
+    Return
+}
+function f1 name="make" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 name="other" parameters=[{type=number}] results=[{type=anything}] {
+    Return v0
+}
+# REPEAT: i = 3..6; a = 0 3 7 11
+function f%(i) name="proven_late%(a)" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = ToBoolean v0
+    Branch v3 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v4 = Check v1 expectedType=L0
+    PropSet v4, v2 key="late%(a)" mode=Strict
+    Return v1
+  b2():
+    Return v0
+}
+# END REPEAT
+function f7 name="proven_text" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = ToBoolean v0
+    Branch v3 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v4 = Check v1 expectedType=L0
+    PropSet v4, v2 key="text" mode=Strict
+    Return v1
+  b2():
+    Return v0
+}
+function f8 name="proven_whole" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = ToBoolean v0
+    Branch v3 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v4 = Check v1 expectedType=L0
+    PropSet v4, v2 key="whole" mode=Strict
+    Return v1
+  b2():
+    Return v0
+}
+# REPEAT: i = 9..12; a = 0 3 7 11
+function f%(i) name="unproven_late%(a)" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v1, v2 key="late%(a)" mode=Strict
+    Return v1
+}
+# END REPEAT
+function f13 name="unproven_text" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v1, v2 key="text" mode=Strict
+    Return v1
+}
+function f14 name="unproven_whole" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v1, v2 key="whole" mode=Strict
+    Return v1
+}

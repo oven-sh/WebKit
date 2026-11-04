@@ -49,7 +49,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyInstance, (JSGlobalObject* global
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto [taintedness, url] = sourceTaintedOriginFromStack(vm, callFrame);
+    auto [taintedness, url] = sourceTaintednessFromStack(vm, callFrame);
     RefPtr<SourceProvider> provider = StringSourceProvider::create("[wasm code]"_s, SourceOrigin(url), String(), taintedness, TextPosition(), SourceProviderSourceType::Program);
 
     // If moduleObject is not a WebAssembly.Module instance, a TypeError is thrown.
@@ -104,7 +104,7 @@ void WebAssemblyInstanceConstructor::finishCreation(VM& vm, WebAssemblyInstanceP
 }
 
 WebAssemblyInstanceConstructor::WebAssemblyInstanceConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callJSWebAssemblyInstance, constructJSWebAssemblyInstance)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callJSWebAssemblyInstance), JSC_REGISTERED_HOST_FUNCTION(constructJSWebAssemblyInstance))
 {
 }
 

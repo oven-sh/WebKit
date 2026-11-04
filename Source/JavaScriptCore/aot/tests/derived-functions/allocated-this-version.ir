@@ -1,0 +1,120 @@
+# The version of a base constructor that takes the object its caller allocated: this is a parameter, the allocation is gone, and undefined is returned in place of this, also where a cast lies between this and the return
+# FORM: Prepared
+# RUN: derived-functions AllocatedThisVersion:f1 AllocatedThisVersion:f2 AllocatedThisVersion:f3 AllocatedThisVersion:f4 AllocatedThisVersion:f5 AllocatedThisVersion:f6
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" module=m0 constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Widened" module=m0 constructor=f2 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="Counter" module=m0 constructor=f3 fields=[{key="step" declared={type=number} flags=[IsRequired]}]
+layout L3 kind=Instance name="Filled" module=m0 constructor=f4 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L4 kind=Instance name="Cached" module=m0 constructor=f5 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L5 kind=Instance name="Merged" module=m0 constructor=f6
+
+function f0 name="main" results=[{type=undefined}] {
+    Return
+}
+
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] constructedClass=L0 {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="x"
+    Return v3
+# CHECK-NOT: role=
+# CHECK: [[prototype]]:{{*}}= GetConstructPrototype v0 layout=L0
+# CHECK-NEXT: = NewObject [[prototype]] layout=L0
+}
+
+function f2 name="Widened" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] constructedClass=L1 {
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    PropSet v3, v1 key="x"
+    v5 = Upcast v3 castType=anything
+    Return v5
+}
+
+function f3 name="Counter" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L2 {
+    v3 = GetConstructPrototype v1 layout=L2
+    v4 = NewObject v3 layout=L2
+    PropSet v4, v0 key="step"
+    Return v4
+}
+
+function f4 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}, {type=number}] results=[{type=anything}] constructedClass=L3 {
+    v3 = GetConstructPrototype v0 layout=L3
+    v4 = NewObject v3, v1, v2 layout=L3 fields=[0, 1]
+    Return v4
+}
+
+function f5 name="Cached" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}, {type=undefined|object}] results=[{type=object}] constructedClass=L4 {
+    v3 = GetConstructPrototype v0 layout=L4
+    v4 = NewObject v3 layout=L4
+    v5 = TypeTest v2 testedType=object
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    Return v6
+  b2():
+    PropSet v4, v1 key="x"
+    Return v4
+}
+
+function f6 name="Merged" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=undefined|object}] results=[{type=object}] constructedClass=L5 {
+    v2 = GetConstructPrototype v0 layout=L5
+    v3 = NewObject v2 layout=L5
+    v4 = TypeTest v1 testedType=object
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    Jump -> next b3(v5)
+  b2():
+    Jump -> next b3(v3)
+  b3(v6):
+    Return v6
+}
+# CHECK-LABEL: function f6 name="Merged"
+
+# CHECK-LABEL: name="Point" module=m0 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget] thisType={type=L0} parameters=[{type=number}]
+# CHECK: derivation={source=f1 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f1} constructedClass=L0 {
+# CHECK-NEXT: b0([[this]]: L0, [[newTarget]]: anything, [[x]]: number):
+# CHECK-NEXT: PropSet [[this]], [[x]] key="x"
+# CHECK-NEXT: [[undefined]]: undefined = Undefined
+# CHECK-NEXT: Return [[undefined]]
+# CHECK-NEXT: }
+
+# CHECK-LABEL: name="Widened" module=m0 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget] thisType={type=L1} parameters=[{type=number}]
+# CHECK: derivation={source=f2 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f2}
+# CHECK-NEXT: b0([[widenedThis]]: L1, [[widenedNewTarget]]: anything, [[widenedX]]: number):
+# CHECK-NOT: GetConstructPrototype
+# CHECK-NOT: NewObject
+# CHECK: PropSet [[widenedThis]], [[widenedX]] key="x"
+# CHECK: [[widenedUndefined]]: undefined = Undefined
+# CHECK-NEXT: Return [[widenedUndefined]]
+
+# CHECK-LABEL: name="Counter" module=m0 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget] captures=[{type=number}] thisType={type=L2} parameters=[{type=anything}]
+# CHECK: derivation={source=f3 parameterMap=[{original=0}, {}, {original=1}, {original=2}]} creator=Version{provenVersion=f3}
+# CHECK-NEXT: b0([[step]]: number, [[counterThis]]: L2, [[counterNewTarget]]: anything, [[unused]]: anything):
+# CHECK-NEXT: PropSet [[counterThis]], [[step]] key="step"
+
+# CHECK-LABEL: name="Filled" module=m0 kind=BaseConstructor role=AllocatedThisVersion
+# CHECK: b0([[filledThis]]: L3, [[filledNewTarget]]: anything, [[first]]: number, [[second]]: number):
+# CHECK-NEXT: PropDefine [[filledThis]], [[first]] key="x"
+# CHECK-NEXT: PropDefine [[filledThis]], [[second]] key="y"
+# CHECK-NOT: NewObject
+# CHECK: Return
+
+# CHECK-LABEL: name="Cached" module=m0 kind=BaseConstructor role=AllocatedThisVersion
+# CHECK: results=[{type=undefined|object}]
+# CHECK: b0([[cachedThis]]: L4, [[cachedNewTarget]]: anything, [[cachedX]]: number, [[other]]: undefined|object):
+# CHECK-NOT: GetConstructPrototype
+# CHECK-NOT: NewObject
+# CHECK: b1([[object]]: object):
+# CHECK-NEXT: Return [[object]]
+# CHECK: PropSet [[cachedThis]], [[cachedX]] key="x"
+# CHECK-NEXT: [[cachedUndefined]]: undefined = Undefined
+# CHECK-NEXT: Return [[cachedUndefined]]
+
+# CHECK-LABEL: name="Merged" module=m0 kind=BaseConstructor role=AllocatedThisVersion
+# CHECK: b0([[mergedThis]]: L5, [[mergedNewTarget]]: anything, [[mergedOther]]: undefined|object):
+# CHECK-NOT: NewObject
+# CHECK: Jump -> next b3([[mergedThis]])
+# CHECK-NEXT: b3([[either]]: object):
+# CHECK-NOT: Undefined
+# CHECK: Return [[either]]

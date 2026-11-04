@@ -26,6 +26,9 @@
 #pragma once
 
 #include "ASTForward.h"
+#include "ASTFunction.h"
+#include "ASTVariable.h"
+#include "Types.h"
 #include "WGSLEnums.h"
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>

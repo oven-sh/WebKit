@@ -112,6 +112,9 @@ public:
     void finishedParsing();
 
     void insertDoctype(AtomHTMLToken&&);
+    void insertProcessingInstruction(AtomHTMLToken&&);
+    void insertProcessingInstructionOnDocument(AtomHTMLToken&&);
+    void insertProcessingInstructionOnHTMLHtmlElement(AtomHTMLToken&&);
     void insertComment(AtomHTMLToken&&);
     void insertCommentOnDocument(AtomHTMLToken&&);
     void insertCommentOnHTMLHtmlElement(AtomHTMLToken&&);
@@ -141,10 +144,10 @@ public:
 
     HTMLStackItem createElementFromSavedToken(const HTMLStackItem&);
 
-    bool NODELETE shouldFosterParent() const;
+    bool LEGACY_NODELETE shouldFosterParent() const;
     void fosterParent(Ref<Node>&&);
 
-    std::optional<unsigned> NODELETE indexOfFirstUnopenFormattingElement() const;
+    std::optional<unsigned> LEGACY_NODELETE indexOfFirstUnopenFormattingElement() const;
     void reconstructTheActiveFormattingElements();
 
     void generateImpliedEndTags();
@@ -160,7 +163,6 @@ public:
     ContainerNode& currentNode() const { return m_openElements.topNode(); }
     ElementName currentElementName() const { return m_openElements.topElementName(); }
     HTMLStackItem& currentStackItem() const LIFETIME_BOUND { return m_openElements.topStackItem(); }
-    HTMLStackItem* oneBelowTop() const LIFETIME_BOUND { return m_openElements.oneBelowTop(); }
     TreeScope& treeScopeForCurrentNode();
     ContainerNode& containerForCurrentNode();
     Document& ownerDocumentForCurrentNode();
@@ -173,7 +175,7 @@ public:
 
     void setForm(HTMLFormElement*);
     HTMLFormElement* form() const { return m_form.get(); }
-    RefPtr<HTMLFormElement> NODELETE takeForm();
+    RefPtr<HTMLFormElement> LEGACY_NODELETE takeForm();
 
     OptionSet<ParserContentPolicy> parserContentPolicy() { return m_parserContentPolicy; }
 
@@ -192,7 +194,7 @@ public:
         SetForScope<bool> m_redirectAttachToFosterParentChange;
     };
 
-    static bool NODELETE isFormattingTag(TagName);
+    static bool LEGACY_NODELETE isFormattingTag(TagName);
 
 private:
     Document& document() const { return m_document; }
@@ -232,7 +234,7 @@ private:
     TaskQueue m_taskQueue;
 
     OptionSet<ParserContentPolicy> m_parserContentPolicy;
-    RefPtr<CustomElementRegistry> m_registry;
+    const RefPtr<CustomElementRegistry> m_registry;
     bool m_isParsingFragment;
 
     // http://www.whatwg.org/specs/web-apps/current-work/multipage/tokenization.html#parsing-main-intable

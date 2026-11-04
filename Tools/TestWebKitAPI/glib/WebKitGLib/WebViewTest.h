@@ -24,6 +24,7 @@
 #include <optional>
 #include <wtf/OptionSet.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/UTF8CStringView.h>
 
 class WebViewTest: public Test {
 public:
@@ -39,6 +40,7 @@ public:
     void platformDestroy();
 
     virtual void loadURI(const char* uri);
+    void loadURI(const UTF8CString& uri) { loadURI(uri.legacyCStringPointer()); }
     virtual void loadHtml(const char* html, const char* baseURI, WebKitWebView* = nullptr);
     virtual void loadPlainText(const char* plainText);
     virtual void loadRequest(WebKitURIRequest*);
@@ -82,6 +84,9 @@ public:
     void mouseMoveTo(int x, int y, OptionSet<Modifiers> = OptionSet<Modifiers>());
     void clickMouseButton(int x, int y, MouseButton = MouseButton::Primary, OptionSet<Modifiers> = OptionSet<Modifiers>());
     void keyStroke(unsigned keyVal, OptionSet<Modifiers> = OptionSet<Modifiers>());
+#if ENABLE(WPE_PLATFORM)
+    void tapTouchscreen(int x, int y);
+#endif
 
     void showInWindow(int width = 0, int height = 0);
 
@@ -90,6 +95,7 @@ public:
 #endif
 
     JSCValue* runJavaScriptAndWaitUntilFinished(const char* javascript, GError**, WebKitWebView* = nullptr);
+    JSCValue* runJavaScriptAndWaitUntilFinished(UTF8CStringView javascript, GError**, WebKitWebView* = nullptr);
     JSCValue* runJavaScriptAndWaitUntilFinished(const char* javascript, gsize, GError**);
     JSCValue* runJavaScriptFromGResourceAndWaitUntilFinished(const char* resource, GError**);
     JSCValue* runJavaScriptInWorldAndWaitUntilFinished(const char* javascript, const char* world, const char* sourceURI, GError**);
@@ -144,8 +150,8 @@ public:
     GRefPtr<WebKitUserContentManager> m_userContentManager;
     GRefPtr<WebKitWebView> m_webView;
     GMainLoop* m_mainLoop;
-    CString m_activeURI;
-    CString m_expectedTitle;
+    UTF8CString m_activeURI;
+    UTF8CString m_expectedTitle;
     GRefPtr<JSCValue> m_javascriptResult;
     GError** m_javascriptError { nullptr };
     GUniquePtr<char> m_resourceData { nullptr };

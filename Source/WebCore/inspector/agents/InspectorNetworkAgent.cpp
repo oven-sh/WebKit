@@ -38,7 +38,6 @@
 #include "CachedResourceRequestInitiatorTypes.h"
 #include "CachedScript.h"
 #include "CertificateInfo.h"
-#include "CertificateSummary.h"
 #include "CookieJar.h"
 #include "DocumentInlines.h"
 #include "DocumentLoader.h"
@@ -145,57 +144,12 @@ Ref<Inspector::Protocol::Network::ResourceTiming> InspectorNetworkAgent::buildOb
     });
 }
 
-static Inspector::Protocol::Network::ReferrerPolicy NODELETE toProtocol(ReferrerPolicy referrerPolicy)
-{
-    switch (referrerPolicy) {
-    case ReferrerPolicy::EmptyString:
-        return Inspector::Protocol::Network::ReferrerPolicy::EmptyString;
-    case ReferrerPolicy::NoReferrer:
-        return Inspector::Protocol::Network::ReferrerPolicy::NoReferrer;
-    case ReferrerPolicy::NoReferrerWhenDowngrade:
-        return Inspector::Protocol::Network::ReferrerPolicy::NoReferrerWhenDowngrade;
-    case ReferrerPolicy::SameOrigin:
-        return Inspector::Protocol::Network::ReferrerPolicy::SameOrigin;
-    case ReferrerPolicy::Origin:
-        return Inspector::Protocol::Network::ReferrerPolicy::Origin;
-    case ReferrerPolicy::StrictOrigin:
-        return Inspector::Protocol::Network::ReferrerPolicy::StrictOrigin;
-    case ReferrerPolicy::OriginWhenCrossOrigin:
-        return Inspector::Protocol::Network::ReferrerPolicy::OriginWhenCrossOrigin;
-    case ReferrerPolicy::StrictOriginWhenCrossOrigin:
-        return Inspector::Protocol::Network::ReferrerPolicy::StrictOriginWhenCrossOrigin;
-    case ReferrerPolicy::UnsafeUrl:
-        return Inspector::Protocol::Network::ReferrerPolicy::UnsafeUrl;
-    }
-
-    ASSERT_NOT_REACHED();
-    return Inspector::Protocol::Network::ReferrerPolicy::EmptyString;
-}
-
 static Ref<Inspector::Protocol::Network::Request> buildObjectForResourceRequest(const ResourceRequest& request, ResourceLoader* resourceLoader)
 {
-    auto requestObject = Inspector::Protocol::Network::Request::create()
-        .setUrl(request.url().string())
-        .setMethod(request.httpMethod())
-        .setHeaders(ResourceUtilities::buildObjectForHeaders(request.httpHeaderFields()))
-        .release();
-
-    if (request.httpBody() && !request.httpBody()->isEmpty()) {
-        auto bytes = protect(request.httpBody())->flatten();
-        requestObject->setPostData(String::fromUTF8WithLatin1Fallback(bytes.span()));
-    }
-
-    if (resourceLoader) {
-        requestObject->setReferrerPolicy(toProtocol(resourceLoader->options().referrerPolicy));
-
-        if (auto integrity = resourceLoader->options().integrity; !integrity.isEmpty())
-            requestObject->setIntegrity(integrity);
-    }
-
-    return requestObject;
+    return ResourceUtilities::buildObjectForResourceRequest(request, ResourceUtilities::copyRequestExtras(request, resourceLoader));
 }
 
-static Inspector::Protocol::Network::Response::Source NODELETE responseSource(ResourceResponse::Source source)
+static Inspector::Protocol::Network::Response::Source LEGACY_NODELETE responseSource(ResourceResponse::Source source)
 {
     switch (source) {
     case ResourceResponse::Source::DOMCache:
@@ -239,39 +193,8 @@ RefPtr<Inspector::Protocol::Network::Response> InspectorNetworkAgent::buildObjec
         responseObject->setTiming(buildObjectForTiming(metrics ? *metrics : NetworkLoadMetrics::emptyMetrics(), *resourceLoader));
     }
 
-    if (auto& certificateInfo = response.certificateInfo()) {
-        auto securityPayload = Inspector::Protocol::Security::Security::create()
-            .release();
-
-        if (auto certificateSummaryInfo = certificateInfo.value().summary()) {
-            auto certificatePayload = Inspector::Protocol::Security::Certificate::create()
-                .release();
-
-            certificatePayload->setSubject(certificateSummaryInfo.value().subject);
-
-            if (auto validFrom = certificateSummaryInfo.value().validFrom)
-                certificatePayload->setValidFrom(validFrom.seconds());
-
-            if (auto validUntil = certificateSummaryInfo.value().validUntil)
-                certificatePayload->setValidUntil(validUntil.seconds());
-
-            auto dnsNamesPayload = JSON::ArrayOf<String>::create();
-            for (auto& dnsName : certificateSummaryInfo.value().dnsNames)
-                dnsNamesPayload->addItem(dnsName);
-            if (dnsNamesPayload->length())
-                certificatePayload->setDnsNames(WTF::move(dnsNamesPayload));
-
-            auto ipAddressesPayload = JSON::ArrayOf<String>::create();
-            for (auto& ipAddress : certificateSummaryInfo.value().ipAddresses)
-                ipAddressesPayload->addItem(ipAddress);
-            if (ipAddressesPayload->length())
-                certificatePayload->setIpAddresses(WTF::move(ipAddressesPayload));
-
-            securityPayload->setCertificate(WTF::move(certificatePayload));
-        }
-
-        responseObject->setSecurity(WTF::move(securityPayload));
-    }
+    if (auto& certificateInfo = response.certificateInfo())
+        responseObject->setSecurity(ResourceUtilities::buildObjectForSecurity(*certificateInfo));
 
     return responseObject;
 }
@@ -340,7 +263,7 @@ static ResourceType resourceTypeForCachedResource(const CachedResource* resource
     return ResourceType::Other;
 }
 
-static ResourceType resourceTypeForLoadType(UncachedLoadType loadType)
+static ResourceType LEGACY_NODELETE resourceTypeForLoadType(UncachedLoadType loadType)
 {
     switch (loadType) {
     case UncachedLoadType::Ping:
@@ -696,10 +619,14 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::enable()
             auto identifier = channel->progressIdentifier();
             didCreateWebSocket(identifier, webSocket->url());
 
-            auto cookieRequestHeaderFieldValue = [document = WeakPtr<Document, WeakPtrImplWithEventTargetData> { document }](const URL& url) -> String {
-                if (!document || !document->page())
+            auto cookieRequestHeaderFieldValue = [weakDocument = WeakPtr<Document, WeakPtrImplWithEventTargetData> { document }](const URL& url) -> String {
+                RefPtr protectedDocument = weakDocument;
+                if (!protectedDocument)
                     return { };
-                return document->page()->cookieJar().cookieRequestHeaderFieldValue(*document, url);
+                RefPtr page = protectedDocument->page();
+                if (!page)
+                    return { };
+                return protect(page->cookieJar())->cookieRequestHeaderFieldValue(*protectedDocument, url);
             };
             didSendWebSocketHandshakeRequest(identifier, channel->clientHandshakeRequest(WTF::move(cookieRequestHeaderFieldValue)));
 
@@ -735,7 +662,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::disable()
     return { };
 }
 
-static NetworkStage NODELETE networkStageFromProtocol(Inspector::Protocol::Network::NetworkStage stage)
+static NetworkStage LEGACY_NODELETE networkStageFromProtocol(Inspector::Protocol::Network::NetworkStage stage)
 {
     switch (stage) {
     case Inspector::Protocol::Network::NetworkStage::Request:
@@ -1180,7 +1107,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::interceptRequest
     return { };
 }
 
-static ResourceError::Type NODELETE toResourceErrorType(Inspector::Protocol::Network::ResourceErrorType protocolResourceErrorType)
+static ResourceError::Type LEGACY_NODELETE toResourceErrorType(Inspector::Protocol::Network::ResourceErrorType protocolResourceErrorType)
 {
     switch (protocolResourceErrorType) {
     case Inspector::Protocol::Network::ResourceErrorType::General:

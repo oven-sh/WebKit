@@ -1,0 +1,49 @@
+# A definition by name on an object that the function has made writes that object and runs nobody's code, so a guard on the storage of an array lives through it. ExpandOwnKeys turns the spread of a small literal into such definitions, between a guard and what relies on it.
+# FORM: Prepared optimizing
+# RUN: guards points
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Empty" fields=[]
+layout L1 name="WithField" fields=[{key="a" declared={type=anything}}]
+function f0 name="keyIsNoField" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
+    v2 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: guard):
+    v4 = NewObject layout=L0 fields=[]
+    PropDefine v4, v1 key="a"
+    v6 = FinishObject v4
+    Return v6
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f0
+# CHECK: b1:1 available: [v3]
+# CHECK-NEXT: b1:2 available: [v3]
+# CHECK-NEXT: b1:3 available: [v3]
+function f1 name="keyIsAField" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
+    v2 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: guard):
+    v4 = NewObject layout=L1 fields=[]
+    PropDefine v4, v1 key="a"
+    v6 = FinishObject v4
+    Return v6
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f1
+# CHECK: b1:1 available: [v3]
+# CHECK-NEXT: b1:2 available: [v3]
+# CHECK-NEXT: b1:3 available: [v3]
+function f2 name="givenObject" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=number}, {type=Object}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: guard):
+    PropDefine v2, v1 key="a"
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f2
+# CHECK: b1:0 available: [v4]
+# CHECK-NEXT: b1:1 available: []

@@ -25,6 +25,7 @@
 
 #include "cmakeconfig.h"
 
+#include "BrowserLoggingInputMethodContext.h"
 #include "BuildRevision.h"
 #include <glib-unix.h>
 #include <memory>
@@ -53,6 +54,7 @@ IGNORE_WARNINGS_END
 static const char** uriArguments;
 static const char** ignoreHosts;
 static gboolean headlessMode;
+static gboolean logInputMethod;
 static gboolean privateMode;
 static const char* profileDirectory;
 static gboolean automationMode;
@@ -121,6 +123,7 @@ static gboolean parseWindowSize(const char*, const char* value, gpointer, GError
 static const GOptionEntry commandLineOptions[] =
 {
     { "headless", 'h', 0, G_OPTION_ARG_NONE, &headlessMode, "Run in headless mode", nullptr },
+    { "log-input-method", 0, 0, G_OPTION_ARG_NONE, &logInputMethod, "Log what WebKit reports to the input method. Disables composition", nullptr },
     { "private", 'p', 0, G_OPTION_ARG_NONE, &privateMode, "Run in private browsing mode", nullptr },
     { "profile-dir", 0, 0, G_OPTION_ARG_FILENAME, &profileDirectory, "Custom profile directory to store session data", "DIR" },
     { "automation", 0, 0, G_OPTION_ARG_NONE, &automationMode, "Run in automation mode", nullptr },
@@ -310,6 +313,28 @@ static gboolean decidePermissionRequest(WebKitWebView *, WebKitPermissionRequest
     return TRUE;
 }
 
+static void webProcessTerminated(WebKitWebView* webView, WebKitWebProcessTerminationReason reason, gpointer)
+{
+    const char* message;
+    switch (reason) {
+    case WEBKIT_WEB_PROCESS_CRASHED:
+        g_warning("WebProcess CRASHED");
+        message = "The web process crashed";
+        break;
+    case WEBKIT_WEB_PROCESS_EXCEEDED_MEMORY_LIMIT:
+        g_warning("WebProcess exceeded memory limit");
+        message = "The web process exceeded the memory limit";
+        break;
+    default:
+        return;
+    }
+
+    const char* uri = webkit_web_view_get_uri(webView);
+    g_autofree char* escapedURI = g_markup_escape_text(uri ? uri : "", -1);
+    g_autofree char* html = g_strdup_printf("<html><head><title>%s</title></head><body><h1>%s</h1><p>%s</p></body></html>", message, message, escapedURI);
+    webkit_web_view_load_alternate_html(webView, html, uri, nullptr);
+}
+
 #if defined(USE_LIBWPE) && USE_LIBWPE
 static std::unique_ptr<WPEToolingBackends::ViewBackend> createViewBackend(uint32_t width, uint32_t height)
 {
@@ -347,6 +372,7 @@ static void webViewClose(WebKitWebView* webView, gpointer user_data)
 static WebKitWebView* createWebView(WebKitWebView* webView, WebKitNavigationAction*, gpointer user_data)
 {
 #if defined(USE_LIBWPE) && USE_LIBWPE
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     auto backend = createViewBackend(defaultWindowWidthLegacyAPI, defaultWindowHeightLegacyAPI);
     WebKitWebViewBackend* viewBackend = nullptr;
     if (backend) {
@@ -359,6 +385,7 @@ static WebKitWebView* createWebView(WebKitWebView* webView, WebKitNavigationActi
                 delete static_cast<WPEToolingBackends::ViewBackend*>(data);
             }, backend.release());
     }
+    ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 
     auto* newWebView = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
@@ -380,6 +407,7 @@ static WebKitWebView* createWebView(WebKitWebView* webView, WebKitNavigationActi
 
     g_signal_connect(newWebView, "create", G_CALLBACK(createWebView), user_data);
     g_signal_connect(newWebView, "close", G_CALLBACK(webViewClose), user_data);
+    g_signal_connect(newWebView, "web-process-terminated", G_CALLBACK(webProcessTerminated), nullptr);
 
     g_hash_table_add(openViews, newWebView);
 
@@ -423,6 +451,7 @@ static WebKitWebView* createWebViewForAutomationCallback(WebKitAutomationSession
     auto* application = g_application_get_default();
     g_signal_connect(newWebView, "create", G_CALLBACK(createWebView), application);
     g_signal_connect(newWebView, "close", G_CALLBACK(webViewClose), application);
+    g_signal_connect(newWebView, "web-process-terminated", G_CALLBACK(webProcessTerminated), nullptr);
     webkit_web_view_load_uri(newWebView, "about:blank");
 
     g_hash_table_add(openViews, newWebView);
@@ -492,7 +521,7 @@ static void activate(GApplication* application, gpointer)
 #endif
 {
     g_application_hold(application);
-#if ENABLE_2022_GLIB_API
+
     WebKitNetworkSession* networkSession = nullptr;
     if (!automationMode) {
         if (privateMode)
@@ -532,46 +561,6 @@ static void activate(GApplication* application, gpointer)
     }
 
     auto* webContext = WEBKIT_WEB_CONTEXT(g_object_new(WEBKIT_TYPE_WEB_CONTEXT, "time-zone-override", timeZone, nullptr));
-#else
-    WebKitWebsiteDataManager* manager;
-    if (privateMode || automationMode)
-        manager = webkit_website_data_manager_new_ephemeral();
-    else if (profileDirectory) {
-        g_autofree char* dataDirectory = g_build_filename(profileDirectory, "data", nullptr);
-        g_autofree char* cacheDirectory = g_build_filename(profileDirectory, "cache", nullptr);
-        manager = webkit_website_data_manager_new("base-data-directory", dataDirectory, "base-cache-directory", cacheDirectory, nullptr);
-    } else
-        manager = webkit_website_data_manager_new(nullptr);
-
-    webkit_website_data_manager_set_itp_enabled(manager, enableITP);
-
-    if (proxy) {
-        auto* webkitProxySettings = webkit_network_proxy_settings_new(proxy, ignoreHosts);
-        webkit_website_data_manager_set_network_proxy_settings(manager, WEBKIT_NETWORK_PROXY_MODE_CUSTOM, webkitProxySettings);
-        webkit_network_proxy_settings_free(webkitProxySettings);
-    }
-
-    if (ignoreTLSErrors)
-        webkit_website_data_manager_set_tls_errors_policy(manager, WEBKIT_TLS_ERRORS_POLICY_IGNORE);
-
-    auto* webContext = WEBKIT_WEB_CONTEXT(g_object_new(WEBKIT_TYPE_WEB_CONTEXT, "website-data-manager", manager, "time-zone-override", timeZone, nullptr));
-    g_object_unref(manager);
-
-    if (cookiesPolicy) {
-        auto* cookieManager = webkit_web_context_get_cookie_manager(webContext);
-        auto* enumClass = static_cast<GEnumClass*>(g_type_class_ref(WEBKIT_TYPE_COOKIE_ACCEPT_POLICY));
-        GEnumValue* enumValue = g_enum_get_value_by_nick(enumClass, cookiesPolicy);
-        if (enumValue)
-            webkit_cookie_manager_set_accept_policy(cookieManager, static_cast<WebKitCookieAcceptPolicy>(enumValue->value));
-        g_type_class_unref(enumClass);
-    }
-
-    if (cookiesFile && !webkit_web_context_is_ephemeral(webContext)) {
-        auto* cookieManager = webkit_web_context_get_cookie_manager(webContext);
-        auto storageType = g_str_has_suffix(cookiesFile, ".txt") ? WEBKIT_COOKIE_PERSISTENT_STORAGE_TEXT : WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE;
-        webkit_cookie_manager_set_persistent_storage(cookieManager, cookiesFile, storageType);
-    }
-#endif
 
     g_autoptr(WebKitUserContentManager) userContentManager = nullptr;
     if (contentFilter) {
@@ -649,9 +638,11 @@ static void activate(GApplication* application, gpointer)
     }
 
 #if defined(USE_LIBWPE) && USE_LIBWPE
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     auto* viewBackend = backend ? webkit_web_view_backend_new(backend->backend(), [](gpointer data) {
         delete static_cast<WPEToolingBackends::ViewBackend*>(data);
     }, backend) : nullptr;
+    ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 
 #if ENABLE_WPE_PLATFORM_HEADLESS
@@ -674,9 +665,7 @@ static void activate(GApplication* application, gpointer)
         "backend", viewBackend,
 #endif
         "web-context", webContext,
-#if ENABLE_2022_GLIB_API
         "network-session", networkSession,
-#endif
         "settings", settings,
         "user-content-manager", userContentManager,
         "is-controlled-by-automation", automationMode,
@@ -687,6 +676,11 @@ static void activate(GApplication* application, gpointer)
         nullptr));
     g_object_unref(settings);
     g_object_unref(defaultWebsitePolicies);
+
+    if (logInputMethod) {
+        g_autoptr(WebKitInputMethodContext) inputMethodContext = browser_logging_input_method_context_new();
+        webkit_web_view_set_input_method_context(webView, inputMethodContext);
+    }
 #if ENABLE_WPE_PLATFORM_HEADLESS
     g_clear_object(&wpeDisplay);
 #endif
@@ -737,6 +731,7 @@ static void activate(GApplication* application, gpointer)
     g_signal_connect(webView, "permission-request", G_CALLBACK(decidePermissionRequest), nullptr);
     g_signal_connect(webView, "create", G_CALLBACK(createWebView), application);
     g_signal_connect(webView, "close", G_CALLBACK(webViewClose), application);
+    g_signal_connect(webView, "web-process-terminated", G_CALLBACK(webProcessTerminated), nullptr);
     g_hash_table_add(openViews, webView);
 
     WebKitColor color;
@@ -757,9 +752,7 @@ static void activate(GApplication* application, gpointer)
         webkit_web_view_load_uri(webView, "https://wpewebkit.org");
 
     g_object_unref(webContext);
-#if ENABLE_2022_GLIB_API
     g_clear_object(&networkSession);
-#endif
 }
 
 int main(int argc, char *argv[])

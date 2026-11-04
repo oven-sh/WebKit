@@ -1,0 +1,21 @@
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="oneMayBeUndefined" parameters=[{type=anything}, {type=number}] results=[{type=Array<undefined|number>}] {
+    v2 = AssumeType v0 provenType=undefined|number
+    v3 = NewArray v2, v1 contents=undefined|number
+    Return v3
+}
+# CHECK: f0:
+# CHECK-NOT: stub ArrayLiteral.n2
+# CHECK: stub ArrayLiteralWithDouble.n2
+function f1 name="oneMayBeText" parameters=[{type=anything}, {type=number}] results=[{type=Array<number|string>}] {
+    v2 = AssumeType v0 provenType=number|string
+    v3 = NewArray v2, v1 contents=number|string
+    Return v3
+}
+# CHECK: f1:
+# CHECK-NOT: stub ArrayLiteralWithDouble
+# CHECK: stub ArrayLiteral.n2

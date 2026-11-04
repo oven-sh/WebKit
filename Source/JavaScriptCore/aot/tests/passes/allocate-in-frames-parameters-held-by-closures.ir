@@ -1,0 +1,78 @@
+# A parameter that a closure of the callee's own frame captures stays borrowed, so the caller's closure lies in the frame too. Which closures lie in a frame is known by the plans: the table of borrowed parameters grows by them, and who gains is planned again.
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,AllocateInFrames
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    v4 = CallDirect v1 function=f3
+    Return
+}
+
+function f1 name="handsToOneThatWrapsIt" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = CallDirect v1 function=f4
+    Return v2
+# CHECK: = NewClosure function=f10 {{*}}storage=Frame
+}
+
+function f2 name="handsToOneWhoseWrapperLeaves" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = CallDirect v1 function=f5
+    Return v2
+# CHECK-NOT: storage=
+}
+
+function f3 name="throughTwoWrappers" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = CallDirect v1 function=f6
+    Return v2
+# CHECK: = NewClosure function=f10 {{*}}storage=Frame
+}
+
+function f4 name="wraps" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure v0 function=f8
+    v2 = CallDirect v1 function=f7
+    Return v2
+# CHECK: = NewClosure v0 function=f8 {{*}}storage=Frame
+}
+
+function f5 name="wrapsAndKeeps" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure v0 function=f8
+    PutModuleVariable v1 variable=g0
+    Return
+# CHECK-NOT: storage=
+}
+
+function f6 name="wrapsAndHandsToOneThatWraps" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure v0 function=f8
+    v2 = CallDirect v1 function=f4
+    Return v2
+# CHECK: = NewClosure v0 function=f8 {{*}}storage=Frame
+}
+
+function f7 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+
+function f8 name="wrapper" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    v2 = ToBoolean v1
+    Return v2
+}
+
+function f9 name="unused" kind=Arrow results=[{type=anything}] {
+    Return
+}
+
+function f10 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}

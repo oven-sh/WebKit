@@ -1,0 +1,71 @@
+# Where the test in the header of a loop is known to hold when the loop is entered, the first turn goes on into the block behind it with nothing but the header in front: a read of a variable that is stored once leaves the loop from there as from the header
+# FORM: Prepared
+# RUN: pass HoistLoopInvariantReads
+# STATISTIC: HoistLoopInvariantReadsChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="storedOnce" declared={type=number} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+
+function f0 name="turnsAtLeastOnce" results=[{type=anything}] {
+    v0 = Integer
+    Jump -> next b1(v0)
+  b1(v1):
+    LoopHint
+    v3 = Integer integer=10
+    v4 = Less v1, v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = GetModuleVariable variable=g0
+    v6 = ToBoolean v5
+    v7 = Increment v1
+    Jump -> next b1(v7)
+  b3():
+    Return
+# CHECK: b0(
+# CHECK: GetModuleVariable variable=g0
+# CHECK: b1(
+# CHECK-NOT: GetModuleVariable
+}
+
+function f1 name="mayTurnNotOnce" parameters=[{type=i32}] results=[{type=anything}] {
+    v1 = Integer
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = GetModuleVariable variable=g0
+    v6 = ToBoolean v5
+    v7 = Increment v2
+    Jump -> next b1(v7)
+  b3():
+    Return
+# CHECK: b0(
+# CHECK-NOT: GetModuleVariable
+# CHECK: b2():
+# CHECK-NEXT: GetModuleVariable variable=g0
+}
+
+function f2 name="aCallStandsInFrontOfTheRead" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Integer integer=10
+    v5 = Less v2, v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Call v0
+    v7 = GetModuleVariable variable=g0
+    v8 = ToBoolean v7
+    v9 = Increment v2
+    Jump -> next b1(v9)
+  b3():
+    Return
+# CHECK: b0(
+# CHECK-NOT: GetModuleVariable
+# CHECK: b2():
+# CHECK-NEXT: Call
+# CHECK-NEXT: GetModuleVariable variable=g0
+}

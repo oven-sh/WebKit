@@ -77,6 +77,9 @@ WI.CSSGrouping = class CSSGrouping extends WI.Object
         newText ||= "";
 
         this._nodeStyles.ignoreNextContentDidChangeForStyleSheet = this._ownerStyleSheet;
+        using clearIgnoredStyleSheet = new ScopeExit(() => {
+            this._nodeStyles.ignoreNextContentDidChangeForStyleSheet = null;
+        });
 
         let owningTarget = this._nodeStyles.node.owningTarget;
         let target = owningTarget || WI.assumingMainTarget();
@@ -114,6 +117,12 @@ WI.CSSGrouping = class CSSGrouping extends WI.Object
             || this._type === WI.CSSGrouping.Type.MediaStyleNode;
     }
 
+    get isLayer()
+    {
+        return this._type === WI.CSSGrouping.Type.LayerRule
+            || this._type === WI.CSSGrouping.Type.LayerImportRule;
+    }
+
     get isStartingStyle()
     {
         return this._type === WI.CSSGrouping.Type.StartingStyleRule;
@@ -137,6 +146,9 @@ WI.CSSGrouping = class CSSGrouping extends WI.Object
 
         case WI.CSSGrouping.Type.ContainerRule:
             return "@container";
+
+        case WI.CSSGrouping.Type.KeyframesRule:
+            return "@keyframes";
 
         case WI.CSSGrouping.Type.ScopeRule:
             return "@scope";
@@ -162,6 +174,7 @@ WI.CSSGrouping.Type = {
     ScopeRule: "scope-rule",
     StartingStyleRule: "starting-style-rule",
     StyleRule: "style-rule",
+    KeyframesRule: "keyframes-rule",
 };
 
 WI.CSSGrouping.Event = {

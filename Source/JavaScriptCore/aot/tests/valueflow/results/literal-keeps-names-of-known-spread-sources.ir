@@ -1,0 +1,80 @@
+# const defaults = { a: 1.5, b: "x" }
+# function spreadUnder(from) { return { ...defaults, ...from } }                  spreadUnder(JSON.parse(text))
+# function spreadOver(from) { return { ...from, ...defaults } }                   spreadOver(JSON.parse(text))
+# function assignUnder(from) { return Object.assign({}, defaults, from) }         assignUnder(JSON.parse(text))
+# function assignOver(from) { return Object.assign({}, from, defaults) }          assignOver(JSON.parse(text))
+# A copy lays values under names and takes nothing away, so the names of the listed source are there whatever the other source brings: they get fields that are always filled.
+# What the listed source holds is what the fields are expected to hold; they take every value.
+# An assignment asks what stands above the target, and a source that nobody lists may have put something else there: behind such a source nothing is said to be filled.
+# RUN: valueflow-apply
+# CHECK: layout L1 name="SpreadUnder" fields=[{key="a" declared={type=fractional flags=[IsExpected]} flags=[IsAddedLate] flow={location={writers=AllKnown initialization=SetAtCreation{{*}}} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type="x" flags=[IsExpected]} flags=[IsAddedLate] flow={location={writers=AllKnown initialization=SetAtCreation{{*}}} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+# CHECK: layout L2 name="SpreadOver" fields=[{key="a" {{*}} occupancy=AlwaysFilled {{*}}}, {key="b" {{*}} occupancy=AlwaysFilled {{*}}}]
+# CHECK: layout L3 name="AssignUnder" fields=[{key="a" {{*}} occupancy=AlwaysFilled {{*}}}, {key="b" {{*}} occupancy=AlwaysFilled {{*}}}]
+# CHECK: layout L4 name="AssignOver"
+# CHECK-NOT: AlwaysFilled
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Defaults" fields=[{key="a" declared={type=undefined|number} flags=[IsRequired]}, {key="b" declared={type=undefined|string} flags=[IsRequired]}]
+layout L1 kind=Record name="SpreadUnder"
+layout L2 kind=Record name="SpreadOver"
+layout L3 kind=Record name="AssignUnder"
+layout L4 kind=Record name="AssignOver"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="{}"
+    v1 = Builtin builtin=JSONParse
+    v2 = Double number=1.5
+    v3 = String string="x"
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Call v1, -, v0
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v5, v6
+    v9 = NewClosure function=f2
+    v10 = Call v9, -, v5, v6
+    v11 = NewClosure function=f3
+    v12 = Call v11, -, v5, v6
+    v13 = NewClosure function=f4
+    v14 = Call v13, -, v5, v6
+    v15 = PropGet v8 key="a"
+    v16 = PropGet v10 key="a"
+    v17 = PropGet v12 key="a"
+    v18 = PropGet v14 key="a"
+    v19 = Add v15, v16
+    v20 = Add v17, v18
+    v21 = Add v19, v20
+    Return v21
+}
+function f1 name="spreadUnder" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject layout=L1
+    CopyDataProperties v2, v0
+    CopyDataProperties v2, v1
+    v5 = FinishObject v2
+    Return v5
+}
+function f2 name="spreadOver" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject layout=L2
+    CopyDataProperties v2, v1
+    CopyDataProperties v2, v0
+    v5 = FinishObject v2
+    Return v5
+}
+function f3 name="assignUnder" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=ObjectAssign
+    v3 = NewObject layout=L3
+    v4 = FinishObject v3
+    v5 = Call v2, -, v4, v0, v1
+    Return v5
+}
+function f4 name="assignOver" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=ObjectAssign
+    v3 = NewObject layout=L4
+    v4 = FinishObject v3
+    v5 = Call v2, -, v4, v1, v0
+    Return v5
+}

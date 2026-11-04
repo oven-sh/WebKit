@@ -1,0 +1,8 @@
+# Closure tests of a callee that is one of two functions and of an expected callee pass the back-end checks in compact code
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end
+# STATISTIC: CallsResolved >= 1
+# STATISTIC: CallsGuarded >= 1
+# STATISTIC: TestAndBranchGroups >= 2
+# CHECK: image not empty
+# PROGRAM-OF: fast.ir

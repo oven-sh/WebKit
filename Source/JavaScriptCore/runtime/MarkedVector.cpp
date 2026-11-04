@@ -28,7 +28,7 @@ namespace JSC {
 
 EncodedJSValue MarkedVectorBase::m_storageForOutOfBoundsAccess;
 
-void MarkedVectorBase::addMarkSet(JSValue v)
+NEVER_INLINE void MarkedVectorBase::addMarkSet(JSValue v)
 {
     if (m_markSet)
         return;
@@ -90,7 +90,7 @@ JSCell* MarkedVectorBase::toCellForGC(const void* pointer, MarkedVectorBase::Sto
     return nullptr;
 }
 
-void MarkedVectorBase::addMarkSet(const void* pointer)
+NEVER_INLINE void MarkedVectorBase::addMarkSet(const void* pointer)
 {
     if (m_markSet)
         return;
@@ -125,31 +125,31 @@ void MarkedVectorBase::markLists(Visitor& visitor, ListSet& markSet)
 template void MarkedVectorBase::markLists(AbstractSlotVisitor&, ListSet&);
 template void MarkedVectorBase::markLists(SlotVisitor&, ListSet&);
 
-auto MarkedVectorBase::slowEnsureCapacity(size_t requestedCapacity) -> Status
+auto MarkedVectorBase::slowEnsureCapacity(size_t requestedCapacity, Request request) -> Status
 {
     setNeedsOverflowCheck();
     auto checkedNewCapacity = CheckedInt32(requestedCapacity);
     if (checkedNewCapacity.hasOverflowed()) [[unlikely]]
         return Status::Overflowed;
-    return expandCapacity(checkedNewCapacity);
+    return expandCapacity(checkedNewCapacity, request);
 }
 
 void MarkedVectorBase::slowEnsureCapacityAndCrashOnOverflow(size_t requestedCapacity)
 {
-    auto status = slowEnsureCapacity(requestedCapacity);
+    auto status = slowEnsureCapacity(requestedCapacity, Request::MayNotFail);
     RELEASE_ASSERT(status != Status::Overflowed);
 }
 
-auto MarkedVectorBase::expandCapacity() -> Status
+NEVER_INLINE auto MarkedVectorBase::expandCapacity(Request request) -> Status
 {
     setNeedsOverflowCheck();
     auto checkedNewCapacity = CheckedInt32(m_capacity) * 2;
     if (checkedNewCapacity.hasOverflowed()) [[unlikely]]
         return Status::Overflowed;
-    return expandCapacity(checkedNewCapacity);
+    return expandCapacity(checkedNewCapacity, request);
 }
 
-auto MarkedVectorBase::expandCapacity(unsigned newCapacity) -> Status
+NEVER_INLINE auto MarkedVectorBase::expandCapacity(unsigned newCapacity, Request request) -> Status
 {
     setNeedsOverflowCheck();
     ASSERT(m_capacity < newCapacity);
@@ -161,7 +161,7 @@ auto MarkedVectorBase::expandCapacity(unsigned newCapacity) -> Status
     auto checkedSize = CheckedSize(newCapacity) * elementSize;
     if (checkedSize.hasOverflowed()) [[unlikely]]
         return Status::Overflowed;
-    void* newBuffer = FastMalloc::tryMalloc(checkedSize);
+    void* newBuffer = request == Request::MayNotFail ? FastMalloc::malloc(checkedSize) : FastMalloc::tryMalloc(checkedSize);
     if (!newBuffer)
         return Status::Overflowed;
 #if CPU(ADDRESS32)
@@ -195,11 +195,11 @@ auto MarkedVectorBase::expandCapacity(unsigned newCapacity) -> Status
     return Status::Success;
 }
 
-auto MarkedVectorBase::slowAppend(JSValue v) -> Status
+NEVER_INLINE auto MarkedVectorBase::slowAppend(JSValue v, Request request) -> Status
 {
     ASSERT(m_size <= m_capacity);
     if (m_size == m_capacity) {
-        auto status = expandCapacity();
+        auto status = expandCapacity(request);
         if (status == Status::Overflowed) {
             ASSERT(m_needsOverflowCheck);
             return status;
@@ -212,11 +212,11 @@ auto MarkedVectorBase::slowAppend(JSValue v) -> Status
 }
 
 #if CPU(ADDRESS32)
-auto MarkedVectorBase::slowAppend(const void* pointer) -> Status
+NEVER_INLINE auto MarkedVectorBase::slowAppend(const void* pointer, Request request) -> Status
 {
     ASSERT(m_size <= m_capacity);
     if (m_size == m_capacity) {
-        auto status = expandCapacity();
+        auto status = expandCapacity(request);
         if (status == Status::Overflowed) {
             ASSERT(m_needsOverflowCheck);
             return status;

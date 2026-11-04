@@ -1,0 +1,38 @@
+# A type that is assumed to hold behind checks has a check in front of the value: the check itself, a cast of it, what an operation makes of it, what a test leaves of it, or a join that takes it
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: ProofWithoutCheck 3
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="badNoCheck" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = AssumeType v0 provenType=number [isBehindChecks]
+    Return
+}
+function f1 name="badCheckOfAnotherValue" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+    v2 = Check v0 expectedType=number
+    v3 = AssumeType v1 provenType=number [isBehindChecks]
+    Return
+}
+function f2 name="badExpectationInPlaceOfTheCheck" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Expect v0 expectedType=number
+    v2 = AssumeType v1 provenType=number [isBehindChecks]
+    Return
+}
+function f3 name="good" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+    v2 = Check v0 expectedType=undefined|number
+    v3 = AssumeType v2 provenType=number [isBehindChecks]
+    v4 = Add v2, v1
+    v5 = AssumeType v4 provenType=number [isBehindChecks]
+    v6 = AssumeType v1 provenType=number
+    v7 = TypeTest v2 testedType=number
+    Branch v7 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v8: number):
+    v9 = AssumeType v8 provenType=i32 [isBehindChecks]
+    Jump -> next b3(v8)
+  b2(v10: undefined):
+    Jump -> next b3(v10)
+  b3(v11: undefined|number):
+    v12 = AssumeType v11 provenType=number [isBehindChecks]
+    Return
+}

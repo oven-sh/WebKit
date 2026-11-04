@@ -64,11 +64,10 @@ DOMCacheStorage::~DOMCacheStorage() = default;
 std::optional<ClientOrigin> DOMCacheStorage::origin() const
 {
     RefPtr scriptExecutionContext = this->scriptExecutionContext();
-    RefPtr origin = scriptExecutionContext ? scriptExecutionContext->securityOrigin() : nullptr;
-    if (!origin)
+    if (!scriptExecutionContext || !scriptExecutionContext->securityOrigin())
         return std::nullopt;
 
-    return ClientOrigin { scriptExecutionContext->topOrigin().data(), origin->data() };
+    return scriptExecutionContext->storageClientOrigin();
 }
 
 static void doSequentialMatch(size_t index, Vector<Ref<DOMCache>>&& caches, DOMCache::RequestInfo&& info, CacheQueryOptions&& options, DOMCache::MatchCallback&& completionHandler)
@@ -97,7 +96,7 @@ static inline void startSequentialMatch(Vector<Ref<DOMCache>>&& caches, DOMCache
     doSequentialMatch(0, WTF::move(caches), WTF::move(info), WTF::move(options), WTF::move(completionHandler));
 }
 
-static inline Ref<DOMCache> copyCache(const Ref<DOMCache>& cache)
+static inline Ref<DOMCache> LEGACY_NODELETE copyCache(const Ref<DOMCache>& cache)
 {
     return cache.copyRef();
 }
@@ -109,11 +108,12 @@ void DOMCacheStorage::doSequentialMatch(DOMCache::RequestInfo&& info, CacheQuery
             promise->reject(result.releaseException());
             return;
         }
-        if (!result.returnValue()) {
+        RefPtr returnValue = result.releaseReturnValue();
+        if (!returnValue) {
             promise->resolve();
             return;
         }
-        promise->resolve<IDLInterface<FetchResponse>>(*result.returnValue());
+        promise->resolve<IDLInterface<FetchResponse>>(*returnValue);
     });
 }
 
@@ -214,7 +214,7 @@ void DOMCacheStorage::retrieveCaches(CompletionHandler<void(std::optional<Except
             m_updateCounter = cachesInfo.updateCounter;
 
             m_caches = WTF::map(WTF::move(cachesInfo.infos), [&] (DOMCacheEngine::CacheInfo&& info) {
-                return findCacheOrCreate(WTF::move(info), *context);
+                return protectedThis->findCacheOrCreate(WTF::move(info), *context);
             });
         }
         callback(std::nullopt);

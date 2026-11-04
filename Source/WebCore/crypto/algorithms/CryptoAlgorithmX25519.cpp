@@ -58,7 +58,7 @@ void CryptoAlgorithmX25519::generateKey(const CryptoAlgorithmParameters&, bool e
     callback(WTF::move(pair));
 }
 
-#if !PLATFORM(COCOA) && !USE(GCRYPT)
+#if !PLATFORM(COCOA) && !USE(GCRYPT) && !HAVE(OPENSSL_OKP)
 std::optional<Vector<uint8_t>> CryptoAlgorithmX25519::platformDeriveBits(const CryptoKeyOKP&, const CryptoKeyOKP&)
 {
     return std::nullopt;
@@ -81,9 +81,9 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
         exceptionCallback(ExceptionCode::InvalidAccessError);
         return;
     }
-    auto& ecBaseKey = downcast<CryptoKeyOKP>(baseKey.get());
+    Ref ecBaseKey = downcast<CryptoKeyOKP>(baseKey);
     Ref ecPublicKey = downcast<CryptoKeyOKP>(*(ecParameters.publicKey.get()));
-    if (ecBaseKey.namedCurve() != ecPublicKey->namedCurve()) {
+    if (ecBaseKey->namedCurve() != ecPublicKey->namedCurve()) {
         exceptionCallback(ExceptionCode::InvalidAccessError);
         return;
     }

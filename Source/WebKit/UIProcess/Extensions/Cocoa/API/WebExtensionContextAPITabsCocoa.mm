@@ -47,6 +47,7 @@
 #import "WebExtensionWindowIdentifier.h"
 #import "WebPageProxy.h"
 #import <WebCore/ImageUtilities.h>
+#import <wtf/Borrow.h>
 #import <wtf/Box.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/MathExtras.h>
@@ -108,8 +109,14 @@ void WebExtensionContext::tabsCreate(std::optional<WebPageProxyIdentifier> webPa
         configuration.parentTab = tab->delegate();
     }
 
-    if (parameters.url)
+    if (parameters.url) {
+        if (!canOpenURLInNewTabOrWindow(parameters.url.value())) {
+            completionHandler(toWebExtensionError(apiName, @"url", unsupportedURLForNewTabOrWindowMessage(parameters.url.value())));
+            return;
+        }
+
         configuration.url = parameters.url.value().createNSURL().get();
+    }
 
     [delegate webExtensionController:extensionController->wrapper() openNewTabUsingConfiguration:configuration forExtensionContext:wrapper() completionHandler:makeBlockPtr([this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)](id<WKWebExtensionTab> newTab, NSError *error) mutable {
         if (error) {
@@ -450,7 +457,8 @@ void WebExtensionContext::tabsCaptureVisibleTab(WebPageProxyIdentifier webPagePr
             }
 
             static NeverDestroyed<Ref<WorkQueue>> queue { WorkQueue::create("org.WebKit.WKWebExtension.tabsCaptureVisibleTab"_s) };
-            queue.get()->dispatch([cgImage = WTF::move(cgImage), imageFormat, imageQuality, completionHandler = WTF::move(completionHandler)]() mutable {
+            // FIXME: rdar://190389704. NeverDestroyed<Ref<T>>::get() is not recognized as safe.
+            SUPPRESS_UNCOUNTED_ARG queue.get()->dispatch([cgImage = WTF::move(cgImage), imageFormat, imageQuality, completionHandler = WTF::move(completionHandler)]() mutable {
                 URL result { WebCore::encodeDataURL(cgImage.get(), toMIMEType(imageFormat), imageQuality) };
                 WorkQueue::mainSingleton().dispatch([completionHandler = WTF::move(completionHandler), result = crossThreadCopy(WTF::move(result))]() mutable {
                     completionHandler(WTF::move(result));
@@ -597,7 +605,7 @@ void WebExtensionContext::tabsMove(Vector<WebExtensionTabIdentifier> tabIdentifi
     Vector<Ref<WebExtensionTab>> tabs;
     tabs.reserveInitialCapacity(tabIdentifiers.size());
 
-    for (auto& tabIdentifier : tabIdentifiers) {
+    for (auto& tabIdentifier : borrow(tabIdentifiers)) {
         if (RefPtr tab = getTab(tabIdentifier))
             tabs.append(tab.releaseNonNull());
         else {
@@ -700,7 +708,7 @@ void WebExtensionContext::tabsRemove(Vector<WebExtensionTabIdentifier> tabIdenti
     Vector<Ref<WebExtensionTab>> tabs;
     tabs.reserveInitialCapacity(tabIdentifiers.size());
 
-    for (auto& tabIdentifier : tabIdentifiers) {
+    for (auto& tabIdentifier : borrow(tabIdentifiers)) {
         if (RefPtr tab = getTab(tabIdentifier))
             tabs.append(tab.releaseNonNull());
         else {
@@ -745,7 +753,7 @@ void WebExtensionContext::tabsExecuteScript(WebPageProxyIdentifier webPageProxyI
         if (parameters.code)
             scriptData = SourcePair { parameters.code.value(), URL { } };
         else {
-            RetainPtr filePath = parameters.files.value().first().createNSString();
+            RetainPtr filePath = borrow(parameters.files.value())->first().createNSString();
             scriptData = sourcePairForResource(filePath.get(), *this);
             if (!scriptData) {
                 completionHandler(toWebExtensionError(apiName, nullString(), makeString("Invalid resource: "_s, String(filePath.get()))));
@@ -754,7 +762,7 @@ void WebExtensionContext::tabsExecuteScript(WebPageProxyIdentifier webPageProxyI
         }
 
         auto scriptPairs = getSourcePairsForParameters(parameters, *this);
-        executeScript(scriptPairs, webView, *m_contentScriptWorld, *tab, parameters, *this, userGesture, [completionHandler = WTF::move(completionHandler)](InjectionResults&& injectionResults) mutable {
+        executeScript(scriptPairs, webView, *protect(m_contentScriptWorld), *tab, parameters, *this, userGesture, [completionHandler = WTF::move(completionHandler)](InjectionResults&& injectionResults) mutable {
             completionHandler(WTF::move(injectionResults));
         });
     });

@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "AsyncReplyID.h"
 #include "Attachment.h"
 #include "MessageNames.h"
 #include "ReceiverMatcher.h"
@@ -42,10 +43,6 @@
 #include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 
-#if PLATFORM(COCOA)
-#include "ClassStructPtr.h"
-#endif
-
 #if PLATFORM(MAC)
 #include "ImportanceAssertion.h"
 #endif
@@ -59,17 +56,11 @@ template<typename> struct ArgumentCoder;
 
 #ifdef __OBJC__
 template<typename T> using IsObjCObject = std::enable_if_t<std::is_convertible<T *, id>::value, T *>;
-template<typename T> using IsNotObjCObject = std::enable_if_t<!std::is_convertible<T *, id>::value, T *>;
-template<typename T, typename = IsObjCObject<T>> std::optional<RetainPtr<T>> decodeRequiringAllowedClasses(Decoder&);
 
 template<typename T, typename = IsObjCObject<T>> Class getClass()
 {
     return [T class];
 }
-#endif
-
-#if PLATFORM(COCOA)
-using AllowedClassHashSet = HashSet<RetainPtr<ClassStructPtr>>;
 #endif
 
 class Decoder {
@@ -91,20 +82,26 @@ public:
     ReceiverName messageReceiverName() const { return receiverName(m_messageName); }
     MessageName messageName() const { return m_messageName; }
     uint64_t destinationID() const { return m_destinationID; }
-    SyncRequestID syncRequestID() const { ASSERT(m_syncRequestID); return *m_syncRequestID; }
+    SyncRequestID syncRequestID() const { ASSERT(m_replyID); return SyncRequestID(m_replyID); }
+    AsyncReplyID asyncReplyID() const { ASSERT(m_replyID); return AsyncReplyID(m_replyID); }
     bool matches(const ReceiverMatcher& matcher) const { return matcher.matches(messageReceiverName(), destinationID()); }
 
     bool isSyncMessage() const { return messageIsSync(messageName()); }
-    ShouldDispatchWhenWaitingForSyncReply NODELETE shouldDispatchMessageWhenWaitingForSyncReply() const;
+    bool isAsyncWithReplyMessage() const { return messageIsAsyncWithReply(messageName()); }
+    bool isAsyncReplyMessage() const { return messageIsReplyToAsyncWithReply(messageName()); }
+
+    ShouldDispatchWhenWaitingForSyncReply LEGACY_NODELETE shouldDispatchMessageWhenWaitingForSyncReply() const;
     bool isAllowedWhenWaitingForSyncReply() const { return messageAllowedWhenWaitingForSyncReply(messageName()) || m_isAllowedWhenWaitingForSyncReplyOverride; }
     bool isAllowedWhenWaitingForUnboundedSyncReply() const { return messageAllowedWhenWaitingForUnboundedSyncReply(messageName()); }
-    bool NODELETE shouldUseFullySynchronousModeForTesting() const;
-    bool NODELETE shouldMaintainOrderingWithAsyncMessages() const;
+    bool LEGACY_NODELETE shouldUseFullySynchronousModeForTesting() const;
+    bool LEGACY_NODELETE shouldMaintainOrderingWithAsyncMessages() const;
     void setIsAllowedWhenWaitingForSyncReplyOverride(bool value) { m_isAllowedWhenWaitingForSyncReplyOverride = value; }
-    bool isAsyncReplyMessage() const { return isAsyncReply(messageName()); }
+
+    bool wasHandled() const { return m_wasHandled; }
+    void markHandled() { m_wasHandled = true; }
 
 #if PLATFORM(MAC)
-    void NODELETE setImportanceAssertion(ImportanceAssertion&&);
+    void LEGACY_NODELETE setImportanceAssertion(ImportanceAssertion&&);
 #endif
 
 #if ENABLE(IPC_TESTING_API)
@@ -153,34 +150,6 @@ public:
         return t;
     }
 
-#ifdef __OBJC__
-    template<typename T, typename = IsObjCObject<T>>
-    std::optional<RetainPtr<T>> decodeWithAllowedClasses(const AllowedClassHashSet& allowedClasses = { getClass<T>() })
-    {
-#if HAVE(WK_SECURE_CODING_NSURLREQUEST)
-        UNUSED_PARAM(allowedClasses);
-#else
-        m_allowedClasses = allowedClasses;
-#endif
-        return IPC::decodeRequiringAllowedClasses<T>(*this);
-    }
-
-    template<typename T, typename = IsNotObjCObject<T>>
-    std::optional<T> decodeWithAllowedClasses(const AllowedClassHashSet& allowedClasses)
-    {
-#if HAVE(WK_SECURE_CODING_NSURLREQUEST)
-        UNUSED_PARAM(allowedClasses);
-#else
-        m_allowedClasses = allowedClasses;
-#endif
-        return decode<T>();
-    }
-
-#if !HAVE(WK_SECURE_CODING_NSURLREQUEST)
-    AllowedClassHashSet& allowedClasses() LIFETIME_BOUND { return m_allowedClasses; }
-#endif // !HAVE(WK_SECURE_CODING_NSURLREQUEST)
-#endif // __OBJC__
-
     std::optional<Attachment> takeLastAttachment();
 
     void addIndexOfDecodingFailure(uint32_t indexOfObjectFailingDecoding) { m_indicesOfObjectsFailingDecoding.append(indexOfObjectFailingDecoding); }
@@ -202,18 +171,18 @@ private:
 #if PLATFORM(MAC)
     ImportanceAssertion m_importanceAssertion;
 #endif
-#if PLATFORM(COCOA) && !HAVE(WK_SECURE_CODING_NSURLREQUEST)
-    AllowedClassHashSet m_allowedClasses;
-#endif
 
     uint64_t m_destinationID;
-    Markable<SyncRequestID> m_syncRequestID;
+    // Holds the SyncRequestID (sync messages) or the AsyncReplyID (async messages with a reply),
+    // both decoded from the message header. 0 means neither is present.
+    uint64_t m_replyID { 0 };
 
     Vector<uint32_t> m_indicesOfObjectsFailingDecoding;
 
 #if ENABLE(IPC_TESTING_API)
     ASCIILiteral m_errorString;
 #endif
+    bool m_wasHandled { false };
 };
 
 template<>

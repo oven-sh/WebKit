@@ -65,7 +65,7 @@ RenderSlider::RenderSlider(HTMLInputElement& element, Style::ComputedStyle&& sty
 
 RenderSlider::~RenderSlider() = default;
 
-HTMLInputElement& NODELETE RenderSlider::element() const
+HTMLInputElement& LEGACY_NODELETE RenderSlider::element() const
 {
     return downcast<HTMLInputElement>(nodeForNonAnonymous());
 }
@@ -106,7 +106,7 @@ void RenderSlider::computeIntrinsicLogicalWidthContributions()
 
 bool RenderSlider::inDragMode() const
 {
-    return protect(protect(element())->sliderThumbElement())->active();
+    return protect(element())->sliderThumbElement()->active();
 }
 
 double RenderSlider::valueRatio() const

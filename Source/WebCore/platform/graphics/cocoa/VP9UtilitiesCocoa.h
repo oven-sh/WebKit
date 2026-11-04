@@ -29,6 +29,7 @@
 #if ENABLE(VP9) && PLATFORM(COCOA)
 
 #include <WebCore/VP9Utilities.h>
+#include <wtf/Lock.h>
 
 typedef const struct opaqueCMFormatDescription* CMVideoFormatDescriptionRef;
 
@@ -45,14 +46,16 @@ WEBCORE_EXPORT void registerSupplementalVP9Decoder();
 bool isVP9DecoderAvailable();
 WEBCORE_EXPORT bool vp9HardwareDecoderAvailable();
 WEBCORE_EXPORT bool vp9HardwareDecoderAvailableInProcess();
-WEBCORE_EXPORT void NODELETE setVP9HardwareDecoderAvailableInProcess(bool);
+WEBCORE_EXPORT void LEGACY_NODELETE setVP9HardwareDecoderAvailableInProcess(bool);
 bool isVP8DecoderAvailable();
 bool isVPCodecConfigurationRecordSupported(const VPCodecConfigurationRecord&);
 std::optional<PlatformMediaCapabilitiesInfo> validateVPParameters(const VPCodecConfigurationRecord&, const PlatformMediaCapabilitiesVideoConfiguration&);
 std::optional<PlatformMediaCapabilitiesInfo> computeVPParameters(const PlatformMediaCapabilitiesVideoConfiguration&, bool vp9HardwareDecoderAvailable);
-bool NODELETE isVPSoftwareDecoderSmooth(const PlatformMediaCapabilitiesVideoConfiguration&);
+bool LEGACY_NODELETE isVPSoftwareDecoderSmooth(const PlatformMediaCapabilitiesVideoConfiguration&);
 RetainPtr<CMVideoFormatDescriptionRef> createVP9FormatDescriptionFromRecord(const VPCodecConfigurationRecord&, const std::optional<PlatformVideoColorSpace>& colorSpaceOverride = std::nullopt);
 WEBCORE_EXPORT Ref<VideoInfo> createVideoInfoFromVPCodecConfigurationRecord(const VPCodecConfigurationRecord&, const std::optional<PlatformVideoColorSpace>& colorSpaceOverride = std::nullopt);
+// FIXME: createVideoInfoFromVP9Stream should take optional width/height parameters.
+WEBCORE_EXPORT RefPtr<VideoInfo> createVideoInfoFromVP9Stream(std::span<const uint8_t>, uint16_t width, uint16_t height);
 
 struct VP8FrameHeader {
     bool keyframe { false };
@@ -71,13 +74,21 @@ std::optional<VP8FrameHeader> parseVP8FrameHeader(std::span<const uint8_t>);
 
 class VP9TestingOverrides {
 public:
-    static WEBCORE_EXPORT VP9TestingOverrides& singleton();
+    static WEBCORE_EXPORT VP9TestingOverrides& LEGACY_NODELETE singleton();
 
     WEBCORE_EXPORT void setHardwareDecoderDisabled(std::optional<bool>&&);
-    std::optional<bool> hardwareDecoderDisabled() const { return m_hardwareDecoderDisabled; }
-    
+    std::optional<bool> hardwareDecoderDisabled() const
+    {
+        Locker locker { m_hardwareDecoderLock };
+        return m_hardwareDecoderDisabled;
+    }
+
     WEBCORE_EXPORT void setVP9HardwareDecoderEnabledOverride(std::optional<bool>&&);
-    std::optional<bool> vp9HardwareDecoderEnabledOverride() const { return m_vp9HardwareDecoderEnabledOverride; }
+    std::optional<bool> vp9HardwareDecoderEnabledOverride() const
+    {
+        Locker locker { m_hardwareDecoderLock };
+        return m_vp9HardwareDecoderEnabledOverride;
+    }
 
     WEBCORE_EXPORT void setVP9DecoderDisabled(std::optional<bool>&&);
     std::optional<bool> vp9DecoderDisabled() const { return m_vp9DecoderDisabled; }
@@ -88,16 +99,17 @@ public:
     WEBCORE_EXPORT void setConfigurationChangedCallback(std::function<void(bool)>&&);
     WEBCORE_EXPORT void resetOverridesToDefaultValues();
 
-    WEBCORE_EXPORT void NODELETE setSWVPDecodersAlwaysEnabled(bool);
+    WEBCORE_EXPORT void LEGACY_NODELETE setSWVPDecodersAlwaysEnabled(bool);
     bool swVPDecodersAlwaysEnabled() const { return m_swVPDecodersAlwaysEnabled; }
 
-    WEBCORE_EXPORT void NODELETE setShouldEnableVP9Decoder(bool);
-    WEBCORE_EXPORT bool NODELETE shouldEnableVP9Decoder() const;
+    WEBCORE_EXPORT void LEGACY_NODELETE setShouldEnableVP9Decoder(bool);
+    WEBCORE_EXPORT bool LEGACY_NODELETE shouldEnableVP9Decoder() const;
 
 private:
-    std::optional<bool> m_hardwareDecoderDisabled;
+    mutable Lock m_hardwareDecoderLock;
+    std::optional<bool> m_hardwareDecoderDisabled WTF_GUARDED_BY_LOCK(m_hardwareDecoderLock);
     std::optional<bool> m_vp9DecoderDisabled;
-    std::optional<bool> m_vp9HardwareDecoderEnabledOverride;
+    std::optional<bool> m_vp9HardwareDecoderEnabledOverride WTF_GUARDED_BY_LOCK(m_hardwareDecoderLock);
     std::optional<ScreenDataOverrides> m_screenSizeAndScale;
     Function<void(bool)> m_configurationChangedCallback;
     bool m_vp9DecoderEnabled { false };

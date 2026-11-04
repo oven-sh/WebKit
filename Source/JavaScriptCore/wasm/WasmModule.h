@@ -84,6 +84,7 @@ public:
     CalleeGroup* calleeGroupFor(MemoryMode mode) { return m_calleeGroups[static_cast<uint8_t>(mode)].get(); }
 
     void copyInitialCalleeGroupToAllMemoryModes(MemoryMode);
+    void createInterpreterMetadataIfNeeded(const CalleeGroup&);
 
     CodePtr<WasmEntryPtrTag> importFunctionStub(FunctionSpaceIndex importFunctionNum) { return m_wasmToJSExitStubs[importFunctionNum].code(); }
 

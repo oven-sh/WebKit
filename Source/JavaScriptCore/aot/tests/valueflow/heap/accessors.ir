@@ -1,0 +1,49 @@
+# holder = { get made() { return one }, set taken(value) { value() } }; holder.made(); holder.taken = two; plain = {}; plain.taken = three
+# A read enters the getter it finds and gets what the getter returns. A store enters the setter it finds with the stored value. A store that finds no setter enters nothing.
+# RUN: valueflow-solve calls
+# CHECK: f0 v6 -> f1
+# CHECK: f5 v1 -> f2
+# CHECK-NOT: f3
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED: unreached f3
+# UNREACHED-NOT: unreached f4
+# UNREACHED-NOT: unreached f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder"
+layout L1 name="Plain"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f4
+    DefineGetter v0, v1 key="made"
+    v3 = NewClosure function=f5
+    DefineSetter v0, v3 key="taken"
+    v5 = PropGet v0 key="made"
+    v6 = Call v5, v0
+    v7 = NewClosure function=f2
+    PropSet v0, v7 key="taken" mode=Strict
+    v9 = NewObject layout=L1 fields=[]
+    v10 = NewClosure function=f3
+    PropSet v9, v10 key="taken" mode=Strict
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+    Return
+}
+function f3 name="three" results=[{type=anything}] {
+    Return
+}
+function f4 name="made" kind=Getter results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    Return v0
+}
+function f5 name="taken" kind=Setter parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return
+}

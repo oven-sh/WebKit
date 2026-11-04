@@ -1,0 +1,115 @@
+# A store into an object that this function allocated and that has not escaped yet cannot reach an object from outside, even if the new object escapes later.
+# FORM: Prepared
+# RUN: guards points
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+variable g0 name="published" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="returnedLater" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = NewObject -, v1 layout=L0 fields=[1]
+    v3 = IsSlotFilled v0 key="x" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    PutSlot v2, -, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: b1:0 available: [v4]
+# CHECK-NEXT: b1:1 available: [v4]
+
+function f1 name="appendToArrayReturnedLater" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: number):
+    v2 = NewArray contents=number
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    AppendElement v2, v1
+    v6 = GetArrayLength v0, v4
+    Return v2
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: b1:0 available: [v2 v4]
+# CHECK-NEXT: b1:1 available: [v4]
+
+function f2 name="publishedBefore" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = NewObject -, v1 layout=L0 fields=[1]
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g0
+    v5 = TypeTest v4 testedType=L0
+    Branch v5 -> taken b1(| 0), notTaken b3()
+  b1(v6: L0):
+    v7 = IsSlotFilled v6 key="x" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    PutSlot v2, -, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: b2:0 available: [v8]
+# CHECK-NEXT: b2:1 available: []
+
+function f3 name="testedValueMayBeTheNewObject" parameters=[{type=L0}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything, v2: boolean):
+    v3 = NewObject -, v1 layout=L0 fields=[1]
+    Branch v2 -> taken b1(v0), notTaken b1(v3)
+  b1(v4):
+    v5 = IsSlotFilled v4 key="x" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    PutSlot v3, -, v1 key="x" receivers=[L0] level=Proven
+    Return v3
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK: b2:0 available: [v6]
+# CHECK-NEXT: b2:1 available: []
+
+function f4 name="readOutOfTheNewObject" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = NewObject -, v1 layout=L0 fields=[1]
+    v3 = NewObject -, v2 layout=L0 fields=[1]
+    v4 = GetSlot v3, v3 key="y" receivers=[L0] level=Proven
+    v5 = TypeTest v4 testedType=L0
+    Branch v5 -> taken b1(| 0), notTaken b3()
+  b1(v6: L0):
+    v7 = IsSlotFilled v6 key="x" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    PutSlot v2, -, v1 key="x" receivers=[L0] level=Proven
+    Return v0
+  b3():
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK: b2:0 available: [{{*}}v8]
+# CHECK-NOT: b2:1 available: [{{*}}v8]
+
+function f5 name="readOutOfContainerAndReturnedLater" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = NewObject -, v1 layout=L0 fields=[1]
+    v3 = NewObject -, v2 layout=L0 fields=[1]
+    v4 = GetSlot v3, v3 key="y" receivers=[L0] level=Proven
+    v5 = TypeTest v4 testedType=L0
+    Branch v5 -> taken b1(| 0), notTaken b3()
+  b1(v6: L0):
+    v7 = IsSlotFilled v6 key="x" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    PutSlot v2, -, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+  b3():
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK: b2:0 available: [{{*}}v8]
+# CHECK-NOT: b2:1 available: [{{*}}v8]

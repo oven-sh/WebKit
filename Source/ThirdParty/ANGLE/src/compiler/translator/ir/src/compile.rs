@@ -9,9 +9,6 @@ use crate::*;
 
 #[cxx::bridge(namespace = "sh::ir::ffi")]
 mod ffi {
-    // TODO(http://anglebug.com/349994211): equivalent enums to the options in ShaderLang.h, eventually all options need to be
-    // passed to IR: add them as the translator is converted to IR.
-
     // Matching ShShaderSpec
     #[derive(Copy, Clone)]
     #[repr(u32)]
@@ -219,6 +216,10 @@ mod ffi {
         scalarize_vec_and_mat_constructor_args: bool,
         // Clamp non-constant indices to the bounds of the entity being indexed for robustness.
         clamp_indirect_indices: bool,
+        // Whether ESSL300 fragment outputs should be expanded to vec4s.
+        expand_fragment_outputs_to_vec4: bool,
+        // Generate support code for emulating transform feedback in Vulkan transform feedback.
+        add_vulkan_xfb_emulation_support_code: bool,
 
         // Whether the ANGLE_pixel_local_storage extension has been used and there are PLS uniforms
         // to rewrite.
@@ -672,6 +673,11 @@ fn common_post_variable_collection_transforms(ir: &mut IR, options: &Options) {
             max_dual_source_draw_buffers: options.limits.max_dual_source_draw_buffers,
         };
         transform::run!(localized_workarounds, ir, &transform_options);
+    }
+
+    if options.expand_fragment_outputs_to_vec4 && options.shader_version >= 300 {
+        debug_assert!(ir.meta.get_shader_type() == ShaderType::Fragment);
+        transform::run!(expand_fragment_outputs_to_vec4, ir);
     }
 }
 

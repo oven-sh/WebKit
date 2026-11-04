@@ -55,10 +55,11 @@ public:
         return std::unique_ptr<ImageTransferSessionVT>(new ImageTransferSessionVT(pixelFormat, shouldUseIOSurface));
     }
 
+    enum class ShouldPreserveAlpha : bool { No, Yes };
     RefPtr<VideoFrame> convertVideoFrame(VideoFrame&, const IntSize&);
-    RefPtr<VideoFrame> createVideoFrame(CGImageRef, const WTF::MediaTime&, const IntSize&);
+    RefPtr<VideoFrame> createVideoFrame(CGImageRef, const WTF::MediaTime&, const IntSize&, ShouldPreserveAlpha = ShouldPreserveAlpha::No);
     RefPtr<VideoFrame> createVideoFrame(CMSampleBufferRef, const WTF::MediaTime&, const IntSize&);
-    RefPtr<VideoFrame> createVideoFrame(CGImageRef, const WTF::MediaTime&, const IntSize&, VideoFrameRotation, bool mirrored = false);
+    RefPtr<VideoFrame> createVideoFrame(CGImageRef, const WTF::MediaTime&, const IntSize&, VideoFrameRotation, bool mirrored = false, ShouldPreserveAlpha = ShouldPreserveAlpha::No);
     RefPtr<VideoFrame> createVideoFrame(CMSampleBufferRef, const WTF::MediaTime&, const IntSize&, VideoFrameRotation, bool mirrored = false);
 
 #if !PLATFORM(MACCATALYST)
@@ -72,8 +73,15 @@ public:
     RetainPtr<CMSampleBufferRef> convertCMSampleBuffer(CMSampleBufferRef, const IntSize&, const WTF::MediaTime* = nullptr);
     void setCroppingRectangle(std::optional<FloatRect>, FloatSize = { });
 
-    enum DestinationColorSpace : bool { Unspecified, BT709 };
-    WEBCORE_EXPORT static RetainPtr<CVPixelBufferRef> convertPixelBuffer(CVPixelBufferRef source, uint32_t targetPixelFormat, DestinationColorSpace = DestinationColorSpace::Unspecified);
+    enum DestinationColorSpace : uint8_t {
+        Unspecified,
+        BT709,
+        SRGB,
+#if ENABLE(DESTINATION_COLOR_SPACE_DISPLAY_P3)
+        DisplayP3
+#endif
+    };
+    WEBCORE_EXPORT static RetainPtr<CVPixelBufferRef> convertPixelBuffer(CVPixelBufferRef source, uint32_t targetPixelFormat, DestinationColorSpace);
 
 private:
     WEBCORE_EXPORT ImageTransferSessionVT(uint32_t pixelFormat, bool shouldUseIOSurface);
@@ -83,15 +91,15 @@ private:
 #endif
 
     RetainPtr<CMSampleBufferRef> createCMSampleBuffer(CVPixelBufferRef, const WTF::MediaTime&, const IntSize&);
-    RetainPtr<CMSampleBufferRef> createCMSampleBuffer(CGImageRef, const WTF::MediaTime&, const IntSize&);
+    RetainPtr<CMSampleBufferRef> createCMSampleBuffer(CGImageRef, const WTF::MediaTime&, const IntSize&, ShouldPreserveAlpha);
 
     RetainPtr<CVPixelBufferRef> convertPixelBuffer(CVPixelBufferRef, const IntSize&);
     RetainPtr<CVPixelBufferRef> createPixelBuffer(CMSampleBufferRef, const IntSize&);
-    RetainPtr<CVPixelBufferRef> createPixelBuffer(CGImageRef, const IntSize&);
+    RetainPtr<CVPixelBufferRef> createPixelBuffer(CGImageRef, const IntSize&, ShouldPreserveAlpha);
 
     bool setSize(const IntSize&);
 
-    RetainPtr<VTPixelTransferSessionRef> m_transferSession;
+    const RetainPtr<VTPixelTransferSessionRef> m_transferSession;
     RetainPtr<CVPixelBufferPoolRef> m_outputBufferPool;
     bool m_shouldUseIOSurface { true };
     std::optional<FloatRect> m_croppingRectangle;

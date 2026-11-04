@@ -1,0 +1,35 @@
+# A name that the program reads in hundreds of places has a read stub of its own. A read of it asks that stub in every shape of code: the stub answers for every Structure in about what a hit in the cache of a site costs, the site passes neither the name nor the cache, and a site that sees many Structures misses nothing. f6 is the code of f1, which reads such a name, f7 that of f2, which reads a name that is read once.
+# FORM: AsRead
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# RUN: generate-code
+# CHECK: f6: size=
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+# X64: f6: size=15 
+# X64: f7: size=28 
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="readsNameOfManyPlaces" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="popular"
+    Return v1
+}
+function f2 name="readsNameOfOnePlace" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="seldom"
+    Return v1
+}
+function f3 name="readsItFiveHundredTimes" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 0..519
+    v%(i+1) = PropGet v%(i) key="popular"
+# END REPEAT
+    Return v520
+}

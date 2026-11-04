@@ -1,0 +1,39 @@
+# What one layout declares about another plays no part in the relation: a set holds the layouts it lists. The declared members of a layout, written out, do nest.
+# RUN: subset
+# RUN(MEMBERS): members
+# CHECK: t0 <= t1: no overlaps: no
+# CHECK: t0 <= t6: yes overlaps: yes
+# CHECK: t0 <= t8: yes overlaps: yes
+# CHECK: t1 <= t0: no overlaps: no
+# CHECK: t1 <= t3: no overlaps: no
+# CHECK: t1 <= t7: yes overlaps: yes
+# CHECK: t1 <= t8: yes overlaps: yes
+# CHECK: t2 <= t0: no overlaps: no
+# CHECK: t2 <= t1: no overlaps: no
+# CHECK: t2 <= t7: yes overlaps: yes
+# CHECK: t3 <= t0: no overlaps: no
+# CHECK: t3 <= t8: no overlaps: no
+# CHECK: t4 <= t5: no overlaps: no
+# CHECK: t4 <= t9: yes overlaps: yes
+# CHECK: t5 <= t4: no overlaps: no
+# CHECK: t5 <= t9: yes overlaps: yes
+# CHECK: t6 <= t0: no overlaps: yes
+# CHECK: t7 <= t8: yes overlaps: yes
+# CHECK: t8 <= t7: no overlaps: yes
+# CHECK: laws hold
+# MEMBERS: L0: members [L0, L1, L2]
+# MEMBERS-NEXT: L1: members [L1, L2]
+# MEMBERS-NEXT: L2: members [L2]
+# MEMBERS-NEXT: L3: members [L3]
+# MEMBERS-NEXT: L4: members [L4, L5]
+# MEMBERS-NEXT: L5: members [L4, L5]
+# MEMBERS-NEXT: t0: members [L0] only-layouts: yes
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Shape"
+layout L1 name="Circle" supertypes=[L0]
+layout L2 name="Disc" supertypes=[L1]
+layout L3 name="Other"
+layout L4 name="Ping" supertypes=[L5]
+layout L5 name="Pong" supertypes=[L4]
+function f0 name="types" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}, {type=L4}, {type=L5}, {type=object}, {type=L1|L2}, {type=L0|L1|L2}, {type=L4|L5}] results=[{type=undefined}]

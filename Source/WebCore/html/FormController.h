@@ -47,7 +47,7 @@ public:
     void willDeleteForm(HTMLFormElement&);
     void restoreControlStateFor(ValidatedFormListedElement&);
     void restoreControlStateIn(HTMLFormElement&);
-    bool NODELETE hasFormStateToRestore() const;
+    bool LEGACY_NODELETE hasFormStateToRestore() const;
 
     WEBCORE_EXPORT static Vector<String> referencedFilePaths(const Vector<AtomString>& stateVector);
     static HTMLFormElement* ownerForm(const FormListedElement&);
@@ -61,7 +61,7 @@ private:
     static SavedFormStateMap parseStateVector(const Vector<AtomString>&);
 
     SavedFormStateMap m_savedFormStateMap;
-    std::unique_ptr<FormKeyGenerator> m_formKeyGenerator;
+    const std::unique_ptr<FormKeyGenerator> m_formKeyGenerator;
 };
 
 } // namespace WebCore

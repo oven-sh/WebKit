@@ -39,7 +39,7 @@
 
 namespace WebCore::Style {
 
-static bool elementIsEmptyForCSS(const Element& element)
+static bool LEGACY_NODELETE elementIsEmptyForCSS(const Element& element)
 {
     for (auto* node = element.firstChild(); node; node = node->nextSibling()) {
         if (is<Element>(*node))
@@ -52,6 +52,23 @@ static bool elementIsEmptyForCSS(const Element& element)
     return true;
 }
 
+static bool LEGACY_NODELETE isInsertionForStyle(const ContainerNode::ChildChange& childChange)
+{
+    switch (childChange.type) {
+    case ContainerNode::ChildChange::Type::ElementMovedInto:
+    case ContainerNode::ChildChange::Type::TextMovedInto:
+    case ContainerNode::ChildChange::Type::NonContentsChildMovedInto:
+        return true;
+    default:
+        return childChange.isInsertion();
+    }
+}
+
+static bool LEGACY_NODELETE isElementRemovalForStyle(const ContainerNode::ChildChange& childChange)
+{
+    return childChange.type == ContainerNode::ChildChange::Type::ElementRemoved || childChange.type == ContainerNode::ChildChange::Type::ElementMovedFrom;
+}
+
 bool ChildChangeInvalidation::emptyStateMayChange() const
 {
     // CharacterData::makeChildChange uses TextChanged only when both the old and new data are non-empty,
@@ -59,10 +76,10 @@ bool ChildChangeInvalidation::emptyStateMayChange() const
     if (m_childChange.type == ContainerNode::ChildChange::Type::TextChanged)
         return false;
     bool wasEmpty = elementIsEmptyForCSS(*m_parentElement);
-    return m_childChange.isInsertion() == wasEmpty;
+    return isInsertionForStyle(m_childChange) == wasEmpty;
 }
 
-static bool isSiblingHasRelation(const MatchElement& matchElement)
+static bool LEGACY_NODELETE isSiblingHasRelation(const MatchElement& matchElement)
 {
     if (!matchElement.hasRelation)
         return false;
@@ -137,7 +154,7 @@ void ChildChangeInvalidation::invalidateForChangedElement(Element& changedElemen
     };
 
     auto hasMatchingInvalidationSelector = [&](auto& invalidationRuleSet) {
-        SelectorChecker selectorChecker(changedElement.document());
+        SelectorChecker selectorChecker(protect(changedElement.document()));
         SelectorChecker::CheckingContext checkingContext(SelectorChecker::Mode::StyleInvalidation);
         checkingContext.matchesAllHasScopes = true;
 
@@ -216,7 +233,7 @@ void ChildChangeInvalidation::invalidateForHasSiblings(MatchingHasSelectors& mat
 
     // For insertion, the pre-mutation :first/:last-child state of the neighbor will stop matching.
     // For removal, the post-mutation state of the neighbor will start matching.
-    bool checkNow = phase == MutationPhase::Before ? m_childChange.isInsertion() : !m_childChange.isInsertion();
+    bool checkNow = phase == MutationPhase::Before ? isInsertionForStyle(m_childChange) : !isInsertionForStyle(m_childChange);
     if (!checkNow)
         return;
 
@@ -253,7 +270,7 @@ void ChildChangeInvalidation::invalidateForHasAfterMutation()
     invalidateForHasSiblings(matchingHasSelectors, MutationPhase::After);
 }
 
-static bool NODELETE needsDescendantTraversal(const RuleFeatureSet& features)
+static bool LEGACY_NODELETE needsDescendantTraversal(const RuleFeatureSet& features)
 {
     // With the bundled MatchElement representation, any :has() with hasRelation=Descendant or SiblingDescendant
     // needs descendant traversal. Since we don't have per-value tracking for hasRelation,
@@ -262,9 +279,9 @@ static bool NODELETE needsDescendantTraversal(const RuleFeatureSet& features)
 };
 
 template<typename Function>
-void ChildChangeInvalidation::traverseRemovedElements(Function&& function)
+void ChildChangeInvalidation::traverseRemovedElements(NOESCAPE const Function& function)
 {
-    if (m_childChange.isInsertion() && m_childChange.type != ContainerNode::ChildChange::Type::AllChildrenReplaced)
+    if (isInsertionForStyle(m_childChange) && m_childChange.type != ContainerNode::ChildChange::Type::AllChildrenReplaced)
         return;
 
     Ref resolver = parentElement().styleResolver();
@@ -285,9 +302,9 @@ void ChildChangeInvalidation::traverseRemovedElements(Function&& function)
 }
 
 template<typename Function>
-void ChildChangeInvalidation::traverseAddedElements(Function&& function)
+void ChildChangeInvalidation::traverseAddedElements(NOESCAPE const Function& function)
 {
-    if (!m_childChange.isInsertion())
+    if (!isInsertionForStyle(m_childChange))
         return;
 
     auto callFunctionOnInclusiveDescendants = [&](Element& element) {
@@ -417,7 +434,7 @@ void ChildChangeInvalidation::checkForSiblingStyleChanges()
             invalidateForFirstChildState(*elementAfterChange, true);
 
         // We also have to handle node removal.
-        if (m_childChange.type == ContainerNode::ChildChange::Type::ElementRemoved && newFirstElement == elementAfterChange)
+        if (isElementRemovalForStyle(m_childChange) && newFirstElement == elementAfterChange)
             invalidateForFirstChildState(*newFirstElement, false);
     }
 
@@ -431,7 +448,7 @@ void ChildChangeInvalidation::checkForSiblingStyleChanges()
             invalidateForLastChildState(*elementBeforeChange, true);
 
         // We also have to handle node removal.
-        if (m_childChange.type == ContainerNode::ChildChange::Type::ElementRemoved && newLastElement == elementBeforeChange)
+        if (isElementRemovalForStyle(m_childChange) && newLastElement == elementBeforeChange)
             invalidateForLastChildState(*newLastElement, false);
     }
 

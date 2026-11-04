@@ -1,0 +1,60 @@
+# resolved.members = members; resolved.callSignatures = callSignatures;
+# Each store of untyped code has its own tests and a path by name around it, so no store dominates the next. The first store still reserves the granule of the second:
+# the Extension is allocated once, at its final size.
+# FORM: Selected
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
+# RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): unsanitized-code
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Late" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="near0" declared={type=anything}}, {key="near1" declared={type=anything}}, {key="late0" declared={type=anything}}, {key="late1" declared={type=anything}}, {key="late2" declared={type=anything}}, {key="late3" declared={type=anything}}, {key="late4" declared={type=anything}}]
+function f0 name="make" parameters=[{type=number}, {type=boolean}] results=[{type=L0}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+function f1 name="useNear" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    PutSlotOrAdd v0, -, v1 key="near0" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="near1" receivers=[L0] level=Proven
+    v4 = GetSlotOrUndefined v0 key="near0" receivers=[L0] level=Proven
+    v5 = GetSlotOrUndefined v0 key="near0" receivers=[L0] level=Proven
+    v6 = GetSlotOrUndefined v0 key="near1" receivers=[L0] level=Proven
+    v7 = GetSlotOrUndefined v0 key="near1" receivers=[L0] level=Proven
+    Return v7
+}
+function f2 name="pathAroundTheFirstStore" parameters=[{type=L0}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    PutSlotOrAdd v0, -, v1 key="late0" receivers=[L0] level=Proven
+    Jump -> next b3()
+  b2() frequency=Unlikely:
+    Jump -> next b3()
+  b3():
+    PutSlotOrAdd v0, -, v1 key="late1" receivers=[L0] level=Proven
+    Return
+}
+function f3 name="laterStoreIsUnlikely" parameters=[{type=L0}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    PutSlotOrAdd v0, -, v1 key="late2" receivers=[L0] level=Proven
+    Jump -> next b3()
+  b2() frequency=Unlikely:
+    PutSlotOrAdd v0, -, v1 key="late3" receivers=[L0] level=Proven
+    Jump -> next b3()
+  b3():
+    Return
+}
+
+# Two granules are 32 bytes. The second store has nothing after it.
+# CALLS-LABEL: f2: size=
+# CALLS: stub AllocateExtension.n1{{*}} x1
+# CALLS-NEXT: stub AllocateExtension.n2{{*}} x1
+# CALLS-NOT: AllocateExtension
+# Nothing is reserved for a store that seldom runs.
+# CALLS-LABEL: f3: size=
+# CALLS: stub AllocateExtension.n1{{*}} x2
+# CALLS-NOT: AllocateExtension

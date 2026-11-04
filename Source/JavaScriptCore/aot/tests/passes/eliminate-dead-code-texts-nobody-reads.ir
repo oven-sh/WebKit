@@ -1,0 +1,85 @@
+# A text that nobody reads is not made where the types of its parts say that they fit in one string: joins and conversions of primitives that are no symbols run no code, and such a one throws for lack of memory alone.
+# Parts that together may be longer than a string may be are joined all the same (a RangeError). A symbol has no text (a TypeError), and an object runs its conversion
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+# RUN(EFFECTS): effects f2 f3 f5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="numbers" parameters=[{type=number}] results=[{type=number}] {
+    v1 = String string="p"
+    v2 = Strcat v1, v0
+    Return v0
+}
+function f1 name="whole" parameters=[{type=int|whole}] results=[{type=int|whole}] {
+    v1 = String string="p"
+    v2 = String string=":"
+    v3 = Integer integer=1
+    v4 = Add v0, v3
+    v5 = Strcat v1, v0, v2, v4
+    Return v0
+}
+function f2 name="strings" parameters=[{type=string}, {type=string}, {type="a"|"bc"}] results=[{type=string}] {
+    v3 = Strcat v0, v1
+    v4 = Strcat v2, v0
+    Return v0
+}
+function f3 name="added" parameters=[{type=string}, {type=number}, {type="a"|"bc"}, {type=bigint}] results=[{type=string}] {
+    v4 = Add v0, v1
+    v5 = ToString v1
+    v6 = Add v0, v0
+    v7 = Add v2, v0
+    v8 = Add v2, v3
+    Return v0
+}
+function f4 name="symbols" parameters=[{type=string}, {type=symbol}, {type=anything}, {type=object}] results=[{type=string}] {
+    v4 = Strcat v0, v1
+    v5 = Strcat v0, v2
+    v6 = Strcat v0, v3
+    Return v0
+}
+function f5 name="short" parameters=[{type=string}, {type=number}, {type="a"|"bc"}, {type=undefined|boolean}] results=[{type=string}] {
+    v4 = String string=""
+    v5 = Add v0, v4
+    v6 = Add v2, v1
+    v7 = Add v2, v2
+    v8 = Strcat v2, v1, v3, v2
+    v9 = Strcat v4, v0
+    v10 = ToString v0
+    Return v0
+}
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="numbers"
+# CHECK-NOT: Strcat
+# CHECK-LABEL: function f1 name="whole"
+# CHECK-NOT: Strcat
+# CHECK-NOT: Add
+# CHECK-LABEL: function f2 name="strings"
+# CHECK: v3: string = Strcat v0, v1
+# CHECK-NEXT: v4: string = Strcat v2, v0
+# CHECK-LABEL: function f3 name="added"
+# CHECK-NOT: ToString
+# CHECK: v4: string = Add v0, v1
+# CHECK-NEXT: v6: string = Add v0, v0
+# CHECK-NEXT: v7: string = Add v2, v0
+# CHECK-NEXT: v8: string = Add v2, v3
+# CHECK-LABEL: function f4 name="symbols"
+# CHECK: v4: string = Strcat v0, v1
+# CHECK-NEXT: v5: string = Strcat v0, v2
+# CHECK-NEXT: v6: string = Strcat v0, v3
+# CHECK-LABEL: function f5 name="short"
+# CHECK-NOT: Add
+# CHECK-NOT: Strcat
+# CHECK-NOT: ToString
+# EFFECTS: v3 Strcat: {{*}} throws collects
+# EFFECTS: v4 Strcat: {{*}} throws collects
+# EFFECTS: v4 Add: {{*}} throws collects
+# EFFECTS: v5 ToString: {{*}} throwsForLackOfMemory collects
+# EFFECTS: v6 Add: {{*}} throws collects
+# EFFECTS: v7 Add: {{*}} throws collects
+# EFFECTS: v8 Add: {{*}} throws collects
+# EFFECTS: v5 Add: {{*}} throwsForLackOfMemory collects
+# EFFECTS: v6 Add: {{*}} throwsForLackOfMemory collects
+# EFFECTS: v7 Add: {{*}} throwsForLackOfMemory collects
+# EFFECTS: v8 Strcat: {{*}} throwsForLackOfMemory collects
+# EFFECTS: v9 Strcat: {{*}} throwsForLackOfMemory collects
+# EFFECTS: v10 ToString: {{*}} throwsForLackOfMemory collects

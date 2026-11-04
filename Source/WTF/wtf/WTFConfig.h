@@ -84,7 +84,7 @@ struct Config {
     WTF_EXPORT_PRIVATE static void permanentlyFreeze();
     WTF_EXPORT_PRIVATE static void initialize();
     WTF_EXPORT_PRIVATE static void finalize();
-    WTF_EXPORT_PRIVATE static void NODELETE disableFreezingForTesting();
+    WTF_EXPORT_PRIVATE static void LEGACY_NODELETE disableFreezingForTesting();
 
     struct AssertNotFrozenScope {
         AssertNotFrozenScope();
@@ -110,6 +110,10 @@ struct Config {
     bool isThreadSuspendResumeSignalConfigured;
     int sigThreadSuspendResume;
 #endif
+#if ENABLE(AOT_GUARDED_PAGES) && OS(LINUX)
+    enum class AddressRandomization : uint8_t { NotAsked, Enabled, Disabled };
+    AddressRandomization addressRandomization;
+#endif
     SignalHandlers signalHandlers;
     PtrTagLookup* ptrTagLookupHead;
 
@@ -127,6 +131,11 @@ static_assert(roundUpToMultipleOf<alignmentOfWTFConfig>(startOffsetOfWTFConfig) 
 static_assert(startOffsetOfWTFConfig + sizeof(WTF::Config) <= ConfigSizeToProtect);
 
 WTF_EXPORT_PRIVATE void setPermissionsOfConfigPage();
+
+#if ENABLE(AOT_GUARDED_PAGES) && OS(LINUX)
+// Asks the kernel once a process, in Config::initialize() at the latest: a program may later forbid itself the call.
+WTF_EXPORT_PRIVATE bool isAddressRandomizationDisabled();
+#endif
 
 WTF_EXPORT_PRIVATE void makePagesFreezable(void* base, size_t); // Works together with permanentlyFreezePages().
 

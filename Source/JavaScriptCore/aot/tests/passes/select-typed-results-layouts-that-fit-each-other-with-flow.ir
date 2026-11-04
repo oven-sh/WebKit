@@ -1,0 +1,39 @@
+# A literal without an optional member of a declared type fits that type, and objects of the declared type fit the literal's. A parse by the declared type builds the declared layout.
+# FORM: AsRead
+# OPTIONS: report=Declines only-passes=ResolveBuiltins,SelectTypedResults
+# RUN: pipeline SelectTypedResults
+# STATISTIC: TypedResultsSelected = 1
+# CHECK-NOT: decline TypedResultNotSelected
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Config" fields=[{key="host" declared={type=string} flags=[IsRequired]}, {key="port" declared={type=number} flags=[IsRequired]}, {key="tags" declared={type=undefined|string}}]
+layout L1 fields=[{key="host" declared={type=string} flags=[IsRequired]}, {key="port" declared={type=number} flags=[IsRequired]}] supertypes=[L0]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = ToString v1
+    v3 = PropGet v0 key="sink" [isFreeName]
+    v4 = CallDirect v2 function=f1
+    v5 = Call v3, -, v4
+    v6 = CallDirect function=f2
+    v7 = Call v3, -, v6
+    Return
+}
+
+function f1 name="parsesByTheDeclaredType" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    v3 = Convert v2 declared={type=undefined|null|L0|L1} illTypedCause=FromLooseType
+    Return v3
+# CHECK: = JSONSourceOpen v0
+}
+
+function f2 name="makesTheLiteral" results=[{type=anything}] {
+    v0 = String string="own"
+    v1 = Double number=1.5
+    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    v3 = FinishObject v2
+    Return v3
+}

@@ -33,7 +33,6 @@ typedef intptr_t WebSourceId;
 @class WebView;
 @class WebFrame;
 @class WebScriptCallFrame;
-@class WebScriptCallFramePrivate;
 @class WebScriptObject;
 
 extern NSString * const WebScriptErrorDomain;
@@ -93,7 +92,6 @@ enum {
 @interface WebScriptCallFrame : NSObject
 {
 @private
-    WebScriptCallFramePrivate* _private;
     id                         _userInfo;
 }
 

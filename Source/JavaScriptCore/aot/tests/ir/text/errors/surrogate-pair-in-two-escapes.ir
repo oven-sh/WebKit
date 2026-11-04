@@ -1,0 +1,10 @@
+# A surrogate pair is one code point and has one escape
+# RUN: print
+# DIAGNOSTIC: StringNotCanonical
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" results=[{type=undefined}] {
+  b0():
+    v0 = String string="\u{d800}\u{dc00}"
+    Return
+}

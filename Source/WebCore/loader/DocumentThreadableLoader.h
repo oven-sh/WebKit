@@ -110,7 +110,7 @@ class CachedRawResource;
         Ref<SecurityOrigin> topOrigin() const;
         SecurityOrigin& securityOrigin() const;
         const ContentSecurityPolicy& contentSecurityPolicy() const;
-        const CrossOriginEmbedderPolicy& NODELETE crossOriginEmbedderPolicy() const;
+        const CrossOriginEmbedderPolicy& LEGACY_NODELETE crossOriginEmbedderPolicy() const;
 
         Document* document() { return m_document; }
 
@@ -133,7 +133,7 @@ class CachedRawResource;
         ThreadableLoaderOptions m_options;
         RefPtr<SecurityOrigin> m_origin;
         String m_referrer;
-        std::unique_ptr<ContentSecurityPolicy> m_contentSecurityPolicy;
+        const std::unique_ptr<ContentSecurityPolicy> m_contentSecurityPolicy;
         std::optional<CrossOriginEmbedderPolicy> m_crossOriginEmbedderPolicy;
         RefPtr<CrossOriginPreflightChecker> m_preflightChecker;
         std::optional<HTTPHeaderMap> m_originalHeaders;

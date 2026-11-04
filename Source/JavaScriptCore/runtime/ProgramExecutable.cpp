@@ -48,7 +48,7 @@ ProgramExecutable::ProgramExecutable(JSGlobalObject* globalObject, const SourceC
     ASSERT(source.provider()->sourceType() == SourceProviderSourceType::Program);
     VM& vm = globalObject->vm();
     if (vm.typeProfiler() || vm.controlFlowProfiler())
-        vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), typeProfilingStartOffset(), typeProfilingEndOffset());
+        vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), typeProfilingStartOffset(), typeProfilingEndOffset(), SourceParseMode::ProgramMode);
 }
 
 void ProgramExecutable::destroy(JSCell* cell)
@@ -61,9 +61,16 @@ enum class GlobalPropertyLookUpStatus {
     NotFound,
     Configurable,
     NonConfigurable,
+#if ENABLE(AOT)
+    Immutable,
+#endif
 };
 static GlobalPropertyLookUpStatus hasRestrictedGlobalProperty(JSGlobalObject* globalObject, PropertyName propertyName)
 {
+#if ENABLE(AOT)
+    if (globalObject->structure()->isImmutablePropertyForReader(propertyName.uid())) [[unlikely]]
+        return GlobalPropertyLookUpStatus::Immutable;
+#endif
     PropertyDescriptor descriptor;
     if (!globalObject->getOwnPropertyDescriptor(globalObject, propertyName, descriptor))
         return GlobalPropertyLookUpStatus::NotFound;
@@ -117,12 +124,16 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
     if (error.isValid())
         RELEASE_AND_RETURN(throwScope, error.toErrorObject(globalObject, source()));
 
+    // Bun allows a Proxy in the global object's prototype chain (jsdom's window has one). Everything below only does own-property
+    // lookups on the global object and the global lexical environment, so no trap can run during global declaration instantiation.
+#if !USE(BUN_JSC_ADDITIONS)
     JSValue nextPrototype = globalObject->getPrototypeDirect();
     while (nextPrototype && nextPrototype.isObject()) {
         if (asObject(nextPrototype)->type() == ProxyObjectType) [[unlikely]]
             return createTypeError(globalObject, "Proxy is not allowed in the global prototype chain."_s);
         nextPrototype = asObject(nextPrototype)->getPrototypeDirect();
     }
+#endif
     
     JSGlobalLexicalEnvironment* globalLexicalEnvironment = globalObject->globalLexicalEnvironment();
     bool hasGlobalLexicalDeclarations = !globalLexicalEnvironment->isEmpty();
@@ -158,6 +169,10 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
             switch (status) {
             case GlobalPropertyLookUpStatus::NonConfigurable:
                 return createSyntaxError(globalObject, makeString("Can't create duplicate variable that shadows a global property: '"_s, StringView(entry.key.get()), '\''));
+#if ENABLE(AOT)
+            case GlobalPropertyLookUpStatus::Immutable:
+                return createSyntaxError(globalObject, withAOTErrorNote(makeString("Cannot declare '"_s, StringView(entry.key.get()), "': compiled code treats the global '"_s, StringView(entry.key.get()), "' as a constant, so a script can't shadow it with a top-level let, const or class"_s)));
+#endif
             case GlobalPropertyLookUpStatus::Configurable:
                 // Lexical bindings can shadow global properties if the given property's attribute is configurable.
                 // https://tc39.github.io/ecma262/#sec-globaldeclarationinstantiation step 5-c, `hasRestrictedGlobal` becomes false
@@ -251,7 +266,8 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
         if (vm.typeProfiler() || vm.controlFlowProfiler()) {
             vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), 
                 unlinkedFunctionExecutable->unlinkedFunctionStart(),
-                unlinkedFunctionExecutable->unlinkedFunctionEnd());
+                unlinkedFunctionExecutable->unlinkedFunctionEnd(),
+                unlinkedFunctionExecutable->parseMode());
         }
     }
 

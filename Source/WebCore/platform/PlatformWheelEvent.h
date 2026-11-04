@@ -101,7 +101,7 @@ public:
     }
 
 #if ENABLE(MAC_GESTURE_EVENTS)
-    static PlatformWheelEvent createFromGesture(const PlatformGestureEvent&, double deltaY);
+    static PlatformWheelEvent createFromGesture(const PlatformGestureEvent&, double deltaY, std::optional<double> wheelTicksYOverride = std::nullopt);
 #endif
 
     PlatformWheelEvent copySwappingDirection() const
@@ -125,6 +125,19 @@ public:
     {
         PlatformWheelEvent copy = *this;
         copy.m_scrollingVelocity = velocity;
+        return copy;
+    }
+
+    // Converts the deltas from view pixels to content pixels, including the unaccelerated ones rubber-banding uses.
+    PlatformWheelEvent copyScalingDeltas(float scale) const
+    {
+        PlatformWheelEvent copy = *this;
+        copy.m_deltaX /= scale;
+        copy.m_deltaY /= scale;
+#if PLATFORM(COCOA)
+        copy.m_unacceleratedScrollingDeltaX /= scale;
+        copy.m_unacceleratedScrollingDeltaY /= scale;
+#endif
         return copy;
     }
 

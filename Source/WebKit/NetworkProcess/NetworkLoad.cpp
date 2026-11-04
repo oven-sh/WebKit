@@ -115,7 +115,7 @@ public:
             return false;
 
         ASSERT(!m_completion);
-        m_completion = [weakClient = m_load->m_client, error, networkLoadMetrics](ShouldNotifyClient shouldNotifyClient) {
+        m_completion = [weakClient = m_load->m_client, error, metrics = networkLoadMetrics](ShouldNotifyClient shouldNotifyClient) mutable {
             if (shouldNotifyClient == ShouldNotifyClient::No)
                 return;
 
@@ -123,9 +123,10 @@ public:
             if (!client)
                 return;
 
-            if (error.isNull())
-                client->didFinishLoading(networkLoadMetrics);
-            else
+            if (error.isNull()) {
+                metrics.responseEnd = MonotonicTime::now();
+                client->didFinishLoading(metrics);
+            } else
                 client->didFailLoading(error);
         };
         return true;

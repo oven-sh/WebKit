@@ -1,0 +1,59 @@
+# Two values compare the same however often they are asked, whatever runs in between: the second comparison of the same two goes, in either order of the operands. A comparison with another value stays, and so does one that the first does not come before on every way.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass EliminateRedundantReads
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="behindACall" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = StrictEq v0, v1
+    v4 = Call v2, v3
+    v5 = StrictEq v0, v1
+    v6 = StrictEq v1, v0
+    v7 = Call v2, v5, v6
+    Return v7
+# CHECK: v3: boolean = StrictEq v0, v1
+# CHECK-NEXT: = Call v2, v3
+# CHECK-NEXT: = Call v2, v3, v3
+# CHECK-NEXT: Return
+}
+
+function f1 name="behindAJoin" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = StrictEq v0, v1
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Call v2
+    Jump -> next b2()
+  b2():
+    v5 = StrictEq v0, v1
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    Return v1
+# CHECK: b2():
+# CHECK-NEXT: Branch v3 -> taken b3(), notTaken b4()
+}
+
+function f2 name="others" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = StrictEq v0, v1
+    v4 = StrictEq v0, v2
+    v5 = StrictEq v2, v1
+    v6 = Call v2, v3, v4, v5
+    Return v6
+# CHECK: = StrictEq v0, v1
+# CHECK-NEXT: = StrictEq v0, v2
+# CHECK-NEXT: = StrictEq v2, v1
+}
+
+function f3 name="onOneWay" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = StrictEq v0, v1
+    v4 = Call v0, v3
+    Jump -> next b2()
+  b2():
+    v5 = StrictEq v0, v1
+    Return v5
+# CHECK: b2():
+# CHECK-NEXT: = StrictEq v0, v1
+}

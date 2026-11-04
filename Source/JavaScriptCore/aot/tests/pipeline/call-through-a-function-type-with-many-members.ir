@@ -1,0 +1,71 @@
+# type Unary = (n: number) => number  function call(f: Unary, n) { return f(n) }  register(call, one, two, three, four, five, six, stranger)
+# A position of a function type admits every function, and lists the functions that are converted to it, here more than a dispatch has arms. The test at the head of the function asks for a function.
+# A closure of a listed function, a closure of another compiled function and a function of the shell satisfy the type: all are called by value, in the same code.
+# A text and an object that cannot be called fail the test at the head and take the generic version, which does what plain JavaScript does
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (call, ...all) => { let text = ""; for (const f of all) text += " " + call(f, 10); print(text); print(call(n => n * 3, 10)); for (const none of ["text", undefined, null, {}]) { try { call(none, 10); } catch (error) { print(error instanceof TypeError); } } };
+# CHECK: {{*}}11 12 13 14 15 16 110
+# CHECK-NEXT: 30
+# CHECK-NEXT: true
+# CHECK-NEXT: true
+# CHECK-NEXT: true
+# CHECK-NEXT: true
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=40 kind=Parameter
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = NewClosure function=f7
+    v7 = NewClosure function=f8
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="register" [isFreeName]
+    v10 = Call v9, -, v0, v1, v2, v3, v4, v5, v6, v7
+    Return
+}
+function f1 name="call" flags=[IsChecked] parameters=[{type=undefined|null|f9 site=w0}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f2 name="one" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f9] {
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f3 name="two" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f9] {
+    v1 = Integer integer=2
+    v2 = Add v0, v1
+    Return v2
+}
+function f4 name="three" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f9] {
+    v1 = Integer integer=3
+    v2 = Add v0, v1
+    Return v2
+}
+function f5 name="four" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f9] {
+    v1 = Integer integer=4
+    v2 = Add v0, v1
+    Return v2
+}
+function f6 name="five" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f9] {
+    v1 = Integer integer=5
+    v2 = Add v0, v1
+    Return v2
+}
+function f7 name="six" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f9] {
+    v1 = Integer integer=6
+    v2 = Add v0, v1
+    Return v2
+}
+function f8 name="stranger" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=100
+    v2 = Add v0, v1
+    Return v2
+}
+function f9 role=Signature results=[{type=anything}]

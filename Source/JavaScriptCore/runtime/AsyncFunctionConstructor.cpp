@@ -52,7 +52,7 @@ JSC_DEFINE_HOST_FUNCTION(constructAsyncFunctionConstructor, (JSGlobalObject* glo
 }
 
 AsyncFunctionConstructor::AsyncFunctionConstructor(VM& vm, Structure* structure)
-    : InternalFunction(vm, structure, callAsyncFunctionConstructor, constructAsyncFunctionConstructor)
+    : InternalFunction(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callAsyncFunctionConstructor), JSC_REGISTERED_HOST_FUNCTION(constructAsyncFunctionConstructor))
 {
 }
 

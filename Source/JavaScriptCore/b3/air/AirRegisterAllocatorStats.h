@@ -72,6 +72,15 @@ namespace JSC { namespace B3 { namespace Air {
     macro(maxGroupSize)                         \
     macro(numInsts)                             \
 
+#define FOR_EACH_REGISTER_ALLOCATOR_STAT_WITH_ADDITIONS(macro) \
+    FOR_EACH_REGISTER_ALLOCATOR_STAT(macro)     \
+    macro(numSplitAroundClobberRegisterMoves)   \
+    macro(numSplitAroundClobberStackMoves)      \
+    macro(numSplitAroundClobberStretches)       \
+    macro(numSplitAroundClobberSitesInStretches) \
+    macro(numColdUsesKeptThroughSecondSplit)    \
+    macro(numColdUsesKeptThroughSecondSplitBetweenDefs)
+
 class AirAllocateRegistersStats {
 public:
     AirAllocateRegistersStats(Bank bank, const String& label = { })
@@ -82,7 +91,7 @@ public:
         return m_bank == GP ? "RegAlloc<GP>"_s : "RegAlloc<FP>"_s;
     }
 
-    DEFINE_PHASE_STATS(AirAllocateRegistersStats, FOR_EACH_REGISTER_ALLOCATOR_STAT)
+    DEFINE_PHASE_STATS(AirAllocateRegistersStats, FOR_EACH_REGISTER_ALLOCATOR_STAT_WITH_ADDITIONS)
 
 private:
     Bank m_bank;

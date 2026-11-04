@@ -1,0 +1,47 @@
+# The variables that go around a separated loop are looked at while the uses behind the loop still name the values of the loop, though they will get those of the copy.
+# A loop around the loop hands such a value back in, and the loop stores it to the variable
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" declared={type=number} flow={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+
+function f0 name="aParameterOfThePathThatLeft" parameters=[{type=anything}, {type=anything}, {type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: string, v3: number):
+    Jump -> next b1(v3)
+  b1(v4: number):
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v7 = GetModuleVariable variable=g0
+    v8 = GetStringLength v2
+    v9 = Less v7, v8
+    Branch v9 -> taken b3(), notTaken b7()
+  b3():
+    v10 = TypeTest v7 testedType=i32
+    Branch v10 -> taken b4(| 0), notTaken b5(v7)
+  b4(v11):
+    v12 = BitOr v11, v11
+    PutModuleVariable v4 variable=g0
+    Jump -> next b2()
+  b5(v14: number) frequency=Unlikely:
+    v15 = Call v1, -
+    v16 = IsClosureOf v15 function=f1
+    Branch v16 -> taken b2(), notTaken b6()
+  b6() frequency=Unlikely:
+    Jump -> next b1(v14)
+  b7():
+    Return v7
+}
+# CHECK-LABEL: name="aParameterOfThePathThatLeft"
+# CHECK: b2([[carried]]: i32):
+# CHECK: Jump -> next b1([[inCopy]])
+# CHECK: ([[inCopy]]: number) frequency=Unlikely:
+# CHECK: = TypeTest v4 testedType=i32
+
+function f1 name="callee" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}

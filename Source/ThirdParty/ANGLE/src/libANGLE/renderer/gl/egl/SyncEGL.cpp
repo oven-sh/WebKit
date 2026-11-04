@@ -9,7 +9,9 @@
 #include "libANGLE/renderer/gl/egl/SyncEGL.h"
 
 #include "libANGLE/AttributeMap.h"
+#include "libANGLE/Context.h"
 #include "libANGLE/Display.h"
+#include "libANGLE/renderer/gl/ContextGL.h"
 #include "libANGLE/renderer/gl/egl/FunctionsEGL.h"
 
 namespace rx
@@ -25,7 +27,7 @@ SyncEGL::~SyncEGL()
     ASSERT(mSync && *mSync == EGL_NO_SYNC_KHR);
 }
 
-void SyncEGL::onDestroy(const egl::Display *display)
+void SyncEGL::onDestroy(const egl::ThreadSafeDisplay *display)
 {
     if (*mSync != EGL_NO_SYNC_KHR)
     {
@@ -43,7 +45,7 @@ void SyncEGL::onDestroy(const egl::Display *display)
     }
 }
 
-egl::Error SyncEGL::initialize(const egl::Display *display,
+egl::Error SyncEGL::initialize(const egl::ThreadSafeDisplay *display,
                                const gl::Context *context,
                                EGLenum type,
                                const egl::AttributeMap &attribs)
@@ -61,6 +63,13 @@ egl::Error SyncEGL::initialize(const egl::Display *display,
     }
     nativeAttribs.push_back(EGL_NONE);
 
+    // Creating a fence adds a command to flush; importing a native fence does not.
+    if (attribs.getAsInt(EGL_SYNC_NATIVE_FENCE_FD_ANDROID, EGL_NO_NATIVE_FENCE_FD_ANDROID) ==
+        EGL_NO_NATIVE_FENCE_FD_ANDROID)
+    {
+        GetImplAs<ContextGL>(context)->markWorkSubmitted();
+    }
+
     egl::Display::GetCurrentThreadUnlockedTailCall()->add(
         [egl = mEGL, syncRef = mSync, type, attribs = nativeAttribs](void *resultOut) {
             *syncRef = egl->createSyncKHR(type, attribs.data());
@@ -77,7 +86,7 @@ egl::Error SyncEGL::initialize(const egl::Display *display,
     return egl::NoError();
 }
 
-egl::Error SyncEGL::clientWait(const egl::Display *display,
+egl::Error SyncEGL::clientWait(const egl::ThreadSafeDisplay *display,
                                const gl::Context *context,
                                EGLint flags,
                                EGLTime timeout,
@@ -95,7 +104,7 @@ egl::Error SyncEGL::clientWait(const egl::Display *display,
     return egl::NoError();
 }
 
-egl::Error SyncEGL::serverWait(const egl::Display *display,
+egl::Error SyncEGL::serverWait(const egl::ThreadSafeDisplay *display,
                                const gl::Context *context,
                                EGLint flags)
 {
@@ -109,7 +118,7 @@ egl::Error SyncEGL::serverWait(const egl::Display *display,
     return egl::NoError();
 }
 
-egl::Error SyncEGL::getStatus(const egl::Display *display, EGLint *outStatus)
+egl::Error SyncEGL::getStatus(const egl::ThreadSafeDisplay *display, EGLint *outStatus)
 {
     ASSERT(*mSync != EGL_NO_SYNC_KHR);
     EGLBoolean result = mEGL->getSyncAttribKHR(*mSync, EGL_SYNC_STATUS_KHR, outStatus);
@@ -122,7 +131,7 @@ egl::Error SyncEGL::getStatus(const egl::Display *display, EGLint *outStatus)
     return egl::NoError();
 }
 
-egl::Error SyncEGL::dupNativeFenceFD(const egl::Display *display, EGLint *result) const
+egl::Error SyncEGL::dupNativeFenceFD(const egl::ThreadSafeDisplay *display, EGLint *result) const
 {
     ASSERT(*mSync != EGL_NO_SYNC_KHR);
     *result = mEGL->dupNativeFenceFDANDROID(*mSync);

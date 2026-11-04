@@ -1,0 +1,21 @@
+# The required pass ResolveBuiltins allocates the record of an iteration step with NewObject, the operation from which placement plans the cells of a layout. The result has the layout as its type, and the allocation site that flow stamped on the intrinsic is handed on
+# FORM: Prepared optimizing
+# RUN: pass ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="withoutAllocationSite" parameters=[{type=anything}, {type=boolean}] results=[{type=object}] {
+    v2 = CreateIteratorResult v0, v1
+    Return v2
+# CHECK-NOT: CreateIteratorResult
+# CHECK: v2: L(IteratorResult) = NewObject -, v0, v1 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Return v2
+}
+
+function f1 name="withAllocationSite" parameters=[{type=anything}, {type=boolean}] results=[{type=object}] {
+    v2 = CreateIteratorResult v0, v1 allocationSite=3
+    Return v2
+# CHECK-NOT: CreateIteratorResult
+# CHECK: v2: L(IteratorResult) = NewObject -, v0, v1 layout=L(IteratorResult) fields=[0, 1] allocationSite=3
+# CHECK-NEXT: Return v2
+}

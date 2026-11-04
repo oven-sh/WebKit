@@ -34,10 +34,14 @@
 namespace JSC { namespace B3 {
 
 class Procedure;
+class Variable;
 
 // Turns all mentions of the given values into accesses to variables. This is meant to be used
 // from phases that don't like SSA for whatever reason.
 JS_EXPORT_PRIVATE void demoteValues(Procedure&, const IndexSet<Value*>&);
+
+// The variable that demoteValues() makes for a value, for a phase that stores the value to it by itself.
+JS_EXPORT_PRIVATE Variable* addVariableForDemotedValue(Procedure&, Value*);
 
 // This fixes SSA for you. Use this after you have done demoteValues() and you have performed
 // whatever evil transformation you needed.

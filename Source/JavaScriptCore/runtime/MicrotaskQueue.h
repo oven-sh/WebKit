@@ -38,10 +38,8 @@
 #include <wtf/VectorTraits.h>
 
 namespace JSC {
-class JSCell;
 class JSMicrotaskDispatcher;
 }
-WTF_ALLOW_COMPACT_POINTERS_TO_INCOMPLETE_TYPE(JSC::JSCell);
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -137,6 +135,11 @@ public:
     uint8_t payload() const { return static_cast<uint8_t>(m_dispatcher.type() >> 8); }
     std::span<const JSValue, maxArguments> arguments() const { return std::span<const JSValue, maxArguments> { m_arguments, maxArguments }; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr ptrdiff_t offsetOfDispatcher() { return OBJECT_OFFSETOF(QueuedTask, m_dispatcher); }
+    static constexpr ptrdiff_t offsetOfArguments() { return OBJECT_OFFSETOF(QueuedTask, m_arguments); }
+#endif
+
 private:
     bool isJSMicrotaskDispatcher() const
     {
@@ -181,6 +184,28 @@ public:
 
     size_t size() const { return m_queue.size(); }
 
+#if ENABLE(AOT)
+    bool allOf(NOESCAPE const Invocable<bool(const QueuedTask&)> auto& functor) const
+    {
+        for (const QueuedTask& task : m_queue) {
+            if (!functor(task))
+                return false;
+        }
+        return true;
+    }
+
+    // In their order, to the end of the other queue.
+    void moveTasksBehind(size_t count, MarkedMicrotaskDeque& other)
+    {
+        Vector<QueuedTask, 8> moved;
+        while (m_queue.size() > count)
+            moved.append(m_queue.takeLast());
+        while (!moved.isEmpty())
+            other.m_queue.append(moved.takeLast());
+        m_markedBefore = std::min(m_markedBefore, m_queue.size());
+    }
+#endif
+
     void clear()
     {
         m_queue.clear();
@@ -207,6 +232,14 @@ public:
 
     DECLARE_VISIT_AGGREGATE;
 
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr ptrdiff_t offsetOfStart() { return OBJECT_OFFSETOF(MarkedMicrotaskDeque, m_queue) + Deque<QueuedTask>::offsetOfStart(); }
+    static constexpr ptrdiff_t offsetOfEnd() { return OBJECT_OFFSETOF(MarkedMicrotaskDeque, m_queue) + Deque<QueuedTask>::offsetOfEnd(); }
+    static constexpr ptrdiff_t offsetOfCapacityMask() { return OBJECT_OFFSETOF(MarkedMicrotaskDeque, m_queue) + Deque<QueuedTask>::offsetOfCapacityMask(); }
+    static constexpr ptrdiff_t offsetOfBuffer() { return OBJECT_OFFSETOF(MarkedMicrotaskDeque, m_queue) + Deque<QueuedTask>::offsetOfBuffer(); }
+    static constexpr ptrdiff_t offsetOfMarkedBefore() { return OBJECT_OFFSETOF(MarkedMicrotaskDeque, m_markedBefore); }
+#endif
+
 private:
     Deque<QueuedTask> m_queue;
     size_t m_markedBefore { 0 };
@@ -228,6 +261,17 @@ public:
     }
 
     size_t size() const { return m_queue.size(); }
+
+#if ENABLE(AOT)
+    bool allOf(NOESCAPE const Invocable<bool(const QueuedTask&)> auto& functor) const { return m_queue.allOf(functor); }
+
+    void moveTasksBehind(size_t count, MicrotaskQueue& other)
+    {
+        m_queue.moveTasksBehind(count, other.m_queue);
+        if (!other.m_isScheduledToRun && !other.isEmpty())
+            other.scheduleToRunIfNeeded();
+    }
+#endif
 
     void clear()
     {
@@ -260,6 +304,15 @@ public:
     void setIsScheduledToRun(bool value) { m_isScheduledToRun = value; }
 
     bool isPerformingMicrotaskCheckpoint() const { return m_isPerformingMicrotaskCheckpoint; }
+
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr ptrdiff_t offsetOfStart() { return OBJECT_OFFSETOF(MicrotaskQueue, m_queue) + MarkedMicrotaskDeque::offsetOfStart(); }
+    static constexpr ptrdiff_t offsetOfEnd() { return OBJECT_OFFSETOF(MicrotaskQueue, m_queue) + MarkedMicrotaskDeque::offsetOfEnd(); }
+    static constexpr ptrdiff_t offsetOfCapacityMask() { return OBJECT_OFFSETOF(MicrotaskQueue, m_queue) + MarkedMicrotaskDeque::offsetOfCapacityMask(); }
+    static constexpr ptrdiff_t offsetOfBuffer() { return OBJECT_OFFSETOF(MicrotaskQueue, m_queue) + MarkedMicrotaskDeque::offsetOfBuffer(); }
+    static constexpr ptrdiff_t offsetOfMarkedBefore() { return OBJECT_OFFSETOF(MicrotaskQueue, m_queue) + MarkedMicrotaskDeque::offsetOfMarkedBefore(); }
+    static constexpr ptrdiff_t offsetOfIsScheduledToRun() { return OBJECT_OFFSETOF(MicrotaskQueue, m_isScheduledToRun); }
+#endif
 
 protected:
     JS_EXPORT_PRIVATE MicrotaskQueue(VM&);

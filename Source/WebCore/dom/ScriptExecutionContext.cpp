@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2012 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,6 +30,7 @@
 
 #include "CSSValuePool.h"
 #include "CachedScript.h"
+#include "ClientOrigin.h"
 #include "CommonVM.h"
 #include "ContentSecurityPolicy.h"
 #include "ContextDestructionObserverInlines.h"
@@ -90,7 +91,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ScriptCallStack.h>
-#include <JavaScriptCore/SourceTaintedOrigin.h>
+#include <JavaScriptCore/SourceTaintedness.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/StructureInlines.h>
@@ -101,6 +102,7 @@
 #include <wtf/Lock.h>
 #include <wtf/MainThread.h>
 #include <wtf/Ref.h>
+#include <wtf/RunLoop.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -111,7 +113,7 @@ using namespace Inspector;
 static std::atomic<CrossOriginMode> globalCrossOriginMode { CrossOriginMode::Shared };
 
 static Lock allScriptExecutionContextsMapLock;
-static HashMap<ScriptExecutionContextIdentifier, WeakRef<ScriptExecutionContext>>& NODELETE allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
+static HashMap<ScriptExecutionContextIdentifier, WeakRef<ScriptExecutionContext>>& LEGACY_NODELETE allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
 {
     static NeverDestroyed<HashMap<ScriptExecutionContextIdentifier, WeakRef<ScriptExecutionContext>>> contexts;
     ASSERT(allScriptExecutionContextsMapLock.isLocked());
@@ -213,9 +215,9 @@ ScriptExecutionContext::~ScriptExecutionContext()
         Locker locker { allScriptExecutionContextsMapLock };
         ASSERT_WITH_MESSAGE(!allScriptExecutionContextsMap().contains(m_identifier), "A ScriptExecutionContext subclass instance implementing postTask should have already removed itself from the map");
     }
+#endif // ASSERT_ENABLED
 
     m_inScriptExecutionContextDestructor = true;
-#endif // ASSERT_ENABLED
 
     auto callbacks = WTF::move(m_notificationCallbacks);
     for (auto& callback : callbacks.values())
@@ -232,9 +234,7 @@ ScriptExecutionContext::~ScriptExecutionContext()
 
     setContentSecurityPolicy(nullptr);
 
-#if ASSERT_ENABLED
     m_inScriptExecutionContextDestructor = false;
-#endif
 }
 
 void ScriptExecutionContext::resumeAllMessagePortsSoon()
@@ -422,6 +422,7 @@ void ScriptExecutionContext::suspendActiveDOMObjects(ReasonForSuspension why)
     }
 
     m_activeDOMObjectsAreSuspended = true;
+    m_reasonForSuspendingActiveDOMObjects = why;
 
     forEachMicrotaskGlobalObject([](auto& globalObject) {
         globalObject.setMicrotaskRunnability(JSC::QueuedTaskResult::Suspended);
@@ -431,8 +432,6 @@ void ScriptExecutionContext::suspendActiveDOMObjects(ReasonForSuspension why)
         activeDOMObject.suspend(why);
         return ShouldContinue::Yes;
     });
-
-    m_reasonForSuspendingActiveDOMObjects = why;
 }
 
 void ScriptExecutionContext::resumeActiveDOMObjects(ReasonForSuspension why)
@@ -450,6 +449,7 @@ void ScriptExecutionContext::resumeActiveDOMObjects(ReasonForSuspension why)
     vm().deferredWorkTimer->didResumeScriptExecutionOwner();
 
     m_activeDOMObjectsAreSuspended = false;
+    m_reasonForSuspendingActiveDOMObjects = std::nullopt;
 
     forEachMicrotaskGlobalObject([](auto& globalObject) {
         globalObject.setMicrotaskRunnability(JSC::QueuedTaskResult::Executed);
@@ -482,7 +482,7 @@ void ScriptExecutionContext::suspendActiveDOMObjectIfNeeded(ActiveDOMObject& act
 {
     ASSERT(m_activeDOMObjects.contains(activeDOMObject));
     if (m_activeDOMObjectsAreSuspended)
-        activeDOMObject.suspend(m_reasonForSuspendingActiveDOMObjects);
+        activeDOMObject.suspend(*m_reasonForSuspendingActiveDOMObjects);
     if (m_activeDOMObjectsAreStopped)
         activeDOMObject.stop();
 }
@@ -652,16 +652,15 @@ bool ScriptExecutionContext::dispatchErrorEvent(const String& errorMessage, int 
 
 int ScriptExecutionContext::circularSequentialID()
 {
-    ++m_circularSequentialID;
-    if (m_circularSequentialID <= 0)
-        m_circularSequentialID = 1;
-    return m_circularSequentialID;
+    if (m_circularSequentialID == std::numeric_limits<int>::max())
+        m_circularSequentialID = 0;
+    return ++m_circularSequentialID;
 }
 
 PublicURLManager& ScriptExecutionContext::publicURLManager()
 {
     if (!m_publicURLManager)
-        m_publicURLManager = PublicURLManager::create(this);
+        lazyInitialize(m_publicURLManager, PublicURLManager::create(this));
     return *m_publicURLManager;
 }
 
@@ -702,7 +701,7 @@ RejectedPromiseTracker* ScriptExecutionContext::ensureRejectedPromiseTrackerSlow
 
     ASSERT(!m_rejectedPromiseTracker);
     if (auto* globalScope = dynamicDowncast<WorkerOrWorkletGlobalScope>(*this)) {
-        CheckedPtr scriptController = globalScope->script();
+        auto* scriptController = globalScope->script();
         // Do not re-create the promise tracker if we are in a worker / worklet whose execution is terminating.
         if (!scriptController || scriptController->isTerminatingExecution())
             return nullptr;
@@ -769,7 +768,7 @@ bool ScriptExecutionContext::allowsMediaDevices() const
     auto* document = dynamicDowncast<Document>(*this);
     if (!document)
         return false;
-    RefPtr page = document->page();
+    auto* page = document->page();
     return page && !page->settings().mediaCaptureRequiresSecureConnection();
 #else
     return false;
@@ -937,7 +936,12 @@ void ScriptExecutionContext::postTaskToResponsibleDocument(Function<void(Documen
         callback(document.releaseNonNull());
 }
 
-static bool NODELETE isOriginEquivalentToLocal(const SecurityOrigin& origin)
+ClientOrigin ScriptExecutionContext::storageClientOrigin() const
+{
+    return { storageTopOrigin().data(), securityOrigin()->data() };
+}
+
+static bool LEGACY_NODELETE isOriginEquivalentToLocal(const SecurityOrigin& origin)
 {
     return origin.isLocal() && !origin.needsStorageAccessFromFileURLsQuirk() && !origin.hasUniversalAccess();
 }
@@ -963,7 +967,7 @@ ScriptExecutionContext::HasResourceAccess ScriptExecutionContext::canAccessResou
     case ResourceType::SessionStorage:
         if (m_storageBlockingPolicy == StorageBlockingPolicy::BlockAll)
             return HasResourceAccess::No;
-        if ((m_storageBlockingPolicy == StorageBlockingPolicy::BlockThirdParty) && !protect(topOrigin())->isSameOriginAs(*origin) && !origin->hasUniversalAccess())
+        if ((m_storageBlockingPolicy == StorageBlockingPolicy::BlockThirdParty) && !protect(storageTopOrigin())->isSameOriginAs(*origin) && !origin->hasUniversalAccess())
             return HasResourceAccess::DefaultForThirdParty;
         return HasResourceAccess::Yes;
     }
@@ -1039,6 +1043,12 @@ private:
     bool isCurrent() const final
     {
         return m_workerThreadId ? *m_workerThreadId == Thread::currentSingleton().uid() : isMainThread();
+    }
+    void dispatchAfter(Seconds delay, Function<void()>&& callback) final
+    {
+        RunLoop::mainSingleton().dispatchAfter(delay, [protectedThis = Ref { *this }, callback = WTF::move(callback)] mutable {
+            protectedThis->dispatch(WTF::move(callback));
+        });
     }
 
     ScriptExecutionContextIdentifier m_identifier;

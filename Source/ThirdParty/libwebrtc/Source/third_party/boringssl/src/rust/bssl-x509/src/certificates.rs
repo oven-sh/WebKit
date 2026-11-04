@@ -72,10 +72,22 @@ use core::{
     ptr::{NonNull, null_mut},
 };
 
+use bssl_crypto::FromFfiSlice;
+
 use crate::{
-    errors::{PemReason, PkiError, X509Error},
-    ffi::{Bio, sanitize_slice, slice_into_ffi_raw_parts},
-    keys::{PrivateKey, PublicKey},
+    errors::{
+        PemReason,
+        PkiError,
+        X509Error, //
+    },
+    ffi::{
+        Bio,
+        slice_into_ffi_raw_parts, //
+    },
+    keys::{
+        PrivateKey,
+        PublicKey, //
+    },
 };
 
 bssl_macros::bssl_enum! {
@@ -175,8 +187,10 @@ unsafe fn extract_ia5str<'a>(ia5str: *const bssl_sys::ASN1_IA5STRING) -> Option<
         return None;
     }
     let bytes = unsafe {
-        // Safety: `'a` will still outlive the input buffer and this byte slice.
-        sanitize_slice(ptr, str_len)?
+        // Safety:
+        // - `'a` will still outlive the input buffer and this byte slice.
+        // - `ptr` is sourced from BoringSSL.
+        u8::from_ffi_ptr(ptr, str_len)
     };
     core::str::from_utf8(bytes).ok()
 }
@@ -249,8 +263,10 @@ impl<'a> Iterator for GeneralNamesIter<'a> {
                                 continue;
                             }
                             let bytes = unsafe {
-                                // Safety: `self` will outlive the input buffer and this byte slice.
-                                sanitize_slice(ptr, len as usize)?
+                                // Safety:
+                                // - `self` will outlive the input buffer and this byte slice.
+                                // - `ptr` is sourced from BoringSSL.
+                                u8::from_ffi_ptr(ptr, len as usize)
                             };
                             return Some(GeneralName::Ip(bytes));
                         }

@@ -78,9 +78,10 @@ WorkerConsoleClient::~WorkerConsoleClient() = default;
 void WorkerConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel level, JSC::JSGlobalObject* exec, Ref<Inspector::ScriptArguments>&& arguments)
 {
     String messageText;
-    arguments->getFirstArgumentAsString(messageText);
+    bool messageIsFirstArgument = arguments->getFirstArgumentAsString(messageText);
 
     auto message = makeUnique<Inspector::ConsoleMessage>(MessageSource::ConsoleAPI, type, level, messageText, arguments.copyRef(), exec);
+    message->setMessageIsFirstArgument(messageIsFirstArgument);
 
     auto url = message->url();
     auto line = message->line();
@@ -156,7 +157,7 @@ void WorkerConsoleClient::timeStamp(JSC::JSGlobalObject*, Ref<ScriptArguments>&&
         InspectorInstrumentation::consoleTimeStamp(*worker, WTF::move(arguments));
 }
 
-static JSC::JSObject* objectArgumentAt(ScriptArguments& arguments, unsigned index)
+static JSC::JSObject* LEGACY_NODELETE objectArgumentAt(ScriptArguments& arguments, unsigned index)
 {
     return arguments.argumentCount() > index ? arguments.argumentAt(index).getObject() : nullptr;
 }

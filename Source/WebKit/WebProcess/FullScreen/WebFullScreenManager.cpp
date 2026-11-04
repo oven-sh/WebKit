@@ -83,7 +83,7 @@ using namespace WebCore;
 
 using WebCore::FloatSize;
 
-static WebCore::IntRect rootViewRectOfContents(WebCore::Element& element)
+static WebCore::IntRect mainFrameRectOfContents(WebCore::Element& element)
 {
     CheckedPtr renderer = element.renderer();
     if (!renderer)
@@ -105,7 +105,7 @@ static WebCore::IntRect rootViewRectOfContents(WebCore::Element& element)
     auto viewportRect = snappedIntRect(frameView->layoutViewportRect());
     contentsRect.intersect(viewportRect);
 
-    return frameView->contentsToRootView(contentsRect);
+    return frameView->contentsToMainFrameView(contentsRect);
 }
 
 Ref<WebFullScreenManager> WebFullScreenManager::create(WebPage& page)
@@ -269,16 +269,14 @@ FullScreenMediaDetails WebFullScreenManager::getImageMediaDetails(CheckedPtr<Ren
     if (!(image->isMaybePanoramic() || image->isSpatial() || updating == IsUpdating::Yes))
         return { };
 
-    auto imageSize = image->size();
-
     FullScreenMediaDetails mediaDetails;
     mediaDetails.type = FullScreenMediaDetails::Type::Image;
-    mediaDetails.mediaDimensions = imageSize;
 
     if (image->isSpatial()) {
         RefPtr bitmapImage = dynamicDowncast<BitmapImage>(cachedImage->image());
         if (bitmapImage) {
-            if (auto spatialImage = ShareableSpatialImage::create(*bitmapImage)) {
+            if (auto spatialImage = bitmapImage->createShareableSpatialImage()) {
+                mediaDetails.mediaDimensions = bitmapImage->size();
                 mediaDetails.imageData = WTF::move(*spatialImage);
                 m_willUseQuickLookForFullscreen = true;
                 return mediaDetails;
@@ -286,11 +284,7 @@ FullScreenMediaDetails WebFullScreenManager::getImageMediaDetails(CheckedPtr<Ren
         }
     }
 
-    RefPtr nativeImage = image->nativeImage();
-    if (!nativeImage)
-        return { };
-
-    RefPtr shareableBitmap = ShareableBitmap::createFromImagePixels(*nativeImage);
+    RefPtr shareableBitmap = renderImage->createShareableBitmapForFullScreen();
     if (!shareableBitmap)
         return { };
 
@@ -298,6 +292,7 @@ FullScreenMediaDetails WebFullScreenManager::getImageMediaDetails(CheckedPtr<Ren
     if (!bitmapHandle)
         return { };
 
+    mediaDetails.mediaDimensions = shareableBitmap->size();
     mediaDetails.imageData = WTF::move(*bitmapHandle);
     m_willUseQuickLookForFullscreen = true;
 
@@ -450,7 +445,7 @@ void WebFullScreenManager::performEnterFullScreen()
     }
 #endif
 
-    m_initialFrameInRootViewCoordinates = rootViewRectOfContents(*element);
+    m_initialFrameInMainFrameCoordinates = mainFrameRectOfContents(*element);
 
 #if ENABLE(VIDEO)
     updateMainVideoElement();
@@ -592,7 +587,7 @@ void WebFullScreenManager::willEnterFullScreen(Element& element, CompletionHandl
     m_page->hidePageBanners();
 #endif
     protect(element.document())->updateLayout();
-    m_finalFrameInRootViewCoordinates = rootViewRectOfContents(element);
+    m_finalFrameInMainFrameCoordinates = mainFrameRectOfContents(element);
 
     RefPtr frame = element.document().frame();
     if (!frame) {
@@ -601,12 +596,18 @@ void WebFullScreenManager::willEnterFullScreen(Element& element, CompletionHandl
         return;
     }
 
-    m_page->sendWithAsyncReply(Messages::WebFullScreenManagerProxy::BeganEnterFullScreen(frame->frameID(), m_initialFrameInRootViewCoordinates, m_finalFrameInRootViewCoordinates), [
+    m_page->sendWithAsyncReply(Messages::WebFullScreenManagerProxy::BeganEnterFullScreen(frame->frameID(), m_initialFrameInMainFrameCoordinates, m_finalFrameInMainFrameCoordinates), [
         this,
         protectedThis = Ref { *this },
+        element = Ref { element },
         mode,
         completionHandler = WTF::move(didEnterFullscreenCallback)
     ] (bool success) mutable {
+        // A later request may have replaced the element while this one was in flight.
+        if (m_element != element.ptr()) {
+            completionHandler(false);
+            return;
+        }
         if (!success && mode != WebCore::HTMLMediaElementEnums::VideoFullscreenModeInWindow) {
             completionHandler(false);
             return;
@@ -685,7 +686,7 @@ void WebFullScreenManager::willExitFullScreen(CompletionHandler<void()>&& comple
     setPIPStandbyElement(nullptr);
 #endif
 
-    m_finalFrameInRootViewCoordinates = rootViewRectOfContents(*element);
+    m_finalFrameInMainFrameCoordinates = mainFrameRectOfContents(*element);
     if (!protect(protect(element->document())->fullscreen())->willExitFullscreen()) {
         close();
         return completionHandler();
@@ -695,7 +696,7 @@ void WebFullScreenManager::willExitFullScreen(CompletionHandler<void()>&& comple
 #endif
     // FIXME: The order of these frames is switched, but that is kept for historical reasons.
     // It should probably be fixed to be consistent at some point.
-    m_page->sendWithAsyncReply(Messages::WebFullScreenManagerProxy::BeganExitFullScreen(m_finalFrameInRootViewCoordinates, m_initialFrameInRootViewCoordinates), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)] mutable {
+    m_page->sendWithAsyncReply(Messages::WebFullScreenManagerProxy::BeganExitFullScreen(m_finalFrameInMainFrameCoordinates, m_initialFrameInMainFrameCoordinates), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)] mutable {
         didExitFullScreen(WTF::move(completionHandler));
     });
 }
@@ -790,7 +791,7 @@ void WebFullScreenManager::requestRestoreFullScreen(CompletionHandler<void(bool)
 
     ALWAYS_LOG(LOGIDENTIFIER, "<", element->tagName(), " id=\"", element->getIdAttribute(), "\">");
     WebCore::UserGestureIndicator gestureIndicator(WebCore::IsProcessingUserGesture::Yes, protect(element->document()).ptr());
-    protect(protect(element->document())->fullscreen())->requestFullscreen(*element, WebCore::DocumentFullscreen::ExemptIFrameAllowFullscreenRequirement, [completionHandler = WTF::move(completionHandler)] (auto result) mutable {
+    protect(protect(element->document())->fullscreen())->requestFullscreen(*element, WebCore::DocumentFullscreen::FullscreenCheckType::ExemptIFrameAllowFullscreenRequirement, [completionHandler = WTF::move(completionHandler)](auto result) mutable {
         completionHandler(!result.hasException());
     });
 }
@@ -958,7 +959,7 @@ void WebFullScreenManager::enterFullScreenForOwnerElements(WebCore::FrameIdentif
         return completionHandler();
 
     Vector<Ref<Element>> elements;
-    for (RefPtr frame = coreFrame; frame; frame = frame->tree().parent()) {
+    for (Ref frame : inclusiveAncestorFrames(*coreFrame)) {
         if (RefPtr element = frame->ownerElement())
             elements.append(element.releaseNonNull());
     }

@@ -70,7 +70,7 @@ struct TabSize {
         return WTF::holdsAlternative<U>(m_value);
     }
 
-    template<typename... F> constexpr decltype(auto) switchOn(F&&... f) const
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -91,7 +91,7 @@ template<> struct CSSValueConversion<TabSize> { auto operator()(BuilderState&, c
 // MARK: - Blending
 
 template<> struct Blending<TabSize> {
-    bool NODELETE canBlend(const TabSize&, const TabSize&);
+    bool LEGACY_NODELETE canBlend(const TabSize&, const TabSize&);
     auto blend(const TabSize&, const TabSize&, const BlendingContext&) -> TabSize;
 };
 

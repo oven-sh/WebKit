@@ -39,10 +39,8 @@ WI.DOMTree = class DOMTree extends WI.Object
         WI.domManager.addEventListener(WI.DOMManager.Event.DocumentUpdated, this._documentUpdated, this);
 
         // Only add extra event listeners when not the main frame. Since DocumentUpdated is enough for the main frame.
-        if (!this._frame.isMainFrame()) {
-            WI.domManager.addEventListener(WI.DOMManager.Event.NodeRemoved, this._nodeRemoved, this);
+        if (!this._frame.isMainFrame())
             this._frame.addEventListener(WI.Frame.Event.MainResourceDidChange, this._frameMainResourceDidChange, this);
-        }
     }
 
     // Public
@@ -56,15 +54,20 @@ WI.DOMTree = class DOMTree extends WI.Object
         WI.domManager.removeEventListener(WI.DOMManager.Event.DocumentUpdated, this._documentUpdated, this);
 
         if (!this._frame.isMainFrame()) {
-            WI.domManager.removeEventListener(WI.DOMManager.Event.NodeRemoved, this._nodeRemoved, this);
+            this._rootDOMNode?.removeEventListener(WI.DOMNode.Event.Removed, this._nodeRemoved, this);
             this._frame.removeEventListener(WI.Frame.Event.MainResourceDidChange, this._frameMainResourceDidChange, this);
+        }
+
+        if (this._invalidateTimeoutIdentifier) {
+            clearTimeout(this._invalidateTimeoutIdentifier);
+            this._invalidateTimeoutIdentifier = undefined;
         }
     }
 
     invalidate()
     {
         // Set to null so it is fetched again next time requestRootDOMNode is called.
-        this._rootDOMNode = null;
+        this._setRootDOMNode(null);
 
         // Clear the pending callbacks. It is the responsibility of the client to listen for
         // the RootDOMNodeInvalidated event and request the root DOM node again.
@@ -122,7 +125,7 @@ WI.DOMTree = class DOMTree extends WI.Object
         // Bump the request identifier. This prevents pending callbacks for previous requests from completing.
         var requestIdentifier = ++this._requestIdentifier;
 
-        function rootObjectAvailable(error, result)
+        function rootObjectAvailable(executionContextTarget, error, result)
         {
             // Check to see if we have been invalidated (if the callbacks were cleared).
             if (!this._pendingRootDOMNodeRequests || requestIdentifier !== this._requestIdentifier)
@@ -131,13 +134,13 @@ WI.DOMTree = class DOMTree extends WI.Object
             if (error) {
                 console.error(JSON.stringify(error));
 
-                this._rootDOMNode = null;
+                this._setRootDOMNode(null);
                 dispatchCallbacks.call(this);
                 return;
             }
 
             // Convert the RemoteObject to a DOMNode by asking the backend to push it to us.
-            var remoteObject = WI.RemoteObject.fromPayload(result);
+            var remoteObject = WI.RemoteObject.fromPayload(result, executionContextTarget);
             remoteObject.pushNodeToFrontend(rootDOMNodeAvailable.bind(this, remoteObject));
         }
 
@@ -150,12 +153,12 @@ WI.DOMTree = class DOMTree extends WI.Object
                 return;
 
             if (!nodeId) {
-                this._rootDOMNode = null;
+                this._setRootDOMNode(null);
                 dispatchCallbacks.call(this);
                 return;
             }
 
-            this._rootDOMNode = WI.domManager.nodeForId(nodeId);
+            this._setRootDOMNode(WI.domManager.nodeForId(nodeId));
 
             console.assert(this._rootDOMNode);
             if (!this._rootDOMNode) {
@@ -170,7 +173,10 @@ WI.DOMTree = class DOMTree extends WI.Object
 
         function mainDocumentAvailable(document)
         {
-            this._rootDOMNode = document;
+            if (!this._pendingRootDOMNodeRequests || requestIdentifier !== this._requestIdentifier)
+                return;
+
+            this._setRootDOMNode(document);
 
             dispatchCallbacks.call(this);
         }
@@ -181,8 +187,8 @@ WI.DOMTree = class DOMTree extends WI.Object
             if (!this._pendingRootDOMNodeRequests || requestIdentifier !== this._requestIdentifier)
                 return;
 
-            for (var i = 0; i < this._pendingRootDOMNodeRequests.length; ++i)
-                this._pendingRootDOMNodeRequests[i](this._rootDOMNode);
+            for (let pendingRootDOMNodeRequest of this._pendingRootDOMNodeRequests)
+                pendingRootDOMNodeRequest(this._rootDOMNode);
             this._pendingRootDOMNodeRequests = null;
         }
 
@@ -193,18 +199,31 @@ WI.DOMTree = class DOMTree extends WI.Object
         if (this._frame.isMainFrame())
             WI.domManager.requestDocument(mainDocumentAvailable.bind(this));
         else {
-            let target = WI.assumingMainTarget();
-            var contextId = this._frame.pageExecutionContext.id;
-            target.RuntimeAgent.evaluate.invoke({expression: appendWebInspectorSourceURL("document"), objectGroup: "", includeCommandLineAPI: false, doNotPauseOnExceptionsAndMuteConsole: true, contextId, returnByValue: false, generatePreview: false}, rootObjectAvailable.bind(this));
+            // A context identifier is only meaningful to the agent that minted it, so evaluate on the
+            // context's own target rather than assuming the main target.
+            let executionContext = this._frame.pageExecutionContext;
+            let executionContextTarget = executionContext.target;
+            executionContextTarget.RuntimeAgent.evaluate.invoke({expression: appendWebInspectorSourceURL("document"), objectGroup: "", includeCommandLineAPI: false, doNotPauseOnExceptionsAndMuteConsole: true, contextId: executionContext.id, returnByValue: false, generatePreview: false}, rootObjectAvailable.bind(this, executionContextTarget));
         }
     }
 
-    _nodeRemoved(event)
+    _setRootDOMNode(rootDOMNode)
+    {
+        if (this._rootDOMNode === rootDOMNode)
+            return;
+
+        if (!this._frame.isMainFrame())
+            this._rootDOMNode?.removeEventListener(WI.DOMNode.Event.Removed, this._nodeRemoved, this);
+
+        this._rootDOMNode = rootDOMNode;
+
+        if (!this._frame.isMainFrame())
+            this._rootDOMNode?.addEventListener(WI.DOMNode.Event.Removed, this._nodeRemoved, this);
+    }
+
+    _nodeRemoved()
     {
         console.assert(!this._frame.isMainFrame());
-
-        if (event.data.node !== this._rootDOMNode)
-            return;
 
         this.invalidate();
     }

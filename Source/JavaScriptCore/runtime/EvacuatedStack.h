@@ -101,6 +101,8 @@ ALWAYS_INLINE void* relocateReturnPC(void* returnPC, const void* originalDiscrim
     if (Options::useJITCage() && isJITPC(removeCodePtrTag(returnPC)))
         return relocateJITReturnPC(returnPC, originalDiscriminator, newDiscriminator);
     return ptrauth_auth_and_resign(returnPC, ptrauth_key_asib, originalDiscriminator, ptrauth_key_asib, newDiscriminator);
+#elif ENABLE(RETURN_ADDRESS_SIGNING)
+    return signReturnAddress(authenticateReturnAddress(returnPC, originalDiscriminator), newDiscriminator);
 #else
     UNUSED_PARAM(originalDiscriminator);
     UNUSED_PARAM(newDiscriminator);

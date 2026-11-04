@@ -21,8 +21,6 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if compiler(>=6.2.3)
-
 #if ENABLE_BACK_FORWARD_LIST_SWIFT
 
 import WebCore_Private
@@ -73,25 +71,13 @@ extension WebKit.WebBackForwardListItem {
 // but can't be put there as we are unable to use swift::Array and swift::String
 // rdar://161270632
 
-// Temporary partial WTF logging support from Swift
-// rdar://168139823 is the task of exposing WebKit logging properly in Swift
-private func backForwardLog(_ msgCreator: @autoclosure () -> String) {
-    // rdar://133777029 likely will allow us to avoid the performance penalty
-    // of creating the string if logging is disabled.
-    doLog(WTF.String(msgCreator()))
-}
-
-private func loadingReleaseLog(_ msgCreator: @autoclosure () -> String) {
-    doLoadingReleaseLog(WTF.String(msgCreator()))
-}
-
 // FIXME(rdar://130765784): We should be able use the built-in ===, but AnyObject currently excludes foreign reference types
-@_expose(!Cxx) // rdar://169474185
 func === (_ lhs: WebKit.WebBackForwardListItem, _ rhs: WebKit.WebBackForwardListItem) -> Bool {
     // Safety: Swift represents all reference types, including foreign reference types, as raw pointers
     unsafe unsafeBitCast(lhs, to: UnsafeRawPointer.self) == unsafeBitCast(rhs, to: UnsafeRawPointer.self)
 }
 
+@_expose(Cxx)
 final class WebBackForwardList {
     private static let defaultCapacity = 100
 
@@ -125,11 +111,13 @@ final class WebBackForwardList {
     init(page: WebKit.WeakPtrWebPageProxy) {
         self.page = page
         self.messageForwarder = WebKit.WebBackForwardListMessageForwarder.create(target: self)
-        backForwardLog("(Back/Forward) Created WebBackForwardList \(ObjectIdentifier(self))")
+        WebKit.LogChannel.BackForward().debugLog
+            .log("(Back/Forward) Created WebBackForwardList \(String(describing: ObjectIdentifier(self)), privacy: .public)")
     }
 
     deinit {
-        backForwardLog("(Back/Forward) Destroying WebBackForwardList \(ObjectIdentifier(self))")
+        WebKit.LogChannel.BackForward().debugLog
+            .log("(Back/Forward) Destroying WebBackForwardList \(String(describing: ObjectIdentifier(self)), privacy: .public)")
         // A WebBackForwardList should never be destroyed unless it's associated page has been closed or is invalid.
         assert(page.get().map { !$0.hasRunningProcess() } ?? (currentIndex == nil))
     }
@@ -142,7 +130,11 @@ final class WebBackForwardList {
     }
 
     @used
-    func itemForID(identifier: WebCore.BackForwardItemIdentifier) -> WebKit.WebBackForwardListItem? {
+    func itemForID(identifier: WebCore.BackForwardItemIdentifier) -> WebKit.RefPtrWebBackForwardListItem {
+        WebKit.RefPtrWebBackForwardListItem(entryForID(identifier))
+    }
+
+    private func entryForID(_ identifier: WebCore.BackForwardItemIdentifier) -> WebKit.WebBackForwardListItem? {
         // FIXME: consider restructuring this a bit. It's a bit odd that it basically refers
         // to a map within WebBackForwardListItem. Maybe WebBackForwardList should
         // own that map. This is a pre-existing quirk of the C++ implementation, not a
@@ -161,7 +153,10 @@ final class WebBackForwardList {
 
     @used
     func pageClosed() {
-        backForwardLog("(Back/Forward) WebBackForwardList \(ObjectIdentifier(self)) had its page closed with current size \(entries.count)")
+        WebKit.LogChannel.BackForward().debugLog
+            .log(
+                "(Back/Forward) WebBackForwardList \(String(describing: ObjectIdentifier(self)), privacy: .public) had its page closed with current size \(self.entries.count)"
+            )
 
         // We should have always started out with an m_page and we should never close the page twice
         #if compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
@@ -264,9 +259,10 @@ final class WebBackForwardList {
             }
         }
 
-        backForwardLog(
-            "(Back/Forward) WebBackForwardList \(ObjectIdentifier(self)) added an item. Current size \(entries.count), current index \(String(describing: currentIndex)), threw away \(removedItems.count) items"
-        )
+        WebKit.LogChannel.BackForward().debugLog
+            .log(
+                "(Back/Forward) WebBackForwardList \(String(describing: ObjectIdentifier(self)), privacy: .public) added an item. Current size \(self.entries.count), current index \(unwrappedCurrentIndex), threw away \(removedItems.count) items"
+            )
         page.didChangeBackForwardList(newItem, consuming: WebKit.BackForwardListItemVector(array: removedItems))
     }
 
@@ -288,9 +284,10 @@ final class WebBackForwardList {
 
         // If the target item wasn't even in the list, there's nothing else to do.
         guard var targetIndex else {
-            backForwardLog(
-                "(Back/Forward) WebBackForwardList \(ObjectIdentifier(self)) could not go to item \(item.identifier().toString()) \(item.url) because it was not found"
-            )
+            WebKit.LogChannel.BackForward().debugLog
+                .log(
+                    "(Back/Forward) WebBackForwardList \(String(describing: ObjectIdentifier(self)), privacy: .public) could not go to item \(item.identifier().toString().description, privacy: .public) \(item.url.description) because it was not found"
+                )
             return
         }
 
@@ -323,14 +320,19 @@ final class WebBackForwardList {
 
         currentIndex = targetIndex
 
-        backForwardLog(
-            "(Back/Forward) WebBackForwardList \(ObjectIdentifier(self)) going to item \(item.identifier().toString()), is now at index \(targetIndex)"
-        )
+        WebKit.LogChannel.BackForward().debugLog
+            .log(
+                "(Back/Forward) WebBackForwardList \(String(describing: ObjectIdentifier(self)), privacy: .public) going to item \(item.identifier().toString().description, privacy: .public), is now at index \(targetIndex)"
+            )
         page.didChangeBackForwardList(Optional.none, consuming: WebKit.BackForwardListItemVector(array: removedItems))
     }
 
     @used
-    func currentItem() -> WebKit.WebBackForwardListItem? {
+    func currentItem() -> WebKit.RefPtrWebBackForwardListItem {
+        WebKit.RefPtrWebBackForwardListItem(currentEntry())
+    }
+
+    private func currentEntry() -> WebKit.WebBackForwardListItem? {
         assertValidIndex()
 
         #if compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
@@ -351,7 +353,11 @@ final class WebBackForwardList {
     }
 
     @used
-    func backItem() -> WebKit.WebBackForwardListItem? {
+    func backItem() -> WebKit.RefPtrWebBackForwardListItem {
+        WebKit.RefPtrWebBackForwardListItem(backEntry())
+    }
+
+    private func backEntry() -> WebKit.WebBackForwardListItem? {
         assertValidIndex()
 
         #if compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
@@ -379,7 +385,11 @@ final class WebBackForwardList {
     }
 
     @used
-    func forwardItem() -> WebKit.WebBackForwardListItem? {
+    func forwardItem() -> WebKit.RefPtrWebBackForwardListItem {
+        WebKit.RefPtrWebBackForwardListItem(forwardEntry())
+    }
+
+    private func forwardEntry() -> WebKit.WebBackForwardListItem? {
         assertValidIndex()
 
         #if compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
@@ -408,7 +418,11 @@ final class WebBackForwardList {
     }
 
     @used
-    func itemAtDeltaFromCurrentIndex(delta: Int, allowSkipping: Bool = true) -> WebKit.WebBackForwardListItem? {
+    func itemAtDeltaFromCurrentIndex(delta: Int, allowSkipping: Bool = true) -> WebKit.RefPtrWebBackForwardListItem {
+        WebKit.RefPtrWebBackForwardListItem(entryAtDeltaFromCurrentIndex(delta: delta, allowSkipping: allowSkipping))
+    }
+
+    private func entryAtDeltaFromCurrentIndex(delta: Int, allowSkipping: Bool) -> WebKit.WebBackForwardListItem? {
         assertValidIndex()
 
         #if compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
@@ -650,7 +664,14 @@ final class WebBackForwardList {
     func removeAllItems() {
         assertValidIndex()
 
-        backForwardLog("(Back/Forward) WebBackForwardList \(ObjectIdentifier(self)) removeAllItems (has \(entries.count) of them)")
+        WebKit.LogChannel.BackForward().debugLog
+            .log(
+                "(Back/Forward) WebBackForwardList \(String(describing: ObjectIdentifier(self)), privacy: .public) removeAllItems (has \(self.entries.count) of them)"
+            )
+
+        guard let page = page.get() else {
+            return
+        }
 
         for item in entries {
             didRemoveItem(item: item)
@@ -659,15 +680,17 @@ final class WebBackForwardList {
 
         let entriesCopy = entries
         entries.removeAll()
-        // swift-format-ignore: NeverForceUnwrap
-        page.get()!.didChangeBackForwardList(Optional.none, consuming: WebKit.BackForwardListItemVector(array: entriesCopy))
+        page.didChangeBackForwardList(Optional.none, consuming: WebKit.BackForwardListItemVector(array: entriesCopy))
     }
 
     @used
     func clear() {
         assertValidIndex()
 
-        backForwardLog("(Back/Forward) WebBackForwardList \(ObjectIdentifier(self)) clear (has \(entries.count) of them)")
+        WebKit.LogChannel.BackForward().debugLog
+            .log(
+                "(Back/Forward) WebBackForwardList \(String(describing: ObjectIdentifier(self)), privacy: .public) clear (has \(self.entries.count) of them)"
+            )
 
         let size = entries.count
         guard let page = page.get() else {
@@ -677,7 +700,7 @@ final class WebBackForwardList {
             return
         }
 
-        guard let unwrappedCurrentItem = currentItem() else {
+        guard let unwrappedCurrentItem = currentEntry() else {
             // We should only ever have no current item if we also have no current item index.
             assert(currentIndex == nil)
 
@@ -752,8 +775,18 @@ final class WebBackForwardList {
             entries.append(itemAtIndexInBackForwardListItemVector(restoredItems, i)!)
         }
 
-        currentIndex = Optional(fromCxx: backForwardListState.currentIndex).map({ val in Int(val) })
-        backForwardLog("(Back/Forward) WebBackForwardList \(ObjectIdentifier(self)) restored from state (has \(entries.count) entries)")
+        let restoredIndex = Optional(fromCxx: backForwardListState.currentIndex).map({ val in Int(val) })
+        if let restoredIndex, restoredIndex < entries.count {
+            currentIndex = restoredIndex
+        } else {
+            // A missing or out-of-range current index would leave the list inconsistent, so restore an empty list instead.
+            entries.removeAll()
+            currentIndex = nil
+        }
+        WebKit.LogChannel.BackForward().debugLog
+            .log(
+                "(Back/Forward) WebBackForwardList \(String(describing: ObjectIdentifier(self)), privacy: .public) restored from state (has \(self.entries.count) entries)"
+            )
     }
 
     @used
@@ -855,16 +888,18 @@ final class WebBackForwardList {
                 // If there are no more back items that ever had a user gesture, then we should not enable going back.
                 // This happens when e.g. a new window is created by JavaScript then client redirects occur that create
                 // a sequence of history items, each without user interaction.
-                loadingReleaseLog(
-                    "UI Navigation is disabling going back because no more WebBackForwardListItem items in the back list had user interaction"
-                )
+                WebKit.LogChannel.Loading().releaseLog
+                    .log(
+                        "UI Navigation is disabling going back because no more WebBackForwardListItem items in the back list had user interaction"
+                    )
                 return (nil, 0)
             }
             item = (thisItem, thisItemIndex)
 
-            loadingReleaseLog(
-                "UI Navigation is skipping a WebBackForwardListItem because it was added by JavaScript without user interaction"
-            )
+            WebKit.LogChannel.Loading().releaseLog
+                .log(
+                    "UI Navigation is skipping a WebBackForwardListItem because it was added by JavaScript without user interaction"
+                )
         }
 
         // We are now on the next item that has user interaction.
@@ -884,9 +919,10 @@ final class WebBackForwardList {
             }
             item = (thisItem, thisItemIndex)
 
-            loadingReleaseLog(
-                "UI Navigation is skipping a WebBackForwardListItem that has user interaction because we started on an item that didn't have interaction"
-            )
+            WebKit.LogChannel.Loading().releaseLog
+                .log(
+                    "UI Navigation is skipping a WebBackForwardListItem that has user interaction because we started on an item that didn't have interaction"
+                )
         } else {
             // If going forward and there are items that we created by JS without user interaction, move forward to the last
             // one in the series.
@@ -933,9 +969,9 @@ final class WebBackForwardList {
         childFrameID: WebCore.FrameIdentifier,
         childFrameIndex: UInt64,
         childFrameName: WTF.String
-    ) -> WebKit.FrameState? {
-        guard let targetItem = itemForID(identifier: itemID) else {
-            return nil
+    ) -> WebKit.RefPtrFrameState {
+        guard let targetItem = entryForID(itemID) else {
+            return WebKit.RefPtrFrameState()
         }
         // FIXME: After session restore, the back/forward list's frame identifiers don't match
         // the current WebView's frames because the original identifiers are unavailable.
@@ -952,7 +988,7 @@ final class WebBackForwardList {
                 childFrameItem = parentFrameItem.childItemForFrameName(childFrameName)
             }
             guard let matchedItem = childFrameItem else {
-                return nil
+                return WebKit.RefPtrFrameState()
             }
             let existingFrameID = Optional(fromCxx: matchedItem.frameID())
             if existingFrameID == nil {
@@ -960,9 +996,9 @@ final class WebBackForwardList {
             }
         }
         guard let childFrameItem else {
-            return nil
+            return WebKit.RefPtrFrameState()
         }
-        return getFrameState(childFrameItem)
+        return WebKit.RefPtrFrameState(getFrameState(childFrameItem))
     }
 
     @used
@@ -979,7 +1015,7 @@ final class WebBackForwardList {
     }
 
     private func addChildItem(parentFrameID: WebCore.FrameIdentifier, frameState: WebKit.RefFrameState) {
-        guard let currentItem = currentItem() else {
+        guard let currentItem = currentEntry() else {
             return
         }
         guard let parentItem = currentItem.mainFrameItem().childItemForFrameID(parentFrameID) else {
@@ -992,8 +1028,8 @@ final class WebBackForwardList {
         setFrameStateBackForwardItemIdentifier(frameState, itemID)
     }
 
-    func completeFrameStateForNavigation(navigatedFrameState: WebKit.FrameState) -> WebKit.FrameState {
-        guard let currentItem = currentItem() else {
+    private func completeFrameStateForNavigation(navigatedFrameState: WebKit.FrameState) -> WebKit.FrameState {
+        guard let currentItem = currentEntry() else {
             return navigatedFrameState
         }
         guard let navigatedFrameID = Optional(fromCxx: navigatedFrameState.frameID) else {
@@ -1016,7 +1052,13 @@ final class WebBackForwardList {
         return frameState
     }
 
-    private func messageCheckItemURLs(frameState: WebKit.RefFrameState, process: WebKit.RefWebProcessProxy) throws(InvalidMessage) {
+    private func messageCheckItemURLs(
+        frameState: WebKit.RefFrameState,
+        process: WebKit.RefWebProcessProxy,
+        depth: UInt32 = 0
+    ) throws(InvalidMessage) {
+        try messageCheck { depth < maxFrameStateDepthForMessageCheck() }
+
         // 'nil' works around rdar://162310543
         // Safety: it's OK to pass a null pointer to these two functions; in fact it's the default
         let itemURL = unsafe WTF.URL(frameState.ptr().urlString, nil)
@@ -1040,13 +1082,21 @@ final class WebBackForwardList {
             }
         }
         #endif
+
+        let childCount = frameStateChildCount(frameState.ptr())
+        for i in 0..<childCount {
+            // swift-format-ignore: NeverForceUnwrap
+            let child = frameStateChildAtIndex(frameState.ptr(), i)!
+            try messageCheckItemURLs(frameState: WebKit.RefFrameState(child), process: process, depth: depth + 1)
+        }
     }
 
     @used
     func backForwardAddItemShared(
         connection: IPC.Connection,
         navigatedFrameState: WebKit.RefFrameState,
-        loadedWebArchive: WebKit.LoadedWebArchive
+        loadedWebArchive: WebKit.LoadedWebArchive,
+        browsingContextGroup: WebKit.BrowsingContextGroup
     ) {
         // Also reached from C++ (WebPageProxy::backForwardAddItemShared), so this rather than
         // the caller is the catch site.
@@ -1054,7 +1104,8 @@ final class WebBackForwardList {
             try addItemInternal(
                 connection: connection,
                 navigatedFrameState: navigatedFrameState,
-                loadedWebArchive: loadedWebArchive
+                loadedWebArchive: loadedWebArchive,
+                browsingContextGroup: browsingContextGroup
             )
         }
     }
@@ -1062,7 +1113,8 @@ final class WebBackForwardList {
     private func addItemInternal(
         connection: IPC.Connection,
         navigatedFrameState: WebKit.RefFrameState,
-        loadedWebArchive: WebKit.LoadedWebArchive
+        loadedWebArchive: WebKit.LoadedWebArchive,
+        browsingContextGroup: WebKit.BrowsingContextGroup
     ) throws(InvalidMessage) {
         let process = WebKit.WebProcessProxy.fromConnection(connection)
 
@@ -1124,7 +1176,7 @@ final class WebBackForwardList {
                 consuming: WebKit.RefFrameState(completeFrameStateForNavigation(navigatedFrameState: navigatedFrameState.ptr())),
                 webPageProxy.identifier(),
                 navigatedFrameID,
-                webPageProxy.browsingContextGroup()
+                browsingContextGroup
             )
             .ptr()
         item.setResourceDirectoryURL(consuming: webPageProxy.currentResourceDirectoryURL())
@@ -1145,16 +1197,19 @@ final class WebBackForwardList {
         handlingProvisionalMessage = handling
     }
 
+    @MainActor
     func backForwardAddItem(connection: IPC.Connection, navigatedFrameState: WebKit.RefFrameState) throws(InvalidMessage) {
         if let page = page.get() {
             try addItemInternal(
                 connection: connection,
                 navigatedFrameState: navigatedFrameState,
-                loadedWebArchive: page.didLoadWebArchive() ? .Yes : .No
+                loadedWebArchive: page.didLoadWebArchive() ? .Yes : .No,
+                browsingContextGroup: page.browsingContextGroup()
             )
         }
     }
 
+    @MainActor
     func backForwardSetChildItem(
         connection: IPC.Connection,
         frameItemID: WebCore.BackForwardFrameItemIdentifier,
@@ -1163,7 +1218,7 @@ final class WebBackForwardList {
         let process = WebKit.WebProcessProxy.fromConnection(connection)
         try messageCheckItemURLs(frameState: frameState, process: process)
 
-        guard let item = currentItem() else {
+        guard let item = currentEntry() else {
             return
         }
 
@@ -1172,6 +1227,7 @@ final class WebBackForwardList {
         }
     }
 
+    @MainActor
     func backForwardClearChildren(
         connection: IPC.Connection,
         itemID: WebCore.BackForwardItemIdentifier,
@@ -1182,6 +1238,7 @@ final class WebBackForwardList {
         }
     }
 
+    @MainActor
     func backForwardUpdateItem(connection: IPC.Connection, frameState: WebKit.RefFrameState) throws(InvalidMessage) {
         let process = WebKit.WebProcessProxy.fromConnection(connection)
 
@@ -1254,6 +1311,7 @@ final class WebBackForwardList {
         targetFrameItem.updateFrameStatePayload(consuming: newFrameState)
     }
 
+    @MainActor
     func backForwardGoToItem(connection: IPC.Connection, itemID: WebCore.BackForwardItemIdentifier) throws(InvalidMessage) {
         // On process swap, we tell the previous process to ignore the load, which causes it to restore its current back forward item to its previous
         // value. Since the load is really going on in a new provisional process, we want to ignore such requests from the committed process.
@@ -1265,12 +1323,12 @@ final class WebBackForwardList {
         try goToItemInternal(itemID: itemID)
     }
 
+    @MainActor
     func backForwardListContainsItem(
         connection: IPC.Connection,
-        itemID: WebCore.BackForwardItemIdentifier,
-        completionHandler: CompletionHandlers.WebBackForwardList.BackForwardListContainsItemCompletionHandler
-    ) {
-        completionHandler.pointee(itemForID(identifier: itemID) != nil)
+        itemID: WebCore.BackForwardItemIdentifier
+    ) -> Bool {
+        entryForID(itemID) != nil
     }
 
     @used
@@ -1289,7 +1347,7 @@ final class WebBackForwardList {
             try messageCheck { !WebKit.isInspectorPage(webPageProxy) }
         }
 
-        if let item = itemForID(identifier: itemID) {
+        if let item = entryForID(itemID) {
             // Mirror of the C++ backForwardGoToItemShared guard (webkit.org/b/318728): ignore an index
             // move opposite to the in-flight traversal direction so a stale split leg can't clobber it.
             if let webPageProxy = page.get(), let priorCurrentIndex = currentIndex,
@@ -1304,28 +1362,43 @@ final class WebBackForwardList {
         }
     }
 
+    // Not a message check: a subframe process may name the main frame, which it does not host, and a
+    // frame can be destroyed while a synchronous request naming it is in flight.
+    private func frameOnPage(_ frameID: WebCore.FrameIdentifier) -> WebKit.WebFrameProxy? {
+        guard let webPageProxy = page.get(), let frame = webFrameForFrameID(frameID), let framePage = frame.page() else {
+            return nil
+        }
+        // We can't use == here due to rdar://162357139
+        guard contentsMatch(framePage.identifier(), webPageProxy.identifier()) else {
+            return nil
+        }
+        return frame
+    }
+
+    @MainActor
     func backForwardAllItems(
         connection: IPC.Connection,
-        frameID: WebCore.FrameIdentifier,
-        completionHandler: CompletionHandlers.WebBackForwardList.BackForwardAllItemsCompletionHandler
-    ) {
+        frameID: WebCore.FrameIdentifier
+    ) -> WebKit.VectorRefFrameState {
+        guard frameOnPage(frameID) != nil else {
+            return WebKit.VectorRefFrameState(array: [])
+        }
         var frameStates: [WebKit.FrameState] = []
         for item in entries {
             if let frameItem = item.mainFrameItem().childItemForFrameID(frameID) {
                 frameStates.append(frameItem.copyFrameStateWithChildren().ptr())
             }
         }
-        completionHandler.pointee(consuming: WebKit.VectorRefFrameState(array: frameStates))
+        return WebKit.VectorRefFrameState(array: frameStates)
     }
 
+    @MainActor
     func backForwardItemAtIndexForWebContent(
         connection: IPC.Connection,
         delta: Int32,
-        frameID: WebCore.FrameIdentifier,
-        completionHandler: CompletionHandlers.WebBackForwardList.BackForwardItemAtIndexForWebContentCompletionHandler
-    ) throws(InvalidMessage) {
-        let reply = try itemAtIndexForWebContent(delta: delta, frameID: frameID)
-        completionHandler.pointee(consuming: reply)
+        frameID: WebCore.FrameIdentifier
+    ) throws(InvalidMessage) -> WebKit.RefPtrFrameState {
+        try itemAtIndexForWebContent(delta: delta, frameID: frameID)
     }
 
     private func itemAtIndexForWebContent(
@@ -1334,25 +1407,30 @@ final class WebBackForwardList {
     ) throws(InvalidMessage) -> WebKit.RefPtrFrameState {
         try messageCheck { delta != Int32.min }
 
-        // FIXME: This should verify that the web process requesting the item hosts the specified frame.
+        guard let frame = frameOnPage(frameID) else {
+            return WebKit.RefPtrFrameState()
+        }
+
         let delta = Int(delta)
-        guard let item = itemAtDeltaFromCurrentIndex(delta: delta, allowSkipping: false) else {
+        guard let item = entryAtDeltaFromCurrentIndex(delta: delta, allowSkipping: false) else {
             return WebKit.RefPtrFrameState()
         }
         guard let frameItem = item.mainFrameItem().childItemForFrameID(frameID) else {
+            // Entries can lack the main frame's current ID (after session restore or a process swap).
+            guard frame.isMainFrame() else {
+                return WebKit.RefPtrFrameState()
+            }
             return WebKit.RefPtrFrameState(item.copyMainFrameStateWithChildren().ptr())
         }
         return WebKit.RefPtrFrameState(frameItem.copyFrameStateWithChildren().ptr())
     }
 
+    @MainActor
     func backForwardListCounts(
-        connection: IPC.Connection,
-        completionHandler: CompletionHandlers.WebBackForwardList.BackForwardListCountsCompletionHandler
-    ) {
-        completionHandler.pointee(consuming: rawCounts())
+        connection: IPC.Connection
+    ) -> WebKit.WebBackForwardListCounts {
+        rawCounts()
     }
 }
 
 #endif // ENABLE_BACK_FORWARD_LIST_SWIFT
-
-#endif // compiler(>=6.2.3)

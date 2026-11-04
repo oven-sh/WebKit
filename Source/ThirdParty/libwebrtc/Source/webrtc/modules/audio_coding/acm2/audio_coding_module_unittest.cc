@@ -67,7 +67,6 @@
 
 using ::testing::_;
 using ::testing::AtLeast;
-using ::testing::Invoke;
 
 namespace webrtc {
 
@@ -372,6 +371,65 @@ TEST(AudioCodingModule, DoesResetEncoder) {
 
   EXPECT_CALL(*encoder_mock, Reset()).Times(1);
   acm->Reset();
+}
+
+TEST(AudioCodingModule, PassesEncodedInfoOptionalsToPacketizationCallback) {
+  class TestAudioPacketizationCallback : public AudioPacketizationCallback {
+   public:
+    int32_t SendData(AudioFrameType frame_type,
+                     uint8_t payload_type,
+                     uint32_t timestamp,
+                     const uint8_t* payload_data,
+                     size_t payload_len_bytes,
+                     int64_t absolute_capture_timestamp_ms,
+                     std::optional<uint8_t> audio_level_dbov,
+                     std::optional<std::vector<uint32_t>> csrcs) override {
+      last_capture_time_ms = absolute_capture_timestamp_ms;
+      last_audio_level_dbov = audio_level_dbov;
+      last_csrcs = std::move(csrcs);
+      return 0;
+    }
+    int64_t last_capture_time_ms = -1;
+    std::optional<uint8_t> last_audio_level_dbov;
+    std::optional<std::vector<uint32_t>> last_csrcs;
+  };
+
+  std::unique_ptr<AudioCodingModule> acm = AudioCodingModule::Create();
+  TestAudioPacketizationCallback transport;
+  acm->RegisterTransportCallback(&transport);
+
+  auto encoder = std::make_unique<MockAudioEncoder>();
+  MockAudioEncoder* encoder_mock = encoder.get();
+  EXPECT_CALL(*encoder_mock, SampleRateHz())
+      .WillRepeatedly(testing::Return(16000));
+  EXPECT_CALL(*encoder_mock, NumChannels()).WillRepeatedly(testing::Return(1));
+  EXPECT_CALL(*encoder_mock, RtpTimestampRateHz())
+      .WillRepeatedly(testing::Return(16000));
+  EXPECT_CALL(*encoder_mock, Num10MsFramesInNextPacket())
+      .WillRepeatedly(testing::Return(1));
+  AudioEncoder::EncodedInfo info;
+  info.encoded_bytes = 10;
+  info.send_even_if_empty = true;
+  info.speech = true;
+  info.audio_level_dbov_override = 42;
+  info.absolute_capture_timestamp_ms_override = 99999;
+  info.csrcs_override = std::vector<uint32_t>{1234, 5678};
+  EXPECT_CALL(*encoder_mock, EncodeImpl(_, _, _))
+      .WillOnce(MockAudioEncoder::FakeEncoding(info));
+
+  acm->SetEncoder(std::move(encoder));
+
+  AudioFrame frame;
+  int16_t audio_data[160] = {0};
+  frame.UpdateFrame(0, audio_data, 160, 16000,
+                    AudioFrame::SpeechType::kNormalSpeech,
+                    AudioFrame::VADActivity::kVadActive, 1);
+  acm->Add10MsData(frame);
+
+  EXPECT_EQ(transport.last_capture_time_ms, 99999);
+  EXPECT_EQ(transport.last_audio_level_dbov, 42);
+  ASSERT_TRUE(transport.last_csrcs.has_value());
+  EXPECT_THAT(*transport.last_csrcs, ::testing::ElementsAre(1234, 5678));
 }
 
 class AcmAbsoluteCaptureTimestamp : public ::testing::Test {
@@ -1099,26 +1157,25 @@ TEST_F(AcmSenderBitExactnessOldApi, External_Pcmu_20ms) {
   // real encoder.
   EXPECT_CALL(*mock_encoder, SampleRateHz())
       .Times(AtLeast(1))
-      .WillRepeatedly(Invoke(&encoder, &AudioEncoderPcmU::SampleRateHz));
+      .WillRepeatedly([&] { return encoder.SampleRateHz(); });
   EXPECT_CALL(*mock_encoder, NumChannels())
       .Times(AtLeast(1))
-      .WillRepeatedly(Invoke(&encoder, &AudioEncoderPcmU::NumChannels));
+      .WillRepeatedly([&] { return encoder.NumChannels(); });
   EXPECT_CALL(*mock_encoder, RtpTimestampRateHz())
       .Times(AtLeast(1))
-      .WillRepeatedly(Invoke(&encoder, &AudioEncoderPcmU::RtpTimestampRateHz));
+      .WillRepeatedly([&] { return encoder.RtpTimestampRateHz(); });
   EXPECT_CALL(*mock_encoder, Num10MsFramesInNextPacket())
       .Times(AtLeast(1))
-      .WillRepeatedly(
-          Invoke(&encoder, &AudioEncoderPcmU::Num10MsFramesInNextPacket));
+      .WillRepeatedly([&] { return encoder.Num10MsFramesInNextPacket(); });
   EXPECT_CALL(*mock_encoder, GetTargetBitrate())
       .Times(AtLeast(1))
-      .WillRepeatedly(Invoke(&encoder, &AudioEncoderPcmU::GetTargetBitrate));
+      .WillRepeatedly([&] { return encoder.GetTargetBitrate(); });
   EXPECT_CALL(*mock_encoder, EncodeImpl(_, _, _))
       .Times(AtLeast(1))
-      .WillRepeatedly(Invoke(
-          &encoder, static_cast<AudioEncoder::EncodedInfo (AudioEncoder::*)(
-                        uint32_t, std::span<const int16_t>, Buffer*)>(
-                        &AudioEncoderPcmU::Encode)));
+      .WillRepeatedly([&](uint32_t rtp_timestamp,
+                          std::span<const int16_t> audio, Buffer* encoded) {
+        return encoder.Encode(rtp_timestamp, audio, encoded);
+      });
   ASSERT_TRUE(SetUpSender(kTestFileMono32kHz, 32000));
   ASSERT_NO_FATAL_FAILURE(
       SetUpTestExternalEncoder(std::move(mock_encoder), config.payload_type));

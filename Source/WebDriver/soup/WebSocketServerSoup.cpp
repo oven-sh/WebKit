@@ -36,6 +36,7 @@
 #include <optional>
 #include <span>
 #include <tuple>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/WTFString.h>
 
@@ -53,7 +54,7 @@ static bool soupServerListen(SoupServer* server, const String& host, unsigned po
 
     GRefPtr<GSocketAddress> address = adoptGRef(g_inet_socket_address_new_from_string(host.utf8().legacyCStringPointer(), port));
     if (!address) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid host IP address '%s'", host.utf8().legacyCStringPointer());
+        SAFE_G_SET_ERROR(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid host IP address '%s'", host.utf8());
         return false;
     }
 
@@ -79,8 +80,8 @@ static void handleIncomingHandshake(SoupServer*, SoupServerMessage* message, con
     if (webSocketServer->messageHandler().acceptHandshake(WTF::move(handshakeMessage))) // Follow with handshake procedure
         return;
 
-    HTTPRequestHandler::Response errorResponse = { 503, "Service Unavailable", "text/plain"_s };
-    RELEASE_LOG(WebDriverBiDi, "Error during handshake, sending error response: %s", errorResponse.data.data());
+    HTTPRequestHandler::Response errorResponse = { 503, "Service Unavailable"_s, "text/plain"_s };
+    RELEASE_LOG(WebDriverBiDi, "Error during handshake, sending error response: %s", errorResponse.data);
     soup_server_message_set_status(message, errorResponse.statusCode, nullptr);
     auto* responseHeaders = soup_server_message_get_response_headers(message);
     soup_message_headers_append(responseHeaders, "Content-Type", errorResponse.contentType.utf8().legacyCStringPointer());
@@ -95,7 +96,7 @@ static void handleWebSocketMessage(SoupWebsocketConnection* connection, SoupWebs
     if (messageType != SOUP_WEBSOCKET_DATA_TEXT) {
         RELEASE_LOG(WebDriverBiDi, "websocket message handler received non-text message. error return");
         auto errorReply = WebSocketMessageHandler::Message::fail(CommandResult::ErrorCode::InvalidArgument, std::nullopt, { "Non-text message received"_s });
-        GRefPtr<GBytes> rawMessage = adoptGRef(g_bytes_new(errorReply.payload.data(), errorReply.payload.length()));
+        GRefPtr rawMessage = gBytesNew(errorReply.payload.span());
         soup_websocket_connection_send_message(connection, SOUP_WEBSOCKET_DATA_TEXT, rawMessage.get());
         return;
     }
@@ -109,7 +110,7 @@ static void handleWebSocketMessage(SoupWebsocketConnection* connection, SoupWebs
             RELEASE_LOG(WebDriverBiDi, "No connection found when trying to send message: %s", message.payload);
             return;
         }
-        GRefPtr<GBytes> rawMessage = adoptGRef(g_bytes_new(message.payload.data(), message.payload.length()));
+        GRefPtr rawMessage = gBytesNew(message.payload.span());
         // Using send_message to avoid dealing with null chars in the middle of the message
         soup_websocket_connection_send_message(message.connection.get(), SOUP_WEBSOCKET_DATA_TEXT, rawMessage.get());
     });
@@ -179,7 +180,7 @@ void WebSocketServer::sendMessage(WebSocketMessageHandler::Connection connection
 {
     ASSERT(connection);
     RELEASE_LOG(WebDriverBiDi, "Sending message: %s", message.utf8());
-    GRefPtr<GBytes> rawMessage = adoptGRef(g_bytes_new(message.utf8().legacyCStringPointer(), message.utf8().length()));
+    GRefPtr rawMessage = gBytesNew(message.utf8().span());
     soup_websocket_connection_send_message(connection.get(), SOUP_WEBSOCKET_DATA_TEXT, rawMessage.get());
 }
 

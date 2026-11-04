@@ -32,6 +32,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SortedArrayMap.h>
 #include <wtf/UUID.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/RunLoopSourcePriority.h>
 
 namespace WebCore {
@@ -87,7 +88,10 @@ void AccessibilityAtspi::didConnect(GRefPtr<GDBusConnection>&& connection)
             auto& atspi = *static_cast<AccessibilityAtspi*>(userData);
             atspi.didOwnName();
         },
-        nullptr, this, nullptr);
+        [](GDBusConnection*, const char* name, gpointer userData) {
+            auto& atspi = *static_cast<AccessibilityAtspi*>(userData);
+            atspi.didLoseName(name);
+        }, this, nullptr);
 }
 
 void AccessibilityAtspi::disconnect()
@@ -127,6 +131,15 @@ void AccessibilityAtspi::didOwnName()
     initializeRegistry();
 }
 
+void AccessibilityAtspi::didLoseName(const char* name)
+{
+    // This happens when the name can't be acquired, for example, when the web process isn't
+    // allowed to own it because it's not sandboxed. Accessibility can't work without the
+    // name because object references are built with it, so give up.
+    g_warning("Can't own name %s on a11y bus", name);
+    disconnect();
+}
+
 void AccessibilityAtspi::initializeRegistry()
 {
     RELEASE_ASSERT(m_connection);
@@ -145,10 +158,10 @@ void AccessibilityAtspi::initializeRegistry()
             const char* eventName;
             if (!g_strcmp0(signal, "EventListenerRegistered")) {
                 g_variant_get(parameters, "(&s&s@as)", &dbusName, &eventName, nullptr);
-                atspi->addEventListener(dbusName, eventName);
+                atspi->addEventListener(ASCIICString { dbusName }, UTF8CStringView::unsafeFromUTF8(eventName));
             } else if (!g_strcmp0(signal, "EventListenerDeregistered")) {
                 g_variant_get(parameters, "(&s&s)", &dbusName, &eventName);
-                atspi->removeEventListener(dbusName, eventName);
+                atspi->removeEventListener(ASCIICString { dbusName }, UTF8CStringView::unsafeFromUTF8(eventName));
             }
         }), &atspi);
 
@@ -168,15 +181,15 @@ void AccessibilityAtspi::initializeRegistry()
             const char* dbusName;
             const char* eventName;
             while (g_variant_iter_loop(&iter, "(&s&s)", &dbusName, &eventName))
-                atspi.addEventListener(dbusName, eventName);
+                atspi.addEventListener(ASCIICString { dbusName }, UTF8CStringView::unsafeFromUTF8(eventName));
         }, &atspi);
     }, this);
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-static GUniquePtr<char*> eventConvertingDetailToNonCamelCase(const char* eventName)
+static GUniquePtr<char*> eventConvertingDetailToNonCamelCase(UTF8CStringView eventName)
 {
-    GUniquePtr<char*> event(g_strsplit(eventName, ":", 3));
+    GUniquePtr<char*> event(g_strsplit(eventName.utf8(), ":", 3));
     if (!event.get()[0] || !event.get()[1] || !event.get()[2] || !*event.get()[2])
         return event;
 
@@ -200,7 +213,7 @@ static GUniquePtr<char*> eventConvertingDetailToNonCamelCase(const char* eventNa
     return event;
 }
 
-void AccessibilityAtspi::addEventListener(const char* dbusName, const char* eventName)
+void AccessibilityAtspi::addEventListener(const ASCIICString& dbusName, UTF8CStringView eventName)
 {
     auto& listeners = m_eventListeners.ensure(dbusName, [] {
         return Vector<GUniquePtr<char*>> { };
@@ -222,9 +235,9 @@ static bool eventIsSubtype(char** needle, char** haystack)
 }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-void AccessibilityAtspi::removeEventListener(const char* dbusName, const char* eventName)
+void AccessibilityAtspi::removeEventListener(const ASCIICString& dbusName, UTF8CStringView eventName)
 {
-    if (!eventName || !*eventName) {
+    if (eventName.isEmpty()) {
         m_eventListeners.remove(dbusName);
         return;
     }
@@ -242,7 +255,7 @@ void AccessibilityAtspi::removeEventListener(const char* dbusName, const char* e
         m_eventListeners.remove(it);
 }
 
-void AccessibilityAtspi::addClient(const char* dbusName)
+void AccessibilityAtspi::addClient(const ASCIICString& dbusName)
 {
     if (m_clients.isEmpty())
         AXObjectCache::enableAccessibility();
@@ -253,7 +266,7 @@ void AccessibilityAtspi::addClient(const char* dbusName)
 
     m_cacheClearTimer.stop();
 
-    addResult.iterator->value = g_dbus_connection_signal_subscribe(m_connection.get(), nullptr, "org.freedesktop.DBus", "NameOwnerChanged", nullptr, dbusName,
+    addResult.iterator->value = g_dbus_connection_signal_subscribe(m_connection.get(), nullptr, "org.freedesktop.DBus", "NameOwnerChanged", nullptr, dbusName.data(),
         G_DBUS_SIGNAL_FLAGS_MATCH_ARG0_NAMESPACE, [](GDBusConnection*, const gchar*, const gchar*, const gchar*, const gchar*, GVariant* parameters, gpointer userData) {
             auto& atspi = *static_cast<AccessibilityAtspi*>(userData);
             const char* interface;
@@ -261,11 +274,11 @@ void AccessibilityAtspi::addClient(const char* dbusName)
             const char* newName;
             g_variant_get(parameters, "(&s&s&s)", &interface, &oldName, &newName);
             if (*oldName != '\0' && *newName == '\0')
-                atspi.removeClient(oldName);
+                atspi.removeClient(ASCIICString { oldName });
         }, this, nullptr);
 }
 
-void AccessibilityAtspi::removeClient(const char* dbusName)
+void AccessibilityAtspi::removeClient(const ASCIICString& dbusName)
 {
     auto id = m_clients.take(dbusName);
     if (!id)
@@ -360,12 +373,12 @@ void AccessibilityAtspi::unregisterRoot(AccessibilityRootAtspi& rootObject)
     if (!m_connection)
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, rootObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "StateChanged",
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, rootObject.path().utf8(), "org.a11y.atspi.Event.Object", "StateChanged",
         g_variant_new("(siiva{sv})", "defunct", TRUE, 0, g_variant_new_string("0"), nullptr), nullptr);
 
     auto registeredObjects = m_rootObjects.take(&rootObject);
     g_dbus_connection_emit_signal(m_connection.get(), nullptr, "/org/a11y/atspi/cache", "org.a11y.atspi.Cache", "RemoveAccessible",
-        g_variant_new("((so))", uniqueName(), rootObject.path().utf8().legacyCStringPointer()), nullptr);
+        gVariantNew("((so))", uniqueName(), rootObject.path().utf8()), nullptr);
     for (auto id : registeredObjects)
         g_dbus_connection_unregister_object(m_connection.get(), id);
 }
@@ -403,12 +416,12 @@ void AccessibilityAtspi::unregisterObject(AccessibilityObjectAtspi& atspiObject)
     }
 
     const auto& path = atspiObject.path();
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, path.utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "StateChanged",
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, path.utf8(), "org.a11y.atspi.Event.Object", "StateChanged",
         g_variant_new("(siiva{sv})", "defunct", TRUE, 0, g_variant_new_string("0"), nullptr), nullptr);
 
     if (!m_cacheUpdateList.remove(&atspiObject) && m_cache.remove(path)) {
         g_dbus_connection_emit_signal(m_connection.get(), nullptr, "/org/a11y/atspi/cache", "org.a11y.atspi.Cache", "RemoveAccessible",
-            g_variant_new("((so))", uniqueName(), path.utf8().legacyCStringPointer()), nullptr);
+            gVariantNew("((so))", uniqueName(), path.utf8()), nullptr);
     }
 
     if (m_cacheUpdateList.isEmpty())
@@ -421,7 +434,7 @@ void AccessibilityAtspi::unregisterObject(AccessibilityObjectAtspi& atspiObject)
 
 String AccessibilityAtspi::registerHyperlink(AccessibilityObjectAtspi& atspiObject, Vector<std::pair<GDBusInterfaceInfo*, GDBusInterfaceVTable*>>&& interfaces)
 {
-    if (!m_connection)
+    if (!isConnected())
         return { };
 
     String path = makeString("/org/a11y/atspi/accessible/"_s, makeStringByReplacingAll(createVersion4UUIDString(), '-', '_'));
@@ -435,7 +448,7 @@ String AccessibilityAtspi::registerHyperlink(AccessibilityObjectAtspi& atspiObje
 
 void AccessibilityAtspi::parentChanged(AccessibilityObjectAtspi& atspiObject)
 {
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     // Always emit parentChanged when there are clients because the atspi cache always consumes it.
@@ -446,49 +459,49 @@ void AccessibilityAtspi::parentChanged(AccessibilityObjectAtspi& atspiObject)
     if (m_cacheUpdateList.contains(&atspiObject))
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, atspiObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "PropertyChange",
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, atspiObject.path().utf8(), "org.a11y.atspi.Event.Object", "PropertyChange",
         g_variant_new("(siiva{sv})", "accessible-parent", 0, 0, atspiObject.parentReference(), nullptr), nullptr);
 }
 
 void AccessibilityAtspi::parentChanged(AccessibilityRootAtspi& rootObject)
 {
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     // Always emit parentChanged when there are clients because the atspi cache always consumes it.
     if (m_clients.isEmpty())
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, rootObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "PropertyChange",
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, rootObject.path().utf8(), "org.a11y.atspi.Event.Object", "PropertyChange",
         g_variant_new("(siiva{sv})", "accessible-parent", 0, 0, rootObject.parentReference(), nullptr), nullptr);
 }
 
 void AccessibilityAtspi::childrenChanged(AccessibilityObjectAtspi& atspiObject, AccessibilityObjectAtspi& child, ChildrenChanged change)
 {
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     // Always emit ChildrenChanged when there are clients because the atspi cache always consumes it.
     if (m_clients.isEmpty())
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, atspiObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "ChildrenChanged",
-        g_variant_new("(siiv(so))", change == ChildrenChanged::Added ? "add" : "remove", child.indexInParentForChildrenChanged(change),
-        0, g_variant_new("(so)", uniqueName(), child.path().utf8().legacyCStringPointer()), uniqueName(), atspiObject.path().utf8().legacyCStringPointer()), nullptr);
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, atspiObject.path().utf8(), "org.a11y.atspi.Event.Object", "ChildrenChanged",
+        gVariantNew("(siiv(so))", change == ChildrenChanged::Added ? "add" : "remove", child.indexInParentForChildrenChanged(change),
+        0, gVariantNew("(so)", uniqueName(), child.path().utf8()), uniqueName(), atspiObject.path().utf8()), nullptr);
 }
 
 void AccessibilityAtspi::childrenChanged(AccessibilityRootAtspi& rootObject, AccessibilityObjectAtspi& child, ChildrenChanged change)
 {
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     // Always emit ChildrenChanged when there are clients because the atspi cache always consumes it.
     if (m_clients.isEmpty())
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, rootObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "ChildrenChanged",
-        g_variant_new("(siiv(so))", change == ChildrenChanged::Added ? "add" : "remove", 0,
-        0, g_variant_new("(so)", uniqueName(), child.path().utf8().legacyCStringPointer()), uniqueName(), rootObject.path().utf8().legacyCStringPointer()), nullptr);
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, rootObject.path().utf8(), "org.a11y.atspi.Event.Object", "ChildrenChanged",
+        gVariantNew("(siiv(so))", change == ChildrenChanged::Added ? "add" : "remove", 0,
+        0, gVariantNew("(so)", uniqueName(), child.path().utf8()), uniqueName(), rootObject.path().utf8()), nullptr);
 }
 
 void AccessibilityAtspi::stateChanged(AccessibilityObjectAtspi& atspiObject, const char* name, bool value)
@@ -497,13 +510,13 @@ void AccessibilityAtspi::stateChanged(AccessibilityObjectAtspi& atspiObject, con
     notifyStateChanged(atspiObject, name, value);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "StateChanged", name))
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, atspiObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "StateChanged",
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, atspiObject.path().utf8(), "org.a11y.atspi.Event.Object", "StateChanged",
         g_variant_new("(siiva{sv})", name, value, 0, g_variant_new_string("0"), nullptr), nullptr);
 }
 
@@ -513,25 +526,25 @@ void AccessibilityAtspi::textChanged(AccessibilityObjectAtspi& atspiObject, cons
     notifyTextChanged(atspiObject);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "TextChanged", changeType))
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, atspiObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "TextChanged",
-        g_variant_new("(siiva{sv})", changeType, offset, length, g_variant_new_string(text.legacyCStringPointer()), nullptr), nullptr);
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, atspiObject.path().utf8(), "org.a11y.atspi.Event.Object", "TextChanged",
+        g_variant_new("(siiva{sv})", changeType, offset, length, gVariantNewString(text), nullptr), nullptr);
 }
 
 void AccessibilityAtspi::textAttributesChanged(AccessibilityObjectAtspi& atspiObject)
 {
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "TextAttributesChanged"))
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, atspiObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "TextAttributesChanged",
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, atspiObject.path().utf8(), "org.a11y.atspi.Event.Object", "TextAttributesChanged",
         g_variant_new("(siiva{sv})", "", 0, 0, g_variant_new_string(""), nullptr), nullptr);
 }
 
@@ -541,25 +554,25 @@ void AccessibilityAtspi::textCaretMoved(AccessibilityObjectAtspi& atspiObject, u
     notifyTextCaretMoved(atspiObject, caretOffset);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "TextCaretMoved"))
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, atspiObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "TextCaretMoved",
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, atspiObject.path().utf8(), "org.a11y.atspi.Event.Object", "TextCaretMoved",
         g_variant_new("(siiva{sv})", "", caretOffset, 0, g_variant_new_string(""), nullptr), nullptr);
 }
 
 void AccessibilityAtspi::textSelectionChanged(AccessibilityObjectAtspi& atspiObject)
 {
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "TextSelectionChanged"))
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, atspiObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "TextSelectionChanged",
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, atspiObject.path().utf8(), "org.a11y.atspi.Event.Object", "TextSelectionChanged",
         g_variant_new("(siiva{sv})", "", 0, 0, g_variant_new_string(""), nullptr), nullptr);
 }
 
@@ -569,13 +582,13 @@ void AccessibilityAtspi::valueChanged(AccessibilityObjectAtspi& atspiObject, dou
     notifyValueChanged(atspiObject);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "PropertyChange", "accessible-value"))
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, atspiObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "PropertyChange",
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, atspiObject.path().utf8(), "org.a11y.atspi.Event.Object", "PropertyChange",
         g_variant_new("(siiva{sv})", "accessible-value", 0, 0, g_variant_new_double(value), nullptr), nullptr);
 }
 
@@ -585,7 +598,7 @@ void AccessibilityAtspi::activeDescendantChanged(AccessibilityObjectAtspi& atspi
     notifyActiveDescendantChanged(atspiObject);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "ActiveDescendantChanged"))
@@ -594,8 +607,8 @@ void AccessibilityAtspi::activeDescendantChanged(AccessibilityObjectAtspi& atspi
     auto* activeDescendant = atspiObject.activeDescendant();
     ASSERT(activeDescendant);
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, atspiObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "ActiveDescendantChanged",
-        g_variant_new("(siiva{sv})", "", activeDescendant->indexInParent(), 0, g_variant_new("(so)", uniqueName(), activeDescendant->path().utf8().legacyCStringPointer()), nullptr), nullptr);
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, atspiObject.path().utf8(), "org.a11y.atspi.Event.Object", "ActiveDescendantChanged",
+        g_variant_new("(siiva{sv})", "", activeDescendant->indexInParent(), 0, gVariantNew("(so)", uniqueName(), activeDescendant->path().utf8()), nullptr), nullptr);
 }
 
 void AccessibilityAtspi::selectionChanged(AccessibilityObjectAtspi& atspiObject)
@@ -607,29 +620,29 @@ void AccessibilityAtspi::selectionChanged(AccessibilityObjectAtspi& atspiObject)
         notifySelectionChanged(atspiObject);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
     if (!shouldEmitSignal("Object", "SelectionChanged"))
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, atspiObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Object", "SelectionChanged",
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, atspiObject.path().utf8(), "org.a11y.atspi.Event.Object", "SelectionChanged",
         g_variant_new("(siiva{sv})", "", 0, 0, g_variant_new_string(""), nullptr), nullptr);
 }
 
-void AccessibilityAtspi::loadEvent(AccessibilityObjectAtspi& atspiObject, CString&& event)
+void AccessibilityAtspi::loadEvent(AccessibilityObjectAtspi& atspiObject, ASCIILiteral event)
 {
 #if ENABLE(DEVELOPER_MODE)
     notifyLoadEvent(atspiObject, event);
 #endif
 
-    if (!m_connection)
+    if (!isConnected())
         return;
 
-    if (!shouldEmitSignal("Document", event.data()))
+    if (!shouldEmitSignal("Document", event.characters()))
         return;
 
-    g_dbus_connection_emit_signal(m_connection.get(), nullptr, atspiObject.path().utf8().legacyCStringPointer(), "org.a11y.atspi.Event.Document", event.data(),
+    gDBusConnectionEmitSignal(m_connection.get(), nullptr, atspiObject.path().utf8(), "org.a11y.atspi.Event.Document", event.characters(),
         g_variant_new("(siiva{sv})", "", 0, 0, g_variant_new_string(""), nullptr), nullptr);
 }
 
@@ -771,7 +784,7 @@ GDBusInterfaceVTable AccessibilityAtspi::s_cacheFunctions = {
     [](GDBusConnection*, const gchar* sender, const gchar*, const gchar*, const gchar* methodName, GVariant*, GDBusMethodInvocation* invocation, gpointer userData) {
         if (!g_strcmp0(methodName, "GetItems")) {
             auto& atspi = *static_cast<AccessibilityAtspi*>(userData);
-            atspi.addClient(sender);
+            atspi.addClient(ASCIICString { sender });
             GVariantBuilder builder = G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE("(" GET_ITEMS_SIGNATURE ")"));
             g_variant_builder_open(&builder, G_VARIANT_TYPE(GET_ITEMS_SIGNATURE));
             for (auto* rootObject : atspi.m_rootObjects.keys()) {
@@ -962,7 +975,7 @@ void AccessibilityAtspi::notifyValueChanged(AccessibilityObjectAtspi& atspiObjec
     notify(atspiObject, "AXValueChanged", nullptr);
 }
 
-void AccessibilityAtspi::notifyLoadEvent(AccessibilityObjectAtspi& atspiObject, const CString& event) const
+void AccessibilityAtspi::notifyLoadEvent(AccessibilityObjectAtspi& atspiObject, ASCIILiteral event) const
 {
     if (event != "LoadComplete"_s)
         return;

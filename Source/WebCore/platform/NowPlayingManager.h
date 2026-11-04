@@ -34,7 +34,6 @@
 
 namespace WebCore {
 
-class Image;
 struct NowPlayingInfo;
 
 class NowPlayingManagerClient : public AbstractRefCountedAndCanMakeWeakPtr<NowPlayingManagerClient> {
@@ -75,7 +74,7 @@ private:
     std::optional<NowPlayingInfo> m_nowPlayingInfo;
     struct ArtworkCache {
         String src;
-        RefPtr<Image> image;
+        RefPtr<NativeImage> image;
     };
     std::optional<ArtworkCache> m_nowPlayingInfoArtwork;
     bool m_setAsNowPlayingApplication { false };

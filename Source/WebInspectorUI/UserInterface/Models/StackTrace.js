@@ -38,13 +38,13 @@ WI.StackTrace = class StackTrace
 
     // Static
 
-    static fromPayload(target, payload)
+    static fromPayload(target, payload, options = {})
     {
         let result = null;
         let previousStackTrace = null;
 
         while (payload) {
-            let callFrames = payload.callFrames.map((x) => WI.CallFrame.fromPayload(target, x));
+            let callFrames = payload.callFrames.map((x) => WI.CallFrame.fromPayload(target, x, options));
             let stackTrace = new WI.StackTrace(callFrames, {
                 topCallFrameIsBoundary: payload.topCallFrameIsBoundary,
                 truncated: payload.truncated,
@@ -88,7 +88,8 @@ WI.StackTrace = class StackTrace
             const reasonablyLongProtocolLength = 10;
             const reasonablyLongLineLength = 500;
             const reasonablyLongNativeMethodLength = 120;
-            const stackTraceLine = `(global code|eval code|module code|\\w+)?([^:]{1,${reasonablyLongProtocolLength}}://[^:]{1,${reasonablyLongLineLength}}:\\d+:\\d+|[^@]{1,${reasonablyLongNativeMethodLength}}@\\[native code\\])`;
+            const sourceURL = `(?:blob:)?[^:@]{1,${reasonablyLongProtocolLength}}://[^:\\r\\n]{1,${reasonablyLongLineLength}}(?::\\d+/[^:\\r\\n]{0,${reasonablyLongLineLength}})?`;
+            const stackTraceLine = `((?:[^@\\r\\n]*@)?${sourceURL}:\\d+:\\d+|[^@]{1,${reasonablyLongNativeMethodLength}}@\\[native code\\])`;
             WI.StackTrace._likelyStackTraceRegex = new RegExp(`^${stackTraceLine}([\\n\\r]${stackTraceLine})+$`);
         }
 

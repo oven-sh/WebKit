@@ -41,6 +41,7 @@
 #include "HTMLHtmlElement.h"
 #include "HTMLImageElement.h"
 #include "HTMLNames.h"
+#include "Image.h"
 #include "LayoutSize.h"
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
@@ -52,6 +53,7 @@
 #include "Page.h"
 #include "RawDataDocumentParser.h"
 #include "RenderElement.h"
+#include "RenderElementInlines.h"
 #include "Settings.h"
 #include "UserScriptTypes.h"
 #include <pal/text/TextEncoding.h>
@@ -68,7 +70,7 @@ using namespace HTMLNames;
 #if !PLATFORM(IOS_FAMILY)
 class ImageEventListener final : public EventListener {
 public:
-    static Ref<ImageEventListener> create(ImageDocument& document) { return adoptRef(*new ImageEventListener(document)); }
+    static Ref<ImageEventListener> LEGACY_NODELETE create(ImageDocument& document) { return adoptRef(*new ImageEventListener(document)); }
 
 private:
     explicit ImageEventListener(ImageDocument& document)
@@ -143,10 +145,13 @@ LayoutSize ImageDocument::imageSize()
     RefPtr imageElement = m_imageElement;
     ASSERT(imageElement);
     updateStyleIfNeeded();
-    RefPtr cachedImage = imageElement->cachedImage();
-    if (!cachedImage)
+    CheckedPtr renderer = imageElement->renderer();
+    if (!renderer)
         return { };
-    return cachedImage->imageSizeForRenderer(protect(imageElement->renderer()).get(), frame() ? frame()->pageZoomFactor() : 1);
+    auto size = renderer->usedZoomedImageSize();
+    if (!size)
+        return { };
+    return LayoutSize(*size);
 }
 
 void ImageDocument::updateDuringParsing()
@@ -188,10 +193,10 @@ void ImageDocument::finishedParsing()
         cachedImage->finishLoading(data.get(), { });
         cachedImage->finish();
 
-        // Report the natural image size in the page title, regardless of zoom level.
-        // At a zoom level of 1 the image is guaranteed to have an integer size.
         updateStyleIfNeeded();
-        IntSize size = flooredIntSize(cachedImage->imageSizeForRenderer(protect(imageElement->renderer()).get(), 1));
+        RefPtr sourceImage = imageElement->sourceImage();
+        auto naturalDimensions = sourceImage ? sourceImage->naturalDimensions() : NaturalDimensions::none();
+        auto size = flooredIntSize(FloatSize { naturalDimensions.width.value_or(0), naturalDimensions.height.value_or(0) });
         if (size.width()) {
             // Compute the title. We use the decoded filename of the resource, falling
             // back on the hostname if there is no path.
@@ -207,7 +212,7 @@ void ImageDocument::finishedParsing()
     HTMLDocument::finishedParsing();
 }
 
-inline ImageDocument& NODELETE ImageDocumentParser::document() const
+inline ImageDocument& LEGACY_NODELETE ImageDocumentParser::document() const
 {
     // Only used during parsing, so document is guaranteed to be non-null.
     ASSERT(RawDataDocumentParser::document());
@@ -245,8 +250,8 @@ Ref<DocumentParser> ImageDocument::createParser()
 void ImageDocument::createDocumentStructure()
 {
     Ref rootElement = HTMLHtmlElement::create(*this);
+    rootElement->setAttribute(styleAttr, "color-scheme: light dark; height: 100%"_s);
     appendChild(rootElement);
-    rootElement->setInlineStyleProperty(CSSPropertyHeight, 100, CSSUnitType::Percentage);
 
     if (RefPtr localFrame = frame())
         localFrame->injectUserScripts(UserScriptInjectionTime::DocumentStart);
@@ -259,7 +264,7 @@ void ImageDocument::createDocumentStructure()
     Ref body = HTMLBodyElement::create(*this);
     body->setAttribute(styleAttr, "margin: 0px; height: 100%"_s);
     if (documentLoader && MIMETypeRegistry::isPDFMIMEType(documentLoader->responseMIMEType()))
-        body->setInlineStyleProperty(CSSPropertyBackgroundColor, "white"_s);
+        body->setInlineStyleProperty(CSSPropertyID::BackgroundColor, "white"_s);
     rootElement->appendChild(body);
     
     Ref imageElement = ImageDocumentElement::create(*this);
@@ -346,7 +351,7 @@ void ImageDocument::resizeImageToFit()
     imageElement->setIntegralAttribute(widthAttr, imageSize.width() * scale);
     imageElement->setIntegralAttribute(heightAttr, imageSize.height() * scale);
 
-    imageElement->setInlineStyleProperty(CSSPropertyCursor, CSSValueZoomIn);
+    imageElement->setInlineStyleProperty(CSSPropertyID::Cursor, CSSValueID::ZoomIn);
 }
 
 void ImageDocument::restoreImageSize()
@@ -363,9 +368,9 @@ void ImageDocument::restoreImageSize()
     imageElement->setUnsignedIntegralAttribute(heightAttr, imageSize.height().toUnsigned());
 
     if (imageFitsInWindow())
-        imageElement->removeInlineStyleProperty(CSSPropertyCursor);
+        imageElement->removeInlineStyleProperty(CSSPropertyID::Cursor);
     else
-        imageElement->setInlineStyleProperty(CSSPropertyCursor, CSSValueZoomOut);
+        imageElement->setInlineStyleProperty(CSSPropertyID::Cursor, CSSValueID::ZoomOut);
 
     m_didShrinkImage = false;
 }
@@ -399,9 +404,9 @@ void ImageDocument::didChangeViewSize()
     // and set it to a zoom out cursor if the image doesn't fit
     if (!m_shouldShrinkImage) {
         if (fitsInWindow)
-            imageElement->removeInlineStyleProperty(CSSPropertyCursor);
+            imageElement->removeInlineStyleProperty(CSSPropertyID::Cursor);
         else
-            imageElement->setInlineStyleProperty(CSSPropertyCursor, CSSValueZoomOut);
+            imageElement->setInlineStyleProperty(CSSPropertyID::Cursor, CSSValueID::ZoomOut);
         return;
     }
 

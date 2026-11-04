@@ -4,6 +4,9 @@
 #ifndef ULOCALE_H
 #define ULOCALE_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/localpointer.h"
 #include "unicode/uenum.h"
 #include "unicode/utypes.h"

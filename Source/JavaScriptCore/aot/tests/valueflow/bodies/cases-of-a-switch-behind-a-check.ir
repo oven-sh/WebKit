@@ -1,0 +1,82 @@
+# Behind a Check a case of a switch, taken, is a test as `===` is: a case over texts lets that text by, or texts where the type of that text is in no table; a case over integers lets numbers by.
+# RUN: valueflow-body f0 f1 f2
+# CHECK: body f0: nodes=7 sites=0 edges=6 edgesOnceReached=0 seeds=0 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: n3 filter v1 : string
+# CHECK-NEXT: n4 merge
+# CHECK-NEXT: n5 filter & "a"
+# CHECK-NEXT: n6 filter & "b"
+# CHECK-NEXT: edge n0 -> n3
+# CHECK-NEXT: edge n3 -> n1
+# CHECK-NEXT: edge n3 -> n5
+# CHECK-NEXT: edge n3 -> n6
+# CHECK-NEXT: edge n5 -> n1
+# CHECK-NEXT: edge n6 -> n1
+# CHECK-NEXT: returns n0 & "a" as it came, the rest in n4
+# CHECK-NEXT: returns n0 & "b" as it came, the rest in n4
+# CHECK-NEXT: returns n0 : string as it came, the rest in n4
+# CHECK-NEXT: observed switch: n3
+# CHECK-NEXT: observed v1: n0
+# CHECK-NEXT: body f1: nodes=6 sites=0 edges=4 edgesOnceReached=0 seeds=0 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: n3 filter v1 : number
+# CHECK-NEXT: n4 merge
+# CHECK-NEXT: n5 filter & number
+# CHECK-NEXT: edge n0 -> n3
+# CHECK-NEXT: edge n3 -> n1
+# CHECK-NEXT: edge n3 -> n5
+# CHECK-NEXT: edge n5 -> n1
+# CHECK-NEXT: returns n0 & number as it came, the rest in n4
+# CHECK-NEXT: returns n0 : number as it came, the rest in n4
+# CHECK-NEXT: observed switch: n3
+# CHECK-NEXT: observed v1: n0
+# CHECK-NEXT: body f2: nodes=6 sites=0 edges=4 edgesOnceReached=0 seeds=0 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: n3 filter v1 : number
+# CHECK-NEXT: n4 merge
+# CHECK-NEXT: n5 filter & string
+# CHECK-NEXT: edge n0 -> n3
+# CHECK-NEXT: edge n3 -> n1
+# CHECK-NEXT: edge n3 -> n5
+# CHECK-NEXT: edge n5 -> n1
+# CHECK-NEXT: returns n0 & string as it came, the rest in n4
+# CHECK-NEXT: returns n0 : number as it came, the rest in n4
+# CHECK-NEXT: observed switch: n3
+# CHECK-NEXT: observed v1: n0
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="caseOfTexts" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=string
+    SwitchString v1 strings=["a", "b"] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v2):
+    Return v2
+  b2(v3):
+    Return v3
+  b3():
+    Return v1
+}
+function f1 name="caseOfIntegers" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=number
+    Switch v1 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v2):
+    Return v2
+  b2(v3):
+    Return v3
+  b3():
+    Return v1
+}
+function f2 name="caseOfATextThatTheCheckTurnsAway" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=number
+    SwitchString v1 strings=["c"] -> case b1(| 0), otherwise b2()
+  b1(v2):
+    Return v2
+  b2():
+    Return v1
+}

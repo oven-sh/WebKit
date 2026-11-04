@@ -901,6 +901,16 @@ static inline int get_txfm_rd_gate_level(
   return txfm_rd_gate_level[TX_SEARCH_DEFAULT];
 }
 
+void av1_get_variance_stats(const MACROBLOCK *x, int64_t *src_var,
+                            int64_t *rec_var);
+
+void av1_get_tx_skip_dist(const struct AV1_COMP *cpi, const MACROBLOCK *x,
+                          BLOCK_SIZE bsize, int64_t dist, int64_t sse,
+                          int64_t *no_skip_dist, int64_t *skip_dist);
+
+int av1_is_skip_txfm_penalized(const struct AV1_COMP *cpi, const MACROBLOCK *x,
+                               BLOCK_SIZE bsize);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

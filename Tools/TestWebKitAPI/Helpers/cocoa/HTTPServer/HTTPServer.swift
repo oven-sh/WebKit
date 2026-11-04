@@ -24,6 +24,12 @@
 import Foundation
 import struct Swift.String
 
+#if USE_APPLE_INTERNAL_SDK
+@_spi(HTTP) public import Network
+#else
+public import Network_SPI
+#endif
+
 /// A description of an HTTP server route with a path and a response.
 ///
 /// Typically, a simple route can be created using a path and some response data:
@@ -50,8 +56,9 @@ import struct Swift.String
 public struct Route: Sendable {
     fileprivate struct Storage: Sendable {
         let pathComponents: [String]
+        let statusCode: Int
         let headerFields: [String: String]
-        let response: String
+        let response: Data
     }
 
     fileprivate let children: [Storage]
@@ -60,8 +67,8 @@ public struct Route: Sendable {
         self.children = children
     }
 
-    fileprivate init(path: String, headerFields: [String: String], response: String) {
-        self.children = [Storage(pathComponents: [path], headerFields: headerFields, response: response)]
+    fileprivate init(path: String, statusCode: Int, headerFields: [String: String], response: Data) {
+        self.children = [Storage(pathComponents: [path], statusCode: statusCode, headerFields: headerFields, response: response)]
     }
 
     /// Creates a Route from a group of child Routes.
@@ -72,18 +79,35 @@ public struct Route: Sendable {
     public init(_ path: String, @RouteBuilder _ route: () -> Route) {
         self.children = route().children
             .map {
-                Storage(pathComponents: [path] + $0.pathComponents, headerFields: $0.headerFields, response: $0.response)
+                Storage(
+                    pathComponents: [path] + $0.pathComponents,
+                    statusCode: $0.statusCode,
+                    headerFields: $0.headerFields,
+                    response: $0.response
+                )
             }
+    }
+
+    /// Creates a Route whose response data is binary, such as an image or a PDF.
+    ///
+    /// - Parameters:
+    ///   - path: The path of this route. If this value is non-empty, it must start with `/`.
+    ///   - statusCode: The status code of the response.
+    ///   - headerFields: The header fields of the response, such as `["Content-Type": "application/pdf"]`.
+    ///   - response: The response to be used.
+    public init(_ path: String, statusCode: Int = 200, headerFields: [String: String] = [:], _ response: () -> Data) {
+        self.init(path: path, statusCode: statusCode, headerFields: headerFields, response: response())
     }
 
     /// Creates a Route whose response data is a String.
     ///
     /// - Parameters:
     ///   - path: The path of this route. If this value is non-empty, it must start with `/`.
+    ///   - statusCode: The status code of the response.
     ///   - headerFields: The header fields of the response.
     ///   - response: The response to be used.
-    public init(_ path: String, headerFields: [String: String] = [:], _ response: () -> String) {
-        self.init(path: path, headerFields: headerFields, response: response())
+    public init(_ path: String, statusCode: Int = 200, headerFields: [String: String] = [:], _ response: () -> String) {
+        self.init(path: path, statusCode: statusCode, headerFields: headerFields, response: Data(response().utf8))
     }
 }
 
@@ -124,8 +148,12 @@ public struct HTTPServer: ~Copyable {
 
         /// The HTTPS proxy protocol with authentication.
         case httpsProxyWithAuthentication
+
+        /// The HTTPS proxy protocol, serving HTTP2 to clients that connect through it.
+        case http2Proxy
     }
 
+    private let `protocol`: `Protocol`
     private let storage: HTTPServerCore
 
     /// Create a server from a group of routes.
@@ -167,13 +195,15 @@ public struct HTTPServer: ~Copyable {
             .reduce(into: [String: HTTPResponseData]()) { result, child in
                 let path = child.pathComponents.joined()
                 let response = HTTPResponseData(
+                    statusCode: UInt(child.statusCode),
                     headerFields: child.headerFields.map { (name: $0.key, value: $0.value) },
-                    body: Data(child.response.utf8)
+                    body: child.response
                 )
 
                 result[path] = response
             }
 
+        self.protocol = `protocol`
         self.storage = try HTTPServerCore(protocol: .init(`protocol`), responses: responses)
     }
 
@@ -186,7 +216,7 @@ public struct HTTPServer: ~Copyable {
         _ body: (Configuration) async throws -> sending Result
     ) async throws -> sending Result {
         try await storage.startListening()
-        let result = try await body(Configuration(port: Int(storage.port)))
+        let result = try await body(Configuration(port: Int(storage.port), scheme: `protocol`.scheme))
 
         await storage.cancel()
         return result
@@ -195,6 +225,31 @@ public struct HTTPServer: ~Copyable {
     /// The number of requests this server has received so far.
     public var totalRequests: Int {
         storage.totalRequests
+    }
+
+    /// The requests this server has received so far, with their bodies, in the order they arrived.
+    ///
+    /// Only the HTTP2 and HTTP3 protocols (`.http2`, `.http3` and `.http2Proxy`) record requests.
+    @_spi(HTTP)
+    public var receivedRequests: [(request: HTTPRequest, body: Data)] {
+        precondition(`protocol`.recordsRequests, "\(`protocol`) does not record requests")
+        return storage.receivedRequests
+    }
+}
+
+extension HTTPServer.`Protocol` {
+    fileprivate var scheme: String {
+        switch self {
+        case .https, .httpsWithLegacyTLS, .http2Raw, .http2, .http3: "https"
+        case .http, .httpsProxy, .httpsProxyWithAuthentication, .http2Proxy: "http"
+        }
+    }
+
+    fileprivate var recordsRequests: Bool {
+        switch self {
+        case .http2, .http3, .http2Proxy: true
+        case .http, .https, .httpsWithLegacyTLS, .http2Raw, .httpsProxy, .httpsProxyWithAuthentication: false
+        }
     }
 }
 
@@ -210,6 +265,7 @@ extension HTTPServerCore.`Protocol` {
             case .http3: .http3
             case .httpsProxy: .httpsProxy
             case .httpsProxyWithAuthentication: .httpsProxyWithAuthentication
+            case .http2Proxy: .http2Proxy
             }
     }
 }
@@ -220,11 +276,15 @@ extension HTTPServer {
         /// The port of the server.
         public let port: Int
 
+        fileprivate let scheme: String
+
         // swift-format-ignore: NeverForceUnwrap
         /// The URL of the server, addressed by IP.
+        ///
+        /// The scheme is `https` for the protocols that use TLS, and `http` otherwise.
         public var address: Foundation.URL {
             // Well formed for every port number, so this cannot fail.
-            Foundation.URL(string: "http://127.0.0.1:\(port)/")!
+            Foundation.URL(string: "\(scheme)://127.0.0.1:\(port)/")!
         }
 
         // swift-format-ignore: NeverForceUnwrap
@@ -234,7 +294,7 @@ extension HTTPServer {
         /// needs two same-server origins can use one of each.
         public var localhostAddress: Foundation.URL {
             // Well formed for every port number, so this cannot fail.
-            Foundation.URL(string: "http://localhost:\(port)/")!
+            Foundation.URL(string: "\(scheme)://localhost:\(port)/")!
         }
 
         /// The URL representing the HTTPS proxy for the server.

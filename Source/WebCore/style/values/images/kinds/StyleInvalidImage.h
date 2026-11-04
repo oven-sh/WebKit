@@ -36,21 +36,17 @@ namespace Style {
 
 class InvalidImage final : public GeneratedImage {
 public:
-    static Ref<InvalidImage> create();
+    static Ref<InvalidImage> LEGACY_NODELETE create();
 
     virtual ~InvalidImage();
 
     bool operator==(const Image&) const final { return false; }
     bool equals(const InvalidImage&) const { return false; }
-    bool canRender(const RenderElement*, float) const final { return false; }
-
-    static constexpr bool isFixedSize = true;
+    bool canRender(const RenderElement*) const final { return false; }
 
 protected:
     void didAddClient(RenderElement&) final { }
     void didRemoveClient(RenderElement&) final { }
-
-    FloatSize fixedSize(const RenderElement&) const final { return { }; }
 
 private:
     InvalidImage();
@@ -58,8 +54,14 @@ private:
     bool isPending() const final { return false; }
     void load(CachedResourceLoader&, const ResourceLoaderOptions&) final;
     bool knownToBeOpaque(const RenderElement&) const { return false; }
+    bool canDraw(const RenderElement&) const final { return false; }
+    bool containsCurrentColor() const final { return false; }
+    bool canDrawAtSize(const RenderElement&, const FloatSize&) const final { return false; }
 
-    RefPtr<WebCore::Image> image(const RenderElement*, const FloatSize&, const GraphicsContext& destinationContext, bool isForFirstLine) const final;
+    ImageDrawResult draw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawTiled(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawNinePiece(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const NinePieceGeometry&, ImageDrawingOptions) const final;
     Ref<CSSValue> computedStyleValue(const Style::ComputedStyle&) const;
     Ref<DeprecatedCSSOMValue> computedStyleDeprecatedCSSOMValue(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&) const final;
 };

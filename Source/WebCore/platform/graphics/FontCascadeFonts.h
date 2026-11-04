@@ -122,7 +122,7 @@ public:
     bool isFixedPitch(const FontCascadeDescription&, FontSelector*);
 
     bool canTakeFixedPitchFastContentMeasuring(const FontCascadeDescription&, FontSelector*);
-    TriState NODELETE cachedCanTakeFixedPitchFastContentMeasuring() const
+    TriState LEGACY_NODELETE cachedCanTakeFixedPitchFastContentMeasuring() const
     {
         return m_canTakeFixedPitchFastContentMeasuring;
     }
@@ -142,8 +142,9 @@ public:
         ShapedTextCacheDefaults::initialInterval,
         ShapedTextCacheDefaults::minInterval,
         ShapedTextCacheDefaults::maxInterval,
-        ShapedTextCacheDefaults::maxSize,
-        ShapedTextCacheDefaults::maxTextLength
+        ShapedTextCacheDefaults::maxTextLength,
+        ShapedTextCacheDefaults::maxTextLength, // InlineKeyCapacity == MaxTextLength: keep every entry inline, out-of-line table intentionally unused.
+        ShapedTextCacheDefaults::maxSize
     >;
     ShapedTextCache& shapedTextCache() LIFETIME_BOUND { return m_shapedTextCache; }
     const ShapedTextCache& shapedTextCache() const LIFETIME_BOUND { return m_shapedTextCache; }
@@ -151,7 +152,7 @@ public:
     TextShapingResultAndDisplayList* getOrCreateCachedShapedText(const TextRun&, const FontCascade&, unsigned from, std::optional<unsigned> to, ForTextEmphasis);
 
     const Font& primaryFont(const FontCascadeDescription&, FontSelector*);
-    const Font* NODELETE cachedPrimaryFont() const { return m_cachedPrimaryFont.get(); }
+    const Font* LEGACY_NODELETE cachedPrimaryFont() const { return m_cachedPrimaryFont.get(); }
     WEBCORE_EXPORT const FontRanges& realizeFallbackRangesAt(const FontCascadeDescription&, FontSelector*, unsigned fallbackIndex);
 
     void pruneSystemFallbacks();
@@ -182,9 +183,9 @@ private:
         GlyphPageCacheEntry& operator=(GlyphPageCacheEntry&&) = default;
         ~GlyphPageCacheEntry();
 
-        GlyphData glyphDataForCharacter(char32_t);
+        GlyphData LEGACY_NODELETE glyphDataForCharacter(char32_t);
 
-        void NODELETE setSingleFontPage(RefPtr<GlyphPage>&&);
+        void setSingleFontPage(RefPtr<GlyphPage>&&);
         void setGlyphDataForCharacter(char32_t, GlyphData);
 
         bool isNull() const { return !m_singleFont && !m_mixedFont; }

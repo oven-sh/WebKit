@@ -46,8 +46,8 @@ public:
     PageOverlayController(Page&);
     virtual ~PageOverlayController();
 
-    bool NODELETE hasDocumentOverlays() const;
-    bool NODELETE hasViewOverlays() const;
+    bool LEGACY_NODELETE hasDocumentOverlays() const;
+    bool LEGACY_NODELETE hasViewOverlays() const;
 
     GraphicsLayer& layerWithDocumentOverlaysForFrame(LocalFrame* rootFrame);
     GraphicsLayer& layerWithViewOverlays();
@@ -74,12 +74,14 @@ public:
     void didChangeViewExposedRect();
     void didScrollFrame(LocalFrame&);
 
+    void mainFrameDidBecomeLocal();
+
     void didChangeOverlayFrame(PageOverlay&);
     void didChangeOverlayBackgroundColor(PageOverlay&);
 
     int overlayCount() const;
 
-    bool handleMouseEvent(const PlatformMouseEvent&);
+    bool handleMouseEvent(const PlatformMouseEvent&, LocalFrame& handlingFrame);
 
     WEBCORE_EXPORT bool copyAccessibilityAttributeStringValueForPoint(String attribute, FloatPoint, String& value);
     WEBCORE_EXPORT bool copyAccessibilityAttributeBoolValueForPoint(String attribute, FloatPoint, bool& value);
@@ -88,10 +90,10 @@ public:
 private:
     void createRootLayersIfNeeded();
 
-    WEBCORE_EXPORT GraphicsLayer* NODELETE documentOverlayRootLayer() const;
+    WEBCORE_EXPORT GraphicsLayer* LEGACY_NODELETE documentOverlayRootLayer() const;
     GraphicsLayer& documentOverlayRootLayerForFrame(LocalFrame* rootFrame);
 
-    WEBCORE_EXPORT GraphicsLayer* NODELETE viewOverlayRootLayer() const;
+    WEBCORE_EXPORT GraphicsLayer* LEGACY_NODELETE viewOverlayRootLayer() const;
 
     void installedPageOverlaysChanged();
     void attachViewOverlayLayers();
@@ -103,14 +105,14 @@ private:
     // GraphicsLayerClient
     void notifyFlushRequired(const GraphicsLayer*) override;
     void paintContents(const GraphicsLayer&, GraphicsContext&, const FloatRect& clipRect, OptionSet<GraphicsLayerPaintBehavior>) override;
-    float NODELETE deviceScaleFactor() const override;
-    bool NODELETE shouldSkipLayerInDump(const GraphicsLayer*, OptionSet<LayerTreeAsTextOptions>) const override;
+    float LEGACY_NODELETE deviceScaleFactor() const override;
+    bool LEGACY_NODELETE shouldSkipLayerInDump(const GraphicsLayer*, OptionSet<LayerTreeAsTextOptions>) const override;
     bool shouldDumpPropertyForLayer(const GraphicsLayer*, ASCIILiteral propertyName, OptionSet<LayerTreeAsTextOptions>) const override;
     void tiledBackingUsageChanged(const GraphicsLayer*, bool) override;
 
     WeakRef<Page> m_page;
-    RefPtr<GraphicsLayer> m_documentOverlayRootLayer;
-    RefPtr<GraphicsLayer> m_viewOverlayRootLayer;
+    const RefPtr<GraphicsLayer> m_documentOverlayRootLayer;
+    const RefPtr<GraphicsLayer> m_viewOverlayRootLayer;
 
     // Per-local-root-frame document overlay root layers, for overlays scoped to a specific frame
     // (see PageOverlay::setAssociatedFrame). The main frame keeps using m_documentOverlayRootLayer.

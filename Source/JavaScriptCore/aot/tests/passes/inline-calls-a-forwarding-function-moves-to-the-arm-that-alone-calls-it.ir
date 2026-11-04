@@ -1,0 +1,90 @@
+# How seldom one arm of a function that runs often is taken is the weakest estimate that the compiler has. A function that does little more than call another, and that only
+# such an arm calls, moves to the arm: nothing is copied, and one call goes. What two arms call stays, and so does a larger body.
+# FORM: Prepared
+# RUN: pass InlineCalls
+# LOSS: MaxInlineHeadBytes
+
+module m0 path="main.js" displayPath="main.js" body=f6
+entry module=m0
+function f0 name="forwards" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="literal"
+    v2 = CallDirect v1 function=f3 [isNeverInlined]
+    Return v2
+}
+function f1 name="forwardsForTwoArms" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="operand"
+    v2 = CallDirect v1 function=f3 [isNeverInlined]
+    Return v2
+}
+function f2 name="doesMore" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="name"
+    v2 = CallDirect v1 function=f3 [isNeverInlined]
+    v3 = PropGet v0 key="first"
+    v4 = CallDirect v3 function=f3 [isNeverInlined]
+    v5 = PropGet v0 key="second"
+    v6 = CallDirect v5 function=f3 [isNeverInlined]
+    Return v6
+}
+function f3 name="print" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="text"
+    Return v1
+}
+function f4 name="dispatch" parameters=[{type=anything}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=int}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Branch v2 -> taken b1(), notTaken b3()
+  b3():
+    Branch v3 -> taken b1(), notTaken b4()
+  b4():
+    Branch v4 -> taken b1(), notTaken b5()
+  b5():
+    Branch v5 -> taken b1(), notTaken b6()
+  b6():
+    Branch v6 -> taken b1(), notTaken b7()
+  b7():
+    Branch v7 -> taken b1(), notTaken b8()
+  b8():
+    Branch v8 -> taken b1(), notTaken b9()
+  b9():
+    Switch v9 cases=[0, 1, 2] -> case b10(), case b11(), case b12(), otherwise b13()
+  b10():
+    v10 = CallDirect v0 function=f0
+    Return v10
+  b11():
+    v11 = CallDirect v0 function=f1
+    Return v11
+  b12():
+    v12 = CallDirect v0 function=f1
+    Return v12
+  b13():
+    v13 = CallDirect v0 function=f2
+    Return v13
+}
+# CHECK-LABEL: function f4 name="dispatch"
+# CHECK-NOT: function=f0
+# CHECK: = CallDirect v0 function=f1
+# CHECK-NOT: function=f0
+# CHECK: = CallDirect v0 function=f1
+# CHECK-NOT: function=f0
+# CHECK: = CallDirect v0 function=f2
+# CHECK-NOT: function=f0
+# CHECK: = PropGet v0 key="literal"
+# CHECK: = CallDirect {{*}} function=f3
+function f5 name="drive" parameters=[{type=anything}, {type=boolean}, {type=int}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v0, v1, v1, v1, v1, v1, v1, v1, v1, v2 function=f4 [isNeverInlined]
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+function f6 name="main" kind=Module results=[{type=anything}] {
+    v0 = Undefined
+    v1 = Boolean boolean=true
+    v2 = Integer integer=1
+    v3 = CallDirect v0, v1, v2 function=f5 [isNeverInlined]
+    Return v3
+}

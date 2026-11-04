@@ -1,0 +1,20 @@
+# A right shift by a constant has the range of an int32 shifted by it, whatever number is shifted: the number becomes an int32 first. The count counts modulo 32, and a count that is not known leaves any int32
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v6: int[-8, 7]
+# CHECK: v7: int[-8, 7]
+# CHECK: v8: int[-8, 7]
+# CHECK: v9: int[-1073741824, 1073741823]
+# CHECK: v10: i32
+# CHECK: v11: i32
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="shifted" parameters=[{type=number}, {type=int[-2147483645, 2147483650]}, {type=int|whole}, {type=int[28, 28]}, {type=int[33, 33]}, {type=int[0, 31]}] results=[{type=undefined}] {
+    v6 = RShift v0, v3
+    v7 = RShift v1, v3
+    v8 = RShift v2, v3
+    v9 = RShift v0, v4
+    v10 = RShift v0, v5
+    v11 = RShift v1, v5
+    Return
+}

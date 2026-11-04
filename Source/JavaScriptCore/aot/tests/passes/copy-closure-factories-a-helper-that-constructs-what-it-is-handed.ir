@@ -1,0 +1,47 @@
+# function inherits(Below, Above) { Below.prototype = new Above() }   function Base() { this.size = 1 }   function Derived() {}   inherits(Derived, Base)
+# The call gets a copy of the helper. The closure of that copy is held by nothing but the call, so in it Above is the function that the call names: the prototype object is made by a copy of Base that constructs objects of no layout.
+# The construction is the first value of the helper, and none of what stands in front of it now has a type: what types the values later asks the first.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[helper]]{{*}} = NewClosure function=f4
+# CHECK-NEXT: = Call [[helper]], -, v1, v2 [isAlwaysInlined]
+# CHECK-LABEL: function f1 name="inherits"
+# CHECK: = Construct v1
+# CHECK-LABEL: function f4 name="inherits"
+# CHECK: [[copy]] = NewClosure function=f5
+# CHECK-NEXT: [[held]] = PropGet v1 key="prototype"
+# CHECK-NEXT: PropSet [[copy]], [[held]] key="prototype"
+# CHECK-NEXT: [[made]] = Construct [[copy]]
+# CHECK-NEXT: PropSet v0, [[made]] key="prototype"
+# CHECK-LABEL: function f5 name="Base" {{*}}thisType={type=anything} {{*}}IsNeverCalledByHost] derivation={source=f2} {
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 constructor=f2 fields=[{key="size" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="inherits" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Base" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="Derived" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g2
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v0, -, v1, v2
+    Return
+}
+function f1 name="inherits" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Construct v1
+    PropSet v0, v2 key="prototype" mode=Strict
+    Return
+}
+function f2 name="Base" module=m0 flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="size" mode=Strict
+    Return
+}
+function f3 name="Derived" module=m0 results=[{type=anything}] {
+    Return
+}

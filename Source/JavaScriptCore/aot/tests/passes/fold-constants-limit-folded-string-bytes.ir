@@ -1,0 +1,37 @@
+# A string is folded while its parts have at most as many bytes as the limit, with 24 bytes counted for a part that is no string
+# FORM: Prepared
+# OPTIONS: limit=MaxFoldedStringBytes:8
+# RUN: pass FoldConstants
+# LOSS: MaxFoldedStringBytes x3 f0 v5
+# STATISTIC: FoldConstantsChanges = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="atAndOverTheLimit" results=[{type=string}] {
+    v0 = String string="abcd"
+    v1 = String string="efgh"
+    v2 = String string="efghi"
+    v3 = Integer integer=1
+    v4 = Add v0, v1
+    v5 = Add v0, v2
+    v6 = Add v0, v3
+    v7 = Strcat v0, v0
+    v8 = ToString v3
+    v9 = ToString v2
+    Return v4
+# CHECK: v4: "abcdefgh" = String string="abcdefgh"
+# CHECK-NEXT: v5: string = Add v0, v2
+# CHECK-NEXT: v6: string = Add v0, v3
+# CHECK-NEXT: v7: "abcdabcd" = String string="abcdabcd"
+# CHECK-NEXT: v8: string = ToString v3
+# CHECK-NEXT: v9: "efghi" = String string="efghi"
+# CHECK-NEXT: Return v4
+}
+
+function f1 name="unknownPartIsNoLoss" parameters=[{type=string}] results=[{type=string}] {
+    v1 = String string="abcdefghij"
+    v2 = Add v1, v0
+    Return v2
+# CHECK: v2: string = Add v1, v0
+# CHECK-NEXT: Return v2
+}

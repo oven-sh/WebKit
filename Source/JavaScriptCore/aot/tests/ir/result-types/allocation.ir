@@ -1,0 +1,20 @@
+# An allocation has what it allocates as its type: the layout or the environment it names, or its class with the contents or the pattern it names
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v1: L0
+# CHECK-NEXT: v2: env L1
+# CHECK-NEXT: v3: Array<number>
+# CHECK-NEXT: v4: RegExp<"a"[]>
+# CHECK-NEXT: v5: Promise
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Environment fields=[{key="c" declared={type=anything}}]
+function f0 name="a" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewArray v0 contents=number
+    v4 = NewRegExp pattern="a"
+    v5 = ImportModule module=m0 referrer=m0
+    Return
+}

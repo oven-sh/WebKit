@@ -1,0 +1,25 @@
+# A read by name that starts at its own receiver stands where the slot of a field was found empty: the table of fields has nothing to say there, so the read gets a site cache. A read through `super` gets none
+# FORM: Prepared
+# RUN: pass Select NumberAndEncode PlaceSiteCaches CheckPlacement
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Message" fields=[{key="retries" declared={type=undefined|number}}] flow={members=[L0]}
+
+function f0 name="default-above-the-object" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = IsSlotFilled v0 key="retries" receivers=[L0] level=Proven
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v0, v2 key="retries" receivers=[L0] level=Proven
+    Return v3
+  b2():
+    v4 = SuperGet v0, v0 key="retries"
+    Return v4
+# CHECK: = SuperGet v0, v0 key="retries" siteCache=
+}
+
+function f1 name="through-super" parameters=[{type=L0}, {type=object}] results=[{type=anything}] {
+    v2 = SuperGet v1, v0 key="retries"
+    Return v2
+# CHECK: = SuperGet v1, v0 key="retries"
+# CHECK-NOT: siteCache=
+}

@@ -1,0 +1,69 @@
+# A value that a test has narrowed: with one reader the filter is the mask of that operand, with several readers or on the way into a node it is a node with a mask. The arm not taken excludes only what is surely of the tested type. What a test looks at is kept as an observed value, without a statement.
+# RUN: valueflow-body f0 f1 f2
+# CHECK: body f0: nodes=3 sites=0 edges=0 edgesOnceReached=0 seeds=1 statements=1
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: reached: seed n1 <- undefined
+# CHECK-NEXT: PropGet v4 (n0 & null|boolean|number|string|symbol|bigint|object - undefined) throws n2
+# CHECK-NEXT: observed v1: n0
+# CHECK-NEXT: body f1: nodes=6 sites=0 edges=3 edgesOnceReached=0 seeds=2 statements=2
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: n3 filter v2 & function
+# CHECK-NEXT: n4 merge
+# CHECK-NEXT: n5 filter - function
+# CHECK-NEXT: edge n0 -> n3
+# CHECK-NEXT: edge n0 -> n5
+# CHECK-NEXT: edge n5 -> n1
+# CHECK-NEXT: reached: seed n1 <- undefined
+# CHECK-NEXT: reached: seed n4 <- undefined
+# CHECK-NEXT: returns n0 - function as it came, the rest in n4
+# CHECK-NEXT: PropGet v3 (n3) throws n2
+# CHECK-NEXT: PropGet v4 (n3) throws n2
+# CHECK-NEXT: observed v1: n0
+# CHECK-NEXT: body f2: nodes=6 sites=0 edges=4 edgesOnceReached=0 seeds=0 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: n3 merge
+# CHECK-NEXT: n4 filter & true|number|string|symbol|bigint|object
+# CHECK-NEXT: n5 filter & undefined|null|false|0|whole|string|bigint
+# CHECK-NEXT: edge n0 -> n4
+# CHECK-NEXT: edge n0 -> n5
+# CHECK-NEXT: edge n4 -> n1
+# CHECK-NEXT: edge n5 -> n1
+# CHECK-NEXT: returns n0 & true|number|string|symbol|bigint|object as it came, the rest in n3
+# CHECK-NEXT: returns n0 & undefined|null|false|0|whole|string|bigint as it came, the rest in n3
+# CHECK-NEXT: observed v1: n0
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="oneReader" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return
+  b2(v3):
+    v4 = PropGet v3 key="a"
+    Return
+}
+function f1 name="twoReaders" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=function
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = PropGet v2 key="a"
+    v4 = PropGet v2 key="b"
+    Return
+  b2(v5):
+    Return v5
+}
+function f2 name="truthiness" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3):
+    Return v3
+}

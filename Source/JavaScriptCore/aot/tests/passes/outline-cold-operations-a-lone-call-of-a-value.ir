@@ -1,0 +1,54 @@
+# In cold code a call of a value is the moves of its operands and one call of a stub, which is what a call of a function is: by itself it stays where it is, however many equal sites there are,
+# also where an operation that makes no code stands beside it. With an operation in front of it that a shared body saves, it goes along.
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 24
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="loneCalls" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), case b17(), case b18(), case b19(), case b20(), case b21(), case b22(), case b23(), case b24(), otherwise b25()
+# REPEAT: i = 3..26
+  b%(i-2)() frequency=Rare:
+    v%(i) = Call v1, -, v2
+    Return v%(i)
+# END REPEAT
+  b25():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-24: = Call v1, -, v2
+# CHECK-NOT: CallDirect
+
+function f1 name="loneCallsOfMethods" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), case b17(), case b18(), case b19(), case b20(), case b21(), case b22(), case b23(), case b24(), otherwise b25()
+# REPEAT: i = 3..26
+  b%(i-2)() frequency=Rare:
+    v%(i) = CallMethod v1, v2 key="run"
+    Return v%(i)
+# END REPEAT
+  b25():
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-24: = CallMethod v1, v2 key="run"
+# CHECK-NOT: CallDirect
+
+function f2 name="callsBehindARead" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), case b17(), case b18(), case b19(), case b20(), case b21(), case b22(), case b23(), case b24(), otherwise b25()
+# REPEAT: i = 1..24
+  b%(i)() frequency=Rare:
+    v%(i*2+1) = PropGet v1 key="handler"
+    v%(i*2+2) = Call v%(i*2+1), -, v2
+    Return v%(i*2+2)
+# END REPEAT
+  b25():
+    Return v1
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: = Call v
+# CHECK-COUNT-24: = CallDirect v1, v2

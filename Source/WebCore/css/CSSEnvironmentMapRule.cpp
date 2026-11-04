@@ -44,7 +44,7 @@ static std::optional<EnvironmentMapFormat> toEnvironmentMapFormat(const CSSValue
     if (!keywordValue)
         return std::nullopt;
 
-    if (keywordValue->valueID() == CSSValueEquirectangular)
+    if (keywordValue->valueID() == CSSValueID::Equirectangular)
         return EnvironmentMapFormat::Equirectangular;
     return std::nullopt;
 }
@@ -53,12 +53,12 @@ StyleRuleEnvironmentMap::StyleRuleEnvironmentMap(Ref<StyleProperties>&& properti
     : StyleRuleBase(StyleRuleType::EnvironmentMap)
     , m_properties(WTF::move(properties))
 {
-    if (RefPtr name = dynamicDowncast<CSSStringValue>(m_properties->getPropertyCSSValue(CSSPropertyName).get()))
+    if (RefPtr name = dynamicDowncast<CSSStringValue>(m_properties->getPropertyCSSValue(CSSPropertyID::Name).get()))
         m_name = AtomString { name->string().value };
 
-    m_format = toEnvironmentMapFormat(m_properties->getPropertyCSSValue(CSSPropertyFormat).get());
+    m_format = toEnvironmentMapFormat(m_properties->getPropertyCSSValue(CSSPropertyID::Format).get());
 
-    if (RefPtr src = dynamicDowncast<CSSURLValue>(m_properties->getPropertyCSSValue(CSSPropertySrc).get()))
+    if (RefPtr src = dynamicDowncast<CSSURLValue>(m_properties->getPropertyCSSValue(CSSPropertyID::Src).get()))
         m_src = src->url();
 }
 
@@ -100,7 +100,7 @@ String CSSEnvironmentMapRule::format() const
 
     switch (*format) {
     case EnvironmentMapFormat::Equirectangular:
-        return nameString(CSSValueEquirectangular);
+        return nameString(CSSValueID::Equirectangular);
     }
 
     RELEASE_ASSERT_NOT_REACHED();

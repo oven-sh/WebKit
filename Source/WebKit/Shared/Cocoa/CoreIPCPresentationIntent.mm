@@ -31,6 +31,7 @@
 #import <Foundation/Foundation.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/TZoneMallocInlines.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 namespace WebKit {
 
@@ -54,7 +55,8 @@ CoreIPCPresentationIntent::CoreIPCPresentationIntent(NSPresentationIntent *inten
         m_languageHint = { intent.languageHint };
         break;
     case NSPresentationIntentKindTable:
-        for (NSNumber *alignment in intent.columnAlignments)
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSNumber *alignment in intent.columnAlignments)
             m_columnAlignments.append(alignment.unsignedIntegerValue);
         m_columnCount = intent.columnCount;
         break;
@@ -76,7 +78,7 @@ CoreIPCPresentationIntent::CoreIPCPresentationIntent(NSPresentationIntent *inten
 
 RetainPtr<id> CoreIPCPresentationIntent::toID() const
 {
-    auto parent = (m_parentIntent ? m_parentIntent->toID(): nullptr);
+    RetainPtr parent = m_parentIntent ? checked_objc_cast<NSPresentationIntent>(m_parentIntent->toID().get()) : nullptr;
     switch (m_intentKind) {
     case NSPresentationIntentKindParagraph:
         return [NSPresentationIntent paragraphIntentWithIdentity:m_identity nestedInsideIntent:parent.get()];

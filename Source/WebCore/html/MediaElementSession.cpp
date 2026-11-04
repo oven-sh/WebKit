@@ -125,13 +125,14 @@ static String restrictionNames(MediaElementSession::BehaviorRestrictions restric
     CASE(RequirePlaybackToControlControlsManager)
     CASE(RequireUserGestureForVideoDueToLowPowerMode)
     CASE(RequireUserGestureForVideoDueToAggressiveThermalMitigation)
+    CASE(RequireUserGestureToStartAudiblePlaybackWhenHidden)
 
     return restrictionBuilder.toString();
 }
 
 #endif
 
-static bool NODELETE pageExplicitlyAllowsElementToAutoplayInline(const HTMLMediaElement& element)
+static bool LEGACY_NODELETE pageExplicitlyAllowsElementToAutoplayInline(const HTMLMediaElement& element)
 {
     auto& document = element.document();
     auto* page = document.page();
@@ -152,7 +153,7 @@ public:
         m_mediaSession->removeObserver(*this);
     }
 
-    void NODELETE ref() const final { RefCounted::ref(); }
+    void LEGACY_NODELETE ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
     void metadataChanged(const RefPtr<MediaMetadata>& metadata) final
@@ -459,7 +460,7 @@ static ASCIILiteral mediaGestureReasonString(Document::MediaGestureReason reason
 
 #endif
 
-std::expected<void, MediaPlaybackDenialExplanation> MediaElementSession::playbackStateChangePermitted(MediaPlaybackState state) const
+std::expected<void, MediaPlaybackDenialExplanation> MediaElementSession::playbackStateChangePermitted(MediaPlaybackState state, ForAutoplay forAutoplay) const
 {
     RefPtr element = m_element.get();
     auto makeUnexpectedDenial = [](MediaPlaybackDenialReason reason, const String& explanation) {
@@ -476,6 +477,9 @@ std::expected<void, MediaPlaybackDenialExplanation> MediaElementSession::playbac
 
     if (document->isMediaDocument() && !document->ownerElement())
         return { };
+
+    if (startingAudiblePlaybackWhileHiddenRequiresUserGesture(state, forAutoplay, *element, document))
+        return makeUnexpectedDenial(MediaPlaybackDenialReason::UserGestureRequired, "User gesture required to start audible playback when not visible"_s);
 
     RefPtr mainFrameDocument = document->mainFrameDocument();
 
@@ -530,7 +534,7 @@ std::expected<void, MediaPlaybackDenialExplanation> MediaElementSession::playbac
 #endif
 
 #if ENABLE(FULLSCREEN_API)
-    if (mainFrameDocument && mainFrameDocument->quirks().requiresUserGestureToPlayInFullscreen() && document->fullscreen().fullscreenElement() && state == MediaPlaybackState::Playing && element->paused()) {
+    if (mainFrameDocument && mainFrameDocument->quirks().requiresUserGestureToPlayInFullscreen() && protect(document->fullscreen())->fullscreenElement() && state == MediaPlaybackState::Playing && element->paused()) {
         auto lastPause = element->lastUserPauseTime();
         bool reboundFromRecentPause = lastPause.isFinite() && (MonotonicTime::now() - lastPause) < 500_ms;
         if (!document->processingUserGestureForMedia() || reboundFromRecentPause)
@@ -565,12 +569,18 @@ std::expected<void, MediaPlaybackDenialExplanation> MediaElementSession::playbac
 
 static bool autoplayPermittedWhileInvisible(const HTMLMediaElement& element)
 {
+#if ENABLE(MEDIA_STREAM)
+    bool isTryingToPlayLiveAudioWhileCapturing = element.hasAudio() && element.hasMediaStreamSrcObject() && protect(element.document())->isCapturing();
+#else
+    bool isTryingToPlayLiveAudioWhileCapturing = false;
+#endif
+
     // If the media element is already playing audibly, allow it to continue even when not visible as
     // pausing it would be observable by the user. Also allow elements that were previously playing
     // audibly and got interrupted by becoming invisible to resume (e.g. after unmuting), since the
     // interruption is what made them paused. However, elements that have not yet started playing
-    // should not autoplay while invisible.
-    if (element.paused() && !element.wasInterruptedForInvisibleAutoplay())
+    // should not autoplay while invisible, if not playing live stream while capturing.
+    if (!isTryingToPlayLiveAudioWhileCapturing && element.paused() && !element.wasInterruptedForInvisibleAutoplay())
         return false;
     if (element.isVideo() && !element.hasAudio())
         return false;
@@ -608,7 +618,7 @@ bool MediaElementSession::autoplayPermitted() const
         ALWAYS_LOG(LOGIDENTIFIER, "Returning FALSE because element is not visible");
         return false;
     }
-    if (renderer->view().frameView().isOffscreen()) {
+    if (protect(renderer->view().frameView())->isOffscreen()) {
         ALWAYS_LOG(LOGIDENTIFIER, "Returning FALSE because frame is offscreen");
         return false;
     }
@@ -757,7 +767,7 @@ bool MediaElementSession::canShowControlsManager(PlaybackControlsPurpose purpose
 
     RefPtr manager = sessionManager();
     bool registeredAsNowPlayingApplication = manager && manager->registeredAsNowPlayingApplication();
-    if (client().presentationType() == MediaType::Audio && purpose == PlaybackControlsPurpose::NowPlaying) {
+    if (protect(client())->presentationType() == MediaType::Audio && purpose == PlaybackControlsPurpose::NowPlaying) {
         if (!element->hasSource()
             || element->error()
             || (!isLongEnoughForMainContent() && !registeredAsNowPlayingApplication)) {
@@ -766,7 +776,7 @@ bool MediaElementSession::canShowControlsManager(PlaybackControlsPurpose purpose
         }
     }
 
-    if (client().presentationType() == MediaType::Audio && (purpose == PlaybackControlsPurpose::ControlsManager || purpose == PlaybackControlsPurpose::MediaSession)) {
+    if (protect(client())->presentationType() == MediaType::Audio && (purpose == PlaybackControlsPurpose::ControlsManager || purpose == PlaybackControlsPurpose::MediaSession)) {
         if (!hasBehaviorRestriction(RequireUserGestureToControlControlsManager) || protect(element->document())->processingUserGestureForMedia()) {
             INFO_LOG(LOGIDENTIFIER, "returning TRUE: audio element with user gesture");
             return true;
@@ -1004,19 +1014,19 @@ void MediaElementSession::setHasPlaybackTargetAvailabilityListeners(bool hasList
 #else
     UNUSED_PARAM(hasListeners);
     if (RefPtr element = m_element.get())
-        element->document().playbackTargetPickerClientStateDidChange(*this, element->mediaState());
+        protect(element->document())->playbackTargetPickerClientStateDidChange(*this, element->mediaState());
 #endif
 }
 
 void MediaElementSession::setPlaybackTarget(Ref<MediaPlaybackTarget>&& device)
 {
     m_playbackTarget = WTF::move(device);
-    client().setWirelessPlaybackTarget(*m_playbackTarget.copyRef());
+    protect(client())->setWirelessPlaybackTarget(*m_playbackTarget.copyRef());
 }
 
 void MediaElementSession::targetAvailabilityChangedTimerFired()
 {
-    client().wirelessRoutesAvailableDidChange();
+    protect(client())->wirelessRoutesAvailableDidChange();
 }
 
 void MediaElementSession::externalOutputDeviceAvailableDidChange(bool hasTargets)
@@ -1033,11 +1043,11 @@ void MediaElementSession::externalOutputDeviceAvailableDidChange(bool hasTargets
 bool MediaElementSession::isPlayingToWirelessPlaybackTarget() const
 {
 #if !PLATFORM(IOS_FAMILY)
-    if (!m_playbackTarget || !m_playbackTarget->hasActiveRoute())
+    if (!m_playbackTarget || !protect(m_playbackTarget)->hasActiveRoute())
         return false;
 #endif
 
-    return client().isPlayingToWirelessPlaybackTarget();
+    return protect(client())->isPlayingToWirelessPlaybackTarget();
 }
 
 void MediaElementSession::setShouldPlayToPlaybackTarget(bool shouldPlay)
@@ -1045,13 +1055,13 @@ void MediaElementSession::setShouldPlayToPlaybackTarget(bool shouldPlay)
     INFO_LOG(LOGIDENTIFIER, shouldPlay);
     m_shouldPlayToPlaybackTarget = shouldPlay;
     updateClientDataBuffering();
-    client().setShouldPlayToPlaybackTarget(shouldPlay);
+    protect(client())->setShouldPlayToPlaybackTarget(shouldPlay);
 }
 
 void MediaElementSession::playbackTargetPickerWasDismissed()
 {
     INFO_LOG(LOGIDENTIFIER);
-    client().playbackTargetPickerWasDismissed();
+    protect(client())->playbackTargetPickerWasDismissed();
 }
 
 void MediaElementSession::audioSessionCategoryChanged(AudioSessionCategory category, AudioSessionMode mode, RouteSharingPolicy policy)
@@ -1113,8 +1123,8 @@ bool MediaElementSession::requiresFullscreenForVideoPlayback() const
         return false;
 
     if (element->document().isMediaDocument()) {
-        const HTMLVideoElement& videoElement = downcast<const HTMLVideoElement>(*element);
-        if (element->readyState() < HTMLVideoElement::HAVE_METADATA || !videoElement.hasEverHadVideo())
+        Ref videoElement = downcast<const HTMLVideoElement>(*element);
+        if (element->readyState() < HTMLVideoElement::HAVE_METADATA || !videoElement->hasEverHadVideo())
             return false;
     }
 
@@ -1170,11 +1180,96 @@ void MediaElementSession::mediaEngineUpdated()
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     if (m_restrictions & WirelessVideoPlaybackDisabled)
         setWirelessVideoPlaybackDisabled(true);
+    CheckedRef client = this->client();
     if (m_playbackTarget)
-        client().setWirelessPlaybackTarget(*m_playbackTarget.copyRef());
-    client().setShouldPlayToPlaybackTarget(m_shouldPlayToPlaybackTarget);
+        client->setWirelessPlaybackTarget(*m_playbackTarget.copyRef());
+    client->setShouldPlayToPlaybackTarget(m_shouldPlayToPlaybackTarget);
 #endif
 
+}
+
+void MediaElementSession::setState(State state)
+{
+    auto previousState = this->state();
+
+    if (state == State::Playing)
+        m_startPlaybackWhenHiddenGranted = false;
+
+    if (previousState == State::Playing && state != State::Playing) {
+        m_mostRecentPlaybackEndedTime = MonotonicTime::now();
+        if (RefPtr element = m_element.get(); element && !element->muted() && canProduceAudio())
+            protect(element->document())->updateMostRecentAudiblePlaybackEndedTime();
+    }
+    PlatformMediaSession::setState(state);
+}
+
+bool MediaElementSession::isWithinGracePeriodForResumingPlaybackInBackground(const Document& document) const
+{
+    auto now = MonotonicTime::now();
+    auto isWithinGracePeriod = [&now, this](const Markable<MonotonicTime>& time) {
+        return time && now - *time <= m_gracePeriodForResumingPlaybackInBackground;
+    };
+    return isWithinGracePeriod(m_mostRecentPlaybackEndedTime) || isWithinGracePeriod(document.mostRecentAudiblePlaybackEndedTime());
+}
+
+void MediaElementSession::loadWillStart(bool autoplay)
+{
+    RefPtr element = m_element.get();
+    // An autoplay load started within the grace period may begin playback once enough data has loaded, however long that takes.
+    m_startPlaybackWhenHiddenGranted = element && autoplay && isWithinGracePeriodForResumingPlaybackInBackground(protect(element->document()));
+}
+
+// A gesture inherited from an earlier interaction with the document does not count.
+static bool isProcessingUserGestureForStartingPlaybackWhileHidden(const Document& document)
+{
+    switch (document.mediaUserGestureReason()) {
+    case Document::MediaGestureReason::ActiveToken:
+    case Document::MediaGestureReason::TransientActivation:
+    case Document::MediaGestureReason::MediaFinishedGrace:
+        return true;
+    case Document::MediaGestureReason::None:
+    case Document::MediaGestureReason::InheritsFromDocumentSetting:
+    case Document::MediaGestureReason::InheritedUserGesturesQuirk:
+        return false;
+    }
+    ASSERT_NOT_REACHED();
+    return false;
+}
+
+bool MediaElementSession::startingAudiblePlaybackWhileHiddenRequiresUserGesture(MediaPlaybackState state, ForAutoplay forAutoplay, const HTMLMediaElement& element, const Document& document) const
+{
+    if (!(m_restrictions & RequireUserGestureToStartAudiblePlaybackWhenHidden) || state != MediaPlaybackState::Playing)
+        return false;
+
+    // Only starting playback is restricted. Media that is playing, or whose play request was already accepted
+    // and is waiting for data, is never denied. A session restored to Playing when an interruption ends was
+    // admitted before the interruption began and may resume.
+    if (!element.paused() || this->state() == State::Playing)
+        return false;
+
+    if (!document.hidden() || isProcessingUserGestureForStartingPlaybackWhileHidden(document))
+        return false;
+
+#if ENABLE(MEDIA_STREAM)
+    if (element.hasMediaStreamSrcObject())
+        return false;
+#endif
+
+    if (element.muted() || !element.volume())
+        return false;
+
+    // Tracks are unknown until metadata is available, so the element is treated as audible until then.
+    if (element.isVideo() && element.readyState() >= HTMLMediaElement::HAVE_METADATA && !element.hasAudio())
+        return false;
+
+    if (forAutoplay == ForAutoplay::Yes && m_startPlaybackWhenHiddenGranted)
+        return false;
+
+    // Another element of this document playing audio may hand over to this one (a crossfade).
+    if (document.mediaState().contains(MediaProducerMediaState::IsPlayingAudio))
+        return false;
+
+    return !isWithinGracePeriodForResumingPlaybackInBackground(document);
 }
 
 void MediaElementSession::resetPlaybackSessionState()
@@ -1404,7 +1499,7 @@ bool MediaElementSession::allowsPlaybackControlsForAutoplayingAudio() const
 
 #if ENABLE(MEDIA_SESSION)
 #if ENABLE(MEDIA_STREAM)
-static bool NODELETE isDocumentPlayingSeveralMediaStreamsAndCapturing(Document& document)
+static bool LEGACY_NODELETE isDocumentPlayingSeveralMediaStreamsAndCapturing(Document& document)
 {
     // We restrict to capturing document for now, until we have a good way to state to the UIProcess application that audio rendering is muted from here.
     auto* page = document.page();
@@ -1647,8 +1742,9 @@ void MediaElementSession::updateMediaUsageIfChanged()
             isOutsideOfFullscreen = !element->isDescendantOf(*fullscreenElement);
     }
 #endif
-    bool isAudio = client().presentationType() == MediaType::Audio;
-    bool isVideo = client().presentationType() == MediaType::Video;
+    auto presentationType = protect(client())->presentationType();
+    bool isAudio = presentationType == MediaType::Audio;
+    bool isVideo = presentationType == MediaType::Video;
     bool processingUserGesture = document->processingUserGestureForMedia();
     bool isPlaying = element->isPlaying();
 

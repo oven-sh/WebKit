@@ -1,5 +1,7 @@
 
-FAIL corner-block-start in horizontal-tb ltr assert_not_equals: computed shorthand should not be empty got disallowed value ""
-FAIL corner-block-start in horizontal-tb rtl assert_not_equals: computed shorthand should not be empty got disallowed value ""
-FAIL corner-block-start in vertical-rl ltr assert_not_equals: computed shorthand should not be empty got disallowed value ""
+FAIL corner-block-start in horizontal-tb ltr assert_equals: border-top-left-radius expected "10px" but got "10px 20px"
+FAIL corner-block-start in horizontal-tb rtl assert_equals: border-top-right-radius expected "10px" but got "10px 20px"
+FAIL corner-block-start in vertical-rl ltr assert_equals: border-top-right-radius expected "10px" but got "10px 20px"
+FAIL corner-inline-start in horizontal-tb ltr assert_equals: border-top-left-radius expected "10px" but got "10px 20px"
+FAIL corner-inline-start in horizontal-tb rtl assert_equals: border-top-right-radius expected "10px" but got "10px 20px"
 

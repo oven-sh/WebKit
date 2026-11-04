@@ -26,8 +26,6 @@
 #include "config.h"
 #include "GraphicsContext.h"
 
-#include "BidiResolver.h"
-#include "BitmapImage.h"
 #include "DisplayList.h"
 #include "Filter.h"
 #include "FilterImage.h"
@@ -38,9 +36,11 @@
 #include "IntRect.h"
 #include "LayoutRoundedRect.h"
 #include "SystemImage.h"
-#include "TextRunIterator.h"
+#include "TextRun.h"
 #include "VideoFrame.h"
+#include <unicode/ubidi.h>
 #include <wtf/MathExtras.h>
+#include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
@@ -190,35 +190,57 @@ void GraphicsContext::drawEmphasisMarks(const FontCascade& font, const TextRun& 
     font.drawEmphasisMarks(*this, run, mark, point, from, to);
 }
 
-void GraphicsContext::drawBidiText(const FontCascade& font, const TextRun& run, const FloatPoint& point, FontCascade::CustomFontNotReadyAction customFontNotReadyAction)
+// Splits the run at its bidi level boundaries and returns the pieces in visual (left to right) order, each in its resolved direction.
+Vector<TextRun> GraphicsContext::visuallyOrderedSubruns(const TextRun& run)
 {
-    BidiResolver<TextRunIterator, SimpleBidiCharacterRun> bidiResolver;
-    bidiResolver.setStatus(BidiStatus(run.direction(), run.directionalOverride()));
-    bidiResolver.setPositionIgnoringNestedIsolates(TextRunIterator(&run, 0));
+    if (!run.length())
+        return { };
 
-    // FIXME: This ownership should be reversed. We should pass BidiRunList
-    // to BidiResolver in createBidiRunsForLine.
-    auto& bidiRuns = bidiResolver.runs();
-    bidiResolver.createBidiRunsForLine(TextRunIterator(&run, run.length()));
+    // An override forces every character into the run's direction, and Latin-1 text has no right-to-left
+    // characters (nor the bidi control characters), so neither case has anything to reorder.
+    if (run.directionalOverride() || (run.is8Bit() && run.ltr()))
+        return { run };
 
-    if (!bidiRuns.runCount())
-        return;
+    UBiDi* ubidi = ubidi_open();
+    auto closeUBiDiOnExit = makeScopeExit([&] {
+        ubidi_close(ubidi);
+    });
 
-    FloatPoint currPoint = point;
-    auto* bidiRun = bidiRuns.firstRun();
-    while (bidiRun) {
-        TextRun subrun = run.subRun(bidiRun->start(), bidiRun->stop() - bidiRun->start());
-        bool isRTL = bidiRun->level() % 2;
-        subrun.setDirection(isRTL ? TextDirection::RTL : TextDirection::LTR);
-        subrun.setDirectionalOverride(bidiRun->dirOverride(false));
-
-        auto advance = font.drawText(*this, subrun, currPoint, 0, std::nullopt, customFontNotReadyAction);
-        currPoint.move(advance);
-
-        bidiRun = bidiRun->next();
+    auto characters = run.text().upconvertedCharacters();
+    UErrorCode error = U_ZERO_ERROR;
+    ubidi_setPara(ubidi, characters, run.length(), run.ltr() ? UBIDI_LTR : UBIDI_RTL, nullptr, &error);
+    if (U_FAILURE(error)) {
+        ASSERT_NOT_REACHED();
+        return { };
     }
 
-    bidiRuns.clear();
+    auto runCount = ubidi_countRuns(ubidi, &error);
+    if (U_FAILURE(error)) {
+        ASSERT_NOT_REACHED();
+        return { };
+    }
+
+    Vector<TextRun> subruns;
+    subruns.reserveInitialCapacity(runCount);
+    for (int32_t visualIndex = 0; visualIndex < runCount; ++visualIndex) {
+        int32_t start = 0;
+        int32_t length = 0;
+        auto direction = ubidi_getVisualRun(ubidi, visualIndex, &start, &length);
+
+        auto subrun = run.subRun(start, length);
+        subrun.setDirection(direction == UBIDI_RTL ? TextDirection::RTL : TextDirection::LTR);
+        subruns.append(WTF::move(subrun));
+    }
+    return subruns;
+}
+
+void GraphicsContext::drawBidiText(const FontCascade& font, const TextRun& run, const FloatPoint& point, FontCascade::CustomFontNotReadyAction customFontNotReadyAction)
+{
+    auto currentPoint = point;
+    for (CheckedRef subrun : visuallyOrderedSubruns(run)) {
+        auto advance = font.drawText(*this, subrun, currentPoint, 0, std::nullopt, customFontNotReadyAction);
+        currentPoint.move(advance);
+    }
 }
 
 static IntSize scaledImageBufferSize(const FloatSize& size, const FloatSize& scale)
@@ -324,57 +346,19 @@ RefPtr<ImageBuffer> GraphicsContext::createAlignedImageBuffer(const FloatRect& r
     return createScaledImageBuffer(rect, scaleFactor(), colorSpace, renderingModeForCompatibleBuffer(), renderingMethod);
 }
 
+void GraphicsContext::drawNativeImage(const NativeImage& image, FloatPoint destination, ImageDrawingOptions options)
+{
+    drawNativeImage(image, FloatRect(destination, image.size()), FloatRect({ }, image.size()), options);
+}
+
+void GraphicsContext::drawNativeImage(const NativeImage& image, const FloatRect& destination, ImageDrawingOptions options)
+{
+    drawNativeImage(image, destination, FloatRect({ }, image.size()), options);
+}
+
 void GraphicsContext::drawSystemImage(SystemImage& systemImage, const FloatRect& destinationRect)
 {
     systemImage.draw(*this, destinationRect);
-}
-
-ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatPoint& destination, ImagePaintingOptions imagePaintingOptions)
-{
-    return drawImage(image, FloatRect(destination, image.size()), FloatRect(FloatPoint(), image.size()), imagePaintingOptions);
-}
-
-ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatRect& destination, ImagePaintingOptions imagePaintingOptions)
-{
-    FloatRect srcRect(FloatPoint(), image.size(imagePaintingOptions.orientation()));
-    return drawImage(image, destination, srcRect, imagePaintingOptions);
-}
-
-ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options)
-{
-    return image.draw(*this, destination, source, options);
-}
-
-ImageDrawResult GraphicsContext::drawBitmapImage(BitmapImage& image, const FloatPoint& destination, ImagePaintingOptions imagePaintingOptions)
-{
-    return drawBitmapImage(image, FloatRect(destination, image.size()), FloatRect(FloatPoint(), image.size()), imagePaintingOptions);
-}
-
-ImageDrawResult GraphicsContext::drawBitmapImage(BitmapImage& image, const FloatRect& destination, ImagePaintingOptions imagePaintingOptions)
-{
-    FloatRect source(FloatPoint(), image.size(imagePaintingOptions.orientation()));
-    return drawBitmapImage(image, destination, source, imagePaintingOptions);
-}
-
-ImageDrawResult GraphicsContext::drawBitmapImage(BitmapImage& image, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions imagePaintingOptions)
-{
-    return image.draw(*this, destination, source, imagePaintingOptions);
-}
-
-ImageDrawResult GraphicsContext::drawTiledImage(Image& image, const FloatRect& destination, const FloatPoint& source, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions options)
-{
-    return image.drawTiled(*this, destination, source, tileSize, spacing, options);
-}
-
-ImageDrawResult GraphicsContext::drawTiledImage(Image& image, const FloatRect& destination, const FloatRect& source, const FloatSize& tileScaleFactor,
-    Image::TileRule hRule, Image::TileRule vRule, ImagePaintingOptions options)
-{
-    if (hRule == Image::StretchTile && vRule == Image::StretchTile) {
-        // Just do a scale.
-        return drawImage(image, destination, source, options);
-    }
-
-    return image.drawTiled(*this, destination, source, tileScaleFactor, hRule, vRule, { options.compositeOperator(), options.interpolationQuality() });
 }
 
 RefPtr<NativeImage> GraphicsContext::nativeImageForDrawing(ImageBuffer& imageBuffer)
@@ -384,17 +368,17 @@ RefPtr<NativeImage> GraphicsContext::nativeImageForDrawing(ImageBuffer& imageBuf
     return imageBuffer.createNativeImageReference();
 }
 
-void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatPoint& destination, ImagePaintingOptions imagePaintingOptions)
+void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatPoint& destination, ImageDrawingOptions imageDrawingOptions)
 {
-    drawImageBuffer(image, FloatRect(destination, image.logicalSize()), FloatRect({ }, image.logicalSize()), imagePaintingOptions);
+    drawImageBuffer(image, FloatRect(destination, image.logicalSize()), FloatRect({ }, image.logicalSize()), imageDrawingOptions);
 }
 
-void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, ImagePaintingOptions imagePaintingOptions)
+void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, ImageDrawingOptions imageDrawingOptions)
 {
-    drawImageBuffer(image, destination, FloatRect({ }, image.logicalSize()), imagePaintingOptions);
+    drawImageBuffer(image, destination, FloatRect({ }, image.logicalSize()), imageDrawingOptions);
 }
 
-void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options)
+void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options)
 {
     FloatRect sourceScaled = source;
     sourceScaled.scale(image.resolutionScale());
@@ -402,23 +386,23 @@ void GraphicsContext::drawImageBuffer(ImageBuffer& image, const FloatRect& desti
         drawNativeImage(*nativeImage, destination, sourceScaled, options);
 }
 
-void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatPoint& destination, ImagePaintingOptions imagePaintingOptions)
+void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatPoint& destination, ImageDrawingOptions imageDrawingOptions)
 {
     if (!image)
         return;
     auto imageLogicalSize = image->logicalSize();
-    drawConsumingImageBuffer(WTF::move(image), FloatRect(destination, imageLogicalSize), FloatRect({ }, imageLogicalSize), imagePaintingOptions);
+    drawConsumingImageBuffer(WTF::move(image), FloatRect(destination, imageLogicalSize), FloatRect({ }, imageLogicalSize), imageDrawingOptions);
 }
 
-void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatRect& destination, ImagePaintingOptions imagePaintingOptions)
+void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatRect& destination, ImageDrawingOptions imageDrawingOptions)
 {
     if (!image)
         return;
     auto imageLogicalSize = image->logicalSize();
-    drawConsumingImageBuffer(WTF::move(image), destination, FloatRect({ }, imageLogicalSize), imagePaintingOptions);
+    drawConsumingImageBuffer(WTF::move(image), destination, FloatRect({ }, imageLogicalSize), imageDrawingOptions);
 }
 
-void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options)
+void GraphicsContext::drawConsumingImageBuffer(RefPtr<ImageBuffer> image, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options)
 {
     if (!image)
         return;
@@ -444,7 +428,7 @@ void GraphicsContext::drawFilteredImageBuffer(ImageBuffer* sourceImage, const Fl
     scale(filter.filterScale());
 }
 
-void GraphicsContext::drawPattern(ImageBuffer& image, const FloatRect& destRect, const FloatRect& source, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void GraphicsContext::drawPattern(ImageBuffer& image, const FloatRect& destRect, const FloatRect& source, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
 {
     FloatRect scaledSource = source;
     scaledSource.scale(image.resolutionScale());
@@ -458,7 +442,7 @@ void GraphicsContext::drawControlPart(ControlPart& part, const FloatRoundedRect&
 }
 
 #if ENABLE(VIDEO)
-void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImagePaintingOptions options)
+void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImageDrawingOptions options)
 {
     RefPtr image = frame.copyNativeImage();
     if (!image)

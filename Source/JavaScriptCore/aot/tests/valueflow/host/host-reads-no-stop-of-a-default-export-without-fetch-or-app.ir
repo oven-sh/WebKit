@@ -1,0 +1,27 @@
+# class Config { get stop() { .. } }    export default new Config()
+# The host asks for `fetch` and `app` first. Where it finds neither, it is done, and the getter does not run.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="default" variable=g0}]
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}]
+layout L0 kind=Instance name="Config" constructor=f1
+variable g0 name="default" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 methodKind=Getter key="stop"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    PutModuleVariable v5 variable=g0
+    Return
+}
+function f1 name="Config" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="stop" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}

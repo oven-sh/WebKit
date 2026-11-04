@@ -51,7 +51,7 @@ public:
     void reset();
 
     size_t impulseResponseLength() const { return m_impulseResponseLength; }
-    size_t NODELETE latencyFrames() const;
+    size_t LEGACY_NODELETE latencyFrames() const;
 
 private:
     void initialize(AudioBus& impulseResponseBuffer, size_t renderSliceSize, size_t maxFFTSize, bool useBackgroundThreads, float scale);
@@ -64,7 +64,7 @@ private:
     Vector<std::unique_ptr<ReverbConvolver>> m_convolvers;
 
     // For "True" stereo processing
-    RefPtr<AudioBus> m_tempBuffer;
+    const RefPtr<AudioBus> m_tempBuffer;
 };
 
 } // namespace WebCore

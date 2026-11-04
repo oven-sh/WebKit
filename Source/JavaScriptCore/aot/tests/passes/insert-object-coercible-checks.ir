@@ -1,0 +1,232 @@
+# The null check of an access is an operation, and every use it dominates reads its result
+# FORM: Prepared optimizing
+# STATISTIC: InsertObjectCoercibleChecksChanges = 16
+# RUN: pass InsertObjectCoercibleChecks
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Pixel" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="allocate" parameters=[{type=number}] results=[{type=L0}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+
+function f1 name="read" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x" receivers=[L0] @7
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK: b0(v0: undefined|L0):
+# CHECK-NEXT: [[C1]]: L0 = RequireObjectCoercible v0 name="x" @7
+# CHECK-NEXT: v1:{{*}}= PropGet [[C1]] key="x"{{*}}@7
+# CHECK-NEXT: Return v1
+
+function f2 name="dominatedRead" parameters=[{type=undefined|L0}, {type=boolean}] results=[{type=anything}] {
+    v2 = PropGet v0 key="x" receivers=[L0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="x" receivers=[L0]
+    Return v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f2
+# CHECK: [[C2]]: L0 = RequireObjectCoercible v0 name="x"
+# CHECK-NEXT: v2:{{*}}= PropGet [[C2]] key="x"
+# CHECK-NOT: = RequireObjectCoercible
+# CHECK: v3:{{*}}= PropGet [[C2]] key="x"
+
+function f3 name="store" parameters=[{type=undefined|L0}, {type=number}] results=[{type=undefined}] {
+    PropSet v0, v1 key="x" receivers=[L0]
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK: [[C3]]: L0 = RequireObjectCoercible v0 nullishAccess=Write name="x"
+# CHECK-NEXT: PropSet [[C3]], v1 key="x"
+
+function f4 name="iteration" parameters=[{type=null|Array<number>}] results=[{type=undefined}] {
+    v1 = IteratorOpen v0
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK: [[C4]]: Array<number> = RequireObjectCoercible v0 nullishAccess=Iterate
+# CHECK-NOT: name=
+# CHECK: v1: iteratorstate = IteratorOpen [[C4]]
+
+function f5 name="methodOfNumber" parameters=[{type=undefined|number}] results=[{type=anything}] {
+    v1 = PropGet v0 key="toFixed"
+    v2 = Call v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f5
+# CHECK: [[C5]]: number = RequireObjectCoercible v0 name="toFixed"
+# CHECK-NEXT: v1:{{*}}= PropGet [[C5]] key="toFixed"
+# CHECK-NEXT: v2:{{*}}= Call v1, [[C5]]
+
+function f6 name="elementWithNumberKey" parameters=[{type=null|Array<number>}, {type=int}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f6
+# CHECK: [[C6]]: Array<number> = RequireObjectCoercible v0
+# CHECK-NOT: name=
+# CHECK: v2:{{*}}= ElemGet [[C6]], v1
+
+function f7 name="edgeArgument" parameters=[{type=undefined|L0}] results=[{type=undefined|L0}] {
+    v1 = PropGet v0 key="x" receivers=[L0]
+    Jump -> next b1(v0)
+  b1(v2):
+    Return v2
+}
+# CHECK-LABEL: function f7
+# CHECK: [[C7]]: L0 = RequireObjectCoercible v0 name="x"
+# CHECK: Jump -> next b1([[C7]])
+# CHECK-NEXT: b1(v2: L0):
+
+function f8 name="returned" parameters=[{type=undefined|L0}] results=[{type=undefined|L0}] {
+    v1 = PropGet v0 key="x" receivers=[L0]
+    Return v0
+}
+# CHECK-LABEL: function f8
+# CHECK: [[C8]]: L0 = RequireObjectCoercible v0 name="x"
+# CHECK: Return [[C8]]
+
+function f9 name="expected" parameters=[{type=undefined|L0|L1}] results=[{type=anything}] {
+  b0(v0: undefined|L0|L1 ~ L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f9
+# CHECK: [[C9]]: L0|L1 ~ L0 = RequireObjectCoercible v0 name="x"
+
+function f10 name="underHandler" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    v1 = PropGet v0 key="x" receivers=[L0]
+    Jump -> next b2()
+  b2():
+    Return v1
+  b3() role=CatchHandler:
+    v2 = CatchValue
+    Return v0
+}
+# CHECK-LABEL: function f10
+# CHECK: b1() handler=b3():
+# CHECK-NEXT: [[C10]]: L0 = RequireObjectCoercible v0 name="x"
+# CHECK-NEXT: = PropGet [[C10]] key="x"
+# CHECK: = CatchValue
+# CHECK-NEXT: Return v0
+
+function f11 name="siblingBranches" parameters=[{type=undefined|L0}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = PropGet v0 key="x" receivers=[L0]
+    Return v2
+  b2():
+    v3 = PropGet v0 key="x" receivers=[L0]
+    Return v3
+}
+# CHECK-LABEL: function f11
+# CHECK: [[C11A]]: L0 = RequireObjectCoercible v0 name="x"
+# CHECK-NEXT: v2:{{*}}= PropGet [[C11A]] key="x"
+# CHECK: [[C11B]]: L0 = RequireObjectCoercible v0 name="x"
+# CHECK-NEXT: v3:{{*}}= PropGet [[C11B]] key="x"
+
+function f12 name="afterMerge" parameters=[{type=undefined|L0}, {type=boolean}] results=[{type=undefined|L0}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = PropGet v0 key="x" receivers=[L0]
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    Return v0
+}
+# CHECK-LABEL: function f12
+# CHECK: [[C12]]: L0 = RequireObjectCoercible v0 name="x"
+# CHECK: b3():
+# CHECK-NEXT: Return v0
+
+function f13 name="receiversWithAndWithoutAnyObject" parameters=[{type=anything}, {type=null|object}, {type=null|number|string}] results=[{type=undefined}] {
+    v3 = PropGet v0 key="x"
+    v4 = PropGet v1 key="x"
+    v5 = PropGet v2 key="x"
+    Return
+}
+# CHECK-LABEL: function f13
+# CHECK: v3:{{*}}= PropGet v0 key="x"
+# CHECK-NEXT: v4:{{*}}= PropGet v1 key="x"
+# CHECK-NEXT: [[C13]]: number|string = RequireObjectCoercible v2 name="x"
+# CHECK-NEXT: v5:{{*}}= PropGet [[C13]] key="x"
+
+function f14 name="keyMayBeObject" parameters=[{type=null|Array<number>}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f14
+# CHECK-NOT: = RequireObjectCoercible
+
+function f15 name="has" parameters=[{type=undefined|L0}] results=[{type=boolean}] {
+    v1 = PropHas v0 key="x" receivers=[L0]
+    Return v1
+}
+# CHECK-LABEL: function f15
+# CHECK-NOT: = RequireObjectCoercible
+
+function f16 name="notNullish" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x" receivers=[L0]
+    Return v1
+}
+# CHECK-LABEL: function f16
+# CHECK-NOT: = RequireObjectCoercible
+
+function f17 name="guardBelowCheck" parameters=[{type=undefined|string|L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x" receivers=[L0]
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: function f17
+# CHECK: [[C18]]: string|L0 = RequireObjectCoercible v0 name="x"
+# CHECK-NEXT: v1:{{*}}= PropGet [[C18]] key="x"
+# CHECK-NEXT: v2: boolean = TypeTest [[C18]] testedType=string
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v3: string):
+
+function f18 name="guardAboveCheck" parameters=[{type=undefined|string|L0}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=string
+    v2 = PropGet v0 key="x" receivers=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Return v3
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f18
+# CHECK: v1: boolean = TypeTest v0 testedType=string
+# CHECK-NEXT: [[C19]]: string|L0 = RequireObjectCoercible v0 name="x"
+# CHECK-NEXT: v2:{{*}}= PropGet [[C19]] key="x"
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v3: string):
+# CHECK: Return [[C19]]
+
+function f19 name="storeUnderHandler" parameters=[{type=undefined|L0}, {type=number}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    PropSet v0, v1 key="x" receivers=[L0]
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# CHECK-LABEL: function f19
+# CHECK: b1() handler=b3():
+# CHECK-NEXT: [[C20]]: L0 = RequireObjectCoercible v0 nullishAccess=Write name="x"
+# CHECK-NEXT: PropSet [[C20]], v1 key="x"

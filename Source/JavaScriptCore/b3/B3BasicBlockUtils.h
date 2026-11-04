@@ -27,7 +27,9 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3Limits.h"
 #include <wtf/GraphNodeWorklist.h>
+#include <wtf/HashMap.h>
 #include <wtf/IndexSet.h>
 #include <wtf/Vector.h>
 
@@ -71,6 +73,74 @@ bool replacePredecessor(BasicBlock* block, BasicBlock* from, BasicBlock* to)
 }
 
 template<typename BasicBlock>
+class LargePredecessorLists {
+public:
+    bool add(BasicBlock* block, BasicBlock* predecessor)
+    {
+        PredecessorIndices* indices = tryGetIndices(block);
+        if (!indices)
+            return addPredecessor(block, predecessor);
+        auto& predecessors = block->predecessors();
+        if (!indices->add(predecessor, predecessors.size()).isNewEntry)
+            return false;
+        predecessors.append(predecessor);
+        return true;
+    }
+
+    bool remove(BasicBlock* block, BasicBlock* predecessor)
+    {
+        PredecessorIndices* indices = tryGetIndices(block);
+        if (!indices)
+            return removePredecessor(block, predecessor);
+        auto found = indices->find(predecessor);
+        if (found == indices->end())
+            return false;
+        unsigned index = found->value;
+        indices->remove(found);
+        auto& predecessors = block->predecessors();
+        BasicBlock* last = predecessors.takeLast();
+        if (index < predecessors.size()) {
+            predecessors[index] = last;
+            indices->set(last, index);
+        }
+        return true;
+    }
+
+    bool replace(BasicBlock* block, BasicBlock* from, BasicBlock* to)
+    {
+        bool changed = remove(block, from);
+        changed |= add(block, to);
+        return changed;
+    }
+
+private:
+    using PredecessorIndices = UncheckedKeyHashMap<BasicBlock*, unsigned>;
+    struct IndexedList {
+        PredecessorIndices indices;
+        bool hasDuplicatePredecessor { false };
+    };
+
+    PredecessorIndices* tryGetIndices(BasicBlock* block)
+    {
+        bool isSmall = block->numPredecessors() < Limits::minPredecessorsForIndexedList;
+        if (isSmall && m_lists.isEmpty())
+            return nullptr;
+        auto found = m_lists.find(block);
+        if (found == m_lists.end()) {
+            if (isSmall)
+                return nullptr;
+            found = m_lists.add(block, IndexedList { }).iterator;
+            auto& predecessors = block->predecessors();
+            for (unsigned i = 0; i < predecessors.size(); ++i)
+                found->value.hasDuplicatePredecessor |= !found->value.indices.add(predecessors[i], i).isNewEntry;
+        }
+        return found->value.hasDuplicatePredecessor ? nullptr : &found->value.indices;
+    }
+
+    UncheckedKeyHashMap<BasicBlock*, IndexedList> m_lists;
+};
+
+template<typename BasicBlock>
 void updatePredecessorsAfter(BasicBlock* root)
 {
     Vector<BasicBlock*, 16> worklist;
@@ -93,11 +163,34 @@ void clearPredecessors(Vector<std::unique_ptr<BasicBlock>>& blocks)
     }
 }
 
+template<typename BasicBlock, typename Functor>
+void recomputePredecessorsFromRoots(Vector<std::unique_ptr<BasicBlock>>& blocks, const Functor& forEachRoot)
+{
+    clearPredecessors(blocks);
+    Vector<uint8_t, 256> isDone(FillWith { }, blocks.size(), static_cast<uint8_t>(0));
+    Vector<BasicBlock*, 16> worklist;
+    forEachRoot([&](BasicBlock* root) {
+        worklist.append(root);
+        while (!worklist.isEmpty()) {
+            BasicBlock* block = worklist.takeLast();
+            if (std::exchange(isDone[block->index()], 1))
+                continue;
+            for (BasicBlock* successor : block->successorBlocks()) {
+                auto& predecessors = successor->predecessors();
+                if (!predecessors.isEmpty() && predecessors.last() == block)
+                    continue;
+                predecessors.append(block);
+                if (!isDone[successor->index()])
+                    worklist.append(successor);
+            }
+        }
+    });
+}
+
 template<typename BasicBlock>
 void recomputePredecessors(Vector<std::unique_ptr<BasicBlock>>& blocks)
 {
-    clearPredecessors(blocks);
-    updatePredecessorsAfter(blocks[0].get());
+    recomputePredecessorsFromRoots(blocks, [&](auto&& visit) { visit(blocks[0].get()); });
 }
 
 template<typename BasicBlock>

@@ -1,0 +1,79 @@
+# Objects, arrays, regular expressions, template objects, errors and arguments objects pass the back-end checks in fast code
+# RUN: compile
+# OPTIONS: heat=everything-is-hot check=validate-back-end only-passes=EstimateHeat
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1 kind=Environment fields=[{key="count" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = NewClosure function=f7
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="register" [isFreeName]
+    v9 = Call v8, -, v0, v1, v2, v3, v4, v5, v6
+    Return v9
+}
+function f1 name="objects" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = FinishObject v1
+    v3 = NewObject layout=L0
+    v4 = FinishObject v3
+    v5 = NewObject v2, v0 layout=L0 fields=[1]
+    v6 = FinishObject v5
+    v7 = NewArray v2, v4, v6 contents=anything
+    Return v7
+}
+function f2 name="environments" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure v1 function=f8
+    Return v2
+}
+function f3 name="arrays" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0, v0 contents=anything holes=[1]
+    v2 = NewArray contents=number
+    AppendElement v1, v0
+    AppendHole v1
+    AppendElement v1, v2
+    Return v1
+}
+function f4 name="regularExpressions" results=[{type=anything}] {
+    v0 = NewRegExp pattern="a+" regExpFlags=[HasIndices, Global, IgnoreCase, Multiline, DotAll, Unicode, Sticky]
+    v1 = NewRegExp pattern="b"
+    v2 = NewArray v0, v1 contents=anything
+    Return v2
+}
+function f5 name="templateObject" results=[{type=anything}] {
+    v0 = NewTemplateObject templateStrings=[{cooked="c" raw="c"}, {raw="\\u"}]
+    Return v0
+}
+function f6 name="errors" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewRuntimeError runtimeError=ConstantAssignment name="k"
+    v2 = NewRuntimeError runtimeError=NotDestructurable
+    v3 = NewSuppressedError v1, v0
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+}
+function f7 name="argumentsObjects" flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: int[0, 4294967295], v2: anything, v3: Array):
+    v4 = CreateUnmappedArguments v1, v3, v2
+    v5 = CreateUnmappedArguments v1, v3
+    v6 = CreateMappedArguments v0, v1, v3, v2
+    v7 = CreateMappedArguments v0, v1, v3
+    v8 = GetMappedArgument v6
+    SetMappedArgument v6, v8
+    v10 = NewArray v4, v5, v6, v7 contents=anything
+    Return v10
+}
+function f8 name="readsEnvironment" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    Return v1
+}

@@ -42,7 +42,7 @@ namespace Style {
 class PropertyCascade {
     WTF_MAKE_TZONE_ALLOCATED(PropertyCascade);
 public:
-    using PropertyBitSet = WTF::BitSet<lastLowPriorityProperty + 1>;
+    using PropertyBitSet = WTF::BitSet<std::to_underlying(lastLowPriorityProperty) + 1>;
 
     enum class AnimationSource : uint8_t {
         CSSAnimation,
@@ -106,12 +106,12 @@ public:
 
     bool hasCustomProperty(const AtomString&) const;
     const Property& customProperty(const AtomString&) const LIFETIME_BOUND;
-    const Property& functionResultProperty() const LIFETIME_BOUND;
+    const Property& LEGACY_NODELETE functionResultProperty() const LIFETIME_BOUND;
 
     std::span<const CSSPropertyID> logicalGroupPropertyIDs() const LIFETIME_BOUND;
     const OrderedHashMap<AtomString, Property>& customProperties() const LIFETIME_BOUND { return m_customProperties; }
 
-    ValueOrReference<HashSet<AnimatableCSSProperty>> overriddenAnimatedProperties() const;
+    ValueOrReference<HashSet<AnimatableCSSProperty>> LEGACY_NODELETE overriddenAnimatedProperties() const;
 
     const MatchResult& matchResult() const LIFETIME_BOUND { return m_matchResult; }
 
@@ -122,6 +122,7 @@ public:
 
 private:
     void buildCascade();
+    static IncludedProperties rollbackProperties(const PropertyCascade& parent);
     bool addNormalMatches(Origin);
     void addImportantMatches(Origin);
     bool addMatch(const MatchedProperties&, Origin, IsImportant);
@@ -129,12 +130,12 @@ private:
     void addPositionTryFallbackProperties();
 
     void set(CSSPropertyID, CSSValue&, const MatchedProperties&, Origin);
-    void setLogicalGroupProperty(CSSPropertyID, CSSValue&, const MatchedProperties&, Origin);
-    static void NODELETE setPropertyInternal(Property&, CSSPropertyID, CSSValue&, const MatchedProperties&, Origin);
+    void LEGACY_NODELETE setLogicalGroupProperty(CSSPropertyID, CSSValue&, const MatchedProperties&, Origin);
+    static void LEGACY_NODELETE setPropertyInternal(Property&, CSSPropertyID, CSSValue&, const MatchedProperties&, Origin);
     void setDelayingForRuleRollback(CSSPropertyID, CSSValue&, const MatchedProperties&, Origin);
 
-    bool NODELETE hasProperty(CSSPropertyID, const CSSValue&);
-    bool NODELETE mayOverrideExistingProperty(CSSPropertyID, const CSSValue&);
+    bool LEGACY_NODELETE hasProperty(CSSPropertyID, const CSSValue&);
+    bool LEGACY_NODELETE mayOverrideExistingProperty(CSSPropertyID, const CSSValue&);
 
     unsigned logicalGroupPropertyIndex(CSSPropertyID) const;
     void setLogicalGroupPropertyIndex(CSSPropertyID, unsigned);
@@ -167,7 +168,7 @@ private:
     HashMap<std::pair<unsigned, AtomString>, Deque<DelayedRollbackProperty>> m_delayedRollbackProperties;
 
     // The CSSPropertyID enum is sorted like this:
-    // 1. CSSPropertyInvalid and CSSPropertyCustom.
+    // 1. CSSPropertyID::Invalid and CSSPropertyID::Custom.
     // 2. Normal longhand properties (high priority ones followed by low priority ones).
     // 3. Longhand properties in a logical property group.
     // 4. Shorthand properties.
@@ -175,10 +176,10 @@ private:
     // 'm_properties' is used for both normal and logical longhands, so it has size 'lastLogicalGroupProperty + 1'.
     // It could actually be 2 units smaller, but then we would have to subtract 'firstCSSProperty', which may not be worth it.
     // 'm_propertyIsPresent' is not used for logical group properties, so we only need to cover up to the last low priority one.
-    std::array<Property, lastLogicalGroupProperty + 1> m_properties;
+    std::array<Property, std::to_underlying(lastLogicalGroupProperty) + 1> m_properties;
     PropertyBitSet m_propertyIsPresent;
 
-    static constexpr unsigned logicalGroupPropertyCount = lastLogicalGroupProperty - firstLogicalGroupProperty + 1;
+    static constexpr unsigned logicalGroupPropertyCount = std::to_underlying(lastLogicalGroupProperty) - std::to_underlying(firstLogicalGroupProperty) + 1;
     std::array<unsigned, logicalGroupPropertyCount> m_logicalGroupPropertyIndices { };
     unsigned m_lastIndexForLogicalGroup { 0 };
     std::array<CSSPropertyID, logicalGroupPropertyCount> m_logicalGroupPropertyIDs { };
@@ -192,27 +193,27 @@ private:
 inline bool PropertyCascade::hasNormalProperty(CSSPropertyID id) const
 {
     ASSERT(id < firstLogicalGroupProperty);
-    return m_propertyIsPresent.get(id);
+    return m_propertyIsPresent.get(std::to_underlying(id));
 }
 
 inline const PropertyCascade::Property& PropertyCascade::normalProperty(CSSPropertyID id) const
 {
     ASSERT(hasNormalProperty(id));
-    return m_properties[id];
+    return m_properties[std::to_underlying(id)];
 }
 
 inline unsigned PropertyCascade::logicalGroupPropertyIndex(CSSPropertyID id) const
 {
     ASSERT(id >= firstLogicalGroupProperty);
     ASSERT(id <= lastLogicalGroupProperty);
-    return m_logicalGroupPropertyIndices[id - firstLogicalGroupProperty];
+    return m_logicalGroupPropertyIndices[std::to_underlying(id) - std::to_underlying(firstLogicalGroupProperty)];
 }
 
 inline void PropertyCascade::setLogicalGroupPropertyIndex(CSSPropertyID id, unsigned index)
 {
     ASSERT(id >= firstLogicalGroupProperty);
     ASSERT(id <= lastLogicalGroupProperty);
-    m_logicalGroupPropertyIndices[id - firstLogicalGroupProperty] = index;
+    m_logicalGroupPropertyIndices[std::to_underlying(id) - std::to_underlying(firstLogicalGroupProperty)] = index;
 }
 
 inline bool PropertyCascade::hasLogicalGroupProperty(CSSPropertyID id) const
@@ -223,7 +224,7 @@ inline bool PropertyCascade::hasLogicalGroupProperty(CSSPropertyID id) const
 inline const PropertyCascade::Property& PropertyCascade::logicalGroupProperty(CSSPropertyID id) const
 {
     ASSERT(hasLogicalGroupProperty(id));
-    return m_properties[id];
+    return m_properties[std::to_underlying(id)];
 }
 
 inline std::span<const CSSPropertyID> PropertyCascade::logicalGroupPropertyIDs() const

@@ -98,7 +98,19 @@ void MediaSourcePrivateAVFObjC::setPlayer(MediaPlayerPrivateInterface* player)
     m_renderer = renderer.get();
     ensureOnDispatcher([protectedThis = Ref { *this }, renderer = WTF::move(renderer)] {
         for (Ref sourceBuffer : protectedThis->sourceBuffers())
-            downcast<SourceBufferPrivateAVFObjC>(sourceBuffer)->setAudioVideoRenderer(renderer);
+            downcast<SourceBufferPrivateAVFObjC>(sourceBuffer).setAudioVideoRenderer(renderer);
+    });
+}
+
+void MediaSourcePrivateAVFObjC::willShutdown()
+{
+    ALWAYS_LOG(LOGIDENTIFIER);
+
+    RefPtr renderer = m_renderer.get();
+    if (!renderer)
+        return;
+    ensureOnDispatcher([renderer = renderer.releaseNonNull()] {
+        renderer->shutdown();
     });
 }
 
@@ -228,7 +240,7 @@ bool MediaSourcePrivateAVFObjC::needsVideoLayer() const
 {
     assertIsMainThread();
     return std::ranges::any_of(sourceBuffers(), [](auto& sourceBuffer) {
-        return downcast<SourceBufferPrivateAVFObjC>(sourceBuffer)->needsVideoLayer();
+        return downcast<SourceBufferPrivateAVFObjC>(sourceBuffer).needsVideoLayer();
     });
 }
 

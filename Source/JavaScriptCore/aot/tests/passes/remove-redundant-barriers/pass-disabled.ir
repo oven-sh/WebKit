@@ -1,0 +1,23 @@
+# With the pass disabled every store keeps its barrier
+# FORM: Selected
+# OPTIONS: disable=pass:RemoveRedundantBarriers
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 0
+# STATISTIC: BarriersCoveredLater = 0
+# CHECK: outcome: Unchanged
+# CHECK: PutEnvironmentField v2, v1 layout=L0
+# CHECK-NEXT: PutEnvironmentField v0, v1 layout=L0
+# CHECK-NEXT: PutEnvironmentField v0, v1 layout=L0 field=1
+# CHECK-NOT: ownerCannotBeMarked
+# CHECK-NOT: laterBarrierCovers
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="pass-disabled" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: anything):
+    v2 = NewObject layout=L0 fields=[]
+    PutEnvironmentField v2, v1 layout=L0 field=0
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    PutEnvironmentField v0, v1 layout=L0 field=1
+    Return
+}

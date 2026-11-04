@@ -53,7 +53,7 @@ public:
     inline void resolveSlotsBeforeNodeInsertionOrRemoval();
     inline void willRemoveAllChildren();
 
-    virtual HTMLSlotElement* NODELETE findAssignedSlot(const Node&) = 0;
+    virtual HTMLSlotElement* LEGACY_NODELETE findAssignedSlot(const Node&) = 0;
     virtual const Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>>* assignedNodesForSlot(const HTMLSlotElement&, ShadowRoot&) = 0;
 
     virtual void renameSlotElement(HTMLSlotElement&, const AtomString& oldName, const AtomString& newName, ShadowRoot&) = 0;
@@ -69,6 +69,7 @@ public:
     virtual void willRemoveAssignedNode(Node&, ShadowRoot&) = 0;
     virtual void didRemoveAllChildrenOfShadowHost(ShadowRoot&) = 0;
     virtual void didMutateTextNodesOfShadowHost(ShadowRoot&) = 0;
+    virtual void didChangeSlotNamesOfShadowHostChildren(ShadowRoot&) { }
 
 protected:
     // These flags are used by NamedSlotAssignment but it's here to avoid virtual function calls in perf critical code paths.
@@ -90,7 +91,7 @@ protected:
     void didChangeSlot(const AtomString&, ShadowRoot&);
 
 private:
-    HTMLSlotElement* NODELETE findAssignedSlot(const Node&) final;
+    HTMLSlotElement* LEGACY_NODELETE findAssignedSlot(const Node&) final;
 
     void renameSlotElement(HTMLSlotElement&, const AtomString& oldName, const AtomString& newName, ShadowRoot&) final;
     void addSlotElementByName(const AtomString&, HTMLSlotElement&, ShadowRoot&) final;
@@ -125,9 +126,9 @@ private:
     enum class SlotMutationType { Insertion, Removal };
     void resolveSlotsAfterSlotMutation(ShadowRoot&, SlotMutationType, ContainerNode* oldParentOfRemovedTree = nullptr);
 
-    virtual const AtomString& NODELETE slotNameForHostChild(const Node&) const;
+    virtual const AtomString& LEGACY_NODELETE slotNameForHostChild(const Node&) const;
 
-    HTMLSlotElement* NODELETE findFirstSlotElement(Slot&);
+    HTMLSlotElement* LEGACY_NODELETE findFirstSlotElement(Slot&);
 
     void assignSlots(ShadowRoot&);
     void assignToSlot(Node& child, const AtomString& slotName);
@@ -146,7 +147,7 @@ class ManualSlotAssignment : public SlotAssignment {
 public:
     ManualSlotAssignment() = default;
 
-    HTMLSlotElement* NODELETE findAssignedSlot(const Node&) final;
+    HTMLSlotElement* LEGACY_NODELETE findAssignedSlot(const Node&) final;
 
     const Vector<WeakPtr<Node, WeakPtrImplWithEventTargetData>>* assignedNodesForSlot(const HTMLSlotElement&, ShadowRoot&) final;
     void renameSlotElement(HTMLSlotElement&, const AtomString&, const AtomString&, ShadowRoot&) final;
@@ -209,6 +210,12 @@ inline void ShadowRoot::didRemoveAllChildrenOfShadowHost()
 {
     if (m_slotAssignment) [[unlikely]]
         m_slotAssignment->didRemoveAllChildrenOfShadowHost(*this);
+}
+
+inline void ShadowRoot::didChangeSlotNamesOfShadowHostChildren()
+{
+    if (m_slotAssignment)
+        m_slotAssignment->didChangeSlotNamesOfShadowHostChildren(*this);
 }
 
 inline void ShadowRoot::didMutateTextNodesOfShadowHost()

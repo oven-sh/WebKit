@@ -1,0 +1,77 @@
+# An array of shareable leaves is a copy-on-write array, every other constant record is a read-only tree. A hole is shareable where no element is a cell: then the storage lies in the image
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: DataEncodingGroups = 10
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2.5}, Number{value=-0}]}
+data d1 root=Array{contents=null|string elements=[String{value="a"}, Null, String{value="b"}]}
+data d2 root=Array{contents=anything elements=[Undefined, Boolean{value=true}, Number{value=1}, String{value="s"}, Null]}
+data d3 root=Array{contents=number}
+data d4 root=Array{contents=number elements=[Number{value=1}, Hole, Number{value=3}]}
+data d5 root=Array{contents=anything elements=[Number{value=1}, Array{contents=number elements=[Number{value=2}]}]}
+data d6 root=Array{contents=bigint elements=[BigInt{digits="9"}]}
+data d7 root=Object{layout=L0 members=[{key="x" value=Number{value=1}}]}
+data d8 root=Array{contents=anything elements=[Number{value=1}, Object{layout=L0 members=[{key="x" value=Number{value=1}}]}]}
+data d9 root=Array{contents=string elements=[String{value="a"}, Hole, String{value="b"}]}
+
+function f0 name="numbers" results=[{type=anything}] {
+    v0 = Data data=d0
+    Return v0
+# CHECK: = Data data=d0 encoding=CopyOnWriteArray
+}
+
+function f1 name="stringsAndNull" results=[{type=anything}] {
+    v0 = Data data=d1
+    Return v0
+# CHECK: = Data data=d1 encoding=CopyOnWriteArray
+}
+
+function f2 name="everyShareableLeaf" results=[{type=anything}] {
+    v0 = Data data=d2
+    Return v0
+# CHECK: = Data data=d2 encoding=CopyOnWriteArray
+}
+
+function f3 name="emptyArray" results=[{type=anything}] {
+    v0 = Data data=d3
+    Return v0
+# CHECK: = Data data=d3 encoding=CopyOnWriteArray
+}
+
+function f4 name="hole" results=[{type=anything}] {
+    v0 = Data data=d4
+    Return v0
+# CHECK: = Data data=d4 encoding=CopyOnWriteArray
+}
+
+function f5 name="nestedArray" results=[{type=anything}] {
+    v0 = Data data=d5
+    Return v0
+# CHECK: = Data data=d5 encoding=ReadOnlyTree
+}
+
+function f6 name="bigInt" results=[{type=anything}] {
+    v0 = Data data=d6
+    Return v0
+# CHECK: = Data data=d6 encoding=ReadOnlyTree
+}
+
+function f7 name="objectRoot" results=[{type=anything}] {
+    v0 = Data data=d7
+    Return v0
+# CHECK: = Data data=d7 encoding=ReadOnlyTree
+}
+
+function f8 name="objectElement" results=[{type=anything}] {
+    v0 = Data data=d8
+    Return v0
+# CHECK: = Data data=d8 encoding=ReadOnlyTree
+}
+
+function f9 name="holeAmongStrings" results=[{type=anything}] {
+    v0 = Data data=d9
+    Return v0
+# CHECK: = Data data=d9 encoding=ReadOnlyTree
+}

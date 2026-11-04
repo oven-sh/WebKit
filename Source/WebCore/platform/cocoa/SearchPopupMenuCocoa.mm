@@ -26,6 +26,7 @@
 #import "config.h"
 #import "SearchPopupMenuCocoa.h"
 
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
 namespace WebCore {
@@ -35,7 +36,7 @@ static NSString * const itemsKey = @"items";
 static NSString * const searchesKey = @"searches";
 static NSString * const searchStringKey = @"searchString";
 
-static NSString *searchFieldRecentSearchesPlistPath(NSString *baseDirectory)
+static RetainPtr<NSString> searchFieldRecentSearchesPlistPath(NSString *baseDirectory)
 {
     return [baseDirectory stringByAppendingPathComponent:@"RecentSearches.plist"];
 }
@@ -92,7 +93,8 @@ static RetainPtr<NSDictionary> typeCheckedRecentSearchesRemovingRecentSearchesAd
         return nil;
 
     RetainPtr<NSMutableArray> keysToRemove = adoptNS([[NSMutableArray alloc] init]);
-    for (NSString *key in itemsDictionary) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *key in itemsDictionary) {
         if (![key isKindOfClass:[NSString class]])
             return nil;
 
@@ -101,7 +103,8 @@ static RetainPtr<NSDictionary> typeCheckedRecentSearchesRemovingRecentSearchesAd
             return nil;
 
         RetainPtr<NSMutableArray> entriesToRemove = adoptNS([[NSMutableArray alloc] init]);
-        for (NSDictionary *recentSearch in recentSearches.get()) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSDictionary *recentSearch in recentSearches.get()) {
             RetainPtr dateAdded = typeCheckedDateInRecentSearch(recentSearch);
             if (!dateAdded)
                 return nil;
@@ -129,11 +132,11 @@ void saveRecentSearchesToFile(const String& name, const Vector<RecentSearch>& se
 
     RetainPtr nsDirectory = directory.createNSString();
     RetainPtr<NSDictionary> recentSearchesPlist = readSearchFieldRecentSearchesPlist(nsDirectory.get());
-    RetainPtr<NSMutableDictionary> itemsDictionary = [recentSearchesPlist objectForKey:itemsKey];
+    RetainPtr itemsDictionary = dynamic_objc_cast<NSMutableDictionary>([recentSearchesPlist objectForKey:itemsKey]);
 
     // The NSMutableDictionary method we use to read the property list guarantees we get only
     // mutable containers, but it does not guarantee the file has a dictionary as expected.
-    if (![itemsDictionary isKindOfClass:[NSDictionary class]]) {
+    if (!itemsDictionary) {
         itemsDictionary = adoptNS([[NSMutableDictionary alloc] init]);
         recentSearchesPlist = adoptNS([[NSDictionary alloc] initWithObjectsAndKeys:itemsDictionary.get(), itemsKey, nil]);
     }
@@ -142,7 +145,7 @@ void saveRecentSearchesToFile(const String& name, const Vector<RecentSearch>& se
         [itemsDictionary removeObjectForKey:name.createNSString().get()];
     else {
         auto items = createNSArray(searchItems, [] (auto& item) {
-            return adoptNS([[NSDictionary alloc] initWithObjectsAndKeys:item.string.createNSString().get(), searchStringKey, toNSDateFromSystemClock(item.time), dateKey, nil]);
+            return adoptNS([[NSDictionary alloc] initWithObjectsAndKeys:item.string.createNSString().get(), searchStringKey, protect(toNSDateFromSystemClock(item.time)).get(), dateKey, nil]);
         });
         [itemsDictionary setObject:adoptNS([[NSDictionary alloc] initWithObjectsAndKeys:items.get(), searchesKey, nil]).get() forKey:name.createNSString().get()];
     }
@@ -168,7 +171,8 @@ Vector<RecentSearch> loadRecentSearchesFromFile(const String& name, const String
     if (!recentSearches)
         return searchItems;
 
-    for (NSDictionary *item in recentSearches.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSDictionary *item in recentSearches.get()) {
         RetainPtr date = typeCheckedDateInRecentSearch(item);
         if (!date)
             continue;

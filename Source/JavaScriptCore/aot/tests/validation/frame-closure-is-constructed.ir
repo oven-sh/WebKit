@@ -1,0 +1,49 @@
+# function inFrame() { function Holder() {} return new Holder() }  function onHeap() { function Holder() {} return new Holder() }  register(inFrame, onHeap)
+# Both are written as they are once the construction is resolved and the empty body is inlined: the caller reads the prototype property of new.target and allocates under it.
+# The first read of that property makes the prototype object, which lies on the heap and names the function as its `constructor`. So a function that is constructed may not lie in the frame of its creator:
+# the object that is returned would lead back into a frame that is gone. The planner of AllocateInFrames refuses such a closure, and a validating build puts no closure in a frame at all.
+# The lie: `storage=Frame` is written on the first closure by hand, behind the planner. The check of frame pointers at build time sees an operation that only inspects its operand.
+# A validating build asks, wherever a function gets properties, whether its cell lies in the stack, and ends the process.
+# The closure on the heap goes the same way in the same build, and the program runs to its end.
+# SinkAllocations and PlaceTypeTests are off so that the allocations and the reads of the property stay as they are written
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (inFrame, onHeap) => { print(typeof inFrame()); };
+# RUN(HEAP): run-in-shell globalThis.register = (inFrame, onHeap) => { print(typeof onHeap()); };
+# OPTIONS: validate disable=pass:SinkAllocations,pass:PlaceTypeTests
+# STATISTIC: ClosuresInFrames >= 1
+# CHECK: AOT validation: FunctionCellInFrameGotProperties f
+# CHECK: crashed with
+# HEAP-NOT: AOT validation
+# HEAP: object
+# HEAP-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Holder" constructor=f3 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Holder" constructor=f4 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return
+}
+function f1 name="inFrame" results=[{type=anything}] {
+    v0 = NewClosure function=f3 storage=Frame
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="onHeap" results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f3 name="Holder" thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f4 name="Holder" thisType={type=anything} results=[{type=anything}] {
+    Return
+}

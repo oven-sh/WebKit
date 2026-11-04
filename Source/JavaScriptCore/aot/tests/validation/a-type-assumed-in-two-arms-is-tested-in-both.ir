@@ -1,0 +1,32 @@
+# function twoArms(first: boolean, held) { return first ? <string>held : <string>held; }
+# function behindCall(held, callee) { const before = <{ x }>held; callee(); return <{ x }>held; }
+# Where proofs are checked at run time, the test that one arm makes says nothing about the other arm: each arm tests what it assumes.
+# And what a test of a shape has answered holds until other code runs: behind the call the shape is tested again.
+# FORM: Selected
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN: lower-to-b3 f0 f1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}]
+function f0 name="twoArms" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = AssumeType v1 provenType=string
+    Return v2
+  b2():
+    v3 = AssumeType v1 provenType=string
+    Return v3
+}
+function f1 name="behindCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = AssumeType v0 provenType=L0
+    v3 = Call v1, -
+    v4 = AssumeType v0 provenType=L0
+    Return v4
+}
+# CHECK-LABEL: name="twoArms"
+# CHECK: Branch({{*}}v2:AssumeType)
+# CHECK: Branch({{*}}v3:AssumeType)
+# CHECK-LABEL: name="behindCall"
+# CHECK: Branch({{*}}v2:AssumeType)
+# CHECK: v3:Call
+# CHECK: Branch({{*}}v4:AssumeType)

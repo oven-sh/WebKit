@@ -1,0 +1,40 @@
+# The pass runs again after inlining: the copy of an access whose receiver is a proven object of the caller is resolved, the copy on an unknown value stays by name
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat,SummarizeForInlining,InlineCalls,ResolveAccesses
+# RUN(FIRST): pipeline ResolveAccesses
+# RUN: pipeline PlanSlots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1 [isAlwaysInlined]
+    v3 = Double number=1.5
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = CallDirect v4 function=f1 [isAlwaysInlined]
+    v6 = PropGet v0 key="print" [isFreeName]
+    v7 = Call v6, -, v5
+    v8 = Call v6, -, v2
+    Return
+# FIRST: = CallDirect v1 function=f1
+# FIRST: v4: L0 = NewObject
+# FIRST-NEXT: = CallDirect v4 function=f1
+# FIRST-NOT: GetSlot
+# CHECK-NOT: CallDirect
+# CHECK: = PropGet {{*}} key="x"
+# CHECK-NOT: CallDirect
+# CHECK: : L0 = NewObject
+# CHECK-NOT: CallDirect
+# CHECK-NOT: key="x"
+# CHECK: = GetSlot {{*}} key="x" receivers=[L0] level=Proven
+# CHECK-NOT: key="x"
+# CHECK: Return
+}
+function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+# FIRST: = PropGet v0 key="x"
+}

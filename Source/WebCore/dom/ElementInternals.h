@@ -49,7 +49,7 @@ public:
     }
 
     Element* element() const { return m_element.get(); }
-    RefPtr<ShadowRoot> shadowRoot() const;
+    RefPtr<ShadowRoot> LEGACY_NODELETE shadowRoot() const;
 
     ExceptionOr<RefPtr<HTMLFormElement>> form() const;
 
@@ -81,7 +81,7 @@ private:
     {
     }
 
-    FormAssociatedCustomElement* NODELETE elementAsFormAssociatedCustom() const;
+    FormAssociatedCustomElement* LEGACY_NODELETE elementAsFormAssociatedCustom() const;
 
     WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData> m_element;
 };

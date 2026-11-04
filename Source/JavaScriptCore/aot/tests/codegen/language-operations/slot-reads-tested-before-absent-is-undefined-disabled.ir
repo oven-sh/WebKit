@@ -1,0 +1,11 @@
+# Without the comparisons that B3 folds, each read of a field that may be absent keeps the marker of `undefined` among its constants
+# FORM: Selected
+# RUN: generate-code
+# OPTIONS: heat=everything-is-hot check=validate-back-end disable=b3:FoldImpliedComparisons disable=b3:PinnedConstants
+# CHECK: f1: size={{*}} constants=1
+# CHECK: f2: size={{*}} constants=1
+# CHECK: f3: size={{*}} constants=1
+# CHECK: f4: size={{*}} constants=1
+# CHECK: f6: size={{*}} constants=1
+# CHECK: f7: size={{*}} constants=1
+# PROGRAM-OF: slot-reads-tested-before-absent-is-undefined.ir

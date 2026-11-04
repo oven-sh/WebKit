@@ -68,7 +68,7 @@ static JSC_DECLARE_HOST_FUNCTION(callIntlNumberFormat);
 static JSC_DECLARE_HOST_FUNCTION(constructIntlNumberFormat);
 
 IntlNumberFormatConstructor::IntlNumberFormatConstructor(VM& vm, Structure* structure)
-    : InternalFunction(vm, structure, callIntlNumberFormat, constructIntlNumberFormat)
+    : InternalFunction(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callIntlNumberFormat), JSC_REGISTERED_HOST_FUNCTION(constructIntlNumberFormat))
 {
 }
 

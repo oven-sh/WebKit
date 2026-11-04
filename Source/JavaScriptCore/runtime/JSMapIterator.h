@@ -83,6 +83,7 @@ public:
         JSValue key;
         JSValue value;
     };
+    template<typename StorageType = JSCell>
     ALWAYS_INLINE NextResult nextWithAdvance(VM& vm)
     {
         JSCell* sentinel = vm.orderedHashTableSentinel();
@@ -102,6 +103,13 @@ public:
             // entry before this iterator.next() is called.
             setStorage(vm, storage);
         }
+
+#if ENABLE(AOT)
+        if constexpr (std::is_same_v<StorageType, JSCell>) {
+            if (JSMap::Helper::isCompact(*storage)) [[unlikely]]
+                return nextWithAdvanceInCompactStorage(vm, storage);
+        }
+#endif
 
         JSMap::Storage& storageRef = *uncheckedDowncast<JSMap::Storage>(storage);
         auto result = JSMap::Helper::transitAndNext(vm, storageRef, entry());
@@ -134,9 +142,10 @@ public:
         }
         return true;
     }
+    template<typename StorageType = JSCell>
     bool nextKeyValue(JSGlobalObject* globalObject, JSValue& key, JSValue& value)
     {
-        auto result = nextWithAdvance(globalObject->vm());
+        auto result = nextWithAdvance<StorageType>(globalObject->vm());
         if (result.key.isEmpty())
             return false;
 
@@ -175,6 +184,22 @@ private:
     {
         internalField(Field::Storage).setWithoutWriteBarrier(sentinel);
     }
+
+#if ENABLE(AOT)
+    NEVER_INLINE NextResult nextWithAdvanceInCompactStorage(VM& vm, JSCell* storage)
+    {
+        auto result = JSMap::Helper::transitAndNext(vm, *storage, entry());
+        if (!result.storage) {
+            markClosed(vm.orderedHashTableSentinel());
+            return { };
+        }
+
+        setEntry(vm, result.entry + 1);
+        if (result.storage != storage)
+            setStorage(vm, result.storage);
+        return { result.key, result.value };
+    }
+#endif
 
     JS_EXPORT_PRIVATE void finishCreation(VM&, JSMap*, IterationKind);
     void finishCreation(VM&);

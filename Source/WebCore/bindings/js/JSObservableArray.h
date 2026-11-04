@@ -94,9 +94,9 @@ private:
     JSObservableArray(VM&, Structure*);
     void finishCreation(VM&, Ref<ObservableArray>&&);
 
-    static JSC::GCClient::IsoSubspace* NODELETE subspaceForImpl(JSC::VM&);
+    static JSC::GCClient::IsoSubspace* LEGACY_NODELETE subspaceForImpl(JSC::VM&);
 
-    RefPtr<ObservableArray> m_array;
+    const RefPtr<ObservableArray> m_array;
 };
 
 } // namespace JSC

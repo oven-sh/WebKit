@@ -27,8 +27,10 @@
 
 #pragma once
 
+#include "CSSNormalizedMixPercentages.h"
 #include "CachedImageClient.h"
 #include "CachedResourceHandle.h"
+#include "StyleCrossfade.h"
 #include "StyleGeneratedImage.h"
 #include "StylePrimitiveNumericTypes.h"
 
@@ -41,12 +43,8 @@ namespace Style {
 class CrossfadeImage final : public GeneratedImage, private CachedImageClient {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(CrossfadeImage);
 public:
-    using Progress = NumberOrPercentageResolvedToNumber<CSS::ClosedUnitRangeClampBoth, CSS::ClosedPercentageRangeClampBoth>;
-
-    static Ref<CrossfadeImage> create(RefPtr<Image> from, RefPtr<Image> to, Progress progress, bool isPrefixed)
-    {
-        return adoptRef(*new CrossfadeImage(WTF::move(from), WTF::move(to), progress, isPrefixed));
-    }
+    static Ref<CrossfadeImage> create(CrossfadeFunction&&);
+    static Ref<CrossfadeImage> create(WebkitCrossfadeFunction&&);
     virtual ~CrossfadeImage();
 
     // CachedResourceClient.
@@ -59,36 +57,40 @@ public:
     bool equals(const CrossfadeImage&) const;
     bool equalInputImages(const CrossfadeImage&) const;
 
-    static constexpr bool isFixedSize = true;
-
 private:
-    explicit CrossfadeImage(RefPtr<Image>&&, RefPtr<Image>&&, Progress, bool);
+    explicit CrossfadeImage(CrossfadeFunction&&);
+    explicit CrossfadeImage(WebkitCrossfadeFunction&&);
 
     Ref<CSSValue> computedStyleValue(const Style::ComputedStyle&) const final;
     Ref<DeprecatedCSSOMValue> computedStyleDeprecatedCSSOMValue(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&) const final;
     bool isPending() const final;
     void load(CachedResourceLoader&, const ResourceLoaderOptions&) final;
-    RefPtr<WebCore::Image> image(const RenderElement*, const FloatSize&, const GraphicsContext& destinationContext, bool isForFirstLine) const final;
+    ImageDrawResult draw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions, bool isForFirstLine) const final;
     bool currentFrameIsComplete(const RenderElement*) const final;
     bool knownToBeOpaque(const RenderElement&) const final;
-    FloatSize fixedSize(const RenderElement&) const final;
+    bool containsCurrentColor() const final;
+    bool canDrawAtSize(const RenderElement&, const FloatSize&) const final;
+    InterpolationQuality interpolationQualityForImageDraw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const void* layer, const LayoutSize&) const final;
+    NaturalDimensions naturalDimensions(const RenderElement&, const ImageSizingContext&) const final;
     void didAddClient(RenderElement&) final { }
     void didRemoveClient(RenderElement&) final { }
 
     // CachedImageClient.
     void imageChanged(WebCore::CachedImage*, const IntRect*) final;
 
-    RefPtr<Image> m_from;
-    RefPtr<Image> m_to;
-    Progress m_progress;
-    bool m_isPrefixed;
+    void drawCrossfade(GraphicsContext&, const RenderElement&, ConcreteObjectSize, bool isForFirstLine) const;
+    void normalizePercentages();
 
+    decltype(auto) withInputs(NOESCAPE auto&&) const;
+
+    Variant<CrossfadeFunction, WebkitCrossfadeFunction> m_function;
+    CSS::NormalizedMixPercentages<Vector<double, 2>> m_normalizedPercentages;
     // FIXME: Rather than caching and tracking the input image via WebCore::CachedImages, we should
     // instead use a new, Style::Image specific notification, to allow correct tracking of
     // nested images (e.g. one of the input images for a Style::CrossfadeImage is a Style::FilterImage
     // where its input image is a Style::CachedImage).
-    CachedResourceHandle<WebCore::CachedImage> m_cachedFromImage;
-    CachedResourceHandle<WebCore::CachedImage> m_cachedToImage;
+    Vector<CachedResourceHandle<WebCore::CachedImage>> m_cachedImages;
     bool m_inputImagesAreReady;
 };
 

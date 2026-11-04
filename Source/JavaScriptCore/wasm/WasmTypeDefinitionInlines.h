@@ -30,10 +30,22 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "Options.h"
 #include "WasmFormat.h"
 #include "WasmTypeDefinition.h"
 
 namespace JSC { namespace Wasm {
+
+static constexpr unsigned structPayloadOffsetPastShapeWord = sizeof(uint64_t);
+
+inline unsigned offsetOfFirstStructFieldInPayload()
+{
+#if ENABLE(AOT)
+    if (Options::runsCompiledImage()) [[unlikely]]
+        return structPayloadOffsetPastShapeWord;
+#endif
+    return 0;
+}
 
 inline TypeInformation& TypeInformation::singleton()
 {
@@ -59,11 +71,11 @@ inline RefPtr<const RTT> TypeInformation::tryGetRTT(TypeIndex typeIndex)
 // flags (hasRefFieldTypes, hasRecursiveReference) and field offsets in
 // place. External RTT refs are anchored inline in each entry's rttAnchor.
 template<typename FieldProvider>
-Ref<const RTT> TypeInformation::typeDefinitionForStructFromProvider(StructFieldCount fieldCount, FieldProvider&& provider)
+Ref<const RTT> TypeInformation::typeDefinitionForStructFromProvider(StructFieldCount fieldCount, NOESCAPE const FieldProvider& provider)
 {
     bool hasRefFieldTypes = false;
     bool hasRecursiveReference = false;
-    unsigned currentOffset = 0;
+    unsigned currentOffset = offsetOfFirstStructFieldInPayload();
     unsigned gapPosition = 0;
     unsigned gapSize = 0;
 
@@ -94,7 +106,7 @@ Ref<const RTT> TypeInformation::typeDefinitionForStructFromProvider(StructFieldC
 // then arguments. Builds the FixedVector<TypeSlot> in place from two
 // providers. External RTT refs are anchored inline in each slot.
 template<typename ReturnProvider, typename ArgProvider>
-Ref<const RTT> TypeInformation::typeDefinitionForFunctionFromProviders(FunctionArgCount retCount, ReturnProvider&& returnsProvider, FunctionArgCount argCount, ArgProvider&& argsProvider)
+Ref<const RTT> TypeInformation::typeDefinitionForFunctionFromProviders(FunctionArgCount retCount, NOESCAPE const ReturnProvider& returnsProvider, FunctionArgCount argCount, NOESCAPE const ArgProvider& argsProvider)
 {
     bool hasRecursiveReference = false;
     bool argumentsOrResultsIncludeI64 = false;

@@ -19,6 +19,9 @@
 #ifndef __UITER_H__
 #define __UITER_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file
  * \brief C API: Unicode Character Iteration

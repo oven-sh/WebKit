@@ -16,6 +16,8 @@ None
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/webrtc/META.yml
 /LayoutTests/imported/w3c/web-platform-tests/webrtc/README.md
+/LayoutTests/imported/w3c/web-platform-tests/webrtc/RTCCertificate-postMessage-to-workers-helper.js
+/LayoutTests/imported/w3c/web-platform-tests/webrtc/RTCCertificate-postMessage-to-workers.https.html
 /LayoutTests/imported/w3c/web-platform-tests/webrtc/RTCCertificate-postMessage.html
 /LayoutTests/imported/w3c/web-platform-tests/webrtc/RTCCertificate.html
 /LayoutTests/imported/w3c/web-platform-tests/webrtc/RTCConfiguration-bundlePolicy.html

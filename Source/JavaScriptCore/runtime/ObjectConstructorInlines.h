@@ -28,7 +28,12 @@
 #include "JSObjectInlines.h"
 #include "MarkedVector.h"
 #include "ObjectConstructor.h"
+#include "StructureArrayStorageInlines.h"
 #include "StructureCreateInlines.h"
+
+#if ENABLE(AOT)
+#include "AOTPropertyWalkInlines.h"
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -55,12 +60,21 @@ ALWAYS_INLINE bool canPerformFastPropertyNameEnumerationForJSONStringifyWithSide
     return true;
 }
 
+#if ENABLE(AOT)
+// Only an element in the sparse map can have attributes, and putDirectIndex() would replace them.
+ALWAYS_INLINE bool mayHaveElementsWithAttributes(VM& vm, JSObject* target)
+{
+    return vm.hasCompiledCode() && hasAnyArrayStorage(target->indexingType()) && target->butterfly()->arrayStorage()->m_sparseMap;
+}
+#endif
+
 ALWAYS_INLINE void objectAssignIndexedPropertiesFast(JSGlobalObject* globalObject, JSObject* target, JSObject* source)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    source->forEachOwnIndexedProperty<>(globalObject, [&](unsigned index, JSValue value) {
+    ASSERT(source != target);
+    source->forEachOwnElement<>([&](unsigned index, JSValue value) {
         target->putDirectIndex(globalObject, index, value);
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
         return IterationStatus::Continue;
@@ -68,7 +82,7 @@ ALWAYS_INLINE void objectAssignIndexedPropertiesFast(JSGlobalObject* globalObjec
     RETURN_IF_EXCEPTION(scope, void());
 }
 
-ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
+ALWAYS_INLINE bool checkStructureForClone(Structure* structure, bool requiresQuickEnumeration = true)
 {
     static constexpr bool verbose = false;
 
@@ -132,7 +146,7 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
         return false;
     }
 
-    if (!structure->isQuickPropertyAccessAllowedForEnumeration()) {
+    if (requiresQuickEnumeration && !structure->isQuickPropertyAccessAllowedForEnumeration()) {
         dataLogLnIf(verbose, "target has symbol properties (right now we disable this optimization in this case since we cannot detect private symbol properties)");
         return false;
     }
@@ -302,18 +316,55 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
     properties.shrink(0);
     values.clear();
 
+    ASSERT(!target->structure()->isCompiledStructure());
+
     if (source->hasNonReifiedStaticProperties())
         return false;
 
     Structure* sourceStructure = source->structure();
-    if (!sourceStructure->canPerformFastPropertyEnumerationCommon())
+    if (!sourceStructure->canPerformFastPropertyEnumerationCommon()) {
+#if ENABLE(AOT)
+        if (sourceStructure->isCompiledStructure()) {
+            EnsureStillAliveScope sourceScope(source);
+            JSObject* holder = AOT::PropertyWalk::objectHoldingIndexedProperties(source);
+            bool hasElements = holder && holder->canHaveExistingOwnIndexedProperties();
+            if (hasElements && (target->structure()->holesMustForwardToPrototype(target) || mayHaveElementsWithAttributes(vm, target))) [[unlikely]]
+                return false;
+            auto result = AOT::PropertyWalk::forEachOwnPropertyAsCreatedInline(vm, source, [&](const AOT::PropertyWalk::OwnProperty& property) {
+                if ((property.attributes & PropertyAttribute::DontEnum) || PropertyName(property.name).isPrivateName())
+                    return IterationStatus::Continue;
+                if (property.name == vm.propertyNames->underscoreProto.impl())
+                    return IterationStatus::Done;
+                properties.append(property.name);
+                values.appendWithCrashOnOverflow(property.value);
+                return IterationStatus::Continue;
+            }, AOT::PropertyWalk::Elements::AreLeftOut);
+            if (result != AOT::PropertyWalk::Result::Completed)
+                return false;
+            if (hasElements) {
+                objectAssignIndexedPropertiesFast(globalObject, target, holder);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+            if (properties.size())
+                target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+            return true;
+        }
+#endif
         return false;
+    }
 
     if (objectCloneFast(vm, target, source))
         return true;
 
     if (source->canHaveExistingOwnIndexedGetterSetterProperties())
         return false;
+
+    if (source->canHaveExistingOwnIndexedProperties() && target->structure()->holesMustForwardToPrototype(target)) [[unlikely]]
+        return false;
+#if ENABLE(AOT)
+    if (source->canHaveExistingOwnIndexedProperties() && mayHaveElementsWithAttributes(vm, target)) [[unlikely]]
+        return false;
+#endif
 
     EnsureStillAliveScope sourceStructureScope(sourceStructure);
     sourceStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
@@ -330,7 +381,7 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
         return true;
     });
 
-    if (source->canHaveExistingOwnIndexedProperties()) {
+    if (source->canHaveExistingOwnIndexedProperties() && source != target) {
         objectAssignIndexedPropertiesFast(globalObject, target, source);
         RETURN_IF_EXCEPTION(scope, { });
     }

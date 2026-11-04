@@ -165,6 +165,37 @@ public:
 #endif
 };
 
+class AOTOperationPrologueCallFrameTracer {
+public:
+    ALWAYS_INLINE AOTOperationPrologueCallFrameTracer(VM& vm, CallerFrameAndPC* operationFrameRecord)
+#if ASSERT_ENABLED
+        : m_vm(vm)
+#endif
+    {
+        ASSERT(operationFrameRecord);
+        ASSERT(reinterpret_cast<void*>(operationFrameRecord) < reinterpret_cast<void*>(vm.topEntryFrame));
+        assertStackPointerIsAligned();
+        vm.topCallFrame = std::bit_cast<CallFrame*>(operationFrameRecord);
+    }
+
+#if ASSERT_ENABLED
+    ~AOTOperationPrologueCallFrameTracer()
+    {
+        m_vm.topCallFrame = std::bit_cast<CallFrame*>(static_cast<uintptr_t>(0x0badbeef0badbeefULL));
+    }
+
+    VM& m_vm;
+#else
+    // The frame of the operation outlives what it calls. Without this the compiler may end an operation with a jump to its last callee.
+    // The record that vm.topCallFrame names is gone by then, and the callee's own lies at the same address only where a frame record
+    // lies above the registers that a function saves: on x86-64 and on Darwin, and not on ARM64 elsewhere.
+    ALWAYS_INLINE ~AOTOperationPrologueCallFrameTracer()
+    {
+        WTF::compilerFence();
+    }
+#endif
+};
+
 class ICSlowPathCallFrameTracer {
 public:
     inline ICSlowPathCallFrameTracer(VM&, CallFrame*, PropertyInlineCache*);

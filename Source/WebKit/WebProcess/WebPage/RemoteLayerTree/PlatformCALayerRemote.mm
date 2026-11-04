@@ -43,6 +43,7 @@
 #import <WebCore/PlatformCAFilters.h>
 #import <WebCore/PlatformCALayerCocoa.h>
 #import <WebCore/TiledBacking.h>
+#import <wtf/Borrow.h>
 #import <wtf/PointerComparison.h>
 
 #if ENABLE(THREADED_ANIMATIONS)
@@ -302,16 +303,16 @@ void PlatformCALayerRemote::ensureBackingStore()
     updateBackingStore();
 }
 
-ColorSpace PlatformCALayerRemote::displayColorSpace() const
+ColorSpace PlatformCALayerRemote::displayColorSpace(ContentsFormat contentsFormat) const
 {
 #if PLATFORM(IOS_FAMILY)
-    if (auto displayColorSpace = contentsFormatExtendedColorSpace(contentsFormat()))
+    if (auto displayColorSpace = contentsFormatExtendedColorSpace(contentsFormat))
         return displayColorSpace.value();
 #else
     RefPtr context = m_context.get();
     if (auto displayColorSpace = context ? context->displayColorSpace() : std::nullopt) {
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
-        if (contentsFormat() == ContentsFormat::RGBA16F) {
+        if (contentsFormat == ContentsFormat::RGBA16F) {
             if (auto extendedDisplayColorSpace = displayColorSpace->asExtended())
                 return extendedDisplayColorSpace.value();
         }
@@ -339,6 +340,24 @@ IncludeDynamicContentScalingDisplayList PlatformCALayerRemote::shouldIncludeDisp
 }
 #endif
 
+// Bitmap backing stores are drawn with CGBitmapContexts, which can't represent the
+// 10-bit IOSurface formats (RGB10A8 is bi-planar). Use half-float for those instead.
+static ContentsFormat backingStoreContentsFormat(ContentsFormat contentsFormat, RemoteLayerBackingStore::Type type)
+{
+#if ENABLE(PIXEL_FORMAT_RGB10)
+    if (type == RemoteLayerBackingStore::Type::Bitmap && contentsFormat == ContentsFormat::RGBA10) {
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+        return ContentsFormat::RGBA16F;
+#else
+        return ContentsFormat::RGBA8;
+#endif
+    }
+#else
+    UNUSED_PARAM(type);
+#endif
+    return contentsFormat;
+}
+
 void PlatformCALayerRemote::updateBackingStore()
 {
     CheckedPtr store = m_properties.backingStoreOrProperties.store.get();
@@ -351,8 +370,8 @@ void PlatformCALayerRemote::updateBackingStore()
     parameters.type = m_acceleratesDrawing ? RemoteLayerBackingStore::Type::IOSurface : RemoteLayerBackingStore::Type::Bitmap;
     parameters.size = m_properties.bounds.size();
 
-    parameters.colorSpace = displayColorSpace();
-    parameters.contentsFormat = contentsFormat();
+    parameters.contentsFormat = backingStoreContentsFormat(contentsFormat(), parameters.type);
+    parameters.colorSpace = displayColorSpace(parameters.contentsFormat);
     parameters.scale = m_properties.contentsScale;
     parameters.isOpaque = m_properties.opaque;
 
@@ -425,7 +444,7 @@ void PlatformCALayerRemote::setSublayers(const PlatformCALayerList& list)
     removeAllSublayers();
     m_children = list;
 
-    for (const auto& layer : list) {
+    for (const auto& layer : borrow(list)) {
         layer->removeFromSuperlayer();
         downcast<PlatformCALayerRemote>(*layer).m_superlayer = *this;
     }
@@ -435,7 +454,7 @@ void PlatformCALayerRemote::setSublayers(const PlatformCALayerList& list)
 
 void PlatformCALayerRemote::removeAllSublayers()
 {
-    PlatformCALayerList layersToRemove = m_children;
+    const PlatformCALayerList layersToRemove = m_children;
     for (const auto& layer : layersToRemove)
         layer->removeFromSuperlayer();
     ASSERT(m_children.isEmpty());
@@ -483,7 +502,7 @@ void PlatformCALayerRemote::adoptSublayers(PlatformCALayer& source)
     PlatformCALayerList layersToMove = downcast<PlatformCALayerRemote>(source).m_children;
 
     if (const PlatformCALayerList* customLayers = source.customSublayers()) {
-        for (const auto& layer : *customLayers) {
+        for (const auto& layer : borrow(*customLayers)) {
             size_t layerIndex = layersToMove.find(layer);
             if (layerIndex != notFound)
                 layersToMove.removeAt(layerIndex);
@@ -502,7 +521,7 @@ void PlatformCALayerRemote::addAnimationForKey(const String& key, PlatformCAAnim
         // process yet, we update the key properties before it happens. Otherwise, we just append it
         // to the list of animations to be added: PlatformCAAnimationRemote::updateLayerAnimations
         // will actually take care of replacing the existing animation.
-        for (auto& keyAnimationPair : m_properties.animationChanges.addedAnimations) {
+        for (auto& keyAnimationPair : borrow(m_properties.animationChanges.addedAnimations)) {
             if (keyAnimationPair.first == key) {
                 keyAnimationPair.second = downcast<PlatformCAAnimationRemote>(animation).properties();
                 appendToAddedAnimations = false;
@@ -535,7 +554,7 @@ RefPtr<PlatformCAAnimation> PlatformCALayerRemote::animationForKey(const String&
     return m_animations.get(key);
 }
 
-static inline bool NODELETE isEquivalentLayer(const PlatformCALayer* layer, const std::optional<PlatformLayerIdentifier>& layerID)
+static inline bool LEGACY_NODELETE isEquivalentLayer(const PlatformCALayer* layer, const std::optional<PlatformLayerIdentifier>& layerID)
 {
     auto newLayerID = layer ? std::optional { layer->layerID() } : std::nullopt;
     return layerID == newLayerID;
@@ -825,20 +844,31 @@ CFTypeRef PlatformCALayerRemote::contents() const
 
 void PlatformCALayerRemote::setContents(CFTypeRef value)
 {
+    m_properties.displayOnlyImage = { };
     if (CheckedPtr store = m_properties.backingStoreOrProperties.store.get(); store && !value)
         store->clearBackingStore();
 }
 
 void PlatformCALayerRemote::setDelegatedContents(const PlatformCALayerDelegatedContents& contents)
 {
-    setRemoteDelegatedContents({ ImageBufferBackendHandle { MachSendRight { contents.surface } }, contents.finishedFence, contents.surfaceIdentifier });
+    setRemoteDelegatedContents({ ImageBufferBackendHandle { MachSendRight { contents.surface } }, contents.finishedFence, std::nullopt });
 }
 
 void PlatformCALayerRemote::setRemoteDelegatedContents(const PlatformCALayerRemoteDelegatedContents& contents)
 {
     ASSERT(m_acceleratesDrawing);
+    m_properties.displayOnlyImage = { };
     ensureBackingStore();
     protect(m_properties.backingStoreOrProperties.store)->setDelegatedContents(contents);
+}
+
+void PlatformCALayerRemote::setDisplayOnlyImage(RemoteSnapshotIdentifier image)
+{
+    if (m_properties.displayOnlyImage == image)
+        return;
+
+    m_properties.displayOnlyImage = image;
+    m_properties.notePropertiesChanged(LayerChange::DisplayOnlyImageChanged);
 }
 
 void PlatformCALayerRemote::setContentsRect(const FloatRect& value)
@@ -1205,11 +1235,6 @@ unsigned PlatformCALayerRemote::backingStoreBytesPerPixel() const
 {
     auto* store = m_properties.backingStoreOrProperties.store.get();
     return store ? store->bytesPerPixel() : 4;
-}
-
-LayerPool* PlatformCALayerRemote::layerPool()
-{
-    return m_context ? &m_context->layerPool() : nullptr;
 }
 
 #if ENABLE(THREADED_ANIMATIONS)

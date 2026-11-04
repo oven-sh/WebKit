@@ -1,0 +1,24 @@
+# member = handedIn[someName]; handler = { has: member }; "a" in new Proxy({}, handler)
+# Nobody knows what the handler holds. The run time finds a trap on it under the name of a member of Reflect: of the built-ins that have escaped the functions under those names run,
+# as Map.prototype.has, and every other one stays held.
+# RUN: valueflow-solve used
+# CHECK-NOT: run MapPrototypeForEach
+# CHECK: used MapPrototypeForEach
+# CHECK: run MapPrototypeHas
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Handler" fields=[{key="has" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Target" fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = PropGet v0 key="someName" [isFreeName]
+    v3 = ElemGet v1, v2
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = NewObject layout=L1 fields=[]
+    v6 = Builtin builtin=Proxy
+    v7 = Construct v6, -, v5, v4
+    v8 = PropHas v7 key="a"
+    Return
+}

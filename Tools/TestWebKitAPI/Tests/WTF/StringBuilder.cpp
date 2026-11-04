@@ -35,7 +35,9 @@
 #include "Helpers/Test.h"
 #include "Helpers/WTFTestUtilities.h"
 #include <sstream>
+#include <wtf/WeakRandom.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilderJSON.h>
 #include <wtf/unicode/CharacterNames.h>
 
 namespace TestWebKitAPI {
@@ -514,6 +516,196 @@ TEST(StringBuilderTest, ToAtomStringOnEmpty)
         AtomString atomString = builder.toAtomString();
         EXPECT_EQ(emptyAtom(), atomString);
     }
+}
+
+static std::optional<char> shortJSONEscape(char16_t codeUnit)
+{
+    switch (codeUnit) {
+    case '"':
+        return '"';
+    case '\\':
+        return '\\';
+    case '\b':
+        return 'b';
+    case '\t':
+        return 't';
+    case '\n':
+        return 'n';
+    case '\f':
+        return 'f';
+    case '\r':
+        return 'r';
+    default:
+        return std::nullopt;
+    }
+}
+
+template<typename OutputCharacterType, typename InputCharacterType>
+static Vector<OutputCharacterType> escapeJSONScalar(std::span<const InputCharacterType> input)
+{
+    Vector<OutputCharacterType> result;
+    auto append = [&](char16_t codeUnit) {
+        result.append(static_cast<OutputCharacterType>(codeUnit));
+    };
+    auto appendHexEscape = [&](char16_t codeUnit) {
+        append('\\');
+        append('u');
+        for (int shift = 12; shift >= 0; shift -= 4) {
+            unsigned nibble = (codeUnit >> shift) & 0xf;
+            append(static_cast<char16_t>(nibble < 10 ? '0' + nibble : 'a' + nibble - 10));
+        }
+    };
+    for (size_t i = 0; i < input.size(); ++i) {
+        char16_t codeUnit = input[i];
+        if (auto shortForm = shortJSONEscape(codeUnit)) {
+            append('\\');
+            append(*shortForm);
+        } else if (codeUnit < ' ')
+            appendHexEscape(codeUnit);
+        else if (U16_IS_LEAD(codeUnit) && i + 1 < input.size() && U16_IS_TRAIL(input[i + 1])) {
+            append(codeUnit);
+            append(input[++i]);
+        } else if (U16_IS_SURROGATE(codeUnit))
+            appendHexEscape(codeUnit);
+        else
+            append(codeUnit);
+    }
+    return result;
+}
+
+template<typename OutputCharacterType, typename InputCharacterType>
+static std::optional<Vector<OutputCharacterType>> escapeIntoGuardedBuffer(std::span<const InputCharacterType> input)
+{
+    constexpr size_t guardSize = 64;
+    constexpr OutputCharacterType guardValue { 0x5a };
+    size_t outputSize = 6 * input.size();
+    Vector<OutputCharacterType> buffer(FillWith { }, outputSize + guardSize, guardValue);
+    auto output = buffer.mutableSpan().first(outputSize);
+    bool succeeded = WTF::appendEscapedJSONStringContent(output, input);
+    bool isGuardIntact = std::ranges::all_of(buffer.span().subspan(outputSize), [&](auto element) {
+        return element == guardValue;
+    });
+    EXPECT_TRUE(isGuardIntact);
+    if (!succeeded)
+        return std::nullopt;
+    buffer.shrink(outputSize - output.size());
+    return buffer;
+}
+
+template<typename OutputCharacterType, typename InputCharacterType>
+static void expectEscapedWithinBuffer(std::span<const InputCharacterType> input)
+{
+    auto escaped = escapeIntoGuardedBuffer<OutputCharacterType>(input);
+    ASSERT_TRUE(escaped.has_value());
+    auto expected = escapeJSONScalar<OutputCharacterType>(input);
+    EXPECT_EQ(expected.size(), escaped->size());
+    EXPECT_TRUE(equalSpans(expected.span(), escaped->span()));
+}
+
+static void expectEscapedAllWidths(std::span<const Latin1Character> input)
+{
+    auto wideInput = Vector<char16_t>::map(input, [](Latin1Character character) -> char16_t {
+        return character.value;
+    });
+    expectEscapedWithinBuffer<Latin1Character>(input);
+    expectEscapedWithinBuffer<char16_t>(input);
+    expectEscapedWithinBuffer<Latin1Character>(wideInput.span());
+    expectEscapedWithinBuffer<char16_t>(wideInput.span());
+}
+
+TEST(StringBuilderTest, JSONEscapeFillsWholeBuffer)
+{
+    for (size_t length : std::initializer_list<size_t> { 0, 1, 15, 16, 17, 31, 32, 33, 511, 512, 513, 1040 }) {
+        SCOPED_TRACE(::testing::Message() << "length " << length);
+        Vector<Latin1Character> input(FillWith { }, length, 0x01);
+        expectEscapedAllWidths(input.span());
+    }
+}
+
+TEST(StringBuilderTest, JSONEscapeLastVectorGroup)
+{
+    constexpr size_t groupSize = 16;
+    for (size_t length = groupSize; length <= 3 * groupSize; ++length) {
+        SCOPED_TRACE(::testing::Message() << "length " << length);
+        Vector<Latin1Character> input(FillWith { }, length, 'a');
+        expectEscapedAllWidths(input.span());
+
+        auto lastGroup = input.mutableSpan().last(groupSize);
+        for (auto& character : lastGroup) {
+            character = 0x1f;
+            expectEscapedAllWidths(input.span());
+            character = 'a';
+        }
+
+        std::ranges::fill(lastGroup, Latin1Character { '"' });
+        expectEscapedAllWidths(input.span());
+    }
+}
+
+TEST(StringBuilderTest, JSONEscapeMixedContent)
+{
+    constexpr std::array<Latin1Character, 7> alphabet { 'a', '"', '\\', '\n', 0x01, 0x7f, 0xe9 };
+    constexpr std::array<unsigned, 4> sparsities { 1, 4, 64, 1024 };
+    constexpr size_t stringCount = 200;
+    constexpr size_t maxLength = 600;
+    WeakRandom random(0x9e3779b9);
+    for (size_t index = 0; index < stringCount; ++index) {
+        SCOPED_TRACE(::testing::Message() << "string " << index);
+        unsigned sparsity = sparsities[index % sparsities.size()];
+        Vector<Latin1Character> input(index * maxLength / (stringCount - 1), [&](size_t) -> Latin1Character {
+            if (random.getUint32(sparsity))
+                return 'a';
+            return alphabet[random.getUint32(alphabet.size())];
+        });
+        expectEscapedAllWidths(input.span());
+    }
+}
+
+TEST(StringBuilderTest, JSONEscapeSurrogates)
+{
+    constexpr char16_t lead = 0xd83d;
+    constexpr char16_t trail = 0xde00;
+    constexpr std::array<std::array<char16_t, 2>, 6> patterns { {
+        { lead, trail },
+        { lead, u'a' },
+        { trail, u'a' },
+        { trail, lead },
+        { lead, lead },
+        { trail, trail },
+    } };
+    for (size_t length = 1; length <= 24; ++length) {
+        for (size_t index = 0; index < length; ++index) {
+            SCOPED_TRACE(::testing::Message() << "length " << length << ", index " << index);
+            for (auto& pattern : patterns) {
+                Vector<char16_t> input(FillWith { }, length, u'a');
+                input[index] = pattern[0];
+                if (index + 1 < length)
+                    input[index + 1] = pattern[1];
+                expectEscapedWithinBuffer<char16_t>(input.span());
+            }
+        }
+    }
+}
+
+TEST(StringBuilderTest, JSONEscapeWideInputFails)
+{
+    for (size_t length = 1; length <= 24; ++length) {
+        for (size_t index = 0; index < length; ++index) {
+            SCOPED_TRACE(::testing::Message() << "length " << length << ", index " << index);
+            Vector<char16_t> input(FillWith { }, length, u'a');
+            input[index] = 0x100;
+            EXPECT_FALSE(escapeIntoGuardedBuffer<Latin1Character>(input.span()).has_value());
+        }
+    }
+}
+
+TEST(StringBuilderDeathTest, JSONEscapeOutputTooSmall)
+{
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    Vector<Latin1Character> input(FillWith { }, 16, 'a');
+    Vector<Latin1Character> buffer(FillWith { }, 6 * input.size(), 'b');
+    auto output = buffer.mutableSpan().first(buffer.size() - 1);
+    ASSERT_DEATH_IF_SUPPORTED(WTF::appendEscapedJSONStringContent(output, input.span()), "");
 }
 
 } // namespace

@@ -59,7 +59,7 @@ namespace JSC { namespace B3 { namespace Air {
 // Definition of Patch instruction. Patch is used to delegate the behavior of the instruction to the
 // Special object, which will be the first argument to the instruction.
 struct PatchCustom {
-    static void forEachArg(Inst& inst, const ScopedLambda<Inst::EachArgCallback>& lambda)
+    static void forEachArg(Inst& inst, NOESCAPE const ScopedLambda<Inst::EachArgCallback>& lambda)
     {
         // This is basically bogus, but it works for analyses that model Special as an
         // immediate.
@@ -100,6 +100,11 @@ struct PatchCustom {
         return inst.args()[0].special()->isTerminal(inst);
     }
 
+    static bool needsFrame(Inst& inst)
+    {
+        return inst.args()[0].special()->needsFrame(inst);
+    }
+
     static bool hasNonArgEffects(Inst& inst)
     {
         return inst.args()[0].special()->hasNonArgEffects(inst);
@@ -130,7 +135,7 @@ struct CommonCustomBase {
 // inline lowering happens before register allocation, so that the register allocator sees the clobbers.
 struct CCallCustom : public CommonCustomBase<CCallCustom> {
     template<typename Functor>
-    static void forEachArg(Inst& inst, const Functor& functor)
+    static void forEachArg(Inst& inst, NOESCAPE const Functor& functor)
     {
         CCallValue* value = inst.origin->as<CCallValue>();
 
@@ -191,6 +196,11 @@ struct CCallCustom : public CommonCustomBase<CCallCustom> {
         return false;
     }
 
+    static bool needsFrame(Inst&)
+    {
+        return true;
+    }
+
     static bool hasNonArgNonControlEffects(Inst&)
     {
         return true;
@@ -202,7 +212,7 @@ struct CCallCustom : public CommonCustomBase<CCallCustom> {
 
 struct ColdCCallCustom : CCallCustom {
     template<typename Functor>
-    static void forEachArg(Inst& inst, const Functor& functor)
+    static void forEachArg(Inst& inst, NOESCAPE const Functor& functor)
     {
         // This is just like a call, but uses become cold.
         CCallCustom::forEachArg(
@@ -215,7 +225,7 @@ struct ColdCCallCustom : CCallCustom {
 
 struct ShuffleCustom : public CommonCustomBase<ShuffleCustom> {
     template<typename Functor>
-    static void forEachArg(Inst& inst, const Functor& functor)
+    static void forEachArg(Inst& inst, NOESCAPE const Functor& functor)
     {
         unsigned limit = inst.args().size() / 3 * 3;
         for (unsigned i = 0; i < limit; i += 3) {
@@ -259,6 +269,11 @@ struct ShuffleCustom : public CommonCustomBase<ShuffleCustom> {
         return false;
     }
 
+    static bool needsFrame(Inst&)
+    {
+        return true;
+    }
+
     static bool hasNonArgNonControlEffects(Inst&)
     {
         return false;
@@ -269,7 +284,7 @@ struct ShuffleCustom : public CommonCustomBase<ShuffleCustom> {
 
 struct EntrySwitchCustom : public CommonCustomBase<EntrySwitchCustom> {
     template<typename Func>
-    static void forEachArg(Inst&, const Func&)
+    static void forEachArg(Inst&, NOESCAPE const Func&)
     {
     }
     
@@ -298,6 +313,11 @@ struct EntrySwitchCustom : public CommonCustomBase<EntrySwitchCustom> {
     {
         return true;
     }
+
+    static bool needsFrame(Inst&)
+    {
+        return false;
+    }
     
     static bool hasNonArgNonControlEffects(Inst&)
     {
@@ -315,7 +335,7 @@ struct EntrySwitchCustom : public CommonCustomBase<EntrySwitchCustom> {
 
 struct WasmBoundsCheckCustom : public CommonCustomBase<WasmBoundsCheckCustom> {
     template<typename Func>
-    static void forEachArg(Inst& inst, const Func& functor)
+    static void forEachArg(Inst& inst, NOESCAPE const Func& functor)
     {
         functor(inst.args()[0], Arg::Use, GP, pointerWidth());
         functor(inst.args()[1], Arg::Use, GP, pointerWidth());
@@ -345,7 +365,123 @@ struct WasmBoundsCheckCustom : public CommonCustomBase<WasmBoundsCheckCustom> {
     {
         return false;
     }
+
+    static bool needsFrame(Inst&)
+    {
+        return true;
+    }
     
+    static bool hasNonArgNonControlEffects(Inst&)
+    {
+        return true;
+    }
+
+    static MacroAssembler::Jump generate(Inst&, CCallHelpers&, GenerationContext&);
+};
+
+// The number of scratch registers, those registers, the registers that the callee saves, then a register and a word of the frame for each spill that the setup pushes.
+// Words count from the top of what the setup allocates.
+struct EnterFrameCustom : public CommonCustomBase<EnterFrameCustom> {
+    static unsigned numberOfScratchRegisters(const Inst& inst)
+    {
+        return static_cast<unsigned>(inst.args()[0].value());
+    }
+
+    template<typename Func>
+    static void forEachArg(Inst& inst, NOESCAPE const Func& functor)
+    {
+        functor(inst.args()[0], Arg::Use, GP, Width32);
+        unsigned endOfScratchRegisters = 1 + numberOfScratchRegisters(inst);
+        for (unsigned i = 1; i < inst.args().size(); ++i) {
+            Arg& arg = inst.args()[i];
+            if (arg.isImm()) {
+                functor(arg, Arg::Use, GP, Width32);
+                continue;
+            }
+            Bank bank = arg.tmp().bank();
+            functor(arg, i < endOfScratchRegisters ? Arg::Scratch : Arg::Use, bank, conservativeWidthWithoutVectors(bank));
+        }
+    }
+
+    template<typename... Arguments>
+    static bool isValidFormStatic(Arguments...)
+    {
+        return false;
+    }
+
+    static bool isValidForm(Inst&);
+
+    static bool admitsStack(Inst&, unsigned)
+    {
+        return false;
+    }
+
+    static bool admitsExtendedOffsetAddr(Inst&, unsigned)
+    {
+        return false;
+    }
+
+    static bool isTerminal(Inst&)
+    {
+        return false;
+    }
+
+    static bool needsFrame(Inst&)
+    {
+        return false;
+    }
+
+    static bool hasNonArgNonControlEffects(Inst&)
+    {
+        return true;
+    }
+
+    static MacroAssembler::Jump generate(Inst&, CCallHelpers&, GenerationContext&);
+};
+
+// The registers that the callee saves, then a register and a word of the frame for each reload that the teardown pops. Words count from the stack pointer.
+struct LeaveFrameCustom : public CommonCustomBase<LeaveFrameCustom> {
+    template<typename Func>
+    static void forEachArg(Inst& inst, NOESCAPE const Func& functor)
+    {
+        for (Arg& arg : inst.args()) {
+            if (arg.isImm()) {
+                functor(arg, Arg::Use, GP, Width32);
+                continue;
+            }
+            Bank bank = arg.tmp().bank();
+            functor(arg, Arg::Def, bank, conservativeWidthWithoutVectors(bank));
+        }
+    }
+
+    template<typename... Arguments>
+    static bool isValidFormStatic(Arguments...)
+    {
+        return false;
+    }
+
+    static bool isValidForm(Inst&);
+
+    static bool admitsStack(Inst&, unsigned)
+    {
+        return false;
+    }
+
+    static bool admitsExtendedOffsetAddr(Inst&, unsigned)
+    {
+        return false;
+    }
+
+    static bool isTerminal(Inst&)
+    {
+        return false;
+    }
+
+    static bool needsFrame(Inst&)
+    {
+        return false;
+    }
+
     static bool hasNonArgNonControlEffects(Inst&)
     {
         return true;

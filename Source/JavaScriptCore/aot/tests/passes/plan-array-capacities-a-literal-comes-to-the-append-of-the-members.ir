@@ -1,0 +1,30 @@
+# `[...set]`, where what makes the set stands between the empty literal and the append: the literal comes to stand right in front of the append, where the code generator
+# makes the list with the members in it. Nobody can tell when an empty list that nobody has was made.
+# FORM: Prepared optimizing
+# RUN: pass PlanArrayCapacities
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="theSetIsMadeBehindTheLiteral" parameters=[{type=function}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    v2 = Call v0
+    v3 = AssumeType v2 provenType=Set<number, pristine[Storage, Names]>
+    AppendMembers v1, v3
+    Return v1
+}
+# CHECK-LABEL: function f0 name="theSetIsMadeBehindTheLiteral"
+# CHECK: Call v0
+# CHECK-NEXT: AssumeType
+# CHECK-NEXT: NewArray contents=anything
+# CHECK-NEXT: AppendMembers v1, v3
+
+function f1 name="theListIsReadInBetween" parameters=[{type=function}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    v2 = Call v0, -, v1
+    v3 = AssumeType v2 provenType=Set<number, pristine[Storage, Names]>
+    AppendMembers v1, v3
+    Return v1
+}
+# CHECK-LABEL: function f1 name="theListIsReadInBetween"
+# CHECK: NewArray contents=anything
+# CHECK-NEXT: Call v0, -, v1

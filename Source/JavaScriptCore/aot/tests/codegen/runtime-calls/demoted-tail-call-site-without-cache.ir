@@ -1,0 +1,18 @@
+# Without a site cache one stub reads the method and calls it, and the site of the call is recorded as a tail call's when the call is a demoted tail call
+# FORM: Selected
+# OPTIONS: limit=MaxSiteCaches:0
+# LOSS: MaxSiteCaches
+# RUN: generate-code
+# CHECK: f0: size={{*}} sites=1 {{*}} tailCallSites=1
+# CHECK-NEXT: f1: size={{*}} sites=1
+# CHECK-NOT: tailCallSites
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="markedCallMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallMethod v0, v1 key="m" @0 tail
+    Return v2
+}
+function f1 name="callMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallMethod v0, v1 key="m"
+    Return v2
+}

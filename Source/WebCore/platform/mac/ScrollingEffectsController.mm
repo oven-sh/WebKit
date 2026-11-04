@@ -96,7 +96,7 @@ void ScrollingEffectsController::stopAllTimers()
 #endif
 }
 
-static ScrollEventAxis NODELETE dominantAxisFavoringVertical(FloatSize delta)
+static ScrollEventAxis LEGACY_NODELETE dominantAxisFavoringVertical(FloatSize delta)
 {
     if (std::abs(delta.height()) >= std::abs(delta.width()))
         return ScrollEventAxis::Vertical;
@@ -104,7 +104,7 @@ static ScrollEventAxis NODELETE dominantAxisFavoringVertical(FloatSize delta)
     return ScrollEventAxis::Horizontal;
 }
 
-static FloatSize NODELETE deltaAlignedToAxis(FloatSize delta, ScrollEventAxis axis)
+static FloatSize LEGACY_NODELETE deltaAlignedToAxis(FloatSize delta, ScrollEventAxis axis)
 {
     switch (axis) {
     case ScrollEventAxis::Horizontal: return FloatSize { delta.width(), 0 };
@@ -114,7 +114,7 @@ static FloatSize NODELETE deltaAlignedToAxis(FloatSize delta, ScrollEventAxis ax
     return { };
 }
 
-static FloatSize NODELETE deltaAlignedToDominantAxis(FloatSize delta)
+static FloatSize LEGACY_NODELETE deltaAlignedToDominantAxis(FloatSize delta)
 {
     auto dominantAxis = dominantAxisFavoringVertical(delta);
     return deltaAlignedToAxis(delta, dominantAxis);
@@ -141,7 +141,7 @@ FloatSize ScrollingEffectsController::deltaAlignedToPredominantGestureAxis(Monot
     return deltaAlignedToAxis(delta, dominantAxisFavoringVertical(m_cumulativeGestureDelta));
 }
 
-static std::optional<BoxSide> NODELETE affectedSideOnDominantAxis(FloatSize delta)
+static std::optional<BoxSide> LEGACY_NODELETE affectedSideOnDominantAxis(FloatSize delta)
 {
     auto dominantAxis = dominantAxisFavoringVertical(delta);
     return ScrollableArea::targetSideForScrollDelta(delta, dominantAxis);
@@ -173,12 +173,14 @@ bool ScrollingEffectsController::handleWheelEvent(const PlatformWheelEvent& whee
 
     if (wheelEvent.phase() == PlatformWheelEventPhase::Began) {
         // FIXME: Trying to decide if a gesture is horizontal or vertical at the "began" phase is very error-prone.
-        auto horizontalSide = ScrollableArea::targetSideForScrollDelta(-rawDelta, ScrollEventAxis::Horizontal);
-        if (horizontalSide && m_client.isPinnedOnSide(*horizontalSide) && !shouldRubberBandOnSide(*horizontalSide, rawDelta))
-            return false;
+        auto sideCanScrollOrStretch = [&](std::optional<BoxSide> side) {
+            return side && (!m_client.isPinnedOnSide(*side) || shouldRubberBandOnSide(*side, rawDelta));
+        };
 
+        auto horizontalSide = ScrollableArea::targetSideForScrollDelta(-rawDelta, ScrollEventAxis::Horizontal);
         auto verticalSide = ScrollableArea::targetSideForScrollDelta(-rawDelta, ScrollEventAxis::Vertical);
-        if (verticalSide && m_client.isPinnedOnSide(*verticalSide) && !shouldRubberBandOnSide(*verticalSide, rawDelta))
+
+        if ((horizontalSide || verticalSide) && !sideCanScrollOrStretch(horizontalSide) && !sideCanScrollOrStretch(verticalSide))
             return false;
 
         m_momentumScrollInProgress = false;
@@ -206,7 +208,7 @@ bool ScrollingEffectsController::handleWheelEvent(const PlatformWheelEvent& whee
 
     if (wheelEvent.phase() == PlatformWheelEventPhase::Ended) {
         // FIXME: This triggers the rubberband timer even when we don't start rubberbanding.
-        startRubberBandAnimationIfNecessary();
+        startRubberBandAnimationIfNecessary(wheelEvent);
         updateRubberBandingState();
         return true;
     }
@@ -285,7 +287,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                 if (canStartAnimation && m_lastMomentumScrollTimestamp) {
                     m_ignoreMomentumScrolls = true;
                     m_momentumScrollInProgress = false;
-                    startRubberBandAnimationIfNecessary();
+                    startRubberBandAnimationIfNecessary(wheelEvent);
                 }
             }
         } else {
@@ -761,7 +763,7 @@ void ScrollingEffectsController::rubberBandTargetOffsetDidChange()
     startRubberBandAnimation({ }, stretchAmount);
 }
 
-void ScrollingEffectsController::startRubberBandAnimationIfNecessary()
+void ScrollingEffectsController::startRubberBandAnimationIfNecessary(const PlatformWheelEvent& wheelEvent)
 {
     auto timeDelta = MonotonicTime::now() - m_lastMomentumScrollTimestamp;
     if (m_lastMomentumScrollTimestamp && timeDelta >= scrollVelocityZeroingTimeout)
@@ -780,6 +782,16 @@ void ScrollingEffectsController::startRubberBandAnimationIfNecessary()
         return;
 
     auto initialVelocity = m_momentumVelocity;
+
+    bool allowsDiagonalRubberbanding = wheelEvent.inputSource() == MouseEventInputSource::Automation;
+    if (allowsDiagonalRubberbanding) {
+        bool isHorizontallyStretched = stretchAmount.width() || targetOffset.x() != contrainedOffset.x() || m_stretchScrollForce.width();
+        bool isVerticallyStretched = stretchAmount.height() || targetOffset.y() != contrainedOffset.y() || m_stretchScrollForce.height();
+        if (!isHorizontallyStretched)
+            initialVelocity.setWidth(0);
+        if (!isVerticallyStretched)
+            initialVelocity.setHeight(0);
+    }
 
     // Just like normal scrolling, prefer vertical rubberbanding
     if (std::abs(initialVelocity.height()) >= std::abs(initialVelocity.width()))
@@ -848,7 +860,7 @@ enum class WheelEventStatus {
     Unknown
 };
 
-static inline WheelEventStatus NODELETE toWheelEventStatus(PlatformWheelEventPhase phase, PlatformWheelEventPhase momentumPhase)
+static inline WheelEventStatus LEGACY_NODELETE toWheelEventStatus(PlatformWheelEventPhase phase, PlatformWheelEventPhase momentumPhase)
 {
     if (phase == PlatformWheelEventPhase::None) {
         switch (momentumPhase) {

@@ -125,6 +125,18 @@ void WeakMapImpl<WeakMapBucket>::reconcileWeakReferencesAtGCEnd(VM& vm, Collecti
 
     if (shouldShrink())
         rehash(RehashMode::RemoveBatching);
+
+    // The heap counts the buffer as it is now that the dead keys went, also of an old table, which no visit came by.
+    // Its count only ever goes up. An eden collection only collects what was allocated since the last collection, and the
+    // heap expects its size not to go below what that one left (see Heap::updateAllocationLimits()). So the buffer of an old
+    // table that has shrunk since stays counted as it was until the next full collection.
+    if (m_buffer == emptyBuffer())
+        return;
+    uint32_t capacity = hasOutOfLineBuffer() ? m_capacity : 0;
+    if (capacity > m_capacityCountedByHeap) {
+        heap()->reportExtraMemoryVisited(static_cast<size_t>(capacity - m_capacityCountedByHeap) * sizeof(WeakMapBucket));
+        m_capacityCountedByHeap = capacity;
+    }
 }
 
 template<typename WeakMapBucket>
@@ -167,7 +179,9 @@ void WeakMapImpl<WeakMapBucket>::rehash(RehashMode mode)
 
     // rehash() only runs once a real buffer has been allocated, so the shared empty buffer is never freed here.
     ASSERT(oldBuffer != emptyBuffer());
-    WeakMapBufferType::destroy(oldBuffer);
+    ASSERT(oldBuffer != m_buffer);
+    if (oldBuffer != inlineBuffer())
+        WeakMapBufferType::destroy(oldBuffer);
 }
 
 template<typename WeakMapBucket>

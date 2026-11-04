@@ -27,17 +27,11 @@
 
 #if ENABLE(GPU_PROCESS)
 
-#include <WebCore/WebGPUTextureSampleType.h>
-#include <WebCore/WebGPUTextureViewDimension.h>
-#include <optional>
+#include <WebCore/WebGPUCppAPI.h>
 
 namespace WebKit::WebGPU {
 
-struct TextureBindingLayout {
-    WebCore::WebGPU::TextureSampleType sampleType { WebCore::WebGPU::TextureSampleType::Float };
-    WebCore::WebGPU::TextureViewDimension viewDimension { WebCore::WebGPU::TextureViewDimension::_2d };
-    bool multisampled { false };
-};
+using TextureBindingLayout = ::WebGPU::TextureBindingLayout;
 
 } // namespace WebKit::WebGPU
 

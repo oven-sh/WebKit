@@ -103,14 +103,23 @@ void RenderSVGModelObject::updateFromStyle()
     updateHasSVGTransformFlags();
     if (!hasLayer())
         updateLocalTransform();
+    else
+        m_localTransform = std::nullopt;
+}
+
+AffineTransform RenderSVGModelObject::computeLocalTransform() const
+{
+    TransformationMatrix transform;
+    CheckedRef style = this->style();
+    applyTransform(transform, style, transformReferenceBoxRect(style), Style::TransformResolver::allTransformOperations);
+    return transform.toAffineTransform();
 }
 
 void RenderSVGModelObject::updateLocalTransform()
 {
-    TransformationMatrix transform;
-    auto referenceBoxRect = transformReferenceBoxRect(style());
-    applyTransform(transform, style(), referenceBoxRect, Style::TransformResolver::allTransformOperations);
-    m_localTransform = transform.toAffineTransform();
+    auto localTransform = computeLocalTransform();
+    auto oldTransform = std::exchange(m_localTransform, localTransform);
+    invalidateNonScalingStrokeCachesInSubtreeForSVG(oldTransform, localTransform);
 }
 
 LayoutRect RenderSVGModelObject::overflowClipRect(const LayoutPoint&, OverlayScrollbarSizeRelevancy, PaintPhase) const
@@ -176,10 +185,12 @@ LayoutRect RenderSVGModelObject::outlineBoundsForRepaint(const RenderLayerModelO
 
     if (repaintContainer != this) {
         FloatQuad containerRelativeQuad;
-        if (geometryMap)
+        if (geometryMap) {
             containerRelativeQuad = geometryMap->mapToContainer(outlineBounds, repaintContainer);
-        else
-            containerRelativeQuad = localToContainerQuad(FloatRect(outlineBounds), repaintContainer);
+        } else {
+            // FIXME: Remove suppression once rdar://189998444 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST containerRelativeQuad = localToContainerQuad(FloatRect(outlineBounds), repaintContainer);
+        }
 
         outlineBounds = LayoutRect(containerRelativeQuad.boundingBox());
     }
@@ -203,7 +214,7 @@ void RenderSVGModelObject::styleDidChange(Style::Difference diff, const Style::C
 
     // A non-layer renderer with a clip-path or a mask is an atomic paint boundary, so rebuild the
     // enclosing layer's DOM-order paint cache when either is added or removed.
-    if (oldStyle && (oldStyle->clipPath().isNone() != style().clipPath().isNone() || oldStyle->hasMask() != style().hasMask())) {
+    if (oldStyle && (oldStyle->clipPath().isNone() != style().clipPath().isNone() || oldStyle->hasMask() != protect(style())->hasMask())) {
         if (CheckedPtr layer = enclosingLayer(); layer && layer->isSVGLayer())
             layer->dirtyChildrenInDOMOrderForSVG();
     }
@@ -226,8 +237,8 @@ void RenderSVGModelObject::styleDidChange(Style::Difference diff, const Style::C
 
             // Outline properties
             if (newStyle.outlineStyle() != oldStyle.outlineStyle()
-                || newStyle.usedOutlineWidth() != oldStyle.usedOutlineWidth()
-                || newStyle.usedOutlineOffset() != oldStyle.usedOutlineOffset())
+                || Style::effectiveOutlineWidth(newStyle) != Style::effectiveOutlineWidth(oldStyle)
+                || Style::effectiveOutlineOffset(newStyle) != Style::effectiveOutlineOffset(oldStyle))
                 return true;
 
             // Resource references (clip-path, mask, filter)
@@ -245,16 +256,26 @@ void RenderSVGModelObject::styleDidChange(Style::Difference diff, const Style::C
             return false;
         };
 
-        if (visualOverflowStyleChanged(style(), *oldStyle))
+        if (visualOverflowStyleChanged(protect(style()), *oldStyle)) {
             m_cachedVisualOverflowRect = std::nullopt;
+            // The old area was repainted before the change. Unless layout follows, repaint the new one too.
+            CheckedPtr layer = this->layer();
+            if (layer) {
+                layer->setSelfAndDescendantsNeedPositionUpdate();
+                layer->setRepaintStatus(RepaintStatus::NeedsFullRepaint);
+            }
+            // A layer position update never repaints an SVG container itself, only its contents.
+            if ((!layer || layer->shouldSkipRepaintAfterLayoutForSVG()) && !needsLayout())
+                repaint();
+        }
     }
 
     // SVG masks are painted independent of the target renderers visibility.
     // FIXME: [LBSE] Upstream RenderElement changes
     // bool hasSVGMask = hasSVGMask();
     bool hasSVGMask = false;
-    if (hasSVGMask && hasLayer() && style().usedVisibility() != Visibility::Visible)
-        layer()->setHasVisibleContent();
+    if (hasSVGMask && hasLayer() && usedStyle().visibility() != UsedVisibility::Visible)
+        protect(layer())->setHasVisibleContent();
 }
 
 std::optional<FloatPoint3D> RenderSVGModelObject::cachedTransformOriginForReferenceBox(const Style::ComputedStyle& style, const FloatRect& referenceBox) const
@@ -308,7 +329,7 @@ void RenderSVGModelObject::addFocusRingRects(Vector<LayoutRect>& rects, const La
 
 // FloatRect::intersects does not consider horizontal or vertical lines (because of isEmpty()).
 // So special-case handling of such lines.
-static bool NODELETE intersectsAllowingEmpty(const FloatRect& r, const FloatRect& other)
+static bool LEGACY_NODELETE intersectsAllowingEmpty(const FloatRect& r, const FloatRect& other)
 {
     if (r.isEmpty() && other.isEmpty())
         return false;
@@ -321,7 +342,7 @@ static bool NODELETE intersectsAllowingEmpty(const FloatRect& r, const FloatRect
 
 // One of the element types that can cause graphics to be drawn onto the target canvas. Specifically: circle, ellipse,
 // image, line, path, polygon, polyline, rect, text and use.
-static bool NODELETE isGraphicsElement(const RenderElement& renderer)
+static bool LEGACY_NODELETE isGraphicsElement(const RenderElement& renderer)
 {
     return renderer.isRenderSVGShape() || renderer.isRenderSVGText() || renderer.isRenderSVGImage() || renderer.element()->hasTagName(SVGNames::useTag);
 }
@@ -416,6 +437,7 @@ void RenderSVGModelObject::updateLayerTransform()
 {
     // Transform-origin depends on box size, so we need to update the layer transform after layout.
     if (hasLayer()) {
+        m_localTransform = std::nullopt;
         RenderLayerModelObject::updateLayerTransform();
         return;
     }

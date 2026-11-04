@@ -67,9 +67,9 @@ public:
     // rather than list-style-image/type.
     bool hasContentProperty() const;
 
-    RenderBlockFlow* contentContainer() const;
+    RenderBlockFlow* LEGACY_NODELETE contentContainer() const;
 
-    RenderListItem* NODELETE listItem() const;
+    RenderListItem* LEGACY_NODELETE listItem() const;
 
     std::pair<float, float> layoutBounds() const { return m_layoutBounds; }
 
@@ -92,7 +92,7 @@ private:
     void paint(PaintInfo&, const LayoutPoint&) final;
     void layout() final;
     void imageChanged(WrappedImagePtr, const IntRect*) final;
-    LayoutRect NODELETE selectionRectForRepaint(const RenderLayerModelObject* repaintContainer, bool clipToVisibleContent) final;
+    LayoutRect LEGACY_NODELETE selectionRectForRepaint(const RenderLayerModelObject* repaintContainer, bool clipToVisibleContent) final;
     bool canBeSelectionLeaf() const final { return true; }
     void styleWillChange(Style::Difference, const Style::ComputedStyle& newStyle) final;
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
@@ -104,11 +104,12 @@ private:
 
     void updateInlineMargins();
     void updateContent();
+    LayoutSize markerImageSize(const Style::Image&) const;
     void updateContentContainerText(const ListMarkerTextContent&);
     void setContentContainerImageSize(LayoutSize);
     void layoutContentContainer(RenderBlockFlow&);
 
-    LayoutRect NODELETE localSelectionRect();
+    LayoutRect LEGACY_NODELETE localSelectionRect();
 
 private:
     SingleThreadWeakPtr<RenderListItem> m_listItem;
@@ -119,7 +120,7 @@ private:
 // The room an image marker keeps between itself and the content it labels.
 constexpr int listMarkerImagePadding = 7;
 ListMarkerTextContent listMarkerTextContent(const Style::ComputedStyle& markerStyle, RenderListItem&);
-bool listMarkerHasContent(const Style::ComputedStyle& markerStyle, Document&);
+bool LEGACY_NODELETE listMarkerHasContent(const Style::ComputedStyle& markerStyle, Document&);
 bool listMarkerSynthesizesGlyph(const Style::ComputedStyle& markerStyle, Document&);
 RefPtr<Style::Image> listMarkerImage(const Style::ComputedStyle& markerStyle);
 bool listMarkerIsDisclosure(const Style::ComputedStyle& markerStyle, Document&);

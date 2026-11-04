@@ -49,6 +49,7 @@
 #import <wtf/BlockPtr.h>
 #import <wtf/Vector.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #import <pal/cocoa/AppSSOSoftLink.h>
 
@@ -64,7 +65,7 @@ static constexpr auto Redirect = "Redirect"_s;
 static constexpr auto PopUp = "PopUp"_s;
 static constexpr auto SubFrame = "SubFrame"_s;
 
-static ASCIILiteral NODELETE toString(const SOAuthorizationSession::InitiatingAction& action)
+static ASCIILiteral LEGACY_NODELETE toString(const SOAuthorizationSession::InitiatingAction& action)
 {
     switch (action) {
     case SOAuthorizationSession::InitiatingAction::Redirect:
@@ -402,18 +403,9 @@ void SOAuthorizationSession::presentViewController(SOAuthorizationViewController
     ASSERT(!m_sheetWindow);
     ASSERT(!m_sheetWindowWillCloseObserver);
 
-    // Let the client (e.g. Safari) present the authorization view controller within its own UI.
-    if (RetainPtr<NSViewController> presentingViewController = page->uiClient().presentingViewController()) {
-        AUTHORIZATIONSESSION_RELEASE_LOG("presentViewController: Presenting via client-provided view controller %p.", presentingViewController.get());
-        m_presentingViewController = presentingViewController;
-        [presentingViewController presentViewControllerAsSheet:m_viewController.get()];
-        uiCallback(YES, nil);
-        return;
-    }
-
     dismissModalSheetIfNecessary();
 
-    m_sheetWindow = [NSWindow windowWithContentViewController:m_viewController.get()];
+    m_sheetWindow = [NSWindow windowWithContentViewController:checked_objc_cast<NSViewController>(m_viewController.get())];
 
     m_sheetWindowWillCloseObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowWillCloseNotification object:m_sheetWindow.get() queue:nil usingBlock:[weakThis = ThreadSafeWeakPtr { *this }] (NSNotification *) {
         auto protectedThis = weakThis.get();
@@ -481,14 +473,6 @@ void SOAuthorizationSession::dismissViewController()
     }
 
 #if PLATFORM(MAC)
-    if (m_presentingViewController) {
-        AUTHORIZATIONSESSION_RELEASE_LOG("dismissViewController: Dismissing client-presented view controller %p.", m_presentingViewController.get());
-        [m_presentingViewController dismissViewController:m_viewController.get()];
-        m_presentingViewController = nullptr;
-        m_viewController = nullptr;
-        return;
-    }
-
     if (!m_sheetWindow) {
         ASSERT(!m_sheetWindowWillCloseObserver);
         AUTHORIZATIONSESSION_RELEASE_LOG("dismissViewController: No view controller or sheet window, so returning early.");

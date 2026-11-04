@@ -49,7 +49,7 @@ namespace WebKit {
 
 class WebFrame;
 
-Ref<JSON::Array> filterObjects(const JSON::Array&, WTF::Function<bool(const JSON::Value&)>&& lambda);
+Ref<JSON::Array> filterObjects(const JSON::Array&, NOESCAPE const WTF::Function<bool(const JSON::Value&)>&);
 
 Vector<String> makeStringVector(const JSON::Array&);
 
@@ -72,7 +72,10 @@ inline std::unexpected<WebExtensionError> toWebExtensionError(const String& call
 JSObjectRef toJSError(JSContextRef, const String& callingAPIName, const String& sourceKey, const String& underlyingErrorString);
 
 /// Serializes large data to JSON chunks to avoid StringBuilder overflow.
-void serializeToMultipleJSONStrings(Ref<JSON::Object>, Function<void(String&&)>&&);
+void serializeToMultipleJSONStrings(Ref<JSON::Object>, NOESCAPE const Function<void(String&&)>&);
+
+/// Returns the maximum number of bytes that can be set or retrieved in a single storage call. Returns a lower limit for tests to avoid a timeout.
+size_t storageMaximumBytesPerCall(bool inTestingMode);
 
 enum class UseNullValue : bool { No, Yes };
 
@@ -85,7 +88,7 @@ JSValueRef toWebAPI(JSContextRef context, const std::optional<T>& result, UseNul
 }
 
 template <typename T>
-static JSObjectRef toWebAPI(JSContextRef context, const Vector<T>& data)
+JSObjectRef toWebAPI(JSContextRef context, const Vector<T>& data)
 {
     if (data.isEmpty())
         return JSObjectMakeArray(context, 0, nullptr, nullptr);
@@ -103,12 +106,25 @@ static JSObjectRef toWebAPI(JSContextRef context, const Vector<T>& data)
     return array;
 }
 
+bool validateObject(RefPtr<JSON::Value> dictionary, const String& sourceKey, Vector<JSON::Value::Type> validationType, Vector<JSON::Value::Type> arrayValidationType, String& outExceptionString);
+
 bool validateDictionary(RefPtr<JSON::Value> dictionary, const String& sourceKey, Vector<String> requiredKeys, HashMap<String, JSON::Value::Type> keyTypes, String& outExceptionString);
 
 /// Returns a rejected Promise object that combines the provided information into a single, descriptive error message.
 JSObjectRef toJSRejectedPromise(JSContextRef, const String& callingAPIName, const String& sourceKey, const String& underlyingErrorString);
 
 void callAfterRandomDelay(Function<void()>&&);
+
+size_t storageMaximumBytesPerCall(bool inTestingMode);
+
+/// Returns the storage size of a string.
+size_t storageSizeOf(const String&);
+
+/// Returns the storage size of all of the key value pairs in a dictionary.
+size_t storageSizeOf(RefPtr<JSON::Object>);
+
+/// Returns true if the size of any item in the dictionary exceeds the given quota.
+bool anyItemsExceedQuota(RefPtr<JSON::Object>, size_t quota, String& outKeyWithError);
 
 #ifdef __OBJC__
 
@@ -133,15 +149,6 @@ bool validateDictionary(NSDictionary<NSString *, id> *, NSString *sourceKey, NSA
 bool validateObject(NSObject *, NSString *sourceKey, id valueTypes, NSString **outExceptionString);
 
 NSString *toWebAPI(NSLocale *);
-
-/// Returns the storage size of a string.
-size_t storageSizeOf(NSString *);
-
-/// Returns the storage size of all of the key value pairs in a dictionary.
-size_t storageSizeOf(NSDictionary<NSString *, NSString *> *);
-
-/// Returns true if the size of any item in the dictionary exceeds the given quota.
-bool anyItemsExceedQuota(NSDictionary *, size_t quota, NSString **outKeyWithError = nullptr);
 
 template<typename T>
 id toWebAPI(const std::optional<T>& result, UseNullValue useNull = UseNullValue::Yes)
@@ -174,7 +181,7 @@ inline NSNumber *toWebAPI(size_t index)
 
 #endif // __OBJC__
 
-Markable<WTF::UUID> NODELETE toDocumentIdentifier(WebFrame&);
+Markable<WTF::UUID> LEGACY_NODELETE toDocumentIdentifier(WebFrame&);
 
 } // namespace WebKit
 

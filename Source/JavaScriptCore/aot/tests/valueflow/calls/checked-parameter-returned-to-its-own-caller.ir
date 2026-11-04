@@ -1,0 +1,22 @@
+# function keep(a: number | string) { a.length; return a }   first = keep(1); second = keep("s")
+# Each caller gets back its own argument, as it does when `a` has no type.
+# RUN: valueflow-why values=f0:v2
+# CHECK: values=f0:v2
+# CHECK: result {{*}} 1 members: primitive4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1
+    v3 = String string="s"
+    v4 = Call v0, -, v3
+    v5 = NewArray v2, v4 contents=anything
+    Return v5
+}
+function f1 name="keep" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=number|string
+    v2 = PropGet v1 key="length"
+    Return v1
+}

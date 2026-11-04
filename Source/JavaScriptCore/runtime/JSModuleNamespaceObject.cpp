@@ -27,12 +27,17 @@
 #include "JSModuleNamespaceObject.h"
 
 #include "AbstractModuleRecord.h"
+#include "CodeCache.h"
 #include "CyclicModuleRecord.h"
+#include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleRecord.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "SyntheticModuleRecord.h"
+#endif
+#if ENABLE(AOT)
+#include "AOTModuleRecord.h"
 #endif
 #if ENABLE(WEBASSEMBLY)
 #include "JSWebAssemblyGlobal.h"
@@ -63,8 +68,20 @@ JSModuleNamespaceObject::JSModuleNamespaceObject(VM& vm, Structure* structure, A
         m_exports.add(pair.first.impl(), ExportEntry {
             pair.second.localName,
             WriteBarrier { pair.second.moduleRecord, WriteBarrierEarlyInit },
+#if ENABLE(AOT)
+            pair.second.compiledExportIndex,
+#endif
         });
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    m_isDeferredOrLive = isDeferred;
+    if (vm.codeCache()->hasModuleRecordWithLiveExports()) [[unlikely]] {
+        m_isDeferredOrLive |= moduleRecord->hasLiveExports();
+        for (auto& entry : m_exports.values())
+            m_isDeferredOrLive |= entry.moduleRecord->hasLiveExports();
+    }
+#endif
 }
 
 void JSModuleNamespaceObject::finishCreation(JSGlobalObject* globalObject, bool shouldPreventExtensions)
@@ -164,10 +181,19 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
 
     slot.setIsTaintedByOpaqueObject();
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_isDeferredOrLive) [[unlikely]] {
+        std::optional<bool> result = getOwnPropertySlotIfDeferredOrLive(globalObject, propertyName, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (result)
+            return *result;
+    }
+#else
     if (m_isDeferred && slot.internalMethodType() != PropertySlot::InternalMethodType::VMInquiry) [[unlikely]] {
         ensureDeferredNamespaceEvaluation(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
     }
+#endif
 
     auto iterator = m_exports.find(propertyName.uid());
     if (iterator == m_exports.end()) {
@@ -184,6 +210,16 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
     switch (slot.internalMethodType()) {
     case PropertySlot::InternalMethodType::GetOwnProperty:
     case PropertySlot::InternalMethodType::Get: {
+#if ENABLE(AOT)
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(exportEntry.moduleRecord.get())) {
+            JSValue value = exportEntry.localName == vm.propertyNames->starNamespacePrivateName
+                ? JSValue(compiled->moduleNamespaceObject(globalObject, AbstractModuleRecord::ModulePhase::Evaluation))
+                : compiled->readExport(globalObject, exportEntry.localName, exportEntry.compiledExportIndex);
+            RETURN_IF_EXCEPTION(scope, false);
+            slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
+            return true;
+        }
+#endif
         if (exportEntry.localName == vm.propertyNames->starNamespacePrivateName) {
             // https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-get-p-receiver
             // 10. If binding.[[BindingName]] is "*namespace*", then
@@ -245,6 +281,79 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
     return false;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// The source can be a namespace object backed by the same record, and that recursion never pushes a JS frame.
+static bool canForwardToLiveExportsSource(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    if (globalObject->vm().isSafeToRecurseSoft()) [[likely]]
+        return true;
+    throwStackOverflowError(globalObject, scope);
+    return false;
+}
+
+// Returns nothing if the property is to be looked up as in any other namespace object.
+std::optional<bool> JSModuleNamespaceObject::getOwnPropertySlotIfDeferredOrLive(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_isDeferred && slot.internalMethodType() != PropertySlot::InternalMethodType::VMInquiry) {
+        ensureDeferredNamespaceEvaluation(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+    }
+
+    if (m_moduleRecord->hasLiveExports())
+        RELEASE_AND_RETURN(scope, getOwnPropertySlotForLiveExports(globalObject, propertyName, slot));
+
+    if (slot.internalMethodType() != PropertySlot::InternalMethodType::Get && slot.internalMethodType() != PropertySlot::InternalMethodType::GetOwnProperty)
+        return std::nullopt;
+    auto iterator = m_exports.find(propertyName.uid());
+    if (iterator == m_exports.end())
+        return std::nullopt;
+    ExportEntry& exportEntry = iterator->value;
+    if (!exportEntry.moduleRecord->hasLiveExports() || exportEntry.localName == vm.propertyNames->starNamespacePrivateName)
+        return std::nullopt;
+
+    // Re-exported from a live record. Its module environment may have no binding with this name.
+    JSValue value = exportEntry.moduleRecord->getReexportedLiveExport(globalObject, exportEntry.localName);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
+    return true;
+}
+
+// The namespace object of a live record forwards to liveExportsSource(), writes included.
+bool JSModuleNamespaceObject::getOwnPropertySlotForLiveExports(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    AbstractModuleRecord* moduleRecord = m_moduleRecord.get();
+
+    if (slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) {
+        slot.setValue(this, static_cast<unsigned>(PropertyAttribute::None), jsUndefined());
+        return false;
+    }
+
+    if (slot.internalMethodType() != PropertySlot::InternalMethodType::Get || propertyName == vm.propertyNames->__esModule) {
+        bool hasExport = moduleRecord->hasLiveExport(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!hasExport) {
+            if (propertyName == vm.propertyNames->__esModule)
+                RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(this, globalObject, propertyName, slot));
+            return false;
+        }
+        if (slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty) {
+            slot.setValue(this, static_cast<unsigned>(PropertyAttribute::None), jsUndefined());
+            return true;
+        }
+    }
+
+    JSValue value = moduleRecord->getLiveExport(globalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    slot.setValue(this, static_cast<unsigned>(PropertyAttribute::None), value);
+    return true;
+}
+#endif
+
 bool JSModuleNamespaceObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     JSModuleNamespaceObject* thisObject = uncheckedDowncast<JSModuleNamespaceObject>(cell);
@@ -270,6 +379,14 @@ bool JSModuleNamespaceObject::put(JSCell* cell, JSGlobalObject* globalObject, Pr
     } else if (propertyName == vm.propertyNames->__esModule && !thisObject->m_exports.contains(propertyName.uid())) [[unlikely]] {
         RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
     }
+    if (JSObject* source = thisObject->liveExportsSource()) [[unlikely]] {
+        if (!canForwardToLiveExportsSource(globalObject, scope)) [[unlikely]]
+            return false;
+        if (isThisValueAltered(slot, thisObject)) [[unlikely]]
+            RELEASE_AND_RETURN(scope, ordinarySetSlow(globalObject, thisObject, propertyName, value, slot.thisValue(), slot.isStrictMode()));
+        PutPropertySlot sourceSlot(source, slot.isStrictMode());
+        RELEASE_AND_RETURN(scope, source->methodTable()->put(source, globalObject, propertyName, value, sourceSlot));
+    }
 #endif
 
     // http://www.ecma-international.org/ecma-262/6.0/#sec-module-namespace-exotic-objects-set-p-v-receiver
@@ -278,10 +395,22 @@ bool JSModuleNamespaceObject::put(JSCell* cell, JSGlobalObject* globalObject, Pr
     return false;
 }
 
-bool JSModuleNamespaceObject::putByIndex(JSCell*, JSGlobalObject* globalObject, unsigned, JSValue, bool shouldThrow)
+bool JSModuleNamespaceObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned propertyName, JSValue value, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (JSObject* source = uncheckedDowncast<JSModuleNamespaceObject>(cell)->liveExportsSource()) [[unlikely]] {
+        if (!canForwardToLiveExportsSource(globalObject, scope)) [[unlikely]]
+            return false;
+        RELEASE_AND_RETURN(scope, source->methodTable()->putByIndex(source, globalObject, propertyName, value, shouldThrow));
+    }
+#else
+    UNUSED_PARAM(cell);
+    UNUSED_PARAM(propertyName);
+    UNUSED_PARAM(value);
+#endif
 
     if (shouldThrow)
         throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
@@ -302,6 +431,16 @@ bool JSModuleNamespaceObject::deleteProperty(JSCell* cell, JSGlobalObject* globa
         RETURN_IF_EXCEPTION(scope, false);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (JSObject* source = thisObject->liveExportsSource()) [[unlikely]] {
+        if (!canForwardToLiveExportsSource(globalObject, scope)) [[unlikely]]
+            return false;
+        // Not `slot`: the source would mark it cacheable, and the IC would cache that for this object's structure, which never changes.
+        DeletePropertySlot sourceSlot;
+        RELEASE_AND_RETURN(scope, source->methodTable()->deleteProperty(source, globalObject, propertyName, sourceSlot));
+    }
+#endif
+
     return !thisObject->m_exports.contains(propertyName.uid());
 }
 
@@ -314,6 +453,13 @@ bool JSModuleNamespaceObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject
         thisObject->ensureDeferredNamespaceEvaluation(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (JSObject* source = thisObject->liveExportsSource()) [[unlikely]] {
+        if (!canForwardToLiveExportsSource(globalObject, scope)) [[unlikely]]
+            return false;
+        RELEASE_AND_RETURN(scope, source->methodTable()->deletePropertyByIndex(source, globalObject, propertyName));
+    }
+#endif
     return !thisObject->m_exports.contains(Identifier::from(vm, propertyName).impl());
 }
 
@@ -328,7 +474,30 @@ void JSModuleNamespaceObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject
         thisObject->ensureDeferredNamespaceEvaluation(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
     }
-    for (const auto& name : thisObject->m_exports.keys()) {
+#if USE(BUN_JSC_ADDITIONS)
+    if (JSObject* source = thisObject->liveExportsSource()) [[unlikely]] {
+        if (!canForwardToLiveExportsSource(globalObject, scope)) [[unlikely]]
+            return;
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        source->methodTable()->getOwnPropertyNames(source, globalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, void());
+        for (const auto& name : names)
+            propertyNames.add(name);
+        if (propertyNames.includeSymbolProperties()) {
+            scope.release();
+            thisObject->getOwnNonIndexPropertyNames(globalObject, propertyNames, mode);
+        }
+        return;
+    }
+#endif
+    for (const auto& [name, exportEntry] : thisObject->m_exports) {
+#if USE(BUN_JSC_ADDITIONS)
+        // A live export is never uninitialized, and reading it can run an accessor of the source.
+        if (exportEntry.moduleRecord->hasLiveExports() && exportEntry.localName != vm.propertyNames->starNamespacePrivateName) {
+            propertyNames.add(name);
+            continue;
+        }
+#endif
         if (mode == DontEnumPropertiesMode::Exclude) {
             // Perform [[GetOwnProperty]] to throw ReferenceError if binding is uninitialized.
             PropertySlot slot(cell, PropertySlot::InternalMethodType::GetOwnProperty);
@@ -358,6 +527,14 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
     if (thisObject->isSymbolLikeNamespaceKey(vm, propertyName))
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (JSObject* source = thisObject->liveExportsSource()) [[unlikely]] {
+        if (!canForwardToLiveExportsSource(globalObject, scope)) [[unlikely]]
+            return false;
+        RELEASE_AND_RETURN(scope, source->methodTable()->defineOwnProperty(source, globalObject, propertyName, descriptor, shouldThrow));
+    }
+#endif
+
     // 2. Let current be ? O.[[GetOwnProperty]](P).
     PropertyDescriptor current;
     bool isCurrentDefined = thisObject->getOwnPropertyDescriptor(globalObject, propertyName, current);
@@ -381,28 +558,28 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
     // 4. If IsAccessorDescriptor(Desc) is true, return false.
     if (descriptor.isAccessorDescriptor()) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, "Cannot change module namespace object's binding to accessor"_s);
+            throwTypeError(globalObject, scope, NamespaceBindingToAccessorError);
         return false;
     }
 
     // 5. If Desc.[[Writable]] is present and has value false, return false.
     if (descriptor.writablePresent() && !descriptor.writable()) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, "Cannot change module namespace object's binding to non-writable attribute"_s);
+            throwTypeError(globalObject, scope, NamespaceBindingToNonWritableError);
         return false;
     }
 
     // 6. If Desc.[[Enumerable]] is present and has value false, return false.
     if (descriptor.enumerablePresent() && !descriptor.enumerable()) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, "Cannot replace module namespace object's binding with non-enumerable attribute"_s);
+            throwTypeError(globalObject, scope, NamespaceBindingToNonEnumerableError);
         return false;
     }
 
     // 7. If Desc.[[Configurable]] is present and has value true, return false.
     if (descriptor.configurablePresent() && descriptor.configurable()) {
         if (shouldThrow)
-            throwTypeError(globalObject, scope, "Cannot replace module namespace object's binding with configurable attribute"_s);
+            throwTypeError(globalObject, scope, NamespaceBindingToConfigurableError);
         return false;
     }
 
@@ -412,7 +589,7 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
         RETURN_IF_EXCEPTION(scope, false);
         if (!result) {
             if (shouldThrow)
-                throwTypeError(globalObject, scope, "Cannot replace module namespace object's binding's value"_s);
+                throwTypeError(globalObject, scope, NamespaceBindingValueError);
             return false;
         }
     }
@@ -423,6 +600,16 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
 
 #if USE(BUN_JSC_ADDITIONS)
 
+static bool isLiveBindingExport(AbstractModuleRecord* record)
+{
+#if ENABLE(AOT)
+    return record->inherits<AOT::ModuleRecord>();
+#else
+    UNUSED_PARAM(record);
+    return false;
+#endif
+}
+
 void JSModuleNamespaceObject::overrideExports(JSGlobalObject* globalObject, const WTF::Function<bool(JSGlobalObject* globalObject, const Identifier& exportName, JSC::JSValue& result)>& iter)
 {
     VM& vm = globalObject->vm();
@@ -432,7 +619,16 @@ void JSModuleNamespaceObject::overrideExports(JSGlobalObject* globalObject, cons
         JSValue value = jsUndefined();
         const Identifier& name = pair.value.localName;
 
+        if (pair.value.moduleRecord->hasLiveExports())
+            continue;
+
         if (iter(globalObject, name, value)) {
+            if (isLiveBindingExport(pair.value.moduleRecord.get())) {
+                throwTypeError(globalObject, scope, "Cannot replace a module export that is a live binding"_s);
+                return;
+            }
+            // DFG and FTL drop the TDZ check once a binding is initialized, so it must never go back to empty.
+            RELEASE_ASSERT(value);
             auto* moduleNamespaceObject = pair.value.moduleRecord->getModuleNamespace(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
             bool putResult = false;
@@ -468,6 +664,15 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
     }
 
     auto* record = resolution.moduleRecord;
+    // Live exports come from liveExportsSource(). There's no binding to override.
+    if (record->hasLiveExports())
+        return false;
+    if (isLiveBindingExport(record)) {
+        throwTypeError(globalObject, scope, "Cannot replace a module export that is a live binding"_s);
+        return false;
+    }
+    // DFG and FTL drop the TDZ check once a binding is initialized, so it must never go back to empty.
+    RELEASE_ASSERT(value);
     auto* moduleNamespaceObject = record->getModuleNamespace(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 

@@ -31,7 +31,6 @@ namespace WebCore {
 class SVGTransformList final : public SVGValuePropertyList<SVGTransform> {
     friend class SVGViewSpec;
     using Base = SVGValuePropertyList<SVGTransform>;
-    using Base::Base;
 
 public:
     static Ref<SVGTransformList> create()
@@ -49,6 +48,8 @@ public:
         return adoptRef(*new SVGTransformList(other, access));
     }
 
+    ~SVGTransformList();
+
     ExceptionOr<Ref<SVGTransform>> createSVGTransformFromMatrix(DOMMatrix2DInit&& matrixInit)
     {
         Ref svgTransform =  SVGTransform::create();
@@ -57,14 +58,14 @@ public:
     }
 
     ExceptionOr<RefPtr<SVGTransform>> consolidate();
-    std::optional<AffineTransform> NODELETE concatenate() const;
+    std::optional<AffineTransform> LEGACY_NODELETE concatenate() const;
 
     bool parse(StringView);
     String valueAsString() const override;
 
     static std::optional<SVGTransformValue::SVGTransformType> parseTransformType(StringView);
-    static std::optional<SVGTransformValue::SVGTransformType> parseTransformType(StringParsingBuffer<Latin1Character>&);
-    static std::optional<SVGTransformValue::SVGTransformType> parseTransformType(StringParsingBuffer<char16_t>&);
+    static std::optional<SVGTransformValue::SVGTransformType> LEGACY_NODELETE parseTransformType(StringParsingBuffer<Latin1Character>&);
+    static std::optional<SVGTransformValue::SVGTransformType> LEGACY_NODELETE parseTransformType(StringParsingBuffer<char16_t>&);
 
     template<typename CharacterType>
     static bool parseAndReplaceTransform(SVGTransformValue::SVGTransformType, StringParsingBuffer<CharacterType>&, SVGTransform&); // Defined in SVGTransformListInlines.h
@@ -73,6 +74,9 @@ public:
     static RefPtr<SVGTransform> parseTransform(SVGTransformValue::SVGTransformType, StringParsingBuffer<CharacterType>&); // Defined in SVGTransformListInlines.h
 
 private:
+    SVGTransformList();
+    SVGTransformList(SVGPropertyOwner*, SVGPropertyAccess);
+    SVGTransformList(const SVGTransformList&, SVGPropertyAccess);
 
     enum class ListReplacement : bool {
         Append,

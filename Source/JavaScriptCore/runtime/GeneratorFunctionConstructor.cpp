@@ -52,7 +52,7 @@ JSC_DEFINE_HOST_FUNCTION(constructGeneratorFunctionConstructor, (JSGlobalObject*
 }
 
 GeneratorFunctionConstructor::GeneratorFunctionConstructor(VM& vm, Structure* structure)
-    : InternalFunction(vm, structure, callGeneratorFunctionConstructor, constructGeneratorFunctionConstructor)
+    : InternalFunction(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callGeneratorFunctionConstructor), JSC_REGISTERED_HOST_FUNCTION(constructGeneratorFunctionConstructor))
 {
 }
 

@@ -1,0 +1,33 @@
+# With the pass off a read of a variable nothing in the loop writes stays in the loop header
+# FORM: Prepared
+# OPTIONS: disable=pass:HoistLoopInvariantReads
+# RUN: pass HoistLoopInvariantReads
+# STATISTIC: HoistLoopInvariantReadsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="limit" declared={type=number}
+
+function f0 name="moduleVariableRead" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = GetModuleVariable variable=g0
+    v3 = Less v0, v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v2
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v2: number = GetModuleVariable variable=g0
+# CHECK-NEXT: v3: boolean = Less v0, v2
+# CHECK-NEXT: Branch v3 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return v2
+}

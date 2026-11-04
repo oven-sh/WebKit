@@ -171,10 +171,10 @@ public:
     WEBCORE_EXPORT ~IOSurface();
 
     WEBCORE_EXPORT static IntSize maximumSize();
-    WEBCORE_EXPORT static void NODELETE setMaximumSize(IntSize);
+    WEBCORE_EXPORT static void LEGACY_NODELETE setMaximumSize(IntSize);
 
     WEBCORE_EXPORT static size_t bytesPerRowAlignment();
-    WEBCORE_EXPORT static void NODELETE setBytesPerRowAlignment(size_t);
+    WEBCORE_EXPORT static void LEGACY_NODELETE setBytesPerRowAlignment(size_t);
 
     WEBCORE_EXPORT WTF::MachSendRight createSendRight() const;
 
@@ -188,10 +188,11 @@ public:
     // Passed in context is the context through which the contents was drawn.
     WEBCORE_EXPORT RetainPtr<CGImageRef> createImage(CGContextRef);
     WEBCORE_EXPORT RefPtr<NativeImage> createNativeImage(ShouldForceOpaque = ShouldForceOpaque::Yes);
+    WEBCORE_EXPORT void withNativeImage(ShouldForceOpaque, NOESCAPE const Function<void(NativeImage*)>&);
     // Passed in context is the context through which the contents was drawn.
     WEBCORE_EXPORT static RetainPtr<CGImageRef> sinkIntoImage(std::unique_ptr<IOSurface>, RetainPtr<CGContextRef> = nullptr);
 
-    WEBCORE_EXPORT static Name NODELETE nameForRenderingPurpose(RenderingPurpose);
+    WEBCORE_EXPORT static Name LEGACY_NODELETE nameForRenderingPurpose(RenderingPurpose);
     Name name() const { return m_name; }
 
 #ifdef __OBJC__
@@ -201,7 +202,8 @@ public:
 
     IOSurfaceRef surface() const { return m_surface.get(); }
 
-    WEBCORE_EXPORT RetainPtr<CGContextRef> createPlatformContext(PlatformDisplayID = 0, std::optional<CGImageAlphaInfo> = std::nullopt);
+    WEBCORE_EXPORT RetainPtr<CGContextRef> createPlatformContext(PlatformDisplayID = 0, std::optional<CGImageAlphaInfo> = std::nullopt, bool useWebKitBehavior = false);
+    WEBCORE_EXPORT static void releaseCGIOSurfaceContextResources();
 
     struct LockAndContext {
         IOSurface::Locker<AccessMode::ReadWrite> lock;
@@ -238,7 +240,7 @@ public:
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
     WEBCORE_EXPORT void setContentEDRHeadroom(float);
-    WEBCORE_EXPORT std::optional<float> NODELETE contentEDRHeadroom() const;
+    WEBCORE_EXPORT std::optional<float> LEGACY_NODELETE contentEDRHeadroom() const;
     WEBCORE_EXPORT void loadContentEDRHeadroom();
 #endif
 
@@ -279,7 +281,7 @@ private:
         size_t bitsPerComponent;
     };
 
-    BitmapConfiguration NODELETE bitmapConfiguration() const;
+    BitmapConfiguration LEGACY_NODELETE bitmapConfiguration() const;
 
     std::optional<UsedFormat> m_format;
     std::optional<ColorSpace> m_colorSpace;

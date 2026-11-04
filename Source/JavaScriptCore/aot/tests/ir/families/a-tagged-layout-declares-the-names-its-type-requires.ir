@@ -1,0 +1,32 @@
+# interface Node { kind: number }  interface List extends Node { kind: 1; elements: number }  interface Text extends Node { kind: 2; text: number }
+# interface HasElements { elements: number }      (node as HasElements).elements      function NodeObject(this: Node, kind: number) { this.kind = kind }
+# The assertion puts Node below HasElements, and with Node everything that is a Node. Of the layouts by tag only L5, for `kind: 1`, takes `elements` from the type that declares it.
+# L6, for `kind: 2`, has no such field: it is no HasElements. A read of `elements` is asked of the one layout that has it.
+# THE MAKER's OWN LAYOUT STAYS (L0): the record of a constructor lists what the constructor stores, and programs store names that the type requires after it has returned.
+# Asking it for them turned away every Type, Symbol and Signature of the TypeScript compiler.
+# FORM: AsRead
+# RUN: members
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}] supertypes=[L4] flags=[IsNeverAllocated]
+layout L2 name="List" fields=[{key="elements" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=1} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated]
+layout L3 name="Text" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="text" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated]
+layout L4 name="HasElements" fields=[{key="elements" declared={type=number} flags=[IsRequired]}] flags=[IsNeverAllocated]
+# CHECK: L0: members [L0, L5, L6]
+# CHECK-NEXT: L1: members [L0, L5, L6]
+# CHECK-NEXT: L2: members [L5]
+# CHECK-NEXT: L3: members [L6]
+# CHECK-NEXT: L4: members [L0, L5]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=L1} parameters=[{type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="kind" mode=Strict
+    Return
+}
+function f2 name="take" parameters=[{type=L4}] results=[{type=anything}] {
+    Return
+}

@@ -1,0 +1,42 @@
+# const first = { held: heldByFirst, set shown(value) { handOut(this); } }, second = { held: heldBySecond }; either = first; either = second; either.shown = 1
+# The store looks for a setter of `shown` on both objects at once. Only `first` finds one, so only `first` is its `this`: the setter hands it out and what `first` holds is entered.
+# `second` takes the value as a property of its own and stays in the program, whichever objects are stored to beside it.
+# setter-is-entered-with-the-receivers-that-find-it.ir with another order of the rules: the answer is the same.
+# OPTIONS: testing=DelayOtherFlowRules
+# RUN: valueflow-why escaped=f2 escaped=f3
+# CHECK: escaped=f2
+# CHECK-NEXT: n0 escaped
+# CHECK: escaped=f3
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="either" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    DefineSetter v1, v2 key="shown"
+    v4 = NewClosure function=f3
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v5 variable=g0
+    v8 = GetModuleVariable variable=g0
+    v9 = Integer integer=1
+    PropSet v8, v9 key="shown"
+    Return
+}
+function f1 name="shown" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="somethingThatNoTableLists" [isFreeName]
+    v4 = Call v3, -, v0
+    Return
+}
+function f2 name="heldByFirst" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f3 name="heldBySecond" kind=Arrow results=[{type=anything}] {
+    Return
+}

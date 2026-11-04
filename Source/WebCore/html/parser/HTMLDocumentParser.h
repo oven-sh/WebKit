@@ -72,7 +72,7 @@ public:
     HTMLTokenizer& tokenizer() LIFETIME_BOUND;
     TextPosition textPosition() const final;
 
-    bool NODELETE isOnStackOfOpenElements(Element&) const;
+    bool LEGACY_NODELETE isOnStackOfOpenElements(Element&) const;
 
 protected:
     explicit HTMLDocumentParser(HTMLDocument&, OptionSet<ParserContentPolicy> = DefaultParserContentPolicy);
@@ -90,11 +90,11 @@ private:
 
     // DocumentParser
     void detach() final;
-    bool hasInsertionPoint() final;
+    bool LEGACY_NODELETE hasInsertionPoint() final;
     bool processingData() const final;
     void prepareToStopParsing() final;
     void stopParsing() final;
-    bool NODELETE isWaitingForScripts() const;
+    bool LEGACY_NODELETE isWaitingForScripts() const;
     bool isExecutingScript() const final;
     bool hasScriptsWaitingForStylesheets() const final;
     void executeScriptsWaitingForStylesheets() final;
@@ -113,7 +113,7 @@ private:
     // PendingScriptClient
     void notifyFinished(PendingScript&) final;
 
-    Document* NODELETE contextForParsingSession();
+    Document* LEGACY_NODELETE contextForParsingSession();
 
     enum class SynchronousMode : bool { AllowYield, ForceSynchronous };
     void append(RefPtr<StringImpl>&&, SynchronousMode);
@@ -131,9 +131,9 @@ private:
     void attemptToRunDeferredScriptsAndEnd();
     void end();
 
-    bool NODELETE isParsingFragment() const;
-    bool NODELETE isScheduledForResume() const;
-    bool NODELETE inPumpSession() const;
+    bool LEGACY_NODELETE isParsingFragment() const;
+    bool LEGACY_NODELETE isScheduledForResume() const;
+    bool LEGACY_NODELETE inPumpSession() const;
     bool shouldDelayEnd() const;
 
     void didBeginYieldingParser() final;
@@ -143,7 +143,7 @@ private:
     HTMLInputStream m_input;
 
     HTMLTokenizer m_tokenizer;
-    std::unique_ptr<HTMLScriptRunner> m_scriptRunner;
+    const std::unique_ptr<HTMLScriptRunner> m_scriptRunner;
     const UniqueRef<HTMLTreeBuilder> m_treeBuilder;
     std::unique_ptr<HTMLPreloadScanner> m_preloadScanner;
     std::unique_ptr<HTMLPreloadScanner> m_insertionPreloadScanner;

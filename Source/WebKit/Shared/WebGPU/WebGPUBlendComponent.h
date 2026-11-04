@@ -27,17 +27,11 @@
 
 #if ENABLE(GPU_PROCESS)
 
-#include <WebCore/WebGPUBlendFactor.h>
-#include <WebCore/WebGPUBlendOperation.h>
-#include <optional>
+#include <WebCore/WebGPUCppAPI.h>
 
 namespace WebKit::WebGPU {
 
-struct BlendComponent {
-    WebCore::WebGPU::BlendOperation operation { WebCore::WebGPU::BlendOperation::Add };
-    WebCore::WebGPU::BlendFactor srcFactor { WebCore::WebGPU::BlendFactor::One };
-    WebCore::WebGPU::BlendFactor dstFactor { WebCore::WebGPU::BlendFactor::Zero };
-};
+using BlendComponent = ::WebGPU::BlendComponent;
 
 } // namespace WebKit::WebGPU
 

@@ -1,0 +1,25 @@
+# The last of the functions that a callee can be is entered because the tests for the others have failed. A validating build asks there whether the callee is that function
+# FORM: Prepared
+# OPTIONS: validate
+# RUN: pass ResolveCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f1 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f2 name="two-functions" parameters=[{type=f0|f1}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK: [[isFirst]]: boolean = TypeTest v0 testedType=f0
+# CHECK-NEXT: Branch [[isFirst]] -> taken [[firstArm]](| 0), notTaken [[secondArm]](| 0)
+# CHECK: [[firstArm]]({{*}}: f0):
+# CHECK-NEXT: ValidateType v0 validatedType=f0
+# CHECK-NEXT: = CallDirect v1 function=f0
+# CHECK: [[secondArm]]([[second]]: f1):
+# CHECK-NEXT: ValidateType [[second]] validatedType=f1
+# CHECK-NEXT: = CallDirect v1 function=f1
+}

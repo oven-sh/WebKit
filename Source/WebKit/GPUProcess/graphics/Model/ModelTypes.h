@@ -30,11 +30,7 @@
 
 #ifdef __cplusplus
 #include <WebCore/SharedMemory.h>
-#include <WebCore/WebGPUPrimitiveTopology.h>
-#include <WebCore/WebGPUTextureFormat.h>
-#include <WebCore/WebGPUTextureUsage.h>
-#include <WebCore/WebGPUTextureViewDimension.h>
-#include <WebCore/WebGPUVertexFormat.h>
+#include <WebCore/WebGPUCppAPI.h>
 #include <WebKit/Float3.h>
 #include <WebKit/Float4x4.h>
 #include <wtf/ExportMacros.h>
@@ -46,6 +42,8 @@
 #endif
 
 typedef struct __IOSurface *IOSurfaceRef;
+
+static const long WKBridgeMaximumTextureDimension = 16384;
 
 #ifdef __OBJC__
 
@@ -500,14 +498,18 @@ NS_SWIFT_SENDABLE
 
 - (nullable id<MTLCommandBuffer>)commandBuffer;
 - (void)renderWithTexture:(id<MTLTexture>)texture commandBuffer:(id<MTLCommandBuffer>)commandBuffer;
-- (void)updateMesh:(NSArray<WKBridgeUpdateMesh *> *)descriptor;
+- (void)updateMesh:(NSArray<WKBridgeUpdateMesh *> *)descriptor forNode:(uint64_t)node;
+- (void)removeNode:(uint64_t)node;
 - (void)updateTexture:(NSArray<WKBridgeUpdateTexture *> *)descriptor;
 - (void)updateMaterial:(NSArray<WKBridgeUpdateMaterial *> *)descriptor;
 - (BOOL)processRemovals:(NSArray<WKBridgeTypedResourceId *> *)meshRemovals materialRemovals:(NSArray<WKBridgeTypedResourceId *> *)materialRemovals  textureRemovals:(NSArray<WKBridgeTypedResourceId *> *)textureRemovals;
 - (void)setTransform:(simd_float4x4)transform;
+- (void)setTransform:(simd_float4x4)transform forNode:(uint64_t)node;
 - (void)setFOV:(float)fovY;
 - (void)setPlaying:(BOOL)play;
 - (void)setEnvironmentMap:(WKBridgeUpdateTexture *)imageAsset;
+- (void)setDefaultEnvironmentMap;
+- (void)removeEnvironmentMap;
 
 - (instancetype)init NS_UNAVAILABLE;
 - (nullable instancetype)initWithConfiguration:(WKBridgeUSDConfiguration *)configuration diffuseAsset:(WKBridgeImageAsset *)diffuseAsset specularAsset:(WKBridgeImageAsset *)specularAsset error:(NSError **)error NS_DESIGNATED_INITIALIZER;
@@ -522,7 +524,6 @@ NS_SWIFT_SENDABLE
 - (double)currentTime;
 - (void)setCurrentTime:(double)newTime;
 - (double)duration;
-- (BOOL)treatZAsUpAxis;
 - (BOOL)loadModel:(NSData *)data mimeType:(NSString *)mimeType;
 - (nullable WKBridgeUpdateTexture *)loadEnvironmentMap:(NSData *)data;
 - (void)update:(double)deltaTime;
@@ -559,11 +560,11 @@ struct ImageAsset {
     long width { 0 };
     long height { 0 };
     long depth { 0 };
-    WebCore::WebGPU::TextureViewDimension textureType { WebCore::WebGPU::TextureViewDimension::_2d };
-    WebCore::WebGPU::TextureFormat pixelFormat { WebCore::WebGPU::TextureFormat::R8unorm };
+    ::WebGPU::TextureViewDimension textureType { ::WebGPU::TextureViewDimension::_2d };
+    ::WebGPU::TextureFormat pixelFormat { ::WebGPU::TextureFormat::R8unorm };
     long mipmapLevelCount { 0 };
     long arrayLength { 0 };
-    WebCore::WebGPU::TextureUsageFlags textureUsage { };
+    OptionSet<::WebGPU::TextureUsage> textureUsage { };
     ImageAssetSwizzle swizzle { };
 };
 
@@ -586,7 +587,7 @@ struct VertexLayout {
 struct MeshPart {
     uint32_t indexOffset;
     uint32_t indexCount;
-    WebCore::WebGPU::PrimitiveTopology topology;
+    ::WebGPU::PrimitiveTopology topology;
     uint32_t materialIndex;
     Float3 boundsMin;
     Float3 boundsMax;
@@ -611,7 +612,7 @@ enum class VertexSemantic : uint8_t {
 
 struct VertexAttributeFormat {
     VertexSemantic semantic;
-    WebCore::WebGPU::VertexFormat format;
+    ::WebGPU::VertexFormat format;
     long layoutIndex;
     long offset;
 };

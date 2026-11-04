@@ -28,9 +28,7 @@
 
 namespace WebCore {
 
-class LegacyInlineFlowBox;
 class RenderObject;
-class SVGInlineTextBox;
 
 class SVGTextQuery {
 public:
@@ -53,12 +51,12 @@ private:
     bool executeQuery(Data*, ProcessTextFragmentCallback) const;
 
     void collectTextBoxesInInlineBox(InlineIterator::InlineBoxIterator);
-    bool mapStartEndPositionsIntoFragmentCoordinates(Data*, const SVGTextFragment&, unsigned& startPosition, unsigned& endPosition) const;
-    void modifyStartEndPositionsRespectingLigatures(Data*, const SVGTextFragment&, unsigned& startPosition, unsigned& endPosition) const;
+    bool LEGACY_NODELETE mapStartEndPositionsIntoFragmentCoordinates(Data*, const SVGTextFragment&, unsigned& startPosition, unsigned& endPosition) const;
+    void LEGACY_NODELETE modifyStartEndPositionsRespectingLigatures(Data*, const SVGTextFragment&, unsigned& startPosition, unsigned& endPosition) const;
 
 private:
-    bool NODELETE numberOfCharactersCallback(Data*, const SVGTextFragment&) const;
-    bool NODELETE textLengthCallback(Data*, const SVGTextFragment&) const;
+    bool LEGACY_NODELETE numberOfCharactersCallback(Data*, const SVGTextFragment&) const;
+    bool LEGACY_NODELETE textLengthCallback(Data*, const SVGTextFragment&) const;
     bool subStringLengthCallback(Data*, const SVGTextFragment&) const;
     bool startPositionOfCharacterCallback(Data*, const SVGTextFragment&) const;
     bool endPositionOfCharacterCallback(Data*, const SVGTextFragment&) const;

@@ -1,0 +1,37 @@
+# A value of type `any` in a checked function is no better known than a value in a function that nobody has checked: the layouts expected of it are a guess from the names it is asked for.
+# The copy behind that guess holds the stretch alone, comes back behind it and is expected to run now and then. Behind a type that the checker has given, the copy goes on behind the stretch
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Hook" constructor=f2 fields=[{key="memoizedState" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None}
+
+function f0 name="guessedFromTheName" flags=[IsChecked] parameters=[{type=object flags=[IsExpected]}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: function):
+    v2 = PropGet v0 key="memoizedState"
+    v3 = Call v1, -, v2
+    Return v3
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = GetSlot {{*}} key="memoizedState" receivers=[L0] level=Expected
+# CHECK-COUNT-1: = Call v1
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="memoizedState"
+# CHECK-NOT: = Call v1
+}
+
+function f1 name="saidByTheChecker" flags=[IsChecked] parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2: anything ~ L0 = Upcast v0 castType=anything
+    v3 = PropGet v2 key="memoizedState"
+    v4 = Call v1, -, v3
+    Return v4
+# CHECK: = TypeTest v2 testedType=L0
+# CHECK: = GetSlot {{*}} key="memoizedState" receivers=[L0] level=Expected
+# CHECK: = Call v1
+# CHECK: frequency=Rare:
+# CHECK: = PropGet v2 key="memoizedState"
+# CHECK: = Call v1
+}
+
+function f2 name="Hook" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]

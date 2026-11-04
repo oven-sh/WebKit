@@ -1,0 +1,71 @@
+# A block parameter takes the word read from a 32-bit slot on one edge and a parameter or a closure on another. In front of a loop's poll the word is decoded before the edge; where nothing can run the collector before the parameter's uses the word crosses the edge as it is
+# RUN: compile
+# RUN(CHOSEN): pipeline ChooseRepresentations
+# OPTIONS: references=narrow check=validate-back-end,validate-references testing=NoLayoutIsMadeSeldom
+# OPTIONS: disable=pass:InlineCalls,pass:HoistTestsIntoPredecessors,pass:ThreadJumps,pass:SinkAllocations,pass:AllocateInFrames,pass:RemoveUnreadFields
+# CHECK: image not empty
+# CHOSEN-LABEL: name="parameterThenSlotRead"
+# CHOSEN-NOT: @Cell32)
+# CHOSEN: [[word]]: null|L0 @Cell32 = GetSlot
+# CHOSEN-NEXT: Jump -> next b1({{*}})
+# CHOSEN-LABEL: name="slotReadOrFreshClosure"
+# CHOSEN: [[otherWord]]: null|L0 @Cell32 = GetSlot
+# CHOSEN-NEXT: Jump -> next b3([[otherWord]])
+# CHOSEN: Jump -> next b3({{*}})
+# CHOSEN-NEXT: b3([[joined]]: null|L0|f3 @Cell32):
+# CHOSEN-NEXT: TypeTest [[joined]]
+
+layout L0 name="Node" fields=[{key="next" declared={type=null|L0} flags=[IsRequired]}, {key="first" declared={type=null|L0} flags=[IsRequired]}, {key="second" declared={type=null|L0} flags=[IsRequired]}, {key="third" declared={type=null|L0} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Null
+    v1 = NewObject -, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3]
+    v2 = NewObject -, v1, v1, v1, v1 layout=L0 fields=[0, 1, 2, 3]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="input" [isFreeName]
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v2)
+  b3(v6):
+    v7 = Convert v6 declared={type=null|L0}
+    v8 = CallDirect v7 function=f1
+    v9 = Convert v6 declared={type=L0}
+    v10 = CallDirect v5, v9, v4 function=f2
+    v11 = PropGet v3 key="use" [isFreeName]
+    v12 = Call v11, -, v10
+    Return v12
+}
+function f1 name="parameterThenSlotRead" parameters=[{type=null|L0}] results=[{type=undefined}] {
+    Jump -> next b1(v0)
+  b1(v1):
+    LoopHint
+    v3 = TypeTest v1 testedType=undefined|null
+    Branch v3 -> taken b3(), notTaken b2(| 0)
+  b2(v4):
+    v5 = PropGet v4 key="next"
+    v6 = Convert v5 declared={type=null|L0}
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+function f2 name="slotReadOrFreshClosure" parameters=[{type=boolean}, {type=L0}, {type=anything}] results=[{type=boolean}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v1 key="next"
+    v4 = Convert v3 declared={type=null|L0}
+    Jump -> next b3(v4)
+  b2():
+    v5 = NewClosure v2 function=f3
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = TypeTest v6 testedType=undefined|null
+    Return v7
+}
+function f3 name="capturesValue" captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

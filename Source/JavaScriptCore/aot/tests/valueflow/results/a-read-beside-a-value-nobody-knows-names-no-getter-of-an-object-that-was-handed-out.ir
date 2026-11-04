@@ -1,0 +1,33 @@
+# shared = { get size() { return 3 } }; publish(shared); (name ? shared : handedIn).size
+# `shared` is in hands nobody knows, so the value nobody knows stands for it at the read, and for whatever lies on it by then. No record names its getter
+# RUN: valueflow-results
+# CHECK: function f1 cause=ReachesNativeCode
+# RUN(NOWHERE): valueflow-results
+# NOWHERE-NOT: -> f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Shared"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f1
+    DefineGetter v0, v1 key="size"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v0
+    v6 = PropGet v3 key="handedIn" [isFreeName]
+    v7 = PropGet v3 key="name" [isFreeName]
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v6)
+  b3(v9: anything):
+    v10 = PropGet v9 key="size"
+    Return
+}
+function f1 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=3
+    Return v1
+}

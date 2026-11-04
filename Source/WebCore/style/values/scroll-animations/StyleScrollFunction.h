@@ -40,14 +40,14 @@ struct ScrollFunctionParameters {
     Scroller scroller;
     ScrollAxis axis;
 
-    bool NODELETE operator==(const ScrollFunctionParameters&) const = default;
+    bool LEGACY_NODELETE operator==(const ScrollFunctionParameters&) const = default;
 };
-using ScrollFunction = FunctionNotation<CSSValueScroll, ScrollFunctionParameters>;
+using ScrollFunction = FunctionNotation<CSSValueID::Scroll, ScrollFunctionParameters>;
 
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<ScrollFunction> {
-    ScrollFunction NODELETE operator()(BuilderState&, const CSSValue&);
+    ScrollFunction operator()(BuilderState&, const CSSValue&);
     auto operator()(BuilderState&, const CSSScrollValue&) -> ScrollFunction;
 };
 

@@ -72,7 +72,7 @@ void RemoteDOMWindow::closePage()
 void RemoteDOMWindow::frameDetached()
 {
     if (RefPtr frame = m_frame) {
-        m_detachedFrameDocumentSecurityOrigin = frame->frameDocumentSecurityOriginOrOpaque();
+        lazyInitialize(m_detachedFrameDocumentSecurityOrigin, Ref { frame->frameDocumentSecurityOriginOrOpaque() });
         m_isDetachedFrameDocumentSandboxedOrigin = frame->frameDocumentIsSandboxedOrigin();
     }
     m_frame = nullptr;
@@ -155,7 +155,7 @@ ExceptionOr<void> RemoteDOMWindow::postMessage(JSC::JSGlobalObject& lexicalGloba
     return { };
 }
 
-void RemoteDOMWindow::setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior historyHandling, SetLocationLocking locking, CanNavigateState navigationState)
+void RemoteDOMWindow::setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior historyHandling, ReplaceIfNotCompletelyLoaded replaceIfNotCompletelyLoaded, SetLocationLocking locking, CanNavigateState navigationState)
 {
     if (!passesSetLocationSecurityChecks(activeWindow, completedURL, navigationState))
         return;
@@ -170,9 +170,9 @@ void RemoteDOMWindow::setLocation(LocalDOMWindow& activeWindow, const URL& compl
     LockBackForwardList lockBackForwardList = (locking != SetLocationLocking::LockHistoryBasedOnGestureState) ? LockBackForwardList::Yes : LockBackForwardList::No;
     protect(frame->navigationScheduler())->scheduleLocationChange(*activeDocument, protect(activeDocument->securityOrigin()),
         // FIXME: What if activeDocument()->frame() is 0?
-        completedURL, activeDocument->frame()->loader().outgoingReferrer(),
+        completedURL, protect(activeDocument->frame()->loader())->outgoingReferrer(),
         lockHistory, lockBackForwardList,
-        historyHandling);
+        historyHandling, replaceIfNotCompletelyLoaded);
 }
 
 } // namespace WebCore

@@ -1,4 +1,4 @@
-mediaSessionRestrictions["video"] = "backgroundprocessplaybackrestricted,backgroundtabplaybackrestricted"
+mediaSessionRestrictions["video"] = "backgroundprocessplaybackrestricted"
 mediaSessionRestrictions["audio"] = ""
 mediaSessionRestrictions["videoaudio"] = "concurrentplaybacknotpermitted,backgroundprocessplaybackrestricted"
 mediaSessionRestrictions["webaudio"] = "backgroundprocessplaybackrestricted"

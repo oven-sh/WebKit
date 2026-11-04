@@ -94,9 +94,10 @@ private:
 #endif
     void setContentsDisplayDelegate(RefPtr<GraphicsLayerContentsDisplayDelegate>&&, ContentsLayerPurpose) override;
     RefPtr<GraphicsLayerAsyncContentsDisplayDelegate> createAsyncContentsDisplayDelegate(GraphicsLayerAsyncContentsDisplayDelegate*) override;
-    void setContentsToImage(Image*) override;
+    void setContentsToNativeImage(NativeImage*) override;
     void setContentsToSolidColor(const Color&) override;
     bool usesContentsLayer() const override;
+    bool hasContentsDisplayDelegate() const override { return !!m_contentsDisplayDelegate; }
 
     bool setChildren(Vector<Ref<GraphicsLayer>>&&) override;
     void addChild(Ref<GraphicsLayer>&&) override;

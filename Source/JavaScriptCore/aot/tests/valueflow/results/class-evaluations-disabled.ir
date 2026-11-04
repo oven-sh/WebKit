@@ -1,0 +1,72 @@
+# With class evaluations switched off no class definition is known to be evaluated at most once. The links and the names of the classes stay proven, and so does how often a function runs
+# OPTIONS: disable=flow:ClassEvaluations
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}classFlow={prototypeLink=Fixed staticLink=Fixed
+# CHECK: layout L1 {{*}}classFlow={prototypeLink=Fixed staticLink=Fixed
+# CHECK: layout L2 {{*}}classFlow={prototypeLink=Fixed staticLink=Fixed
+# CHECK: layout L3 {{*}}classFlow={prototypeLink=Fixed staticLink=Fixed
+# RUN(NOTHING): valueflow-apply
+# NOTHING-NOT: evaluations=
+# RUN(RESULTS): valueflow-results
+# RESULTS: function f0 executions=AtMostOnce
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="AtTop" constructor=f1
+layout L1 kind=Instance name="InFunctionCalledOnce" constructor=f2
+layout L2 kind=Instance name="InLoop" constructor=f3
+layout L3 kind=Instance name="InFunctionCalledTwice" constructor=f4
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = CallDirect function=f5
+    v5 = CallDirect function=f6
+    v6 = CallDirect function=f6
+    v7 = Boolean boolean=true
+    Jump -> next b1()
+  b1():
+    v8 = NewClosure function=f3
+    v9 = NewClass v8 layout=L2
+    v10 = FinishClass v9 layout=L2
+    v11 = Construct v10
+    LoopHint
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="AtTop" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="InFunctionCalledOnce" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f3 name="InLoop" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    Return v2
+}
+function f4 name="InFunctionCalledTwice" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3 fields=[]
+    Return v2
+}
+function f5 name="defineOnce" results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewClass v0 layout=L1
+    v2 = FinishClass v1 layout=L1
+    v3 = Construct v2
+    Return
+}
+function f6 name="defineTwice" results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = NewClass v0 layout=L3
+    v2 = FinishClass v1 layout=L3
+    v3 = Construct v2
+    Return
+}

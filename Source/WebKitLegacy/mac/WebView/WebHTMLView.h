@@ -34,7 +34,6 @@
 #endif
 
 @class WebDataSource;
-@class WebHTMLViewPrivate;
 
 /*!
     @class WebHTMLView
@@ -47,10 +46,6 @@
 #else
 @interface WebHTMLView : WAKView <WebDocumentView, WebDocumentSearching>
 #endif
-{
-@private
-    WebHTMLViewPrivate *_private;
-}
 
 /*!
     @method setNeedsToApplyStyles:

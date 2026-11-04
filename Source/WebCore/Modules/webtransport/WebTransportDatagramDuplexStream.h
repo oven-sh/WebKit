@@ -46,12 +46,12 @@ template<typename> class ExceptionOr;
 
 class WebTransportDatagramDuplexStream : public RefCounted<WebTransportDatagramDuplexStream> {
 public:
-    static Ref<WebTransportDatagramDuplexStream> create(Ref<ReadableStream>&&);
+    static Ref<WebTransportDatagramDuplexStream> LEGACY_NODELETE create(Ref<ReadableStream>&&);
     ~WebTransportDatagramDuplexStream();
 
     ReadableStream& readable() { return m_readable; }
     ExceptionOr<Ref<WebTransportDatagramsWritable>> createWritable(ScriptExecutionContext&, WebTransportSendOptions&&);
-    unsigned NODELETE maxDatagramSize() const;
+    unsigned LEGACY_NODELETE maxDatagramSize() const;
     std::optional<double> incomingMaxAge() const { return m_incomingMaxAge; }
     std::optional<double> outgoingMaxAge() const { return m_outgoingMaxAge; }
     uint32_t incomingMaxBufferedDatagrams() const { return m_incomingMaxBufferedDatagrams; }
@@ -61,7 +61,7 @@ public:
     void setIncomingMaxBufferedDatagrams(uint32_t);
     void setOutgoingMaxBufferedDatagrams(uint32_t);
 
-    void attachTo(WebTransport&);
+    void LEGACY_NODELETE attachTo(WebTransport&);
 
 private:
     WebTransportDatagramDuplexStream(Ref<ReadableStream>&&);

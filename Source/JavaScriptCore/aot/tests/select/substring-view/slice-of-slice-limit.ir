@@ -1,0 +1,33 @@
+# A chain of ranges is at most as long as a group may have members: the range behind the limit reads the range around it, which is created
+# FORM: Prepared
+# OPTIONS: limit=MaxSelectionGroupMembers:1
+# RUN: pass Select
+# LOSS: MaxSelectionGroupMembers f0 v13
+# STATISTIC: SubstringViewGroups = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice-of-slice" parameters=[{type=string}, {type=int}, {type=int}, {type=int}] results=[{type=boolean}] {
+    v4 = GetStringLength v0
+    v5 = StringRange v4, v1, v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Substring v0, v6, v7
+    v9 = GetStringLength v8
+    v10 = StringRange v9, v3
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    v13 = Substring v8, v11, v12
+    v14 = String string="ab"
+    v15 = StrictEq v13, v14
+    Return v15
+}
+# CHECK: v8: string = Substring v0, v6, v7
+# CHECK-NEXT: [[differenceInner]]: int[-2147483647, 2147483647] = Sub v7, v6
+# CHECK-NEXT: [[maskInner]]: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: [[innerLength]]: int[0, 2147483647] = BitAnd [[differenceInner]], [[maskInner]]
+# CHECK-NEXT: [[innerRange]]: {{*}} = StringRange [[innerLength]], v3
+# CHECK-NEXT: [[relativeFrom]]: {{*}} = ResultAt [[innerRange]]
+# CHECK-NEXT: [[relativeTo]]: {{*}} = ResultAt [[innerRange]] index=1
+# CHECK-NOT: = Substring
+# CHECK: [[result]]: boolean = StringRangeEqualsLiteral v8, [[relativeFrom]], [[relativeTo]] literal="ab"
+# CHECK-NEXT: Return [[result]]

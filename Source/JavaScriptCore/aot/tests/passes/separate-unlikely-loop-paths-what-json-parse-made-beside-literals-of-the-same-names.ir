@@ -1,0 +1,298 @@
+# function size(shape) { if (shape.kind === "circle") return shape.radius + shape.radius; return shape.side; }, called in one loop with literals and in another with what JSON.parse made.
+# Inlined there, its reads carry what flow saw at them in the function: the layouts of the literals. A test for those would turn away every element, so the reads are asked of the tables, as they are where only parsed objects have the names, and the sum is tested for numbers.
+# radiiOfParsed: nothing with a layout is seen to arrive, though a layout has the name.
+# -- source: main.js
+# function size(shape) {
+#   if (shape.kind === "circle") return shape.radius + shape.radius;
+#   return shape.side;
+# }
+# const shapes = [];
+# for (let i = 0; i < 8; i++) shapes.push(i % 3 ? { kind: "circle", radius: i + 0.5 } : { kind: "square", side: i + 0.25 });
+# const parsed = JSON.parse(JSON.stringify(shapes));
+# function sizesOfLiterals() {
+#   let sum = 0;
+#   for (let i = 0; i < 8; i++) sum += size(shapes[i]);
+#   return sum;
+# }
+# function sizesOfParsed() {
+#   let sum = 0;
+#   for (let i = 0; i < 8; i++) sum += size(parsed[i]);
+#   return sum;
+# }
+# function radiusOfParsed(shape) {
+#   return shape.radius;
+# }
+# function radiiOfParsed() {
+#   let sum = 0;
+#   for (let i = 0; i < 8; i++) sum += radiusOfParsed(parsed[i]) || 0;
+#   return sum;
+# }
+# globalThis.answer = sizesOfLiterals() + sizesOfParsed() + radiiOfParsed();
+# -- end of source
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pipeline SeparateUnlikelyLoopPaths
+# CHECK-LABEL: name="sizesOfLiterals"
+# CHECK: = GetSlot {{*}} key="kind"
+# CHECK-LABEL: name="sizesOfParsed"
+# CHECK-NOT: testedType=L
+# CHECK: = PropGet {{*}} key="kind" {{*}} [asksOnlyTables]
+# CHECK-NOT: testedType=L
+# CHECK: = PropGet {{*}} key="radius" {{*}} [asksOnlyTables]
+# CHECK-NOT: testedType=L
+# CHECK-LABEL: name="radiiOfParsed"
+# CHECK: = PropGet {{*}} key="radius" {{*}} [asksOnlyTables]
+
+layout L0 fields=[{key="kind" declared={type=anything}}, {key="radius" declared={type=anything}}, {key="side" declared={type=anything}}] flags=[IsNeverAllocated] ownFieldCount=3 flow={allocation=NeverAllocated}
+layout L1 module=m0 position=180 fields=[{key="kind" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="radius" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L2 module=m0 position=218 fields=[{key="kind" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="side" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="size" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="radiusOfParsed" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="shapes" module=m0 declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]
+variable g3 name="parsed" module=m0 declared={type=undefined|null|absent|Array<undefined|null|number|string|symbol|bigint|object> flags=[IsExpected]} flags=[IsImmutable]
+module m0 path="/main.js" displayPath="main.js" flags=[KeepsError] body=f0 positions={lineStarts=[0, 23, 90, 111, 113, 132, 255, 306, 335, 350, 404, 418, 420, 447, 462, 516, 530, 532, 565, 588, 590, 617, 632, 701, 715, 717, 792] textOfBody="\x84\x01z\x012\x9c\x03J" whereThisIsMade=[0, 29, 306, 368, 420, 480, 532, 574, 590, 650]} functionText="function size(shape) {\x0a  if (shape.kind === \x22circle\x22) return shape.radius + shape.radius;\x0a  return shape.side;\x0a}\x0aconst shapes = [];\x0afor (let i = 0; i < 8; i++) shapes.push(i % 3 ? { kind: \x22circle\x22, radius: i + 0.5 } : { kind: \x22square\x22, side: i + 0.25 });\x0aconst parsed = JSON.parse(JSON.stringify(shapes));\x0afunction sizesOfLiterals() {\x0a  let sum = 0;\x0a  for (let i = 0; i < 8; i++) sum += size(shapes[i]);\x0a  return sum;\x0a}\x0afunction sizesOfParsed() {\x0a  let sum = 0;\x0a  for (let i = 0; i < 8; i++) sum += size(parsed[i]);\x0a  return sum;\x0a}\x0afunction radiusOfParsed(shape) {\x0a  return shape.radius;\x0a}\x0afunction radiiOfParsed() {\x0a  let sum = 0;\x0a  for (let i = 0; i < 8; i++) sum += radiusOfParsed(parsed[i]) || 0;\x0a  return sum;\x0a}\x0aglobalThis.answer = sizesOfLiterals() + sizesOfParsed() + radiiOfParsed();\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f5 @0
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = Data data=d0 @128
+    v7 = Convert v6 declared={type=undefined|null|Array<never> flags=[IsExpected]} @128
+    v8 = Convert v7 declared={type=undefined|null|Array flags=[IsExpected]} @128
+    PutModuleVariable v8 variable=g2 @119
+    v10 = Integer @145
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @145
+    Jump -> next b2(v11) @141
+  b2(v12):
+    LoopHint @141
+    v14 = Integer integer=8 @152
+    v15 = Less v12, v14 @148
+    Branch v15 -> taken b3(| 0), notTaken b11(| 0) @148
+  b3(v16):
+    Jump -> next b4() @148
+  b4():
+    v17 = PropGet v8 key="push" @160
+    v18 = Convert v17 declared={type=undefined|null|function flags=[IsExpected]} @160
+    v19 = Integer integer=3 @176
+    v20 = Mod v16, v19 @172
+    v21 = ToBoolean v20 @172
+    Branch v21 -> taken b5(| 0), notTaken b7(| 0) @172
+  b5(v22):
+    Jump -> next b6() @172
+  b6():
+    v23 = String string="circle" @188
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]} @188
+    v25 = NewObject layout=L1 @182
+    PropDefine v25, v24 key="kind" @182
+    v27 = Double number=0.5 @210
+    v28 = Add v16, v27 @206
+    v29 = Convert v28 declared={type=number flags=[IsExpected]} @206
+    PropDefine v25, v29 key="radius" @198
+    v31 = FinishObject v25 @180
+    Jump -> next b9(v31) @180
+  b7(v32):
+    Jump -> next b8() @172
+  b8():
+    v33 = String string="square" @226
+    v34 = Convert v33 declared={type=undefined|null|string flags=[IsExpected]} @226
+    v35 = NewObject layout=L2 @220
+    PropDefine v35, v34 key="kind" @220
+    v37 = Double number=0.25 @246
+    v38 = Add v16, v37 @242
+    v39 = Convert v38 declared={type=number flags=[IsExpected]} @242
+    PropDefine v35, v39 key="side" @236
+    v41 = FinishObject v35 @218
+    Jump -> next b9(v41) @218
+  b9(v42):
+    v43 = Call v18, v8, v42 calleeKey="push" calleeName="shapes.push" @167
+    Jump -> next b10() @160
+  b10():
+    v44 = Increment v16 @167
+    v45 = Convert v44 declared={type=number flags=[IsExpected]} @155
+    Jump -> next b2(v45) @155
+  b11(v46):
+    Jump -> next b12() @148
+  b12():
+    v47 = Builtin builtin=JSON @270
+    v48 = PropGet v47 key="parse" @270
+    v49 = Convert v48 declared={type=builtin(JSONParse) flags=[IsExpected]} @270
+    v50 = Builtin builtin=JSON @281
+    v51 = PropGet v50 key="stringify" @281
+    v52 = Convert v51 declared={type=builtin(JSONStringify) flags=[IsExpected]} @281
+    v53 = Convert v8 declared={type=undefined|null|Array<undefined|null|L1|L2> flags=[IsExpected]} @296
+    v54 = Call v52, v50, v53 calleeKey="stringify" calleeName="JSON.stringify" @286
+    v55 = Convert v54 declared={type=undefined|null|string flags=[IsExpected]} @281
+    v56 = Call v49, v47, v55 calleeKey="parse" calleeName="JSON.parse" @275
+    v57 = Convert v56 declared={type=undefined|null|Array<undefined|null|number|string|symbol|bigint|object> flags=[IsExpected]} @270
+    PutModuleVariable v57 variable=g3 @261
+    v59 = Builtin builtin=GlobalThis @717
+    v60 = PropGet v59 key="globalThis" [isFreeName] @717
+    v61 = Convert v60 declared={type=builtin(GlobalThis) flags=[IsExpected]} @717
+    v62 = Call v1 calleeName="sizesOfLiterals" @737
+    v63 = Convert v62 declared={type=number flags=[IsExpected]} @737
+    v64 = Call v3 calleeName="sizesOfParsed" @757
+    v65 = Convert v64 declared={type=number flags=[IsExpected]} @757
+    v66 = Add v63, v65 @737
+    v67 = Call v5 calleeName="radiiOfParsed" @775
+    v68 = Convert v67 declared={type=number flags=[IsExpected]} @775
+    v69 = Add v66, v68 @737
+    PropSet v61, v69 key="answer" @717
+    v71 = Undefined @717
+    Return v71 @717
+}
+function f1 name="size" module=m0 text={end=112} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @0
+  b1():
+    v1 = PropGet v0 key="kind" @29
+    v2 = String string="circle" @44
+    v3 = StrictEq v1, v2 @29
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0) @29
+  b2(v4):
+    v5 = NarrowByField v0, v4 key="kind" @29
+    Jump -> next b3() @29
+  b3():
+    v6 = PropGet v5 key="radius" @61
+    v7 = PropGet v5 key="radius" @76
+    v8 = Add v6, v7 @61
+    Return v8 @61
+  b4(v9):
+    v10 = NarrowByField v0, v9 key="kind" @29
+    Jump -> next b5() @29
+  b5():
+    v11 = PropGet v10 key="side" @99
+    Return v11 @99
+}
+function f2 name="radiusOfParsed" module=m0 position=532 text={start=532 end=589} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1() @532
+  b1():
+    v1 = PropGet v0 key="radius" @574
+    Return v1 @574
+}
+function f3 name="sizesOfLiterals" module=m0 position=306 text={start=306 end=419} flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @306
+  b1():
+    v0 = Integer @347
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @347
+    v2 = Integer @365
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @365
+    Jump -> next b2(v1, v3) @361
+  b2(v4, v5):
+    LoopHint @361
+    v7 = Integer integer=8 @372
+    v8 = Less v5, v7 @368
+    Branch v8 -> taken b3(| 0), notTaken b6(| 0) @368
+  b3(v9):
+    Jump -> next b4() @368
+  b4():
+    v10 = GetModuleVariable variable=g0 @387
+    v11 = GetModuleVariable variable=g2 @392
+    v12 = CheckInitialized v11 name="shapes" @392
+    v13 = ElemGet v12, v9 @392
+    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @392
+    v15 = Call v10, -, v14 calleeName="size" @387
+    v16 = Add v4, v15 @387
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @380
+    Jump -> next b5() @380
+  b5():
+    v18 = Increment v9 @387
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]} @375
+    Jump -> next b2(v17, v19) @375
+  b6(v20):
+    Jump -> next b7() @368
+  b7():
+    v21 = Convert v4 declared={type=number flags=[IsExpected]} @413
+    Return v21 @413
+}
+function f4 name="sizesOfParsed" module=m0 position=420 text={start=420 end=531} flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @420
+  b1():
+    v0 = Integer @459
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @459
+    v2 = Integer @477
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @477
+    Jump -> next b2(v1, v3) @473
+  b2(v4, v5):
+    LoopHint @473
+    v7 = Integer integer=8 @484
+    v8 = Less v5, v7 @480
+    Branch v8 -> taken b3(| 0), notTaken b6(| 0) @480
+  b3(v9):
+    Jump -> next b4() @480
+  b4():
+    v10 = GetModuleVariable variable=g0 @499
+    v11 = GetModuleVariable variable=g3 @504
+    v12 = CheckInitialized v11 name="parsed" @504
+    v13 = ElemGet v12, v9 @504
+    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @504
+    v15 = Call v10, -, v14 calleeName="size" @499
+    v16 = Add v4, v15 @499
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @492
+    Jump -> next b5() @492
+  b5():
+    v18 = Increment v9 @499
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]} @487
+    Jump -> next b2(v17, v19) @487
+  b6(v20):
+    Jump -> next b7() @480
+  b7():
+    v21 = Convert v4 declared={type=number flags=[IsExpected]} @525
+    Return v21 @525
+}
+function f5 name="radiiOfParsed" module=m0 position=590 text={start=590 end=716} flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @590
+  b1():
+    v0 = Integer @629
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @629
+    v2 = Integer @647
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @647
+    Jump -> next b2(v1, v3) @643
+  b2(v4, v5):
+    LoopHint @643
+    v7 = Integer integer=8 @654
+    v8 = Less v5, v7 @650
+    Branch v8 -> taken b3(| 0), notTaken b10(| 0) @650
+  b3(v9):
+    Jump -> next b4() @650
+  b4():
+    v10 = GetModuleVariable variable=g1 @669
+    v11 = GetModuleVariable variable=g3 @684
+    v12 = CheckInitialized v11 name="parsed" @684
+    v13 = ElemGet v12, v9 @684
+    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @684
+    v15 = Call v10, -, v14 calleeName="radiusOfParsed" @669
+    v16 = ToBoolean v15 @669
+    Branch v16 -> taken b5(| 0), notTaken b6(| 0) @669
+  b5(v17):
+    Jump -> next b8(v17) @669
+  b6(v18):
+    Jump -> next b7() @669
+  b7():
+    v19 = Integer @698
+    Jump -> next b8(v19) @698
+  b8(v20):
+    v21 = Add v4, v20 @669
+    v22 = Convert v21 declared={type=number flags=[IsExpected]} @662
+    Jump -> next b9() @662
+  b9():
+    v23 = Increment v9 @669
+    v24 = Convert v23 declared={type=i32 flags=[IsExpected]} @657
+    Jump -> next b2(v22, v24) @657
+  b10(v25):
+    Jump -> next b11() @650
+  b11():
+    v26 = Convert v4 declared={type=number flags=[IsExpected]} @710
+    Return v26 @710
+}
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+data d0 root=Array{contents=anything} module=m0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]

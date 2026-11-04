@@ -68,6 +68,11 @@ enum class TransitionKind : uint8_t {
 
     // The object becomes non-extensible and its own properties and prototype can no longer change. Property attributes do not change.
     MakePropertiesImmutable = 18,
+
+    MakeListedPropertiesImmutable = 19,
+    FreezeElementsInPlace = 20,
+    PropertyRunAddition = 21,
+    AllocateElementsStartOffset = 22,
 };
 
 static constexpr auto FirstNonPropertyTransitionKind = TransitionKind::AllocateUndecided;
@@ -103,7 +108,7 @@ inline IndexingType newIndexingType(IndexingType oldType, TransitionKind transit
         ASSERT(!hasIndexedProperties(oldType) || hasUndecided(oldType) || hasInt32(oldType) || oldType == CopyOnWriteArrayWithDouble);
         return (oldType & ~IndexingShapeAndWritabilityMask) | DoubleShape;
     case TransitionKind::AllocateContiguous:
-        ASSERT(!hasIndexedProperties(oldType) || hasUndecided(oldType) || hasInt32(oldType) || hasDouble(oldType) || oldType == CopyOnWriteArrayWithContiguous);
+        ASSERT(!hasIndexedProperties(oldType) || hasUndecided(oldType) || hasInt32(oldType) || hasDouble(oldType) || hasArrayStorage(oldType) || oldType == CopyOnWriteArrayWithContiguous);
         return (oldType & ~IndexingShapeAndWritabilityMask) | ContiguousShape;
     case TransitionKind::AllocateArrayStorage:
         ASSERT(!hasIndexedProperties(oldType) || hasUndecided(oldType) || hasInt32(oldType) || hasDouble(oldType) || hasContiguous(oldType));
@@ -122,6 +127,9 @@ inline IndexingType newIndexingType(IndexingType oldType, TransitionKind transit
         if ((oldType & IsArray) && (hasInt32(oldType) || hasDouble(oldType) || hasContiguous(oldType)))
             return oldType | CopyOnWrite;
         return oldType;
+    case TransitionKind::FreezeElementsInPlace:
+        ASSERT(isCopyOnWrite(oldType));
+        return oldType;
     default:
         return oldType;
     }
@@ -134,6 +142,18 @@ inline bool preventsExtensions(TransitionKind transition)
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
     case TransitionKind::MakePropertiesImmutable:
+    case TransitionKind::FreezeElementsInPlace:
+        return true;
+    default:
+        return false;
+    }
+}
+
+inline bool makesAllPropertiesImmutable(TransitionKind transition)
+{
+    switch (transition) {
+    case TransitionKind::MakePropertiesImmutable:
+    case TransitionKind::FreezeElementsInPlace:
         return true;
     default:
         return false;
@@ -145,6 +165,7 @@ inline bool setsDontDeleteOnAllProperties(TransitionKind transition)
     switch (transition) {
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
+    case TransitionKind::FreezeElementsInPlace:
         return true;
     default:
         return false;
@@ -155,6 +176,7 @@ inline bool setsReadOnlyOnNonAccessorProperties(TransitionKind transition)
 {
     switch (transition) {
     case TransitionKind::Freeze:
+    case TransitionKind::FreezeElementsInPlace:
         return true;
     default:
         return false;
@@ -284,8 +306,10 @@ public:
     inline ~StructureTransitionTable(); // Defined in StructureInlines.h.
 
     void add(VM&, JSCell* owner, Structure*);
+    void addAlias(VM&, JSCell* owner, PointerKey, unsigned attributes, TransitionKind, Structure*);
     bool contains(PointerKey, unsigned attributes, TransitionKind) const;
     Structure* get(PointerKey, unsigned attributes, TransitionKind) const;
+    template<typename Functor> void forEach(NOESCAPE const Functor&) const; // Defined in StructureInlines.h.
 
     Structure* trySingleTransition() const;
 

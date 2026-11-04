@@ -384,10 +384,10 @@ bool PathCG::definitelyEqual(const PathImpl& otherImpl) const
     if (otherAsPathCGImpl.get() == this)
         return true;
 
-    if (!m_platformPath && !otherAsPathCGImpl->platformPath())
+    if (!m_platformPath && !otherAsPathCGImpl->m_platformPath)
         return true;
 
-    return CGPathEqualToPath(m_platformPath.get(), otherAsPathCGImpl->platformPath());
+    return CGPathEqualToPath(m_platformPath, otherAsPathCGImpl->m_platformPath);
 }
 
 Ref<PathImpl> PathCG::copy() const
@@ -400,11 +400,11 @@ PlatformPathPtr PathCG::platformPath() const
     return m_platformPath.get();
 }
 
-PlatformPathPtr PathCG::ensureMutablePlatformPath()
+const RetainPtr<CGMutablePathRef>& PathCG::ensureMutablePlatformPath()
 {
     if (CFGetRetainCount(m_platformPath.get()) > 1)
         m_platformPath = adoptCF(CGPathCreateMutableCopy(m_platformPath.get()));
-    return m_platformPath.get();
+    return m_platformPath;
 }
 
 void PathCG::add(PathMoveTo moveTo)
@@ -479,11 +479,11 @@ void PathCG::addPath(const PathCG& path, const AffineTransform& transform)
     // CG doesn't allow adding a path to itself. Optimize for the common case
     // and copy the path for the self referencing case.
     if (platformPath() != path.platformPath()) {
-        CGPathAddPath(ensureMutablePlatformPath(), &transformCG, path.platformPath());
+        CGPathAddPath(ensureMutablePlatformPath(), &transformCG, protect(path.platformPath()));
         return;
     }
 
-    auto pathCopy = adoptCF(CGPathCreateCopy(path.platformPath()));
+    RetainPtr pathCopy = adoptCF(CGPathCreateCopy(protect(path.platformPath())));
     CGPathAddPath(ensureMutablePlatformPath(), &transformCG, pathCopy.get());
 }
 
@@ -515,21 +515,21 @@ static void pathElementApplierCallback(void* info, const CGPathElement* element)
     }
 }
 
-bool PathCG::applyElements(const PathElementApplier& applier) const
+bool PathCG::applyElements(NOESCAPE const PathElementApplier& applier) const
 {
-    CGPathApply(platformPath(), (void*)&applier, pathElementApplierCallback);
+    CGPathApply(m_platformPath, (void*)&applier, pathElementApplierCallback);
     return true;
 }
 
 FloatPoint PathCG::currentPoint() const
 {
-    return CGPathGetCurrentPoint(platformPath());
+    return CGPathGetCurrentPoint(m_platformPath);
 }
 
 bool PathCG::transform(const AffineTransform& transform)
 {
     CGAffineTransform transformCG = transform;
-    m_platformPath = adoptCF(CGPathCreateMutableCopyByTransformingPath(platformPath(), &transformCG));
+    m_platformPath = adoptCF(CGPathCreateMutableCopyByTransformingPath(m_platformPath, &transformCG));
     return true;
 }
 
@@ -574,11 +574,11 @@ bool PathCG::contains(const FloatPoint &point, WindRule rule) const
 
     // CGPathContainsPoint returns false for non-closed paths, as a work-around, we copy
     // and close the path first. Radar 4758998 asks for a better CG API to use.
-    auto path = copyCGPathClosingSubpaths(platformPath());
+    auto path = copyCGPathClosingSubpaths(m_platformPath);
     return CGPathContainsPoint(path.get(), nullptr, point, rule == WindRule::EvenOdd);
 }
 
-static size_t NODELETE putBytesNowhere(void*, const void*, size_t count)
+static size_t LEGACY_NODELETE putBytesNowhere(void*, const void*, size_t count)
 {
     return count;
 }
@@ -611,11 +611,11 @@ bool PathCG::strokeContains(const FloatPoint& point, NOESCAPE const Function<voi
 {
     ASSERT(strokeStyleApplier);
 
-    CGContextRef context = scratchContext();
+    RetainPtr context = scratchContext();
 
     CGContextSaveGState(context);
     CGContextBeginPath(context);
-    CGContextAddPath(context, platformPath());
+    CGContextAddPath(context, m_platformPath);
 
     GraphicsContextCG graphicsContext(context);
     strokeStyleApplier(graphicsContext);
@@ -635,22 +635,22 @@ static inline FloatRect zeroRectIfNull(CGRect rect)
 
 FloatRect PathCG::fastBoundingRect() const
 {
-    return zeroRectIfNull(CGPathGetBoundingBox(platformPath()));
+    return zeroRectIfNull(CGPathGetBoundingBox(m_platformPath));
 }
 
 FloatRect PathCG::boundingRect() const
 {
     // CGPathGetBoundingBox includes the path's control points, CGPathGetPathBoundingBox does not.
-    return zeroRectIfNull(CGPathGetPathBoundingBox(platformPath()));
+    return zeroRectIfNull(CGPathGetPathBoundingBox(m_platformPath));
 }
 
 FloatRect PathCG::strokeBoundingRect(NOESCAPE const Function<void(GraphicsContext&)>& strokeStyleApplier) const
 {
-    CGContextRef context = scratchContext();
+    RetainPtr context = scratchContext();
 
     CGContextSaveGState(context);
     CGContextBeginPath(context);
-    CGContextAddPath(context, platformPath());
+    CGContextAddPath(context, m_platformPath);
 
     if (strokeStyleApplier) {
         GraphicsContextCG graphicsContext(context);
@@ -675,7 +675,7 @@ void addToCGContextPath(CGContextRef context, const Path& path)
             addToCGContextPath(context, segment);
         return;
     }
-    CGContextAddPath(context, path.platformPath());
+    CGContextAddPath(context, protect(path.platformPath()));
 }
 
 } // namespace WebCore

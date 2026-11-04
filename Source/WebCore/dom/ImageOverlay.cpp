@@ -386,7 +386,7 @@ static Elements updateSubtree(HTMLElement& element, const TextRecognitionResult&
             rootContainer->setIdAttribute(imageOverlayElementIdentifier());
             rootContainer->setTranslate(false);
             if (document->isImageDocument())
-                rootContainer->setInlineStyleProperty(CSSPropertyWebkitUserSelect, CSSValueText);
+                rootContainer->setInlineStyleProperty(CSSPropertyID::WebkitUserSelect, CSSValueID::Text);
 
             if (mediaControlsContainer)
                 mediaControlsContainer->appendChild(rootContainer);
@@ -397,14 +397,14 @@ static Elements updateSubtree(HTMLElement& element, const TextRecognitionResult&
         elements.lines.reserveInitialCapacity(result.lines.size());
         for (auto& line : result.lines) {
             Ref lineContainer = HTMLDivElement::create(document.get());
-            protect(lineContainer)->classList().add(imageOverlayLineClass());
+            protect(lineContainer->classList())->add(imageOverlayLineClass());
             protect(elements.root)->appendChild(lineContainer);
             LineElements lineElements { lineContainer, { }, { } };
             lineElements.children.reserveInitialCapacity(line.children.size());
             for (size_t childIndex = 0; childIndex < line.children.size(); ++childIndex) {
                 auto& child = line.children[childIndex];
                 Ref textContainer = HTMLDivElement::create(document.get());
-                protect(textContainer)->classList().add(imageOverlayTextClass());
+                protect(textContainer->classList())->add(imageOverlayTextClass());
                 protect(textContainer)->setUserAgentPart(UserAgentParts::internalImageOverlayText());
                 lineContainer->appendChild(textContainer);
                 textContainer->appendChild(Text::create(document.get(), child.hasLeadingWhitespace ? makeString('\n', child.text) : String { child.text }));
@@ -424,7 +424,7 @@ static Elements updateSubtree(HTMLElement& element, const TextRecognitionResult&
         elements.dataDetectors.reserveInitialCapacity(result.dataDetectors.size());
         for (auto& dataDetector : result.dataDetectors) {
             auto dataDetectorContainer = DataDetection::createElementForImageOverlay(document.get(), dataDetector);
-            protect(dataDetectorContainer)->classList().add(imageOverlayDataDetectorClass());
+            protect(dataDetectorContainer->classList())->add(imageOverlayDataDetectorClass());
             protect(elements.root)->appendChild(dataDetectorContainer);
             elements.dataDetectors.append(WTF::move(dataDetectorContainer));
         }
@@ -433,7 +433,7 @@ static Elements updateSubtree(HTMLElement& element, const TextRecognitionResult&
         elements.blocks.reserveInitialCapacity(result.blocks.size());
         for (auto& block : result.blocks) {
             Ref blockContainer = HTMLDivElement::create(document.get());
-            protect(blockContainer)->classList().add(imageOverlayBlockClass());
+            protect(blockContainer->classList())->add(imageOverlayBlockClass());
             auto lines = block.text.split(newlineCharacter);
             for (auto&& textContent : WTF::move(lines)) {
                 if (blockContainer->hasChildNodes())
@@ -443,7 +443,7 @@ static Elements updateSubtree(HTMLElement& element, const TextRecognitionResult&
 
             constexpr auto maxLineCountForCenterAlignedText = 2;
             if (lines.size() > maxLineCountForCenterAlignedText)
-                blockContainer->setInlineStyleProperty(CSSPropertyTextAlign, CSSValueStart);
+                blockContainer->setInlineStyleProperty(CSSPropertyID::TextAlign, CSSValueID::Start);
 
             protect(elements.root)->appendChild(blockContainer);
             elements.blocks.append(WTF::move(blockContainer));
@@ -460,10 +460,10 @@ enum class ConstrainHeight : bool { No, Yes };
 static RotatedRect fitElementToQuad(HTMLElement& container, const FloatQuad& quad, ConstrainHeight constrainHeight = ConstrainHeight::Yes)
 {
     auto bounds = rotatedBoundingRectWithMinimumAngleOfRotation(quad, 0.01);
-    container.setInlineStyleProperty(CSSPropertyWidth, bounds.size.width(), CSSUnitType::Px);
+    container.setInlineStyleProperty(CSSPropertyID::Width, bounds.size.width(), CSSUnitType::Px);
     if (constrainHeight == ConstrainHeight::Yes)
-        container.setInlineStyleProperty(CSSPropertyHeight, bounds.size.height(), CSSUnitType::Px);
-    container.setInlineStyleProperty(CSSPropertyTransform, makeString(
+        container.setInlineStyleProperty(CSSPropertyID::Height, bounds.size.height(), CSSUnitType::Px);
+    container.setInlineStyleProperty(CSSPropertyID::Transform, makeString(
         "translate("_s,
         std::round(bounds.center.x() - (bounds.size.width() / 2)), "px, "_s,
         std::round(bounds.center.y() - (bounds.size.height() / 2)), "px) "_s,
@@ -556,7 +556,7 @@ void updateWithTextRecognitionResult(HTMLElement& element, const TextRecognition
 
             FloatSize targetSize { horizontalExtent - horizontalOffset, lineBounds.size.height() };
             if (targetSize.isEmpty()) {
-                textContainer->setInlineStyleProperty(CSSPropertyTransform, "scale(0, 0)"_s);
+                textContainer->setInlineStyleProperty(CSSPropertyID::Transform, "scale(0, 0)"_s);
                 continue;
             }
 
@@ -571,11 +571,11 @@ void updateWithTextRecognitionResult(HTMLElement& element, const TextRecognition
             }
 
             if (sizeBeforeTransform.isEmpty()) {
-                textContainer->setInlineStyleProperty(CSSPropertyTransform, "scale(0, 0)"_s);
+                textContainer->setInlineStyleProperty(CSSPropertyID::Transform, "scale(0, 0)"_s);
                 continue;
             }
 
-            textContainer->setInlineStyleProperty(CSSPropertyTransform, makeString(
+            textContainer->setInlineStyleProperty(CSSPropertyID::Transform, makeString(
                 "translate("_s,
                 horizontalOffset + (targetSize.width() - sizeBeforeTransform.width()) / 2, "px, "_s,
                 (targetSize.height() - sizeBeforeTransform.height()) / 2, "px) "_s,
@@ -583,11 +583,11 @@ void updateWithTextRecognitionResult(HTMLElement& element, const TextRecognition
             ));
 
             if (line.isVertical)
-                textContainer->setInlineStyleProperty(CSSPropertyWritingMode, CSSValueVerticalRl);
+                textContainer->setInlineStyleProperty(CSSPropertyID::WritingMode, CSSValueID::VerticalRl);
         }
 
         if (document->isImageDocument())
-            lineContainer->setInlineStyleProperty(CSSPropertyCursor, line.isVertical ? CSSValueVerticalText : CSSValueText);
+            lineContainer->setInlineStyleProperty(CSSPropertyID::Cursor, line.isVertical ? CSSValueID::VerticalText : CSSValueID::Text);
     }
 
 #if ENABLE(DATA_DETECTION)
@@ -631,12 +631,12 @@ void updateWithTextRecognitionResult(HTMLElement& element, const TextRecognition
     auto setInlineStylesForBlock = [&](HTMLElement& block, float scale, float targetHeight) {
         float fontSize = scale * targetHeight;
         float borderRadius = fontSize / 5 + (targetHeight - fontSize) / 50;
-        block.setInlineStyleProperty(CSSPropertyFontSize, fontSize, CSSUnitType::Px);
-        block.setInlineStyleProperty(CSSPropertyBorderRadius, makeString(borderRadius, "px"_s));
-        block.setInlineStyleProperty(CSSPropertyPaddingLeft, 2 * borderRadius, CSSUnitType::Px);
-        block.setInlineStyleProperty(CSSPropertyPaddingRight, 2 * borderRadius, CSSUnitType::Px);
-        block.setInlineStyleProperty(CSSPropertyPaddingTop, borderRadius, CSSUnitType::Px);
-        block.setInlineStyleProperty(CSSPropertyPaddingBottom, borderRadius, CSSUnitType::Px);
+        block.setInlineStyleProperty(CSSPropertyID::FontSize, fontSize, CSSUnitType::Px);
+        block.setInlineStyleProperty(CSSPropertyID::BorderRadius, makeString(borderRadius, "px"_s));
+        block.setInlineStyleProperty(CSSPropertyID::PaddingLeft, 2 * borderRadius, CSSUnitType::Px);
+        block.setInlineStyleProperty(CSSPropertyID::PaddingRight, 2 * borderRadius, CSSUnitType::Px);
+        block.setInlineStyleProperty(CSSPropertyID::PaddingTop, borderRadius, CSSUnitType::Px);
+        block.setInlineStyleProperty(CSSPropertyID::PaddingBottom, borderRadius, CSSUnitType::Px);
     };
 
     ASSERT(result.blocks.size() == elements.blocks.size());
@@ -685,7 +685,7 @@ void updateWithTextRecognitionResult(HTMLElement& element, const TextRecognition
         if (++currentIteration > iterationLimit) {
             // Fall back to the largest font size that still vertically fits within the container.
             for (auto& state : elementsToAdjust)
-                protect(state.container)->setInlineStyleProperty(CSSPropertyFontSize, state.targetSize.height() * state.minScale, CSSUnitType::Px);
+                protect(state.container)->setInlineStyleProperty(CSSPropertyID::FontSize, state.targetSize.height() * state.minScale, CSSUnitType::Px);
             break;
         }
     }

@@ -1,0 +1,59 @@
+# `while (i--)` with a counter that is never negative: that it is not zero says that it is above zero. As a comparison that bounds the counter, so every turn hands on what passes the test at the head, and only the first value is asked.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ConvertCountersToIntegers
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="neverNegative" parameters=[{type=int[-1, 4294967295]}] results=[{type=number}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v0)
+  b1(v2, v3):
+    LoopHint
+    v5 = TypeTest v3 testedType=int[0, 2147483647]
+    Branch v5 -> taken b2(| 0), notTaken b5(v2, v3)
+  b2(v6):
+    v7 = Decrement v6
+    v8 = ToBoolean v6
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = BitXor v2, v7
+    Jump -> next b1(v9, v7)
+  b4():
+    Return v2
+  b5(v10, v11) frequency=Unlikely:
+    v12 = Add v10, v11
+    Return v12
+# CHECK: b1(v2: {{*}}, v3: int[0, 2147483647]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v5: true = TypeTest v3 testedType=int[0, 2147483647]
+# CHECK: [[above]]: boolean = Greater v6,
+# CHECK: Branch [[above]] -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3([[left]]: int[1, 2147483647]):
+# CHECK: int[0, 2147483646] = Decrement [[left]]
+# CHECK: boolean = TypeTest v0 testedType=int[0, 2147483647]
+}
+
+function f1 name="mayBeNegative" parameters=[{type=int[-5, 4294967295]}] results=[{type=number}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v0)
+  b1(v2, v3):
+    LoopHint
+    v5 = TypeTest v3 testedType=i32
+    Branch v5 -> taken b2(| 0), notTaken b5(v2, v3)
+  b2(v6):
+    v7 = Decrement v6
+    v8 = ToBoolean v6
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = BitXor v2, v7
+    Jump -> next b1(v9, v7)
+  b4():
+    Return v2
+  b5(v10, v11) frequency=Unlikely:
+    v12 = Add v10, v11
+    Return v12
+# CHECK: v8: boolean = ToBoolean v6
+# CHECK-NEXT: Branch v8 ->
+# CHECK-NOT: Greater
+}

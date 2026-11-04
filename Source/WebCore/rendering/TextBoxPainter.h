@@ -73,7 +73,7 @@ protected:
     void paintPlatformDocumentMarkers();
 
     void paintForeground(const StyledMarkedText&);
-    bool hasSynthesizedGlyph() const;
+    bool LEGACY_NODELETE hasSynthesizedGlyph() const;
     void paintSynthesizedGlyph();
     bool paintForegroundForShapeRange(TextPainter&);
     TextDecorationPainter createDecorationPainter(const StyledMarkedText&, const FloatRect&);
@@ -89,10 +89,10 @@ protected:
     bool computeHaveSelection() const;
     std::pair<unsigned, unsigned> selectionStartEnd() const;
     MarkedText createMarkedTextFromSelectionInBox();
-    const FontCascade& NODELETE fontCascade() const;
+    const FontCascade& LEGACY_NODELETE fontCascade() const;
     WritingMode writingMode() const { return m_style->writingMode(); }
     FloatPoint textOriginFromPaintRect(const FloatRect&) const;
-    bool NODELETE isInsideShapedContent() const;
+    bool LEGACY_NODELETE isInsideShapedContent() const;
 
     struct DecoratingBox {
         InlineIterator::InlineBoxIterator inlineBox;
@@ -113,7 +113,7 @@ protected:
     std::pair<FloatPoint, float> insetAdjustedDecorationLocationAndWidth(const DecoratingBox&, const StyledMarkedText&) const;
 
     // FIXME: We could just talk to the display box directly.
-    const InlineIterator::BoxModernPath m_textBox;
+    const InlineIterator::TextBox m_textBox;
     const CheckedRef<const RenderText> m_renderer;
     const CheckedRef<const Document> m_document;
     const CheckedRef<const Style::ComputedStyle> m_style;

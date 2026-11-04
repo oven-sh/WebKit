@@ -28,7 +28,6 @@
 #if USE(AVFOUNDATION)
 
 #include "GPUVideoEncoderVTB.h"
-#include "H264Utilities.h"
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -46,12 +45,10 @@ public:
 private:
     GPUVideoEncoderVTBH264(CreationInfo&&, const Vector<std::pair<String, String>>&, GPUVideoEncoderCallback&&, GPUVideoEncoderDescriptionCallback&&, GPUVideoEncoderErrorCallback&&);
 
-    bool convertAndNotify(RetainPtr<CMSampleBufferRef>&&, GPUVideoEncoderFrameInfo&&) final;
+    bool convertAndNotify(RetainPtr<CMSampleBufferRef>&&, GPUVideoEncoderFrameInfo&&, const PlatformVideoColorSpace&) final;
     void configureAdditionalProperties() final;
 
     const RetainPtr<CFStringRef> m_profileLevel;
-
-    H264BitstreamParser m_bitstreamParser;
 };
 
 }

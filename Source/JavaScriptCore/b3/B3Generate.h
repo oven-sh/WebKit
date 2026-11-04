@@ -28,6 +28,10 @@
 #if ENABLE(B3_JIT)
 
 #include "B3Common.h"
+#include <span>
+#include <wtf/ScopedLambda.h>
+#include <wtf/Vector.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC {
 
@@ -42,6 +46,12 @@ namespace Air { class Code; }
 // generation.
 JS_EXPORT_PRIVATE void prepareForGeneration(Procedure&);
 
+// Called after each B3 step that ran, once the cleanups it requested are done, with the name listEnabledSteps() reports.
+using StepObserver = ScopedLambda<void(Procedure&, ASCIILiteral step)>;
+
+JS_EXPORT_PRIVATE void prepareForGeneration(std::span<Procedure* const>, const StepObserver* = nullptr);
+JS_EXPORT_PRIVATE Vector<ASCIILiteral> listEnabledSteps(Procedure&);
+
 // This takes a B3::Procedure that has been prepared for generation (i.e. it has been lowered to Air and
 // the Air has been prepared for generation) and generates it. This is the equivalent of calling
 // Air::generate() on the Procedure::code().
@@ -50,7 +60,7 @@ JS_EXPORT_PRIVATE void generate(Procedure&, CCallHelpers&);
 // This takes a B3::Procedure, optimizes it in-place, and lowers it to Air. You can then generate
 // the Air to machine code using Air::prepareForGeneration() and Air::generate() on the Procedure's
 // code().
-void generateToAir(Procedure&);
+JS_EXPORT_PRIVATE void generateToAir(Procedure&);
 
 } } // namespace JSC::B3
 

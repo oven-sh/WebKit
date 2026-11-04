@@ -1,0 +1,19 @@
+# (sum + a * b - c) | 0 where b is an integer whose size nothing bounds, read out of a place that holds numbers: one test that b is an int32, and behind it the product and the sum are computed in integers.
+# Where the test fails they are computed in numbers. A position in a list takes no integer that holds only behind a test.
+# FORM: Selected
+# RUN: generate-code ExactIntegersBehindNumbers
+# CHECK: : size=
+# CHECK-NOT: no code
+# CHECK: statistic ExactIntegersBehindNumbers 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lowWordOfSumWithProduct" parameters=[{type=i32}, {type=i32}, {type=number}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32, v2: number, v3: i32):
+    v4 = AssumeType v2 provenType=int
+    v5 = Mul v1, v4 form=CheckedIntegers
+    v6 = Add v0, v5 form=Numbers
+    v7 = Sub v6, v3 form=Numbers
+    v8 = Integer integer=0
+    v9 = BitOr v7, v8 form=Numbers
+    Return v9
+}

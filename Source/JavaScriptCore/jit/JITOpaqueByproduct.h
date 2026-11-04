@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include <wtf/Noncopyable.h>
 #include <wtf/PrintStream.h>
@@ -47,4 +47,4 @@ public:
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

@@ -1,0 +1,214 @@
+# A chain whose callbacks may throw and are not seen to run is one traversal under a handler that runs the methods as they are written
+# FORM: Prepared
+# OPTIONS: report=Declines heat=OnlyLoopsAreHot
+# RUN: pass FuseArrayChains
+# RUN(DECLINES): pass FuseArrayChains
+# STATISTIC: ArrayChainsFused = 5
+# CHECK: outcome: Changed
+# DECLINES: outcome: Changed
+# DECLINES: decline ArrayChainNotFused f10 v7 None [0] reason=CallbacksInterfere
+# DECLINES: decline ArrayChainNotFused f11 v7 None [0] reason=CallbacksInterfere
+# DECLINES: decline ArrayChainNotFused f15 v7 None [0] reason=SkippedCallIsObservable
+# DECLINES-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
+runtimefunction id=ArrayPrototypeFilter function=f1
+runtimefunction id=ArrayPrototypeFind function=f2
+runtimefunction id=ArrayPrototypeMap function=f3
+runtimefunction id=ArrayTraversalTraverseArray function=f0
+function f0 name="traverseArray" role=Library enclosingRuntimeFunction=ArrayTraversalTraverseArray parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v6 = Undefined
+    Return v6
+}
+function f1 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+function f2 name="find" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeFind thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+function f3 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+
+function f4 name="hasAmount" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireObjectCoercible v0 name="amount"
+    Return v1
+}
+function f5 name="hasCustomer" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireObjectCoercible v0 name="customer"
+    Return v1
+}
+function f6 name="isSeenAndHasCustomer" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    PutModuleVariable v0 variable=g0
+    v2 = RequireObjectCoercible v0 name="customer"
+    Return v2
+}
+
+function f7 name="filterThenMap" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f4
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f1
+    v4 = AssumeType v3 provenType=Array<anything>
+    v5 = NewClosure function=f5
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f3
+    v8 = AssumeType v7 provenType=Array<anything>
+    Return v8
+# CHECK: v1: f4 = NewClosure function=f4
+# CHECK-NEXT: v5: f5 = NewClosure function=f5
+# CHECK-NOT: function=f1
+# CHECK: Jump -> next [[traversal7]]()
+# CHECK: [[after7]](v7: anything):
+# CHECK-NEXT: v8: Array = AssumeType v7 provenType=Array
+# CHECK: [[asWritten7]]() role=CatchHandler frequency=Rare:
+# CHECK-NEXT: = CatchValue
+# CHECK: [[filtered7]]: anything = CallDirect v0, v1, {{*}} function=f1
+# CHECK-NEXT: [[list7]]: {{*}} = AssumeType [[filtered7]] provenType=Array
+# CHECK: [[mapped7]]: anything = CallDirect [[list7]], v5, {{*}} function=f3
+# CHECK-NEXT: Jump -> next [[after7]]([[mapped7]])
+# CHECK: [[traversal7]]() handler=[[asWritten7]]():
+# CHECK-NEXT: [[fused7]]: anything = CallDirect v0, {{*}}, v1, {{*}}, v5, {{*}} function=[[filterMapToArray]] [isAlwaysInlined]
+# CHECK-NEXT: Jump -> next [[after7]]([[fused7]])
+}
+
+function f8 name="insideTry" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<anything, proven, pristine[Storage, Names]>) handler=b2():
+    v1 = NewClosure function=f4
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f1
+    v4 = AssumeType v3 provenType=Array<anything>
+    v5 = NewClosure function=f5
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f3
+    v8 = AssumeType v7 provenType=Array<anything>
+    Jump -> next b1()
+  b1():
+    Return v8
+  b2() role=CatchHandler:
+    v9 = CatchValue
+    Return v9
+# CHECK: b0(v0: {{*}}) handler=b2():
+# CHECK: [[after8]](v7: anything) handler=b2():
+# CHECK: [[asWritten8]]() role=CatchHandler frequency=Rare handler=b2():
+# CHECK: = CallDirect v0, v1, {{*}} function=f1
+# CHECK: = CallDirect {{*}}, v5, {{*}} function=f3
+# CHECK: () handler=[[asWritten8]]():
+# CHECK-NEXT: = CallDirect v0, {{*}}, v1, {{*}}, v5, {{*}} function=[[filterMapToArray]] [isAlwaysInlined]
+}
+
+function f9 name="listIsStoredBehindTheChain" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f4
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f1
+    v4 = AssumeType v3 provenType=Array<anything>
+    v5 = NewClosure function=f4
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f1
+    v8 = AssumeType v7 provenType=Array<anything, proven, pristine[Storage, Names]>
+    PutModuleVariable v8 variable=g0
+    Return v8
+# CHECK: (v7: anything):
+# CHECK-NEXT: v8: {{*}} = AssumeType v7
+# CHECK-NEXT: PutModuleVariable v8 variable=g0
+# CHECK: role=CatchHandler frequency=Rare:
+# CHECK: [isAlwaysInlined]
+}
+
+function f10 name="firstThrowsSecondIsSeen" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f4
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f1
+    v4 = AssumeType v3 provenType=Array<anything>
+    v5 = NewClosure function=f6
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f3
+    v8 = AssumeType v7 provenType=Array<anything>
+    Return v8
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f1
+# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f3
+# CHECK-NOT: role=CatchHandler
+}
+function f11 name="firstIsSeenSecondThrows" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f3
+    v4 = AssumeType v3 provenType=Array<anything>
+    v5 = NewClosure function=f5
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f3
+    v8 = AssumeType v7 provenType=Array<anything>
+    Return v8
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f3
+# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f3
+# CHECK-NOT: role=CatchHandler
+}
+
+function f12 name="filterThrowsBehindWhatFindTakes" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f4
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f1
+    v4 = AssumeType v3 provenType=Array<anything>
+    v5 = NewClosure function=f4
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f2
+    Return v7
+# The callback of `filter` still runs on the elements behind the one that `find` takes.
+# CHECK: role=CatchHandler frequency=Rare:
+# CHECK: = CallDirect v0, v1, {{*}} function=f1
+# CHECK: = CallDirect {{*}}, v5, {{*}} function=f2
+# CHECK: = CallDirect v0, {{*}}, v1, {{*}}, v5, {{*}} function=[[filterToFindOnEveryElement]] [isAlwaysInlined]
+}
+
+function f13 name="isSeen" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    PutModuleVariable v0 variable=g0
+    Return v0
+}
+function f14 name="same" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f15 name="mapIsSeenBehindWhatFindTakes" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f13
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f3
+    v4 = AssumeType v3 provenType=Array<anything>
+    v5 = NewClosure function=f14
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f2
+    Return v7
+# Any call may find the stack full. Where the one behind does, the one in front has been seen on every element, and nothing that was seen can start over.
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f3
+# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f2
+# CHECK-NOT: role=CatchHandler
+}
+function f16 name="nothingIsMissedBehindWhatFindTakes" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f14
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f3
+    v4 = AssumeType v3 provenType=Array<anything>
+    v5 = NewClosure function=f14
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f2
+    Return v7
+# CHECK-NOT: role=CatchHandler
+# CHECK: = CallDirect v0, {{*}}, v1, {{*}}, v5, {{*}} function=[[mapToFind]] [isAlwaysInlined]
+}
+
+# Find is 6, a map in front 1 << 4, a filter 2 << 4, and 1 << 12 says that the links run on every element.
+# CHECK: function [[mapToFind]] name="traverseArray"{{*}}role=ChainStep
+# CHECK: = Integer integer=22
+# CHECK: function [[filterMapToArray]] name="traverseArray"{{*}}role=ChainStep
+# CHECK: function [[filterToFindOnEveryElement]] name="traverseArray"{{*}}role=ChainStep
+# CHECK: = Integer integer=4134

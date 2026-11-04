@@ -33,6 +33,7 @@
 messages -> RemoteAudioVideoRendererProxyManager {
     CreateManager(WebKit::RemoteAudioVideoRendererIdentifier identifier, WebCore::MediaPlayerClientIdentifier mediaElementIdentifier, WebCore::MediaPlayerIdentifier playerIdentifier) -> (std::optional<WebCore::SharedTimebaseHandle> handle)
     Shutdown(WebKit::RemoteAudioVideoRendererIdentifier identifier)
+    Destroy(WebKit::RemoteAudioVideoRendererIdentifier identifier)
 
     SetPreferences(WebKit::RemoteAudioVideoRendererIdentifier identifier, OptionSet<WebCore::VideoRendererPreference> preferences)
     SetHasProtectedVideoContent(WebKit::RemoteAudioVideoRendererIdentifier identifier, bool isProtected)
@@ -40,7 +41,7 @@ messages -> RemoteAudioVideoRendererProxyManager {
     AddTrack(WebKit::RemoteAudioVideoRendererIdentifier identifier, enum:uint8_t WebCore::TrackInfoTrackType type) -> (std::expected<WebCore::SamplesRendererTrackIdentifier, WebCore::PlatformMediaError> result) Synchronous
     RemoveTrack(WebKit::RemoteAudioVideoRendererIdentifier identifier, WebCore::SamplesRendererTrackIdentifier trackIdentifier)
 
-    NewTrackInfoForTrack(WebKit::RemoteAudioVideoRendererIdentifier identifier, WebCore::SamplesRendererTrackIdentifier trackIdentifier, Ref<WebCore::TrackInfo> info);
+    NewTrackInfoForTrack(WebKit::RemoteAudioVideoRendererIdentifier identifier, WebCore::SamplesRendererTrackIdentifier trackIdentifier, Ref<const WebCore::TrackInfo> info);
     EnqueueSample(WebKit::RemoteAudioVideoRendererIdentifier identifier, WebCore::SamplesRendererTrackIdentifier trackIdentifier, WebCore::MediaSamplesBlock block, std::optional<MediaTime> upcomingMinimumTime) -> (bool readyForMoreData);
     RequestMediaDataWhenReady(WebKit::RemoteAudioVideoRendererIdentifier identifier, WebCore::SamplesRendererTrackIdentifier trackIdentifier)
 

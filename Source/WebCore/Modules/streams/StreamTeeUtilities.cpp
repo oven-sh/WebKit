@@ -58,27 +58,27 @@ public:
     ~StreamTeeState();
 
     // AbstractRefCounted.
-    void NODELETE ref() const final { RefCounted::ref(); }
+    void LEGACY_NODELETE ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    bool NODELETE isReader(const ReadableStreamDefaultReader* thisReader) const { return m_defaultReader && m_defaultReader.get() == thisReader; }
-    bool NODELETE isReader(const ReadableStreamBYOBReader* thisReader) const { return m_byobReader && m_byobReader.get() == thisReader; }
+    bool LEGACY_NODELETE isReader(const ReadableStreamDefaultReader* thisReader) const { return m_defaultReader && m_defaultReader.get() == thisReader; }
+    bool LEGACY_NODELETE isReader(const ReadableStreamBYOBReader* thisReader) const { return m_byobReader && m_byobReader.get() == thisReader; }
 
-    bool NODELETE reading() const { return m_reading; }
-    void NODELETE setReading(bool value) { m_reading = value; }
+    bool LEGACY_NODELETE reading() const { return m_reading; }
+    void LEGACY_NODELETE setReading(bool value) { m_reading = value; }
 
-    bool NODELETE readAgainForBranch1() const { return m_readAgainForBranch1; }
-    void NODELETE setReadAgainForBranch1(bool value) { m_readAgainForBranch1 = value; }
+    bool LEGACY_NODELETE readAgainForBranch1() const { return m_readAgainForBranch1; }
+    void LEGACY_NODELETE setReadAgainForBranch1(bool value) { m_readAgainForBranch1 = value; }
 
-    bool NODELETE readAgainForBranch2() const { return m_readAgainForBranch2; }
-    void NODELETE setReadAgainForBranch2(bool value) { m_readAgainForBranch2 = value; }
+    bool LEGACY_NODELETE readAgainForBranch2() const { return m_readAgainForBranch2; }
+    void LEGACY_NODELETE setReadAgainForBranch2(bool value) { m_readAgainForBranch2 = value; }
 
-    bool NODELETE canceled1() const { return m_canceled1; }
-    bool NODELETE canceled2() const { return m_canceled2; }
-    void NODELETE setCanceled1() { m_canceled1 = true; }
-    void NODELETE setCanceled2() { m_canceled2 = true; }
-    JSC::JSValue NODELETE reason1() { return m_branch1Reason.getValue(); }
-    JSC::JSValue NODELETE reason2() { return m_branch2Reason.getValue(); }
+    bool LEGACY_NODELETE canceled1() const { return m_canceled1; }
+    bool LEGACY_NODELETE canceled2() const { return m_canceled2; }
+    void LEGACY_NODELETE setCanceled1() { m_canceled1 = true; }
+    void LEGACY_NODELETE setCanceled2() { m_canceled2 = true; }
+    JSC::JSValue LEGACY_NODELETE reason1() { return m_branch1Reason.getValue(); }
+    JSC::JSValue LEGACY_NODELETE reason2() { return m_branch2Reason.getValue(); }
     void setReason1(JSDOMGlobalObject& globalObject, const JSC::JSCell* owner, JSC::JSValue value)
     {
         m_branch1Reason.set(globalObject, owner, value);
@@ -93,19 +93,19 @@ public:
         m_branch2Reason.visitInGCThread(visitor);
         m_stream->visitAdditionalChildrenInGCThread(visitor);
     }
-    void NODELETE clearReasons()
+    void LEGACY_NODELETE clearReasons()
     {
         m_branch1Reason.clear();
         m_branch2Reason.clear();
     }
 
-    ReadableStream& NODELETE stream() const { return m_stream; }
-    ReadableStream* NODELETE branch1() const { return m_branch1.get(); }
-    ReadableStream* NODELETE branch2() const { return m_branch2.get(); }
-    void NODELETE setBranch1(ReadableStream& stream) { m_branch1 = &stream; }
-    void NODELETE setBranch2(ReadableStream& stream) { m_branch2 = &stream; }
+    ReadableStream& LEGACY_NODELETE stream() const { return m_stream; }
+    ReadableStream* LEGACY_NODELETE branch1() const { return m_branch1.get(); }
+    ReadableStream* LEGACY_NODELETE branch2() const { return m_branch2.get(); }
+    void LEGACY_NODELETE setBranch1(ReadableStream& stream) { m_branch1 = &stream; }
+    void LEGACY_NODELETE setBranch2(ReadableStream& stream) { m_branch2 = &stream; }
 
-    ReadableStreamBYOBReader* NODELETE byobReader() const { return m_byobReader.get(); }
+    ReadableStreamBYOBReader* LEGACY_NODELETE byobReader() const { return m_byobReader.get(); }
     RefPtr<ReadableStreamBYOBReader> takeBYOBReader() { return std::exchange(m_byobReader, { }); }
     void setReader(Ref<ReadableStreamBYOBReader>&& reader)
     {
@@ -114,7 +114,7 @@ public:
         m_byobReader = WTF::move(reader);
     }
 
-    ReadableStreamDefaultReader* NODELETE defaultReader() const { return m_defaultReader.get(); }
+    ReadableStreamDefaultReader* LEGACY_NODELETE defaultReader() const { return m_defaultReader.get(); }
     RefPtr<ReadableStreamDefaultReader> takeDefaultReader() { return std::exchange(m_defaultReader, { }); }
     void setReader(Ref<ReadableStreamDefaultReader>&& reader)
     {
@@ -123,16 +123,16 @@ public:
         m_defaultReader = WTF::move(reader);
     }
 
-    DOMPromise& NODELETE cancelPromise() { return m_cancelPromise; }
+    DOMPromise& LEGACY_NODELETE cancelPromise() { return m_cancelPromise; }
 
     void resolveCancelPromise()
     {
-        Ref { m_cancelDeferredPromise }->resolve();
+        m_cancelDeferredPromise->resolve();
     }
 
     void rejectCancelPromise(JSC::JSValue value)
     {
-        Ref { m_cancelDeferredPromise }->rejectWithCallback([&](auto&) {
+        m_cancelDeferredPromise->rejectWithCallback([&](auto&) {
             return value;
         });
     }
@@ -208,8 +208,8 @@ private:
     bool m_readAgainForBranch2 = false;
     bool m_canceled1 = false;
     bool m_canceled2 = false;
-    Ref<DeferredPromise> m_cancelDeferredPromise;
-    Ref<DOMPromise> m_cancelPromise;
+    const Ref<DeferredPromise> m_cancelDeferredPromise;
+    const Ref<DOMPromise> m_cancelPromise;
     WeakPtr<ReadableStream> m_branch1;
     WeakPtr<ReadableStream> m_branch2;
     JSValueInWrappedObject m_branch1Reason;
@@ -373,7 +373,7 @@ static Ref<DOMPromise> pull2Steps(JSDOMGlobalObject& globalObject, StreamTeeStat
 
 class TeeDefaultReadRequest : public ReadableStreamReadRequest {
 public:
-    static Ref<TeeDefaultReadRequest> create(Ref<StreamTeeState>&& state) { return adoptRef(*new TeeDefaultReadRequest(WTF::move(state))); }
+    static Ref<TeeDefaultReadRequest> LEGACY_NODELETE create(Ref<StreamTeeState>&& state) { return adoptRef(*new TeeDefaultReadRequest(WTF::move(state))); }
 
 private:
     explicit TeeDefaultReadRequest(Ref<StreamTeeState>&& state)
@@ -464,17 +464,17 @@ private:
             m_state->resolveCancelPromise();
     }
 
-    void NODELETE runErrorSteps(JSC::JSValue) final
+    void LEGACY_NODELETE runErrorSteps(JSC::JSValue) final
     {
         runErrorSteps();
     }
 
-    void NODELETE runErrorSteps(Exception&&) final
+    void LEGACY_NODELETE runErrorSteps(Exception&&) final
     {
         runErrorSteps();
     }
 
-    void NODELETE runErrorSteps()
+    void LEGACY_NODELETE runErrorSteps()
     {
         m_state->setReading(false);
     }
@@ -489,7 +489,7 @@ private:
 
 class TeeBYOBReadRequest : public ReadableStreamReadIntoRequest {
 public:
-    static Ref<TeeBYOBReadRequest> create(Ref<StreamTeeState>&& state, bool forBranch2) { return adoptRef(*new TeeBYOBReadRequest(WTF::move(state), forBranch2)); }
+    static Ref<TeeBYOBReadRequest> LEGACY_NODELETE create(Ref<StreamTeeState>&& state, bool forBranch2) { return adoptRef(*new TeeBYOBReadRequest(WTF::move(state), forBranch2)); }
 
 private:
     explicit TeeBYOBReadRequest(Ref<StreamTeeState>&& state, bool forBranch2)
@@ -604,17 +604,17 @@ private:
             m_state->resolveCancelPromise();
     }
 
-    void NODELETE runErrorSteps(JSC::JSValue) final
+    void LEGACY_NODELETE runErrorSteps(JSC::JSValue) final
     {
         runErrorSteps();
     }
 
-    void NODELETE runErrorSteps(Exception&&) final
+    void LEGACY_NODELETE runErrorSteps(Exception&&) final
     {
         runErrorSteps();
     }
 
-    void NODELETE runErrorSteps()
+    void LEGACY_NODELETE runErrorSteps()
     {
         m_state->setReading(false);
     }

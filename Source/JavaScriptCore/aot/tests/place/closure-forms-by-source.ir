@@ -1,0 +1,30 @@
+# Placement lists the entrypoints that closures are made of, in the order of their sources, for a source that has several of them and starts recording callees once renamed. The run time marks them all when a closure of one is renamed. A construct entrypoint is not listed: the word of a closure names the entrypoint for calls.
+# FORM: Selected
+# RUN: pass NumberAndEncode
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="twoForms" results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed]
+function f2 name="oneForm" results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed]
+function f3 name="neverRecords" results=[{type=anything}]
+function f4 name="constructed" flags=[HasNewTarget] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed]
+function f5 name="alsoTwoForms" results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed]
+function f6 name="alsoTwoForms" role=GenericEntrypoint flags=[HasThis] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] derivation={source=f5} creator=Entrypoint{target=f5}
+function f7 name="neverRecords" role=GenericEntrypoint flags=[HasThis] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] derivation={source=f3} creator=Entrypoint{target=f3}
+function f8 name="twoForms" role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] derivation={source=f1} creator=Entrypoint{target=f1}
+function f9 name="oneForm" role=GenericEntrypoint flags=[HasThis] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2}
+function f10 name="neverRecords" role=GenericEntrypoint flags=[HasThis] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] derivation={source=f3} creator=Entrypoint{target=f3}
+function f11 name="twoForms" role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] derivation={source=f1} creator=Entrypoint{target=f1}
+function f12 name="constructed" role=GenericEntrypoint flags=[HasThis] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] derivation={source=f4} creator=Entrypoint{target=f4 takesNewTarget=true}
+function f13 name="constructed" role=GenericEntrypoint flags=[HasThis] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] derivation={source=f4} creator=Entrypoint{target=f4 constructEntrypoint=f12}
+function f14 name="alsoTwoForms" role=GenericEntrypoint flags=[HasThis] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] derivation={source=f5} creator=Entrypoint{target=f5}
+
+# CHECK: closureFunctions first=
+# CHECK-NEXT: closureForm f8
+# CHECK-NEXT: closureForm f11
+# CHECK-NEXT: closureForm f6
+# CHECK-NEXT: closureForm f14
+# CHECK-NOT: closureForm

@@ -279,7 +279,6 @@
             "crypto/fuzzer_mode.cc",
             "crypto/hpke/hpke.cc",
             "crypto/hrss/hrss.cc",
-            "crypto/kyber/kyber.cc",
             "crypto/lhash/lhash.cc",
             "crypto/md4/md4.cc",
             "crypto/md5/md5.cc",
@@ -379,6 +378,7 @@
             "crypto/x509/x509_def.cc",
             "crypto/x509/x509_ext.cc",
             "crypto/x509/x509_lu.cc",
+            "crypto/x509/x509_mtc.cc",
             "crypto/x509/x509_obj.cc",
             "crypto/x509/x509_req.cc",
             "crypto/x509/x509_set.cc",
@@ -429,6 +429,7 @@
             "include/openssl/cmac.h",
             "include/openssl/cms.h",
             "include/openssl/conf.h",
+            "include/openssl/configuration.h",
             "include/openssl/cpu.h",
             "include/openssl/crypto.h",
             "include/openssl/ctrdrbg.h",
@@ -492,6 +493,7 @@
             "include/openssl/tls_prf.h",
             "include/openssl/trust_token.h",
             "include/openssl/type_check.h",
+            "include/openssl/types.h",
             "include/openssl/x509.h",
             "include/openssl/x509_vfy.h",
             "include/openssl/x509v3.h",
@@ -545,7 +547,6 @@
             "crypto/hrss/internal.h",
             "crypto/bcm_support.h",
             "crypto/internal.h",
-            "crypto/kyber/internal.h",
             "crypto/lhash/internal.h",
             "crypto/md5/internal.h",
             "crypto/mem_internal.h",
@@ -836,6 +837,7 @@
             "crypto/constant_time_test.cc",
             "crypto/cpu_arm_linux_test.cc",
             "crypto/crypto_test.cc",
+            "crypto/curve25519/curve25519_test.cc",
             "crypto/curve25519/ed25519_test.cc",
             "crypto/curve25519/spake25519_test.cc",
             "crypto/curve25519/x25519_test.cc",
@@ -867,7 +869,6 @@
             "crypto/hpke/hpke_test.cc",
             "crypto/hrss/hrss_test.cc",
             "crypto/impl_dispatch_test.cc",
-            "crypto/kyber/kyber_test.cc",
             "crypto/lhash/lhash_test.cc",
             "crypto/md5/md5_test.cc",
             "crypto/mlkem/mlkem_test.cc",
@@ -904,6 +905,7 @@
             "crypto/cipher/test/*.txt",
             "crypto/cipher/test/nist_cavp/*.txt",
             "crypto/curve25519/ed25519_tests.txt",
+            "crypto/curve25519/ed25519ph_tests.txt",
             "crypto/ecdh/ecdh_tests.txt",
             "crypto/evp/test/*.txt",
             "crypto/fipsmodule/aes/aes_tests.txt",
@@ -921,7 +923,6 @@
             "crypto/fipsmodule/rand/ctrdrbg_df_vectors.txt",
             "crypto/hmac/hmac_tests.txt",
             "crypto/hpke/*.txt",
-            "crypto/kyber/kyber_tests.txt",
             "crypto/mldsa/mldsa_nist_keygen_44_tests.txt",
             "crypto/mldsa/mldsa_nist_keygen_65_tests.txt",
             "crypto/mldsa/mldsa_nist_keygen_87_tests.txt",
@@ -954,6 +955,8 @@
             "crypto/slhdsa/slhdsa_shake_256f_sigver.txt",
             "crypto/x509/test/*.pem",
             "crypto/x509/test/*.pk8",
+            "crypto/x509/test/mtc/*.pem",
+            "crypto/x509/test/mtc/*.txt",
             "third_party/wycheproof_testvectors/*.txt"
         ],
         "internal_hdrs": [
@@ -1004,6 +1007,7 @@
             "pki/verify_unittest.cc"
         ],
         "data": [
+            "crypto/x509/test/mtc/*.txt",
             "pki/testdata/cert_issuer_source_static_unittest/*.pem",
             "pki/testdata/certificate_policies_unittest/*.pem",
             "pki/testdata/crl_unittest/*.pem",
@@ -1125,6 +1129,12 @@
     "rust_bssl_x509": {
         "srcs": [
             "rust/bssl-x509/src/*.rs"
+        ]
+    },
+    "rust_bssl_tls_tokio": {
+        "srcs": [
+            "rust/bssl-tls-tokio/src/*.rs",
+            "rust/bssl-tls-tokio/src/*/*.rs"
         ]
     },
     "modulewrapper": {

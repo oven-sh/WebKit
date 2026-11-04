@@ -28,6 +28,7 @@
 #include "CaretRectComputation.h"
 #include "CompositionHighlight.h"
 #include "DocumentMarkerController.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "EventRegion.h"
 #include "FontCascadeInlines.h"
@@ -36,7 +37,7 @@
 #include "InlineIteratorBoxInlines.h"
 #include "InlineIteratorInlineBox.h"
 #include "InlineIteratorLineBox.h"
-#include "InlineIteratorTextBoxInlines.h"
+#include "InlineIteratorTextBox.h"
 #include "InlineTextBoxStyle.h"
 #include "LayoutInlineTextBox.h"
 #include "LineSelection.h"
@@ -111,22 +112,22 @@ struct ShapedContent {
     size_t textBoxStartOffset { 0 }; // text box's position relative to the shaped content.
     float textBoxVisualLeft { 0.f }; // text box's left relative to the visual left of the shaped content.
 };
-static void buildTextForShaping(ShapedContent& shapedContent, InlineIterator::BoxModernPath textBox, bool needsTextBoxVisualLeft = false)
+static void buildTextForShaping(ShapedContent& shapedContent, const InlineIterator::TextBoxIterator& textBox, bool needsTextBoxVisualLeft = false)
 {
-    ASSERT(textBox.direction() == TextDirection::RTL);
+    ASSERT(textBox->direction() == TextDirection::RTL);
 
-    auto shapingBoundaryIterator = textBox;
+    InlineIterator::LeafBoxIterator shapingBoundaryIterator = textBox;
     // 1. Find shaping boundary start when we are at the end or inside a shape range (note that we deal with
     // rtl content hence the opposite direction walk)
     // 2. Walk from the start to the end and build the text content.
 
     auto moveToShapingBoundaryStart = [&] {
-        if (shapingBoundaryIterator.box().text().isAtShapingBoundaryStart())
+        if (shapingBoundaryIterator->displayBox().text().isAtShapingBoundaryStart())
             return;
 
-        shapingBoundaryIterator.traverseNextLeafOnLine();
-        for (; !shapingBoundaryIterator.atEnd(); shapingBoundaryIterator.traverseNextLeafOnLine()) {
-            auto& displayBox = shapingBoundaryIterator.box();
+        shapingBoundaryIterator.traverseLineRightwardOnLine();
+        for (; !shapingBoundaryIterator.atEnd(); shapingBoundaryIterator.traverseLineRightwardOnLine()) {
+            auto& displayBox = shapingBoundaryIterator->displayBox();
             if (displayBox.isText()) {
                 shapedContent.textBoxStartOffset += displayBox.text().length();
                 if (displayBox.text().isAtShapingBoundaryStart())
@@ -136,18 +137,18 @@ static void buildTextForShaping(ShapedContent& shapedContent, InlineIterator::Bo
     };
     moveToShapingBoundaryStart();
 
-    if (shapingBoundaryIterator.atEnd() || !shapingBoundaryIterator.isText()) {
+    if (shapingBoundaryIterator.atEnd() || !shapingBoundaryIterator->isText()) {
         ASSERT_NOT_REACHED();
         return;
     }
 
     auto buildTextContent = [&] {
-        for (; !shapingBoundaryIterator.atEnd(); shapingBoundaryIterator.traversePreviousLeafOnLine()) {
-            auto& displayBox = shapingBoundaryIterator.box();
+        for (; !shapingBoundaryIterator.atEnd(); shapingBoundaryIterator.traverseLineLeftwardOnLine()) {
+            auto& displayBox = shapingBoundaryIterator->displayBox();
             if (!displayBox.isText())
                 continue;
             auto& text = displayBox.text();
-            if (shapingBoundaryIterator.direction() == TextDirection::LTR) {
+            if (shapingBoundaryIterator->direction() == TextDirection::LTR) {
                 shapedContent.text.clear();
                 return;
             }
@@ -173,10 +174,10 @@ static void buildTextForShaping(ShapedContent& shapedContent, InlineIterator::Bo
         if (!needsTextBoxVisualLeft)
             return;
         // Starting from visual left, walk all the way to the current text box.
-        for (; !shapingBoundaryIterator.atEnd(); shapingBoundaryIterator.traverseNextLeafOnLine()) {
+        for (; !shapingBoundaryIterator.atEnd(); shapingBoundaryIterator.traverseLineRightwardOnLine()) {
             if (shapingBoundaryIterator == textBox)
                 return;
-            auto& displayBox = shapingBoundaryIterator.box();
+            auto& displayBox = shapingBoundaryIterator->displayBox();
             if (displayBox.isText())
                 shapedContent.textBoxVisualLeft += displayBox.visualRectIgnoringBlockDirection().width();
         }
@@ -185,8 +186,8 @@ static void buildTextForShaping(ShapedContent& shapedContent, InlineIterator::Bo
 }
 
 TextBoxPainter::TextBoxPainter(const LayoutIntegration::InlineContent& inlineContent, const InlineDisplay::Box& box, const Style::ComputedStyle& style, PaintInfo& paintInfo, const LayoutPoint& paintOffset)
-    : m_textBox(InlineIterator::BoxModernPath { inlineContent, inlineContent.indexForBox(box) })
-    , m_renderer(downcast<RenderText>(m_textBox.renderer()))
+    : m_textBox(inlineContent, inlineContent.indexForBox(box))
+    , m_renderer(m_textBox.renderer())
     , m_document(m_renderer->document())
     , m_style(style)
     , m_logicalRect(m_textBox.isHorizontal() ? m_textBox.visualRectIgnoringBlockDirection() : m_textBox.visualRectIgnoringBlockDirection().transposedRect())
@@ -195,7 +196,7 @@ TextBoxPainter::TextBoxPainter(const LayoutIntegration::InlineContent& inlineCon
     , m_selectableRange(m_textBox.selectableRange())
     , m_paintOffset(paintOffset)
     , m_paintRect(computePaintRect(paintOffset))
-    , m_isFirstLine(m_textBox.isFirstFormattedLine())
+    , m_isFirstLine(m_textBox.displayBox().isFirstFormattedLine())
     , m_isCombinedText([&] {
         auto* combineTextRenderer = dynamicDowncast<RenderCombineText>(m_renderer.get());
         return combineTextRenderer && combineTextRenderer->isCombined();
@@ -219,8 +220,7 @@ TextBoxPainter::~TextBoxPainter() = default;
 
 InlineIterator::TextBoxIterator TextBoxPainter::makeIterator() const
 {
-    auto pathCopy = m_textBox;
-    return InlineIterator::TextBoxIterator { WTF::move(pathCopy) };
+    return { m_textBox };
 }
 
 void TextBoxPainter::paint()
@@ -612,8 +612,8 @@ LayoutRect TextBoxPainter::selectionRectForRange(unsigned startOffset, unsigned 
     // Note that if the text is truncated, we let the thing being painted in the truncation
     // draw its own highlight.
     auto lineBox = makeIterator()->lineBox();
-    auto selectionBottom = LineSelection::logicalBottom(*lineBox);
-    auto selectionTop = LineSelection::logicalTopAdjustedForPrecedingBlock(*lineBox);
+    auto selectionBottom = LineSelection::logicalBottom(lineBox);
+    auto selectionTop = LineSelection::logicalTopAdjustedForPrecedingBlock(lineBox);
     // Use same y positioning and height as for selection, so that when the selection and this subrange are on
     // the same word there are no pieces sticking out.
     auto deltaY = LayoutUnit { writingMode().isLineInverted() ? selectionBottom - m_logicalRect.maxY() : m_logicalRect.y() - selectionTop };
@@ -623,13 +623,13 @@ LayoutRect TextBoxPainter::selectionRectForRange(unsigned startOffset, unsigned 
     if (isInsideShapedContent()) {
         auto shapedContent = ShapedContent { };
 
-        buildTextForShaping(shapedContent, m_textBox, true);
+        buildTextForShaping(shapedContent, makeIterator(), true);
         selectionRect.setX(selectionRect.x() - shapedContent.textBoxVisualLeft);
         auto selectionLength = endOffset - startOffset;
         auto adjustedStartOffset = shapedContent.textBoxStartOffset + startOffset;
 
         auto characterScanForCodePath = true;
-        auto expansion = m_textBox.box().expansion();
+        auto expansion = m_textBox.displayBox().expansion();
         auto paintRect = m_paintRect;
         paintRect.shiftXEdgeTo(shapedContent.visualLeft);
         auto run = TextRun { shapedContent.text, paintRect.x(), expansion.horizontalExpansion, expansion.behavior, m_textBox.direction(), m_style->rtlOrdering() == Order::Visual, characterScanForCodePath };
@@ -677,7 +677,7 @@ void TextBoxPainter::paintBackgroundFillForRange(unsigned startOffset, unsigned 
     context.fillRect(backgroundRect, color);
 }
 
-static bool NODELETE isTransparent(const StyledMarkedText& markedText)
+static bool LEGACY_NODELETE isTransparent(const StyledMarkedText& markedText)
 {
     switch (markedText.type) {
     case MarkedText::Type::DraggedContent:
@@ -692,7 +692,7 @@ static bool NODELETE isTransparent(const StyledMarkedText& markedText)
 
 bool TextBoxPainter::hasSynthesizedGlyph() const
 {
-    CheckedPtr inlineTextBox = dynamicDowncast<Layout::InlineTextBox>(m_textBox.box().layoutBox());
+    CheckedPtr inlineTextBox = dynamicDowncast<Layout::InlineTextBox>(m_textBox.displayBox().layoutBox());
     return inlineTextBox && inlineTextBox->hasSynthesizedGlyph();
 }
 
@@ -719,14 +719,15 @@ void TextBoxPainter::paintSynthesizedGlyph()
         bool shouldFlip = (glyphRenderer->glyph() == SynthesizedGlyph::PickerDown) == textBox().writingMode().isLineInverted();
         GraphicsContextStateSaver stateSaver(context);
         if (shouldFlip) {
-            // A flipped chevron reads optically low, so lift it by a quarter of the glyph size.
-            context.concatCTM(AffineTransform { }.translate(center.x(), center.y() - size / 4).rotate(180).translate(-center.x(), -center.y()));
+            context.concatCTM(AffineTransform { }.translate(center.x(), center.y()).rotate(180).translate(-center.x(), -center.y()));
         }
 
         context.setLineCap(LineCap::Butt);
         context.setLineJoin(LineJoin::Miter);
         context.setStrokeThickness(std::max(1.0f, fontSize * 0.05f));
 
+        // A chevron's optical center is offset, so shift it by a quarter of the glyph size.
+        center.move(0, size / 4);
         // Draw chevron pointing down.
         Path chevron;
         chevron.moveTo({ center.x() - size, center.y() - size / 2 });
@@ -808,7 +809,7 @@ void TextBoxPainter::paintForeground(const StyledMarkedText& markedText)
         context.clip(clipRect);
     }
 
-    textPainter.setGlyphDisplayListIfNeeded(textBox().box(), m_paintInfo, m_style, m_paintTextRun);
+    textPainter.setGlyphDisplayListIfNeeded(textBox().displayBox(), m_paintInfo, m_style, m_paintTextRun);
     // TextPainter wants the box rectangle and text origin of the entire line box.
     textPainter.paintRange(m_paintTextRun, m_paintRect, textOriginFromPaintRect(m_paintRect), markedText.startOffset, markedText.endOffset);
 }
@@ -826,7 +827,7 @@ bool TextBoxPainter::paintForegroundForShapeRange(TextPainter& textPainter)
         auto rect = FloatRect::infiniteRect();
         rect.setX(m_paintRect.x());
         // Note that this is RTL direction.
-        auto& textContent = m_textBox.box().text();
+        auto& textContent = m_textBox.displayBox().text();
         if (!textContent.isAtShapingBoundaryStart())
             rect.setWidth(m_paintRect.width());
         // FIXME: Setup a semi-inifite rect for the (visually) first box where x is -inifite with fixed maxX.
@@ -835,7 +836,7 @@ bool TextBoxPainter::paintForegroundForShapeRange(TextPainter& textPainter)
     context.save();
     context.clip(clipRect());
     auto shapedContent = ShapedContent { };
-    buildTextForShaping(shapedContent, m_textBox);
+    buildTextForShaping(shapedContent, makeIterator());
 
     if (shapedContent.text.isEmpty())
         return false;
@@ -844,7 +845,7 @@ bool TextBoxPainter::paintForegroundForShapeRange(TextPainter& textPainter)
     paintRect.shiftXEdgeTo(m_paintOffset.x() + shapedContent.visualLeft);
 
     auto characterScanForCodePath = true;
-    auto expansion = m_textBox.box().expansion();
+    auto expansion = m_textBox.displayBox().expansion();
     auto run = TextRun { shapedContent.text, paintRect.x(), expansion.horizontalExpansion, expansion.behavior, m_textBox.direction(), m_style->rtlOrdering() == Order::Visual, characterScanForCodePath };
     run.disableSpacing();
 
@@ -908,7 +909,7 @@ static inline Style::TextDecorationLine computedTextDecorationType(const Style::
     return textDecorations;
 }
 
-static inline CheckedRef<const Style::ComputedStyle> decoratingBoxStyleForInlineBox(const InlineIterator::InlineBox& inlineBox, bool isFirstLine)
+static inline CheckedRef<const Style::ComputedStyle> LEGACY_NODELETE decoratingBoxStyleForInlineBox(const InlineIterator::InlineBox& inlineBox, bool isFirstLine)
 {
     if (!inlineBox.isRootInlineBox())
         return inlineBox.style();
@@ -992,8 +993,9 @@ void TextBoxPainter::collectDecoratingBoxesForBackgroundPainting(DecoratingBoxLi
         // Normally text box top is aligned with the parent inline box top (i.e. textBox->logicalTop() == parentInlineBox->logicalTop()) but when inline box sides are trimmed (see: text-box property)
         // inline box gets an offset while text box does not.
         if (&inlineBox->renderer() != &parentInlineBox->renderer()) {
-            auto decoratingBoxContentBoxTop = inlineBox->logicalTop() + (!inlineBox->isRootInlineBox() ? inlineBox->renderer().borderAndPaddingBefore() : LayoutUnit(0_lu));
-            auto parentInlineBoxContentBoxTop = parentInlineBox->logicalTop() + (!parentInlineBox->isRootInlineBox() ? parentInlineBox->renderer().borderAndPaddingBefore() : LayoutUnit(0_lu));
+            // FIXME: Remove suppression once rdar://189998444 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST auto decoratingBoxContentBoxTop = inlineBox->logicalTop() + (!inlineBox->isRootInlineBox() ? inlineBox->renderer().borderAndPaddingBefore() : LayoutUnit(0_lu));
+            SUPPRESS_MEMORY_UNSAFE_CAST auto parentInlineBoxContentBoxTop = parentInlineBox->logicalTop() + (!parentInlineBox->isRootInlineBox() ? parentInlineBox->renderer().borderAndPaddingBefore() : LayoutUnit(0_lu));
             decoratingBoxLocation.moveBy(FloatPoint { 0.f, decoratingBoxContentBoxTop - parentInlineBoxContentBoxTop + textBoxEdgeAdjustmentForUnderline(parentInlineBox->style()) });
         } else
             decoratingBoxLocation.moveBy(FloatPoint { 0.f, textBoxEdgeAdjustmentForUnderline(inlineBox->style()) });
@@ -1032,7 +1034,7 @@ void TextBoxPainter::collectDecoratingBoxesForBackgroundPainting(DecoratingBoxLi
     }
 }
 
-static float autoTextDecorationInset(const Style::ComputedStyle& style)
+static float LEGACY_NODELETE autoTextDecorationInset(const Style::ComputedStyle& style)
 {
     // A small UA-chosen inset (relative to font size) so that two adjacent identical underlined
     // elements do not appear to share a single continuous underline (important for e.g. Chinese,
@@ -1045,9 +1047,9 @@ struct DecoratingBoxFragmentInlineSizes {
     float current { 0.f };
     float following { 0.f };
 
-    float total() const { return preceding + current + following; }
+    float LEGACY_NODELETE total() const { return preceding + current + following; }
 };
-static DecoratingBoxFragmentInlineSizes decoratingBoxFragmentInlineSizes(const InlineIterator::InlineBox& decoratingInlineBox)
+static DecoratingBoxFragmentInlineSizes LEGACY_NODELETE decoratingBoxFragmentInlineSizes(const InlineIterator::InlineBox& decoratingInlineBox)
 {
     auto inlineSizes = DecoratingBoxFragmentInlineSizes { .current = decoratingInlineBox.logicalWidth() };
     for (auto fragment = decoratingInlineBox.nextInlineBoxLineLeftward(); fragment; fragment.traverseInlineBoxLineLeftward())
@@ -1304,7 +1306,7 @@ enum class TrimSide : bool {
     Right,
 };
 
-static CornerRadii NODELETE trimRadii(const CornerRadii& radii, TrimSide trimSide)
+static CornerRadii LEGACY_NODELETE trimRadii(const CornerRadii& radii, TrimSide trimSide)
 {
     switch (trimSide) {
     case TrimSide::Left:
@@ -1335,12 +1337,12 @@ static FloatRect snapRectToDevicePixelsInDirection(const FloatRect& rect, float 
 }
 
 enum class TextBoxFragmentLocationWithinLayoutBox : uint8_t { First = 1 << 0, Last = 1 << 1 };
-static OptionSet<TextBoxFragmentLocationWithinLayoutBox> NODELETE textBoxFragmentLocationWithinLayoutBox(const InlineIterator::BoxModernPath& textBox)
+static OptionSet<TextBoxFragmentLocationWithinLayoutBox> LEGACY_NODELETE textBoxFragmentLocationWithinLayoutBox(const InlineIterator::TextBox& textBox)
 {
     OptionSet<TextBoxFragmentLocationWithinLayoutBox> location;
-    if (textBox.box().isFirstForLayoutBox())
+    if (textBox.displayBox().isFirstForLayoutBox())
         location.add(TextBoxFragmentLocationWithinLayoutBox::First);
-    if (textBox.box().isLastForLayoutBox())
+    if (textBox.displayBox().isLastForLayoutBox())
         location.add(TextBoxFragmentLocationWithinLayoutBox::Last);
     return location;
 }
@@ -1390,11 +1392,11 @@ void TextBoxPainter::fillCompositionUnderline(float start, float width, const Co
 
     auto underlineColor = [this] {
 #if PLATFORM(MAC)
-        auto cssColorValue = CSSValueAppleSystemControlAccent;
+        auto cssColorValue = CSSValueID::AppleSystemControlAccent;
 #else
-        auto cssColorValue = CSSValueAppleSystemBlue;
+        auto cssColorValue = CSSValueID::AppleSystemBlue;
 #endif
-        auto styleColorOptions = m_renderer->styleColorOptions();
+        auto styleColorOptions = m_renderer->styleColorOptions(StyleColorOptionsPurpose::Rendering);
         return RenderTheme::singleton().systemColor(cssColorValue, styleColorOptions | StyleColorOptions::UseSystemAppearance);
     }();
 
@@ -1483,7 +1485,7 @@ void TextBoxPainter::paintCompositionUnderlines()
     }
 }
 
-static inline void NODELETE mirrorRTLSegment(float logicalWidth, TextDirection direction, float& start, float width)
+static inline void LEGACY_NODELETE mirrorRTLSegment(float logicalWidth, TextDirection direction, float& start, float width)
 {
     if (direction == TextDirection::LTR)
         return;
@@ -1496,7 +1498,7 @@ float TextBoxPainter::textPosition()
     // from the containing block edge in its measurement. textPosition() should be consistent so the text are rendered in the same width.
     if (!m_logicalRect.x())
         return 0;
-    return m_logicalRect.x() - makeIterator()->lineBox()->contentLogicalLeft();
+    return m_logicalRect.x() - makeIterator()->lineBox().contentLogicalLeft();
 }
 
 void TextBoxPainter::paintCompositionUnderline(const CompositionUnderline& underline, const CornerRadii& radii, bool hasLiveConversion)
@@ -1547,14 +1549,14 @@ static void removeMarkersPaintedByTextDecorationPainter(const RenderText& render
     }
 }
 
-static std::optional<MarkedText> NODELETE markedTextForTextDecorationLineSpellingError(const RenderText& renderer)
+static std::optional<MarkedText> LEGACY_NODELETE markedTextForTextDecorationLineSpellingError(const RenderText& renderer)
 {
     if (!renderer.style().textDecorationLineInEffect().isSpellingError())
         return std::nullopt;
     return std::make_optional<MarkedText>(0, static_cast<unsigned>(renderer.length()), MarkedText::Type::SpellingError);
 }
 
-static std::optional<MarkedText> NODELETE markedTextForTextDecorationLineGrammarError(const RenderText& renderer)
+static std::optional<MarkedText> LEGACY_NODELETE markedTextForTextDecorationLineGrammarError(const RenderText& renderer)
 {
     if (!renderer.style().textDecorationLineInEffect().isGrammarError())
         return std::nullopt;
@@ -1783,7 +1785,7 @@ FloatPoint TextBoxPainter::textOriginFromPaintRect(const FloatRect& paintRect) c
 
 bool TextBoxPainter::isInsideShapedContent() const
 {
-    auto& textContent = textBox().box().text();
+    auto& textContent = textBox().displayBox().text();
     return textContent.isAtShapingBoundaryStart() || textContent.isAtShapingBoundaryEnd() || textContent.isInsideShapingBoundary();
 }
 

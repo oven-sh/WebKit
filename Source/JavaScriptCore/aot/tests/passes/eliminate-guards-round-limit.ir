@@ -1,0 +1,52 @@
+# Past the limit of rounds no test is assumed to pass, and only a test whose condition holds whatever the others do is folded
+# FORM: Prepared
+# OPTIONS: limit=MaxGuardEliminationRounds:1
+# RUN: pass EliminateGuards
+# LOSS: MaxGuardEliminationRounds x1 f0
+# STATISTIC: GuardsEliminated = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="oneTestDropsOutPerRound" parameters=[{type=anything}, {type=boolean}, {type=Array<anything>}] results=[{type=undefined}] {
+    v3 = NewArray contents=anything
+    v4 = NewArray contents=anything
+    v5 = NewArray contents=anything
+    v6 = NewArray contents=anything
+# REPEAT: i = 0..3; a = 3 2 4 5; b = 0 4 5 0
+    v%(i*5+7) = IsPristine v%(a) builtinClass=Array aspects=[Storage, Names]
+    Branch v%(i*5+7) -> taken b%(i*3+1)(| 0), notTaken b%(i*3+2)()
+  b%(i*3+1)(v%(i*5+8)):
+    v%(i*5+9) = CallBuiltin v%(a), v0 overload=ArrayPrototypePush/0 [needsPristineReceiver]
+    Jump -> next b%(i*3+3)()
+  b%(i*3+2)() frequency=Unlikely:
+    v%(i*5+10) = PropGet v%(a) key="push"
+    v%(i*5+11) = Call v%(i*5+10), v%(a), v%(b) calleeKey="push"
+    Jump -> next b%(i*3+3)()
+  b%(i*3+3)():
+# END REPEAT
+    LoopHint
+    v28 = IsPristine v6 builtinClass=Array aspects=[Storage, Names]
+    Branch v28 -> taken b13(| 0), notTaken b14()
+  b13(v29):
+    v30 = CallBuiltin v6, v0 overload=ArrayPrototypePush/0 [needsPristineReceiver]
+    Jump -> next b15()
+  b14() frequency=Unlikely:
+    v31 = PropGet v6 key="push"
+    v32 = Call v31, v6, v0 calleeKey="push"
+    Jump -> next b15()
+  b15():
+    Branch v1 -> taken b12(), notTaken b16()
+  b16():
+    Return
+}
+# CHECK-LABEL: function f0 name="oneTestDropsOutPerRound"
+# CHECK-NOT: IsPristine v3
+# CHECK: b2():
+# CHECK-NEXT: Unreachable
+# CHECK: v12: boolean = IsPristine v2 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b5()
+# CHECK: v17: boolean = IsPristine v4 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch v17 -> taken b7(| 0), notTaken b8()
+# CHECK: v22: boolean = IsPristine v5 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch v22 -> taken b10(| 0), notTaken b11()
+# CHECK: v28: boolean = IsPristine v6 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch v28 -> taken b13(| 0), notTaken b14()

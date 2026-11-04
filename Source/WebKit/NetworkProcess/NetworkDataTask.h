@@ -123,13 +123,13 @@ public:
     void clearClient() { m_client = nullptr; }
 
     std::optional<DownloadID> pendingDownloadID() const { return m_pendingDownloadID.asOptional(); }
-    PendingDownload* NODELETE pendingDownload() const;
+    PendingDownload* LEGACY_NODELETE pendingDownload() const;
     void setPendingDownloadID(DownloadID downloadID)
     {
         ASSERT(!m_pendingDownloadID);
         m_pendingDownloadID = downloadID;
     }
-    void NODELETE setPendingDownload(PendingDownload&);
+    void LEGACY_NODELETE setPendingDownload(PendingDownload&);
 
     virtual void setPendingDownloadLocation(const String& filename, SandboxExtension::Handle&&, bool /*allowOverwrite*/) { m_pendingDownloadLocation = filename; }
     const String& pendingDownloadLocation() const LIFETIME_BOUND { return m_pendingDownloadLocation; }
@@ -142,7 +142,7 @@ public:
 
     bool isTopLevelNavigation() const { return m_dataTaskIsForMainFrameNavigation; }
 
-    bool isInitiatedByDedicatedWorker() const { return m_isInitiatedByDedicatedWorker; }
+    bool isInitiatedByWorker() const { return m_isInitiatedByWorker; }
 
     virtual String description() const;
     virtual void setH2PingCallback(const URL&, CompletionHandler<void(std::expected<WTF::Seconds, WebCore::ResourceError>&&)>&&);
@@ -165,7 +165,7 @@ public:
     bool hasPendingStreamBody() const;
 
 protected:
-    NetworkDataTask(NetworkSession&, NetworkDataTaskClient&, const WebCore::ResourceRequest&, WebCore::StoredCredentialsPolicy, bool shouldClearReferrerOnHTTPSToHTTPRedirect, bool dataTaskIsForMainFrameNavigation, bool isInitiatedByDedicatedWorker);
+    NetworkDataTask(NetworkSession&, NetworkDataTaskClient&, const WebCore::ResourceRequest&, WebCore::StoredCredentialsPolicy, bool shouldClearReferrerOnHTTPSToHTTPRedirect, bool dataTaskIsForMainFrameNavigation, bool isInitiatedByWorker);
 
     enum class FailureType : uint8_t {
         Blocked,
@@ -196,7 +196,7 @@ protected:
     bool m_shouldClearReferrerOnHTTPSToHTTPRedirect { true };
     bool m_dataTaskIsForMainFrameNavigation { false };
     bool m_failureScheduled { false };
-    bool m_isInitiatedByDedicatedWorker { false };
+    bool m_isInitiatedByWorker { false };
 };
 
 } // namespace WebKit

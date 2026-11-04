@@ -1,0 +1,38 @@
+# Past the limit of tested types the lightest one goes without a test, and the others are planned as if alone
+# FORM: Prepared
+# OPTIONS: limit=MaxTestedTypesPerFunction:2
+# RUN: test-placement
+# LOSS: MaxTestedTypesPerFunction x1 f0 v6
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="threeOperands" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ number, v1: anything ~ number, v2: anything ~ number, v3: number):
+    v4 = Mul v0, v3
+    v5 = Mul v0, v3
+    v6 = Mul v1, v3
+    v7 = Integer integer=0
+    Jump -> next b1(v7)
+  b1(v8):
+    LoopHint
+    v10 = Mul v2, v3
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    v13 = Less v12, v3
+    Branch v13 -> taken b1(v12), notTaken b2()
+  b2():
+    Return v10
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: stretch 0: test TypeTest v0 testedType=number before v4; uses v4 v5; cloned 0
+# CHECK-NEXT: stretch 1: test TypeTest v2 testedType=number on b0.0; uses v10; cloned
+# CHECK-NOT: stretch
+
+function f1 name="twoOperands" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ number, v1: anything ~ number, v2: number):
+    v3 = Mul v0, v2
+    v4 = Mul v1, v2
+    Return v4
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: stretch 0: test TypeTest v0 testedType=number before v3; test TypeTest v1 testedType=number before v4; uses v3 v4; cloned
+# CHECK-NOT: stretch

@@ -1,0 +1,175 @@
+# Storage written by hand: each way a frame pointer can outlive its frame is refused under its own kind, beside a function that is accepted
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: FramePointerReturned 2
+# DIAGNOSTIC: FramePointerThrown 1
+# DIAGNOSTIC: FramePointerRetained 2
+# DIAGNOSTIC: CalleeRetainsFramePointer 4
+# DIAGNOSTIC: FramePointerInTailCall 1
+# DIAGNOSTIC: FramePointerAcrossSuspension 1
+# DIAGNOSTIC: FrameCellAcrossIterations 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="inner" fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Environment name="outer" fields=[{key="inner" declared={type=env L0}}]
+
+function f0 name="returned" results=[{type=anything}] {
+    v0 = NewClosure function=f19 storage=Frame
+    Return v0
+}
+
+function f1 name="returnedThroughUpcastAndParameter" results=[{type=anything}] {
+    v0 = NewClosure function=f19 storage=Frame
+    v1 = Upcast v0 castType=anything
+    Jump -> next b1(v1)
+  b1(v2):
+    Return v2
+}
+
+function f2 name="returnsTestOfFrameClosure" results=[{type=anything}] {
+    v0 = NewClosure function=f19 storage=Frame
+    v1 = IsClosureOf v0 function=f19
+    Return v1
+}
+
+function f3 name="thrown" results=[{type=anything}] {
+    v0 = NewClosure function=f19 storage=Frame
+    Throw v0
+}
+
+function f4 name="throwsHeapClosure" results=[{type=anything}] {
+    v0 = NewClosure function=f19 storage=Frame
+    v1 = NewClosure function=f19
+    Throw v1
+}
+
+function f5 name="storedInHeapObject" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = NewClosure function=f19 storage=Frame
+    PropSet v0, v1 key="callback" mode=Strict
+    Return
+}
+
+function f6 name="storedInOlderFrameEnvironment" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    v2 = NewClosure function=f19 storage=Frame
+    PutEnvironmentField v1, v2 layout=L0 field=0
+    Return
+}
+
+function f7 name="heldByLateMaterializedEnvironment" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    v2 = NewObject -, v1 layout=L1 fields=[0] storage=FrameUntilMaterialized
+    Return
+}
+
+function f8 name="heldByFrameEnvironment" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    v2 = NewObject -, v1 layout=L1 fields=[0] storage=Frame
+    Return
+}
+
+function f9 name="calledByValue" results=[{type=anything}] {
+    v0 = NewClosure function=f19 storage=Frame
+    v1 = Call v0
+    Return v1
+}
+
+function f10 name="passedToCallee" results=[{type=anything}] {
+    v0 = NewClosure function=f19 storage=Frame
+    v1 = CallDirect v0 function=f20
+    Return v1
+}
+
+function f11 name="capturedByFrameClosure" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    v2 = NewClosure v1 function=f21 storage=Frame
+    Return
+}
+
+function f12 name="heapClosurePassedToCallee" results=[{type=anything}] {
+    v0 = NewClosure function=f19 storage=Frame
+    v1 = NewClosure function=f19
+    v2 = CallDirect v1 function=f20
+    Return v2
+}
+
+function f13 name="inTailCall" results=[{type=anything}] {
+    v0 = NewClosure function=f19 storage=Frame
+    v1 = CallDirect v0 function=f20
+    ReturnCall v1
+}
+
+function f14 name="heapClosureInTailCall" results=[{type=anything}] {
+    v0 = NewClosure function=f19 storage=Frame
+    v1 = NewClosure function=f19
+    v2 = CallDirect v1 function=f20
+    ReturnCall v2
+}
+
+function f15 name="acrossIterations" parameters=[{type=boolean}] results=[{type=anything}] {
+    v1 = Undefined
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = NewClosure function=f19 storage=Frame
+    v5 = IsClosureOf v2 function=f19
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v4)
+  b3():
+    Return v5
+}
+
+function f16 name="deadAtBackEdge" parameters=[{type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = NewClosure function=f19 storage=Frame
+    v3 = IsClosureOf v2 function=f19
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v3
+}
+
+function f17 name="acrossSuspension" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f17 body=f22 entryWithoutPromise=f22 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f22
+    Return v1
+}
+
+function f18 name="deadAtSuspension" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f18 body=f23 entryWithoutPromise=f23 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f23
+    Return v1
+}
+
+function f19 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}
+
+function f20 name="callsParameter" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+
+function f21 name="callback" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+
+function f22 name="acrossSuspension" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f17} creator=Coroutine{kind=AsyncFunction ramp=f17 body=f22 entryWithoutPromise=f22 promiseType=Promise promiseParameter=1} {
+    v2 = NewClosure function=f19 storage=Frame
+    v3 = AwaitBySavingFrame v0, v1
+    v4 = IsClosureOf v2 function=f19
+    Return v4
+}
+
+function f23 name="deadAtSuspension" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f18} creator=Coroutine{kind=AsyncFunction ramp=f18 body=f23 entryWithoutPromise=f23 promiseType=Promise promiseParameter=1} {
+    v2 = NewClosure function=f19 storage=Frame
+    v3 = IsClosureOf v2 function=f19
+    v4 = AwaitBySavingFrame v0, v1
+    Return v3
+}

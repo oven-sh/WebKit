@@ -243,10 +243,10 @@ void FormData::appendMultiPartFileValue(const File& file, Vector<uint8_t>& heade
     FormDataBuilder::finishMultiPartHeader(header);
     appendData(header.span());
 
-    if (!file.path().isEmpty())
-        appendFile(file.path());
-    else if (file.size())
+    if (file.size())
         appendBlob(file.url());
+    else if (!file.path().isEmpty())
+        appendFile(file.path());
 }
 
 void FormData::appendMultiPartStringValue(const String& string, Vector<uint8_t>& header, PAL::TextEncoding& encoding)

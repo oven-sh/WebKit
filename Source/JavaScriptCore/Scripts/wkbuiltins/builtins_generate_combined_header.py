@@ -78,6 +78,7 @@ class BuiltinsCombinedHeaderGenerator(BuiltinsGenerator):
         return """namespace JSC {
 class FunctionExecutable;
 class VM;
+struct BuiltinCode;
 
 enum class ConstructAbility : uint8_t;
 enum class ConstructorKind : uint8_t;

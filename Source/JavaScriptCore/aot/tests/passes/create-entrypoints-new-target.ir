@@ -1,0 +1,13 @@
+# A plain function that reads new.target and is entered from outside gets both generic entrypoints from the pass
+# FORM: Prepared
+# RUN: pass CreateEntrypoints
+# STATISTIC: GenericEntrypoints = 2
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="callable" module=m0 declared={type=anything} initialization=Function function=f0
+function f0 name="callable" flags=[HasThis, HasNewTarget] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+# CHECK: function [[construct]] name="callable" module=m0 role=GenericEntrypoint flags=[HasThis, HasNewTarget]{{*}}capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f0 parameter=1} creator=Entrypoint{target=f0 arguments=Registers takesNewTarget=true} {
+# CHECK: name="callable" module=m0 role=GenericEntrypoint flags=[HasThis] {{*}}capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers constructEntrypoint=[[construct]]} {
+# CHECK-NOT: role=GenericEntrypoint

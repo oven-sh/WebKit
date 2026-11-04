@@ -27,6 +27,11 @@ WI.CSSObserver = class CSSObserver extends InspectorBackend.Dispatcher
 {
     // Events defined by the "CSS" domain.
 
+    fontDataChanged()
+    {
+        WI.cssManager.fontDataChanged(this._target);
+    }
+
     mediaQueryResultChanged()
     {
         WI.cssManager.mediaQueryResultChanged();
@@ -49,9 +54,7 @@ WI.CSSObserver = class CSSObserver extends InspectorBackend.Dispatcher
 
     nodeLayoutFlagsChanged(nodeId, layoutFlags)
     {
-        if (this._target instanceof WI.FrameTarget)
-            return; // FIXME: <https://webkit.org/b/298980> Route to frame-target handler.
-        WI.domManager.nodeLayoutFlagsChanged(nodeId, layoutFlags);
+        WI.domManager.nodeLayoutFlagsChanged(nodeId, layoutFlags, this._target);
     }
 
     nodeLayoutContextTypeChanged(nodeId, layoutContextType)

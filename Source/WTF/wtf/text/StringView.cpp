@@ -233,12 +233,12 @@ public:
         m_indexEnd = computeIndexEnd();
     }
 
-    StringView operator*() const
+    StringView LEGACY_NODELETE operator*() const
     {
         return m_stringView.substring(m_index, m_indexEnd - m_index);
     }
 
-    bool operator==(const Impl& other) const
+    bool LEGACY_NODELETE operator==(const Impl& other) const
     {
         ASSERT(m_stringView.m_characters == other.m_stringView.m_characters);
         ASSERT(m_stringView.m_length == other.m_stringView.m_length);
@@ -374,6 +374,28 @@ void StringView::getCharactersWithASCIICase(CaseConvertType type, std::span<char
         return;
     }
     getCharactersWithASCIICaseInternal(type, destination, span16());
+}
+
+std::optional<char32_t> StringView::precomposedCharacter() const
+{
+    // Latin-1 characters are unaffected by normalization, and a single code point has nothing to compose.
+    if (is8Bit() || convertToSingleCodePoint())
+        return std::nullopt;
+
+    UErrorCode status = U_ZERO_ERROR;
+    const UNormalizer2* normalizer = unorm2_getNFCInstance(&status);
+    ASSERT(U_SUCCESS(status));
+
+    auto span = span16();
+    if (unorm2_isNormalized(normalizer, span.data(), span.size(), &status))
+        return std::nullopt;
+
+    // A single code point is at most two code units, so a longer result overflows the buffer and is rejected.
+    std::array<char16_t, 2> normalized;
+    int32_t normalizedLength = unorm2_normalize(normalizer, span.data(), span.size(), normalized.data(), normalized.size(), &status);
+    if (U_FAILURE(status))
+        return std::nullopt;
+    return StringView { std::span<const char16_t> { normalized }.first(normalizedLength) }.convertToSingleCodePoint();
 }
 
 StringViewWithUnderlyingString normalizedNFC(StringView string)

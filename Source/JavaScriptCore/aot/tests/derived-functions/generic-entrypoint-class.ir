@@ -1,0 +1,13 @@
+# The entrypoint that the closure of a class constructor names takes new.target
+# FORM: Prepared
+# RUN: derived-functions GenericEntrypoint:f0
+# STATISTIC: GenericEntrypoints = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="Class" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+# CHECK: kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f0}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]{{*}}derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything, [[newTarget]]: anything, [[argument]]: anything):
+# CHECK-NEXT: = CallDirect [[newTarget]], [[argument]] function=f0
+# CHECK-NOT: role=GenericEntrypoint

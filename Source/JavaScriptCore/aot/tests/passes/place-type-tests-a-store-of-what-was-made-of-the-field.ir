@@ -1,0 +1,41 @@
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Response" constructor=f0 fields=[{key="id" declared={type=anything}}, {key="code" declared={type=anything} flags=[IsAddedLate]}, {key="other" declared={type=anything} flags=[IsAddedLate]}] classFlow={evaluations=AtMostOnce prototypeNamesAreComplete=true namedMembers=[{key="code" function=f4}]}
+
+function f0 name="Response" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+
+function f1 name="storesWhatItMadeOfTheField" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="code"
+    v3 = Call v1, -, v2
+    PropSet v0, v3 key="code" mode=Strict
+    Return v3
+}
+# CHECK-LABEL: name="storesWhatItMadeOfTheField"
+# CHECK-NOT: HasLayoutPrototype
+# CHECK-NOT: PutSlotOrAdd
+# CHECK: PutSlot {{*}} key="code"
+
+function f2 name="storesWhatItMadeOfAnotherField" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="id"
+    v3 = Call v1, -, v2
+    PropSet v0, v3 key="code" mode=Strict
+    Return v3
+}
+# CHECK-LABEL: name="storesWhatItMadeOfAnotherField"
+# CHECK: PutSlotOrAdd {{*}} key="code"
+
+function f3 name="storesWhatItMadeOfAFieldThatReadsAsUndefinedWhileEmpty" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="other"
+    v3 = Call v1, -, v2
+    PropSet v0, v3 key="other" mode=Strict
+    Return v3
+}
+# CHECK-LABEL: name="storesWhatItMadeOfAFieldThatReadsAsUndefinedWhileEmpty"
+# CHECK: PutSlotOrAdd {{*}} key="other"
+
+function f4 name="code" kind=Method flags=[HasThis] results=[{type=anything}]

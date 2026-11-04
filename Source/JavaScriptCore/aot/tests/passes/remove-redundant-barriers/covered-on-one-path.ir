@@ -1,0 +1,24 @@
+# A store keeps its barrier when only one of the paths from it reaches another store to the same owner.
+# FORM: Placed
+# RUN: pass RemoveRedundantBarriers
+# STATISTIC: BarriersCoveredLater = 0
+# STATISTIC: BarriersOnUnmarkableOwners = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="covered-on-one-path" captures=[{type=env L0}] parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: env L0 @Cell, v1: anything @JSValue, v2: boolean @Boolean):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    PutEnvironmentField v0, v1 layout=L0 field=1
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v5 @JSValue = Undefined
+    Return v5
+}
+# CHECK: outcome: Unchanged
+# CHECK: PutEnvironmentField v0, v1 layout=L0
+# CHECK: PutEnvironmentField v0, v1 layout=L0 field=1

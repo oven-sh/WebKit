@@ -1,0 +1,53 @@
+# the rules of a layout record, of its fields and of its flow record, one bad layout for each; members listed by name ascend by the number of their key, and "x" is named before "own"
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidLayout 34
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="goodBase" fields=[{computedKey=0 declared={type=anything}}, {key="x" declared={type=anything}}] computedKeyCount=1
+layout L1 kind=Instance name="goodInheritedComputedKey" fields=[{key="own" declared={type=anything}}, {computedKey=0 declared={type=anything} flags=[IsInherited] originLayout=L0 originField=0}] ownFieldCount=1 flow={baseState=Layout base=L0}
+layout L2 kind=Instance name="badInheritedComputedKey" fields=[{key="own" declared={type=anything}}, {computedKey=1 declared={type=anything} flags=[IsInherited] originLayout=L0 originField=0}] ownFieldCount=1 flow={baseState=Layout base=L0}
+layout L3 name="badBuiltinLayoutOnRecord" builtinLayout=IteratorResult
+layout L4 kind=BuiltinResult name="badBuiltinResultWithoutBuiltinLayout"
+layout L5 name="badNamespaceOfOnRecord" namespaceOf=m0
+layout L6 kind=ModuleNamespace name="badNamespaceWithoutModule"
+layout L7 name="badOwnFieldCount" fields=[{key="x" declared={type=anything}}] ownFieldCount=2
+layout L8 name="badConstructorOnRecord" constructor=f0
+layout L9 name="badKeyAndComputedKey" fields=[{key="x" computedKey=0 declared={type=anything}}] computedKeyCount=1
+layout L10 name="badFieldWithoutKey" fields=[{declared={type=anything}}]
+layout L11 name="goodHiddenFieldWithoutKey" fields=[{declared={type=anything} flags=[IsHidden]}]
+layout L12 kind=Environment name="goodEnvironmentFieldWithoutKey" fields=[{declared={type=anything}}]
+layout L13 name="badComputedKeyPastCount" fields=[{computedKey=1 declared={type=anything}}] computedKeyCount=1
+layout L14 name="badKeyTwice" fields=[{key="x" declared={type=anything}}, {key="x" declared={type=anything}}]
+layout L15 kind=Instance name="goodSameTextPublicAndPrivate" fields=[{key="x" declared={type=anything}}, {key=#"x"@L15 declared={type=anything} flags=[IsPrivate]}]
+layout L16 kind=Instance name="badInheritedWithoutOrigin" fields=[{key="own" declared={type=anything}}, {key="x" declared={type=anything} flags=[IsInherited]}] ownFieldCount=1
+layout L17 kind=Instance name="badInheritedAmongOwnFields" fields=[{key="x" declared={type=anything} flags=[IsInherited] originLayout=L0 originField=1}] ownFieldCount=1
+layout L18 kind=Instance name="badOwnFieldAmongInherited" fields=[{key="own" declared={type=anything}}, {key="x" declared={type=anything} originLayout=L0 originField=1}] ownFieldCount=1
+layout L19 kind=Instance name="badOriginFieldPastFields" fields=[{key="own" declared={type=anything}}, {key="x" declared={type=anything} flags=[IsInherited] originLayout=L0 originField=2}] ownFieldCount=1
+layout L20 kind=Instance name="badOriginLayoutWithoutField" fields=[{key="own" declared={type=anything}}, {key="x" declared={type=anything} flags=[IsInherited] originLayout=L0}] ownFieldCount=1
+layout L21 kind=Instance name="badOriginFieldWithoutLayout" fields=[{key="x" declared={type=anything} originField=1}]
+layout L22 kind=Instance name="goodInherited" fields=[{key="own" declared={type=anything}}, {key="x" declared={type=anything} flags=[IsInherited] originLayout=L0 originField=1}] ownFieldCount=1
+layout L23 kind=Instance name="badOriginIsInherited" fields=[{key="own" declared={type=anything}}, {key="x" declared={type=anything} flags=[IsInherited] originLayout=L22 originField=1}] ownFieldCount=1
+layout L24 kind=Instance name="badPrivateFlagOnTextKey" fields=[{key="x" declared={type=anything} flags=[IsPrivate]}]
+layout L25 kind=Instance name="badPrivateNameWithoutFlag" fields=[{key=#"x"@L25 declared={type=anything}}]
+layout L26 kind=Instance name="badBrandNotHidden" fields=[{key=#"b"@L26 declared={type=anything} flags=[IsPrivate, IsBrand]}]
+layout L27 kind=Instance name="badBrandNotPrivate" fields=[{key="b" declared={type=anything} flags=[IsBrand, IsHidden]}]
+layout L28 kind=Instance name="goodBrand" fields=[{key=#"b"@L28 declared={type=anything} flags=[IsPrivate, IsBrand, IsHidden]}]
+layout L29 kind=Instance name="badBaseWithoutState" flow={base=L0}
+layout L30 kind=Instance name="badStateWithoutBase" flow={baseState=Layout}
+layout L31 kind=Instance name="badBaseClassWithoutState" flow={baseClass=Array}
+layout L32 kind=Instance name="badStateWithoutBaseClass" flow={baseState=BuiltinClass}
+layout L33 kind=Instance name="goodBaseClass" flow={baseState=BuiltinClass baseClass=Array}
+layout L34 name="badFieldTwiceInOrder" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] flow={constructorOrders=[{fields=[0, 0]}]}
+layout L35 name="badFieldOfOrderPastFields" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] flow={constructorOrders=[{fields=[0, 2]}]}
+layout L36 name="goodOrders" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] flow={constructorOrders=[{fields=[1, 0]}, {fields=[0]}]}
+layout L37 kind=Instance name="badClassMembersDescend" classFlow={namedMembers=[{key="own" function=f0}, {key="x" function=f0}]}
+layout L38 kind=Instance name="goodClassMembers" classFlow={namedMembers=[{key="x" function=f0}, {key="own" function=f0}]}
+layout L39 kind=Instance name="badNamedMemberWithoutKey" classFlow={namedMembers=[{function=f0}]}
+layout L40 kind=Instance name="goodMembersInDefinitionOrder" classFlow={members=[{key="own" function=f0}, {function=f0}, {key="x" function=f0}] namedMembers=[{key="x" function=f0}, {key="own" function=f0}]}
+layout L41 kind=Instance name="badMemberWithoutFunction" classFlow={members=[{key="x"}]}
+layout L42 name="badOwnAccessorIsMethod" flow={ownAccessors=[{key="x" function=f0}]}
+layout L43 name="badOwnAccessorsDescend" flow={ownAccessors=[{key="own" kind=Getter function=f0}, {key="x" kind=Getter function=f0}]}
+layout L44 name="badOwnAccessorOnStaticSide" flow={ownAccessors=[{key="x" side=Static kind=Getter function=f0}]}
+layout L45 name="goodOwnAccessors" flow={ownAccessors=[{key="x" kind=Getter function=f0}, {key="x" kind=Setter function=f0}, {key="own" kind=Getter function=f0}] ownAccessorsAreComplete=true}
+function f0 name="method" results=[{type=anything}]

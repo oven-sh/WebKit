@@ -1,0 +1,25 @@
+# class C { static value = 1 }   keys.map(key => (C[key] = 7))   C.value
+# A store that names the class object and a key is among the known writers of a static field. While no pass has made a store to the variable of it, the operation is code that nobody knows.
+# So such code writes the variable of a static field of which not every store names the variable. It writes neither a static field whose stores all name it nor a variable of a module whose writers are known.
+# FORM: Prepared
+# RUN: effects summaries
+# CHECK: unknown code: reads(all) writes(ModuleVariables/1, ObjectFields,
+# RUN(OVERLAP): write-overlap summaries f0
+# OVERLAP: v1 on v2: May
+# OVERLAP: v1 on v3: None
+# OVERLAP: v1 on v4: None
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="C" constructor=f1 staticFields=[{key="value" variable=g0}, {key="named" variable=g1}]
+variable g0 name="value" module=m0 declared={type=anything} owner=L0 flow={writers=AllKnown}
+variable g1 name="named" module=m0 declared={type=anything} owner=L0 flow={writers=AllKnown storeNaming=EveryStoreNamesLocation}
+variable g2 name="ofModule" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
+function f0 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    v2 = GetModuleVariable variable=g0
+    v3 = GetModuleVariable variable=g1
+    v4 = GetModuleVariable variable=g2
+    v5 = NewArray v2, v3, v4 contents=anything
+    Return v5
+}
+function f1 name="C" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0

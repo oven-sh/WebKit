@@ -65,7 +65,8 @@ public:
     ALWAYS_INLINE InlineWeakRef(InlineWeakRef&& o) : m_ptr(&o.leakWeak()) { }
     template<typename X> InlineWeakRef(InlineWeakRef<X>&& o) : m_ptr(&o.leakWeak()) { }
 
-    ALWAYS_INLINE ~InlineWeakRef() { weakDerefIfNotNull(m_ptr); }
+    // InlineWeakRef is itself the weak reference that keeps m_ptr's storage alive.
+    ALWAYS_INLINE ~InlineWeakRef() { SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG weakDerefIfNotNull(m_ptr); }
 
     T& get() const LIFETIME_BOUND;
     T* ptr() const LIFETIME_BOUND;
@@ -82,7 +83,7 @@ private:
     [[nodiscard]] T& leakWeak();
 
     T* m_ptr;
-} SWIFT_ESCAPABLE;
+} SWIFT_SELF_CONTAINED;
 
 template<typename T>
 T& InlineWeakRef<T>::get() const LIFETIME_BOUND

@@ -1,0 +1,34 @@
+# The prototypes of async functions, generator functions and async generator functions are closed to every string key, present or absent, and the prototypes of generators and async generators are closed entirely: a store that every run reaches is an error. The trim methods of strings, which core-js 2 replaces, can be written, and so can a property of an async function itself
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=AsyncFunctionPrototype
+    PropSet v1, v0 key="extra" mode=Strict @10
+    PropSet v1, v0 key="call" mode=Strict @11
+    v4 = Builtin builtin=GeneratorFunctionPrototype
+    PropSet v4, v0 key="prototype" mode=Strict @20
+    PropSet v4, v0 key="toString" mode=Strict @21
+    v7 = Builtin builtin=AsyncGeneratorFunctionPrototype
+    PropSet v7, v0 key="extra" mode=Strict @30
+    v9 = Builtin builtin=GeneratorPrototype
+    PropSet v9, v0 key="next" mode=Strict @40
+    v11 = Builtin builtin=AsyncGeneratorPrototype
+    PropSet v11, v0 key="extra" mode=Strict @50
+    v13 = Builtin builtin=StringPrototype
+    PropSet v13, v0 key="trim" mode=Strict @60
+    PropSet v13, v0 key="trimLeft" mode=Strict @61
+    v16 = NewClosure function=f2
+    PropSet v16, v0 key="extra" mode=Strict @70
+    PropSet v16, v0 key="call" mode=Strict @71
+    Return
+}
+function f1 name="replacement" results=[{type=anything}] {
+    Return
+}
+function f2 name="later" flags=[IsAsync] results=[{type=anything}] {
+    Return
+}

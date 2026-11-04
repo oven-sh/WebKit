@@ -1145,6 +1145,7 @@ int64_t aom_calc_variance_stat_c(const uint8_t *src, int stride, int bw,
   return var_stats;
 }
 
+#if CONFIG_AV1_HIGHBITDEPTH
 int64_t aom_highbd_calc_variance_stat_c(const uint16_t *src, int stride, int bw,
                                         int bh) {
   DECLARE_ALIGNED(16, uint16_t, dclevel[(MAX_SB_SIZE + 2) * (MAX_SB_SIZE + 2)]);
@@ -1192,7 +1193,6 @@ int64_t aom_highbd_calc_variance_stat_c(const uint16_t *src, int stride, int bw,
   return var_stats;
 }
 
-#if CONFIG_AV1_HIGHBITDEPTH
 uint64_t aom_mse_wxh_16bit_highbd_c(uint16_t *dst, int dstride, uint16_t *src,
                                     int sstride, int w, int h) {
   uint64_t sum = 0;

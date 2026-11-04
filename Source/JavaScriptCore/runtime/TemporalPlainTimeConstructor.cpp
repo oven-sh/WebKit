@@ -69,7 +69,7 @@ static JSC_DECLARE_HOST_FUNCTION(callTemporalPlainTime);
 static JSC_DECLARE_HOST_FUNCTION(constructTemporalPlainTime);
 
 TemporalPlainTimeConstructor::TemporalPlainTimeConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callTemporalPlainTime, constructTemporalPlainTime)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callTemporalPlainTime), JSC_REGISTERED_HOST_FUNCTION(constructTemporalPlainTime))
 {
 }
 

@@ -36,15 +36,15 @@ class Node;
 class UserTypingGestureIndicator {
     WTF_MAKE_NONCOPYABLE(UserTypingGestureIndicator);
 public:
-    WEBCORE_EXPORT static bool NODELETE processingUserTypingGesture();
-    WEBCORE_EXPORT static Node* NODELETE focusedElementAtGestureStart();
+    WEBCORE_EXPORT static bool LEGACY_NODELETE processingUserTypingGesture();
+    WEBCORE_EXPORT static Node* LEGACY_NODELETE focusedElementAtGestureStart();
 
     WEBCORE_EXPORT explicit UserTypingGestureIndicator(LocalFrame&);
     WEBCORE_EXPORT ~UserTypingGestureIndicator();
 
 private:
     bool m_previousProcessingUserTypingGesture;
-    RefPtr<Node> m_previousFocusedNode;
+    const RefPtr<Node> m_previousFocusedNode;
 };    
 
 } // namespace WebCore

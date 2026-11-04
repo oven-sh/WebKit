@@ -1,0 +1,208 @@
+# A store stands between every two reads, so no failing test can enter the generic copy further up: each converts and hands over every number that was read so far. Once that is much code, the stretch ends: the copy comes back, and the tests behind hand over only what is read from there on.
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" module=m0 declared={type=number}
+function f0 name="storesBetweenReads" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = ElemGet v0, v1
+    PutModuleVariable v1 variable=g0
+    v4 = Integer integer=2
+    v5 = ElemGet v0, v4
+    PutModuleVariable v4 variable=g0
+    v7 = Integer integer=3
+    v8 = ElemGet v0, v7
+    PutModuleVariable v7 variable=g0
+    v10 = Integer integer=4
+    v11 = ElemGet v0, v10
+    PutModuleVariable v10 variable=g0
+    v13 = Integer integer=5
+    v14 = ElemGet v0, v13
+    PutModuleVariable v13 variable=g0
+    v16 = Integer integer=6
+    v17 = ElemGet v0, v16
+    PutModuleVariable v16 variable=g0
+    v19 = Integer integer=7
+    v20 = ElemGet v0, v19
+    PutModuleVariable v19 variable=g0
+    v22 = Integer integer=8
+    v23 = ElemGet v0, v22
+    PutModuleVariable v22 variable=g0
+    v25 = Integer integer=9
+    v26 = ElemGet v0, v25
+    PutModuleVariable v25 variable=g0
+    v28 = Integer integer=10
+    v29 = ElemGet v0, v28
+    PutModuleVariable v28 variable=g0
+    v31 = Integer integer=11
+    v32 = ElemGet v0, v31
+    PutModuleVariable v31 variable=g0
+    v34 = Integer integer=12
+    v35 = ElemGet v0, v34
+    PutModuleVariable v34 variable=g0
+    v37 = Integer integer=13
+    v38 = ElemGet v0, v37
+    PutModuleVariable v37 variable=g0
+    v40 = Integer integer=14
+    v41 = ElemGet v0, v40
+    PutModuleVariable v40 variable=g0
+    v43 = Integer integer=15
+    v44 = ElemGet v0, v43
+    PutModuleVariable v43 variable=g0
+    v46 = Integer integer=16
+    v47 = ElemGet v0, v46
+    PutModuleVariable v46 variable=g0
+    v49 = Integer integer=17
+    v50 = ElemGet v0, v49
+    PutModuleVariable v49 variable=g0
+    v52 = Integer integer=18
+    v53 = ElemGet v0, v52
+    PutModuleVariable v52 variable=g0
+    v55 = Integer integer=19
+    v56 = ElemGet v0, v55
+    PutModuleVariable v55 variable=g0
+    v58 = Integer integer=20
+    v59 = ElemGet v0, v58
+    PutModuleVariable v58 variable=g0
+    v61 = Integer integer=21
+    v62 = ElemGet v0, v61
+    PutModuleVariable v61 variable=g0
+    v64 = Integer integer=22
+    v65 = ElemGet v0, v64
+    PutModuleVariable v64 variable=g0
+    v67 = Integer integer=23
+    v68 = ElemGet v0, v67
+    PutModuleVariable v67 variable=g0
+    v70 = Integer integer=24
+    v71 = ElemGet v0, v70
+    PutModuleVariable v70 variable=g0
+    v73 = Integer integer=25
+    v74 = ElemGet v0, v73
+    PutModuleVariable v73 variable=g0
+    v76 = Integer integer=26
+    v77 = ElemGet v0, v76
+    PutModuleVariable v76 variable=g0
+    v79 = Integer integer=27
+    v80 = ElemGet v0, v79
+    PutModuleVariable v79 variable=g0
+    v82 = Integer integer=28
+    v83 = ElemGet v0, v82
+    PutModuleVariable v82 variable=g0
+    v85 = Integer integer=29
+    v86 = ElemGet v0, v85
+    PutModuleVariable v85 variable=g0
+    v88 = Integer integer=30
+    v89 = ElemGet v0, v88
+    PutModuleVariable v88 variable=g0
+    v91 = Integer integer=31
+    v92 = ElemGet v0, v91
+    PutModuleVariable v91 variable=g0
+    v94 = Integer integer=32
+    v95 = ElemGet v0, v94
+    PutModuleVariable v94 variable=g0
+    v97 = Integer integer=33
+    v98 = ElemGet v0, v97
+    PutModuleVariable v97 variable=g0
+    v100 = Integer integer=34
+    v101 = ElemGet v0, v100
+    PutModuleVariable v100 variable=g0
+    v103 = Integer integer=35
+    v104 = ElemGet v0, v103
+    PutModuleVariable v103 variable=g0
+    v106 = Integer integer=36
+    v107 = ElemGet v0, v106
+    PutModuleVariable v106 variable=g0
+    v109 = Integer integer=37
+    v110 = ElemGet v0, v109
+    PutModuleVariable v109 variable=g0
+    v112 = Integer integer=38
+    v113 = ElemGet v0, v112
+    PutModuleVariable v112 variable=g0
+    v115 = Integer integer=39
+    v116 = ElemGet v0, v115
+    PutModuleVariable v115 variable=g0
+    v118 = Integer integer=40
+    v119 = ElemGet v0, v118
+    PutModuleVariable v118 variable=g0
+    v121 = Integer integer=41
+    v122 = ElemGet v0, v121
+    PutModuleVariable v121 variable=g0
+    v124 = Integer integer=42
+    v125 = ElemGet v0, v124
+    PutModuleVariable v124 variable=g0
+    v127 = Integer integer=43
+    v128 = ElemGet v0, v127
+    PutModuleVariable v127 variable=g0
+    v130 = Integer integer=44
+    v131 = ElemGet v0, v130
+    PutModuleVariable v130 variable=g0
+    v133 = Integer integer=45
+    v134 = ElemGet v0, v133
+    PutModuleVariable v133 variable=g0
+    v136 = Integer integer=46
+    v137 = ElemGet v0, v136
+    PutModuleVariable v136 variable=g0
+    v139 = Integer integer=47
+    v140 = ElemGet v0, v139
+    PutModuleVariable v139 variable=g0
+    v142 = Integer integer=48
+    v143 = ElemGet v0, v142
+    PutModuleVariable v142 variable=g0
+    v145 = Integer integer=49
+    v146 = ElemGet v0, v145
+    PutModuleVariable v145 variable=g0
+    v148 = Integer integer=50
+    v149 = ElemGet v0, v148
+    PutModuleVariable v148 variable=g0
+    v151 = Integer integer=51
+    v152 = ElemGet v0, v151
+    PutModuleVariable v151 variable=g0
+    v154 = Integer integer=52
+    v155 = ElemGet v0, v154
+    PutModuleVariable v154 variable=g0
+    v157 = Integer integer=53
+    v158 = ElemGet v0, v157
+    PutModuleVariable v157 variable=g0
+    v160 = Integer integer=54
+    v161 = ElemGet v0, v160
+    PutModuleVariable v160 variable=g0
+    v163 = Integer integer=55
+    v164 = ElemGet v0, v163
+    PutModuleVariable v163 variable=g0
+    v166 = Integer integer=56
+    v167 = ElemGet v0, v166
+    PutModuleVariable v166 variable=g0
+    v169 = Integer integer=57
+    v170 = ElemGet v0, v169
+    PutModuleVariable v169 variable=g0
+    v172 = Integer integer=58
+    v173 = ElemGet v0, v172
+    PutModuleVariable v172 variable=g0
+    v175 = Integer integer=59
+    v176 = ElemGet v0, v175
+    PutModuleVariable v175 variable=g0
+    v178 = Integer integer=60
+    v179 = ElemGet v0, v178
+    PutModuleVariable v178 variable=g0
+    v181 = Integer integer=61
+    v182 = ElemGet v0, v181
+    PutModuleVariable v181 variable=g0
+    v184 = Integer integer=62
+    v185 = ElemGet v0, v184
+    PutModuleVariable v184 variable=g0
+    v187 = Integer integer=63
+    v188 = ElemGet v0, v187
+    PutModuleVariable v187 variable=g0
+    v190 = Integer integer=64
+    v191 = ElemGet v0, v190
+    PutModuleVariable v190 variable=g0
+    v193 = NewArray v2, v5, v8, v11, v14, v17, v20, v23, v26, v29, v32, v35, v38, v41, v44, v47, v50, v53, v56, v59, v62, v65, v68, v71, v74, v77, v80, v83, v86, v89, v92, v95, v98, v101, v104, v107, v110, v113, v116, v119, v122, v125, v128, v131, v134, v137, v140, v143, v146, v149, v152, v155, v158, v161, v164, v167, v170, v173, v176, v179, v182, v185, v188, v191 contents=anything
+    Return v193
+# CHECK: notTaken b113(v2, v5, v8, v11, v14, v17, v20, v23, v26, v29, v32, v35, v38, v41, v44, v47, v50, v53, v56, v59, v62, v65, v68, v71, v74, v77, v80, v83, v86, v89, v92, v95, v98, v101, v104, v107, v110, v113, v116, v119, v122, v125, v128, v131, v134)
+# CHECK: Jump -> next b67(v2, v5, v8, v11, v14, v17, v20, v23, v26, v29, v32, v35, v38, v41, v44, v47, v50, v53, v56, v59, v62, v65, v68, v71, v74, v77, v80, v83, v86, v89, v92, v95, v98, v101, v104, v107, v110, v113, v116, v119, v122, v125, v128, v131, v134, v137)
+# CHECK: notTaken b115(v140)
+# CHECK: notTaken b116(v140, v143)
+# CHECK: notTaken b131(v140, v143, v146, v149, v152, v155, v158, v161, v164, v167, v170, v173, v176, v179, v182, v185, v188)
+# CHECK: notTaken b114()
+}

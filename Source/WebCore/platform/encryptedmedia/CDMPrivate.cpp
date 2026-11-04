@@ -415,8 +415,12 @@ std::optional<Vector<CDMMediaCapability>> CDMPrivate::getSupportedCapabilitiesFo
         }
 
         // 3.11. If content type is not strictly a audio/video type, continue to the next iteration.
+        // NOTE: HLS playlists are not distinguised as having audio or video contents
+        // at a MIME type level.
         auto expectedTopLevel = (type == AudioVideoType::Video) ? "video/"_s : "audio/"_s;
-        if (!container.startsWithIgnoringASCIICase(expectedTopLevel))
+        if (!container.startsWithIgnoringASCIICase(expectedTopLevel)
+            && !equalIgnoringASCIICase(container, "application/vnd.apple.mpegurl"_s)
+            && !equalIgnoringASCIICase(container, "application/x-mpegurl"_s))
             continue;
 
         // 3.12. If robustness is not the empty string and contains an unrecognized value or a value not supported by

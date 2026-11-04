@@ -1,0 +1,12 @@
+# heat-graph-a-store-nobody-can-follow-reaches-the-setter-under-its-name.ir with another order of the rules: the answer is the same.
+# FORM: AsRead
+# OPTIONS: testing=DelayOtherFlowRules
+# RUN: heat-graph flow classes
+# CHECK: host: f0*1.000000 f1*10.000000 f3*10.000000 f4*10.000000 f5*10.000000
+# CHECK: activations:
+# CHECK-NEXT: f0 1.000000
+# CHECK-NEXT: f1 10.000000
+# CHECK-NEXT: f2 0.000000
+# CHECK-NEXT: f3 10.000000
+# CHECK-NEXT: f4 10.000000
+# PROGRAM-OF: heat-graph-a-store-nobody-can-follow-reaches-the-setter-under-its-name.ir

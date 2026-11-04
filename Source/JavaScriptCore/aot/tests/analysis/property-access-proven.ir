@@ -1,0 +1,182 @@
+# What effects learn of an access by name or by key: the operations, accessors, methods and built-ins it can run when everything is proven, and unknown as soon as one test is needed
+# FORM: Prepared
+# RUN: proven-access
+
+variable g0 name="count" module=m0 declared={type=number} owner=L2 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+variable g1 name="a" module=m1 declared={type=number} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" requests=[{target=m1 completes=true}]
+module m1 path="lib.js" displayPath="lib.js" requests=[{target=m2 completes=true}] exports=[{name="a" variable=g1}, {name="inner" kind=Namespace module=m2}]
+module m2 path="inner.js" displayPath="inner.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="maybe" declared={type=number}}, {key="optional" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="deferred" declared={type=f6} flow={location={deferral=CapturesNothing deferredFunction=f6} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Freezable" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangePrototype]}
+layout L2 kind=Instance name="Gauge" constructor=f0 fields=[{key=#"mark"@L2 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] staticFields=[{key="count" variable=g0}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="x" kind=Getter function=f2 mutability=Fixed}, {key="x" kind=Setter function=f3 mutability=Fixed}, {key="m" function=f1 mutability=Fixed}, {key="capturing" function=f4 mutability=Fixed}, {key="changing" function=f5}] namedMembers=[{key="x" kind=Getter function=f2 mutability=Fixed}, {key="x" kind=Setter function=f3 mutability=Fixed}, {key="m" function=f1 mutability=Fixed}, {key="capturing" function=f4 mutability=Fixed}, {key="changing" function=f5}]}
+layout L3 kind=Instance name="UnknownBase" constructor=f7 flags=[HasHeritage] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true}
+layout L4 name="NeverMade" fields=[{key="x" declared={type=number}}] flow={allocation=NeverAllocated}
+# REPEAT: i = 0..64
+layout L%(i+5) name="Member%(i)" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+# END REPEAT
+
+function f0 name="Gauge" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f1 name="m" kind=Method flags=[HasThis] results=[{type=anything}]
+function f2 name="x" kind=Getter flags=[HasThis] results=[{type=anything}]
+function f3 name="x" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}]
+function f4 name="capturing" kind=Method flags=[HasThis] captures=[{type=number}] results=[{type=anything}]
+function f5 name="changing" kind=Method flags=[HasThis] results=[{type=anything}]
+function f6 name="deferred" kind=Arrow results=[{type=anything}]
+function f7 name="UnknownBase" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+
+function f8 name="one-arm" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="optional"
+    v3 = PropGet v0 key="deferred"
+    Return v1
+}
+# CHECK: F8 v1 PropGet: complete operations=[GetSlot] key=K{{*}} receivers=S
+# CHECK-NEXT: F8 v2 PropGet: complete operations=[GetSlotOrUndefined] key=K{{*}} receivers=S
+# CHECK-NEXT: F8 v3 PropGet: complete operations=[GetDeferredClosureSlot] key=K{{*}} receivers=S
+function f9 name="field-and-getter" parameters=[{type=L0|L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-NEXT: F9 v1 PropGet: complete operations=[GetSlot] accessors=[F2] key=K{{*}} receivers=S
+function f10 name="method-read-as-a-value" parameters=[{type=L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = PropGet v0 key="capturing"
+    Return v1
+}
+# CHECK-NEXT: F10 v1 PropGet: complete methods=[F1] key=K{{*}} receivers=S
+# CHECK-NEXT: F10 v2 PropGet: complete methods=[F4] key=K{{*}} receivers=S
+function f11 name="nothing-is-found" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="missing"
+    v2 = PropHas v0 key="missing"
+    v3 = PropHas v0 key="x"
+    Return v1
+}
+# CHECK-NEXT: F11 v1 PropGet: complete nothing key=K{{*}} receivers=S
+# CHECK-NEXT: F11 v2 PropHas: complete nothing key=K{{*}} receivers=S
+# CHECK-NEXT: F11 v3 PropHas: complete nothing key=K{{*}} receivers=S
+function f12 name="field-and-nothing" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="optional"
+    Return v1
+}
+# CHECK-NEXT: F12 v1 PropGet: complete operations=[GetSlotOrUndefined] nothing key=K{{*}} receivers=S
+function f13 name="built-in-member" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="hasOwnProperty"
+    Return v1
+}
+# CHECK-NEXT: F13 v1 PropGet: complete builtins=[ObjectPrototypeHasOwnProperty] key=K{{*}} receivers=S
+function f14 name="nullish-in-the-type" parameters=[{type=undefined|null|L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-NEXT: F14 v1 PropGet: complete operations=[GetSlot] key=K{{*}} receivers=S
+function f15 name="no-object-has-the-layout" parameters=[{type=L4}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-NEXT: F15 v1 PropGet: complete
+# CHECK-NOT: operations=
+function f16 name="member-in-the-rest" parameters=[{type=L0|L3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK: F16 v1 PropGet: unknown
+function f17 name="test-is-needed" parameters=[{type=L0}, {type=L2}] results=[{type=anything}] {
+    v2 = PropGet v0 key="maybe"
+    v3 = PropGet v1 key="changing"
+    Return v2
+}
+# CHECK-NEXT: F17 v2 PropGet: unknown
+# CHECK-NEXT: F17 v3 PropGet: unknown
+function f18 name="one-arm-needs-a-test" parameters=[{type=L0|L1}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK-NEXT: F18 v2 PropSet: unknown
+function f19 name="expected-only" parameters=[{type=L0 flags=[IsExpected]}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: object):
+    v2 = PropGet v0 key="x"
+    v3 = PropGet v1 key="x" receivers=[L0]
+    Return v2
+}
+# CHECK-NEXT: F19 v2 PropGet: unknown
+# CHECK-NEXT: F19 v3 PropGet: unknown
+function f20 name="other-parts-in-the-type" parameters=[{type=string|L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-NEXT: F20 v1 PropGet: unknown
+function f21 name="free-name" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="x" [isFreeName]
+    Return v1
+}
+# CHECK-NEXT: F21 v1 PropGet: unknown
+function f22 name="many-members" parameters=[{type=L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65|L66|L67|L68}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-NEXT: F22 v1 PropGet: complete operations=[GetSlot] key=K{{*}} receivers=S
+function f23 name="one-more-member" parameters=[{type=L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40|L41|L42|L43|L44|L45|L46|L47|L48|L49|L50|L51|L52|L53|L54|L55|L56|L57|L58|L59|L60|L61|L62|L63|L64|L65|L66|L67|L68|L69}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-NEXT: F23 v1 PropGet: complete operations=[GetSlot] key=K{{*}} receivers=S
+function f24 name="stores" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=number}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v3 key="x"
+    PropSet v1, v3 key="x"
+    PropSet v0, v4 key="x"
+    PropSet v0, v3 key="optional"
+    PropSet v2, v3 key="x"
+    PropSet v0, v3 key="missing"
+    PropDefine v0, v3 key="x"
+    Return
+}
+# CHECK-NEXT: F24 v5 PropSet: complete operations=[PutSlot] key=K{{*}} receivers=S
+# CHECK-NEXT: F24 v6 PropSet: unknown
+# CHECK-NEXT: F24 v7 PropSet: unknown
+# CHECK-NEXT: F24 v8 PropSet: complete operations=[PutSlotOrAdd] key=K{{*}} receivers=S
+# CHECK-NEXT: F24 v9 PropSet: complete accessors=[F3] key=K{{*}} receivers=S
+# CHECK-NEXT: F24 v10 PropSet: unknown
+# CHECK-NEXT: F24 v11 PropDefine: complete operations=[PutSlot] key=K{{*}} receivers=S
+function f25 name="private-field" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
+    v2 = NewClassToken layout=L2
+    v3 = PrivateGet v0, v2 layout=L2 field=0
+    PrivateSet v0, v2, v1 layout=L2 field=0
+    Return v3
+}
+# CHECK-NEXT: F25 v3 PrivateGet: complete operations=[GetSlot] key=K{{*}} receivers=S
+# CHECK-NEXT: F25 v4 PrivateSet: complete operations=[PutSlot] key=K{{*}} receivers=S
+function f26 name="class-object" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-NEXT: F26 v1 PropGet: complete operations=[{{*}}GetModuleVariable{{*}}] key=K
+# CHECK-NOT: receivers=
+function f27 name="namespace" results=[{type=anything}] {
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v0 key="inner"
+    v3 = PropGet v0 key="missing"
+    Return v1
+}
+# CHECK: F27 v1 PropGet: complete operations=[{{*}}GetModuleVariable{{*}}] key=K{{*}} receivers=S
+# CHECK-NEXT: F27 v2 PropGet: complete operations=[ModuleNamespace] key=K{{*}} receivers=S
+# CHECK-NEXT: F27 v3 PropGet: complete nothing key=K{{*}} receivers=S
+function f28 name="computed-keys" parameters=[{type=L0}, {type="x"}, {type="maybe"}, {type=Uint8Array}, {type=Array<number>}, {type=string}, {type=number}, {type=object}] results=[{type=anything}] {
+    v8 = ElemGet v0, v1
+    v9 = ElemGet v0, v2
+    v10 = ElemGet v3, v6
+    ElemSet v3, v6, v6
+    v12 = ElemGet v4, v6
+    v13 = ElemGet v5, v6
+    v14 = ElemGet v7, v6
+    Return v8
+}
+# CHECK-NEXT: F28 v8 ElemGet: complete operations=[GetSlot] key=K{{*}} receivers=S
+# CHECK-NEXT: F28 v9 ElemGet: unknown
+# CHECK-NEXT: F28 v10 ElemGet: complete operations=[GetTypedArrayElement]
+# CHECK-NEXT: F28 v11 ElemSet: complete operations=[PutTypedArrayElement]
+# CHECK-NEXT: F28 v12 ElemGet: unknown
+# CHECK-NEXT: F28 v13 ElemGet: complete operations=[StringRangeCharacterOrUndefined]
+# CHECK-NEXT: F28 v14 ElemGet: unknown

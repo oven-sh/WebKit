@@ -73,12 +73,9 @@ bool addErrorInfo(VM&, Vector<StackFrame>*, JSObject*);
 JS_EXPORT_PRIVATE void addErrorInfo(JSGlobalObject*, JSObject*, bool);
 JSObject* addErrorInfo(VM&, JSObject* error, int line, const SourceCode&);
 
-// https://github.com/tc39/proposal-shadowrealm/pull/382
-//
-// When an crosses the ShadowRealm barrier, it is converted to a TypeError,
-// without invoking any observable operations. It attempts to maintain the
-// error message of the original error, if possible, and may include additional
-// information.
+// Converts an error to a TypeError without invoking any observable operations.
+// It attempts to maintain the error message of the original error, if possible,
+// and may include additional information.
 JSObject* createTypeErrorCopy(JSGlobalObject*, JSValue error);
 
 // Methods to throw Errors.
@@ -88,13 +85,16 @@ JS_EXPORT_PRIVATE Exception* throwConstructorCannotBeCalledAsFunctionTypeError(J
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&);
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, ASCIILiteral errorMessage);
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, const String& errorMessage);
+#if USE(BUN_JSC_ADDITIONS)
+JS_EXPORT_PRIVATE String withAOTErrorNote(const String& message);
+#endif
 JS_EXPORT_PRIVATE Exception* throwSyntaxError(JSGlobalObject*, ThrowScope&);
 JS_EXPORT_PRIVATE Exception* throwSyntaxError(JSGlobalObject*, ThrowScope&, const String& errorMessage);
 inline Exception* throwRangeError(JSGlobalObject* globalObject, ThrowScope& scope, const String& errorMessage) { return throwException(globalObject, scope, createRangeError(globalObject, errorMessage)); }
 inline Exception* throwError(JSGlobalObject* globalObject, ThrowScope& scope, ErrorType errorType, const String& errorMessage) { return throwException(globalObject, scope, createError(globalObject, errorType, errorMessage)); }
 
-JS_EXPORT_PRIVATE String makeDOMAttributeGetterTypeErrorMessage(const char* interfaceName, const String& attributeName);
-JS_EXPORT_PRIVATE String makeDOMAttributeSetterTypeErrorMessage(const char* interfaceName, const String& attributeName);
+JS_EXPORT_PRIVATE String makeDOMAttributeGetterTypeErrorMessage(StringView interfaceName, const String& attributeName);
+JS_EXPORT_PRIVATE String makeDOMAttributeSetterTypeErrorMessage(StringView interfaceName, const String& attributeName);
 
 JS_EXPORT_PRIVATE JSValue throwDOMAttributeGetterTypeError(JSGlobalObject*, ThrowScope&, const ClassInfo*, PropertyName);
 JS_EXPORT_PRIVATE JSValue throwDOMAttributeSetterTypeError(JSGlobalObject*, ThrowScope&, const ClassInfo*, PropertyName);

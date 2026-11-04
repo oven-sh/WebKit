@@ -1,0 +1,146 @@
+# A function declared inside another one lies in a field of the environment. Where every read of the field ends in GetCapture, the captures come from the environment: it is one of them, the others get fields of their own, and the closure is never made
+# FORM: Prepared
+# RUN: pass ReadCapturesFromEnvironments RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="outer" fields=[{key="total" declared={type=number}}]
+layout L1 kind=Environment name="scope" fields=[{key="count" declared={type=number}}, {key="first" declared={type=f1}}, {key="second" declared={type=f2}}]
+layout L2 kind=Environment name="merged" fields=[{key="count" declared={type=number}}, {key="inner" declared={type=f4}}]
+layout L3 kind=Environment name="filledOnTwoPaths" fields=[{key="inner" declared={type=f6}}]
+# CHECK: layout L1 kind=Environment name="scope" fields=[{key="count"{{*}}}, {key="first"{{*}}stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="second"{{*}}stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {declared={type=env L0} flags=[IsHidden, IsAddedLate]{{*}}}, {declared={type=string} flags=[IsHidden, IsAddedLate]{{*}}}]
+
+function f0 name="holder" captures=[{type=env L0}] parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number, v2: string):
+    v3 = NewObject -, v1 layout=L1 fields=[0]
+    v4 = NewClosure v0, v3, v2 function=f1
+    PutEnvironmentField v3, v4 layout=L1 field=1
+    v6 = NewClosure v3, v0 function=f2
+    PutEnvironmentField v3, v6 layout=L1 field=2
+    v8 = CallDirect v3, v0, v1 function=f2
+    Return v8
+# CHECK-NOT: NewClosure
+# CHECK: [[scope]]: env L1 = NewObject -, v1 layout=L1 fields=[0]
+# CHECK-NEXT: PutEnvironmentField [[scope]], v0 layout=L1 field=3
+# CHECK-NEXT: PutEnvironmentField [[scope]], v2 layout=L1 field=4
+# CHECK-NEXT: = CallDirect [[scope]], v0, v1 function=f2
+}
+
+function f1 name="first" captures=[{type=env L0}, {type=env L1}, {type=string}] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: env L0, v1: env L1, v2: string, v3: number):
+    v4 = GetEnvironmentField v0 layout=L0 field=0
+    v5 = GetEnvironmentField v1 layout=L1 field=0
+    v6 = Add v4, v5
+    v7 = Add v6, v3
+    v8 = Add v2, v7
+    Return v8
+}
+
+function f2 name="second" captures=[{type=env L1}, {type=env L0}] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: env L1, v1: env L0, v2: number):
+    v3 = GetEnvironmentField v0 layout=L1 field=1
+    v4 = Integer integer=0
+    v5 = Less v2, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Integer integer=1
+    Jump -> next b3(v3, v6)
+  b2():
+    v7 = GetEnvironmentField v0 layout=L1 field=1
+    Jump -> next b3(v7, v2)
+  b3(v8: f1, v9: number):
+    v10 = GetCapture v8 function=f1
+    v11 = GetCapture v8 function=f1 index=1
+    v12 = GetCapture v8 function=f1 index=2
+    v13 = CallDirect v10, v11, v12, v9 function=f1
+    v14 = GetEnvironmentField v0 layout=L1 field=2
+    v15 = GetCapture v14 function=f2
+    v16 = GetCapture v14 function=f2 index=1
+    v17 = Less v9, v4
+    Branch v17 -> taken b4(), notTaken b5()
+  b4():
+    v18 = CallDirect v15, v16, v9 function=f2
+    Return v18
+  b5():
+    Return v13
+# CHECK-NOT: GetCapture
+# CHECK-NOT: field=1
+# CHECK-NOT: field=2
+# CHECK: b3([[reached]]: env L1,
+# CHECK-NEXT: [[outer]]: env L0 = GetEnvironmentField [[reached]] layout=L1 field=3
+# CHECK-NEXT: [[text]]: string = GetEnvironmentField [[reached]] layout=L1 field=4
+# CHECK-NEXT: = CallDirect [[outer]], [[reached]], [[text]], {{*}} function=f1
+# CHECK: = CallDirect v0, {{*}} function=f2
+}
+
+function f3 name="environmentThroughParameter" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    Jump -> next b3(v2)
+  b2():
+    v3 = Integer integer=7
+    v4 = NewObject -, v3 layout=L2 fields=[0]
+    Jump -> next b3(v4)
+  b3(v5: env L2):
+    v6 = Add v0, v0
+    v7 = NewClosure v5, v6 function=f4
+    PutEnvironmentField v5, v7 layout=L2 field=1
+    v9 = CallDirect v5, v6 function=f4
+    Return v9
+# CHECK: [[merged]]: env L2):
+# CHECK-NEXT: [[double]]: number = Add v0, v0
+# CHECK-NEXT: PutEnvironmentField [[merged]], [[double]] layout=L2 field=2
+# CHECK-NEXT: = CallDirect [[merged]], [[double]] function=f4
+}
+
+function f4 name="inner" captures=[{type=env L2}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L2, v1: number):
+    v2 = GetEnvironmentField v0 layout=L2 field=0
+    v3 = Less v2, v1
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Add v2, v1
+    PutEnvironmentField v0, v4 layout=L2 field=0
+    v6 = GetEnvironmentField v0 layout=L2 field=1
+    v7 = GetCapture v6 function=f4
+    v8 = GetCapture v6 function=f4 index=1
+    v9 = CallDirect v7, v8 function=f4
+    Return v9
+  b2():
+    Return v2
+# What it would read there for a call of itself it was given itself (read-captures-from-environments-own-captures.ir).
+# CHECK-NOT: GetCapture
+# CHECK-NOT: field=2
+# CHECK: = CallDirect v0, v1 function=f4
+}
+
+function f5 name="filledOnTwoPaths" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject layout=L3
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewClosure v2, v0 function=f6
+    PutEnvironmentField v2, v3 layout=L3 field=0
+    Jump -> next b3()
+  b2():
+    v5 = Integer integer=3
+    v6 = NewClosure v2, v5 function=f6
+    PutEnvironmentField v2, v6 layout=L3 field=0
+    Jump -> next b3()
+  b3():
+    v8 = GetEnvironmentField v2 layout=L3 field=0
+    v9 = GetCapture v8 function=f6
+    v10 = GetCapture v8 function=f6 index=1
+    v11 = CallDirect v9, v10 function=f6
+    Return v11
+# CHECK-NOT: NewClosure
+# CHECK: PutEnvironmentField v2, v0 layout=L3 field=1
+# CHECK: PutEnvironmentField v2, {{*}} layout=L3 field=1
+# CHECK-NOT: GetCapture
+# CHECK: = CallDirect v2, {{*}} function=f6
+}
+
+function f6 name="inner" captures=[{type=env L3}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L3, v1: number):
+    Return v1
+}

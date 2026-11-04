@@ -1,0 +1,49 @@
+# The program of fast.ir, with a type site on each typed parameter so that a validating build has them tested at entry, settles its promises through calls in compact code
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Parameter
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="register" [isFreeName]
+    v7 = Call v6, -, v0, v1, v2, v3, v4
+    Return v7
+}
+function f1 name="returnsNumber" flags=[IsAsync] parameters=[{type=number site=w0}] results=[{type=anything}] {
+    Return v0
+}
+function f2 name="returnsAnything" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="returnsObject" flags=[IsAsync] parameters=[{type=number site=w1}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f4 name="resolves" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Promise
+    v2 = PropGet v1 key="resolve"
+    v3 = Call v2, v1, v0 calleeKey="resolve"
+    Return v3
+}
+function f5 name="reacts" parameters=[{type=number site=w2}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=Promise
+    v3 = PropGet v2 key="resolve"
+    v4 = Call v3, v2, v0 calleeKey="resolve"
+    v5 = PropGet v4 key="then"
+    v6 = Call v5, v4, v1 calleeKey="then"
+    v7 = PropGet v4 key="catch"
+    v8 = Call v7, v4, v1 calleeKey="catch"
+    Return v6
+}

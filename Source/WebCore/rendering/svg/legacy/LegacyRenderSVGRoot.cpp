@@ -31,6 +31,7 @@
 #include "LegacyRenderSVGResource.h"
 #include "LegacyRenderSVGResourceContainer.h"
 #include "LocalFrame.h"
+#include "NaturalDimensions.h"
 #include "Page.h"
 #include "RenderBoxInlines.h"
 #include "RenderChildIterator.h"
@@ -294,9 +295,7 @@ void LegacyRenderSVGRoot::paintReplaced(PaintInfo& paintInfo, const LayoutPoint&
     if (paintInfo.phase == PaintPhase::Outline || paintInfo.phase == PaintPhase::SelfOutline)
         return;
 
-    // An empty viewBox also disables rendering.
-    // (http://www.w3.org/TR/SVG/coords.html#ViewBoxAttribute)
-    if (svgSVGElement().hasEmptyViewBox())
+    if (svgSVGElement().viewBoxDisablesPainting())
         return;
 
     GraphicsContext& context = paintInfo.context();
@@ -337,7 +336,7 @@ void LegacyRenderSVGRoot::paintReplaced(PaintInfo& paintInfo, const LayoutPoint&
 
     // Convert from container offsets (html renderers) to a relative transform (svg renderers).
     // Transform from our paint container's coordinate system to our local coords.
-    FloatPoint adjustedPaintOffset = roundPointToDevicePixels(paintOffset, protect(document())->deviceScaleFactor());
+    FloatPoint adjustedPaintOffset = roundPointToDevicePixels(paintOffset, document().deviceScaleFactor());
     auto transform = AffineTransform::makeTranslation(toFloatSize(adjustedPaintOffset)) * localToBorderBoxTransform();
     childPaintInfo.applyTransform(transform);
     if (paintInfo.phase == PaintPhase::EventRegion && childPaintInfo.eventRegionContext())
@@ -485,7 +484,8 @@ std::optional<FloatRect> LegacyRenderSVGRoot::computeFloatVisibleRectInContainer
     if (!rectsInContainer)
         return std::nullopt;
 
-    return FloatRect(rectsInContainer->clippedOverflowRect);
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return FloatRect(rectsInContainer->clippedOverflowRect);
 }
 
 // This method expects local CSS box coordinates.
@@ -570,7 +570,8 @@ bool LegacyRenderSVGRoot::nodeAtPoint(const HitTestRequest& request, HitTestResu
     // Test SVG content if the point is in our content box or it is inside the visualOverflowRect and the overflow is visible.
     // FIXME: This should be an intersection when rect-based hit tests are supported by nodeAtFloatPoint.
     if (contentBoxRect().contains(pointInBorderBox) || (!shouldApplyViewportClip() && visualOverflowRect().contains(pointInParent))) {
-        FloatPoint localPoint = valueOrDefault(localToParentTransform().inverse()).mapPoint(FloatPoint(pointInParent));
+        // FIXME: Remove suppression once rdar://189998444 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST FloatPoint localPoint = valueOrDefault(localToParentTransform().inverse()).mapPoint(FloatPoint(pointInParent));
 
         for (RenderObject* child = lastChild(); child; child = child->previousSibling()) {
             // FIXME: nodeAtFloatPoint() doesn't handle rect-based hit tests yet.
@@ -589,7 +590,7 @@ bool LegacyRenderSVGRoot::nodeAtPoint(const HitTestRequest& request, HitTestResu
         // to be able to detect hits on the background of a <div> element. If we'd return true here in the 'Foreground' phase, we are not able
         // to detect these hits anymore.
         LayoutRect boundsRect(accumulatedOffset + location(), borderBoxSize());
-        if (locationInContainer.intersects(boundsRect)) {
+        if (locationInContainer.intersects(boundsRect) && hitTestBorderRadius(locationInContainer, accumulatedOffset)) {
             updateHitTestResult(result, pointInBorderBox);
             if (result.addNodeToListBasedTestResult(protect(nodeForHitTest()).get(), request, locationInContainer, boundsRect) == HitTestProgress::Stop)
                 return true;
@@ -612,4 +613,9 @@ void LegacyRenderSVGRoot::addResourceForClientInvalidation(LegacyRenderSVGResour
     svgRoot->m_resourcesNeedingToInvalidateClients.add(*resource);
 }
 
+NaturalDimensions LegacyRenderSVGRoot::zoomedNaturalDimensions() const
+{
+    return protect(svgSVGElement())->naturalDimensions().zoomed(style().usedZoom());
 }
+
+} // namespace WebCore

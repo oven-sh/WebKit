@@ -1,0 +1,24 @@
+# Reads of declared positions have the declared type
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v1: undefined|string
+# CHECK-NEXT: v2: i32
+# CHECK-NEXT: v3: string
+# CHECK-NEXT: v4.0: number
+# CHECK-NEXT: v4.1: boolean
+# CHECK-NEXT: v5: boolean
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 declared={type=undefined|string}
+layout L0 kind=Environment fields=[{key="c" declared={type=i32}}]
+function f0 name="d" captures=[{type=env L0}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = CallDirect function=f1
+    v4 = CallDirect function=f2
+    v5 = ResultAt v4 index=1
+    Return
+}
+function f1 name="one" results=[{type=string}]
+function f2 name="two" results=[{type=number}, {type=boolean}]

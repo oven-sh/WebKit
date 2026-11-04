@@ -294,6 +294,19 @@ public:
     inline void requestStop();
     inline void cancelStop();
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool stopsAtEveryPoll() const { return m_stack.stopsAtEveryPoll(); }
+#if ENABLE(AOT)
+    bool needsOutOfMemoryError() const { return m_stack.stopsAtFunctionEntries(); }
+#else
+    static constexpr bool needsOutOfMemoryError() { return false; }
+#endif
+    void setNeedsOutOfMemoryError(bool needsError) { m_stack.setStopsAtFunctionEntries(needsError); }
+#endif
+#if ENABLE(AOT)
+    void didClearTerminationRequest() { updateThreadStopRequestIfNeeded(); }
+#endif
+
 private:
     ALWAYS_INLINE BitField clearTrapWithoutCancellingThreadStop(Event event)
     {
@@ -345,6 +358,8 @@ private:
 
 #if ENABLE(SIGNAL_BASED_VM_TRAPS)
     RefPtr<SignalSender> m_signalSender;
+#elif ENABLE(AOT) && HAVE(MACHINE_CONTEXT)
+    void* m_inPlaceOfSignalSender { nullptr };
 #endif
 
     friend class LLIntOffsetsExtractor;

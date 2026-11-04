@@ -1,0 +1,8 @@
+# The program of only-functions-used-as-values-need-a-number-that-fits-a-closure-word.ir with room for one number less
+# OPTIONS: limit=ImageClosureFunctions:2
+# RUN: compile
+# DIAGNOSTIC: TooManyFunctions 1
+# LOSS: ImageClosureFunctions
+# CHECK: diagnostic TooManyFunctions
+# CHECK: image empty
+# PROGRAM-OF: only-functions-used-as-values-need-a-number-that-fits-a-closure-word.ir

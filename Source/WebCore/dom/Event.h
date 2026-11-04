@@ -96,7 +96,7 @@ public:
     DOMHighResTimeStamp timeStampForBindings(ScriptExecutionContext&) const;
     MonotonicTime timeStamp() const { return m_createTime; }
 
-    void NODELETE setEventPath(const EventPath&);
+    void LEGACY_NODELETE setEventPath(const EventPath&);
     Vector<Ref<EventTarget>> composedPath(JSC::JSGlobalObject&) const;
 
     void stopPropagation() { m_propagationStopped = true; }
@@ -110,13 +110,14 @@ public:
 
     virtual bool isBeforeTextInsertedEvent() const { return false; }
     virtual bool isMouseEvent() const { return false; }
+    virtual bool isProgressEvent() const { return false; }
     virtual bool isUIEvent() const { return false; }
     virtual bool isUIEventWithKeyState() const { return false; }
 
     bool propagationStopped() const { return m_propagationStopped || m_immediatePropagationStopped; }
     bool immediatePropagationStopped() const { return m_immediatePropagationStopped; }
 
-    void NODELETE resetBeforeDispatch();
+    void LEGACY_NODELETE resetBeforeDispatch();
     void resetAfterDispatch();
 
     bool defaultPrevented() const { return m_wasCanceled; }

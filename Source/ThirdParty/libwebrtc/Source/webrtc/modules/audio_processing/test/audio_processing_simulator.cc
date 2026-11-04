@@ -312,7 +312,10 @@ void AudioProcessingSimulator::SetupBuffersConfigsOutputs(
                        reverse_input_num_channels);
 
   if (settings_.use_verbose_logging) {
-    LogMessage::LogToDebug(LS_VERBOSE);
+    LoggingConfig config;
+    config.set_min_severity(LS_VERBOSE);
+    config.set_debug_severity(LS_VERBOSE);
+    InitializeLogging(std::move(config));
 
     std::cout << "Sample rates:" << std::endl;
     std::cout << " Forward input: " << input_sample_rate_hz << std::endl;
@@ -414,7 +417,7 @@ void AudioProcessingSimulator::DetachAecDump() {
 }
 
 void AudioProcessingSimulator::ConfigureAudioProcessor() {
-  AudioProcessing::Config apm_config;
+  AudioProcessing::Config apm_config = ap_->GetConfig();
   if (settings_.use_ts) {
     apm_config.transient_suppression.enabled = *settings_.use_ts != 0;
   }
@@ -488,9 +491,8 @@ void AudioProcessingSimulator::ConfigureAudioProcessor() {
         *settings_.post_gain_factor;
   }
 
-  const bool use_aec = settings_.use_aec && *settings_.use_aec;
-  if (use_aec) {
-    apm_config.echo_canceller.enabled = true;
+  if (settings_.use_aec) {
+    apm_config.echo_canceller.enabled = *settings_.use_aec;
   }
   apm_config.echo_canceller.export_linear_aec_output =
       !!settings_.linear_aec_output_filename;

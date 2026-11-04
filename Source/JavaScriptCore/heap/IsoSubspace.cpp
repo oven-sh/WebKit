@@ -44,7 +44,7 @@ IsoSubspace::IsoSubspace(ASCIICString name, JSC::Heap& heap, const HeapCellType&
     ASSERT(WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size) == cellSize());
     ASSERT(m_remainingLowerTierPreciseCount <= MarkedBlock::maxNumberOfLowerTierPreciseCells);
 
-    initialize(heapCellType, allocator ? allocator : heap.fastMallocAllocator.get());
+    initialize(heapCellType, allocator ? allocator : heap.cellAllocator());
 
     Locker locker { m_space.directoryLock() };
     m_directory.setSubspace(this);

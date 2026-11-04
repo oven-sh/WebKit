@@ -1,0 +1,28 @@
+# A test run reads the line that failed from the file, so its image has no text for a function that is only called, nor for the body of a module. It has the text of one that is a value, which toString() answers
+# OPTIONS: disable=pass:InlineCalls admit=ReplacedBuiltins
+# RUN: tables function-texts
+# CHECK: "function plain() { return value }"
+# CHECK-NOT: "() => value"
+# CHECK-NOT: piece
+
+module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0] textOfBody="\x00\x08\x21\x04\x0b\x04"} functionText="publish(function plain() { return value }); (() => value)();"
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v4
+    Return
+}
+function f1 name="plain" text={start=8 end=41} results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="value" [isFreeName]
+    Return v1
+}
+function f2 name="onlyCalled" text={start=45 end=56} kind=Arrow results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="value" [isFreeName]
+    Return v1
+}

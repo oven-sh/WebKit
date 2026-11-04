@@ -1,0 +1,66 @@
+# A slot read whose value nothing uses goes with its field: the read of a deferred closure fills the slot, so no other pass removes it. One whose value is used keeps the field
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="UnusedRead" fields=[{key="run" declared={type=f5} flags=[IsRequired] flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyCalled deferral=CapturesNothing deferredFunction=f5} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="UnusedReadInOtherFunction" fields=[{key="run" declared={type=f5} flags=[IsRequired] flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyCalled deferral=CapturesNothing deferredFunction=f5} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="UsedRead" fields=[{key="run" declared={type=f5} flags=[IsRequired] flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyCalled deferral=CapturesNothing deferredFunction=f5} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="UsedAndUnusedRead" fields=[{key="run" declared={type=f5} flags=[IsRequired] flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=OnlyCalled deferral=CapturesNothing deferredFunction=f5} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L0 name="UnusedRead" fields=[{key="run"{{*}}stores=Never{{*}}reads=NeverRead
+# CHECK: layout L1 name="UnusedReadInOtherFunction" fields=[{key="run"{{*}}stores=Never{{*}}reads=NeverRead
+# CHECK: layout L2 name="UsedRead" fields=[{key="run"{{*}}stores=AtMostOnce{{*}}reads=OnlyCalled
+# CHECK: layout L3 name="UsedAndUnusedRead" fields=[{key="run"{{*}}stores=AtMostOnce{{*}}reads=OnlyCalled
+
+function f0 name="unusedRead" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f5
+    v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    v3 = GetDeferredClosureSlot v2, v2 key="run" receivers=[L0] level=Proven
+    Return v2
+# CHECK-NOT: NewClosure
+# CHECK: = NewObject -, v0 layout=L0 fields=[1]
+# CHECK-NOT: GetDeferredClosureSlot
+}
+
+function f1 name="builtHere" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f5
+    v2 = NewObject -, v1, v0 layout=L1 fields=[0, 1]
+    Return v2
+# CHECK-NOT: NewClosure
+# CHECK: = NewObject -, v0 layout=L1 fields=[1]
+}
+
+function f2 name="readThere" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = GetDeferredClosureSlot v0 key="run" receivers=[L1] level=Proven
+    Return v0
+# CHECK-NOT: GetDeferredClosureSlot
+# CHECK: Return v0
+}
+
+function f3 name="usedRead" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f5
+    v2 = NewObject -, v1, v0 layout=L2 fields=[0, 1]
+    v3 = GetDeferredClosureSlot v2, v2 key="run" receivers=[L2] level=Proven
+    Jump -> next b1(v3)
+  b1(v4: f5):
+    Return v2
+# CHECK: = NewClosure function=f5
+# CHECK: = NewObject -, v1, v0 layout=L2 fields=[0, 1]
+# CHECK: = GetDeferredClosureSlot
+}
+
+function f4 name="usedAndUnusedRead" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f5
+    v2 = NewObject -, v1, v0 layout=L3 fields=[0, 1]
+    v3 = GetDeferredClosureSlot v2, v2 key="run" receivers=[L3] level=Proven
+    v4 = GetDeferredClosureSlot v2, v2 key="run" receivers=[L3] level=Proven
+    Return v4
+# CHECK: = NewClosure function=f5
+# CHECK: = NewObject -, v1, v0 layout=L3 fields=[0, 1]
+# CHECK: = GetDeferredClosureSlot
+}
+
+function f5 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}

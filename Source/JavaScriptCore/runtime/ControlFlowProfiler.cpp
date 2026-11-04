@@ -34,10 +34,7 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ControlFlowProfiler);
 
-ControlFlowProfiler::ControlFlowProfiler()
-    : m_dummyBasicBlock(BasicBlockLocation(-1, -1))
-{
-}
+ControlFlowProfiler::ControlFlowProfiler() = default;
 
 ControlFlowProfiler::~ControlFlowProfiler()
 {
@@ -69,7 +66,7 @@ void ControlFlowProfiler::dumpData() const
     }
 }
 
-Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFunctionRange(SourceID sourceID, VM&) const
+Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFunctionRange(SourceID sourceID, VM& vm, Gaps gaps) const
 {
     Vector<BasicBlockRange> result(0);
     auto bucketFindResult = m_sourceIDBuckets.find(sourceID);
@@ -81,16 +78,30 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFun
         bool hasExecuted = block->hasExecuted();
         size_t executionCount = block->executionCount();
 
-        const Vector<BasicBlockLocation::Gap>& blockRanges = block->getExecutedRanges();
+        const Vector<BasicBlockLocation::Gap>& blockRanges = gaps == Gaps::With ? Vector { BasicBlockLocation::Gap { block->startOffset(), block->endOffset() } } : block->getExecutedRanges();
         result.reserveCapacity(result.size() + blockRanges.size());
         for (BasicBlockLocation::Gap gap : blockRanges) {
             BasicBlockRange range;
             range.m_hasExecuted = hasExecuted;
+            range.m_isInLoopHeader = block->isInLoopHeader();
             range.m_executionCount = executionCount;
             range.m_startOffset = gap.first;
             range.m_endOffset = gap.second;
             result.append(range);
         }
+    }
+
+    // The body of a generator or of an async function and a static block are a part of what the source has as a function
+    // or a class, and run as functions of their own: a gap in the basic blocks around them, with none of their own until they run.
+    for (auto [hasExecuted, start, end, parseMode] : vm.functionHasExecutedCache()->getFunctionRanges(sourceID)) {
+        if (hasExecuted || (!isGeneratorOrAsyncFunctionBodyParseMode(parseMode) && parseMode != SourceParseMode::ClassStaticBlockMode))
+            continue;
+        BasicBlockRange range;
+        range.m_hasExecuted = false;
+        range.m_executionCount = 0;
+        range.m_startOffset = static_cast<int>(start);
+        range.m_endOffset = static_cast<int>(end);
+        result.append(range);
     }
 
     return result;
@@ -118,7 +129,7 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceID(SourceID 
         }
     }
 
-    const Vector<std::tuple<bool, unsigned, unsigned>>& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
+    auto functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
     for (const auto& functionRange : functionRanges) {
         BasicBlockRange range;
         range.m_hasExecuted = std::get<0>(functionRange);
@@ -131,7 +142,7 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceID(SourceID 
     return result;
 }
 
-static BasicBlockRange NODELETE findBasicBlockAtTextOffset(int offset, const Vector<BasicBlockRange>& blocks)
+static BasicBlockRange LEGACY_NODELETE findBasicBlockAtTextOffset(int offset, const Vector<BasicBlockRange>& blocks)
 {
     int bestDistance = INT_MAX;
     BasicBlockRange bestRange;

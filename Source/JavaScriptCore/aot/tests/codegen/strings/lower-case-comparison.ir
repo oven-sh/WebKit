@@ -1,0 +1,60 @@
+# function isGet(method: string): boolean {
+#   return method.toLowerCase() === "get";
+# }
+# declare const input: any;
+# (globalThis as any).answer = isGet(input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(CALLS): generate-code calls
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=15 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=140 kind=CallResult
+typesite w3 module=m0 position=51 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+    v9 = Call v1, -, v8 calleeName="isGet"
+    v10 = Convert v9 declared={type=boolean site=w2}
+    PropSet v5, v10 key="answer"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="isGet" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="toLowerCase"
+    v2 = Call v1, v0 calleeKey="toLowerCase" calleeName="method.toLowerCase"
+    v3 = Convert v2 declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v4 = String string="get"
+    v5 = StrictEq v3, v4
+    v6 = Convert v5 declared={type=boolean site=w1}
+    Return v6
+}
+
+# `method.toLowerCase() === "get"`: the built-in is not looked up, its operation is called with the text alone. The result is known to be a text, so it is compared with the immediate (0x746567 is "get") and no type is tested between the two.
+# CHECK-LABEL: name="isGet" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[method]] = ArgumentReg(
+# CHECK-NEXT: Int64 b@[[lower]] = Patchpoint(b@[[method]]:ColdAny, resultConstraints = Register({{*}}:CallInline)
+# CHECK: Patchpoint(b@[[lower]]:Register({{*}}), $7628135(b@{{*}}):Register({{*}}), resultConstraints = WarmAny, Terminal|ControlDependent|Reads:{argumentBuffer, StringStorage}, {{*}}:StringEqualsLiteral)
+# CHECK-LABEL: end of function
+# CALLS-LABEL: f3: size=
+# CALLS-NEXT: operation operationAOTStringToLowerCase x1
+# CALLS-NEXT: stub StringEqualsLiteralOfLength.n3 x1
+# CALLS-NEXT: f4: size=

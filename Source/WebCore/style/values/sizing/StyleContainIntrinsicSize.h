@@ -116,7 +116,7 @@ struct ContainIntrinsicSize {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -155,8 +155,8 @@ template<> struct CSSValueConversion<ContainIntrinsicSize> { auto operator()(Bui
 // MARK: - Blending
 
 template<> struct Blending<ContainIntrinsicSize> {
-    bool NODELETE canBlend(const ContainIntrinsicSize&, const ContainIntrinsicSize&);
-    auto blend(const ContainIntrinsicSize&, const ContainIntrinsicSize&, const BlendingContext&) -> ContainIntrinsicSize;
+    bool LEGACY_NODELETE canBlend(const ContainIntrinsicSize&, const ContainIntrinsicSize&);
+    ContainIntrinsicSize LEGACY_NODELETE blend(const ContainIntrinsicSize&, const ContainIntrinsicSize&, const BlendingContext&);
 };
 
 } // namespace Style

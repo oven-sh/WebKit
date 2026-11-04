@@ -1,0 +1,39 @@
+# The caught values of a handler stay first: the index after them is where a value is inserted at the head of a block
+# FORM: Prepared
+# RUN: analyses caught-values
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="handlers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = Call v0
+    Jump -> next b1()
+  b1() handler=b4():
+    v2 = Call v0
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    v4 = Undefined
+    Return v3
+  b3() handler=b6():
+    v5 = Call v0
+    Jump -> next b5()
+  b4() role=CatchHandler:
+    v6 = CatchException
+    v7 = CatchValue
+    v8 = Undefined
+    Rethrow v6
+  b5():
+    Return v5
+  b6() role=CatchHandler:
+    v9 = CatchException
+    Rethrow v9
+}
+# CHECK: function f0
+# CHECK-NEXT: caught-values:
+# CHECK-NEXT: b0 index after caught values: 0
+# CHECK-NEXT: b1 index after caught values: 0
+# CHECK-NEXT: b2 index after caught values: 1
+# CHECK-NEXT: b3 index after caught values: 0
+# CHECK-NEXT: b4 index after caught values: 2
+# CHECK-NEXT: b5 index after caught values: 0
+# CHECK-NEXT: b6 index after caught values: 1

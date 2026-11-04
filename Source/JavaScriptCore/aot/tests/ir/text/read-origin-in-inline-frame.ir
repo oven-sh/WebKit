@@ -1,0 +1,18 @@
+# The origin of the read inside a fused access names an inline frame of its function
+# FORM: Selected
+# RUN: round-trip
+# CHECK: module m0 path="main.js" displayPath="main.js"
+# CHECK-NEXT: function f0 name="fused" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=3 module=m0}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1:{{*}}= PropGetChain v0 key="x" secondKey="y" readOrigin={position=5 inlineFrame=1} @6
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-NEXT: function f1 name="inlined" module=m0 thisType={type=anything} results=[{type=undefined}]
+# CHECK-NEXT: round trip: same
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="fused" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=3 module=m0}] {
+    v1 = PropGetChain v0 key="x" secondKey="y" readOrigin={position=5 inlineFrame=1} @6
+    Return v1
+}
+function f1 name="inlined" module=m0 thisType={type=anything} results=[{type=undefined}]

@@ -1,0 +1,29 @@
+# The method under @@hasInstance gets the left operand itself, not a value that nobody knows.
+# RUN: valueflow-solve calls
+# CHECK: f1 v2 -> f2
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Tester" fields=[{key=@@hasInstance declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f2
+    v3 = InstanceOf v2, v1
+    v4 = NewClosure function=f3
+    Return
+}
+function f1 name="hasInstance" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Call v1
+    Return
+}
+function f2 name="tested" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f3 name="kept" kind=Arrow results=[{type=anything}] {
+    Return
+}

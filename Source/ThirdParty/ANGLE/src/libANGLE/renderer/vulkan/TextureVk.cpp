@@ -1164,12 +1164,21 @@ angle::Result TextureVk::ghostOnOverwrite(ContextVk *contextVk,
     }
 
     // Size check: Can only ghost the image if the area being overwritten covers the entire image.
+    // Base level check: If base level has changed, don't attempt to ghost it as
+    //                   getBaseLevelFormat() and initImage() will be wrong below, but also it's
+    //                   possible the texture has to be reallocated anyway later.
     //
     // As a targeted optimization, only limit to non-array 2D color textures.  Other texture types
     // can be very easily added if need, but need additional tests similar to those that have landed
     // in http://anglebug.com/42265356 for 2D textures.
     const gl::OwnerLevel overwriteLevel = index.getLevelIndex();
     const gl::OwnerLevel imageLevel     = mImage->getFirstAllocatedLevel();
+
+    const gl::OwnerLevel baseLevel = mState.toOwnerLevel(gl::LevelIndex(mState.getBaseLevel()));
+    if (baseLevel != imageLevel)
+    {
+        return angle::Result::Continue;
+    }
 
     const bool is2DImage = mImage->getLevelCount() == 1 && mImage->getLayerCount() == 1 &&
                            mImage->getType() == VK_IMAGE_TYPE_2D;
@@ -1859,15 +1868,17 @@ angle::Result TextureVk::copySubTextureImpl(ContextVk *contextVk,
                                                        stagingIndex, stagingExtents, stagingOffset,
                                                        &destData, dstFormatID));
 
-    // Source and dst data is tightly packed
-    GLuint srcDataRowPitch = sourceBox.width * srcTextureFormat.pixelBytes;
-    GLuint dstDataRowPitch = sourceBox.width * dstTextureFormat.pixelBytes;
+    // Source and destination data are tightly packed.
+    const size_t srcDataRowPitch =
+        static_cast<size_t>(sourceBox.width) * srcTextureFormat.pixelBytes;
+    const size_t dstDataRowPitch =
+        static_cast<size_t>(sourceBox.width) * dstTextureFormat.pixelBytes;
 
-    GLuint srcDataDepthPitch = srcDataRowPitch * sourceBox.height;
-    GLuint dstDataDepthPitch = dstDataRowPitch * sourceBox.height;
+    const size_t srcDataDepthPitch = srcDataRowPitch * static_cast<size_t>(sourceBox.height);
+    const size_t dstDataDepthPitch = dstDataRowPitch * static_cast<size_t>(sourceBox.height);
 
-    rx::PixelReadFunction pixelReadFunction   = srcTextureFormat.pixelReadFunction;
-    rx::PixelWriteFunction pixelWriteFunction = dstTextureFormat.pixelWriteFunction;
+    PixelReadFunction pixelReadFunction   = srcTextureFormat.pixelReadFunction;
+    PixelWriteFunction pixelWriteFunction = dstTextureFormat.pixelWriteFunction;
 
     // Fix up the read/write functions for the sake of luminance/alpha that are emulated with
     // formats whose channels don't correspond to the original format (alpha is emulated with red,
@@ -2159,6 +2170,7 @@ angle::Result TextureVk::copySubImageImplWithDraw(ContextVk *contextVk,
 
         params.dstOffset[0] = 0;
         params.dstOffset[1] = 0;
+        params.dstMip       = gl::OwnerLevel(0);
 
         for (vk::LayerIndex layerIndex = vk::LayerIndex(0); layerIndex < layerCount; ++layerIndex)
         {
@@ -2635,10 +2647,10 @@ angle::Result TextureVk::redefineLevel(const gl::Context *context,
         ASSERT(layerIndex.get() ==
                (ownIndex.hasLayer() ? static_cast<uint32_t>(ownIndex.getLayerIndex()) : 0));
 
-        if (gl::IsArrayTextureType(index.getType()))
+        if (gl::IsArrayTextureType(index.getType()) || index.getType() == gl::TextureType::_3D)
         {
-            // A multi-layer texture is being redefined, remove all updates to this level; the
-            // number of layers may have changed.
+            // A multi-layer or 3D texture is being redefined, remove all updates to this level; the
+            // number of layers/slices may have changed.
             mImage->redefineLevels(contextVk, levelIndex, levelIndex);
         }
         else
@@ -3567,6 +3579,15 @@ angle::Result TextureVk::ensureImageInitialized(ContextVk *contextVk, ImageMipLe
         }
     }
 
+    // If context doesn't have valid queue index, it can't write and submit command buffer.
+    // Skip flushing the staged updates for now. The flush will be triggered later when used. This
+    // could only happen with eglCreateImage where the context is provided in the API instead of
+    // using current context.
+    if (!contextVk->hasActiveQueueSerialIndex())
+    {
+        return angle::Result::Continue;
+    }
+
     return flushImageStagedUpdates(contextVk);
 }
 
@@ -3590,7 +3611,8 @@ angle::Result TextureVk::flushImageStagedUpdates(ContextVk *contextVk)
                                                         : mImage->getFirstAllocatedLevel();
     const gl::OwnerLayer firstLayer =
         is3D ? gl::OwnerLayer(0) : mState.toOwnerLayer(gl::LayerIndex(0));
-    const gl::OwnerLayer layerEnd = firstLayer + (is3D ? 1 : getImageViewLayerCount());
+    const gl::OwnerLayer layerEnd =
+        firstLayer + (is3D ? mImage->getExtents().depth : getImageViewLayerCount());
 
     return mImage->flushStagedUpdates(contextVk, firstLevel, firstLevel + getImageViewLevelCount(),
                                       firstLayer, layerEnd, mRedefinedLevels);

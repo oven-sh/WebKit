@@ -1029,7 +1029,8 @@ for (Vector<RefPtr<FrameView> >::iterator it = frameViews.begin(); it != end; ++
 
 ```cpp
 [this] { return m_member; }
-[this]() mutable { return doWork(WTF::move(m_object)); }
+[this] mutable { return doWork(WTF::move(m_object)); }
+[this] -> const String& { return m_member; }
 ```
 
 ###### Wrong:
@@ -1037,6 +1038,8 @@ for (Vector<RefPtr<FrameView> >::iterator it = frameViews.begin(); it != end; ++
 ```cpp
 [this]() { return m_member; }
 []() { return static_cast<unsigned>(-1); }
+[this]() mutable { return doWork(WTF::move(m_object)); }
+[this] () -> const String& { return m_member; }
 ```
 
 [](#function-return-arrow) Only use the arrow for function return types if it allows you to omit redundant information.
@@ -1656,6 +1659,34 @@ auto origin1 = adoptRef(*new SecurityOrigin);
 auto origin2 = adoptRef(new SecurityOrigin);
 
 auto synchronousFileLoadingGroup = adoptOSObject(dispatch_group_create());
+```
+
+[](#smart-pointer-get) Don't call `get()` on a smart pointer to construct another smart pointer from it, or to pass it to `is<>()`, `downcast<>()`, `dynamicDowncast<>()`, or `uncheckedDowncast<>()`, if they can take the smart pointer itself.
+
+###### Right:
+
+```cpp
+RefPtr frame = m_frame;
+
+Ref document = m_document;
+
+CheckedPtr renderer = m_renderer;
+
+if (RefPtr element = dynamicDowncast<Element>(m_node))
+    element->focus();
+```
+
+###### Wrong:
+
+```cpp
+RefPtr frame = m_frame.get();
+
+Ref document = m_document.get();
+
+CheckedPtr renderer = m_renderer.get();
+
+if (RefPtr element = dynamicDowncast<Element>(m_node.get()))
+    element->focus();
 ```
 
 ### Python

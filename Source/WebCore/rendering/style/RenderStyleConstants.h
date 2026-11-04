@@ -138,6 +138,8 @@ constexpr auto allInternalPseudoElementTypes = EnumSet {
 
 constexpr auto allPseudoElementTypes = allPublicPseudoElementTypes | allInternalPseudoElementTypes;
 
+enum class PseudoElementBoxGeneration : bool { Normal, NotForBeforeOrAfter };
+
 inline std::optional<PseudoElementType> parentPseudoElement(PseudoElementType pseudoElementType)
 {
     switch (pseudoElementType) {
@@ -678,7 +680,7 @@ enum class BreakBetween : uint8_t {
     RectoPage,
     VersoPage
 };
-bool NODELETE alwaysPageBreak(BreakBetween);
+bool LEGACY_NODELETE alwaysPageBreak(BreakBetween);
     
 enum class BreakInside : uint8_t {
     Auto,
@@ -706,6 +708,12 @@ enum class Visibility : uint8_t {
     Visible,
     Hidden,
     Collapse
+};
+
+// Outside its table layout effect, collapse is hidden.
+enum class UsedVisibility : bool {
+    Visible,
+    Hidden
 };
 
 enum class CursorType : uint8_t {
@@ -801,8 +809,9 @@ enum class TransformBox : uint8_t {
 };
 
 enum class OverflowContinue : uint8_t {
-    Auto,
+    Normal,
     Discard,
+    Collapse,
     WebkitLegacy
 };
 
@@ -1156,7 +1165,7 @@ enum class MaskType : uint8_t {
     Alpha
 };
 
-CSSBoxType NODELETE transformBoxToCSSBoxType(TransformBox);
+CSSBoxType LEGACY_NODELETE transformBoxToCSSBoxType(TransformBox);
 
 constexpr float defaultMiterLimit = 4;
 
@@ -1272,6 +1281,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, UserDrag);
 WTF::TextStream& operator<<(WTF::TextStream&, UserModify);
 WTF::TextStream& operator<<(WTF::TextStream&, UserSelect);
 WTF::TextStream& operator<<(WTF::TextStream&, Visibility);
+WTF::TextStream& operator<<(WTF::TextStream&, UsedVisibility);
 WTF::TextStream& operator<<(WTF::TextStream&, WhiteSpace);
 WTF::TextStream& operator<<(WTF::TextStream&, WhiteSpaceCollapse);
 WTF::TextStream& operator<<(WTF::TextStream&, WordBreak);

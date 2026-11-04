@@ -45,6 +45,7 @@ enum class AutocapitalizeType : uint8_t;
 enum class EnterKeyHint : uint8_t;
 enum class InputMode : uint8_t;
 enum class PageIsEditable : bool;
+enum class PopoverVisibilityState : bool;
 enum class SelectionRenderingBehavior : bool;
 enum class ToggleState : bool;
 
@@ -55,7 +56,7 @@ class HTMLElement : public StyledElement {
     WTF_MAKE_TZONE_ALLOCATED(HTMLElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLElement);
 public:
-    static Ref<HTMLElement> create(const QualifiedName& tagName, Document&);
+    static Ref<HTMLElement> LEGACY_NODELETE create(const QualifiedName& tagName, Document&);
 
     WEBCORE_EXPORT String title() const final;
 
@@ -65,7 +66,7 @@ public:
     enum class IncludeAltText : bool { No, Yes };
     static String htmlAwareTextContent(const Element&, IncludeAltText);
 
-    virtual bool NODELETE hasCustomFocusLogic() const;
+    virtual bool LEGACY_NODELETE hasCustomFocusLogic() const;
     bool supportsFocus() const override;
 
     WEBCORE_EXPORT String contentEditable() const;
@@ -98,7 +99,6 @@ public:
     virtual bool isDataListButtonElement() const { return false; }
     virtual bool isSelectFallbackButtonElement() const { return false; }
     virtual bool isSelectPopoverElement() const { return false; }
-    virtual void popoverWasHidden() { }
 
     bool willRespondToMouseMoveEvents() const override;
     bool willRespondToMouseClickEventsWithEditability(Editability) const override;
@@ -107,7 +107,7 @@ public:
     virtual bool isLabelable() const { return false; }
     WEBCORE_EXPORT RefPtr<NodeList> labels();
 
-    virtual FormAssociatedElement* NODELETE asFormAssociatedElement();
+    virtual FormAssociatedElement* LEGACY_NODELETE asFormAssociatedElement();
 
     virtual bool isInteractiveContent() const { return false; }
 
@@ -116,7 +116,7 @@ public:
     static const AtomString& eventNameForEventHandlerAttribute(const QualifiedName& attributeName);
 
     // Only some element types can be disabled: https://html.spec.whatwg.org/multipage/scripting.html#concept-element-disabled
-    bool NODELETE canBeActuallyDisabled() const;
+    bool LEGACY_NODELETE canBeActuallyDisabled() const;
     virtual bool isActuallyDisabled() const;
 
 #if ENABLE(AUTOCAPITALIZE)
@@ -159,7 +159,7 @@ public:
     ExceptionOr<void> hidePopoverInternal(FocusPreviousElement, FireEvents, HTMLElement* = nullptr);
     ExceptionOr<bool> togglePopover(Variant<WebCore::HTMLElement::TogglePopoverOptions, bool>);
 
-    const AtomString& NODELETE popover() const;
+    const AtomString& LEGACY_NODELETE popover() const;
     void setPopover(const AtomString& value);
     void popoverAttributeChanged(const AtomString& value);
 
@@ -198,8 +198,11 @@ protected:
 
     virtual void effectiveSpellcheckAttributeChanged(bool);
 
+    virtual void setPopoverVisibilityState(PopoverVisibilityState);
+    virtual void popoverWasHidden() { }
+
     using EventHandlerNameMap = HashMap<AtomString, AtomString>;
-    static const AtomString& NODELETE eventNameForEventHandlerAttribute(const QualifiedName& attributeName, const EventHandlerNameMap&);
+    static const AtomString& LEGACY_NODELETE eventNameForEventHandlerAttribute(const QualifiedName& attributeName, const EventHandlerNameMap&);
 
 private:
     HTMLElement(ClangVTableWorkaroundTag, const QualifiedName&, Document&);

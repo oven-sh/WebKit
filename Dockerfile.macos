@@ -18,21 +18,24 @@ ARG MACOS_ARCH="arm64"
 # deployment target — not the SDK — controls the oldest macOS the artifacts
 # run on, so this tracks the newest SDK Apple serves. Apple's catalog is a
 # rolling window: when this release stops being served, run `list` and bump
-# both pins.
+# the pins. The sha256 is of the .pkg that `download` leaves in the cache.
 ARG MACOS_SDK_VERSION="26.5"
 ARG MACOS_SDK_CLT_RELEASE="26.5"
+ARG MACOS_SDK_PKG_SHA256="5f044578cd78a3a9b9c965a42d56bad609ee5d252e1d4e6aa7c42fc3f35fee7b"
 ARG MACOS_DEPLOYMENT_TARGET="13.0"
-# Bun runs the vendored xmac tool that fetches the SDK from Apple. Same R2
-# mirror .github/actions/setup-bun uses.
-ARG BUN_DOWNLOAD_URL="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest"
+# Bun runs the vendored xmac tool that fetches the SDK from Apple.
+ARG BUN_VERSION="1.4.4"
+ARG BUN_SHA256="bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG=""
 ARG MARCH_FLAG="-mcpu=apple-m1"
 ARG LLVM_VERSION="23"
 ARG LLVM_DEBS_SHA256="993eba8b8ca23ea4d6074643d52ff9397b411e6ac5af6b7b2ca09dca2b351011"
 ARG BOOTSTRAP_CMDS_TAG="bootstrap_cmds-138"
+ARG BOOTSTRAP_CMDS_COMMIT="c71d2d72f48995baaea76148f61002e5299841de"
 # What every variant is compiled with. Cross-only additions live in the build stage.
-ARG DEFAULT_CFLAGS="-fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -O3 -g -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -faddrsig "
+# -fno-standalone-debug is clang's default on Linux: a type is fully described only in the translation units that need its definition.
+ARG DEFAULT_CFLAGS="-fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -O3 -g -fno-standalone-debug -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -faddrsig "
 # Per-variant extras (CPP_FLAGS in .github/scripts/lanes.mjs), e.g.
 # -D_LIBCXX_ENABLE_ASSERTIONS=1 for Debug.
 ARG CPP_FLAGS=""
@@ -49,7 +52,7 @@ ARG USE_EXTERNAL_MIMALLOC="OFF"
 ARG COMPILER_RT_DARWIN_TAG="compiler-rt-darwin-23.1.1"
 ARG COMPILER_RT_DARWIN_SHA256="35241a2d4cff6119b78279ace69cf89c9a190bd5ec7d2baa8d9d7f2a45d9957b"
 
-FROM ubuntu:24.04 AS base
+FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG LLVM_VERSION
@@ -57,8 +60,10 @@ ARG LLVM_DEBS_SHA256
 ARG MACOS_ARCH
 ARG MACOS_SDK_VERSION
 ARG MACOS_SDK_CLT_RELEASE
+ARG MACOS_SDK_PKG_SHA256
 ARG MACOS_DEPLOYMENT_TARGET
-ARG BUN_DOWNLOAD_URL
+ARG BUN_VERSION
+ARG BUN_SHA256
 ARG COMPILER_RT_DARWIN_TAG
 ARG COMPILER_RT_DARWIN_SHA256
 
@@ -88,11 +93,11 @@ ENV AR=llvm-ar-${LLVM_VERSION}
 ENV RANLIB=llvm-ranlib-${LLVM_VERSION}
 
 # Bun — only used to run the vendored xmac tool below.
-RUN case "$(uname -m)" in arm64|aarch64) arch=aarch64;; *) arch=x64;; esac && \
-    wget -q "${BUN_DOWNLOAD_URL}/bun-linux-${arch}.zip" -O /tmp/bun.zip && \
+RUN wget -q "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" -O /tmp/bun.zip && \
+    echo "${BUN_SHA256}  /tmp/bun.zip" | sha256sum -c - && \
     unzip -q /tmp/bun.zip -d /tmp && \
-    install -m 0755 /tmp/bun-linux-${arch}/bun /usr/local/bin/bun && \
-    rm -rf /tmp/bun.zip /tmp/bun-linux-${arch} && \
+    install -m 0755 /tmp/bun-linux-x64/bun /usr/local/bin/bun && \
+    rm -rf /tmp/bun.zip /tmp/bun-linux-x64 && \
     bun --version
 
 # macOS SDK — headers, libc++, framework headers, and the .tbd linker stubs
@@ -103,7 +108,11 @@ RUN case "$(uname -m)" in arm64|aarch64) arch=aarch64;; *) arch=x64;; esac && \
 # Apple itself, nothing is redistributed. Integrity is verified against the
 # SHA-1 checksums in the package's signed xar table of contents.
 COPY macos-cross/xmac.mjs /xmac.mjs
-RUN bun /xmac.mjs splat --accept-license --sdk-only \
+RUN bun /xmac.mjs download --accept-license \
+      --release "${MACOS_SDK_CLT_RELEASE}" --sdk "${MACOS_SDK_VERSION}" \
+      --cache-dir /tmp/xmac-cache && \
+    echo "${MACOS_SDK_PKG_SHA256}  $(echo /tmp/xmac-cache/dl/*/*.pkg)" | sha256sum -c - && \
+    bun /xmac.mjs splat --offline --accept-license --sdk-only \
       --release "${MACOS_SDK_CLT_RELEASE}" --sdk "${MACOS_SDK_VERSION}" \
       --output /tmp/xmac-out --cache-dir /tmp/xmac-cache && \
     mkdir -p /opt && \
@@ -131,6 +140,15 @@ RUN echo 'int main(void){return 0;}' | \
           --ld-path=$(which ld64.lld) -mlinker-version=705 -xc - -o /tmp/t && \
     file /tmp/t | grep -q Mach-O && rm /tmp/t
 
+# Node runs the generators of Source/JavaScriptCore/aot (>=23.6 strips types by default). The one of Dockerfile.
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+RUN wget -q "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -O /tmp/node.tar.xz && \
+    echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
+    tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && \
+    rm /tmp/node.tar.xz && \
+    node --version
+
 RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -143,9 +161,11 @@ RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/
 # ───────────────────────────────────────────────────────────────────────────
 # Part of `base`: it is the same for every lane.
 ARG BOOTSTRAP_CMDS_TAG
+ARG BOOTSTRAP_CMDS_COMMIT
 COPY macos-cross/ /macos-cross/
 RUN git clone --depth=1 --branch ${BOOTSTRAP_CMDS_TAG} \
       https://github.com/apple-oss-distributions/bootstrap_cmds.git /bootstrap_cmds && \
+    test "$(git -C /bootstrap_cmds rev-parse HEAD)" = "${BOOTSTRAP_CMDS_COMMIT}" && \
     cd /bootstrap_cmds/migcom.tproj && \
     flex -o lexxer.c lexxer.l && \
     bison -d -o parser.c parser.y && \
@@ -186,6 +206,9 @@ ENV WEBKIT_OUT_DIR=/webkitbuild
 # WebKit takes the same branches the native macOS build does (USE_APPLE_ICU,
 # U_DISABLE_RENAMING, MachExceptions, cocoa/MemoryFootprintCocoa.cpp).
 # CMAKE_OSX_SYSROOT/-DEPLOYMENT_TARGET add -isysroot/-mmacosx-version-min.
+#
+#
+# find-structures-decoded-behind-calls.py (Tools/Scripts/aot/README.md) reads the machine code of jsc in the optimized lanes: their code is what ships. Here it only prints its rows so far: the list of expected rows was made on Linux x86-64 with glibc.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export CROSS="--target=${MACOS_ARCH}-apple-macosx" && \
     export MIGCC="$(which $CC) -E ${CROSS} -isysroot ${MACOS_SDK}" && \
@@ -228,8 +251,11 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
     -G Ninja \
     /webkit && \
-    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI --target testaot && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
+    if [ "$USE_MIMALLOC" = ON ]; then \
+        PATH="$(dirname "$(readlink -f "$(command -v "$AR")")"):$PATH" python3 /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py $WEBKIT_OUT_DIR/bin/jsc --expected /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt || echo "find-structures-decoded-behind-calls.py: not yet fatal here"; \
+    fi && \
     # -L everywhere: WebKit's cmake stages the WTF/bmalloc framework headers
     # as *symlinks* into the source tree when the host filesystem supports
     # them. Copied verbatim they'd dangle outside this container (pointing at
@@ -248,6 +274,16 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     mkdir -p /output/Source/JavaScriptCore && \
     cp -rL /webkit/Source/JavaScriptCore/Scripts /output/Source/JavaScriptCore && \
     cp -L /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore && \
+    mkdir -p /output/Source/JavaScriptCore/aot/ir /output/Source/JavaScriptCore/aot/builtins && \
+    cp -L /webkit/Source/JavaScriptCore/aot/ir/AOTSchema.def /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/ir/schema /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/ir/generator /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/builtins/generator /output/Source/JavaScriptCore/aot/builtins && \
+    cp -r $WEBKIT_OUT_DIR/JavaScriptCore/ReleasedSources/aot/builtins/generated /output/Source/JavaScriptCore/aot/builtins && \
+    mkdir -p /output/Tools/Scripts/aot && \
+    cp /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py /webkit/Tools/Scripts/aot/calls-that-never-collect.txt /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt /output/Tools/Scripts/aot && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \
+    find /output/Source/JavaScriptCore/aot/tests -type f ! -name '*.ir' -delete && \
     cp -rL $WEBKIT_OUT_DIR/bin /output/bin && \
     # The sanitizer runtime is a dylib the executables name as @rpath/libclang_rt.asan_osx_dynamic.dylib, and the rpath
     # clang adds is this container's resource directory. So it ships next to them, and @executable_path is an rpath.

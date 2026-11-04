@@ -51,8 +51,8 @@ public:
     }
 
     void setDataSource(WebDataSource *, WebView*);
-    void NODELETE detachDataSource();
-    WebDataSource *NODELETE dataSource() const;
+    void LEGACY_NODELETE detachDataSource();
+    WebDataSource *LEGACY_NODELETE dataSource() const;
 
     void increaseLoadCount(WebCore::ResourceLoaderIdentifier);
     void decreaseLoadCount(WebCore::ResourceLoaderIdentifier);
@@ -64,12 +64,18 @@ private:
     virtual void attachToFrame();
     virtual void detachFromFrame(WebCore::LoadWillContinueInAnotherProcess);
 
+    bool isWebDocumentLoaderMac() const final { return true; }
+
     void retainDataSource();
     void releaseDataSource();
 
-    WebDataSource *m_dataSource;
+    __weak WebDataSource *m_dataSource;
     bool m_isDataSourceRetained;
     RetainPtr<id> m_resourceLoadDelegate;
     RetainPtr<id> m_downloadDelegate;
     HashSet<WebCore::ResourceLoaderIdentifier> m_loadingResources;
 };
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebDocumentLoaderMac)
+static bool isType(const WebCore::DocumentLoader& loader) { return loader.isWebDocumentLoaderMac(); }
+SPECIALIZE_TYPE_TRAITS_END()

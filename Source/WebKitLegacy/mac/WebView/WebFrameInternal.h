@@ -70,10 +70,10 @@ enum class WebRangeIsRelativeTo : uint8_t {
     Paragraph,
 };
 
-WebCore::LocalFrame* core(WebFrame *);
+WebCore::LocalFrame* LEGACY_NODELETE core(WebFrame *);
 WebFrame *kit(WebCore::LocalFrame *);
 
-WebCore::Page* core(WebView *);
+WebCore::Page* LEGACY_NODELETE core(WebView *);
 WebView *kit(WebCore::Page*);
 
 WebCore::EditableLinkBehavior core(WebKitEditableLinkBehavior);
@@ -100,6 +100,12 @@ WebView *getWebView(WebFrame *webFrame);
     BOOL isCommitting;
 #endif
     WeakPtr<LegacyWebPageInspectorController> webPageInspectorController;
+}
+@end
+
+@interface WebFrame () {
+@package
+    RetainPtr<WebFramePrivate> _private;
 }
 @end
 

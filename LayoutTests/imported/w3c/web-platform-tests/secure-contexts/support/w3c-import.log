@@ -17,6 +17,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/secure-contexts/support/dedicated-worker-script.js
 /LayoutTests/imported/w3c/web-platform-tests/secure-contexts/support/https-subframe-dedicated.html
 /LayoutTests/imported/w3c/web-platform-tests/secure-contexts/support/https-subframe-shared.html
+/LayoutTests/imported/w3c/web-platform-tests/secure-contexts/support/iframe-with-child.html
 /LayoutTests/imported/w3c/web-platform-tests/secure-contexts/support/parent-dedicated-worker-script.js
 /LayoutTests/imported/w3c/web-platform-tests/secure-contexts/support/parent-shared-worker-script.js
 /LayoutTests/imported/w3c/web-platform-tests/secure-contexts/support/shared-worker-insecure-popup.html

@@ -26,11 +26,10 @@
 #pragma once
 
 #include "ASTVisitor.h"
+#include "WGSLShaderModule.h"
 #include <wtf/StringPrintStream.h>
 
 namespace WGSL {
-
-class ShaderModule;
 
 namespace AST {
 

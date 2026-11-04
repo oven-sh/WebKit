@@ -31,6 +31,7 @@
 namespace JSC {
 
 class JSCell;
+template<typename> class GCIncomingRefCountedSet;
 
 // A C-heap-allocated object that may have additional reference counts
 // due to incoming references from the heap, which are tracked in
@@ -82,9 +83,11 @@ public:
     // to use this with a filter function that can return false unless
     // you're also walking the GC's list.
     template<typename FilterFunctionType>
-    bool filterIncomingReferences(FilterFunctionType&&);
+    bool filterIncomingReferences(NOESCAPE const FilterFunctionType&);
     
 private:
+    template<typename> friend class GCIncomingRefCountedSet;
+
     static uintptr_t singletonFlag() { return 1; }
     
     bool hasVectorOfCells() const { return !(m_encodedPointer & singletonFlag()); }
@@ -103,6 +106,8 @@ private:
         return std::bit_cast<Vector<JSCell*>*>(m_encodedPointer);
     }
     
+    bool m_needsFilteringIncomingReferences { false };
+
     // Singleton flag is set: this is a JSCell*.
     // Singleton flag not set: this is a pointer to a vector of cells.
     uintptr_t m_encodedPointer;

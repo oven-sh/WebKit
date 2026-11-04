@@ -22,6 +22,9 @@
 
 #include "config.h"
 
+#if ENABLE(AOT)
+#include "AOTShell.h"
+#endif
 #include "APICast.h"
 #include "ArrayBuffer.h"
 #include "AtomicsObject.h"
@@ -115,6 +118,7 @@
 #include <wtf/URL.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/WallTime.h>
+#include <wtf/posix/POSIXExtras.h>
 #include <wtf/text/Base64.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -152,6 +156,7 @@
 #if OS(WINDOWS)
 #include <mmsystem.h>
 #include <windows.h>
+#include "AOTCrashExitCode.h"
 #if !USE(BUN_JSC_ADDITIONS)
 #include <wtf/win/WTFCRTDebug.h>
 #endif
@@ -300,7 +305,7 @@ class GlobalObject;
 class Workers;
 
 template<typename Func>
-int runJSC(const CommandLine&, bool isWorker, const Func&);
+int runJSC(const CommandLine&, bool isWorker, NOESCAPE const Func&);
 static void checkException(GlobalObject*, bool isLastFile, bool hasException, JSValue, const CommandLine&, bool& success);
 
 class Message : public ThreadSafeRefCounted<Message> {
@@ -311,7 +316,7 @@ public:
     }
 
     std::span<const uint8_t> data() const { return m_data.span(); }
-    int32_t NODELETE index() const { return m_index; }
+    int32_t LEGACY_NODELETE index() const { return m_index; }
 
     // Every recipient worker gets this same Message and deserializes from it concurrently, which
     // is safe because the side channels (other than arrayBufferContents) are read-only.
@@ -348,7 +353,7 @@ public:
     
     void enqueue(const AbstractLocker&, RefPtr<Message>);
     RefPtr<Message> dequeue();
-    bool NODELETE isMain() const { return m_isMain; }
+    bool LEGACY_NODELETE isMain() const { return m_isMain; }
 
     static Worker& current();
 
@@ -368,7 +373,7 @@ public:
     ~Workers();
     
     template<typename Func>
-    void broadcast(const Func&);
+    void broadcast(NOESCAPE const Func&);
     
     void report(const String&);
     String tryGetReport();
@@ -471,11 +476,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionDisassembleBase64);
 
 static JSC_DECLARE_HOST_FUNCTION(functionCreateGlobalObject);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateHeapBigInt);
-#if USE(BIGINT32)
-static JSC_DECLARE_HOST_FUNCTION(functionCreateBigInt32);
-#endif
-static JSC_DECLARE_HOST_FUNCTION(functionUseBigInt32);
-static JSC_DECLARE_HOST_FUNCTION(functionIsBigInt32);
 static JSC_DECLARE_HOST_FUNCTION(functionIsHeapBigInt);
 static JSC_DECLARE_HOST_FUNCTION(functionIs8BitString);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateNonRopeNonAtomString);
@@ -707,7 +707,7 @@ void StopWatch::stop()
     m_stopTime = MonotonicTime::now();
 }
 
-long NODELETE StopWatch::getElapsedMS()
+long LEGACY_NODELETE StopWatch::getElapsedMS()
 {
     return (m_stopTime - m_startTime).millisecondsAs<long>();
 }
@@ -750,7 +750,7 @@ public:
         return Structure::create(vm, nullptr, prototype, TypeInfo(GlobalObjectType, StructureFlags), info());
     }
 
-    static RuntimeFlags NODELETE javaScriptRuntimeFlags(const JSGlobalObject*) { return RuntimeFlags::createAllEnabled(); }
+    static RuntimeFlags LEGACY_NODELETE javaScriptRuntimeFlags(const JSGlobalObject*) { return RuntimeFlags::createAllEnabled(); }
 
     static void getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
     {
@@ -781,7 +781,7 @@ private:
         }
 
         bool contains(UniquedStringImpl* name) const { return m_names.contains(name); }
-        const UncheckedKeyHashSet<UniquedStringImpl*>& NODELETE names() const { return m_names; }
+        const UncheckedKeyHashSet<UniquedStringImpl*>& LEGACY_NODELETE names() const { return m_names; }
 
     private:
         Vector<AtomString> m_strings; // To keep the UniqueStringImpls alive.
@@ -900,6 +900,11 @@ private:
         addFunction(vm, "noFTL"_s, functionNoFTL, 1);
         addFunction(vm, "noOSRExitFuzzing"_s, functionNoOSRExitFuzzing, 1);
         addFunction(vm, "numberOfDFGCompiles"_s, functionNumberOfDFGCompiles, 1);
+#if ENABLE(AOT)
+        AOT::Shell::addShellFunctions(vm, this);
+        for (auto name : AOT::Shell::shellFunctionNames())
+            filter.add(Identifier::fromString(vm, name).impl());
+#endif
         addFunction(vm, "callerIsBBQOrOMGCompiled"_s, functionCallerIsBBQOrOMGCompiled, 0);
         addFunction(vm, "jscOptions"_s, functionJSCOptions, 0);
         addFunction(vm, "optimizeNextInvocation"_s, functionOptimizeNextInvocation, 1);
@@ -924,11 +929,6 @@ private:
 
         addFunction(vm, "createGlobalObject"_s, functionCreateGlobalObject, 0);
         addFunction(vm, "createHeapBigInt"_s, functionCreateHeapBigInt, 1);
-#if USE(BIGINT32)
-        addFunction(vm, "createBigInt32"_s, functionCreateBigInt32, 1);
-#endif
-        addFunction(vm, "useBigInt32"_s, functionUseBigInt32, 0);
-        addFunction(vm, "isBigInt32"_s, functionIsBigInt32, 1);
         addFunction(vm, "isHeapBigInt"_s, functionIsHeapBigInt, 1);
 
         addFunction(vm, "is8BitString"_s, functionIs8BitString, 1);
@@ -985,6 +985,10 @@ private:
             putDirect(vm, Identifier::fromString(vm, "arguments"_s), array, DontEnum);
         }
 
+#if ENABLE(AOT)
+        // Compiled code tells `console` from the program's own objects by identity.
+        if (!Options::aotImagePath())
+#endif
         putDirect(vm, Identifier::fromString(vm, "console"_s), jsUndefined(), DontEnum);
         
         Structure* plainObjectStructure = JSFinalObject::createStructure(vm, this, objectPrototype(), 0);
@@ -1165,7 +1169,7 @@ private:
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(GlobalObject, JSGlobalObject);
 
 static bool supportsRichSourceInfo = true;
-static bool NODELETE shellSupportsRichSourceInfo(const JSGlobalObject*)
+static bool LEGACY_NODELETE shellSupportsRichSourceInfo(const JSGlobalObject*)
 {
     return supportsRichSourceInfo;
 }
@@ -1194,6 +1198,13 @@ const GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &codeForEval,
     &canCompileStrings,
     &trustedScriptStructure,
+#if USE(BUN_JSC_ADDITIONS)
+    nullptr, // requireBuiltinModule
+    nullptr, // nativeBinding
+#if ENABLE(AOT)
+    &AOT::Shell::moduleHost,
+#endif
+#endif
 };
 
 GlobalObject::GlobalObject(VM& vm, Structure* structure)
@@ -1220,7 +1231,7 @@ JSC_DEFINE_CUSTOM_SETTER(testCustomValueSetter, (JSGlobalObject* lexicalGlobalOb
     return GlobalObject::testCustomSetterImpl(lexicalGlobalObject, thisObject, encodedValue, "_testCustomValueSetter"_s);
 }
 
-static char16_t NODELETE pathSeparator()
+static char16_t LEGACY_NODELETE pathSeparator()
 {
 #if OS(WINDOWS)
     return '\\';
@@ -1273,7 +1284,7 @@ static URL currentWorkingDirectory()
 // FIXME: We may wish to support module specifiers beginning with a (back)slash on Windows. We could either:
 // - align with V8 and SM:  treat '/foo' as './foo'
 // - align with PowerShell: treat '/foo' as 'C:/foo'
-static bool NODELETE isAbsolutePath(StringView path)
+static bool LEGACY_NODELETE isAbsolutePath(StringView path)
 {
 #if OS(WINDOWS)
     // Just look for local drives like C:\.
@@ -1356,6 +1367,12 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
     if (key.isSymbol())
         return key;
 
+#if ENABLE(AOT)
+    // Bun: the loader asks for a module of an image by its key.
+    if (AOT::Shell::isKeyOfCompiledModule(key.string()))
+        return key;
+#endif
+
     auto resolvePath = [&] (const URL& directoryURL) -> Identifier {
         String specifier = key.impl();
         auto filePrefix = "file://"_s;
@@ -1398,6 +1415,16 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
     if (referrer.isSymbol())
         return resolvePath(currentWorkingDirectory());
 
+#if ENABLE(AOT)
+    // Bun: the key of a module of an image is its path.
+    if (AOT::Shell::isKeyOfCompiledModule(referrer.string())) {
+        Identifier resolved = resolvePath(URL::fileURLWithFileSystemPath(referrer.string()));
+        RETURN_IF_EXCEPTION(scope, { });
+        String path = URL({ }, resolved.string()).fileSystemPath();
+        return AOT::Shell::isKeyOfCompiledModule(path) ? Identifier::fromString(vm, path) : resolved;
+    }
+#endif
+
     // If the referrer exists, we assume that the referrer is the correct file url.
     URL url = URL({ }, referrer.impl());
     ASSERT(url.protocolIsFile());
@@ -1405,7 +1432,7 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
 }
 
 template<typename Vector>
-static void NODELETE convertShebangToJSComment(Vector& buffer)
+static void LEGACY_NODELETE convertShebangToJSComment(Vector& buffer)
 {
     if (buffer.size() >= 2) {
         if (buffer[0] == '#' && buffer[1] == '!')
@@ -1438,7 +1465,7 @@ static RefPtr<Uint8Array> fillBufferWithContentsOfFile(FILE* file)
 
 static RefPtr<Uint8Array> fillBufferWithContentsOfFile(const String& fileName)
 {
-    FILE* f = fopen(fileName.utf8().legacyCStringPointer(), "rb");
+    FILE* f = posixFopen(fileName.utf8(), "rb"_s);
     if (!f) {
         SAFE_FPRINTF(stderr, "Could not open file: %s\n", fileName.utf8());
         return nullptr;
@@ -1477,7 +1504,7 @@ static bool fillBufferWithContentsOfFile(const String& fileName, Vector<char>& b
     struct stat statBuf;
     auto fileNameUTF = fileName.tryGetUTF8();
     if (!fileNameUTF.has_value()) {
-        fprintf(stderr, "Error when parsing file name: %s\n", fileName.ascii().data());
+        SAFE_FPRINTF(stderr, "Error when parsing file name: %s\n", fileName.utf8());
         return false;
     }
     if (FileSystem::statFile(fileNameUTF->spanIncludingNullTerminator(), statBuf) == -1) {
@@ -1489,7 +1516,7 @@ static bool fillBufferWithContentsOfFile(const String& fileName, Vector<char>& b
         SAFE_FPRINTF(stderr, "Trying to open a non-file: %s\n", *fileNameUTF);
         return false;
     }
-    auto* f = fopen(fileNameUTF->legacyCStringPointer(), "rb");
+    auto* f = posixFopen(*fileNameUTF, "rb"_s);
     if (!f) {
         SAFE_FPRINTF(stderr, "Could not open file: %s\n", *fileNameUTF);
         return false;
@@ -1631,7 +1658,7 @@ private:
     {
     }
 
-    bool NODELETE cacheEnabled() const { return m_cacheEnabled; }
+    bool LEGACY_NODELETE cacheEnabled() const { return m_cacheEnabled; }
 
     mutable RefPtr<CachedBytecode> m_cachedBytecode;
     const bool m_cacheEnabled;
@@ -1675,7 +1702,7 @@ static bool fetchModuleFromLocalFileSystem(const URL& fileURL, Vector& buffer)
     if ((status.st_mode & S_IFMT) != S_IFREG)
         return false;
 
-    FILE* f = fopen(pathName.legacyCStringPointer(), "r");
+    FILE* f = posixFopen(pathName, "r"_s);
 #endif
     if (!f) {
         SAFE_FPRINTF(stderr, "Could not open file: %s\n", fileName.utf8());
@@ -1705,6 +1732,16 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
     String moduleKey = key.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
+#if ENABLE(AOT)
+    // Bun: an image has the modules that it names.
+    if (!attributes) {
+        JSPromise* compiled = AOT::Shell::fetchCompiledModule(globalObject, moduleKey);
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+        if (compiled)
+            return compiled;
+    }
+#endif
+
     URL moduleURL({ }, moduleKey);
     ASSERT(moduleURL.protocolIsFile());
     // Strip the URI from our key so Errors print canonical system paths.
@@ -1730,6 +1767,10 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
             promise->resolve(globalObject, vm, sourceCode);
             return promise;
         }
+        case ScriptFetchParameters::Type::CSS:
+            // Previous steps in the module loading process would've prevented
+            // this environment from loading CSS module scripts.
+            RELEASE_ASSERT_NOT_REACHED();
         default:
             break;
         }
@@ -1765,6 +1806,11 @@ JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* g
 
     metaProperties->putDirect(vm, JSC::Identifier::fromString(vm, "url"_s), key);
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+#if ENABLE(AOT)
+    // Bun: compiled code calls the functions that Bun puts on import.meta.
+    AOT::Shell::addMissingImportMetaFunctions(globalObject, metaProperties);
+#endif
 
     return metaProperties;
 }
@@ -2022,7 +2068,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateBytecodeCacheFile, (JSGlobalObject* glo
         return throwVMError(globalObject, scope, "cannot read source"_s);
     String text = String::fromUTF8(contents->span());
     if (text.isNull())
-        text = String(contents->span());
+        text = String(byteCast<Latin1Character>(contents->span()));
     SourceCode source = makeSource(text, SourceOrigin { URL::fileURLWithFileSystemPath(sourcePath) }, SourceTaintedOrigin::Untainted, sourcePath, TextPosition(), kind == "module"_s ? SourceProviderSourceType::Module : SourceProviderSourceType::Program);
     FileSystem::deleteFile(outPath);
     auto handle = FileSystem::openFile(outPath, FileSystem::FileOpenMode::ReadWrite);
@@ -2212,7 +2258,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCachePageTouch, (JSGlobalObject* global
         return throwVMError(globalObject, scope, "cannot read source"_s);
     String text = String::fromUTF8(contents->span());
     if (text.isNull())
-        text = String(contents->span());
+        text = String(byteCast<Latin1Character>(contents->span()));
     bool isModule = kind == "module"_s;
     SourceCode source = makeSource(text, SourceOrigin { URL::fileURLWithFileSystemPath(sourcePath) }, SourceTaintedOrigin::Untainted, sourcePath, TextPosition(), isModule ? SourceProviderSourceType::Module : SourceProviderSourceType::Program);
 
@@ -2453,7 +2499,7 @@ class JSCMemoryFootprint : public JSDestructibleObject {
     using Base = JSDestructibleObject;
 public:
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.destructibleObjectSpace();
     }
@@ -2840,7 +2886,7 @@ class JSFileDescriptor : public JSDestructibleObject {
     using Base = JSDestructibleObject;
 public:
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.destructibleObjectSpace();
     }
@@ -2871,7 +2917,7 @@ public:
         static_cast<JSFileDescriptor*>(thisObject)->~JSFileDescriptor();
     }
 
-    FILE* NODELETE descriptor() const { return m_descriptor; }
+    FILE* LEGACY_NODELETE descriptor() const { return m_descriptor; }
 
     DECLARE_INFO;
 
@@ -3049,7 +3095,7 @@ Workers::~Workers()
 }
 
 template<typename Func>
-void Workers::broadcast(const Func& func)
+void Workers::broadcast(NOESCAPE const Func& func)
 {
     Locker locker { m_lock };
     for (Worker& worker : m_workers) {
@@ -3169,6 +3215,9 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarIsRemoteFunction, (JSGlobalObject* global
     return JSValue::encode(jsBoolean(isRemoteFunction(arg)));
 }
 
+constexpr unsigned maxLiveAgentsInFuzzerMode = 64;
+static std::atomic<unsigned> numLiveAgents;
+
 JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -3197,8 +3246,14 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject
         workerPath = callFrame->argument(1).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
-    
-    Thread::create(
+
+    unsigned previousLiveAgents = numLiveAgents.fetch_add(1);
+    if (Options::useFuzzerMode() && previousLiveAgents >= maxLiveAgentsInFuzzerMode) {
+        numLiveAgents.fetch_sub(1);
+        return JSValue::encode(throwException(globalObject, scope, createError(globalObject, "Too many live agents"_s)));
+    }
+
+    RefPtr thread = Thread::tryCreate(
         "JSC Agent"_s,
         [sourceCode = WTF::move(sourceCode).isolatedCopy(), workerPath = WTF::move(workerPath).isolatedCopy(), &didStartLock, &didStartCondition, &didStart] () {
             CommandLine commandLine(CommandLine::CommandLineForWorkers);
@@ -3222,8 +3277,14 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject
                     if (!success)
                         exitProcess(EXIT_FAILURE);
                 });
-        })->detach();
-    
+            numLiveAgents.fetch_sub(1);
+        });
+    if (!thread) [[unlikely]] {
+        numLiveAgents.fetch_sub(1);
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope, "Failed to create agent thread"_s));
+    }
+    thread->detach();
+
     {
         Locker locker { didStartLock };
         while (!didStart)
@@ -3561,7 +3622,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDumpBytecodeProfile, (JSGlobalObject* globalObj
     String path = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
-    bool ok = vm.m_perBytecodeProfiler->save(path.utf8().legacyCStringPointer());
+    bool ok = vm.m_perBytecodeProfiler->save(path.utf8());
     return JSValue::encode(jsBoolean(ok));
 }
 
@@ -3649,63 +3710,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateHeapBigInt, (JSGlobalObject* globalObject
     JSValue argument = callFrame->argument(0);
     JSValue bigInt = argument.toBigInt(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-#if USE(BIGINT32)
-    if (bigInt.isHeapBigInt())
-        return JSValue::encode(bigInt);
-    ASSERT(bigInt.isBigInt32());
-    int32_t value = bigInt.bigInt32AsInt32();
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, value)));
-#else
     return JSValue::encode(bigInt);
-#endif
-}
-
-#if USE(BIGINT32)
-JSC_DEFINE_HOST_FUNCTION(functionCreateBigInt32, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue argument = callFrame->argument(0);
-    JSValue bigIntValue = argument.toBigInt(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (bigIntValue.isBigInt32())
-        return JSValue::encode(bigIntValue);
-    ASSERT(bigIntValue.isHeapBigInt());
-    JSBigInt* bigInt = uncheckedDowncast<JSBigInt>(bigIntValue);
-    if (!bigInt->length())
-        return JSValue::encode(jsBigInt32(0));
-    if (bigInt->length() == 1) {
-        JSBigInt::Digit digit = bigInt->digit(0);
-        if (bigInt->sign()) {
-            if (digit <= static_cast<uint64_t>(-static_cast<int64_t>(INT32_MIN)))
-                return JSValue::encode(jsBigInt32(static_cast<int32_t>(-static_cast<int64_t>(digit))));
-        } else {
-            if (digit <= INT32_MAX)
-                return JSValue::encode(jsBigInt32(static_cast<int32_t>(digit)));
-        }
-    }
-    throwTypeError(globalObject, scope, "Out of range of BigInt32"_s);
-    return { };
-}
-#endif
-
-JSC_DEFINE_HOST_FUNCTION(functionUseBigInt32, (JSGlobalObject*, CallFrame*))
-{
-#if USE(BIGINT32)
-    return JSValue::encode(jsBoolean(true));
-#else
-    return JSValue::encode(jsBoolean(false));
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionIsBigInt32, (JSGlobalObject*, CallFrame* callFrame))
-{
-#if USE(BIGINT32)
-    return JSValue::encode(jsBoolean(callFrame->argument(0).isBigInt32()));
-#else
-    UNUSED_PARAM(callFrame);
-    return JSValue::encode(jsBoolean(false));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionIsHeapBigInt, (JSGlobalObject*, CallFrame* callFrame))
@@ -4175,7 +4180,7 @@ static void startTimeoutTimer(Seconds duration)
 // jsc shell test timeouts (i.e. crashDueToJSCShellTimeout is present in crash stack
 // traces) from other crashes.
 NO_RETURN_DUE_TO_CRASH NEVER_INLINE void crashDueToJSCShellTimeout();
-void NODELETE crashDueToJSCShellTimeout()
+void LEGACY_NODELETE crashDueToJSCShellTimeout()
 {
     CRASH();
 }
@@ -4234,6 +4239,9 @@ int main(int argc, char** argv)
     // testing/debugging, as it causes the post-mortem debugger not to be invoked. We reset the
     // error mode here to work around Cygwin's behavior. See <http://webkit.org/b/55222>.
     ::SetErrorMode(0);
+#if ENABLE(AOT)
+    AOT::terminateWithExceptionCodeOnCrash();
+#endif
 
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);
@@ -4325,9 +4333,9 @@ static void dumpException(GlobalObject* globalObject, JSValue exception)
 
     auto exceptionString = exception.toWTFString(globalObject);
     CHECK_EXCEPTION();
-    std::expected<CString, UTF8ConversionError> expectedCString = exceptionString.tryGetUTF8();
+    auto expectedCString = exceptionString.tryGetUTF8();
     if (expectedCString)
-        printf("Exception: %s\n", expectedCString.value().data());
+        SAFE_PRINTF("Exception: %s\n", expectedCString.value());
     else
         printf("Exception: <out of memory while extracting exception string>\n");
 
@@ -4604,21 +4612,21 @@ static void runInteractive(GlobalObject* globalObject)
         if (evaluationException && vm.isTerminationException(evaluationException.get()))
             vm.setExecutionForbidden();
 
-        std::expected<CString, UTF8ConversionError> utf8;
+        std::expected<UTF8CString, UTF8ConversionError> utf8;
         if (evaluationException) {
             fputs("Exception: ", stdout);
             utf8 = evaluationException->value().toWTFString(globalObject).tryGetUTF8();
         } else
             utf8 = returnValue.toWTFStringForConsole(globalObject).tryGetUTF8();
 
-        CString result;
+        UTF8CString result;
         if (utf8)
             result = utf8.value();
         else if (utf8.error() == UTF8ConversionError::OutOfMemory)
-            result = "OutOfMemory while processing string";
+            result = "OutOfMemory while processing string"_s;
         else
-            result = "Error while processing string";
-        fwrite(result.data(), sizeof(char), result.length(), stdout);
+            result = "Error while processing string"_s;
+        fwrite(result.span().data(), sizeof(char8_t), result.length(), stdout);
         putchar('\n');
 
         scope.clearException();
@@ -5021,7 +5029,7 @@ CommandLine::CommandLine(CommandLineForWorkersTag)
 }
 
 template<typename Func>
-int runJSC(const CommandLine& options, bool isWorker, const Func& func)
+int runJSC(const CommandLine& options, bool isWorker, NOESCAPE const Func& func)
 {
     Worker worker(Workers::singleton(), !isWorker);
     VM& vm = VM::create(HeapType::Large).leakRef();
@@ -5090,7 +5098,7 @@ int runJSC(const CommandLine& options, bool isWorker, const Func& func)
 
         if (Options::useProfiler()) {
             JSLockHolder locker(vm);
-            if (!vm.m_perBytecodeProfiler->save(options.m_profilerOutput.utf8().legacyCStringPointer()))
+            if (!vm.m_perBytecodeProfiler->save(options.m_profilerOutput.utf8()))
                 fprintf(stderr, "could not save profiler output.\n");
         }
 
@@ -5122,7 +5130,7 @@ int runJSC(const CommandLine& options, bool isWorker, const Func& func)
             std::sort(compileTimeKeys.begin(), compileTimeKeys.end());
             for (const ASCIICString& key : compileTimeKeys) {
                 if (key.data())
-                    printf("%40s: %.3lf ms\n", key.data(), compileTimeStats.get(key).milliseconds());
+                    SAFE_PRINTF("%40s: %.3lf ms\n", key, compileTimeStats.get(key).milliseconds());
             }
 
             if (Options::reportTotalPhaseTimes())
@@ -5185,8 +5193,7 @@ int jscmain(int argc, char** argv)
     WTF::initializeMainThread();
 
     // Match the QoS of the WebKit WebContent process.
-    if constexpr (isDarwin())
-        WTF::Thread::setCurrentThreadIsUserInteractive(-1);
+    WTF::Thread::setCurrentThreadIsUserInteractive(-1);
 
     // Note that the options parsing can affect VM creation, and thus
     // comes first.
@@ -5200,7 +5207,10 @@ int jscmain(int argc, char** argv)
 
     {
         Options::AllowUnfinalizedAccessScope scope;
-        processConfigFile(Options::configFile(), "jsc");
+        processConfigFile(Options::configFile(), "jsc"_s);
+#if ENABLE(AOT)
+        AOT::Shell::enableGlobalsOfBuiltinTable();
+#endif
     }
 
     JSC::initialize();
@@ -5210,6 +5220,10 @@ int jscmain(int argc, char** argv)
 #if ENABLE(JIT_OPERATION_DISASSEMBLY)
     if (Options::needDisassemblySupport()) [[unlikely]]
         JSC::JITOperationList::populateDisassemblyLabelsInEmbedder(&startOfJITOperationsInShell, &endOfJITOperationsInShell);
+#endif
+
+#if ENABLE(AOT)
+    AOT::Shell::mapImageFromOptions();
 #endif
 
     if (!Options::maxHeapSizeAsRAMSizeMultiple())

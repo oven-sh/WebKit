@@ -1,0 +1,45 @@
+# s[i] and s.at(i) may be undefined, and a method call or a length read on undefined throws, so a character that is a receiver is created, and a range of it reads the created character
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="element-length" parameters=[{type=string}, {type=int}] results=[{type=int}] {
+    v2 = ElemGet v0, v1
+    v3 = RequireObjectCoercible v2 nullishAccess=Read name="length"
+    v4 = GetStringLength v3
+    Return v4
+# CHECK: v2: undefined|string = StringRangeCharacterOrUndefined v0, -, -, v1
+# CHECK-NEXT: v3: string = RequireObjectCoercible v2 name="length"
+# CHECK-NEXT: v4: int[0, 2147483647] = GetStringLength v3
+}
+
+function f1 name="at-char-code-at" parameters=[{type=string}, {type=int}] results=[{type=number}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeAt/0
+    v3 = RequireObjectCoercible v2 nullishAccess=Read name="charCodeAt"
+    v4 = Integer integer=0
+    v5 = CallBuiltin v3, v4 overload=StringPrototypeCharCodeAt/0
+    Return v5
+# CHECK: v2: undefined|string = Call{{*}} overload=StringPrototypeAt/0
+# CHECK-NEXT: v3: string = RequireObjectCoercible v2 name="charCodeAt"
+# CHECK: v5: number = StringRangeCodeUnitOrNaN v3, -, -, v4
+}
+
+function f2 name="element-slice" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = ElemGet v0, v1
+    v3 = RequireObjectCoercible v2 nullishAccess=Read name="slice"
+    v4 = Integer integer=0
+    v5 = GetStringLength v3
+    v6 = StringRange v5, v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    v9 = Substring v3, v7, v8
+    v10 = String string="a"
+    v11 = StrictEq v9, v10
+    Return v11
+# CHECK: v2: undefined|string = StringRangeCharacterOrUndefined v0, -, -, v1
+# CHECK-NEXT: v3: string = RequireObjectCoercible v2 name="slice"
+# CHECK-NOT: = Substring
+# CHECK: [[result]]: boolean = StringRangeEqualsLiteral v3, v7, v8 literal="a"
+# CHECK-NEXT: Return [[result]]
+}

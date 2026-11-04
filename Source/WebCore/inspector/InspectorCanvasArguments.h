@@ -27,6 +27,7 @@
 #pragma once
 
 #include "CSSStyleImageValue.h"
+#include "CanvasDrawElementImageOptions.h"
 #include "CanvasElementImage.h"
 #include "CanvasGradient.h"
 #include "CanvasPattern.h"
@@ -70,8 +71,8 @@ namespace WebCore {
 struct GPUBindGroupDescriptor;
 struct GPUComputePassDescriptor;
 struct GPUComputePipelineDescriptor;
-struct GPUCopyElementImageDestination;
-struct GPUCopyElementImageSource;
+struct GPUDrawElementImageDestination;
+struct GPUDrawElementImageSource;
 struct GPUExternalTextureDescriptor;
 struct GPUImageCopyBuffer;
 struct GPUImageCopyExternalImage;
@@ -123,7 +124,7 @@ template<typename IDLType> struct InspectorCanvasArgumentProcessor<IDLNullable<I
     std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas& context, const auto& value)
     {
         if (!value)
-            return std::nullopt;
+            return { { context.valueIndexForData("null"_s), RecordingSwizzleType::JSON } };
         return InspectorCanvasArgumentProcessor<IDLInterface<IDLType>>{}(context, *value);
     }
 };
@@ -132,7 +133,7 @@ template<typename IDLType> struct InspectorCanvasArgumentProcessor<IDLNullable<I
     std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas& context, const auto& value)
     {
         if (!value)
-            return std::nullopt;
+            return { { context.valueIndexForData("null"_s), RecordingSwizzleType::JSON } };
         InspectorCanvasArgumentProcessor<IDLAllowSharedAdaptor<IDLType>> processor;
         // BufferSource is std::optional, Typed Arrays are RefPtr.
         if constexpr (requires { value.has_value(); })
@@ -172,7 +173,14 @@ template<typename IDLType> struct InspectorCanvasNullableArgumentProcessor {
     }
 };
 
-template<typename IDLType> struct InspectorCanvasArgumentProcessor<IDLNullable<IDLType>> : InspectorCanvasNullableArgumentProcessor<IDLType> { };
+template<typename IDLType> struct InspectorCanvasArgumentProcessor<IDLNullable<IDLType>> : InspectorCanvasNullableArgumentProcessor<IDLType> {
+    std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas& context, const auto& value)
+    {
+        if (IDLType::isNullValue(value))
+            return { { context.valueIndexForData("null"_s), RecordingSwizzleType::JSON } };
+        return InspectorCanvasNullableArgumentProcessor<IDLType> { }(context, value);
+    }
+};
 
 template<typename IDLType> struct InspectorCanvasArgumentProcessor<IDLOptional<IDLType>> : InspectorCanvasNullableArgumentProcessor<IDLType> { };
 
@@ -234,6 +242,10 @@ template<typename IDLType> struct InspectorCanvasArgumentProcessor<IDLEnumeratio
 
 // MARK: - Dictionaries
 
+template<> struct InspectorCanvasArgumentProcessor<IDLDictionary<CanvasDrawElementImageOptions>> {
+    std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas&, const CanvasDrawElementImageOptions&);
+};
+
 template<> struct InspectorCanvasArgumentProcessor<IDLDictionary<DOMMatrix2DInit>> {
     std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas&, const DOMMatrix2DInit&);
 };
@@ -246,12 +258,12 @@ template<> struct InspectorCanvasArgumentProcessor<IDLDictionary<GPUComputePipel
     std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas&, const GPUComputePipelineDescriptor&);
 };
 
-template<> struct InspectorCanvasArgumentProcessor<IDLDictionary<GPUCopyElementImageDestination>> {
-    std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas&, const GPUCopyElementImageDestination&);
+template<> struct InspectorCanvasArgumentProcessor<IDLDictionary<GPUDrawElementImageDestination>> {
+    std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas&, const GPUDrawElementImageDestination&);
 };
 
-template<> struct InspectorCanvasArgumentProcessor<IDLDictionary<GPUCopyElementImageSource>> {
-    std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas&, const GPUCopyElementImageSource&);
+template<> struct InspectorCanvasArgumentProcessor<IDLDictionary<GPUDrawElementImageSource>> {
+    std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas&, const GPUDrawElementImageSource&);
 };
 
 template<> struct InspectorCanvasArgumentProcessor<IDLDictionary<GPUExternalTextureDescriptor>> {
@@ -292,6 +304,10 @@ template<> struct InspectorCanvasArgumentProcessor<IDLDictionary<GPURenderPipeli
 
 template<> struct InspectorCanvasArgumentProcessor<IDLDictionary<GPUShaderModuleDescriptor>> {
     std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas&, const GPUShaderModuleDescriptor&);
+};
+
+template<> struct InspectorCanvasArgumentProcessor<IDLDictionary<UpdateElementGeometryOptions>> {
+    std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas&, const UpdateElementGeometryOptions&);
 };
 
 // MARK: - Strings
@@ -584,7 +600,7 @@ template<typename... IDLTypes> struct InspectorCanvasArgumentProcessor<IDLUnion<
 
 // MARK: - Sequences
 
-static Ref<JSON::ArrayOf<JSON::Value>> mapToArray(const auto& range, NOESCAPE auto&& functor)
+Ref<JSON::ArrayOf<JSON::Value>> mapToArray(const auto& range, NOESCAPE const auto& functor)
 {
     auto array = JSON::ArrayOf<JSON::Value>::create();
     for (auto& item : range)

@@ -64,6 +64,9 @@ void FunctionRareData::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     rareData->m_internalFunctionAllocationProfile.visitAggregate(visitor);
     visitor.append(rareData->m_boundFunctionStructureID);
     visitor.append(rareData->m_executable);
+#if ENABLE(AOT)
+    visitor.append(rareData->m_compiledAllocationStructureID);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(FunctionRareData);
@@ -134,6 +137,9 @@ void FunctionRareData::clear(const char* reason)
 {
     m_objectAllocationProfile.clear();
     m_internalFunctionAllocationProfile.clear();
+#if ENABLE(AOT)
+    m_compiledAllocationStructureID.clear();
+#endif
     m_allocationProfileWatchpointSet.fireAll(vm(), reason);
 }
 

@@ -58,8 +58,8 @@ using JSOrNativeResizeObserverCallback = Variant<Ref<ResizeObserverCallback>, Na
 class ResizeObserver : public RefCountedAndCanMakeWeakPtr<ResizeObserver> {
     WTF_MAKE_TZONE_ALLOCATED(ResizeObserver);
 public:
-    static Ref<ResizeObserver> create(Document&, Ref<ResizeObserverCallback>&&);
-    static Ref<ResizeObserver> createNativeObserver(Document&, NativeResizeObserverCallback&&);
+    static Ref<ResizeObserver> LEGACY_NODELETE create(Document&, Ref<ResizeObserverCallback>&&);
+    static Ref<ResizeObserver> LEGACY_NODELETE createNativeObserver(Document&, NativeResizeObserverCallback&&);
     ~ResizeObserver();
 
     bool hasObservations() const { return m_observations.size(); }
@@ -93,8 +93,8 @@ private:
     void removeAllTargets();
     bool removeObservation(const Element&);
     void observeInternal(Element&, const ResizeObserverBoxOptions);
-    bool NODELETE isNativeCallback();
-    bool NODELETE isJSCallback();
+    bool LEGACY_NODELETE isNativeCallback();
+    bool LEGACY_NODELETE isJSCallback();
 
     struct ResizeObservationHashFunctions {
         using T = Ref<ResizeObservation>;

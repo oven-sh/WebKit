@@ -26,6 +26,8 @@
 #include "config.h"
 #include "UserContentURLPattern.h"
 
+#include "PublicSuffixStore.h"
+#include "RegistrableDomain.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
@@ -87,6 +89,27 @@ UserContentURLPattern::UserContentURLPattern(StringView scheme, StringView host,
     }
 
     m_error = Error::None;
+}
+
+std::optional<RegistrableDomain> UserContentURLPattern::siteMatchedByPatterns(const Vector<UserContentURLPattern>& patterns)
+{
+    std::optional<RegistrableDomain> site;
+    for (auto& pattern : patterns) {
+        if (!pattern.isValid())
+            continue;
+
+        if (pattern.matchAllHosts() || PublicSuffixStore::singleton().isPublicSuffix(pattern.host()))
+            return std::nullopt;
+
+        if (pattern.host().isEmpty())
+            continue;
+
+        auto patternSite = RegistrableDomain::uncheckedCreateFromHost(pattern.host());
+        if (site && *site != patternSite)
+            return std::nullopt;
+        site = WTF::move(patternSite);
+    }
+    return site;
 }
 
 bool UserContentURLPattern::operator==(const UserContentURLPattern& other) const
@@ -259,10 +282,10 @@ struct MatchTester {
     {
     }
 
-    bool NODELETE testStringFinished() const { return m_testIndex >= m_test.length(); }
-    bool NODELETE patternStringFinished() const { return m_patternIndex >= m_pattern.length(); }
+    bool LEGACY_NODELETE testStringFinished() const { return m_testIndex >= m_test.length(); }
+    bool LEGACY_NODELETE patternStringFinished() const { return m_patternIndex >= m_pattern.length(); }
 
-    void NODELETE eatWildcard()
+    void LEGACY_NODELETE eatWildcard()
     {
         while (!patternStringFinished()) {
             if (m_pattern[m_patternIndex] != '*')
@@ -271,7 +294,7 @@ struct MatchTester {
         }
     }
 
-    void NODELETE eatSameChars()
+    void LEGACY_NODELETE eatSameChars()
     {
         while (!patternStringFinished() && !testStringFinished()) {
             if (m_pattern[m_patternIndex] == '*')
@@ -283,7 +306,7 @@ struct MatchTester {
         }
     }
 
-    bool NODELETE test()
+    bool LEGACY_NODELETE test()
     {
         // Eat all the matching chars.
         eatSameChars();

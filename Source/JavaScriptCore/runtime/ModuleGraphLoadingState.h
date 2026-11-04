@@ -66,8 +66,18 @@ public:
     void setIsLoading(bool loading) { m_isLoading = loading; }
 
     void appendVisited(VM&, CyclicModuleRecord*);
+#if ENABLE(AOT)
+    // Of the module that was appended last.
+    void forgetVisited(CyclicModuleRecord* cyclic)
+    {
+        Locker locker { cellLock() };
+        ASSERT(m_visited.last().get() == cyclic);
+        m_visited.removeLast();
+        m_visitedSet.remove(cyclic);
+    }
+#endif
     bool containsVisited(const AbstractModuleRecord* record) const { return m_visitedSet.contains(record); }
-    void iterateVisited(auto&& function) const
+    void iterateVisited(NOESCAPE const auto& function) const
     {
         for (const auto& barrier : m_visited)
             function(barrier.get());

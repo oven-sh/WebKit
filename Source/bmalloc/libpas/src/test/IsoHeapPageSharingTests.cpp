@@ -37,12 +37,14 @@
 #include <mutex>
 #include "pas_all_heaps.h"
 #include "pas_baseline_allocator_table.h"
+#include "pas_epoch.h"
 #include "pas_heap.h"
 #include "pas_heap_for_config.h"
 #include "pas_large_free_heap_helpers.h"
 #include "pas_large_sharing_pool.h"
 #include "pas_large_utility_free_heap.h"
 #include "pas_page_malloc.h"
+#include "pas_page_sharing_participant.h"
 #include "pas_scavenger.h"
 #include "pas_segregated_size_directory.h"
 #include "pas_thread_local_cache.h"
@@ -93,7 +95,7 @@ void testTakePages(unsigned firstObjectSize,
     
     for (size_t index = firstCount; index--;) {
         pas_page_sharing_pool_verify(&pas_physical_page_sharing_pool, pas_lock_is_not_held);
-        void* object = iso_try_allocate(&firstHeapRef, pas_non_compact_allocation_mode);
+        void* object = iso_try_allocate(&firstHeapRef);
         CHECK(object);
         CHECK(!objects.count(object));
         objects.insert(object);
@@ -158,7 +160,7 @@ void testTakePages(unsigned firstObjectSize,
         if (verbose)
             cout << "Allocating.\n";
         
-        void* object = iso_try_allocate(&secondHeapRef, pas_non_compact_allocation_mode);
+        void* object = iso_try_allocate(&secondHeapRef);
 
         if (verbose)
             cout << "Did allocate.\n";
@@ -195,7 +197,7 @@ void testTakePages(unsigned firstObjectSize,
     
     for (size_t index = 0; index < thirdCount; ++index) {
         pas_page_sharing_pool_verify(&pas_physical_page_sharing_pool, pas_lock_is_not_held);
-        void* object = iso_try_allocate(&firstHeapRef, pas_non_compact_allocation_mode);
+        void* object = iso_try_allocate(&firstHeapRef);
         CHECK(object);
         CHECK(!objects.count(object));
         objects.insert(object);
@@ -241,7 +243,7 @@ void testTakePagesFromCorrectHeap(unsigned numHeaps,
     auto allocate = [&] (unsigned i) {
         if (verbose)
             cout << "Allocating i = " << i << ", size = " << sizeFunc(i) << "\n";
-        objects[i] = iso_try_allocate((heapRefs + i), pas_non_compact_allocation_mode);
+        objects[i] = iso_try_allocate((heapRefs + i));
         if (verbose)
             cout << "    Allocated object at " << objects[i] << "\n";
         directories[i] = pas_segregated_size_directory_for_object(
@@ -360,11 +362,11 @@ void testLargeHeapTakesPagesFromCorrectSmallHeap()
     };
     
     for (size_t size = 0; size < 10000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (size_t size = 0; size < 10000000; size += 512)
-        addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefTwo));
     for (size_t size = 0; size < 10000000; size += 1000000)
-        addObject(iso_try_allocate(&heapRefThree, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefThree));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_get(&iso_heap_config),
@@ -428,7 +430,7 @@ void testLargeHeapTakesPagesFromCorrectSmallHeap()
     if (verbose)
         cout << "Allocating big object.\n";
     
-    addObject(iso_try_allocate(&heapRefFour, pas_non_compact_allocation_mode));
+    addObject(iso_try_allocate(&heapRefFour));
     
     if (verbose)
         cout << "Did allocate big object.\n";
@@ -485,11 +487,11 @@ void testLargeHeapTakesPagesFromCorrectSmallHeapAllocateAfterFree()
     };
     
     for (size_t size = 0; size < 10000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (size_t size = 0; size < 10000000; size += 512)
-        addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefTwo));
     for (size_t size = 0; size < 10000000; size += 1000000)
-        addObject(iso_try_allocate(&heapRefThree, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefThree));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_get(&iso_heap_config),
@@ -522,7 +524,7 @@ void testLargeHeapTakesPagesFromCorrectSmallHeapAllocateAfterFree()
         iso_deallocate(object);
     objects.clear();
     
-    iso_deallocate(checkObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode)));
+    iso_deallocate(checkObject(iso_try_allocate(&heapRefOne)));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_get(&iso_heap_config),
@@ -555,7 +557,7 @@ void testLargeHeapTakesPagesFromCorrectSmallHeapAllocateAfterFree()
     if (verbose)
         cout << "Allocating big object.\n";
     
-    checkObject(iso_try_allocate(&heapRefFour, pas_non_compact_allocation_mode));
+    checkObject(iso_try_allocate(&heapRefFour));
     
     if (verbose)
         cout << "Did allocate big object.\n";
@@ -608,13 +610,13 @@ void testLargeHeapTakesPagesFromCorrectSmallHeapWithFancyOrder()
     };
     
     for (size_t size = 0; size < 5000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (size_t size = 0; size < 10000000; size += 512)
-        addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefTwo));
     for (size_t size = 0; size < 5000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (size_t size = 0; size < 10000000; size += 1000000)
-        addObject(iso_try_allocate(&heapRefThree, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefThree));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_get(&iso_heap_config),
@@ -678,7 +680,7 @@ void testLargeHeapTakesPagesFromCorrectSmallHeapWithFancyOrder()
     if (verbose)
         cout << "Allocating big object.\n";
     
-    addObject(iso_try_allocate(&heapRefFour, pas_non_compact_allocation_mode));
+    addObject(iso_try_allocate(&heapRefFour));
     
     if (verbose)
         cout << "Did allocate big object.\n";
@@ -733,11 +735,11 @@ void testLargeHeapTakesPagesFromCorrectLargeHeap()
     };
     
     for (size_t size = 0; size < 10000000; size += 1000000)
-        addObject(iso_try_allocate(&heapRefThree, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefThree));
     for (size_t size = 0; size < 10000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (size_t size = 0; size < 10000000; size += 512)
-        addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefTwo));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_get(&iso_heap_config),
@@ -801,7 +803,7 @@ void testLargeHeapTakesPagesFromCorrectLargeHeap()
     if (verbose)
         cout << "Allocating big object.\n";
     
-    addObject(iso_try_allocate(&heapRefFour, pas_non_compact_allocation_mode));
+    addObject(iso_try_allocate(&heapRefFour));
     
     if (verbose)
         cout << "Did allocate big object.\n";
@@ -869,11 +871,11 @@ void testLargeHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnSmallHeap()
     };
     
     for (size_t size = 0; size < 10000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (size_t size = 0; size < 10000000; size += 1000000)
-        addObject(iso_try_allocate(&heapRefThree, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefThree));
     for (size_t size = 0; size < 10000000; size += 512)
-        addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefTwo));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_get(&iso_heap_config),
@@ -908,7 +910,7 @@ void testLargeHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnSmallHeap()
 
     // Use the first heap a decent amount.
     for (size_t size = 0; size < 5000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
 
     deleteAllObjects();
 
@@ -943,7 +945,7 @@ void testLargeHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnSmallHeap()
     if (verbose)
         cout << "Allocating big object.\n";
     
-    checkObject(iso_try_allocate(&heapRefFour, pas_non_compact_allocation_mode));
+    checkObject(iso_try_allocate(&heapRefFour));
     
     if (verbose)
         cout << "Did allocate big object.\n";
@@ -1018,11 +1020,11 @@ void testLargeHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnAnotherLargeH
         cout << "Filling up heaps 1-3.\n";
     
     for (size_t size = 0; size < 10000000; size += 2000000)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (size_t size = 0; size < 10000000; size += 1000000)
-        addObject(iso_try_allocate(&heapRefThree, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefThree));
     for (size_t size = 0; size < 10000000; size += 512)
-        addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefTwo));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1069,7 +1071,7 @@ void testLargeHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnAnotherLargeH
         cout << "Filling up heap 1 and emptying it again.\n";
     
     for (size_t size = 0; size < 10000000; size += 2000000)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (void* object : objects)
         iso_deallocate(object);
     objects.clear();
@@ -1101,7 +1103,7 @@ void testLargeHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnAnotherLargeH
     if (verbose)
         cout << "Allocating big object.\n";
     
-    checkObject(iso_try_allocate(&heapRefFour, pas_non_compact_allocation_mode));
+    checkObject(iso_try_allocate(&heapRefFour));
     
     if (verbose)
         cout << "Did allocate big object.\n";
@@ -1157,13 +1159,13 @@ void testLargeHeapTakesPagesFromCorrectLargeHeapWithFancyOrder()
     };
     
     for (size_t size = 0; size < 5000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (size_t size = 0; size < 10000000; size += 1000000)
-        addObject(iso_try_allocate(&heapRefThree, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefThree));
     for (size_t size = 0; size < 5000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (size_t size = 0; size < 10000000; size += 512)
-        addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefTwo));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1230,7 +1232,7 @@ void testLargeHeapTakesPagesFromCorrectLargeHeapWithFancyOrder()
     if (verbose)
         cout << "Allocating big object.\n";
     
-    addObject(iso_try_allocate(&heapRefFour, pas_non_compact_allocation_mode));
+    addObject(iso_try_allocate(&heapRefFour));
     
     if (verbose)
         cout << "Did allocate big object.\n";
@@ -1288,10 +1290,10 @@ void testSmallHeapTakesPagesFromCorrectLargeHeap()
     };
     
     for (size_t size = 0; size < 10000000; size += 1000000)
-        addObject(iso_try_allocate(&heapRefThree, pas_non_compact_allocation_mode));
-    addObject(iso_try_allocate(&heapRefFour, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefThree));
+    addObject(iso_try_allocate(&heapRefFour));
     for (size_t size = 0; size < 10000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1355,7 +1357,7 @@ void testSmallHeapTakesPagesFromCorrectLargeHeap()
     if (verbose)
         cout << "Allocating small object.\n";
     
-    addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+    addObject(iso_try_allocate(&heapRefTwo));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1388,7 +1390,7 @@ void testSmallHeapTakesPagesFromCorrectLargeHeap()
     // It's possible that heap four has also been decommitted, if it was adjacent to heap three.
     
     for (size_t size = 512; size < 10000000; size += 512)
-        addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefTwo));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1447,12 +1449,12 @@ void testSmallHeapTakesPagesFromCorrectLargeHeapWithFancyOrder()
     };
     
     for (size_t size = 0; size < 5000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (size_t size = 0; size < 10000000; size += 1000000)
-        addObject(iso_try_allocate(&heapRefThree, pas_non_compact_allocation_mode));
-    addObject(iso_try_allocate(&heapRefFour, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefThree));
+    addObject(iso_try_allocate(&heapRefFour));
     for (size_t size = 0; size < 5000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1516,7 +1518,7 @@ void testSmallHeapTakesPagesFromCorrectLargeHeapWithFancyOrder()
     if (verbose)
         cout << "Allocating small object.\n";
     
-    addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+    addObject(iso_try_allocate(&heapRefTwo));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1549,7 +1551,7 @@ void testSmallHeapTakesPagesFromCorrectLargeHeapWithFancyOrder()
     // It's possible that heap four has also been decommitted, if it was adjacent to heap three.
     
     for (size_t size = 512; size < 10000000; size += 512)
-        addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefTwo));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1612,10 +1614,10 @@ void testSmallHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnSmallHeap()
     };
     
     for (size_t size = 0; size < 10000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (size_t size = 0; size < 10000000; size += 1000000)
-        addObject(iso_try_allocate(&heapRefThree, pas_non_compact_allocation_mode));
-    addObject(iso_try_allocate(&heapRefFour, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefThree));
+    addObject(iso_try_allocate(&heapRefFour));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1653,7 +1655,7 @@ void testSmallHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnSmallHeap()
                                   pas_lock_is_not_held);
 
     for (size_t size = 0; size < 10000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     for (void* object : objects)
         iso_deallocate(object);
     objects.clear();
@@ -1689,7 +1691,7 @@ void testSmallHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnSmallHeap()
     if (verbose)
         cout << "Allocating small object.\n";
     
-    checkObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+    checkObject(iso_try_allocate(&heapRefTwo));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1722,7 +1724,7 @@ void testSmallHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnSmallHeap()
     // It's possible that heap four has also been decommitted, if it was adjacent to heap three.
     
     for (size_t size = 512; size < 10000000; size += 512)
-        addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefTwo));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1785,11 +1787,11 @@ void testSmallHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnAnotherLargeH
         objects.push_back(checkObject(object));
     };
     
-    addObject(iso_try_allocate(&heapRefFour, pas_non_compact_allocation_mode));
+    addObject(iso_try_allocate(&heapRefFour));
     for (size_t size = 0; size < 10000000; size += 1000000)
-        addObject(iso_try_allocate(&heapRefThree, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefThree));
     for (size_t size = 0; size < 10000000; size += 64)
-        addObject(iso_try_allocate(&heapRefOne, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefOne));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1826,7 +1828,7 @@ void testSmallHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnAnotherLargeH
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
                                   pas_lock_is_not_held);
     
-    iso_deallocate(checkObject(iso_try_allocate(&heapRefFour, pas_non_compact_allocation_mode)));
+    iso_deallocate(checkObject(iso_try_allocate(&heapRefFour)));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1859,7 +1861,7 @@ void testSmallHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnAnotherLargeH
     if (verbose)
         cout << "Allocating small object.\n";
     
-    checkObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+    checkObject(iso_try_allocate(&heapRefTwo));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -1893,7 +1895,7 @@ void testSmallHeapTakesPagesFromCorrectLargeHeapAllocateAfterFreeOnAnotherLargeH
     CHECK_EQUAL(summaryFour.decommitted, 0);
     
     for (size_t size = 512; size < 10000000; size += 512)
-        addObject(iso_try_allocate(&heapRefTwo, pas_non_compact_allocation_mode));
+        addObject(iso_try_allocate(&heapRefTwo));
     
     pas_baseline_allocator_table_for_all(pas_allocator_scavenge_force_stop_action);
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
@@ -2074,27 +2076,27 @@ void allocateThingiesImpl(ThingyKind kind, AllocationKind allocateMany)
     switch (kind) {
     case SmallHeapOne:
         for (unsigned i = allocateMany ? 156250 : 1; i--;)
-            addObject(iso_try_allocate(&smallHeapRefOne, pas_non_compact_allocation_mode));
+            addObject(iso_try_allocate(&smallHeapRefOne));
         return;
     case SmallHeapTwo:
         for (unsigned i = allocateMany ? 39062 : 1; i--;)
-            addObject(iso_try_allocate(&smallHeapRefTwo, pas_non_compact_allocation_mode));
+            addObject(iso_try_allocate(&smallHeapRefTwo));
         return;
     case SmallHeapThree:
         for (unsigned i = allocateMany ? 33112 : 1; i--;)
-            addObject(iso_try_allocate(&smallHeapRefThree, pas_non_compact_allocation_mode));
+            addObject(iso_try_allocate(&smallHeapRefThree));
         return;
     case LargeHeapOne:
         for (unsigned i = allocateMany ? 5 : 1; i--;)
-            addObject(iso_try_allocate(&largeHeapRefOne, pas_non_compact_allocation_mode));
+            addObject(iso_try_allocate(&largeHeapRefOne));
         return;
     case LargeHeapTwo:
         for (unsigned i = allocateMany ? 19 : 1; i--;)
-            addObject(iso_try_allocate(&largeHeapRefTwo, pas_non_compact_allocation_mode));
+            addObject(iso_try_allocate(&largeHeapRefTwo));
         return;
     case PrimitiveSmallOne:
         for (unsigned i = allocateMany ? 156250 : 1; i--;) {
-            void* object = addObject(iso_try_allocate_common_primitive(32, pas_non_compact_allocation_mode));
+            void* object = addObject(iso_try_allocate_common_primitive(32));
             
             pas_segregated_size_directory* directory;
             
@@ -2110,7 +2112,7 @@ void allocateThingiesImpl(ThingyKind kind, AllocationKind allocateMany)
         return;
     case PrimitiveSmallTwo:
         for (unsigned i = allocateMany ? 39062 : 1; i--;) {
-            void* object = addObject(iso_try_allocate_common_primitive(128, pas_non_compact_allocation_mode));
+            void* object = addObject(iso_try_allocate_common_primitive(128));
             
             pas_segregated_size_directory* directory;
             
@@ -2126,7 +2128,7 @@ void allocateThingiesImpl(ThingyKind kind, AllocationKind allocateMany)
         return;
     case PrimitiveSmallThree:
         for (unsigned i = allocateMany ? 104166 : 1; i--;) {
-            void* object = addObject(iso_try_allocate_common_primitive(48, pas_non_compact_allocation_mode));
+            void* object = addObject(iso_try_allocate_common_primitive(48));
             
             pas_segregated_size_directory* directory;
             
@@ -2142,7 +2144,7 @@ void allocateThingiesImpl(ThingyKind kind, AllocationKind allocateMany)
         return;
     case PrimitiveLarge:
         for (unsigned i = allocateMany ? 19 : 1; i--;)
-            addObject(iso_try_allocate_common_primitive(254384, pas_non_compact_allocation_mode));
+            addObject(iso_try_allocate_common_primitive(254384));
         return;
     }
     PAS_ASSERT(!"Should not be reached");
@@ -4245,6 +4247,127 @@ void testNewEligibleHasOlderEpoch()
     assertOnlyDecommitted({ SmallHeapTwo });
 }
 
+// Big enough that adding it to any counter epoch the tests produce puts the participant far past
+// whatever max_epoch the tests scavenge with.
+constexpr uint64_t participantEpochOffset = 1ull << 40;
+
+// 1. Free older participant
+// 2. Free newer participant
+// 3. Scavenge
+// Sans epoch offsets, both the older and newer participants would be
+// decommitted. But with an offset placed on the older participant,
+// only the newer participant is decommitted.
+void testSegregatedVariantEpochOffsetsDelayDecommit()
+{
+    pas_epoch_is_counter = true;
+    setupThingy();
+
+    pas_segregated_participant_epoch_offsets[pas_small_segregated_page_config_variant] = 0;
+    pas_segregated_participant_epoch_offsets[pas_medium_segregated_page_config_variant] = participantEpochOffset;
+
+    pas_heap_ref smallHeapRef = ISO_HEAP_REF_INITIALIZER(32);
+    pas_heap_ref mediumHeapRef = ISO_HEAP_REF_INITIALIZER(4096);
+    pas_heap* smallHeap = iso_heap_ref_get_heap(&smallHeapRef);
+    pas_heap* mediumHeap = iso_heap_ref_get_heap(&mediumHeapRef);
+
+    vector<void*> smallObjects;
+    vector<void*> mediumObjects;
+    for (unsigned i = 10000; i--;)
+        smallObjects.push_back(checkThingy(iso_try_allocate(&smallHeapRef)));
+    for (unsigned i = 300; i--;)
+        mediumObjects.push_back(checkThingy(iso_try_allocate(&mediumHeapRef)));
+
+    auto variantOf = [&] (void* object) {
+        return pas_segregated_page_config_kind_get_config(
+            pas_segregated_size_directory_for_object(
+                reinterpret_cast<uintptr_t>(object), &iso_heap_config)->base.page_config_kind)->variant;
+    };
+    CHECK_EQUAL(variantOf(smallObjects[0]), pas_small_segregated_page_config_variant);
+    CHECK_EQUAL(variantOf(mediumObjects[0]), pas_medium_segregated_page_config_variant);
+
+    auto freeAll = [&] (vector<void*>& objects) {
+        for (void* object : objects)
+            iso_deallocate(object);
+        objects.clear();
+        pas_thread_local_cache_flush_deallocation_log(pas_thread_local_cache_get(&iso_heap_config),
+                                                      pas_lock_is_not_held);
+        cleanThingy();
+    };
+
+    // The medium heap goes first, so it has the older raw epoch.
+    freeAll(mediumObjects);
+    freeAll(smallObjects);
+
+    auto decommitted = [&] (pas_heap* heap) {
+        HeapLocker heapLocker;
+        return pas_heap_compute_summary(heap, pas_lock_is_held).decommitted;
+    };
+
+    CHECK_EQUAL(decommitted(smallHeap), 0);
+    CHECK_EQUAL(decommitted(mediumHeap), 0);
+
+    pas_physical_page_sharing_pool_scavenge(pas_get_epoch());
+
+    CHECK_GREATER(decommitted(smallHeap), 0);
+    CHECK_EQUAL(decommitted(mediumHeap), 0);
+
+    pas_physical_page_sharing_pool_scavenge(pas_get_epoch() + participantEpochOffset);
+
+    CHECK_GREATER(decommitted(mediumHeap), 0);
+}
+
+void testLargeSharingPoolEpochOffsetDelaysDecommit()
+{
+    pas_epoch_is_counter = true;
+    setupThingy();
+
+    pas_segregated_participant_epoch_offsets[pas_small_segregated_page_config_variant] = 0;
+    pas_page_sharing_participant_large_sharing_pool_epoch_offset = participantEpochOffset;
+
+    pas_heap_ref smallHeapRef = ISO_HEAP_REF_INITIALIZER(32);
+    pas_heap_ref largeHeapRef = ISO_HEAP_REF_INITIALIZER(1000000);
+    pas_heap* smallHeap = iso_heap_ref_get_heap(&smallHeapRef);
+    pas_heap* largeHeap = iso_heap_ref_get_heap(&largeHeapRef);
+
+    vector<void*> smallObjects;
+    vector<void*> largeObjects;
+    for (unsigned i = 10000; i--;)
+        smallObjects.push_back(checkThingy(iso_try_allocate(&smallHeapRef)));
+    for (unsigned i = 5; i--;)
+        largeObjects.push_back(checkThingy(iso_try_allocate(&largeHeapRef)));
+
+    // The large heap goes first, so it has the older raw epoch.
+    for (void* object : largeObjects)
+        iso_deallocate(object);
+    largeObjects.clear();
+    pas_thread_local_cache_flush_deallocation_log(pas_thread_local_cache_get(&iso_heap_config),
+                                                  pas_lock_is_not_held);
+    cleanThingy();
+    for (void* object : smallObjects)
+        iso_deallocate(object);
+    smallObjects.clear();
+    pas_thread_local_cache_flush_deallocation_log(pas_thread_local_cache_get(&iso_heap_config),
+                                                  pas_lock_is_not_held);
+    cleanThingy();
+
+    auto decommitted = [&] (pas_heap* heap) {
+        HeapLocker heapLocker;
+        return pas_heap_compute_summary(heap, pas_lock_is_held).decommitted;
+    };
+
+    CHECK_EQUAL(decommitted(smallHeap), 0);
+    CHECK_EQUAL(decommitted(largeHeap), 0);
+
+    pas_physical_page_sharing_pool_scavenge(pas_get_epoch());
+
+    CHECK_GREATER(decommitted(smallHeap), 0);
+    CHECK_EQUAL(decommitted(largeHeap), 0);
+
+    pas_physical_page_sharing_pool_scavenge(pas_get_epoch() + participantEpochOffset);
+
+    CHECK_GREATER(decommitted(largeHeap), 0);
+}
+
 pas_heap* scavengerCompletionHeap;
 bool scavengerCompletionExpectDone;
 bool scavengerCompletionIsDone;
@@ -4280,7 +4403,7 @@ void testScavengerEventuallyReturnsMemory(unsigned objectSize,
     vector<void*> objectList;
 
     for (size_t index = count; index--;) {
-        void* object = iso_try_allocate(&heapRef, pas_non_compact_allocation_mode);
+        void* object = iso_try_allocate(&heapRef);
         CHECK(object);
         objectList.push_back(object);
     }
@@ -4326,7 +4449,7 @@ void testScavengerEventuallyReturnsMemoryEvenWithoutManualShrink(unsigned object
     vector<void*> objectList;
 
     for (size_t index = count; index--;) {
-        void* object = iso_try_allocate(&heapRef, pas_non_compact_allocation_mode);
+        void* object = iso_try_allocate(&heapRef);
         CHECK(object);
         objectList.push_back(object);
     }
@@ -4518,6 +4641,8 @@ void addAllTests()
         }
     
         ADD_TEST(testNewEligibleHasOlderEpoch());
+        ADD_TEST(testSegregatedVariantEpochOffsetsDelayDecommit());
+        ADD_TEST(testLargeSharingPoolEpochOffsetDelaysDecommit());
     
         ADD_TEST(testScavengerEventuallyReturnsMemory(128, 1));
         ADD_TEST(testScavengerEventuallyReturnsMemory(128, 10000));

@@ -34,7 +34,7 @@ namespace Style {
 namespace Calculation {
 class Value;
 struct Child;
-Ref<Value> CLANG_POINTER_CONVERSION protect(Value&);
+Ref<Value> CLANG_POINTER_CONVERSION LEGACY_NODELETE protect(Value&);
 }
 
 struct ZoomFactor;
@@ -54,7 +54,7 @@ public:
     WEBCORE_EXPORT ~UnevaluatedCalculationBase();
 
     Calculation::Value& calculation() const { return m_calc; }
-    [[nodiscard]] Calculation::Value& NODELETE leakRef();
+    [[nodiscard]] Calculation::Value& LEGACY_NODELETE leakRef();
 
     bool equal(const UnevaluatedCalculationBase&) const;
 
@@ -119,7 +119,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, const UnevaluatedCalculationBase&)
 } // namespace WebCore
 
 namespace WTF {
-template<WebCore::Style::Calc T> struct IsSmartPtr<T> {
+template<WebCore::CSS::Numeric CSSType> struct IsSmartPtr<WebCore::Style::UnevaluatedCalculation<CSSType>> {
     static constexpr bool value = true;
 };
 

@@ -1,0 +1,28 @@
+# const values = [1.5, "a", null, { x: 1.5 }]  function first() { return values[0] }  register(first)
+# FORM: AsRead
+# OPTIONS: validate disable=pass:InlineCalls
+# RUN: generate-code calls
+# CHECK-LABEL: f1: size=
+# CHECK: operation operationAOTValueHasType x1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Double number=1.5
+    v1 = String string="a"
+    v2 = Null
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewArray v0, v1, v2, v4 contents=anything holes=[]
+    v6 = NewClosure v5 function=f1
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="register" [isFreeName]
+    v9 = Call v8, -, v6
+    Return
+}
+function f1 name="first" captures=[{type=Array<anything>}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}

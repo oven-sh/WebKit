@@ -41,10 +41,12 @@ public:
     void deref() const final { CanvasRenderingContext::deref(); }
     USING_CAN_MAKE_WEAKPTR(CanvasRenderingContext);
 
+    bool delegatesDisplay() const final { return true; }
+
 protected:
     explicit GPUBasedCanvasRenderingContext(CanvasBase&, CanvasRenderingContext::Type);
 
-    HTMLCanvasElement* NODELETE htmlCanvas() const;
+    HTMLCanvasElement* LEGACY_NODELETE htmlCanvas() const;
     void willUpdateCanvasContents();
 };
     

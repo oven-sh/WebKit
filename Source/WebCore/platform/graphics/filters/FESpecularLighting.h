@@ -35,10 +35,10 @@ public:
     bool operator==(const FESpecularLighting& other) const { return FELighting::operator==(other); }
 
     float specularConstant() const { return m_specularConstant; }
-    bool setSpecularConstant(float);
+    bool LEGACY_NODELETE setSpecularConstant(float);
 
     float specularExponent() const { return m_specularExponent; }
-    bool NODELETE setSpecularExponent(float);
+    bool LEGACY_NODELETE setSpecularExponent(float);
 
     WTF::TextStream& externalRepresentation(WTF::TextStream&, FilterRepresentation) const override;
 

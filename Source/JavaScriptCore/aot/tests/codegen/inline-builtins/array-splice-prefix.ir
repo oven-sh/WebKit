@@ -1,0 +1,50 @@
+# A splice whose removed elements are delivered as results allocates no array where the elements are moved by inline code; behind that, and with a count of removed elements that is not known, it calls the operation and then the function; compact code moves nothing in place
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="removesOneElement" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}] results=[{type=undefined}] {
+    v2 = Integer integer=1
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0 builtinCallForm=Prefix prefixLength=0
+    Return
+}
+# S: f0 b0 Balanced
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: NewArray
+# CHECK: operation operationAOTArraySplice x1
+# CHECK-NOT: NewArray
+# CHECK: stub CallHostFunction
+function f1 name="removesTwoAndReadsBoth" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=i32}, {type=number}] results=[{type=anything}] {
+    v3 = Integer integer=2
+    v4 = CallBuiltin v0, v1, v3, v2 overload=ArrayPrototypeSplice/0 builtinCallForm=Prefix prefixLength=3
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    v7 = ResultAt v4 index=2
+    v8 = ResultAt v4 index=3
+    v9 = NewArray v5, v6, v7, v8 contents=anything
+    Return v9
+}
+# CHECK-LABEL: f1: size=
+function f2 name="countNotKnown" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=i32}] results=[{type=anything}] {
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0 builtinCallForm=Prefix prefixLength=1
+    v4 = ResultAt v3 index=1
+    Return v4
+}
+# CHECK-LABEL: f2: size=
+# CHECK: operation operationAOTArraySplice x1
+# CHECK: stub CallHostFunction
+function f3 name="inCompactCode" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = Integer integer=1
+    v4 = CallBuiltin v0, v1, v3 overload=ArrayPrototypeSplice/0 builtinCallForm=Prefix prefixLength=0
+    Jump -> next b2()
+  b2():
+    Return
+}
+# S: f3 b1 Compact
+# CHECK-LABEL: f3: size=
+# CHECK: operation operationAOTArraySplice x1
+# CHECK: stub CallHostFunction

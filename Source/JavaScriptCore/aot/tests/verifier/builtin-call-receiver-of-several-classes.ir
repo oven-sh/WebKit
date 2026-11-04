@@ -1,0 +1,26 @@
+# a built-in call takes a receiver of several classes where its parameter takes each of them
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidBuiltinCall 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodViewOrBuffer" parameters=[{type=Buffer|Uint8Array}, {type=number}] results=[{type=undefined}] {
+    v2 = CallBuiltin v0, v1 overload=TypedArrayPrototypeSubarray/0
+    Return
+}
+function f1 name="goodTwoKindsOfView" parameters=[{type=Uint8Array|Float64Array}, {type=number}] results=[{type=undefined}] {
+    v2 = CallBuiltin v0, v1 overload=TypedArrayPrototypeSubarray/0
+    Return
+}
+function f2 name="goodOneKindOfView" parameters=[{type=Uint8Array}, {type=number}] results=[{type=undefined}] {
+    v2 = CallBuiltin v0, v1 overload=TypedArrayPrototypeSubarray/0
+    Return
+}
+function f3 name="badViewOrMap" parameters=[{type=Map|Uint8Array}, {type=number}] results=[{type=undefined}] {
+    v2 = CallBuiltin v0, v1 overload=TypedArrayPrototypeSubarray/0
+    Return
+}
+function f4 name="badViewOrString" parameters=[{type=string|Buffer|Uint8Array}, {type=number}] results=[{type=undefined}] {
+    v2 = CallBuiltin v0, v1 overload=TypedArrayPrototypeSubarray/0
+    Return
+}

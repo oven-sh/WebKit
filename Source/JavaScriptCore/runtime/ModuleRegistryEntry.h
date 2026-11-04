@@ -88,7 +88,7 @@ public:
     void setStatus(Status);
 
     void provideFetch(JSGlobalObject*, SourceCode&&);
-    void provideFetch(JSGlobalObject*, JSSourceCode*);
+    void provideFetch(JSGlobalObject*, JSValue);
     void fetchComplete(JSGlobalObject*, AbstractModuleRecord*);
 #if USE(BUN_JSC_ADDITIONS)
     // For an embedder that already built the module record: leaves the entry Fetched without allocating the
@@ -102,6 +102,7 @@ public:
     bool isLoaded() const;
     // loadPromise(), materializing it first for an entry that was markLoaded().
     JSPromise* loadedPromise(JSGlobalObject*);
+    void replaceRecord(JSGlobalObject*, AbstractModuleRecord*);
 #endif
 
 private:

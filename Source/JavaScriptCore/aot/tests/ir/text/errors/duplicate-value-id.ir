@@ -1,0 +1,11 @@
+# A value id defined twice
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    v0 = Undefined
+    Return
+}

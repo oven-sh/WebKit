@@ -27,6 +27,7 @@
 
 #include "GPRInfo.h"
 #include "JSCPtrTag.h"
+#include "LLIntData.h"
 
 namespace JSC {
 
@@ -36,6 +37,8 @@ namespace LLInt {
 extern "C" {
     void llintPCRangeStart();
     void llintPCRangeEnd();
+    void llintBytecodePCRangeStart();
+    void llintBytecodePCRangeEnd();
 #if ENABLE(WEBASSEMBLY)
     void wasmIPIntPCRangeStart();
     void wasmIPIntPCRangeEnd();
@@ -48,17 +51,18 @@ ALWAYS_INLINE bool isLLIntPC(void* pc)
     uintptr_t llintStart = untagCodePtr<uintptr_t, CFunctionPtrTag>(llintPCRangeStart);
     uintptr_t llintEnd = untagCodePtr<uintptr_t, CFunctionPtrTag>(llintPCRangeEnd);
     RELEASE_ASSERT(llintStart < llintEnd);
-    return llintStart <= pcAsInt && pcAsInt <= llintEnd;
+    if (llintStart <= pcAsInt && pcAsInt <= llintEnd)
+        return true;
+    auto& config = g_opcodeConfig;
+    return (config.bytecodePCRangeStart <= pcAsInt && pcAsInt < config.bytecodePCRangeEnd)
+        || (config.wasmIPIntPCRangeStart <= pcAsInt && pcAsInt < config.wasmIPIntPCRangeEnd);
 }
 
 #if ENABLE(WEBASSEMBLY)
 ALWAYS_INLINE bool isWasmIPIntPC(void* pc)
 {
     uintptr_t pcAsInt = std::bit_cast<uintptr_t>(pc);
-    uintptr_t start = untagCodePtr<uintptr_t, CFunctionPtrTag>(wasmIPIntPCRangeStart);
-    uintptr_t end = untagCodePtr<uintptr_t, CFunctionPtrTag>(wasmIPIntPCRangeEnd);
-    RELEASE_ASSERT(start < end);
-    return start <= pcAsInt && pcAsInt <= end;
+    return g_opcodeConfig.wasmIPIntPCRangeStart <= pcAsInt && pcAsInt < g_opcodeConfig.wasmIPIntPCRangeEnd;
 }
 #endif
 

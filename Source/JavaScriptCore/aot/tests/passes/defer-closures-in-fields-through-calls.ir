@@ -1,0 +1,199 @@
+# Object initialization continues into a direct call that takes the new object as `this`, and past operations that do not use the object. A store that no allocation can list stays where it is and leaves its closure unmade there
+# FORM: Prepared
+# OPTIONS: references=narrow check=VerifyEachPass
+# RUN: pass DeferClosuresInFields
+# STATISTIC: FieldsDeferringClosures = 8
+# STATISTIC: ClosuresDeferredInFields = 10
+# STATISTIC: StoresListedByAllocations = 10
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="InitializedByCallee" fields=[{key="id" declared={type=anything}}, {key="onData" declared={type=anything}}, {key="onEnd" declared={type=anything}}]
+layout L1 kind=Instance name="CalleeHasOtherCaller" fields=[{key="run" declared={type=anything}}]
+layout L2 name="StoredBehindUnrelatedCall" fields=[{key="run" declared={type=anything}}]
+layout L3 name="PlaceholderKeepsKeyOrder" fields=[{key="total" declared={type=anything}}, {key="run" declared={type=anything}}]
+layout L4 name="NoPlaceholderForString" fields=[{key="name" declared={type=string}}, {key="run" declared={type=anything}}]
+layout L5 kind=Instance name="InitializedByNestedCalls" fields=[{key="a" declared={type=anything}}, {key="run" declared={type=anything}}]
+layout L6 kind=Instance name="CalleeLeaksReceiverFirst" fields=[{key="run" declared={type=anything}}]
+
+# CHECK: layout L0 {{*}}{key="id" declared={type=anything}}, {key="onData" {{*}}deferral=CapturesObject deferredFunction=f13}{{*}}{key="onEnd" {{*}}deferral=CapturesNothing deferredFunction=f14}
+# CHECK: layout L1 kind=Instance name="CalleeHasOtherCaller" fields=[{key="run" declared={type=anything} flow={location={deferral=CapturesObject deferredFunction=f15}}}]
+# CHECK: layout L2 {{*}}deferral=CapturesObject deferredFunction=f16}
+# CHECK: layout L3 {{*}}{key="total" declared={type=anything}}, {key="run" {{*}}deferral=CapturesObject deferredFunction=f17}
+# CHECK: layout L4 name="NoPlaceholderForString" fields=[{key="name" declared={type=string}}, {key="run" declared={type=anything} flow={location={deferral=CapturesObject deferredFunction=f18}}}]
+# CHECK: layout L5 {{*}}{key="a" declared={type=anything}}, {key="run" {{*}}deferral=CapturesObject deferredFunction=f19}
+# CHECK: layout L6 kind=Instance name="CalleeLeaksReceiverFirst" fields=[{key="run" declared={type=anything} flow={location={deferral=CapturesObject deferredFunction=f22}}}]
+
+function f0 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=undefined}] {
+    PutSlotOrAdd v0, -, v1 key="id" receivers=[L0] level=Proven
+    v3 = NewClosure v0 function=f13
+    PutSlotOrAdd v0, -, v3 key="onData" receivers=[L0] level=Proven
+    v5 = NewClosure function=f14
+    PutSlotOrAdd v0, -, v5 key="onEnd" receivers=[L0] level=Proven
+    v7 = Undefined
+    Return v7
+# CHECK-NOT: PutSlotOrAdd
+# CHECK-NOT: NewClosure
+# CHECK: Return
+}
+
+function f1 name="allocatesWithArgument" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L0 fields=[]
+    v2 = CallDirect v1, v0 function=f0
+    Return v1
+# CHECK: [[onData]]: f13 = NewClosure function=f13 [isMadeOnDemand]
+# CHECK-NEXT: [[onEnd]]: f14 = NewClosure function=f14 [isMadeOnDemand]
+# CHECK-NEXT: [[object]]: L0 = NewObject -, v0, [[onData]], [[onEnd]] layout=L0 fields=[0, 1, 2]
+# CHECK-NEXT: = CallDirect [[object]], v0 function=f0
+}
+
+function f2 name="allocatesWithConstant" results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = Integer integer=7
+    v2 = CallDirect v0, v1 function=f0
+    Return v0
+# CHECK: [[id2]]:{{*}}= Integer integer=7
+# CHECK-NEXT: [[onData2]]: f13 = NewClosure function=f13 [isMadeOnDemand]
+# CHECK-NEXT: [[onEnd2]]: f14 = NewClosure function=f14 [isMadeOnDemand]
+# CHECK-NEXT: [[object2]]: L0 = NewObject -, [[id2]], [[onData2]], [[onEnd2]] layout=L0 fields=[0, 1, 2]
+# CHECK-NEXT: = CallDirect [[object2]], [[id2]] function=f0
+}
+
+function f3 name="initializeShared" kind=Initializer flags=[HasThis] thisType={type=L1} results=[{type=undefined}] {
+    v1 = NewClosure v0 function=f15
+    PutSlotOrAdd v0, -, v1 key="run" receivers=[L1] level=Proven
+    v3 = Undefined
+    Return v3
+# CHECK: = NewClosure function=f15 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, -, v1 key="run"
+}
+
+function f4 name="allocatesForSharedCallee" results=[{type=anything}] {
+    v0 = NewObject layout=L1 fields=[]
+    v1 = CallDirect v0 function=f3
+    Return v0
+# CHECK: = NewObject layout=L1
+}
+
+function f5 name="passesParameterToSharedCallee" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f3
+    Return v0
+}
+
+function f6 name="storesBehindUnrelatedCall" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L2 fields=[]
+    v2 = Call v0
+    v3 = NewClosure v1 function=f16
+    PutSlotOrAdd v1, v1, v3 key="run" receivers=[L2] level=Proven
+    Return v1
+# CHECK: [[run6]]: f16 = NewClosure function=f16 [isMadeOnDemand]
+# CHECK-NEXT: [[object6]]: L2 = NewObject -, [[run6]] layout=L2 fields=[0]
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Return [[object6]]
+}
+
+function f7 name="storesCallResultFirst" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L3 fields=[]
+    v2 = Call v0
+    PutSlotOrAdd v1, v1, v2 key="total" receivers=[L3] level=Proven
+    v4 = NewClosure v1 function=f17
+    PutSlotOrAdd v1, v1, v4 key="run" receivers=[L3] level=Proven
+    Return v1
+# CHECK: [[run7]]: f17 = NewClosure function=f17 [isMadeOnDemand]
+# CHECK-NEXT: [[placeholder7]]:{{*}}= Undefined
+# CHECK-NEXT: [[object7]]: L3 = NewObject -, [[placeholder7]], [[run7]] layout=L3 fields=[0, 1]
+# CHECK-NEXT: [[total7]]:{{*}}= Call v0
+# CHECK-NEXT: PutSlotOrAdd [[object7]], [[object7]], [[total7]] key="total" receivers=[L3] level=Proven
+# CHECK-NEXT: Return [[object7]]
+}
+
+function f8 name="storesStringFirst" results=[{type=anything}] {
+    v0 = NewObject layout=L4 fields=[]
+    v1 = CallDirect function=f9
+    PutSlotOrAdd v0, v0, v1 key="name" receivers=[L4] level=Proven
+    v3 = NewClosure v0 function=f18
+    PutSlotOrAdd v0, v0, v3 key="run" receivers=[L4] level=Proven
+    Return v0
+# CHECK: = NewObject layout=L4
+# CHECK: = NewClosure function=f18 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, v0, v3 key="run"
+}
+
+function f9 name="makeName" results=[{type=string}] {
+    v0 = String string="name"
+    Return v0
+}
+
+function f10 name="initializeInner" kind=Initializer flags=[HasThis] thisType={type=L5} results=[{type=undefined}] {
+    v1 = Integer integer=1
+    PutSlotOrAdd v0, -, v1 key="a" receivers=[L5] level=Proven
+    v3 = Undefined
+    Return v3
+# CHECK-NOT: PutSlotOrAdd
+# CHECK: Return
+}
+
+function f11 name="initializeOuter" kind=Initializer flags=[HasThis] thisType={type=L5} results=[{type=undefined}] {
+    v1 = CallDirect v0 function=f10
+    v2 = NewClosure v0 function=f19
+    PutSlotOrAdd v0, -, v2 key="run" receivers=[L5] level=Proven
+    v4 = Undefined
+    Return v4
+# CHECK: = CallDirect v0 function=f10
+# CHECK-NOT: NewClosure
+# CHECK-NOT: PutSlotOrAdd
+# CHECK: Return
+}
+
+function f12 name="allocatesThroughTwoCalls" results=[{type=anything}] {
+    v0 = NewObject layout=L5 fields=[]
+    v1 = CallDirect v0 function=f11
+    Return v0
+# CHECK: [[a12]]:{{*}}= Integer integer=1
+# CHECK-NEXT: [[run12]]: f19 = NewClosure function=f19 [isMadeOnDemand]
+# CHECK-NEXT: [[object12]]: L5 = NewObject -, [[a12]], [[run12]] layout=L5 fields=[0, 1]
+# CHECK-NEXT: = CallDirect [[object12]] function=f11
+}
+
+function f13 name="overInitializedByCallee" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
+    Return
+}
+function f14 name="overNothing" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f15 name="overCalleeHasOtherCaller" kind=Arrow captures=[{type=L1}] results=[{type=anything}] {
+    Return
+}
+function f16 name="overStoredBehindUnrelatedCall" kind=Arrow captures=[{type=L2}] results=[{type=anything}] {
+    Return
+}
+function f17 name="overPlaceholderKeepsKeyOrder" kind=Arrow captures=[{type=L3}] results=[{type=anything}] {
+    Return
+}
+function f18 name="overNoPlaceholderForString" kind=Arrow captures=[{type=L4}] results=[{type=anything}] {
+    Return
+}
+function f19 name="overInitializedByNestedCalls" kind=Arrow captures=[{type=L5}] results=[{type=anything}] {
+    Return
+}
+
+function f20 name="leaksReceiverFirst" kind=Initializer flags=[HasThis] thisType={type=L6} parameters=[{type=anything}] results=[{type=undefined}] {
+    v2 = Call v1, -, v0
+    v3 = NewClosure v0 function=f22
+    PutSlotOrAdd v0, -, v3 key="run" receivers=[L6] level=Proven
+    v5 = Undefined
+    Return v5
+# CHECK: = NewClosure function=f22 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, -, v3 key="run"
+}
+
+function f21 name="allocatesForLeakingCallee" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L6 fields=[]
+    v2 = CallDirect v1, v0 function=f20
+    Return v1
+# CHECK: = NewObject layout=L6
+}
+
+function f22 name="overCalleeLeaksReceiverFirst" kind=Arrow captures=[{type=L6}] results=[{type=anything}] {
+    Return
+}

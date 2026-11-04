@@ -1,0 +1,21 @@
+# A constant that is live across a suspension is listed by its representation like any other value
+# RUN: frame-maps
+# CHECK: f0:
+# CHECK-NEXT: v4: v2:cell
+# CHECK-NOT: v
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 declared={type=anything} initialization=Undefined
+function f0 name="constant" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything @JSValue, v1: undefined|Promise @JSValue):
+    v2 @Cell = String string="a"
+    v3 @Int32 = Integer integer=7
+    v4 @JSValue = AwaitBySavingFrame v0, v1
+    v5 @JSValue = Box v2
+    PutModuleVariable v5 variable=g0
+    v7 @JSValue = Box v3
+    PutModuleVariable v7 variable=g0
+    v9 @JSValue = Undefined
+    Return v9
+}
+function f1 name="constant" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1}

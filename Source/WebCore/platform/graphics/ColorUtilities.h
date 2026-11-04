@@ -37,16 +37,16 @@ namespace WebCore {
 SRGBA<float> premultiplied(const SRGBA<float>&);
 SRGBA<float> unpremultiplied(const SRGBA<float>&);
 
-WEBCORE_EXPORT SRGBA<uint8_t> premultipliedFlooring(SRGBA<uint8_t>);
-SRGBA<uint8_t> premultipliedCeiling(SRGBA<uint8_t>);
-SRGBA<uint8_t> unpremultiplied(SRGBA<uint8_t>);
+WEBCORE_EXPORT SRGBA<uint8_t> LEGACY_NODELETE premultipliedFlooring(SRGBA<uint8_t>);
+SRGBA<uint8_t> LEGACY_NODELETE premultipliedCeiling(SRGBA<uint8_t>);
+SRGBA<uint8_t> LEGACY_NODELETE unpremultiplied(SRGBA<uint8_t>);
 
 uint8_t convertPrescaledSRGBAFloatToSRGBAByte(float);
 
 template<typename T> T convertByteAlphaTo(uint8_t);
 template<typename T> T convertFloatAlphaTo(float);
 
-template<typename ColorType, typename Functor> auto colorByModifingEachNonAlphaComponent(const ColorType&, NOESCAPE Functor&&);
+template<typename ColorType, typename Functor> auto colorByModifingEachNonAlphaComponent(const ColorType&, NOESCAPE const Functor&);
 
 template<typename ColorType> constexpr auto colorWithOverriddenAlpha(const ColorType&, uint8_t overrideAlpha);
 template<typename ColorType> auto colorWithOverriddenAlpha(const ColorType&, float overrideAlpha);
@@ -119,13 +119,13 @@ template<> inline float convertFloatAlphaTo<float>(float value)
     return clampedAlpha(value);
 }
 
-template<typename ColorType, typename Functor> auto colorByModifingEachNonAlphaComponent(const ColorType& color, NOESCAPE Functor&& functor)
+template<typename ColorType, typename Functor> auto colorByModifingEachNonAlphaComponent(const ColorType& color, NOESCAPE const Functor& functor)
 {
     auto components = asColorComponents(color.resolved());
     auto copy = components;
     copy[0] = std::invoke(functor, components[0]);
     copy[1] = std::invoke(functor, components[1]);
-    copy[2] = std::invoke(std::forward<Functor>(functor), components[2]);
+    copy[2] = std::invoke(functor, components[2]);
     return makeFromComponents<ColorType>(copy);
 }
 

@@ -60,6 +60,7 @@ enum class WebKit::AllowsCellularAccess : bool;
     String networkCacheDirectory;
     WebKit::SandboxExtensionHandle networkCacheDirectoryExtensionHandle;
     String dataConnectionServiceType;
+    String ipAddressSpaceOverridesForTesting;
     bool fastServerTrustEvaluationEnabled;
     bool networkCacheSpeculativeValidationEnabled;
     bool shouldUseTestingNetworkSession;
@@ -77,6 +78,7 @@ enum class WebKit::AllowsCellularAccess : bool;
     String webPushMachServiceName;
     String webPushPartitionString;
     bool enablePrivateClickMeasurementDebugMode;
+    bool enablePrivateClickMeasurementPrivateRelayEnforcement;
     bool isOptInCookiePartitioningEnabled;
     bool shouldSendPrivateTokenIPCForTesting;
     uint64_t cookiesVersion;
@@ -108,7 +110,7 @@ enum class WebKit::AllowsCellularAccess : bool;
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     bool isDeclarativeWebPushEnabled;
 #endif
-#if HAVE(NW_PROXY_CONFIG)
+#if PLATFORM(COCOA)
     std::optional<Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>>> proxyConfigData;
 #endif
     WebKit::ResourceLoadStatisticsParameters resourceLoadStatisticsParameters;

@@ -31,58 +31,47 @@ namespace WebCore {
 
 namespace InlineIterator {
 
-class InlineBoxIterator;
-
 class InlineBox : public Box {
 public:
-    InlineBox(PathVariant&&);
+    InlineBox(const LayoutIntegration::InlineContent&, size_t boxIndex);
 
     const RenderBoxModelObject& renderer() const { return downcast<RenderBoxModelObject>(Box::renderer()); }
 
-    RectEdges<bool> closedEdges() const;
+    RectEdges<bool> LEGACY_NODELETE closedEdges() const;
 
-    // FIXME: Remove. For intermediate porting steps only.
-    const LegacyInlineFlowBox* legacyInlineBox() const LIFETIME_BOUND { return downcast<LegacyInlineFlowBox>(Box::legacyInlineBox()); }
-
-    InlineBoxIterator nextInlineBoxLineRightward() const;
-    InlineBoxIterator nextInlineBoxLineLeftward() const;
+    InlineBoxIterator LEGACY_NODELETE nextInlineBoxLineRightward() const;
+    InlineBoxIterator LEGACY_NODELETE nextInlineBoxLineLeftward() const;
     InlineBoxIterator iterator() const;
 
     LeafBoxIterator firstLeafBox() const;
     LeafBoxIterator lastLeafBox() const;
-    LeafBoxIterator endLeafBox() const;
     inline bool isSplit() const;
 
-    IteratorRange<BoxIterator> descendants() const;
-};
-
-class InlineBoxIterator : public BoxIterator {
-public:
-    InlineBoxIterator() = default;
-    InlineBoxIterator(Box::PathVariant&&);
-    InlineBoxIterator(const Box&);
-
-    const InlineBox& operator*() const LIFETIME_BOUND { return get(); }
-    const InlineBox* operator->() const LIFETIME_BOUND { return &get(); }
-
-    InlineBoxIterator& traverseInlineBoxLineRightward();
-    InlineBoxIterator& traverseInlineBoxLineLeftward();
+    BoxRange<BoxIterator> descendants() const;
+    LeafBoxRange leafDescendants() const;
 
 private:
-    const InlineBox& get() const LIFETIME_BOUND { return downcast<InlineBox>(m_box); }
+    size_t endOfDescendantsIndex() const;
 };
 
+// Fragments of one inline box, in display order.
+class InlineBoxIterator : public BasicBoxIterator<InlineBoxIterator, InlineBox, BoxFilter::SameLayoutBox> {
+public:
+    using BasicBoxIterator::BasicBoxIterator;
+
+    InlineBoxIterator& traverseInlineBoxLineRightward() { return ++*this; }
+    InlineBoxIterator& traverseInlineBoxLineLeftward() { return --*this; }
+};
+
+using InlineBoxRange = BoxRange<InlineBoxIterator>;
+
 InlineBoxIterator lineLeftmostInlineBoxFor(const RenderBoxModelObject&);
+InlineBoxRange inlineBoxesFor(const RenderBoxModelObject&);
 InlineBoxIterator firstRootInlineBoxFor(const RenderBlockFlow&);
+InlineBoxRange rootInlineBoxesFor(const RenderBlockFlow&);
 
-InlineBoxIterator inlineBoxFor(const LegacyInlineFlowBox&);
-InlineBoxIterator inlineBoxFor(const LayoutIntegration::InlineContent&, const InlineDisplay::Box&);
-InlineBoxIterator inlineBoxFor(const LayoutIntegration::InlineContent&, size_t boxIndex);
-
-inline InlineBoxIterator InlineBox::iterator() const
-{
-    return { *this };
-}
+InlineBox inlineBoxFor(const LayoutIntegration::InlineContent&, const InlineDisplay::Box&);
+InlineBox inlineBoxFor(const LayoutIntegration::InlineContent&, size_t boxIndex);
 
 inline bool InlineBox::isSplit() const
 {
@@ -96,6 +85,3 @@ SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::InlineIterator::InlineBox)
 static bool isType(const WebCore::InlineIterator::Box& box) { return box.isInlineBox(); }
 SPECIALIZE_TYPE_TRAITS_END()
 
-SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::InlineIterator::InlineBoxIterator)
-static bool isType(const WebCore::InlineIterator::BoxIterator& box) { return !box || box->isInlineBox(); }
-SPECIALIZE_TYPE_TRAITS_END()

@@ -1,0 +1,41 @@
+# A method that accepts neither undefined nor null as its receiver throws for them. A receiver that may be either, and of which nothing else is expected, is tested for the rest of its type:
+# `pattern ??= /../; exec.call(pattern, text)`, where the second read of the variable has forgotten the first. A method that takes every receiver expects nothing
+# FORM: Prepared
+# RUN: pass ResolveBuiltins PlaceTypeTests ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="patternMayBeMissing" parameters=[{type=undefined|RegExp<pristine[Storage, Names, AsCreated]>}, {type=string}] results=[{type=anything}] {
+    v2 = Builtin builtin=RegExpPrototypeExec
+    v3 = Call v2, v0, v1
+    Return v3
+# CHECK: TypeTest v0 testedType=RegExp
+# CHECK: ([[pattern0]]: RegExp<pristine[Storage, Names, AsCreated]>):
+# CHECK: = CallBuiltin [[pattern0]], v1 overload=RegExpPrototypeExec/0
+# CHECK-NEXT: Return
+# CHECK: CallBuiltin [[missing0]], v1 overload=RegExpPrototypeExec/0 builtinCallForm=AnyReceiver
+# CHECK: ([[missing0]]: undefined) frequency=Unlikely:
+}
+
+function f1 name="textMayBeMissing" parameters=[{type=undefined|null|string}, {type=number}] results=[{type=anything}] {
+    v2 = Builtin builtin=StringPrototypeCharCodeAt
+    v3 = Call v2, v0, v1
+    Return v3
+# CHECK: TypeTest v0 testedType=string
+# CHECK: ([[text1]]: string):
+# CHECK: = CallBuiltin [[text1]], v1 overload=StringPrototypeCharCodeAt/0
+}
+
+function f2 name="everyReceiverIsTaken" parameters=[{type=undefined|RegExp<pristine[Storage, Names, AsCreated]>}] results=[{type=anything}] {
+    v1 = Builtin builtin=ObjectPrototypeToString
+    v2 = Call v1, v0
+    Return v2
+# CHECK-NOT: TypeTest
+}
+
+function f3 name="onlyMissing" parameters=[{type=undefined|null}, {type=string}] results=[{type=anything}] {
+    v2 = Builtin builtin=RegExpPrototypeExec
+    v3 = Call v2, v0, v1
+    Return v3
+# CHECK-NOT: TypeTest
+}

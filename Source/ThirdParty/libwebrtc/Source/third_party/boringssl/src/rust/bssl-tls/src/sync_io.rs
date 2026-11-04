@@ -19,7 +19,11 @@ use crate::{
         TlsConnection, //
     },
     context::TlsContext,
-    io::sync_io::{NoAsync, StdIoWithReactor}, //
+    errors::Error,
+    io::sync_io::{
+        NoAsync,
+        StdIoWithReactor, //
+    }, //
 };
 
 use std::{
@@ -41,22 +45,27 @@ impl TlsConnector {
         Self { ctx }
     }
 
-    /// Connect to the given domain using the provided stream.
-    pub fn connect<S>(
-        &self,
-        domain: &str,
-        stream: S,
-    ) -> Result<TlsStream<Client, S>, crate::errors::Error>
+    /// Connect to the given domain using the provided stream in one shot.
+    ///
+    /// This function will drive the handshake until completion.
+    ///
+    /// This function will **block** on pending I/Os.
+    /// For `async` I/O support, use [`TlsConnection::async_handshake`].
+    ///
+    /// If a non-I/O suspension occurs, including asynchronous certificate verification or a private
+    /// key operation, this function returns an error.
+    pub fn connect<S>(&self, domain: &str, stream: S) -> Result<TlsStream<Client, S>, Error>
     where
         S: Read + Write + Send + 'static,
     {
         let mut conn = self.ctx.new_client_connection().build();
-        {
-            conn.in_handshake()
-                .expect("connection is freshly constructed and it cannot already be established")
-                .set_host(domain)?;
-            conn.set_io(StdIoWithReactor::new(stream, NoAsync))?
-                .do_handshake()?;
+        #[allow(clippy::expect_used)]
+        conn.in_handshake()
+            .expect("connection is freshly constructed and it cannot already be established")
+            .set_host(domain)?;
+        conn.set_io(StdIoWithReactor::new(stream, NoAsync))?;
+        if let Some(reason) = conn.do_handshake()? {
+            return Err(Error::Unknown(Box::new(reason)));
         }
 
         Ok(TlsStream {
@@ -77,14 +86,24 @@ impl TlsAcceptor {
         Self { ctx }
     }
 
-    /// Accept a new connection using the provided stream.
-    pub fn accept<S>(&self, stream: S) -> Result<TlsStream<Server, S>, crate::errors::Error>
+    /// Accept a new connection using the provided stream in one shot.
+    ///
+    /// This function will drive the handshake until completion.
+    ///
+    /// This function will **block** on pending I/Os.
+    /// For `async` I/O support, use [`TlsConnection::async_handshake`].
+    ///
+    /// If a non-I/O suspension occurs, including asynchronous certificate verification or a private
+    /// key operation, this function returns an error.
+    pub fn accept<S>(&self, stream: S) -> Result<TlsStream<Server, S>, Error>
     where
         S: Read + Write + Send + 'static,
     {
         let mut conn = self.ctx.new_server_connection().build();
         conn.set_io(StdIoWithReactor::new(stream, NoAsync))?;
-        conn.do_handshake()?;
+        if let Some(reason) = conn.do_handshake()? {
+            return Err(Error::Unknown(Box::new(reason)));
+        }
 
         Ok(TlsStream {
             conn,

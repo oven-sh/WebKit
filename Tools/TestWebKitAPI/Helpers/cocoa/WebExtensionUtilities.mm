@@ -55,6 +55,20 @@ static NSError *managerError(NSString *description)
     return [NSError errorWithDomain:@"TestWebExtensionManager" code:1 userInfo:@{ NSLocalizedDescriptionKey: description }];
 }
 
+@implementation WKWebExtensionMatchPattern (TestWebKitAPIExtras)
+
++ (instancetype)testCachedPatternWithString:(NSString *)string
+{
+    return [self matchPatternWithString:string];
+}
+
++ (instancetype)testCachedPatternWithScheme:(NSString *)scheme host:(NSString *)host path:(NSString *)path
+{
+    return [self matchPatternWithScheme:scheme host:host path:path];
+}
+
+@end
+
 @implementation TestWebExtensionManager {
     bool _done;
     bool _receivedMessage;
@@ -67,6 +81,16 @@ static NSError *managerError(NSString *description)
     void (^_pendingTestMessageHandler)(NSError *);
 }
 
++ (BOOL)shouldEnableSiteIsolation
+{
+    return TestWebKitAPI::Util::shouldEnableSiteIsolationForWebExtensionsTest;
+}
+
++ (void)setShouldEnableSiteIsolation:(BOOL)shouldEnableSiteIsolation
+{
+    TestWebKitAPI::Util::shouldEnableSiteIsolationForWebExtensionsTest = shouldEnableSiteIsolation;
+}
+
 - (instancetype)initForExtension:(WKWebExtension *)extension
 {
     return [self initForExtension:extension extensionControllerConfiguration:nil];
@@ -74,13 +98,13 @@ static NSError *managerError(NSString *description)
 
 - (instancetype)initWithManifest:(NSDictionary<NSString *, id> *)manifest resources:(NSDictionary<NSString *, id> *)resources
 {
-    return [self initWithManifest:manifest resources:resources extensionControllerConfiguration:nil];
+    return [self initWithManifest:manifest resources:resources extensionControllerConfiguration:nil usesEnhancedSecurity:NO];
 }
 
-- (instancetype)initWithManifest:(NSDictionary<NSString *, id> *)manifest resources:(NSDictionary<NSString *, id> *)resources extensionControllerConfiguration:(WKWebExtensionControllerConfiguration *)configuration
+- (instancetype)initWithManifest:(NSDictionary<NSString *, id> *)manifest resources:(NSDictionary<NSString *, id> *)resources extensionControllerConfiguration:(WKWebExtensionControllerConfiguration *)configuration usesEnhancedSecurity:(BOOL)usesEnhancedSecurity
 {
     RetainPtr extension = adoptNS([[WKWebExtension alloc] _initWithManifestDictionary:manifest resources:resources]);
-    return [self initForExtension:extension.get() extensionControllerConfiguration:configuration];
+    return [self initForExtension:extension.get() extensionControllerConfiguration:configuration usesEnhancedSecurity:usesEnhancedSecurity];
 }
 
 - (instancetype)initForExtension:(WKWebExtension *)extension extensionControllerConfiguration:(WKWebExtensionControllerConfiguration *)configuration
@@ -670,6 +694,16 @@ static WKUserContentController *userContentController(BOOL usingPrivateBrowsing)
 - (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)navigation
 {
     [_extensionController didChangeTabProperties:WKWebExtensionTabChangedPropertiesLoading forTab:self];
+}
+
+- (void)webView:(WKWebView *)webView didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential *))completionHandler
+{
+    if ([challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
+        completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:challenge.protectionSpace.serverTrust]);
+        return;
+    }
+
+    completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
 }
 
 - (void)webView:(WKWebView *)webView didReceiveServerRedirectForProvisionalNavigation:(WKNavigation *)navigation

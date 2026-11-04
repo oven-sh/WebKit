@@ -37,14 +37,16 @@ template<typename Visitor>
 void JSIntersectionObserver::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     wrapped().callbackConcurrently().visitJSFunctionInGCThread(visitor);
-    addWebCoreOpaqueRoot(visitor, wrapped().root());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG addWebCoreOpaqueRoot(visitor, wrapped().root());
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSIntersectionObserver);
 
 bool JSIntersectionObserverOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    if (downcast<JSIntersectionObserver>(handle.slot()->asCell())->wrapped().isReachableFromOpaqueRoots(visitor)) {
+    // This function is called on a GC thread so we cannot ref the object.
+    SUPPRESS_UNCOUNTED_ARG if (downcast<JSIntersectionObserver>(handle.slot()->asCell())->wrapped().isReachableFromOpaqueRoots(visitor)) {
         if (reason) [[unlikely]]
             *reason = "Reachable from observed nodes"_s;
         return true;

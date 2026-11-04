@@ -35,6 +35,10 @@
 #include "NativeImageSource.h"
 #include "ShareableBitmap.h"
 
+#if ENABLE(SPATIAL_IMAGE_DETECTION)
+#include "ShareableSpatialImage.h"
+#endif
+
 namespace WebCore {
 
 Ref<BitmapImage> BitmapImage::create(ImageObserver* observer, AlphaOption alphaOption, GammaAndColorProfileOption gammaAndColorProfileOption)
@@ -58,10 +62,15 @@ std::optional<Ref<BitmapImage>> BitmapImage::create(RefPtr<ShareableBitmap>&& bi
 {
     if (!bitmap)
         return std::nullopt;
-    RefPtr image = bitmap->createImage();
+    RefPtr image = create(*bitmap);
     if (!image)
         return std::nullopt;
     return image.releaseNonNull();
+}
+
+RefPtr<BitmapImage> BitmapImage::create(ShareableBitmap& bitmap)
+{
+    return create(bitmap.createNativeImage());
 }
 
 RefPtr<BitmapImage> BitmapImage::create(PlatformImagePtr&& platformImage)
@@ -97,13 +106,41 @@ void BitmapImage::dataReplaced()
     return m_source->dataReplaced(protect(data()));
 }
 
+void BitmapImage::simulateDataReplacedForTesting()
+{
+    dataReplaced();
+}
+
 void BitmapImage::destroyDecodedData(bool destroyAll)
 {
     m_source->destroyDecodedData(destroyAll);
     invalidateAdapter();
 }
 
-ImageDrawResult BitmapImage::draw(GraphicsContext& context, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions options)
+NaturalDimensions BitmapImage::unorientedNaturalDimensions() const
+{
+    auto size = m_source->size(ImageOrientation::Orientation::None);
+    if (size.isEmpty())
+        return NaturalDimensions::none();
+    return NaturalDimensions::fixed(size);
+}
+
+ImageDrawResult BitmapImage::draw(GraphicsContext& context, FloatPoint destination, ImageDrawingOptions options)
+{
+    return draw(context, FloatRect(destination, size()), FloatRect({ }, size()), options);
+}
+
+ImageDrawResult BitmapImage::draw(GraphicsContext& context, const FloatRect& destination, ImageDrawingOptions options)
+{
+    return draw(context, destination, FloatRect({ }, size(options.orientation())), options);
+}
+
+ImageDrawResult BitmapImage::draw(GraphicsContext& context, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions options)
+{
+    return draw(context, ConcreteObjectSize::fixed(size()), destination, source, options);
+}
+
+ImageDrawResult BitmapImage::drawImage(GraphicsContext& context, ConcreteObjectSize, const FloatRect& destinationRect, const FloatRect& sourceRect, ImageDrawingOptions options, const ImageDrawingExtras*)
 {
     if (destinationRect.isEmpty() || sourceRect.isEmpty())
         return ImageDrawResult::DidNothing;
@@ -170,7 +207,7 @@ ImageDrawResult BitmapImage::draw(GraphicsContext& context, const FloatRect& des
     return ImageDrawResult::DidDraw;
 }
 
-void BitmapImage::drawPattern(GraphicsContext& context, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void BitmapImage::drawPattern(GraphicsContext& context, ConcreteObjectSize concreteObjectSize, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options, const ImageDrawingExtras*)
 {
     if (tileRect.isEmpty())
         return;
@@ -178,16 +215,16 @@ void BitmapImage::drawPattern(GraphicsContext& context, const FloatRect& destina
     auto headroom = options.headroom();
     if (headroom == Headroom::FromImage && hasHDRContentForTesting())
         fillWithSolidColor(context, destinationRect, Color::gold, options.compositeOperator());
-    else if (context.drawLuminanceMask())
+    else if (options.drawLuminanceMask() == DrawLuminanceMask::Yes)
         drawLuminanceMaskPattern(context, destinationRect, tileRect, transform, phase, spacing, options);
     else
-        Image::drawPattern(context, destinationRect, tileRect, transform, phase, spacing, { options, ImageOrientation::Orientation::FromImage });
+        Image::drawPattern(context, concreteObjectSize, destinationRect, tileRect, transform, phase, spacing, { options, ImageOrientation::Orientation::FromImage });
 }
 
-void BitmapImage::drawLuminanceMaskPattern(GraphicsContext& context, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void BitmapImage::drawLuminanceMaskPattern(GraphicsContext& context, const FloatRect& destinationRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
 {
     ASSERT(!tileRect.isEmpty());
-    ASSERT(context.drawLuminanceMask());
+    ASSERT(options.drawLuminanceMask() == DrawLuminanceMask::Yes);
 
     auto buffer = context.createImageBuffer(expandedIntSize(tileRect.size()));
     if (!buffer)
@@ -197,12 +234,11 @@ void BitmapImage::drawLuminanceMaskPattern(GraphicsContext& context, const Float
     {
         // Temporarily reset image observer, we don't want to receive any changeInRect() calls due to this relayout.
         ImageObserverDisableScope imageObserverDisabler(*this);
-        draw(buffer->context(), bufferRect, tileRect, { options, DecodingMode::Synchronous, ImageOrientation::Orientation::FromImage });
+        draw(buffer->context(), ConcreteObjectSize::fixed(size()), bufferRect, tileRect, { options, DecodingMode::Synchronous, ImageOrientation::Orientation::FromImage });
     }
 
     buffer->convertToLuminanceMask();
 
-    context.setDrawLuminanceMask(false);
     context.drawPattern(*buffer, destinationRect, bufferRect, transform, phase, spacing, { options, ImageOrientation::Orientation::FromImage });
 }
 
@@ -211,5 +247,41 @@ void BitmapImage::dump(TextStream& ts) const
     Image::dump(ts);
     m_source->dump(ts);
 }
+
+#if ENABLE(SPATIAL_IMAGE_DETECTION)
+std::optional<ShareableSpatialImage> BitmapImage::createShareableSpatialImage() const
+{
+    if (!isSpatial())
+        return std::nullopt;
+
+    auto leftIndex = spatialLeftEyeFrameIndex();
+    auto rightIndex = spatialRightEyeFrameIndex();
+
+    if (!leftIndex || !rightIndex || leftIndex == rightIndex)
+        return std::nullopt;
+
+    auto leftMetadata = spatialEyePropertiesAtIndex(*leftIndex);
+    auto rightMetadata = spatialEyePropertiesAtIndex(*rightIndex);
+    if (!leftMetadata || !rightMetadata)
+        return std::nullopt;
+
+    RefPtr leftImage = nativeImageAtIndex(*leftIndex);
+    RefPtr rightImage = nativeImageAtIndex(*rightIndex);
+    if (!leftImage || !rightImage)
+        return std::nullopt;
+
+    RefPtr leftShareableBitmap = ShareableBitmap::createFromImagePixels(*leftImage);
+    RefPtr rightShareableBitmap = ShareableBitmap::createFromImagePixels(*rightImage);
+    if (!leftShareableBitmap || !rightShareableBitmap)
+        return std::nullopt;
+
+    auto leftHandle = leftShareableBitmap->createReadOnlyHandle();
+    auto rightHandle = rightShareableBitmap->createReadOnlyHandle();
+    if (!leftHandle || !rightHandle)
+        return std::nullopt;
+
+    return ShareableSpatialImage(WTF::move(*leftHandle), WTF::move(*rightHandle), *leftMetadata, *rightMetadata);
+}
+#endif
 
 } // namespace WebCore

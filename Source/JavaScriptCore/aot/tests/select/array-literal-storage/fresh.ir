@@ -1,0 +1,60 @@
+# An array literal with elements, holes or a capacity, or in a compact block, is created without an allocation profile
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass Select
+# STATISTIC: ArrayLiteralStorageGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="constantElements" results=[{type=Array<anything>}] {
+    v0 = Integer integer=1
+    v1 = String string="a"
+    v2 = NewArray v0, v1 contents=anything
+    Return v2
+# CHECK: = NewArray v0, v1 contents=anything
+# CHECK-NOT: literalStorage
+}
+function f1 name="parameterElement" parameters=[{type=anything}] results=[{type=Array<anything>}] {
+    v1 = NewArray v0 contents=anything
+    Return v1
+# CHECK: = NewArray v0 contents=anything
+# CHECK-NOT: literalStorage
+}
+function f2 name="elementsThenPushedTo" parameters=[{type=anything}] results=[{type=Array<anything>}] {
+    v1 = NewArray v0, v0 contents=anything
+    v2 = CallBuiltin v1, v0 overload=ArrayPrototypePush/0
+    Return v1
+# CHECK: = NewArray v0, v0 contents=anything
+# CHECK-NOT: literalStorage
+}
+function f3 name="onlyHoles" results=[{type=Array<anything>}] {
+    v0 = NewArray contents=anything holes=[0, 1]
+    Return v0
+# CHECK: = NewArray contents=anything holes=[0, 1]
+# CHECK-NOT: literalStorage
+}
+function f4 name="elementsAndHole" results=[{type=Array<anything>}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0, v0 contents=anything holes=[1]
+    Return v1
+# CHECK: = NewArray v0, v0 contents=anything holes=[1]
+# CHECK-NOT: literalStorage
+}
+function f5 name="emptyWithCapacity" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=Array<anything>}] {
+    v2 = NewArray contents=anything capacity=v0
+    v3 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0
+    Return v2
+# CHECK: = NewArray contents=anything capacity=v0
+# CHECK-NOT: literalStorage
+}
+function f6 name="emptyInRareBlock" parameters=[{type=boolean}] results=[{type=Array<anything>}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = NewArray contents=anything
+    Return v1
+  b2() frequency=Rare:
+    v2 = NewArray contents=anything
+    Return v2
+# CHECK: v1:{{*}}= NewArray contents=anything literalStorage=Profiled
+# CHECK: v2:{{*}}= NewArray contents=anything
+# CHECK-NOT: literalStorage
+}

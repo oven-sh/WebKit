@@ -1,0 +1,143 @@
+# A decided test stays while a branch on it passes what it proves, and folds once the branch is decided
+# FORM: Prepared
+# RUN: pass FoldConstants
+# RUN(DECIDED): pass SimplifyControlFlow FoldConstants
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="trueTypeTest" parameters=[{type=number}] results=[{type=number}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v2
+  b2():
+    Return v0
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1:{{*}}= TypeTest v0 testedType=number
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v2: number):
+# DECIDED-NOT: TypeTest
+# DECIDED-NOT: Branch
+# DECIDED: = Boolean boolean=true
+}
+
+function f1 name="trueTypeTestWithoutProofs" parameters=[{type=number}] results=[{type=number}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Return v0
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: true = Boolean boolean=true
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# DECIDED-NOT: TypeTest
+# DECIDED-NOT: Branch
+}
+
+function f2 name="falseTypeTest" parameters=[{type=string}] results=[{type=string}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return v0
+  b2(v2):
+    Return v2
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: v1:{{*}}= TypeTest v0 testedType=number
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2(| 0)
+# DECIDED-NOT: TypeTest
+# DECIDED-NOT: Branch
+# DECIDED: : false = Boolean
+}
+
+function f3 name="truthinessOfObject" parameters=[{type=object}] results=[{type=object}] {
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v2
+  b2():
+    Return v0
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: = ToBoolean v0
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# DECIDED-NOT: ToBoolean
+# DECIDED-NOT: Branch
+# DECIDED: = Boolean boolean=true
+}
+
+function f4 name="truthinessOfObjectWithoutProofs" parameters=[{type=object}] results=[{type=object}] {
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Return v0
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: v1: true = Boolean boolean=true
+# DECIDED-NOT: ToBoolean
+# DECIDED-NOT: Branch
+}
+
+function f5 name="equalityOfKnownValues" parameters=[{type=1}] results=[{type=number}] {
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Return v3
+  b2():
+    Return v1
+# CHECK: = StrictEq v0, v1
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
+# DECIDED-NOT: StrictEq
+# DECIDED-NOT: Branch
+# DECIDED: = Boolean boolean=true
+}
+
+function f6 name="oneOfTwoBranchesPassesProof" parameters=[{type=number}] results=[{type=number}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(), notTaken b4()
+  b1():
+    Branch v1 -> taken b2(| 0), notTaken b3()
+  b2(v2):
+    Return v2
+  b3():
+    Return v0
+  b4():
+    Return v0
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1:{{*}}= TypeTest v0 testedType=number
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b4()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Branch v1 -> taken b2(| 0), notTaken b3()
+# DECIDED-NOT: TypeTest
+# DECIDED-NOT: Branch
+# DECIDED: = Boolean boolean=true
+}
+
+function f7 name="conditionIsAlsoReturned" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v2
+  b2():
+    Return v1
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1:{{*}}= TypeTest v0 testedType=number
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# DECIDED-NOT: TypeTest
+# DECIDED-NOT: Branch
+}
+
+function f8 name="undecidedTest" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v2
+  b2():
+    Return v0
+# CHECK: = TypeTest v0 testedType=number
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# DECIDED: = TypeTest v0 testedType=number
+# DECIDED-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# DECIDED-NEXT: b1(v2: number):
+}

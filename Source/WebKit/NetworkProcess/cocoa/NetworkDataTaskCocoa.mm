@@ -118,7 +118,7 @@ static void applyBasicAuthorizationHeader(WebCore::ResourceRequest& request, con
     request.setHTTPHeaderField(WebCore::HTTPHeaderName::Authorization, credential.serializationForBasicAuthorizationHeader());
 }
 
-static float NODELETE toNSURLSessionTaskPriority(WebCore::ResourceLoadPriority priority)
+static float LEGACY_NODELETE toNSURLSessionTaskPriority(WebCore::ResourceLoadPriority priority)
 {
     switch (priority) {
     case WebCore::ResourceLoadPriority::VeryLow:
@@ -202,7 +202,7 @@ void NetworkDataTaskCocoa::installPendingStreamProbe(WebCore::PendingStreamState
 }
 
 NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataTaskClient& client, const NetworkLoadParameters& parameters)
-    : NetworkDataTask(session, client, parameters.request, parameters.storedCredentialsPolicy, parameters.shouldClearReferrerOnHTTPSToHTTPRedirect, parameters.isMainFrameNavigation, parameters.isInitiatedByDedicatedWorker)
+    : NetworkDataTask(session, client, parameters.request, parameters.storedCredentialsPolicy, parameters.shouldClearReferrerOnHTTPSToHTTPRedirect, parameters.isMainFrameNavigation, parameters.isInitiatedByWorker)
     , NetworkTaskCocoa(session)
     , m_sessionWrapper(downcast<NetworkSessionCocoa>(session).sessionWrapperForTask(parameters.webPageProxyID, parameters.request, parameters.storedCredentialsPolicy, parameters.isNavigatingToAppBoundDomain).get())
     , m_frameID(parameters.webFrameID)
@@ -264,8 +264,10 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
 
     auto advancedPrivacyProtections = parameters.advancedPrivacyProtections;
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
-    if (advancedPrivacyProtections.contains(WebCore::AdvancedPrivacyProtections::BaselineProtections) && parameters.isMainFrameNavigation)
+    if (advancedPrivacyProtections.contains(WebCore::AdvancedPrivacyProtections::BaselineProtections) && parameters.isMainFrameNavigation) {
         configureForAdvancedPrivacyProtections(m_sessionWrapper->session.get());
+        m_sessionWrapper->isConfiguredForAdvancedPrivacyProtections = true;
+    }
 
     enableAdvancedPrivacyProtections(mutableRequest.get(), advancedPrivacyProtections);
 #endif
@@ -313,7 +315,7 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
         return;
     }
 
-    m_task = [m_sessionWrapper->session dataTaskWithRequest:nsRequest.get()];
+    lazyInitialize(m_task, retainPtr([m_sessionWrapper->session dataTaskWithRequest:nsRequest.get()]));
 
 #if HAVE(CFNETWORK_HOSTOVERRIDE)
     // Avoid setting host override for WPT, since we are using a local DNS resolver then.
@@ -458,8 +460,8 @@ void NetworkDataTaskCocoa::didReceiveResponse(WebCore::ResourceResponse&& respon
     }
 #endif
     auto resolvedIPAddress = WebCore::IPAddress::fromString(lastRemoteIPAddress(m_task.get()));
-    if (resolvedIPAddress)
-        response.setIPAddressSpace(WebCore::classifyIPAddressSpace(*resolvedIPAddress));
+    if (CheckedPtr session = networkSession())
+        response.setIPAddressSpace(session->classifyConnectionAddressSpace(resolvedIPAddress, response.url()));
     NetworkDataTask::didReceiveResponse(WTF::move(response), negotiatedLegacyTLS, privateRelayed, resolvedIPAddress, WTF::move(completionHandler));
 }
 
@@ -467,8 +469,9 @@ void NetworkDataTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&
 {
     WTFEmitSignpost(m_task.get(), DataTask, "redirect");
 
-    if (auto resolvedIPAddress = WebCore::IPAddress::fromString(lastRemoteIPAddress(m_task.get())))
-        redirectResponse.setIPAddressSpace(WebCore::classifyIPAddressSpace(*resolvedIPAddress));
+    auto resolvedIPAddress = WebCore::IPAddress::fromString(lastRemoteIPAddress(m_task.get()));
+    if (CheckedPtr session = networkSession())
+        redirectResponse.setIPAddressSpace(session->classifyConnectionAddressSpace(resolvedIPAddress, redirectResponse.url()));
 
     networkLoadMetrics().hasCrossOriginRedirect = networkLoadMetrics().hasCrossOriginRedirect || !WebCore::SecurityOrigin::create(request.url())->canRequest(redirectResponse.url(), WebCore::EmptyOriginAccessPatterns::singleton());
 
@@ -554,8 +557,10 @@ void NetworkDataTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&
             auto protectedThis = weakThis.get();
             if (!protectedThis || !protectedThis->m_session)
                 return completionHandler({ });
-            if (!request.isNull())
+            if (!request.isNull()) {
                 protectedThis->restrictRequestReferrerToOriginIfNeeded(request);
+                updateTaskWithFirstPartyForSameSiteCookies(protectedThis->m_task.get(), request);
+            }
             protectedThis->m_previousRequest = request;
             completionHandler(WTF::move(request));
         });

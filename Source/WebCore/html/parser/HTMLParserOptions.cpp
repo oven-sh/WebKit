@@ -37,8 +37,8 @@ namespace WebCore {
 HTMLParserOptions::HTMLParserOptions()
     : scriptingFlag(false)
     , usePreHTML5ParserQuirks(false)
-    , enhancedSelect(false)
     , enhancedSelectQuirk(false)
+    , processingInstruction(false)
     , maximumDOMTreeDepth(Settings::defaultMaximumHTMLParserDOMTreeDepth)
 {
 }
@@ -52,8 +52,8 @@ HTMLParserOptions::HTMLParserOptions(Document& document)
         scriptingFlag = frame && protect(frame->script())->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript) && document.allowsContentJavaScript();
 
     usePreHTML5ParserQuirks = document.settings().usePreHTML5ParserQuirks();
-    enhancedSelect = document.settings().htmlEnhancedSelectParsingEnabled();
     enhancedSelectQuirk = document.settings().htmlEnhancedSelectParsingQuirkEnabled();
+    processingInstruction = document.settings().htmlProcessingInstructionEnabled();
     maximumDOMTreeDepth = document.settings().maximumHTMLParserDOMTreeDepth();
 }
 

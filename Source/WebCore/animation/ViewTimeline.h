@@ -57,10 +57,10 @@ struct StickinessAdjustmentData {
         AfterExit
     };
 
-    float NODELETE entryDistanceAdjustment() const;
-    float NODELETE exitDistanceAdjustment() const;
-    float NODELETE rangeStartAdjustment() const;
-    float NODELETE rangeEndAdjustment() const;
+    float LEGACY_NODELETE entryDistanceAdjustment() const;
+    float LEGACY_NODELETE exitDistanceAdjustment() const;
+    float LEGACY_NODELETE rangeStartAdjustment() const;
+    float LEGACY_NODELETE rangeEndAdjustment() const;
 
     static StickinessAdjustmentData computeStickinessAdjustmentData(const StickyPositionViewportConstraints&, ScrollTimeline::ResolvedScrollDirection, float scrollContainerSize, float subjectSize, float subjectOffset);
 
@@ -73,9 +73,9 @@ struct StickinessAdjustmentData {
 class ViewTimeline final : public ScrollTimeline {
 public:
     static ExceptionOr<Ref<ViewTimeline>> create(Document&, ViewTimelineOptions&&);
-    static Ref<ViewTimeline> create(const Style::ScopedName&, ScrollAxis, const Style::ViewTimelineInsetItem&, const Style::ZoomFactor&);
+    static Ref<ViewTimeline> LEGACY_NODELETE create(const Style::ScopedName&, ScrollAxis, const Style::ViewTimelineInsetItem&, const Style::ZoomFactor&);
 
-    const Element* NODELETE subject() const;
+    const Element* LEGACY_NODELETE subject() const;
     const WeakStyleable& subjectStyleable() const LIFETIME_BOUND { return m_subject; }
     void setSubject(Element*);
     void setSubject(const Styleable&);
@@ -100,14 +100,14 @@ public:
     std::pair<double, double> offsetIntervalForTimelineRangeName(Style::SingleAnimationRangeName) const;
 
     bool matchesAnonymousViewFunctionForSubject(const Style::ViewFunction&, const Style::ZoomFactor&, const Styleable&) const;
-    WebAnimationTime NODELETE epsilon() const;
+    WebAnimationTime LEGACY_NODELETE epsilon() const;
 
 private:
     ViewTimeline(const Style::ScopedName&, ScrollAxis, const Style::ViewTimelineInsetItem&, const Style::ZoomFactor&);
 
     ScrollTimeline::Data computeTimelineData(UseCachedCurrentTime = UseCachedCurrentTime::Yes) const final;
     std::pair<double, double> intervalForTimelineRangeName(const ScrollTimeline::Data&, Style::SingleAnimationRangeName) const;
-    template<typename F> double mapOffsetToTimelineRange(const ScrollTimeline::Data&, Style::SingleAnimationRangeName, F&&) const;
+    template<typename F> double mapOffsetToTimelineRange(const ScrollTimeline::Data&, Style::SingleAnimationRangeName, NOESCAPE const F&) const;
 
     bool isViewTimeline() const final { return true; }
 

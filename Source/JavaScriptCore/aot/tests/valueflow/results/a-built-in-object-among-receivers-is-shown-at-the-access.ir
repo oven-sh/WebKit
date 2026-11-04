@@ -1,0 +1,29 @@
+# read(Math); read(helper);  function read(value) { value.side }  readClosure(helper);  function readClosure(value) { value.side }
+# An object without a layout is explained by where it is made. No line of the program makes a built-in object: where one arrives, alone or beside a closure, the access is its own witness.
+# A closure that arrives alone is shown where its function is declared
+# RUN: valueflow-results
+# CHECK: access [[both]] function=f1 kind=Read loss cause=NonLayoutObject witness=f1:v1
+# CHECK-NEXT: access [[closure]] function=f2 kind=Read loss cause=NonLayoutObject witness=f3
+# CHECK-NOT: access S
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Math
+    v1 = NewClosure function=f3
+    v2 = CallDirect v0 function=f1
+    v3 = CallDirect v1 function=f1
+    v4 = CallDirect v1 function=f2
+    Return
+}
+function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return v1
+}
+function f2 name="readClosure" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return v1
+}
+function f3 name="helper" results=[{type=anything}] {
+    Return
+}

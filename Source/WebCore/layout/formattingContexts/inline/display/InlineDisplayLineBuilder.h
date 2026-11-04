@@ -42,9 +42,9 @@ public:
 
     InlineDisplay::Line build(const LineLayoutResult&, const LineBox&, bool lineIsFullyTruncatedInBlockDirection) const;
 
-    static std::optional<InlineDisplay::Line::Ellipsis> applyEllipsisIfNeeded(LineEndingTruncationPolicy, InlineDisplay::Line&, std::span<InlineDisplay::Box>, bool isLegacyLineClamp);
+    static std::optional<InlineDisplay::Line::Ellipsis> placeTrailingEllipsisIfNeeded(LineEndingTruncationPolicy, const std::optional<BlockOverflowEllipsis>&, InlineDisplay::Line&, std::span<InlineDisplay::Box>, bool isLegacyLineClamp);
     static void addLegacyLineClampTrailingLinkBoxIfApplicable(const InlineFormattingContext&, const InlineLayoutState&, InlineDisplay::Content&);
-    static bool hasTrailingLineWithBlockContent(const InlineDisplay::Lines&);
+    static bool LEGACY_NODELETE hasTrailingLineWithBlockContent(const InlineDisplay::Lines&);
 
 private:
     struct EnclosingLineGeometry {

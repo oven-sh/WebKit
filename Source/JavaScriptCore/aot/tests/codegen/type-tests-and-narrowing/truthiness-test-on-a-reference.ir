@@ -1,0 +1,136 @@
+# class Item {
+#   weight: number;
+#   constructor(weight: number) { this.weight = weight; }
+# }
+# function weigh(item: Item | undefined): number {
+#   if (item) return item.weight;
+#   return 0;
+# }
+# declare const input: any;
+# (globalThis as any).answer = weigh(input ? new Item(+input) : undefined);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=104 kind=Parameter function=f1
+typesite w1 module=m0 position=89 kind=Result
+typesite w2 module=m0 position=45 kind=Parameter function=f2
+typesite w3 module=m0 position=15 kind=Field
+typesite w4 module=m0 position=253 kind=CallResult
+typesite w5 module=m0 position=239 kind=CallResult
+typesite w6 module=m0 position=63 kind=Field
+layout L0 kind=Instance name="Item" module=m0 position=6 constructor=f2 fields=[{key="weight" declared={type=number site=w3} flags=[IsRequired]}] ownFieldCount=1
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    PutModuleVariable v3 variable=g0
+    v5 = FinishClass v3 layout=L0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="globalThis" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v11 = Convert v10 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="input" [isFreeName]
+    v14 = ToBoolean v13
+    Branch v14 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v15):
+    Jump -> next b3()
+  b3():
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="input" [isFreeName]
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    v19 = ToNumber v18
+    v20 = Construct v7, -, v19 calleeName="Item"
+    v21 = Convert v20 declared={type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}
+    Jump -> next b6(v21)
+  b4(v22):
+    Jump -> next b5()
+  b5():
+    v23 = Undefined
+    Jump -> next b6(v23)
+  b6(v24):
+    v25 = Call v1, -, v24 calleeName="weigh"
+    v26 = Convert v25 declared={type=number site=w5}
+    PropSet v11, v26 key="answer"
+    v28 = Undefined
+    Return v28
+}
+function f1 name="weigh" module=m0 position=89 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w0 flags=[OmitsNull]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = ToBoolean v0
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v2):
+    Jump -> next b3()
+  b3():
+    v3 = PropGet v2 key="weight"
+    v4 = Convert v3 declared={type=number site=w1}
+    Return v4
+  b4(v5):
+    Jump -> next b5()
+  b5():
+    v6 = Integer
+    v7 = Convert v6 declared={type=number site=w1}
+    Return v7
+}
+function f2 name="Item" module=m0 position=44 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w2}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f3
+    v6 = Convert v1 declared={type=number site=w6}
+    PropSet v4, v6 key="weight"
+    v8 = Undefined
+    v9 = TypeTest v8 testedType=object
+    Branch v9 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v10):
+    Jump -> next b4(v10)
+  b3(v11):
+    Jump -> next b4(v4)
+  b4(v12):
+    Return v12
+}
+function f3 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Undefined
+    PropDefine v1, v2 key="weight"
+    v4 = Undefined
+    Return v4
+}
+
+# `if (item)` on a reference that may be undefined asks one thing: is the word a cell. An object is never falsy, so nothing of the object is read for the test.
+# CHECK-LABEL: name="weigh" role=Source
+# CHECK: Int64 b@[[notCell]] = BitAnd(b@[[item]], {{*}}:ToBoolean)
+# CHECK-NEXT: Branch(b@[[notCell]], Terminal
+# CHECK-NEXT: Successors: Then:Unlikely:#[[zero]], Else:#[[read]]
+# CHECK-NEXT: BB#[[read]]:
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Double b@[[weight]] = Load(b@[[item]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Return(b@[[weight]], Terminal)
+# CHECK-NEXT: BB#[[zero]]:
+# CHECK-NOT: Branch(
+# CHECK-LABEL: end of function
+# X64: instructions: 5, patchpoints: 0
+# ARM64: instructions: 5, patchpoints: 0

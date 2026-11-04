@@ -48,16 +48,16 @@
 
 #ifdef NEEDS_WRAPPER_CACHE_LOCK
 static Lock wrapperCacheLock;
-static HashMap<DOMObjectInternal*, NSObject *>& wrapperCache() WTF_REQUIRES_LOCK(wrapperCacheLock)
+static HashMap<void*, NSObject *>& wrapperCache() WTF_REQUIRES_LOCK(wrapperCacheLock)
 #else
-static HashMap<DOMObjectInternal*, NSObject *>& NODELETE wrapperCache()
+static HashMap<void*, NSObject *>& LEGACY_NODELETE wrapperCache()
 #endif
 {
-    static NeverDestroyed<HashMap<DOMObjectInternal*, NSObject *>> map;
+    static NeverDestroyed<HashMap<void*, NSObject *>> map;
     return map;
 }
 
-NSObject* getDOMWrapper(DOMObjectInternal* impl)
+NSObject* getDOMWrapper(void* impl)
 {
 #ifdef NEEDS_WRAPPER_CACHE_LOCK
     Locker stateLocker { wrapperCacheLock };
@@ -65,7 +65,7 @@ NSObject* getDOMWrapper(DOMObjectInternal* impl)
     return wrapperCache().get(impl);
 }
 
-void addDOMWrapper(NSObject* wrapper, DOMObjectInternal* impl)
+void addDOMWrapper(NSObject* wrapper, void* impl)
 {
 #ifdef NEEDS_WRAPPER_CACHE_LOCK
     Locker stateLocker { wrapperCacheLock };
@@ -73,7 +73,7 @@ void addDOMWrapper(NSObject* wrapper, DOMObjectInternal* impl)
     wrapperCache().set(impl, wrapper);
 }
 
-void removeDOMWrapper(DOMObjectInternal* impl)
+void removeDOMWrapper(void* impl)
 {
 #ifdef NEEDS_WRAPPER_CACHE_LOCK
     Locker stateLocker { wrapperCacheLock };
@@ -95,7 +95,7 @@ void removeDOMWrapper(DOMObjectInternal* impl)
         return nil;
     }
 
-    _private = [[WebScriptObjectPrivate alloc] init];
+    _private = adoptNS([[WebScriptObjectPrivate alloc] init]);
     _private->isCreatedByDOMWrapper = YES;
     
     return self;
@@ -121,12 +121,13 @@ void removeDOMWrapper(DOMObjectInternal* impl)
         return;
 
     // The global object which should own this node - FIXME: does this need to be isolated-world aware?
-    auto* globalObject = frame->script().globalObject(WebCore::mainThreadNormalWorldSingleton());
+    CheckedRef script = frame->script();
+    auto* globalObject = script->globalObject(WebCore::mainThreadNormalWorldSingleton());
 
     // Get (or create) a cached JS object for the DOM node.
     JSC::JSObject *scriptImp = asObject(WebCore::toJS(globalObject, globalObject, *nodeImpl));
 
-    RefPtr rootObject = frame->script().bindingRootObject();
+    RefPtr rootObject = script->bindingRootObject();
 
     [self _setImp:scriptImp originRootObject:rootObject.copyRef() rootObject:rootObject.copyRef()];
 }

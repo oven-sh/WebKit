@@ -1,0 +1,21 @@
+# Three layouts of two fields each fill their cells, and three accesses ask for one location each for a name that two of them hold. The program makes the layouts seldom, so two of the cells grow and every access has one location.
+# The same program as share-slot-without-room.ir, where `testing=NoLayoutIsMadeSeldom` lets no cell grow and the lightest access keeps two groups
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots layouts accesses
+# RUN(PLACED): place accesses
+# STATISTIC: SharedSlots = 3
+# STATISTIC: SharesRefused = 0
+
+# CHECK: L0 CompiledObject size=48
+# CHECK: L1 CompiledObject size=32
+# CHECK: L2 CompiledObject size=48
+# CHECK: "x" {L0 L1} read
+# CHECK-NEXT: one location Double @16
+# CHECK-NEXT: "y" {L1 L2} read
+# CHECK-NEXT: one location Double @24
+# CHECK-NEXT: "z" {L0 L2} read
+# CHECK-NEXT: one location Double @32
+
+# PLACED: "z" [L0, L2] read EveryMember Double @32 withField=[L0, L2]
+# PROGRAM-OF: share-slot-without-room.ir

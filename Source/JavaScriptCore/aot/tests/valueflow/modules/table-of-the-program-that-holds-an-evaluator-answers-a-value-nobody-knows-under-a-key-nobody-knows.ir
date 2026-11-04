@@ -1,0 +1,33 @@
+# intrinsics = { "%parse%": parse, "%eval%": eval }; picked = intrinsics[name]; picked("12")
+# table-of-the-program-read-under-a-key-nobody-knows-hands-out-no-evaluator.ir: the call is no event. What the read answers may be `eval` all the same, so it is not `parse` alone:
+# it is also a value nobody knows, and so is what the call returns.
+# RUN: valueflow-why values=f0:v9 values=f0:v11
+# CHECK: values=f0:v9
+# CHECK: result {{*}} unknown
+# CHECK: values=f0:v11
+# CHECK: result {{*}} unknown
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen-code no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Intrinsics" fields=[{key="%parse%" declared={type=anything} flags=[IsRequired]}, {key="%eval%" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Eval
+    v2 = NewObject layout=L0
+    PropDefine v2, v0 key="%parse%"
+    PropDefine v2, v1 key="%eval%"
+    v5 = FinishObject v2
+    v6 = Builtin builtin=DateNow
+    v7 = Call v6
+    v8 = ToString v7
+    v9 = ElemGet v5, v8
+    v10 = String string="12"
+    v11 = Call v9, -, v10
+    Return v11
+}
+function f1 name="parse" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=12
+    Return v1
+}

@@ -1,0 +1,85 @@
+# A set of receivers that is not complete says what is expected. At an access whose receiver has no type and at which the unknown object arrives, or an object without a layout (an array, a closure),
+# the receivers are the layouts that are seen to arrive beside it and have a field of the name, and the set ends in `..`: whoever reads it tests. Where no such layout arrives there are no receivers,
+# and none where a built-in object that arrives answers the name by itself (`length` of an array): there the layout is the odd one. A receiver with a type keeps all the layouts of its type, also the one that is not seen to arrive.
+# The site names the loss all the same: what took the proof away, and where.
+# The unknown object is explained by how it came into being, and without the edges to walk back the access is its own witness. An object without a layout is explained by where it is made.
+# At the end: the same read with the object alone has a complete set and no loss
+# RUN: valueflow-apply
+# RUN(RESULTS): valueflow-results
+# RESULTS: access [[unknown]] function=f1 kind=Read loss cause=[[source]] witness=f1:v1
+# RESULTS-NEXT: access [[array]] function=f2 kind=Read loss cause=NonLayoutObject witness=f0:v4
+# RESULTS-NEXT: access [[closure]] function=f3 kind=Read loss cause=NonLayoutObject witness=f6
+# RESULTS-NEXT: access [[alone]] function=f4 kind=Read loss cause=NonLayoutObject witness=f0:v4
+# RESULTS-NEXT: access [[complete]] function=f5 kind=Read
+# RESULTS-NOT: loss
+# RESULTS: access [[answered]] function=f7 kind=Read loss cause=NonLayoutObject witness=f0:v4
+# RESULTS-NEXT: access [[typed]] function=f8 kind=Read
+# RESULTS-NOT: loss
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Circle" fields=[{key="side" declared={type=anything} flags=[IsRequired]}, {key="length" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Square" fields=[{key="side" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="outside" [isFreeName]
+    v4 = NewArray v0 contents=anything
+    v5 = NewClosure function=f6
+    v6 = CallDirect v1 function=f1
+    v7 = CallDirect v3 function=f1
+    v8 = CallDirect v1 function=f2
+    v9 = CallDirect v4 function=f2
+    v10 = CallDirect v1 function=f3
+    v11 = CallDirect v5 function=f3
+    v12 = CallDirect v4 function=f4
+    v13 = CallDirect v1 function=f5
+    v14 = CallDirect v1 function=f7
+    v15 = CallDirect v4 function=f7
+    v16 = NewObject -, v0 layout=L1 fields=[0]
+    v17 = NewClosure function=f8
+    v18 = CallDirect v1 function=f8
+    v19 = Call v3, -, v17, v16
+    Return
+}
+function f1 name="unknownObjectAmongReceivers" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return v1
+# CHECK: = PropGet {{*}}key="side" accessSite={{*}} receivers=[L0, ..]
+}
+function f2 name="arrayAmongReceivers" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return v1
+# CHECK: = PropGet {{*}}key="side" accessSite={{*}} receivers=[L0, ..]
+}
+function f3 name="closureAmongReceivers" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return v1
+# CHECK: = PropGet {{*}}key="side" accessSite={{*}} receivers=[L0, ..]
+}
+function f4 name="noLayoutAmongReceivers" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return v1
+# CHECK: = PropGet {{*}}key="side" accessSite=
+# CHECK-NOT: receivers=
+}
+function f5 name="onlyTheLayout" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return v1
+# CHECK: = PropGet {{*}}key="side" accessSite={{*}} receivers=[L0]
+}
+function f6 name="callback" results=[{type=anything}] {
+    Return
+}
+function f7 name="arrayAnswersTheName" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return v1
+# CHECK: = PropGet {{*}}key="length" accessSite=
+# CHECK-NOT: receivers=
+}
+function f8 name="receiverWithType" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return v1
+# CHECK: = PropGet {{*}}key="side" accessSite={{*}} receivers=[L0, L1]
+}

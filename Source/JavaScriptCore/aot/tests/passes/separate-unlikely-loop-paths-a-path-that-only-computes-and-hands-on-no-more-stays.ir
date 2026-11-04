@@ -1,0 +1,49 @@
+# Of two unlikely paths that only compute, the one that makes the sum wider leaves the loop; the one that passes what the likely path passes too stays in it
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sum" parameters=[{type=undefined|int[0, 9]}, {type=number}, {type=undefined|Array<string>}] results=[{type=i32}] {
+    v3 = Integer integer=0
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b9()
+  b2():
+    v9 = TypeTest v2 testedType=undefined
+    Branch v9 -> taken b3(), notTaken b4()
+  b3() frequency=Unlikely:
+    v10 = Integer integer=1
+    Jump -> next b5(v10)
+  b4():
+    v11 = Integer integer=2
+    v12 = Integer integer=1
+    v13 = Less v6, v11
+    Branch v13 -> taken b5(v11), notTaken b5(v12)
+  b5(v14):
+    v15 = TypeTest v0 testedType=number
+    Branch v15 -> taken b6(| 0), notTaken b7()
+  b6(v16):
+    v17 = Add v5, v16
+    Jump -> next b8(v17)
+  b7() frequency=Unlikely:
+    v18 = Add v5, v0
+    Jump -> next b8(v18)
+  b8(v19):
+    v20 = BitOr v19, v14
+    v21 = Increment v6
+    Jump -> next b1(v20, v21)
+  b9():
+    Return v5
+# CHECK: Branch v9 -> taken b3(), notTaken b4()
+# CHECK: b3() frequency=Unlikely:
+# CHECK: Jump -> next b5(v10)
+# CHECK: Branch v15 -> taken b6(| 0), notTaken [[missing]]()
+# CHECK: b8(v19: int[-2147483648, 2147483656]):
+# CHECK: [[missing]]() frequency=Rare:
+# CHECK-NEXT: [[sum]]: number = Add v5, v0
+}

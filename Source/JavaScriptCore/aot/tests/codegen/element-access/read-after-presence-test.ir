@@ -1,0 +1,60 @@
+# A read of an array element after the test for its presence has no arm for an absent element: the number that `undefined` converts to is not among the constants
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=b3:PinnedConstants disable=b3:UnrollLoops
+# RUN: generate-code
+# CHECK: f0: size={{*}} constants=0
+# CHECK: f1: size={{*}} constants=1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sameIndex" parameters=[{type=Array<undefined|int[1, 8], proven, Int32, pristine[Storage, Names]>}] results=[{type=i32}] {
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: i32, v4: int[0, 4294967295]):
+    LoopHint
+    v6 = GetArrayLength v0
+    v7 = Less v4, v6 form=Integers
+    TestAndBranch v7 -> taken b2(| 0), notTaken b6()
+  b2(v8: int[0, 4294967294]):
+    v9 = HasArrayElement v0, v8 arrayStorage=Int32 [keyIsIntegral]
+    TestAndBranch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = GetArrayElement v0, v8 arrayStorage=Int32 [keyIsIntegral]
+    v11 = Add v3, v10 form=Numbers
+    v12 = Integer
+    v13 = BitOr v11, v12 form=Numbers
+    Jump -> next b5(v13)
+  b4():
+    Jump -> next b5(v3)
+  b5(v14: i32):
+    v15 = Increment v8 form=Integers
+    Jump -> next b1(v14, v15)
+  b6():
+    Return v3
+}
+function f1 name="otherIndex" parameters=[{type=Array<undefined|int[1, 8], proven, Int32, pristine[Storage, Names]>}, {type=int[0, 4294967294]}] results=[{type=i32}] {
+    v2 = Integer
+    v3 = Integer
+    Jump -> next b1(v2, v3)
+  b1(v4: i32, v5: int[0, 4294967295]):
+    LoopHint
+    v7 = GetArrayLength v0
+    v8 = Less v5, v7 form=Integers
+    TestAndBranch v8 -> taken b2(| 0), notTaken b6()
+  b2(v9: int[0, 4294967294]):
+    v10 = HasArrayElement v0, v9 arrayStorage=Int32 [keyIsIntegral]
+    TestAndBranch v10 -> taken b3(), notTaken b4()
+  b3():
+    v11 = GetArrayElement v0, v1 arrayStorage=Int32 [keyIsIntegral]
+    v12 = Add v4, v11 form=Numbers
+    v13 = Integer
+    v14 = BitOr v12, v13 form=Numbers
+    Jump -> next b5(v14)
+  b4():
+    Jump -> next b5(v4)
+  b5(v15: i32):
+    v16 = Increment v9 form=Integers
+    Jump -> next b1(v15, v16)
+  b6():
+    Return v4
+}

@@ -61,13 +61,13 @@ void HTMLUListElement::collectPresentationalHintsForAttribute(const QualifiedNam
 {
     if (name == typeAttr) {
         if (equalLettersIgnoringASCIICase(value, "disc"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueDisc);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::Disc);
         else if (equalLettersIgnoringASCIICase(value, "circle"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueCircle);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::Circle);
         else if (equalLettersIgnoringASCIICase(value, "square"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueSquare);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::Square);
         else if (equalLettersIgnoringASCIICase(value, "none"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyListStyleType, CSSValueNone);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ListStyleType, CSSValueID::None);
     } else
         HTMLElement::collectPresentationalHintsForAttribute(name, value, style);
 }

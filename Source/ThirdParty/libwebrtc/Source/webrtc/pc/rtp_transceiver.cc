@@ -33,6 +33,7 @@
 #include "api/media_stream_interface.h"
 #include "api/media_types.h"
 #include "api/rtc_error.h"
+#include "api/rtp_packet_infos.h"
 #include "api/rtp_parameters.h"
 #include "api/rtp_receiver_interface.h"
 #include "api/rtp_sender_interface.h"
@@ -41,6 +42,7 @@
 #include "api/sequence_checker.h"
 #include "api/task_queue/pending_task_safety_flag.h"
 #include "api/task_queue/task_queue_base.h"
+#include "api/units/timestamp.h"
 #include "api/video/video_bitrate_allocator_factory.h"
 #include "api/video_codecs/scalability_mode.h"
 #include "call/call.h"
@@ -187,7 +189,8 @@ scoped_refptr<RtpSenderProxyWithInternal<RtpSenderInternal>> CreateSender(
 
 template <typename RtpReceiverT, typename ReceiveInterface>
 scoped_refptr<RtpReceiverProxyWithInternal<RtpReceiverInternal>>
-CreateReceiverOfType(Thread* signaling_thread,
+CreateReceiverOfType(const Environment& env,
+                     Thread* signaling_thread,
                      Thread* worker_thread,
                      absl::string_view receiver_id,
                      MediaReceiveChannelInterface* receive_channel,
@@ -197,10 +200,11 @@ CreateReceiverOfType(Thread* signaling_thread,
       make_ref_counted<RtpReceiverT>(
           worker_thread, receiver_id, std::vector<std::string>(),
           std::move(enable_sframe_at_owner),
-          static_cast<ReceiveInterface*>(receive_channel)));
+          static_cast<ReceiveInterface*>(receive_channel), &env.clock()));
 }
 
 scoped_refptr<RtpReceiverProxyWithInternal<RtpReceiverInternal>> CreateReceiver(
+    const Environment& env,
     MediaType media_type,
     Thread* signaling_thread,
     Thread* worker_thread,
@@ -210,13 +214,13 @@ scoped_refptr<RtpReceiverProxyWithInternal<RtpReceiverInternal>> CreateReceiver(
   if (media_type == MediaType::AUDIO) {
     return CreateReceiverOfType<AudioRtpReceiver,
                                 VoiceMediaReceiveChannelInterface>(
-        signaling_thread, worker_thread, receiver_id, receive_channel,
+        env, signaling_thread, worker_thread, receiver_id, receive_channel,
         std::move(enable_sframe_at_owner));
   }
   RTC_DCHECK_EQ(media_type, MediaType::VIDEO);
   return CreateReceiverOfType<VideoRtpReceiver,
                               VideoMediaReceiveChannelInterface>(
-      signaling_thread, worker_thread, receiver_id, receive_channel,
+      env, signaling_thread, worker_thread, receiver_id, receive_channel,
       std::move(enable_sframe_at_owner));
 }
 
@@ -234,24 +238,31 @@ CreateMediaContentChannels(
     const CryptoOptions& crypto_options,
     VideoBitrateAllocatorFactory* video_bitrate_allocator_factory,
     VideoMediaSendChannelInterface::EncoderSwitchRequestCallback
-        video_encoder_switch_request_callback = nullptr,
-    absl::AnyInvocable<void()> parameters_changed_callback = nullptr) {
+        video_encoder_switch_request_callback,
+    absl::AnyInvocable<void()> parameters_changed_callback,
+    absl::AnyInvocable<void(uint32_t ssrc)> on_first_packet,
+    absl::AnyInvocable<void(uint32_t ssrc, const RtpPacketInfos&, Timestamp)
+                           const> on_frame_delivered_callback) {
   if (media_type == MediaType::AUDIO) {
     RTC_DCHECK(voice_factory);
     return {voice_factory->CreateSendChannel(
                 env, call, media_config, audio_options, crypto_options,
                 std::move(parameters_changed_callback)),
-            voice_factory->CreateReceiveChannel(env, call, media_config,
-                                                audio_options, crypto_options)};
+            voice_factory->CreateReceiveChannel(
+                env, call, media_config, audio_options, crypto_options,
+                std::move(on_first_packet),
+                std::move(on_frame_delivered_callback))};
   }
   RTC_DCHECK(video_factory);
-  return {video_factory->CreateSendChannel(
-              env, call, media_config, video_options, crypto_options,
-              video_bitrate_allocator_factory,
-              std::move(video_encoder_switch_request_callback),
-              std::move(parameters_changed_callback)),
-          video_factory->CreateReceiveChannel(env, call, media_config,
-                                              crypto_options)};
+  return {
+      video_factory->CreateSendChannel(
+          env, call, media_config, video_options, crypto_options,
+          video_bitrate_allocator_factory,
+          std::move(video_encoder_switch_request_callback),
+          std::move(parameters_changed_callback)),
+      video_factory->CreateReceiveChannel(
+          env, call, media_config, crypto_options, std::move(on_first_packet),
+          std::move(on_frame_delivered_callback))};
 }
 
 std::vector<absl::AnyInvocable<void() &&>> DetachAndGetStopTasksForSenders(
@@ -411,7 +422,15 @@ RtpTransceiver::RtpTransceiver(
       media_type_, env_, voice_channel_factory(), video_channel_factory(), call,
       media_config, audio_options, video_options, crypto_options,
       video_bitrate_allocator_factory, std::move(encoder_switch_callback),
-      GetParametersChangedCallback());
+      GetParametersChangedCallback(),
+      [thread = thread_, safety = signaling_thread_safety_,
+       this](uint32_t ssrc) {
+        thread->PostTask(SafeTask(safety, [this, ssrc]() {
+          RTC_DCHECK_RUN_ON(thread_);
+          OnFirstPacketReceived_s(ssrc);
+        }));
+      },
+      GetOnFrameDeliveredCallback());
 
   auto sender = CreateSender(
       media_type_, env_, context_, legacy_stats_, set_streams_observer_,
@@ -427,7 +446,8 @@ RtpTransceiver::RtpTransceiver(
   RTC_DCHECK(set_track_succeeded);
 
   receivers_.push_back(CreateReceiver(
-      media_type_, context_->signaling_thread(), context_->worker_thread(),
+      env_, media_type_, context_->signaling_thread(),
+      context_->worker_thread(),
       receiver_id.empty() ? CreateRandomUuid() : receiver_id,
       owned_receive_channel_.get(),
       absl::bind_front(&RtpTransceiver::TryToEnableSframe, this)));
@@ -474,13 +494,6 @@ void RtpTransceiver::CreateChannel(
   }
 
   ChannelCallbacks callbacks;
-  callbacks.on_first_packet_received =
-      [thread = thread_, flag = signaling_thread_safety_,
-       this](const RtpPacketReceived& packet) mutable {
-        thread->PostTask(SafeTask(
-            std::move(flag),
-            [this, ssrc = packet.Ssrc()]() { OnFirstPacketReceived(ssrc); }));
-      };
   callbacks.on_first_packet_sent =
       [thread = thread_, flag = signaling_thread_safety_, this]() mutable {
         thread->PostTask(
@@ -511,7 +524,15 @@ void RtpTransceiver::CreateChannel(
         media_type(), env_, voice_channel_factory(), video_channel_factory(),
         call_ptr, media_config, audio_options_, video_options_, crypto_options,
         video_bitrate_allocator_factory, std::move(encoder_switch_callback),
-        std::move(parameters_changed_callback));
+        std::move(parameters_changed_callback),
+        [thread = thread_, safety = signaling_thread_safety_,
+         this](uint32_t ssrc) {
+          thread->PostTask(SafeTask(safety, [this, ssrc]() {
+            RTC_DCHECK_RUN_ON(thread_);
+            OnFirstPacketReceived_s(ssrc);
+          }));
+        },
+        GetOnFrameDeliveredCallback());
     media_send_channel = std::move(channels.first);
     media_receive_channel = std::move(channels.second);
     needs_set_media_channels = true;
@@ -846,9 +867,20 @@ std::optional<std::string> RtpTransceiver::mid() const {
   return mid_;
 }
 
-void RtpTransceiver::OnFirstPacketReceived(uint32_t ssrc) {
+void RtpTransceiver::OnFirstPacketReceived_s(uint32_t ssrc) {
+  RTC_DCHECK_RUN_ON(thread_);
   for (const auto& receiver : receivers_) {
-    receiver->internal()->NotifyFirstPacketReceived(ssrc);
+    if (receiver->internal()->ssrc_s() == ssrc) {
+      receiver->internal()->NotifyFirstPacketReceived(ssrc);
+      return;
+    }
+  }
+  for (const auto& receiver : receivers_) {
+    if (!receiver->internal()->ssrc_s().has_value()) {
+      receiver->internal()->SetSsrc_s(ssrc);
+      receiver->internal()->NotifyFirstPacketReceived(ssrc);
+      break;  // Bind first unbound receiver.
+    }
   }
 }
 
@@ -985,8 +1017,7 @@ void RtpTransceiver::ApplySframeEnabled(bool sframe_enabled) {
   sframe_enabled_ = sframe_enabled;
 
   if (sframe_enabled && channel_) {
-    // TODO(bugs.webrtc.org/479862368): Enable Sframe on the media send and
-    // receive channels when the encryption pipeline is implemented.
+    channel_->EnableSframe();
   }
 }
 
@@ -1548,6 +1579,11 @@ absl::string_view RtpTransceiver::channel_transport_name() const {
   return channel_->transport_name();
 }
 
+absl::string_view RtpTransceiver::channel_mid() const {
+  RTC_DCHECK_RUN_ON(context()->network_thread());
+  return channel_ ? absl::string_view(channel_->mid()) : absl::string_view();
+}
+
 MediaSendChannelInterface* RtpTransceiver::media_send_channel() {
   RTC_DCHECK_RUN_ON(thread_);
   return channel_ ? channel_->media_send_channel() : nullptr;
@@ -1609,6 +1645,30 @@ void RtpTransceiver::SetTransport(scoped_refptr<DtlsTransport> transport,
   for (auto& receiver : receivers_) {
     receiver->internal()->set_transport(transport);
   }
+}
+
+void RtpTransceiver::OnFrameDeliveredOnSignalingThread(
+    uint32_t ssrc,
+    const RtpPacketInfos& infos,
+    Timestamp timestamp) {
+  RTC_DCHECK_RUN_ON(thread_);
+  for (const auto& receiver : receivers_) {
+    if (receiver->internal()->ssrc_s() == ssrc) {
+      receiver->internal()->OnFrameDelivered(infos, timestamp);
+    }
+  }
+}
+
+absl::AnyInvocable<void(uint32_t ssrc, const RtpPacketInfos&, Timestamp) const>
+RtpTransceiver::GetOnFrameDeliveredCallback() {
+  TaskQueueBase* thread = thread_;
+  scoped_refptr<PendingTaskSafetyFlag> safety = signaling_thread_safety_;
+  return [thread, safety, this](uint32_t ssrc, const RtpPacketInfos& infos,
+                                Timestamp timestamp) {
+    thread->PostTask(SafeTask(safety, [this, ssrc, infos, timestamp]() {
+      OnFrameDeliveredOnSignalingThread(ssrc, infos, timestamp);
+    }));
+  };
 }
 
 }  // namespace webrtc

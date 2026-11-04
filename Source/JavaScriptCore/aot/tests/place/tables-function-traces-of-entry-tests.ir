@@ -1,0 +1,38 @@
+# The tests at the head of a function are a part of it, as its entrypoint is: where they call the typed body and return, a trace lists the body alone.
+# OPTIONS: disable=pass:InlineCalls
+# RUN(TESTS): tables function-traces
+# RUN(BODY): tables function-traces
+# RUN(FALLBACK): tables function-traces
+# RUN(ENTRY): tables function-traces
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = Double number=1.5
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Call v2, -, v4
+    v7 = Call v1, -, v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="checked" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ number):
+    v1 = Check v0 expectedType=number site=w0
+    v2 = Add v1, v1
+    Return v2
+}
+
+# TESTS: trace f1 role=EntryChecks source=f1 {{*}}visibility=VisibleOnlyOnTop
+# BODY: role=Source source=f1 {{*}}visibility=Visible
+# FALLBACK: role=GenericVersion source=f1 {{*}}visibility=Visible
+# ENTRY: role=GenericEntrypoint source=f1 {{*}}visibility=VisibleOnlyOnTop

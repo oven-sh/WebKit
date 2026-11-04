@@ -53,6 +53,10 @@ private:
 #endif
 };
 
+// A process whose cells live in a cage asks this allocator for the blocks of array storage alone, and may end before it has asked for as many
+// as the supply waits for. The cage's allocator has counted that many blocks of its own: the heap is ramping up.
+void didPassWarmUpStartThresholdInAnotherAllocator();
+
 // The supply of pre-warmed MarkedBlocks is a process-wide singleton with no other observer, so $vm
 // reaches its state through these rather than through any VM.
 bool warmUpMarkedBlocksAreEnabledForTesting();

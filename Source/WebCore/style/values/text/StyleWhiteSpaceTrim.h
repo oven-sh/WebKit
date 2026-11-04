@@ -60,7 +60,7 @@ struct WhiteSpaceTrim {
 
     constexpr bool isNone() const { return m_value.isEmpty(); }
 
-    template<typename... F> constexpr decltype(auto) switchOn(F&&... f) const
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -78,7 +78,7 @@ private:
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<WhiteSpaceTrim> {
-    auto operator()(BuilderState&, const CSSValue&) -> WhiteSpaceTrim;
+    WhiteSpaceTrim LEGACY_NODELETE operator()(BuilderState&, const CSSValue&);
 };
 
 } // namespace Style

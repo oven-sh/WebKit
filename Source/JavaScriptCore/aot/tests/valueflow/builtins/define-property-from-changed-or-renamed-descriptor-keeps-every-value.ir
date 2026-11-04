@@ -1,0 +1,61 @@
+# renamed: Object.defineProperty(target, to, Object.getOwnPropertyDescriptor(source, from)): two key values: any value of the source may lie under any name.
+# changed: descriptor = Object.getOwnPropertyDescriptor(source, key); descriptor.value = other; Object.defineProperty(target, key, descriptor): the stored function is found.
+# RUN: valueflow-solve calls
+# CHECK: f0 v14 -> f3 f4
+# CHECK: f0 v19 -> f3 f4 f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source"
+layout L1 name="Target"
+layout L2 name="Other"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f3
+    v2 = NewClosure function=f4
+    v3 = NewObject layout=L0 fields=[]
+    PropDefine v3, v1 key="first"
+    PropDefine v3, v2 key="second"
+    v6 = FinishObject v3
+    v7 = NewObject layout=L1 fields=[]
+    v8 = Builtin builtin=ObjectGetOwnPropertyNames
+    v9 = Call v8, -, v6
+    v10 = ElemGet v9, v9
+    v11 = ElemGet v9, v10
+    v12 = Call v0, -, v7, v6, v10, v11
+    v13 = PropGet v7 key="first"
+    v14 = Call v13, v7
+    v15 = NewClosure function=f2
+    v16 = NewObject layout=L2 fields=[]
+    v17 = Call v15, -, v16, v6, v10
+    v18 = PropGet v16 key="first"
+    v19 = Call v18, v16
+    Return
+}
+function f1 name="renamed" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v5 = Call v4, -, v1, v2
+    v6 = Builtin builtin=ObjectDefineProperty
+    v7 = Call v6, -, v0, v3, v5
+    Return
+}
+function f2 name="changed" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v4 = Call v3, -, v1, v2
+    v5 = NewClosure function=f5
+    PropSet v4, v5 key="value"
+    v7 = Builtin builtin=ObjectDefineProperty
+    v8 = Call v7, -, v0, v2, v4
+    Return
+}
+function f3 name="first" results=[{type=anything}] {
+    Return
+}
+function f4 name="second" results=[{type=anything}] {
+    Return
+}
+function f5 name="other" results=[{type=anything}] {
+    Return
+}

@@ -1,0 +1,26 @@
+# interface Named { name: string }   interface Flow { name: string; state: string }   (named as Flow).state   const empty = {} as Flow
+# The set of a type is the layouts that DECLARE the names it requires, whatever brought them near it.
+# Point has the names of Named, so it passes for Named. The program asserts a Named to be a Flow, which puts Named below Flow. That says nothing about Point, which has no `state`:
+# names first and a conversion behind them do not add up. Nor is Named's own layout a Flow, nor the empty literal that is asserted to be one: no read of `state` finds a field there.
+# Whole has every name of Flow and passes for it. A method is not asked for (Runner): an object may find it on its prototype, where the reader does not see it.
+# FORM: AsRead
+# RUN: members
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+layout L0 name="Named" fields=[{key="name" declared={type=string} flags=[IsRequired]}] supertypes=[L1]
+layout L1 name="Flow" fields=[{key="name" declared={type=string} flags=[IsRequired]}, {key="state" declared={type=string} flags=[IsRequired]}]
+layout L2 name="Point" fields=[{key="name" declared={type=string} flags=[IsRequired]}, {key="x" declared={type=number} flags=[IsRequired]}]
+layout L3 name="Whole" fields=[{key="name" declared={type=string} flags=[IsRequired]}, {key="state" declared={type=string} flags=[IsRequired]}, {key="x" declared={type=number} flags=[IsRequired]}]
+layout L4 name="Empty" supertypes=[L1, L5]
+layout L5 name="Runner" fields=[{key="run" declared={type=anything} flags=[IsRequired, IsMethod]}]
+# CHECK: L0: members [L0, L1, L2, L3]
+# CHECK-NEXT: L1: members [L1, L3]
+# CHECK-NEXT: L2: members [L2, L3]
+# CHECK-NEXT: L3: members [L3]
+# CHECK-NEXT: L4: members [L4]
+# CHECK-NEXT: L5: members [L4, L5]
+
+function f0 name="take" parameters=[{type=L1}] results=[{type=anything}] {
+    Return
+}

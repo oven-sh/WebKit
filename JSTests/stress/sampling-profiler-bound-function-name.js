@@ -1,3 +1,6 @@
+// Bun: the stacks expected below take "the DFG is enabled" for "the DFG compiles baz()". The ftl-eager-no-cjit mode fails
+// executable allocations at random, and a process in which those compilations fail only ever sees the bound function's frame.
+//@ requireOptions("--useExecutableAllocationFuzz=false")
 if (platformSupportsSamplingProfiler()) {
     load("./sampling-profiler/samplingProfiler.js", "caller relative");
 

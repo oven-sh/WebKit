@@ -1,0 +1,47 @@
+# function Type(flags) { this.flags = flags }   function createType(flags, a, b) { const type = new Type(flags); type.id = next++; if (a && b) type.rare = 1; return type }
+# Tests split the one store of `id` over three paths. No path runs more than half as often as the allocation, together they always run: the field is the constructor's like `flags`.
+# `rare` is stored on one path in four.
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveCalls,ResolveAccesses,EstimateHeat
+# RUN: plan-slots fill
+# CHECK-LABEL: L0 allocated=
+# CHECK-NEXT: .0 "flags" filled={{*}} byConstructor likely
+# CHECK-NEXT: .1 "id" filled={{*}} byConstructor likely
+# CHECK-NEXT: .2 "rare" filled=
+# CHECK-NOT: byConstructor
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Type" constructor=f2 fields=[{key="flags" declared={type=anything}}, {key="id" declared={type=anything}}, {key="rare" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = CallDirect v1, v2, v2 function=f1
+    PutModuleVariable v3 variable=g0
+    Return
+}
+function f1 name="createType" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewClosure function=f2
+    v4 = Construct v3, -, v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Branch v2 -> taken b3(), notTaken b4()
+  b2():
+    PropSet v4, v0 key="id"
+    Jump -> next b5()
+  b3():
+    PropSet v4, v0 key="id"
+    PropSet v4, v0 key="rare"
+    Jump -> next b5()
+  b4():
+    PropSet v4, v0 key="id"
+    Jump -> next b5()
+  b5():
+    Return v4
+}
+function f2 name="Type" flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    PropSet v0, v1 key="flags"
+    Return
+}

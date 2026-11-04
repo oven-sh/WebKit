@@ -102,6 +102,7 @@ typedef struct _CARenderContext CARenderContext;
 - (mach_port_t)createFencePort;
 - (void)setFencePort:(mach_port_t)port;
 - (void)setFencePort:(mach_port_t)port commitHandler:(void(^)(void))block;
+- (BOOL)waitForRenderingWithTimeout:(CFTimeInterval)timeout;
 
 #if PLATFORM(MAC)
 + (void)setAllowsCGSConnections:(BOOL)flag;
@@ -123,6 +124,7 @@ typedef struct _CARenderContext CARenderContext;
 + (instancetype)groupWithCapacity:(NSUInteger)capacity;
 - (void)flush;
 - (void)flushWithTransaction;
+@property (nonatomic) BOOL updatesAsynchronously;
 @end
 
 @interface CAPresentationModifier : NSObject

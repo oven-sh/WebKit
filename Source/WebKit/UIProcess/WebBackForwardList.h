@@ -42,6 +42,7 @@ class Array;
 
 namespace WebKit {
 
+class BrowsingContextGroup;
 class FrameState;
 class WebPageProxy;
 
@@ -66,13 +67,13 @@ public:
 
     virtual ~WebBackForwardList();
 
-    WebBackForwardListItem* itemForID(WebCore::BackForwardItemIdentifier);
+    RefPtr<WebBackForwardListItem> itemForID(WebCore::BackForwardItemIdentifier);
 
     void goToItem(WebBackForwardListItem&);
     void removeAllItems();
     void clear();
 
-    WebBackForwardListItem* NODELETE currentItem() const;
+    RefPtr<WebBackForwardListItem> currentItem() const;
     RefPtr<WebBackForwardListItem> backItem() const;
     RefPtr<WebBackForwardListItem> forwardItem() const;
 
@@ -89,20 +90,20 @@ public:
     Ref<API::Array> backListAsAPIArrayWithLimit(unsigned limit) const;
     Ref<API::Array> forwardListAsAPIArrayWithLimit(unsigned limit) const;
 
-    BackForwardListState backForwardListState(WTF::Function<bool (WebBackForwardListItem&)>&&) const;
+    BackForwardListState backForwardListState(NOESCAPE const WTF::Function<bool(WebBackForwardListItem&)>&) const;
     void restoreFromState(BackForwardListState);
 
     void setItemsAsRestoredFromSession();
-    void setItemsAsRestoredFromSessionIf(NOESCAPE Function<bool(WebBackForwardListItem&)>&&);
+    void setItemsAsRestoredFromSessionIf(NOESCAPE const Function<bool(WebBackForwardListItem&)>&);
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
     void didReceiveProvisionalMessage(IPC::Connection&, IPC::Decoder&);
     void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
-    void backForwardAddItemShared(IPC::Connection&, Ref<FrameState>&&, LoadedWebArchive);
+    void backForwardAddItemShared(IPC::Connection&, Ref<FrameState>&&, LoadedWebArchive, BrowsingContextGroup&);
     void backForwardGoToItemShared(IPC::Connection&, WebCore::BackForwardItemIdentifier);
 
-    FrameState* findFrameStateInItem(WebCore::BackForwardItemIdentifier, WebCore::FrameIdentifier parentFrameID, WebCore::FrameIdentifier childFrameID, uint64_t childFrameIndex, const String& childFrameName);
+    RefPtr<FrameState> findFrameStateInItem(WebCore::BackForwardItemIdentifier, WebCore::FrameIdentifier parentFrameID, WebCore::FrameIdentifier childFrameID, uint64_t childFrameIndex, const String& childFrameName);
     void updateFrameIdentifier(WebCore::FrameIdentifier oldFrameID, WebCore::FrameIdentifier newFrameID);
 
     void replaceFrameStateForChild(WebBackForwardListItem&, WebCore::FrameIdentifier, Ref<FrameState>&& newFrameState);
@@ -121,14 +122,14 @@ private:
     std::pair<unsigned, RefPtr<API::Array>> backListWithLimitInternal(unsigned limit, MakeAPIArray) const;
     std::pair<unsigned, RefPtr<API::Array>> forwardListWithLimitInternal(unsigned limit, MakeAPIArray) const;
 
-    unsigned NODELETE rawBackListEntryCount() const;
-    unsigned NODELETE rawForwardListEntryCount() const;
+    unsigned LEGACY_NODELETE rawBackListEntryCount() const;
+    unsigned LEGACY_NODELETE rawForwardListEntryCount() const;
 
     void addItem(Ref<WebBackForwardListItem>&&);
     void addChildItem(WebCore::FrameIdentifier, Ref<FrameState>&&);
     void didRemoveItem(WebBackForwardListItem&);
     const BackForwardListItemVector& entries() const LIFETIME_BOUND { return m_entries; }
-    WebBackForwardListCounts NODELETE rawCounts() const;
+    WebBackForwardListCounts LEGACY_NODELETE rawCounts() const;
     Ref<FrameState> completeFrameStateForNavigation(Ref<FrameState>&&);
 
     // IPC messages
@@ -172,7 +173,7 @@ public:
     void removeAllItems();
     void clear();
 
-    WebBackForwardListItem* WTF_NULLABLE currentItem() const;
+    RefPtr<WebBackForwardListItem> currentItem() const;
 
     RefPtr<WebBackForwardListItem> itemAtDeltaFromCurrentIndex(int, AllowSkippingBackForwardItems = AllowSkippingBackForwardItems::Yes) const;
     RefPtr<WebBackForwardListItem> backItem() const;
@@ -195,8 +196,8 @@ public:
 private:
     explicit WebBackForwardListWrapper(WebPageProxy&);
 
-    std::unique_ptr<WebBackForwardList> m_impl;
-    Ref<WebBackForwardListMessageForwarder> m_messageForwarder;
+    const std::unique_ptr<WebBackForwardList> m_impl;
+    const Ref<WebBackForwardListMessageForwarder> m_messageForwarder;
 };
 
 #endif // ENABLE(BACK_FORWARD_LIST_SWIFT)

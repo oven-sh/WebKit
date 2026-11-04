@@ -47,7 +47,7 @@ namespace WebKit {
 
 class TestWithSwiftMessageForwarder: public RefCounted<TestWithSwiftMessageForwarder>, public IPC::MessageReceiver {
 public:
-    static Ref<TestWithSwiftMessageForwarder> createFromWeak(WebKit::TestWithSwiftWeakRef* _Nonnull handler)
+    static Ref<TestWithSwiftMessageForwarder> createFromWeak(WebKit::TestWithSwiftWeakRef* WTF_NONNULL handler)
     {
         return adoptRef(*new TestWithSwiftMessageForwarder(handler));
     }
@@ -57,10 +57,10 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 private:
-    TestWithSwiftMessageForwarder(WebKit::TestWithSwiftWeakRef* _Nonnull);
+    TestWithSwiftMessageForwarder(WebKit::TestWithSwiftWeakRef* WTF_NONNULL);
     std::unique_ptr<WebKit::TestWithSwift> getMessageTarget();
     std::unique_ptr<WebKit::TestWithSwiftWeakRef> m_handler;
-} SWIFT_SHARED_REFERENCE(.ref, .deref);
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(.ref, .deref);
 
 }
 
@@ -82,7 +82,7 @@ class TestAsyncMessage {
 public:
     using Arguments = std::tuple<uint32_t>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestAsyncMessage; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestAsyncMessage; }
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -112,7 +112,7 @@ class TestSyncMessage {
 public:
     using Arguments = std::tuple<uint32_t>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestSyncMessage; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestSyncMessage; }
     static constexpr bool isSync = true;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -140,7 +140,7 @@ class TestMessageWithAliasedParameter {
 public:
     using Arguments = std::tuple<Ref<WebKit::FrameState>>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestMessageWithAliasedParameter; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestMessageWithAliasedParameter; }
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -165,7 +165,7 @@ class TestThrowingMessageWithReply {
 public:
     using Arguments = std::tuple<uint32_t>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestThrowingMessageWithReply; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestThrowingMessageWithReply; }
     static constexpr bool isSync = true;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -193,7 +193,7 @@ class TestThrowingMessageWithoutReply {
 public:
     using Arguments = std::tuple<Ref<WebKit::FrameState>, WebCore::FrameIdentifier>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestThrowingMessageWithoutReply; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestThrowingMessageWithoutReply; }
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -217,11 +217,41 @@ private:
     SUPPRESS_FORWARD_DECL_MEMBER const WebCore::FrameIdentifier& m_frameID;
 };
 
+class TestMessageWithEmptyReply {
+public:
+    using Arguments = std::tuple<uint32_t>;
+
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestMessageWithEmptyReply; }
+    static constexpr bool isSync = false;
+    static constexpr bool canDispatchOutOfOrder = false;
+    static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
+
+    static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::TestWithSwift_TestMessageWithEmptyReplyReply; }
+    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;
+    using ReplyArguments = std::tuple<>;
+    using Reply = CompletionHandler<void()>;
+    using Promise = WTF::NativePromise<void, IPC::Error>;
+    explicit TestMessageWithEmptyReply(uint32_t param)
+        : m_param(param)
+    {
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
+        encoder << m_param;
+    }
+
+private:
+    uint32_t m_param;
+};
+
 class TestAsyncMessageReply {
 public:
     using Arguments = std::tuple<uint8_t>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestAsyncMessageReply; }
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestAsyncMessageReply; }
     static constexpr bool isSync = false;
     static constexpr bool canDispatchOutOfOrder = false;
     static constexpr bool replyCanDispatchOutOfOrder = false;
@@ -242,6 +272,28 @@ private:
     uint8_t m_reply;
 };
 
+class TestMessageWithEmptyReplyReply {
+public:
+    using Arguments = std::tuple<>;
+
+    static constexpr IPC::MessageName name() { return IPC::MessageName::TestWithSwift_TestMessageWithEmptyReplyReply; }
+    static constexpr bool isSync = false;
+    static constexpr bool canDispatchOutOfOrder = false;
+    static constexpr bool replyCanDispatchOutOfOrder = false;
+    static constexpr bool deferSendingIfSuspended = false;
+
+    TestMessageWithEmptyReplyReply()
+    {
+    }
+
+    template<typename Encoder>
+    void encode(Encoder& encoder)
+    {
+    }
+
+private:
+};
+
 } // namespace TestWithSwift
 } // namespace Messages
 
@@ -250,8 +302,13 @@ namespace TestWithSwift {
 using TestAsyncMessageCompletionHandler = WTF::RefCountable<Messages::TestWithSwift::TestAsyncMessage::Reply>;
 using TestSyncMessageCompletionHandler = WTF::RefCountable<Messages::TestWithSwift::TestSyncMessage::Reply>;
 using TestThrowingMessageWithReplyCompletionHandler = WTF::RefCountable<Messages::TestWithSwift::TestThrowingMessageWithReply::Reply>;
+using TestMessageWithEmptyReplyCompletionHandler = WTF::RefCountable<Messages::TestWithSwift::TestMessageWithEmptyReply::Reply>;
 
 void completeWithDefaultReply(TestAsyncMessageCompletionHandler&);
+
+void completeWithDefaultReply(TestMessageWithEmptyReplyCompletionHandler&);
+
+void complete(TestAsyncMessageCompletionHandler&, uint8_t);
 } // namespace TestWithSwift
 } // namespace CompletionHandlers
 

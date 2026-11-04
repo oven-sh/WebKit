@@ -63,7 +63,7 @@ WK_CLASS_AVAILABLE(macos(15.0), ios(18.0), visionos(2.0))
 
 - (BOOL)isSameElement:(_WKTargetedElementInfo *)other;
 
-- (void)getChildFrames:(void(^)(NSArray<_WKFrameTreeNode *> *))completionHandler;
+- (void)getChildFrames:(void(^)(NSArray<_WKFrameTreeNode *> *))completionHandler WK_API_DEPRECATED("No longer supported", macos(15.0, WK_MAC_TBA), ios(18.0, WK_IOS_TBA), visionos(2.0, WK_XROS_TBA));
 - (void)takeSnapshotWithCompletionHandler:(void(^)(CGImageRef))completionHandler;
 
 @end

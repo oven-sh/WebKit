@@ -54,6 +54,7 @@
 #include <wtf/MainThread.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/NakedPtr.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/SentinelLinkedList.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
@@ -68,6 +69,20 @@ using JSC::Wasm::ExecutionHandler;
 
 std::atomic<unsigned> replyCount { 0 };
 
+static Lock lastReplyLock;
+
+static String& lastReplyStorage() WTF_REQUIRES_LOCK(lastReplyLock)
+{
+    static NeverDestroyed<String> storage;
+    return storage.get();
+}
+
+String lastReply()
+{
+    Locker locker { lastReplyLock };
+    return lastReplyStorage().isolatedCopy();
+}
+
 // ========== Worker/Workers classes (duplicated from jsc.cpp) ==========
 // These are essential for proper VM tracking and $.agent.start() support
 
@@ -81,7 +96,7 @@ public:
     Workers() = default;
     ~Workers() = default;
 
-    static Workers& NODELETE singleton()
+    static Workers& LEGACY_NODELETE singleton()
     {
         static Workers* workers = new Workers();
         return *workers;
@@ -111,7 +126,7 @@ public:
         remove();
     }
 
-    bool NODELETE isMain() const { return m_isMain; }
+    bool LEGACY_NODELETE isMain() const { return m_isMain; }
 
     static Worker& current()
     {
@@ -267,6 +282,10 @@ void setupTestEnvironment(DebugServer*& debugServer, ExecutionHandler*& executio
 
     debugServer = &DebugServer::singleton();
     debugServer->startRWI([](const String& packet) {
+        {
+            Locker locker { lastReplyLock };
+            lastReplyStorage() = packet.isolatedCopy();
+        }
         replyCount++;
         dataLogLnIf(verboseLogging, RWI_REPLY_PREFIX, packet);
         return true;

@@ -36,7 +36,6 @@ class RenderBlock;
 class RenderBoxModelObject;
 class RenderElement;
 class RenderObject;
-class RenderInline;
 class RenderText;
 
 namespace Style {
@@ -68,16 +67,17 @@ public:
     static void updateContent(const RenderText&);
 
     const Layout::Box& insert(const RenderElement& parent, RenderObject& child, const RenderObject* beforeChild = nullptr);
-    UniqueRef<Layout::Box> remove(const RenderElement& parent, RenderObject& child);
+    // Destroys the layout box of the child, and the boxes of its subtree.
+    void remove(const RenderElement& parent, RenderObject& child);
 
 private:
     const RenderBlock& rootRenderer() const { return m_rootRenderer; }
     RenderBlock& rootRenderer() { return m_rootRenderer; }
 
-    const Layout::ElementBox& NODELETE rootLayoutBox() const;
-    Layout::ElementBox& rootLayoutBox();
+    const Layout::ElementBox& LEGACY_NODELETE rootLayoutBox() const;
+    Layout::ElementBox& LEGACY_NODELETE rootLayoutBox();
 
-    Layout::InitialContainingBlock& NODELETE initialContainingBlock();
+    Layout::InitialContainingBlock& LEGACY_NODELETE initialContainingBlock();
 
     static UniqueRef<Layout::Box> createLayoutBox(RenderObject&);
 

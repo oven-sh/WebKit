@@ -1,0 +1,26 @@
+# With the pass disabled a parameter that receives one value on both edges stays
+# FORM: Prepared
+# OPTIONS: disable=pass:RemoveTrivialParameters
+# RUN: pass RemoveTrivialParameters
+# STATISTIC: RemoveTrivialParametersChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sameValueOnBothEdges" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v0)
+  b3(v2):
+    Return v2
+# CHECK-NEXT: b0(v0: number, v1: boolean):
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK-NEXT: b3(v2: number):
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}

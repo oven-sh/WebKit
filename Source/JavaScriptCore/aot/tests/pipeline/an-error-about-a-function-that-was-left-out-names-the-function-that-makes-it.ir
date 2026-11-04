@@ -1,0 +1,87 @@
+# The error that stands in for a function which was left out of the executable needs no name as an operand: it names the function that makes it,
+# also where that function was copied into its caller, and where the operation was moved into a body that several functions share.
+# A function without a name gets the sentence without one
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (...all) => { for (const f of all) { try { f(); } catch (error) { print(error.constructor.name + ": " + error.message); } } };
+# CHECK: TypeError: 'first' was left out of the executable
+# CHECK-NEXT: TypeError: 'second' was left out of the executable
+# CHECK-NEXT: TypeError: 'second' was left out of the executable
+# CHECK-NEXT: TypeError: This function was left out of the executable
+# CHECK-NEXT: TypeError: 'named' was left out of the executable
+# CHECK-NEXT: TypeError: 'sixth' was left out of the executable
+# CHECK-NEXT: TypeError: 'seventh' was left out of the executable
+# CHECK-NEXT: exited with 0
+# RUN(SHARED): pipeline OutlineColdOperations
+# SHARED: role=OutlinedBody
+# SHARED-NEXT: b0()
+# SHARED-NEXT: = NewRuntimeError runtimeError=LeftOutOfExecutable
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = NewClosure function=f7
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="register" [isFreeName]
+    v9 = Call v8, -, v0, v1, v2, v3, v4, v5, v6
+    Return
+}
+function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v2 = NewRuntimeError runtimeError=LeftOutOfExecutable
+    Throw v2
+}
+function f2 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v2 = NewRuntimeError runtimeError=LeftOutOfExecutable
+    Throw v2
+}
+function f3 name="caller" results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Call v0, -
+    Return v1
+}
+function f4 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v2 = NewRuntimeError runtimeError=LeftOutOfExecutable
+    Throw v2
+}
+function f5 name="other" results=[{type=anything}] {
+    v0 = NewRuntimeError runtimeError=LeftOutOfExecutable name="named"
+    Throw v0
+}
+function f6 name="sixth" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v2 = NewRuntimeError runtimeError=LeftOutOfExecutable
+    Throw v2
+}
+function f7 name="seventh" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v2 = NewRuntimeError runtimeError=LeftOutOfExecutable
+    Throw v2
+}

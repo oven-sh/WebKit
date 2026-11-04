@@ -73,7 +73,7 @@ JSValue iteratorNextWithCachedCall(JSGlobalObject* globalObject, IterationRecord
 
     JSValue iterator = iterationRecord.iterator;
 
-    ASSERT(JSC::getCallDataInline(iterationRecord.nextMethod).type == CallData::Type::JS);
+    ASSERT(CachedCall::supports(JSC::getCallDataInline(iterationRecord.nextMethod)));
 
     JSValue result;
     if (argument)
@@ -490,15 +490,6 @@ ASCIILiteral getIteratorErrorMessage(IterableValidationResult result, JSValue it
     }
     RELEASE_ASSERT_NOT_REACHED();
     return ""_s;
-}
-
-JSArrayIterator* materializeUnboxedFastArrayIterator(JSGlobalObject* globalObject, JSValue iterable, JSValue index)
-{
-    VM& vm = globalObject->vm();
-    RELEASE_ASSERT(isJSArray(iterable));
-    auto* iterator = JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), asArray(iterable), IterationKind::Values);
-    iterator->setIndex(JSArrayIterator::validatedIndexInFrame(index));
-    return iterator;
 }
 
 IterationMode getIterationMode(VM&, JSGlobalObject* globalObject, JSValue iterable, JSValue symbolIterator)

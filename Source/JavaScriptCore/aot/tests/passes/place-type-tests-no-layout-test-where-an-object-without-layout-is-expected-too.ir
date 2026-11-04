@@ -1,0 +1,27 @@
+# `handle.flags`, where the handle is expected to be a record or an object of a built-in class. No test for the record's layout lets the other pass, which is as expected:
+# it would fail every time and take the rest of the function, the reads of `state` here, into its copy. The access goes by name where it stands, and `state` is tested as ever
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Handle" module=m0 fields=[{key="flags" declared={type=number} flags=[IsRequired]}]
+layout L1 name="State" module=m0 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="recordOrMap" module=m0 parameters=[{type=L0|Map flags=[IsExpected]}, {type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|Map, v1: anything ~ L1):
+    v2 = PropGet v0 key="flags"
+    v3 = PropGet v1 key="count"
+    v4 = Add v2, v3
+    Return v4
+# CHECK-NOT: TypeTest v0
+# CHECK: = PropGet v0 key="flags"
+# CHECK: = TypeTest v1 testedType=L1
+}
+
+function f1 name="recordAlone" module=m0 parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="flags"
+    Return v1
+# CHECK: = TypeTest v0 testedType=L0
+}

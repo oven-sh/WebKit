@@ -1,0 +1,9 @@
+# The run time's definition of a private name throws where the field exists, and a slot without an absent state always looks filled. So a private field that a definition by name creates has an absent state, whoever enumerates the keys
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: plan-slots layouts
+
+# CHECK: L0 CompiledObject size=32 {{*}} unordered
+# CHECK-NEXT: .0 #"count"@L0 OptionalDouble @16
+# CHECK-NEXT: .1 "step" Double @24
+# PROGRAM-OF: check-placement-private-definition.ir

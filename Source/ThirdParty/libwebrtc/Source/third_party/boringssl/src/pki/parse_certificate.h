@@ -95,10 +95,11 @@ struct ParsedTbsCertificate;
     der::GeneralizedTime *not_after);
 
 struct OPENSSL_EXPORT ParseCertificateOptions {
-  // If set to true, then parsing will skip checks on the certificate's serial
-  // number. The only requirement will be that the serial number is an INTEGER,
-  // however it is not required to be a valid DER-encoding (i.e. minimal
-  // encoding), nor is it required to be constrained to any particular length.
+  // If set to true, then parsing will accept serial numbers that are not valid
+  // integers.
+  //
+  // TODO(crbug.com/533048005): Historically, people needed to set it to
+  // tolerate length over 20, but this is now always enabled.
   bool allow_invalid_serial_numbers = false;
 };
 
@@ -217,11 +218,6 @@ struct OPENSSL_EXPORT ParsedTbsCertificate {
   //
   // If the option `allow_invalid_serial_numbers=true` was used during
   // parsing, then nothing further can be assumed about these bytes.
-  //
-  // Otherwise if `allow_invalid_serial_numbers=false` then in addition
-  // to being a valid DER-encoded INTEGER, parsing guarantees that
-  // the serial number is at most 20 bytes long. Parsing does NOT guarantee
-  // that the integer is positive (might be zero or negative).
   der::Input serial_number;
 
   // Corresponds with "signatureAlgorithm" from RFC 5280:

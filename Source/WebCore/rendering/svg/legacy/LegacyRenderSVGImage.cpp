@@ -30,13 +30,13 @@
 #include "FloatQuad.h"
 #include "GraphicsContext.h"
 #include "HitTestResult.h"
-#include "ImageQualityController.h"
 #include "LayoutRepainter.h"
 #include "LegacyRenderSVGResource.h"
 #include "PointerEventsHitRules.h"
+#include "RenderElementInlines.h"
 #include "RenderImageResource.h"
-#include "RenderObjectInlines.h"
 #include "RenderLayer.h"
+#include "RenderObjectInlines.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGImageElement.h"
 #include "SVGImageIntrinsicSizing.h"
@@ -44,6 +44,7 @@
 #include "SVGResources.h"
 #include "SVGResourcesCache.h"
 #include "SVGVisitedRendererTracking.h"
+#include "StyleImageDrawingExtras.h"
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -94,24 +95,8 @@ bool LegacyRenderSVGImage::updateImageViewport()
     m_objectBoundingBox = calculateObjectBoundingBox();
 
     bool updatedViewport = false;
-    URL imageSourceURL = protect(document())->encodingParseURL(protect(imageElement())->imageSourceURL());
-
-    // Images with preserveAspectRatio=none should force non-uniform scaling. This can be achieved
-    // by setting the image's container size to its intrinsic size.
-    // See: http://www.w3.org/TR/SVG/single-page.html, 7.8 The ‘preserveAspectRatio’ attribute.
-    if (imageElement().preserveAspectRatio().align() == SVGPreserveAspectRatioValue::SVG_PRESERVEASPECTRATIO_NONE) {
-        if (RefPtr cachedImage = imageResource().cachedImage()) {
-            LayoutSize intrinsicSize = cachedImage->imageSizeForRenderer(nullptr, style().usedZoom());
-            if (intrinsicSize != imageResource().imageSize(style().usedZoom())) {
-                imageResource().setContainerContext(roundedIntSize(intrinsicSize), imageSourceURL);
-                updatedViewport = true;
-            }
-        }
-    }
 
     if (oldBoundaries != m_objectBoundingBox) {
-        if (!updatedViewport)
-            imageResource().setContainerContext(enclosingIntRect(m_objectBoundingBox).size(), imageSourceURL);
         updatedViewport = true;
         m_needsBoundariesUpdate = true;
     }
@@ -146,7 +131,7 @@ void LegacyRenderSVGImage::layout()
 
     // If our bounds changed, notify the parents.
     if (transformOrBoundariesUpdate) {
-        if (CheckedPtr parent = this->parent())
+        if (auto* parent = this->parent())
             parent->invalidateCachedBoundaries();
     }
 
@@ -157,7 +142,7 @@ void LegacyRenderSVGImage::layout()
 void LegacyRenderSVGImage::paint(PaintInfo& paintInfo, const LayoutPoint&)
 {
     if (paintInfo.phase == PaintPhase::EventRegion) {
-        if (style().usedVisibility() == Visibility::Hidden || m_objectBoundingBox.isEmpty())
+        if (usedStyle().visibility() == UsedVisibility::Hidden || m_objectBoundingBox.isEmpty())
             return;
 
         paintInfo.eventRegionContext()->unite(FloatRoundedRect(strokeBoundingBox()), *this, style(), false);
@@ -165,7 +150,7 @@ void LegacyRenderSVGImage::paint(PaintInfo& paintInfo, const LayoutPoint&)
     }
 
     if (paintInfo.context().paintingDisabled() || paintInfo.phase != PaintPhase::Foreground
-        || style().usedVisibility() == Visibility::Hidden || !imageResource().cachedImage())
+        || usedStyle().visibility() == UsedVisibility::Hidden || !imageResource().cachedImage())
         return;
 
     FloatRect boundingBox = repaintRectInLocalCoordinates();
@@ -187,36 +172,25 @@ void LegacyRenderSVGImage::paint(PaintInfo& paintInfo, const LayoutPoint&)
         }
     }
 
-    if (style().usedOutlineWidth())
+    if (style().hasOutline())
         paintOutline(childPaintInfo, IntRect(boundingBox));
 }
 
 void LegacyRenderSVGImage::paintForeground(PaintInfo& paintInfo)
 {
-    RefPtr<Image> image = imageResource().image();
-    if (!image)
+    RefPtr styleImage = imageResource().styleImage();
+    if (!styleImage || !styleImage->canDraw(*this))
         return;
 
-    FloatRect destRect = m_objectBoundingBox;
-    FloatRect srcRect(0, 0, image->width(), image->height());
-
-    imageElement().preserveAspectRatio().transformRect(destRect, srcRect);
-
-    ImagePaintingOptions options = {
-        imageOrientation(),
-        ImageQualityController::chooseInterpolationQualityForSVG(paintInfo.context(), *this, *image),
-        settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
-        settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No,
-        settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No,
-        paintInfo.paintBehavior.contains(PaintBehavior::DrawsHDRContent) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
-        style().dynamicRangeLimit().toPlatformDynamicRangeLimit()
-    };
+    auto placement = calculateSVGImagePlacement(*styleImage, *this, imageElement().preserveAspectRatio(), m_objectBoundingBox);
+    auto destRect = placement.destination;
+    auto srcRect = placement.source;
 
     auto& context = paintInfo.context();
-    context.drawImage(*image, destRect, srcRect, options);
+    auto options = calculateSVGImageDrawingOptions(*styleImage, *this, context, placement.imageRenderingRectangle.size(), destRect.size(), paintInfo.paintBehavior);
+    styleImage->draw(context, *this, ConcreteObjectSize::fixed(placement.imageRenderingRectangle.size()), destRect, srcRect, options);
 
-    RefPtr cachedImage = imageResource().cachedImage();
-    if (cachedImage && !context.paintingDisabled())
+    if (RefPtr cachedImage = imageResource().cachedImage(); cachedImage && !context.paintingDisabled())
         protect(document())->didPaintImage(imageElement(), cachedImage, destRect);
 }
 
@@ -232,7 +206,7 @@ bool LegacyRenderSVGImage::nodeAtFloatPoint(const HitTestRequest& request, HitTe
         return false;
 
     PointerEventsHitRules hitRules(PointerEventsHitRules::HitTestingTargetType::SVGImage, request, usedPointerEvents());
-    if (request.isVisibleForStyle(style()) || !hitRules.requireVisible) {
+    if (request.isVisibleForStyle(usedStyle()) || !hitRules.requireVisible) {
         static NeverDestroyed<SVGVisitedRendererTracking::VisitedSet> s_visitedSet;
 
         SVGVisitedRendererTracking recursionTracking(s_visitedSet);
@@ -269,7 +243,7 @@ void LegacyRenderSVGImage::imageChanged(WrappedImagePtr, const IntRect*)
     // Eventually notify parent resources, that we've changed.
     LegacyRenderSVGResource::markForLayoutAndParentResourceInvalidation(*this, false);
 
-    // Update the SVGImageCache sizeAndScales entry in case image loading finished after layout.
+    // Recompute the object bounding box in case image loading finished after layout.
     // (https://bugs.webkit.org/show_bug.cgi?id=99489)
     m_objectBoundingBox = FloatRect();
     if (updateImageViewport())
@@ -279,7 +253,7 @@ void LegacyRenderSVGImage::imageChanged(WrappedImagePtr, const IntRect*)
 
     repaint();
 
-    if (RefPtr image = imageResource().cachedImage(); image && image->currentFrameIsComplete(this)) {
+    if (RefPtr image = imageResource().cachedImage(); image && image->currentFrameIsComplete()) {
         if (auto styleable = Styleable::fromRenderer(*this))
             protect(document())->didLoadImage(protect(styleable->element).get(), image);
     }

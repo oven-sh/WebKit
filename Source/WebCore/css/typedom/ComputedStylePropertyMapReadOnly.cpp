@@ -55,17 +55,17 @@ ComputedStylePropertyMapReadOnly::ComputedStylePropertyMapReadOnly(Element& elem
 
 RefPtr<CSSValue> ComputedStylePropertyMapReadOnly::propertyValue(CSSPropertyID propertyID) const
 {
-    return Style::Extractor { m_element.get() }.propertyValue(propertyID, Style::Extractor::UpdateLayout::Yes, Style::ExtractorState::PropertyValueType::Computed);
+    return Style::Extractor { protect(m_element) }.propertyValue(propertyID, Style::Extractor::UpdateLayout::Yes, Style::ExtractorState::PropertyValueType::Computed);
 }
 
 String ComputedStylePropertyMapReadOnly::shorthandPropertySerialization(CSSPropertyID propertyID) const
 {
-    return Style::Extractor { m_element.get() }.propertyValueSerialization(propertyID, CSS::defaultSerializationContext(), Style::Extractor::UpdateLayout::Yes, Style::ExtractorState::PropertyValueType::Computed);
+    return Style::Extractor { protect(m_element) }.propertyValueSerialization(propertyID, CSS::defaultSerializationContext(), Style::Extractor::UpdateLayout::Yes, Style::ExtractorState::PropertyValueType::Computed);
 }
 
 RefPtr<CSSValue> ComputedStylePropertyMapReadOnly::customPropertyValue(const AtomString& property) const
 {
-    return Style::Extractor { m_element.get() }.customPropertyValue(property);
+    return Style::Extractor { protect(m_element) }.customPropertyValue(property);
 }
 
 unsigned ComputedStylePropertyMapReadOnly::size() const
@@ -75,7 +75,7 @@ unsigned ComputedStylePropertyMapReadOnly::size() const
     if (!element)
         return 0;
 
-    Style::Extractor::updateStyleIfNeededForProperty(*element.get(), CSSPropertyCustom);
+    Style::Extractor::updateStyleIfNeededForProperty(*element.get(), std::nullopt, CSSPropertyID::Custom);
 
     CheckedPtr style = element->computedStyle();
     if (!style)
@@ -94,7 +94,7 @@ Vector<StylePropertyMapReadOnly::StylePropertyMapEntry> ComputedStylePropertyMap
     Vector<StylePropertyMapReadOnly::StylePropertyMapEntry> values;
 
     // Ensure custom property counts are correct.
-    Style::Extractor::updateStyleIfNeededForProperty(*element.get(), CSSPropertyCustom);
+    Style::Extractor::updateStyleIfNeededForProperty(*element.get(), std::nullopt, CSSPropertyID::Custom);
 
     CheckedPtr style = element->computedStyle();
     if (!style)

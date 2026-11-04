@@ -50,6 +50,11 @@ public:
     void freeAlignedMemory(void*) final;
 
     static void initializeStructureAddressSpace();
+
+    static bool releaseReserve();
+    static bool tryRestoreReleasedReserve();
+    static void didThrowOutOfMemoryError();
+    static bool tryFillReserve();
 };
 
 } // namespace JSC

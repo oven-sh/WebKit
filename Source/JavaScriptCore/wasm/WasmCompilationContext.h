@@ -29,6 +29,7 @@
 
 #if ENABLE(WEBASSEMBLY_OMGJIT) || ENABLE(WEBASSEMBLY_BBQJIT)
 
+#include "AOTWasmInterface.h"
 #include "B3Common.h"
 #include "B3Procedure.h"
 #include "CCallHelpers.h"
@@ -67,11 +68,14 @@ struct CompilationContext {
     std::unique_ptr<CCallHelpers> wasmEntrypointJIT;
     std::unique_ptr<OpaqueByproducts> wasmEntrypointByproducts;
     std::unique_ptr<B3::Procedure> procedure;
+#if ENABLE(WEBASSEMBLY_BBQJIT)
     std::unique_ptr<BBQDisassembler> bbqDisassembler;
+#endif
     Box<PCToCodeOriginMap> pcToCodeOriginMap;
     Box<PCToCodeOriginMapBuilder> pcToCodeOriginMapBuilder;
     Vector<CCallHelpers::Label> catchEntrypoints;
     SegmentedVector<WasmOrigin> origins;
+    CodeForImage* codeForImage { nullptr };
 };
 
 } // namespace Wasm

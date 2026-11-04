@@ -1,0 +1,37 @@
+# The pair that a step over a map allocates is an array, so a store of it by name is inside the type of a field of arrays. A store of a plain object is outside
+# RUN: valueflow-apply
+# CHECK: layout L0 name="HoldsPair" fields=[{key="held" {{*}}occupancy=AlwaysFilled {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: layout L1 name="HoldsPlainObject" fields=[{key="held" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}
+# RUN(RESULTS): valueflow-results
+# RESULTS: class [[holdsPair]] layout=L0 impossibleMutations=[{{*}}StoreOfOtherType
+# RESULTS-NEXT: class [[holdsPlainObject]] layout=L1 impossibleMutations=[
+# RESULTS-NOT: StoreOfOtherType
+# RESULTS: class [[plainObject]] layout=L2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="HoldsPair" fields=[{key="held" declared={type=undefined|null|Array<anything>} flags=[IsRequired]}]
+layout L1 name="HoldsPlainObject" fields=[{key="held" declared={type=undefined|null|Array<anything>} flags=[IsRequired]}]
+layout L2
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Null
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = Builtin builtin=Map
+    v4 = Construct v3
+    v5 = IteratorOpen v4
+    v6 = IteratorResume v5
+    v7 = ResultAt v6 index=1
+    v8 = NewObject layout=L2 fields=[]
+    v9 = CallDirect v1, v7 function=f1
+    v10 = CallDirect v2, v8 function=f2
+    Return
+}
+function f1 name="storePair" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="held" mode=Strict
+    Return
+}
+function f2 name="storePlainObject" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="held" mode=Strict
+    Return
+}

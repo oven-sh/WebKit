@@ -861,8 +861,7 @@ void ObjCInspectorNetwork1BackendDispatcher::loadResource1(long protocol_request
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^{
@@ -882,8 +881,7 @@ void ObjCInspectorNetwork3BackendDispatcher::loadResource1(long protocol_request
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^{
@@ -903,8 +901,7 @@ void ObjCInspectorNetwork3BackendDispatcher::loadResource2(long protocol_request
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^{
@@ -924,8 +921,7 @@ void ObjCInspectorNetwork3BackendDispatcher::loadResource3(long protocol_request
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^{
@@ -945,8 +941,7 @@ void ObjCInspectorNetwork3BackendDispatcher::loadResource4(long protocol_request
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^{
@@ -966,8 +961,7 @@ void ObjCInspectorNetwork3BackendDispatcher::loadResource5(long protocol_request
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^{
@@ -987,8 +981,7 @@ void ObjCInspectorNetwork3BackendDispatcher::loadResource6(long protocol_request
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^{
@@ -1008,8 +1001,7 @@ void ObjCInspectorNetwork3BackendDispatcher::loadResource7(long protocol_request
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^{

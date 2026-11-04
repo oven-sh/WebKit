@@ -1,0 +1,28 @@
+# With the pass off a function that only takes its parameter apart stays whole
+# FORM: Prepared
+# OPTIONS: disable=pass:PromoteAggregateParameters
+# RUN: pass PromoteAggregateParameters
+# STATISTIC: AggregateParametersPromoted = 0
+# CHECK: outcome: Unchanged
+# CHECK-NOT: role=ParameterWrapper
+# CHECK: function f0 name="readsAtEntry"
+# CHECK-NOT: role=ParameterWrapper
+# CHECK: = PropGet {{*}}key="sink"
+# CHECK-NOT: function f2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="readsAtEntry" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a" receivers=[L0]
+    v2 = PropGet v0 key="b" receivers=[L0]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v1, v2
+    Return v5
+}
+function f1 name="passesLiteral" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = CallDirect v1 function=f0
+    Return v2
+}

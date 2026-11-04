@@ -247,7 +247,7 @@ using WebCore::PlaybackSessionInterfaceMac;
         model->selectLegibleMediaOption(index != NSNotFound ? index : UINT64_MAX);
 }
 
-static AVTouchBarMediaSelectionOptionType NODELETE toAVTouchBarMediaSelectionOptionType(MediaSelectionOption::LegibleType type)
+static AVTouchBarMediaSelectionOptionType LEGACY_NODELETE toAVTouchBarMediaSelectionOptionType(MediaSelectionOption::LegibleType type)
 {
     switch (type) {
     case MediaSelectionOption::LegibleType::LegibleOn:
@@ -272,7 +272,7 @@ static RetainPtr<NSArray> mediaSelectionOptions(const Vector<MediaSelectionOptio
 
 - (void)setAudioMediaSelectionOptions:(const Vector<MediaSelectionOption>&)options withSelectedIndex:(NSUInteger)selectedIndex
 {
-    auto webOptions = mediaSelectionOptions(options);
+    RetainPtr<NSArray<AVTouchBarMediaSelectionOption *>> webOptions = mediaSelectionOptions(options);
     [self setAudioTouchBarMediaSelectionOptions:webOptions.get()];
     if (selectedIndex < [webOptions count])
         [self setCurrentAudioTouchBarMediaSelectionOption:retainPtr([webOptions objectAtIndex:selectedIndex]).get()];
@@ -280,7 +280,7 @@ static RetainPtr<NSArray> mediaSelectionOptions(const Vector<MediaSelectionOptio
 
 - (void)setLegibleMediaSelectionOptions:(const Vector<MediaSelectionOption>&)options withSelectedIndex:(NSUInteger)selectedIndex
 {
-    auto webOptions = mediaSelectionOptions(options);
+    RetainPtr<NSArray<AVTouchBarMediaSelectionOption *>> webOptions = mediaSelectionOptions(options);
     [self setLegibleTouchBarMediaSelectionOptions:webOptions.get()];
     if (selectedIndex < [webOptions count])
         [self setCurrentLegibleTouchBarMediaSelectionOption:retainPtr([webOptions objectAtIndex:selectedIndex]).get()];

@@ -30,7 +30,7 @@
 #import "Instance.h"
 #import <wtf/TZoneMallocInlines.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CommandBuffer);
 
@@ -59,9 +59,28 @@ void CommandBuffer::retainTimestampsForOneUpdateLoop()
 CommandBuffer::~CommandBuffer()
 {
     retainTimestampsForOneUpdateLoop();
+    releasePriorCommandBuffers();
     m_device->getQueue()->removeMTLCommandBuffer(m_commandBuffer);
     m_commandBuffer = nil;
     m_cachedCommandBuffer = nil;
+}
+
+void CommandBuffer::setPriorCommandBuffers(Vector<RetainPtr<id<MTLCommandBuffer>>>&& commandBuffers)
+{
+    m_priorCommandBuffers = WTF::move(commandBuffers);
+}
+
+Vector<RetainPtr<id<MTLCommandBuffer>>> CommandBuffer::takePriorCommandBuffers()
+{
+    return std::exchange(m_priorCommandBuffers, { });
+}
+
+void CommandBuffer::releasePriorCommandBuffers()
+{
+    auto commandBuffers = takePriorCommandBuffers();
+    Ref queue = m_device->getQueue();
+    for (auto& commandBuffer : commandBuffers)
+        queue->removeMTLCommandBuffer(commandBuffer.get());
 }
 
 void CommandBuffer::setLabel(String&& label)
@@ -77,6 +96,7 @@ void CommandBuffer::makeInvalid(NSString* lastError)
     m_lastErrorString = lastError;
     m_device->getQueue()->removeMTLCommandBuffer(m_commandBuffer);
     retainTimestampsForOneUpdateLoop();
+    releasePriorCommandBuffers();
     m_commandBuffer = nil;
     m_cachedCommandBuffer = nil;
     if (RefPtr commandEncoder = m_commandEncoder)
@@ -121,21 +141,25 @@ void CommandBuffer::makeInvalidDueToCommit(NSString* lastError)
     if (RefPtr instance = m_device->instance())
         instance->retainCommandBuffer(*this, m_commandBuffer);
     [m_commandBuffer addCompletedHandler:[protectedThis = protect(*this)](id<MTLCommandBuffer> completedCommandBuffer) {
-        double kernelStartTime = completedCommandBuffer.kernelStartTime;
-        double kernelEndTime = completedCommandBuffer.kernelEndTime;
-        protectedThis->m_gpuExecutionDurationSeconds.store(kernelEndTime - kernelStartTime, std::memory_order_relaxed);
+        // GPUStartTime/GPUEndTime bracket execution on the GPU; kernelStartTime/kernelEndTime only bracket the driver scheduling it.
+        double gpuStartTime = completedCommandBuffer.GPUStartTime;
+        double gpuEndTime = completedCommandBuffer.GPUEndTime;
+        protectedThis->m_gpuExecutionDurationSeconds.store(gpuEndTime - gpuStartTime, std::memory_order_relaxed);
         protectedThis->m_commandBufferComplete.signal();
-        protectedThis->m_device->getQueue()->scheduleWork([weakThis = ThreadSafeWeakPtr { protectedThis.get() }, kernelStartTime, kernelEndTime]() mutable {
+        protectedThis->m_device->getQueue()->scheduleWork([weakThis = ThreadSafeWeakPtr { protectedThis.get() }, gpuStartTime, gpuEndTime]() mutable {
             RefPtr protectedThis { weakThis.get() };
             if (!protectedThis)
                 return;
             protectedThis->m_cachedCommandBuffer = nil;
             if (RefPtr commandEncoder = protectedThis->m_commandEncoder) {
-                commandEncoder->recordGPUExecutionWindowOnCanvasTextures(kernelStartTime, kernelEndTime);
+                commandEncoder->recordGPUExecutionWindowOnCanvasTextures(gpuStartTime, gpuEndTime);
                 commandEncoder->clearTracking();
             }
 
             protectedThis->m_commandEncoder = nullptr;
+
+            if (RefPtr instance = protectedThis->m_device->instance())
+                instance->releaseCompletedCommandBuffers();
         });
     }];
     m_lastErrorString = lastError;
@@ -157,21 +181,21 @@ bool CommandBuffer::waitForCompletion()
     return true;
 }
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
 
-void NODELETE wgpuCommandBufferAddRef(WGPUCommandBuffer commandBuffer)
+void LEGACY_NODELETE wgpuCommandBufferAddRef(WGPUCommandBuffer commandBuffer)
 {
-    WebGPU::fromAPI(commandBuffer).ref();
+    WebGPU::Metal::fromAPI(commandBuffer).ref();
 }
 
 void wgpuCommandBufferRelease(WGPUCommandBuffer commandBuffer)
 {
-    WebGPU::fromAPI(commandBuffer).deref();
+    WebGPU::Metal::fromAPI(commandBuffer).deref();
 }
 
 void wgpuCommandBufferSetLabel(WGPUCommandBuffer commandBuffer, WGPUStringView label)
 {
-    protect(WebGPU::fromAPI(commandBuffer))->setLabel(WebGPU::fromAPI(label));
+    protect(WebGPU::Metal::fromAPI(commandBuffer))->setLabel(WebGPU::Metal::fromAPI(label));
 }

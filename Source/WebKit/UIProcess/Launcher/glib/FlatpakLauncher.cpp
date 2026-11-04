@@ -61,6 +61,8 @@ GRefPtr<GSubprocess> flatpakSpawn(GSubprocessLauncher* launcher, const WebKit::P
     if (launchOptions.processType == ProcessLauncher::ProcessType::Web) {
         flatpakArgs.appendList({
             "--sandbox"_s,
+            // The current working directory might not be visible in the sub-sandbox.
+            "--directory=/"_s,
             "--no-network"_s,
             "--sandbox-flag=share-gpu"_s,
             "--sandbox-flag=share-display"_s,
@@ -106,7 +108,7 @@ GRefPtr<GSubprocess> flatpakSpawn(GSubprocessLauncher* launcher, const WebKit::P
     GUniquePtr<char*> environ(g_get_environ());
     for (auto* variable : span(environ)) {
         GUniquePtr<char> arg(g_strconcat("--env=", variable, nullptr));
-        flatpakArgs.append(UTF8CString { byteCast<char8_t>(arg.get()) });
+        flatpakArgs.append(UTF8CString::unsafeFromUTF8(arg.get()));
     }
 
     Vector<char*> newArgv(argv.size() + flatpakArgs.size());

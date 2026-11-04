@@ -70,7 +70,7 @@ struct AspectRatio {
     Number<CSS::Nonnegative> width() const { return m_ratio.numerator; }
     Number<CSS::Nonnegative> height() const { return m_ratio.denominator; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -108,7 +108,7 @@ template<> struct CSSValueConversion<AspectRatio> { auto operator()(BuilderState
 // MARK: - Blending
 
 template<> struct Blending<AspectRatio> {
-    bool NODELETE canBlend(const AspectRatio&, const AspectRatio&);
+    bool LEGACY_NODELETE canBlend(const AspectRatio&, const AspectRatio&);
     auto blend(const AspectRatio&, const AspectRatio&, const Style::ComputedStyle&, const Style::ComputedStyle&, const BlendingContext&) -> AspectRatio;
 };
 

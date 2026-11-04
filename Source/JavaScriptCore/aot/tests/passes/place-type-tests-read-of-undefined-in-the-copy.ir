@@ -1,0 +1,31 @@
+# A read by name from `undefined | an object` has the type of the field: of undefined it throws. Behind the failed test for the object the copy reads from undefined alone. That read is typed never, and the copy ends there. Typed as any value it came back, and what the tested code had resolved by the type of the field stood on any value: a call of Array.prototype.join in the form for arrays
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+layout L0 name="Explanation" fields=[{key="lines" declared={type=Array<string>} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    Return v0
+}
+function f1 name="joined" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="lines"
+    v2 = String string="-"
+    v3 = TypeTest v1 testedType=Array
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = CallBuiltin v4, v2 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+    Jump -> next b3(v5)
+  b2() frequency=Unlikely:
+    v6 = CallBuiltin v1, v2 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+    Jump -> next b3(v6)
+  b3(v7: anything):
+    Return v7
+# CHECK: [[isObject]]: boolean = TypeTest v0 testedType=object
+# CHECK-NEXT: Branch [[isObject]] -> taken {{*}}(| 0), notTaken [[failed]](| 0)
+# CHECK: [[failed]]([[nothing]]: undefined) frequency=Unlikely:
+# CHECK: : never = PropGet [[nothing]] key="lines"
+# CHECK-NEXT: Unreachable
+}

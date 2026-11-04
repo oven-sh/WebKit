@@ -1,0 +1,27 @@
+# The trace record of a compiled form describes the source function that the form stands for: the coroutine body of a module with top-level await is module code like its ramp, the entrypoint of a sloppy function is sloppy function code
+# RUN(SOURCE): tables function-traces
+# RUN(BODY): tables function-traces
+# RUN(BODYENTRY): tables function-traces
+# RUN(ENTRY): tables function-traces
+
+module m0 path="main.js" displayPath="main.js" flags=[HasTopLevelAwait] body=f0
+entry module=m0
+function f0 name="main" kind=Module flags=[IsAsync] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = Await v3
+    Return
+}
+function f1 name="sloppy" flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="value" [isFreeName]
+    Return v1
+}
+
+# SOURCE: trace f0 role=CoroutineRamp source=f0 {{*}} module strict async
+# SOURCE-NEXT: trace f1 role=Source source=f1 {{*}}visibility=Visible {{*}} function sloppy
+# BODY: role=CoroutineBody source=f0 {{*}} module strict async rejectsOnThrow
+# BODYENTRY: role=GenericEntrypoint source=f0 {{*}} module strict async rejectsOnThrow
+# ENTRY: role=GenericEntrypoint source=f1 {{*}} function sloppy

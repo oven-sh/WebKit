@@ -32,7 +32,7 @@ layer at (0,0) size 800x600
       RenderSVGText {text} at (50,389) size 168x14 contains 1 chunk(s)
         RenderSVGInlineText {#text} at (0,0) size 168x13
           chunk 1 text run 1 at (50.00,400.00) startOffset 0 endOffset 33 width 167.68: "The Following Roses are selected:"
-        RenderSVGTSpan {tspan} at (-50,-390) size 0x1
+        RenderSVGTSpan {tspan} at (0,0) size 0x0
           RenderSVGInlineText {#text} at (0,0) size 0x0
       RenderSVGText {text} at (240,551) size 39x14 contains 1 chunk(s)
         RenderSVGInlineText {#text} at (0,0) size 39x13

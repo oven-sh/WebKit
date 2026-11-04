@@ -1,0 +1,40 @@
+# From the flow analysis to the removal: a field that nothing reads loses the store of a record that only code of the program has in hand, that nothing holds weakly and that holds
+# numbers alone, however many places hold the record. The same field keeps the store of a record that a weak reference has taken, and of a record that holds such a one
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,RemoveUnreadExports,RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 4
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/entry.js" displayPath="entry.js" body=f1 requests=[{target=m0 completes=true}]
+entry module=m1
+layout L0 name="Leaf" fields=[{key="v" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Item" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Target" fields=[{key="v" declared={type=number} flags=[IsRequired]}]
+layout L3 name="HoldsTarget" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}, {key="read" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="RefersToTarget" fields=[{key="inner" declared={type=L2} flags=[IsRequired]}]
+layout L5 name="HoldsReferrer" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}, {key="read" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v1, v1, v1, v1 layout=L1 fields=[0, 1, 2, 3]
+    v3 = PropGet v2 key="a"
+    v4 = PropGet v2 key="d"
+    v5 = NewObject -, v0 layout=L2 fields=[0]
+    v6 = Builtin builtin=WeakRef
+    v7 = Construct v6, -, v5
+    v8 = NewObject -, v5, v5 layout=L3 fields=[0, 1]
+    v9 = PropGet v8 key="read"
+    v10 = NewObject -, v5 layout=L4 fields=[0]
+    v11 = NewObject -, v10, v10 layout=L5 fields=[0, 1]
+    v12 = PropGet v11 key="read"
+    Return
+# CHECK: = NewObject -, v1, v1 layout=L1 fields=[0, 3]
+# CHECK: = NewObject -, v5, v5 layout=L3 fields=[0, 1]
+# CHECK: = NewObject -, v10, v10 layout=L5 fields=[0, 1]
+}
+
+function f1 name="entry" module=m1 kind=Module results=[{type=anything}] {
+    Return
+}

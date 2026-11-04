@@ -1,0 +1,15 @@
+# Eight symbols are the limit and no hit. The ninth widens the list to symbol, and the other parts stay.
+# OPTIONS: limit=MaxSymbolLiteralsInType:8
+# RUN: union-widening
+# LOSS: MaxSymbolLiteralsInType x2 f0
+# CHECK: t0 | t0 = symbol@m0:10|symbol@m0:20|symbol@m0:30|symbol@m0:40|symbol@m0:50|symbol@m0:60|symbol@m0:70|symbol@m0:80
+# CHECK-NEXT: t0 | t1 = undefined|symbol|"a"
+# CHECK-NEXT: t0 | t2 = symbol@m0:10|symbol@m0:20|symbol@m0:30|symbol@m0:40|symbol@m0:50|symbol@m0:60|symbol@m0:70|symbol@m0:80
+# CHECK-NEXT: t1 | t1 = undefined|"a"|symbol@m0:90
+# CHECK-NEXT: t1 | t2 = undefined|"a"|symbol@m0:10|symbol@m0:90
+# CHECK-NEXT: t2 | t2 = symbol@m0:10
+# CHECK-NEXT: loss MaxSymbolLiteralsInType x2
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=symbol@m0:10|symbol@m0:20|symbol@m0:30|symbol@m0:40|symbol@m0:50|symbol@m0:60|symbol@m0:70|symbol@m0:80}, {type=undefined|"a"|symbol@m0:90}, {type=symbol@m0:10}] results=[{type=undefined}]

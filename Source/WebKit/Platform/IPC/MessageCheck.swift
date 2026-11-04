@@ -21,8 +21,6 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-#if compiler(>=6.2.3)
-
 #if ENABLE_BACK_FORWARD_LIST_SWIFT || (ENABLE_IPC_TESTING_API && ENABLE_IPC_TESTING_SWIFT)
 
 import WebKit_Internal
@@ -73,6 +71,12 @@ func mayThrowInvalidMessage<T>(_ result: T) throws(InvalidMessage) -> T {
     result
 }
 
+@inline(__always)
+@discardableResult
+nonisolated(nonsending) func mayThrowInvalidMessage<T>(_ result: T) async throws(InvalidMessage) -> T {
+    result
+}
+
 // Returns false if the message was invalid, so that generated dispatch can send a default reply.
 @discardableResult
 func dispatchMessage(
@@ -92,6 +96,10 @@ func markMessageInvalid(_ error: InvalidMessage, on connection: IPC.Connection) 
     connection.markCurrentlyDispatchedMessageAsInvalid(WTF.String(error.reason.description))
 }
 
+func markMessageInvalid(_ error: InvalidMessage, on connection: IPC.StreamServerConnection) {
+    connection.markCurrentlyDispatchedMessageAsInvalid(WTF.String(error.reason.description))
+}
+
 private func logFailedMessageCheck(
     _ reason: StaticString,
     function: StaticString,
@@ -107,5 +115,3 @@ private func logFailedMessageCheck(
 }
 
 #endif // ENABLE_BACK_FORWARD_LIST_SWIFT || (ENABLE_IPC_TESTING_API && ENABLE_IPC_TESTING_SWIFT)
-
-#endif // compiler(>=6.2.3)

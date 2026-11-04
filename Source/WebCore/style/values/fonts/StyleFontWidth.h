@@ -52,7 +52,7 @@ struct FontWidth {
 
     Percentage percentage() const { return Percentage { static_cast<float>(m_platform) }; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
         return visitor(percentage());
@@ -73,7 +73,7 @@ template<> struct CSSValueConversion<FontWidth> { auto operator()(BuilderState&,
 // MARK: - Blending
 
 template<> struct Blending<FontWidth> {
-    auto blend(const FontWidth&, const FontWidth&, const BlendingContext&) -> FontWidth;
+    FontWidth LEGACY_NODELETE blend(const FontWidth&, const FontWidth&, const BlendingContext&);
 };
 
 } // namespace Style

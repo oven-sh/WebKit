@@ -1,0 +1,72 @@
+# A required tail call is a jump, and a jump hands on the result as it lies: where the caller returns a fraction and the callee an integer, one form for both is the boxed one, and it spreads to whoever else they jump to.
+# Where the tail calls of the callee come to an end the caller may keep its frame until the callee returns: it calls, converts the number and returns, and nobody is boxed.
+# FORM: Prepared
+# RUN: pass ChooseCallingConventions
+# STATISTIC: ResultsBoxedForTailCalls = 2
+# STATISTIC: ReturnCallsDemoted = 2
+# CHECK: f0 Direct ({{*}}:Double) -> ({{*}}:Int32)
+# CHECK-NEXT: f1 Direct ({{*}}:Double, {{*}}:Boolean) -> ({{*}}:Double)
+# CHECK-NEXT: f2 Direct ({{*}}:Double) -> ({{*}}:OptionalDouble)
+# CHECK-NEXT: f3 Direct ({{*}}:Double, {{*}}:Boolean) -> ({{*}}:OptionalDouble)
+# CHECK-NEXT: f4 Direct ({{*}}:Double, {{*}}:Boolean) -> ({{*}}:JSValue) boxed-result
+# CHECK-NEXT: f5 Direct ({{*}}:Double, {{*}}:Boolean) -> ({{*}}:JSValue) boxed-result
+# CHECK-NEXT: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="whole" parameters=[{type=number}] results=[{type=i32}] {
+    v1 = Integer
+    v2 = BitOr v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f1 name="halfOrWhole"
+# CHECK: [[whole]]: i32 = CallDirect v0 function=f0
+# CHECK-NEXT: Return [[whole]]
+function f1 name="halfOrWhole" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Add v0, v0
+    Return v2
+  b2():
+    v3 = CallDirect v0 function=f0
+    ReturnCall v3
+}
+function f2 name="maybe" parameters=[{type=number}] results=[{type=undefined|number}] {
+    Return v0
+}
+# A number has the same bits where undefined may come in its place: that jump stays. The integer is converted.
+# CHECK-LABEL: function f3 name="maybeOrWhole"
+# CHECK: = CallDirect v0 function=f2
+# CHECK-NEXT: ReturnCall
+# CHECK: [[whole]]: i32 = CallDirect v0 function=f0
+# CHECK-NEXT: Return [[whole]]
+function f3 name="maybeOrWhole" parameters=[{type=number}, {type=boolean}] results=[{type=undefined|number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f2
+    ReturnCall v2
+  b2():
+    v3 = CallDirect v0 function=f0
+    ReturnCall v3
+}
+# Two functions that jump to each other never come to an end: they keep their jumps, and one form for both is the boxed one.
+# CHECK-LABEL: function f4 name="fractionOrOther"
+# CHECK: ReturnCall
+function f4 name="fractionOrOther" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v2 = CallDirect v0, v1 function=f5
+    ReturnCall v2
+}
+# CHECK-LABEL: function f5 name="integerOrOther"
+# CHECK: ReturnCall
+function f5 name="integerOrOther" parameters=[{type=number}, {type=boolean}] results=[{type=i32}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = CallDirect v0, v1 function=f4
+    ReturnCall v3 casts=[{declared={type=i32} resolution=Assume}]
+}

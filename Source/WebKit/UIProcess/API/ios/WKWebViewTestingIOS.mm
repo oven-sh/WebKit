@@ -38,8 +38,10 @@
 #import "WKFullScreenWindowController.h"
 #import "WKWebViewIOS.h"
 #import "WebPageProxy.h"
+#import "WebPageProxyTesting.h"
 #import "WebProcessProxy.h"
 #import "_WKActivatedElementInfoInternal.h"
+#import "_WKFrameHandleInternal.h"
 #import "_WKTextInputContextInternal.h"
 #import <WebCore/ColorCocoa.h>
 #import <WebCore/ColorSerialization.h>
@@ -368,7 +370,8 @@ static void dumpUIView(TextStream& ts, UIView *view, bool traverse)
     if (ObjectIdentifier<WebCore::ProcessIdentifierType>::isValidIdentifier(processID) && ObjectIdentifier<WebCore::ScrollingNodeIDType>::isValidIdentifier(rawScrollingNodeID))
         scrollingNodeID = WebCore::ScrollingNodeID(ObjectIdentifier<WebCore::ScrollingNodeIDType>(rawScrollingNodeID), ObjectIdentifier<WebCore::ProcessIdentifierType>(processID));
 
-    if (protect(_page->scrollingCoordinatorProxy())->rootScrollingNodeID() == scrollingNodeID) {
+    RefPtr scrollingCoordinatorProxy = _page->scrollingCoordinatorProxy();
+    if (scrollingCoordinatorProxy && scrollingCoordinatorProxy->rootScrollingNodeID() == scrollingNodeID) {
         TextStream ts(TextStream::LineMode::MultipleLine);
         {
             TextStream::GroupScope scope(ts);
@@ -449,6 +452,16 @@ static void dumpUIView(TextStream& ts, UIView *view, bool traverse)
     completionHandler(_page->selectionBoundingRectInRootViewCoordinates());
 }
 
+- (void)_linkIndicatorBoundingRectAtPointForTesting:(CGPoint)point completionHandler:(void (^)(CGRect))completionHandler
+{
+    WebKit::InteractionInformationRequest request { WebCore::roundedIntPoint(point) };
+    request.includeLinkIndicator = true;
+    [_contentView doAfterPositionInformationUpdate:[completionHandler = makeBlockPtr(completionHandler)](WebKit::InteractionInformationAtPosition information) {
+        RefPtr textIndicator = information.textIndicator;
+        completionHandler(textIndicator ? textIndicator->textBoundingRectInRootViewCoordinates() : WebCore::FloatRect { });
+    } forRequest:request];
+}
+
 - (CGRect)_rectToRevealWhenZoomingToFocusedElementForTesting
 {
     return [_contentView rectToRevealWhenZoomingToFocusedElement];
@@ -477,6 +490,11 @@ static void dumpUIView(TextStream& ts, UIView *view, bool traverse)
 - (void)_simulateLongPressActionAtLocation:(CGPoint)location
 {
     [_contentView _simulateLongPressActionAtLocation:location];
+}
+
+- (void)_simulateDoubleClickAtLocation:(CGPoint)location
+{
+    [_contentView _simulateDoubleClickAtLocation:location];
 }
 
 - (void)_simulateTextEntered:(NSString *)text
@@ -567,6 +585,18 @@ static void dumpUIView(TextStream& ts, UIView *view, bool traverse)
 - (CGRect)_fixedClippingViewBoundsForTesting
 {
     return [_contentView _fixedClippingViewBoundsForTesting];
+}
+
+- (void)_screenIsBeingCapturedForFrame:(_WKFrameHandle *)frameHandle completionHandler:(void (^)(BOOL))completionHandler
+{
+    RefPtr pageForTesting = _page->pageForTesting();
+    auto frameID = frameHandle->_frameHandle->frameID();
+    if (!pageForTesting || !frameID)
+        return completionHandler(NO);
+
+    pageForTesting->screenIsBeingCaptured(*frameID, [completionHandler = makeBlockPtr(completionHandler)](bool captured) {
+        completionHandler(captured);
+    });
 }
 
 @end

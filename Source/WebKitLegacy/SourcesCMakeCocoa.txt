@@ -45,13 +45,9 @@ Storage/StorageTracker.cpp
 Storage/WebDatabaseProvider.cpp
 Storage/WebStorageNamespaceProvider.cpp
 
-WebCoreSupport/LegacySocketProvider.cpp
 WebCoreSupport/LegacyWebPageDebuggable.cpp
 WebCoreSupport/LegacyWebPageInspectorController.cpp
-WebCoreSupport/NetworkStorageSessionMap.cpp
-WebCoreSupport/WebBroadcastChannelRegistry.cpp
 WebCoreSupport/WebCryptoClient.mm @nonARC
-WebCoreSupport/WebResourceLoadScheduler.cpp
 WebCoreSupport/WebViewGroup.mm @nonARC
 
 cf/WebCoreSupport/WebInspectorClientCF.cpp

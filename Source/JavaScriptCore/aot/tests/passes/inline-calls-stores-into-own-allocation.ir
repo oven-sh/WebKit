@@ -1,0 +1,112 @@
+# The stores of a callee into an object that the caller allocates become entries of the allocation's list, and a closure over nothing but that object can wait in its field until it is read.
+# So the callee is worth more at such a call than at one that hands on an object from elsewhere. A closure over another object is made where it stands, and counts in full
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 2
+# STATISTIC: InlineDecisionCostExceedsBenefit = 2
+# STATISTIC: InlineBenefitKnownReceiver = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Handlers" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}, {key="d" declared={type=anything}}]
+layout L1 kind=Instance name="ManyHandlers" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}, {key="d" declared={type=anything}}, {key="e" declared={type=anything}}, {key="f" declared={type=anything}}, {key="g" declared={type=anything}}, {key="h" declared={type=anything}}]
+
+function f0 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    v1 = NewClosure v0 function=f3
+    PropDefine v0, v1 key="a"
+    v3 = NewClosure v0 function=f3
+    PropDefine v0, v3 key="b"
+    v5 = NewClosure v0 function=f3
+    PropDefine v0, v5 key="c"
+    v7 = NewClosure v0 function=f3
+    PropDefine v0, v7 key="d"
+    v9 = Undefined
+    Return v9
+}
+
+function f1 name="allocates" results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = CallDirect v0 function=f0
+    Return v0
+# CHECK: = NewObject layout=L0
+# CHECK-NOT: CallDirect
+# CHECK: PropDefine {{*}}key="d"
+# CHECK-NOT: CallDirect
+}
+
+function f2 name="receives" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f0
+    Return v0
+# CHECK: = CallDirect v0 function=f0
+}
+
+function f3 name="handler" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
+    Return
+}
+
+function f4 name="initializeMany" kind=Initializer flags=[HasThis] thisType={type=L1} results=[{type=undefined}] {
+    v1 = NewClosure v0 function=f8
+    PropDefine v0, v1 key="a"
+    v3 = NewClosure v0 function=f8
+    PropDefine v0, v3 key="b"
+    v5 = NewClosure v0 function=f8
+    PropDefine v0, v5 key="c"
+    v7 = NewClosure v0 function=f8
+    PropDefine v0, v7 key="d"
+    v9 = NewClosure v0 function=f8
+    PropDefine v0, v9 key="e"
+    v11 = NewClosure v0 function=f8
+    PropDefine v0, v11 key="f"
+    v13 = NewClosure v0 function=f8
+    PropDefine v0, v13 key="g"
+    v15 = NewClosure v0 function=f8
+    PropDefine v0, v15 key="h"
+    v17 = Undefined
+    Return v17
+}
+
+function f5 name="allocatesMany" results=[{type=anything}] {
+    v0 = NewObject layout=L1
+    v1 = CallDirect v0 function=f4
+    Return v0
+# CHECK: = NewObject layout=L1
+# CHECK-NOT: CallDirect
+# CHECK: PropDefine {{*}}key="h"
+# CHECK-NOT: CallDirect
+}
+
+function f6 name="storesClosuresOverAnotherObject" parameters=[{type=L1}, {type=object}] results=[{type=undefined}] {
+    v2 = NewClosure v1 function=f9
+    PropDefine v0, v2 key="a"
+    v4 = NewClosure v1 function=f9
+    PropDefine v0, v4 key="b"
+    v6 = NewClosure v1 function=f9
+    PropDefine v0, v6 key="c"
+    v8 = NewClosure v1 function=f9
+    PropDefine v0, v8 key="d"
+    v10 = NewClosure v1 function=f9
+    PropDefine v0, v10 key="e"
+    v12 = NewClosure v1 function=f9
+    PropDefine v0, v12 key="f"
+    v14 = NewClosure v1 function=f9
+    PropDefine v0, v14 key="g"
+    v16 = NewClosure v1 function=f9
+    PropDefine v0, v16 key="h"
+    v18 = Undefined
+    Return v18
+}
+
+function f7 name="allocatesForClosuresOverAnotherObject" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = NewObject layout=L1
+    v2 = CallDirect v1, v0 function=f6
+    Return v1
+# CHECK: = CallDirect v1, v0 function=f6
+}
+
+function f8 name="handlerOfMany" kind=Arrow captures=[{type=L1}] results=[{type=anything}] {
+    Return
+}
+
+function f9 name="handlerOverAnotherObject" kind=Arrow captures=[{type=object}] results=[{type=anything}] {
+    Return
+}

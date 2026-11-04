@@ -22,6 +22,9 @@
 #ifndef __STRINGPIECE_H__
 #define __STRINGPIECE_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file 
  * \brief C++ API: StringPiece: Read-only byte string wrapper class.

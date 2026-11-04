@@ -46,8 +46,11 @@ namespace WGSL {
 
 namespace Metal {
 
-#define DECLARE_FORWARD_PROGRESS "volatile uint32_t __wgslEnsureForwardProgress = 0; if (!__wgslEnsureForwardProgress)"
-#define CHECK_FORWARD_PROGRESS "if (++__wgslEnsureForwardProgress == 4294967295u) break;"
+#define DECLARE_FORWARD_PROGRESS_VOLATILE_ACCESS "uint32_t __wgslEnsureForwardProgress = 0;"_s
+#define CHECK_FORWARD_PROGRESS_VOLATILE_ACCESS "if (__wgslEnsureForwardProgress == 4294967295u) break;"_s
+#define DECLARE_FORWARD_PROGRESS_VOLATILE_COUNTER "volatile uint32_t __wgslEnsureForwardProgress = 0; if (!__wgslEnsureForwardProgress)"_s
+#define CHECK_FORWARD_PROGRESS_VOLATILE_COUNTER "if (++__wgslEnsureForwardProgress == 4294967295u) break;"_s
+#define DECLARE_OPAQUE_SCOPE "volatile uint32_t __wgslEnsureSwitchClauseScope = 0; if (!__wgslEnsureSwitchClauseScope)"
 
 #define STRINGIFY_(...) #__VA_ARGS__##_s
 #define STRINGIFY(...) STRINGIFY_(__VA_ARGS__)
@@ -127,8 +130,10 @@ DEFINE_VOLATILE_HELPER(pack_float_to_unorm2x16, PackFloatToUnorm2x16)
 DEFINE_VOLATILE_HELPER(pack_float_to_snorm4x8, PackFloatToSnorm4x8)
 DEFINE_VOLATILE_HELPER(pack_float_to_unorm4x8, PackFloatToUnorm4x8)
 
+// These helpers take their texture by constant reference, as every function the shader declares does;
+// see FunctionDefinitionWriter::emitTextureReference() for why a texture is never copied.
 DEFINE_HELPER_TEXT(TextureSampleBaseClampToEdge,
-    "float4 __wgslTextureSampleBaseClampToEdge(texture2d<float> __texture, sampler __sampler, float2 __coords)\n"
+    "float4 __wgslTextureSampleBaseClampToEdge(const constant texture2d<float>& __texture, sampler __sampler, float2 __coords)\n"
     "{\n"
     "    float2 const __bounds = (float2(0.5f) / float2(uint2(__texture.get_width(), __texture.get_height())));\n"
     "    return __texture.sample(__sampler, clamp(__coords, __bounds, float2(1.0f) - __bounds));\n"
@@ -182,7 +187,7 @@ DEFINE_HELPER_TEXT(TextureExternalSampleBaseClampToEdge,
 // there it is folded into the normalized coordinate instead, which is exact for every address mode.
 DEFINE_HELPER_TEXT(TextureSampleBiasWithOffset2d,
     "template<int __x, int __y>\n"
-    "float4 __wgslTextureSampleBiasWithOffset(texture2d<float> __texture, sampler __sampler, float2 __coords, float __bias)\n"
+    "float4 __wgslTextureSampleBiasWithOffset(const constant texture2d<float>& __texture, sampler __sampler, float2 __coords, float __bias)\n"
     "{\n"
     "    if constexpr(__wgslMetalAppleGPUFamily <= 9) {\n"
     "        uint2 const __size = uint2(__texture.get_width(), __texture.get_height());\n"
@@ -205,7 +210,7 @@ DEFINE_HELPER_TEXT(TextureSampleBiasWithOffset2d,
 
 DEFINE_HELPER_TEXT(TextureSampleBiasWithOffset2dArray,
     "template<int __x, int __y>\n"
-    "float4 __wgslTextureSampleBiasWithOffset(texture2d_array<float> __texture, sampler __sampler, float2 __coords, uint __arrayIndex, float __bias)\n"
+    "float4 __wgslTextureSampleBiasWithOffset(const constant texture2d_array<float>& __texture, sampler __sampler, float2 __coords, uint __arrayIndex, float __bias)\n"
     "{\n"
     "    if constexpr(__wgslMetalAppleGPUFamily <= 9) {\n"
     "        uint2 const __size = uint2(__texture.get_width(), __texture.get_height());\n"
@@ -228,7 +233,7 @@ DEFINE_HELPER_TEXT(TextureSampleBiasWithOffset2dArray,
 
 DEFINE_HELPER_TEXT(TextureSampleBiasWithOffset3d,
     "template<int __x, int __y, int __z>\n"
-    "float4 __wgslTextureSampleBiasWithOffset(texture3d<float> __texture, sampler __sampler, float3 __coords, float __bias)\n"
+    "float4 __wgslTextureSampleBiasWithOffset(const constant texture3d<float>& __texture, sampler __sampler, float3 __coords, float __bias)\n"
     "{\n"
     "    if constexpr(__wgslMetalAppleGPUFamily <= 9) {\n"
     "        uint3 const __size = uint3(__texture.get_width(), __texture.get_height(), __texture.get_depth());\n"
@@ -334,24 +339,38 @@ public:
 
     void visit(const Type*, bool shouldPack = false);
 
-    StringBuilder& NODELETE stringBuilder() { return m_body; }
-    Indentation<4>& NODELETE indent() { return m_indent; }
-    HelperGenerator& NODELETE helperGenerator() { return m_helperGenerator; }
-    unsigned NODELETE metalAppleGPUFamily() const { return m_deviceState.appleGPUFamily; }
-    bool NODELETE shaderValidationEnabled() const { return m_deviceState.shaderValidationEnabled; }
+    StringBuilder& LEGACY_NODELETE stringBuilder() { return m_body; }
+    Indentation<4>& LEGACY_NODELETE indent() { return m_indent; }
+    HelperGenerator& LEGACY_NODELETE helperGenerator() { return m_helperGenerator; }
+    unsigned LEGACY_NODELETE metalAppleGPUFamily() const { return m_deviceState.appleGPUFamily; }
+    bool LEGACY_NODELETE shaderValidationEnabled() const { return m_deviceState.shaderValidationEnabled; }
+
+    ASCIILiteral declareForwardProgress() const
+    {
+        return metalAppleGPUFamily() < 9 ? DECLARE_FORWARD_PROGRESS_VOLATILE_ACCESS : DECLARE_FORWARD_PROGRESS_VOLATILE_COUNTER;
+    }
+
+    ASCIILiteral checkForwardProgress() const
+    {
+        return metalAppleGPUFamily() < 9 ? CHECK_FORWARD_PROGRESS_VOLATILE_ACCESS : CHECK_FORWARD_PROGRESS_VOLATILE_COUNTER;
+    }
 
 private:
+    enum class PackingHelper : bool { Pack, Unpack };
+
     void emitNecessaryHelpers();
     void serializeVariable(AST::Variable&);
+    bool emitTextureReference(const Type*);
+    void usePackingHelper(PackingHelper, const Type*);
     void generatePackingHelpers(AST::Structure&);
     bool emitPackedVector(const Types::Vector&, bool shouldPack);
-    bool NODELETE shouldForceInlining(AST::Function&) const;
+    bool shouldForceInlining(AST::Function&) const;
 
     bool outlineConstant(const Type*, AST::Expression&);
     void serializeConstant(const Type*, ConstantValue);
     void serializeBinaryExpression(AST::Expression&, AST::BinaryOperation, AST::Expression&);
     void visitStatements(AST::Statement::List&);
-    bool NODELETE shouldPackType() const;
+    bool LEGACY_NODELETE shouldPackType() const;
 
     HelperGenerator m_helperGenerator;
     StringBuilder m_body;
@@ -367,6 +386,9 @@ private:
     AST::Function* m_currentFunction { nullptr };
     AST::Continuing*m_continuing { nullptr };
     HashSet<AST::Function*> m_visitedFunctions;
+    HashMap<const AST::Structure*, AST::Structure*> m_packedStructures;
+    HashSet<const AST::Structure*> m_usedPackHelpers;
+    HashSet<const AST::Structure*> m_usedUnpackHelpers;
     PrepareResult& m_prepareResult;
     const HashMap<String, ConstantValue>& m_constantValues;
     DeviceState m_deviceState;
@@ -394,13 +416,11 @@ void FunctionDefinitionWriter::write()
     emitNecessaryHelpers();
 
     for (auto& declaration : m_shaderModule.declarations()) {
-        if (auto* structure = dynamicDowncast<AST::Structure>(declaration))
+        if (auto* structure = dynamicDowncast<AST::Structure>(declaration)) {
             visit(*structure);
-    }
-
-    for (auto& declaration : m_shaderModule.declarations()) {
-        if (auto* structure = dynamicDowncast<AST::Structure>(declaration))
-            generatePackingHelpers(*structure);
+            if (structure->role() == AST::StructureRole::PackedResource)
+                m_packedStructures.add(structure->original(), structure);
+        }
     }
 
     m_output.append(m_body);
@@ -411,8 +431,19 @@ void FunctionDefinitionWriter::write()
             visit(entryPoint.function);
     }
 
-    m_output.append(m_constants);
+    // Only once the functions are generated is it known which packing helpers they call, but the
+    // helpers have to be declared ahead of them. Emitting every struct's helpers instead would make
+    // each library compile them, including a stage that never touches the struct.
+    StringBuilder functions;
+    std::swap(m_body, functions);
+    for (auto& declaration : m_shaderModule.declarations()) {
+        if (auto* structure = dynamicDowncast<AST::Structure>(declaration))
+            generatePackingHelpers(*structure);
+    }
+
     m_output.append(m_body);
+    m_output.append(m_constants);
+    m_output.append(functions);
 }
 
 void FunctionDefinitionWriter::emitNecessaryHelpers()
@@ -1186,6 +1217,41 @@ void FunctionDefinitionWriter::visit(AST::Structure& structDecl)
 
 }
 
+// Records a call to the packing helper for a struct, or for an array of structs, along with the
+// helpers of its members that it calls in turn, so that generatePackingHelpers() emits only those.
+void FunctionDefinitionWriter::usePackingHelper(PackingHelper helper, const Type* type)
+{
+    if (!type)
+        return;
+
+    if (auto* reference = std::get_if<Types::Reference>(type))
+        type = reference->element;
+
+    // The array helpers are templates, which call the helper for the element type on each element.
+    if (auto* array = std::get_if<Types::Array>(type)) {
+        usePackingHelper(helper, array->element);
+        return;
+    }
+
+    auto* structType = std::get_if<Types::Struct>(type);
+    if (!structType)
+        return;
+
+    // A struct's helpers belong to its packed counterpart, but the calls are typed with the original.
+    auto* structure = &structType->structure;
+    if (structure->role() != AST::StructureRole::PackedResource)
+        structure = m_packedStructures.get(structure);
+    if (!structure)
+        return;
+
+    auto& usedHelpers = helper == PackingHelper::Pack ? m_usedPackHelpers : m_usedUnpackHelpers;
+    if (!usedHelpers.add(structure).isNewEntry)
+        return;
+
+    for (auto& member : structure->members())
+        usePackingHelper(helper, member.type().inferredType());
+}
+
 void FunctionDefinitionWriter::generatePackingHelpers(AST::Structure& structure)
 {
     if (structure.role() != AST::StructureRole::PackedResource || !structure.inferredType()->isConstructible())
@@ -1194,48 +1260,53 @@ void FunctionDefinitionWriter::generatePackingHelpers(AST::Structure& structure)
     const String& packedName = structure.name();
     auto unpackedName = structure.original()->name();
 
-    m_body.append(m_indent, "static __attribute__((always_inline)) "_s, packedName, " __pack("_s, unpackedName, " unpacked)\n"_s,
-        m_indent, "{\n"_s);
-    {
-        IndentationScope scope(m_indent);
-        m_body.append(m_indent, packedName, " packed;\n"_s);
-        for (auto& member : structure.members()) {
-            auto& name = member.name();
-            auto* memberType = member.type().inferredType();
-            bool needsPack = memberType->packing() & (Packing::PStruct | Packing::PArray);
-            if (!needsPack) {
-                if (auto* matrix = std::get_if<Types::Matrix>(memberType))
-                    needsPack = matrix->rows == 3;
+    if (m_usedPackHelpers.contains(&structure)) {
+        m_body.append(m_indent, "static __attribute__((always_inline)) "_s, packedName, " __pack("_s, unpackedName, " unpacked)\n"_s,
+            m_indent, "{\n"_s);
+        {
+            IndentationScope scope(m_indent);
+            m_body.append(m_indent, packedName, " packed;\n"_s);
+            for (auto& member : structure.members()) {
+                auto& name = member.name();
+                auto* memberType = member.type().inferredType();
+                bool needsPack = memberType->packing() & (Packing::PStruct | Packing::PArray);
+                if (!needsPack) {
+                    if (auto* matrix = std::get_if<Types::Matrix>(memberType))
+                        needsPack = matrix->rows == 3;
+                }
+                if (needsPack)
+                    m_body.append(m_indent, "packed."_s, name, " = __pack(unpacked."_s, name, ");\n"_s);
+                else
+                    m_body.append(m_indent, "packed."_s, name, " = unpacked."_s, name, ";\n"_s);
             }
-            if (needsPack)
-                m_body.append(m_indent, "packed."_s, name, " = __pack(unpacked."_s, name, ");\n"_s);
-            else
-                m_body.append(m_indent, "packed."_s, name, " = unpacked."_s, name, ";\n"_s);
+            m_body.append(m_indent, "return packed;\n"_s);
         }
-        m_body.append(m_indent, "return packed;\n"_s);
+        m_body.append(m_indent, "}\n\n"_s);
     }
-    m_body.append(m_indent, "}\n\n"_s,
-        m_indent, "static "_s, unpackedName, " __unpack("_s, packedName, " packed)\n"_s,
-        m_indent, "{\n"_s);
-    {
-        IndentationScope scope(m_indent);
-        m_body.append(m_indent, unpackedName, " unpacked;\n"_s);
-        for (auto& member : structure.members()) {
-            auto& name = member.name();
-            auto* memberType = member.type().inferredType();
-            bool needsUnpack = memberType->packing() & (Packing::PStruct | Packing::PArray);
-            if (!needsUnpack) {
-                if (auto* matrix = std::get_if<Types::Matrix>(memberType))
-                    needsUnpack = matrix->rows == 3;
+
+    if (m_usedUnpackHelpers.contains(&structure)) {
+        m_body.append(m_indent, "static "_s, unpackedName, " __unpack("_s, packedName, " packed)\n"_s,
+            m_indent, "{\n"_s);
+        {
+            IndentationScope scope(m_indent);
+            m_body.append(m_indent, unpackedName, " unpacked;\n"_s);
+            for (auto& member : structure.members()) {
+                auto& name = member.name();
+                auto* memberType = member.type().inferredType();
+                bool needsUnpack = memberType->packing() & (Packing::PStruct | Packing::PArray);
+                if (!needsUnpack) {
+                    if (auto* matrix = std::get_if<Types::Matrix>(memberType))
+                        needsUnpack = matrix->rows == 3;
+                }
+                if (needsUnpack)
+                    m_body.append(m_indent, "unpacked."_s, name, " = __unpack(packed."_s, name, ");\n"_s);
+                else
+                    m_body.append(m_indent, "unpacked."_s, name, " = packed."_s, name, ";\n"_s);
             }
-            if (needsUnpack)
-                m_body.append(m_indent, "unpacked."_s, name, " = __unpack(packed."_s, name, ");\n"_s);
-            else
-                m_body.append(m_indent, "unpacked."_s, name, " = packed."_s, name, ";\n"_s);
+            m_body.append(m_indent, "return unpacked;\n"_s);
         }
-        m_body.append(m_indent, "return unpacked;\n"_s);
+        m_body.append(m_indent, "}\n\n"_s);
     }
-    m_body.append(m_indent, "}\n\n"_s);
 }
 
 bool FunctionDefinitionWriter::shouldPackType() const
@@ -1339,7 +1410,8 @@ void FunctionDefinitionWriter::serializeVariable(AST::Variable& variable)
         }
     }
 
-    visit(type);
+    if (!emitTextureReference(type))
+        visit(type);
     m_body.append(' ', variable.name());
 
     if (variable.flavor() == AST::VariableFlavor::Override)
@@ -1350,6 +1422,29 @@ void FunctionDefinitionWriter::serializeVariable(AST::Variable& variable)
         visit(type, *initializer);
     } else
         m_body.append(" { }"_s);
+}
+
+// Every texture is bound through an argument buffer, so any texture a function can name is in the
+// constant address space, and is referred to there instead of being copied. A copy would only copy
+// the texture's handle, but it is expensive to compile: since MSL 3.2 some of a texture's copy
+// constructors take a coherent(device) texture, which is a separate specialization of the texture
+// class, and resolving the copy has to instantiate that specialization, which costs about as much
+// as the texture class itself. That is paid for each texture type a library copies.
+bool FunctionDefinitionWriter::emitTextureReference(const Type* type)
+{
+    if (auto* reference = std::get_if<Types::Reference>(type)) {
+        if (reference->addressSpace != AddressSpace::Handle)
+            return false;
+        type = reference->element;
+    }
+
+    if (!std::holds_alternative<Types::Texture>(*type) && !std::holds_alternative<Types::TextureStorage>(*type) && !std::holds_alternative<Types::TextureDepth>(*type))
+        return false;
+
+    m_body.append("const constant "_s);
+    visit(type);
+    m_body.append('&');
+    return true;
 }
 
 void FunctionDefinitionWriter::visit(AST::Attribute& attribute)
@@ -1766,7 +1861,9 @@ void FunctionDefinitionWriter::visit(const Type* type, bool shouldPack)
 void FunctionDefinitionWriter::visit(AST::Parameter& parameter)
 {
     auto parameterRoleScope = SetForScope(m_parameterRole, parameter.role());
-    visit(parameter.typeName().inferredType());
+    auto* type = parameter.typeName().inferredType();
+    if (!emitTextureReference(type))
+        visit(type);
     m_body.append(' ', parameter.name());
     for (auto& attribute : parameter.attributes()) {
         m_body.append(' ');
@@ -2532,7 +2629,7 @@ static void emitAtomicExchange(FunctionDefinitionWriter* writer, AST::CallExpres
     atomicFunction("atomic_exchange_explicit"_s, writer, call);
 }
 
-[[noreturn]] static void NODELETE emitArrayLength(FunctionDefinitionWriter*, AST::CallExpression&)
+[[noreturn]] static void LEGACY_NODELETE emitArrayLength(FunctionDefinitionWriter*, AST::CallExpression&)
 {
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -2858,8 +2955,15 @@ void FunctionDefinitionWriter::visit(const Type* type, AST::CallExpression& call
                 visit(type);
         } else if (auto mappedName = mappedNames.get(targetName))
             m_body.append(mappedName(m_helperGenerator, call));
-        else
+        else {
+            if (!call.arguments().isEmpty()) {
+                if (targetName == "__pack"_s)
+                    usePackingHelper(PackingHelper::Pack, call.arguments()[0].inferredType());
+                else if (targetName == "__unpack"_s)
+                    usePackingHelper(PackingHelper::Unpack, call.arguments()[0].inferredType());
+            }
             m_body.append(targetName);
+        }
         visitArguments(this, call);
         return;
     }
@@ -3287,7 +3391,7 @@ void FunctionDefinitionWriter::visit(AST::ForStatement& statement)
     if (statement.isInternallyGenerated())
         m_body.append("for ("_s);
     else
-        m_body.append("{ " DECLARE_FORWARD_PROGRESS " for ("_s);
+        m_body.append("{ "_s, declareForwardProgress(), " for ("_s);
 
     if (auto* initializer = statement.maybeInitializer())
         visit(*initializer);
@@ -3305,7 +3409,7 @@ void FunctionDefinitionWriter::visit(AST::ForStatement& statement)
     if (statement.isInternallyGenerated())
         m_body.append(')');
     else
-        m_body.append(") { " CHECK_FORWARD_PROGRESS " "_s);
+        m_body.append(") { "_s, checkForwardProgress(), " "_s);
     visit(statement.body());
     if (!statement.isInternallyGenerated()) {
         m_body.append('}');
@@ -3315,7 +3419,7 @@ void FunctionDefinitionWriter::visit(AST::ForStatement& statement)
 
 void FunctionDefinitionWriter::visit(AST::LoopStatement& statement)
 {
-    m_body.append("{ " DECLARE_FORWARD_PROGRESS " while (true) { " CHECK_FORWARD_PROGRESS " \n"_s);
+    m_body.append("{ "_s, declareForwardProgress(), " while (true) { "_s, checkForwardProgress(), " \n"_s);
     {
         if (statement.containsSwitch())
             m_body.append("bool __continuing = false;\n"_s, m_indent);
@@ -3358,9 +3462,9 @@ void FunctionDefinitionWriter::visit(AST::Continuing& continuing)
 
 void FunctionDefinitionWriter::visit(AST::WhileStatement& statement)
 {
-    m_body.append("{ " DECLARE_FORWARD_PROGRESS " while ("_s);
+    m_body.append("{ "_s, declareForwardProgress(), " while ("_s);
     visit(statement.test());
-    m_body.append(") { " CHECK_FORWARD_PROGRESS " "_s);
+    m_body.append(") { "_s, checkForwardProgress(), " "_s);
     visit(statement.body());
     m_body.append('}');
     m_body.append('}');
@@ -3376,10 +3480,10 @@ void FunctionDefinitionWriter::visit(AST::SwitchStatement& statement)
         }
         if (isDefault)
             m_body.append('\n', m_indent, "default:"_s);
-        // rdar://154262212: the forward-progress workaround is only needed when
+        // rdar://154262212: the opaque-scope workaround is only needed when
         // shader validation is enabled; emit it selectively based on DeviceState.
         if (shaderValidationEnabled())
-            m_body.append("\n{ " DECLARE_FORWARD_PROGRESS "\n"_s);
+            m_body.append("\n{ " DECLARE_OPAQUE_SCOPE "\n"_s);
         else
             m_body.append(' ');
         visit(clause.body);
@@ -3586,8 +3690,11 @@ void emitMetalFunctions(StringBuilder& stringBuilder, ShaderModule& shaderModule
     functionDefinitionWriter.write();
 }
 
-#undef DECLARE_FORWARD_PROGRESS
-#undef CHECK_FORWARD_PROGRESS
+#undef DECLARE_FORWARD_PROGRESS_VOLATILE_ACCESS
+#undef CHECK_FORWARD_PROGRESS_VOLATILE_ACCESS
+#undef DECLARE_FORWARD_PROGRESS_VOLATILE_COUNTER
+#undef CHECK_FORWARD_PROGRESS_VOLATILE_COUNTER
+#undef DECLARE_OPAQUE_SCOPE
 
 } // namespace Metal
 } // namespace WGSL

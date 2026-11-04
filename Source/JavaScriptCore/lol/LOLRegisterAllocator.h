@@ -60,11 +60,7 @@ struct AllocationBindings {
 template<typename Backend>
 class RegisterAllocator {
 public:
-#ifdef NDEBUG
     static constexpr bool verbose = false;
-#else
-    static constexpr bool verbose = true;
-#endif
 
     static constexpr GPRReg s_scratch = GPRInfo::nonPreservedNonArgumentGPR0;
 
@@ -272,7 +268,6 @@ using ReplayRegisterAllocator = RegisterAllocator<ReplayBackend>;
     macro(OpIsUndefinedOrNull, m_operand, 0) \
     macro(OpIsBoolean, m_operand, 0) \
     macro(OpIsNumber, m_operand, 0) \
-    macro(OpIsBigInt, m_operand, 0) \
     macro(OpIsObject, m_operand, 0) \
     macro(OpIsCellWithType, m_operand, 0) \
     macro(OpHasStructureWithFlags, m_operand, 0)

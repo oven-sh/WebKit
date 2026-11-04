@@ -1,0 +1,59 @@
+# class Plain {}   class Held extends (given as typeof Plain) {}   made = new Held()
+# What is proven of the new object is marked as holding behind checks, because the definition of Held takes a checked value as the class above.
+# A class only keeps the class above: its type says nothing of it. So the proof never rested on that check.
+# The definition goes, the class object is read from its variable, and no check is left in front of the new object: the proof is one that holds in every version.
+# What is proven of the checked value itself still stands behind the check
+# FORM: Prepared
+# RUN: pass DeferDefinitions
+# STATISTIC: ClassesDeferredInVariables = 2
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[checked]]: f1 = Check
+# CHECK-NEXT: = ResolveHeritage [[checked]]
+# CHECK-NOT: layout=L1
+# CHECK: [[class]]: f2 = GetModuleVariable variable=g1
+# CHECK: [[made]]: {{*}} = Construct
+# CHECK-NEXT: [[proven]]: L1 = AssumeType [[made]] provenType=L1
+# CHECK-NEXT: PutModuleVariable [[proven]] variable=g3
+# CHECK-NEXT: = AssumeType [[checked]] provenType=f1 [isBehindChecks]
+# CHECK: Return
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="Plain" module=m0 constructor=f1 flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Held" module=m0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce}
+variable g0 name="Plain" module=m0 declared={type=f1} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g1 name="Held" module=m0 declared={type=f2} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g2 name="given" module=m0 declared={type=anything} flow={writers=AllKnown}
+variable g3 name="made" module=m0 declared={type=anything} flow={writers=AllKnown}
+variable g4 name="above" module=m0 declared={type=anything} flow={writers=AllKnown}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g2
+    v5 = Check v4 expectedType=f1
+    v6 = ResolveHeritage v5
+    v7 = AssumeType v6 provenType=object [isBehindChecks]
+    v8 = NewClosure function=f2
+    v9 = NewClass v8, v5, v7 layout=L1
+    v10 = FinishClass v9 layout=L1
+    PutModuleVariable v10 variable=g1
+    v12 = Construct v10
+    v13 = AssumeType v12 provenType=L1 [isBehindChecks]
+    PutModuleVariable v13 variable=g3
+    v15 = AssumeType v5 provenType=f1 [isBehindChecks]
+    PutModuleVariable v15 variable=g4
+    Return
+}
+function f1 name="Plain" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="Held" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}

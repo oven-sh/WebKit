@@ -1,0 +1,75 @@
+# A handler edge is rare: the landing block and what only it reaches are rare, and the merge after the try statement is not
+# FORM: Prepared
+# RUN: frequencies
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="tryCatch" parameters=[{type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = Call v0
+    Jump -> next b4()
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Jump -> next b3()
+  b3():
+    v3 = Call v0
+    Jump -> next b4()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 1.000000
+# CHECK-NEXT: b2 frequency: Rare count: 0.000977
+# CHECK-NEXT: b3 frequency: Rare count: 0.000977
+# CHECK-NEXT: b4 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f1 name="branchInPlaceOfTheHandlerEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    v2 = Call v0
+    Branch v1 -> taken b2(), notTaken b4()
+  b2():
+    Jump -> next b3()
+  b3():
+    v3 = Call v0
+    Jump -> next b4()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 1.000000
+# CHECK-NEXT: b2 frequency: Normal count: 0.500000
+# CHECK-NEXT: b3 frequency: Normal count: 0.500000
+# CHECK-NEXT: b4 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f2 name="nothingThrows" parameters=[{type=number}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = Add v0, v0
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Jump -> next b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 1.000000
+# CHECK-NEXT: b2 frequency: Rare count: 0.000977
+# CHECK-NEXT: b3 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f3 name="coveredBlockReturns" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything) handler=b1():
+    v1 = Call v0
+    Return
+  b1() role=CatchHandler:
+    v2 = CatchValue
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Rare count: 0.000001
+# CHECK-NOT: frequency

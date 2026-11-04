@@ -1,0 +1,12 @@
+# Balanced code, like compact code, calls the stub that finds or creates the cell of a literal string
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: generate-code calls
+
+# CHECK: f0: size={{*}}
+# CHECK-NEXT: stub LiteralStringToString x1
+# CHECK-NOT: operation operationAOTLiteralStringToString
+# CHECK: f1: size={{*}}
+# CHECK-NEXT: stub LiteralStringToString x1
+# CHECK-NOT: operation operationAOTLiteralStringToString
+# PROGRAM-OF: literal-string-to-string-fast.ir

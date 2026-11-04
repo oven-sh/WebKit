@@ -32,7 +32,6 @@
 #include "Helpers/PlatformUtilities.h"
 #include "Helpers/Test.h"
 #include <JavaScriptCore/JSContextRef.h>
-#include <JavaScriptCore/JSRetainPtr.h>
 #include <JavaScriptCore/JSStringRefCPP.h>
 #include <WebKit/WKRetainPtr.h>
 #include <WebKit/WKSerializedScriptValue.h>
@@ -46,7 +45,7 @@ struct JavaScriptCallbackContext {
     JavaScriptCallbackContext() : didFinish(false) { }
 
     bool didFinish;
-    JSRetainPtr<JSStringRef> actualString;
+    RefPtr<OpaqueJSString> actualString;
 };
 
 static void javaScriptCallback(WKTypeRef result, WKErrorRef error, void* ctx)
@@ -59,7 +58,7 @@ static void javaScriptCallback(WKTypeRef result, WKErrorRef error, void* ctx)
     else if (WKBooleanGetTypeID() == WKGetTypeID(result))
         context->actualString = createJSString(WKBooleanGetValue((WKBooleanRef)result) ? "true"_s : "false"_s);
     else if (WKStringGetTypeID() == WKGetTypeID(result))
-        context->actualString = adopt(WKStringCopyJSString((WKStringRef)result));
+        context->actualString = adoptRef(WKStringCopyJSString((WKStringRef)result));
     else if (WKDoubleGetTypeID() == WKGetTypeID(result)) {
         double value = WKDoubleGetValue((WKDoubleRef)result);
         String s = makeString(value);
@@ -77,17 +76,17 @@ static void javaScriptCallback(WKTypeRef result, WKErrorRef error, void* ctx)
     Util::run(&context.didFinish);
 
     auto actualResult = utf8CString(context.actualString.get());
-    return compareJSResult(script, actualResult.legacyCStringPointer(), expectedResult);
+    return compareJSResult(script, actualResult, expectedResult);
 }
     
-::testing::AssertionResult compareJSResult(const char* script, const char* actualResult, const char* expectedResult)
+::testing::AssertionResult compareJSResult(const char* script, UTF8CStringView actualResult, const char* expectedResult)
 {
-    if (!strcmp(actualResult, expectedResult))
+    if (actualResult == UTF8CStringView::unsafeFromUTF8(expectedResult))
         return ::testing::AssertionSuccess();
 
     return ::testing::AssertionFailure()
         << "JS expression: " << script << "\n"
-        << "       Actual: " << actualResult << "\n"
+        << "       Actual: " << actualResult.utf8() << "\n"
         << "     Expected: " << expectedResult;
 }
 

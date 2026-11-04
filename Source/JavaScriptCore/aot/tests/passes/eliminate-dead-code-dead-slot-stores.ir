@@ -1,0 +1,108 @@
+# Stores into the slots of an object that never leaves the function and that nobody reads go with the object
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+# STATISTIC: EliminateDeadCodeChanges = 5
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Stable" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=anything} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+variable g0 name="shared" module=m0 declared={type=anything}
+
+function f0 name="storeIntoFilledSlot" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
+    Return v0
+# CHECK-NEXT: b0(
+# CHECK-NEXT: Return v0
+}
+
+function f1 name="storeThatMayAddTheField" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutSlotOrAdd v1, -, v0 key="y" receivers=[L0] level=Proven
+    Return v0
+# CHECK-NEXT: b0(
+# CHECK-NEXT: Return v0
+}
+
+function f2 name="storedValuesComputedForTheStoresAlone" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    v2 = Mul v0, v0
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    PutSlot v3, -, v1 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v3, -, v2 key="y" receivers=[L0] level=Proven
+    Return v0
+# CHECK-NEXT: b0(
+# CHECK-NEXT: Return v0
+}
+
+function f3 name="storesInOtherBlocks" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PutSlot v2, -, v1 key="x" receivers=[L0] level=Proven
+    Jump -> next b3()
+  b2():
+    PutSlotOrAdd v2, -, v1 key="y" receivers=[L0] level=Proven
+    Jump -> next b3()
+  b3():
+    Return v0
+# CHECK-NEXT: b0(
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3()
+}
+
+function f4 name="storesByNameProvenToBeSlotStores" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v1, v0 key="x" mode=Strict receivers=[L0]
+    PropSet v1, v0 key="y" mode=Strict receivers=[L0]
+    Return v0
+# CHECK-NEXT: b0(
+# CHECK-NEXT: Return v0
+}
+
+function f5 name="objectIsReturned" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v1, -, v0 key="y" receivers=[L0] level=Proven
+    Return v1
+# CHECK: v1: L0 = NewObject
+# CHECK-NEXT: PutSlot v1, -, v0 key="x"
+# CHECK-NEXT: PutSlotOrAdd v1, -, v0 key="y"
+}
+
+function f6 name="objectIsPassedToUnknownCode" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v1, -, v0 key="y" receivers=[L0] level=Proven
+    v4 = Call v0, -, v1
+    Return v0
+# CHECK: v1: L0 = NewObject
+# CHECK-NEXT: PutSlot v1, -, v0 key="x"
+# CHECK-NEXT: PutSlotOrAdd v1, -, v0 key="y"
+}
+
+function f7 name="objectIsStoredInVariable" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v1, -, v0 key="y" receivers=[L0] level=Proven
+    Return v0
+# CHECK: v1: L0 = NewObject
+# CHECK-NEXT: PutModuleVariable v1
+# CHECK-NEXT: PutSlot v1, -, v0 key="x"
+# CHECK-NEXT: PutSlotOrAdd v1, -, v0 key="y"
+}
+
+function f8 name="oneSlotIsRead" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v1, -, v0 key="y" receivers=[L0] level=Proven
+    v4 = GetSlot v1 key="x" receivers=[L0] level=Proven
+    Return v4
+# CHECK: v1: L0 = NewObject
+# CHECK-NEXT: PutSlot v1, -, v0 key="x"
+# CHECK-NEXT: PutSlotOrAdd v1, -, v0 key="y"
+# CHECK-NEXT: = GetSlot v1 key="x"
+}

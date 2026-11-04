@@ -37,7 +37,7 @@ class ProcessingInstruction final : public CharacterData, private CachedStyleShe
 public:
     USING_CAN_MAKE_WEAKPTR(CharacterData);
 
-    static Ref<ProcessingInstruction> create(Document&, String&& target, String&& data);
+    static Ref<ProcessingInstruction> create(Document&, AtomString target, String data);
     virtual ~ProcessingInstruction();
 
     // CachedResourceClient.
@@ -58,7 +58,7 @@ public:
 
 private:
     friend class CharacterData;
-    ProcessingInstruction(Document&, String&& target, String&& data);
+    ProcessingInstruction(Document&, AtomString target, String data);
 
     String nodeName() const override;
     Ref<Node> cloneNodeInternal(Document&, CloningOperation, CustomElementRegistry*) const override;
@@ -69,6 +69,7 @@ private:
     void removingSteps(RemovalType, ContainerNode&) override;
 
     void checkStyleSheet();
+    void setSheet(RefPtr<StyleSheet>&&);
     void setCSSStyleSheet(const String& href, const URL& baseURL, ASCIILiteral charset, const CachedCSSStyleSheet&) override;
 #if ENABLE(XSLT)
     void setXSLStyleSheet(const String& href, const URL& baseURL, const String& sheet) override;

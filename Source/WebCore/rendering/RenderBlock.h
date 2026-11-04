@@ -23,7 +23,6 @@
 #pragma once
 
 #include <WebCore/GapRects.h>
-#include <WebCore/LineWidth.h>
 #include <WebCore/RenderBox.h>
 #include <WebCore/TextRun.h>
 #include <memory>
@@ -34,7 +33,6 @@ namespace WebCore {
 class LayoutScope;
 class LogicalSelectionOffsetCaches;
 class RelayoutScopeForScrollbarChange;
-class RenderInline;
 class RenderText;
 class ScrollbarUpdateScope;
 
@@ -79,7 +77,7 @@ public:
     enum class ContainingBlockState : bool { NewContainingBlock, SameContainingBlock };
     void removeOutOfFlowBoxes(const RenderElement*, ContainingBlockState = ContainingBlockState::SameContainingBlock);
 
-    TrackedRendererListHashSet* NODELETE outOfFlowBoxes() const LIFETIME_BOUND;
+    TrackedRendererListHashSet* LEGACY_NODELETE outOfFlowBoxes() const LIFETIME_BOUND;
     bool hasOutOfFlowBoxes() const
     {
         auto* renderers = outOfFlowBoxes();
@@ -87,13 +85,13 @@ public:
     }
     void addPercentHeightDescendant(RenderBox&);
     static void removePercentHeightDescendant(RenderBox&);
-    TrackedRendererListHashSet* NODELETE percentHeightDescendants() const LIFETIME_BOUND;
+    TrackedRendererListHashSet* LEGACY_NODELETE percentHeightDescendants() const LIFETIME_BOUND;
     bool hasPercentHeightDescendants() const
     {
         auto* renderers = percentHeightDescendants();
         return renderers && !renderers->isEmptyIgnoringNullReferences();
     }
-    static bool NODELETE hasPercentHeightContainerMap();
+    static bool LEGACY_NODELETE hasPercentHeightContainerMap();
     static void clearPercentHeightDescendantsFrom(RenderBox&);
 
     virtual bool willStretchItem(const RenderBox& item, LogicalBoxAxis containingAxis, StretchingMode = StretchingMode::Normal) const;
@@ -107,10 +105,10 @@ public:
     bool hasMarginAfterQuirk() const { return renderBlockHasMarginAfterQuirk(); }
     bool hasBorderOrPaddingLogicalWidthChanged() const { return renderBlockShouldForceRelayoutChildren(); }
 
-    bool NODELETE hasMarginBeforeQuirk(const RenderBox& child) const;
-    bool NODELETE hasMarginAfterQuirk(const RenderBox& child) const;
+    bool LEGACY_NODELETE hasMarginBeforeQuirk(const RenderBox& child) const;
+    bool LEGACY_NODELETE hasMarginAfterQuirk(const RenderBox& child) const;
 
-    void markOutOfFlowBoxesForLayout();
+    void markOutOfFlowBoxesForLayout(MarkingBehavior = MarkingBehavior::MarkContainingBlockChain);
     void markForPaginationRelayoutIfNeeded() override;
     
     // FIXME-BLOCKFLOW: Remove virtualizaion when all of the line layout code has been moved out of RenderBlock
@@ -129,10 +127,10 @@ public:
     GapRects selectionGapRectsForRepaint(const RenderLayerModelObject* repaintContainer);
     LayoutRect logicalLeftSelectionGap(RenderBlock& rootBlock, const LayoutPoint& rootBlockPhysicalPosition, const LayoutSize& offsetFromRootBlock, RenderElement* selObj, LayoutUnit logicalLeft, LayoutUnit logicalTop, LayoutUnit logicalHeight, const LogicalSelectionOffsetCaches&, const PaintInfo*);
     LayoutRect logicalRightSelectionGap(RenderBlock& rootBlock, const LayoutPoint& rootBlockPhysicalPosition, const LayoutSize& offsetFromRootBlock, RenderElement* selObj, LayoutUnit logicalRight, LayoutUnit logicalTop, LayoutUnit logicalHeight, const LogicalSelectionOffsetCaches&, const PaintInfo*);
-    void NODELETE getSelectionGapInfo(HighlightState, bool& leftGap, bool& rightGap);
+    void LEGACY_NODELETE getSelectionGapInfo(HighlightState, bool& leftGap, bool& rightGap);
     bool isSelectionRoot() const;
 
-    LayoutRect logicalRectToPhysicalRect(const LayoutPoint& physicalPosition, const LayoutRect& logicalRect);
+    LayoutRect LEGACY_NODELETE logicalRectToPhysicalRect(const LayoutPoint& physicalPosition, const LayoutRect& logicalRect);
 
     bool establishesIndependentFormattingContext() const;
     bool createsNewFormattingContext() const;
@@ -152,23 +150,23 @@ public:
     static TextRun constructTextRun(std::span<const char16_t> characters, const Style::ComputedStyle&,
         ExpansionBehavior = ExpansionBehavior::defaultBehavior());
 
-    LayoutUnit NODELETE paginationStrut() const;
+    LayoutUnit LEGACY_NODELETE paginationStrut() const;
     void setPaginationStrut(LayoutUnit);
 
     // The page logical offset is the object's offset from the top of the page in the page progression
     // direction (so an x-offset in vertical text and a y-offset for horizontal text).
-    LayoutUnit NODELETE pageLogicalOffset() const;
+    LayoutUnit LEGACY_NODELETE pageLogicalOffset() const;
     void setPageLogicalOffset(LayoutUnit);
 
     // Fieldset legends that are taller than the fieldset border add in intrinsic border
     // in order to ensure that content gets properly pushed down across all layout systems
     // (flexbox, block, etc.)
-    LayoutUnit NODELETE intrinsicBorderForFieldset() const;
+    LayoutUnit LEGACY_NODELETE intrinsicBorderForFieldset() const;
     void setIntrinsicBorderForFieldset(LayoutUnit);
 
     // Fieldset legends with a block-start margin shift the whole fieldset down rather than moving
     // the legend within the border, by adding that margin onto the fieldset's own margin-before.
-    LayoutUnit NODELETE intrinsicMarginBeforeForFieldset() const;
+    LayoutUnit LEGACY_NODELETE intrinsicMarginBeforeForFieldset() const;
     void setIntrinsicMarginBeforeForFieldset(LayoutUnit);
 
     RectEdges<LayoutUnit> borderWidths() const override;
@@ -194,8 +192,8 @@ public:
     LayoutSize logicalSizeForChild(const RenderBox& child) const { return isHorizontalWritingMode() ? child.borderBoxSize() : child.borderBoxSize().transposedSize(); }
     LayoutUnit logicalTopForChild(const RenderBox& child) const { return isHorizontalWritingMode() ? child.y() : child.x(); }
     LayoutUnit logicalLeftForChild(const RenderBox& child) const { return isHorizontalWritingMode() ? child.x() : child.y(); }
-    void NODELETE setLogicalLeftForChild(RenderBox& child, LayoutUnit logicalLeft, ApplyLayoutDeltaMode = DoNotApplyLayoutDelta);
-    void NODELETE setLogicalTopForChild(RenderBox& child, LayoutUnit logicalTop, ApplyLayoutDeltaMode = DoNotApplyLayoutDelta);
+    void LEGACY_NODELETE setLogicalLeftForChild(RenderBox& child, LayoutUnit logicalLeft, ApplyLayoutDeltaMode = DoNotApplyLayoutDelta);
+    void LEGACY_NODELETE setLogicalTopForChild(RenderBox& child, LayoutUnit logicalTop, ApplyLayoutDeltaMode = DoNotApplyLayoutDelta);
     LayoutUnit marginBeforeForChild(const RenderBoxModelObject& child) const { return child.marginBefore(writingMode()); }
     LayoutUnit marginAfterForChild(const RenderBoxModelObject& child) const { return child.marginAfter(writingMode()); }
     LayoutUnit marginStartForChild(const RenderBoxModelObject& child) const { return child.marginStart(writingMode()); }
@@ -224,7 +222,7 @@ public:
     bool canHaveChildren() const override { return true; }
     virtual bool canDropAnonymousBlockChild() const { return true; }
 
-    RenderFragmentedFlow* NODELETE cachedEnclosingFragmentedFlow() const;
+    RenderFragmentedFlow* LEGACY_NODELETE cachedEnclosingFragmentedFlow() const;
     void setCachedEnclosingFragmentedFlowNeedsUpdate();
     virtual bool cachedEnclosingFragmentedFlowNeedsUpdate() const;
     void resetEnclosingFragmentedFlowAndChildInfoIncludingDescendants(RenderFragmentedFlow* = nullptr) final;
@@ -290,6 +288,8 @@ protected:
 
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
     void computeIntrinsicLogicalWidthContributions() override;
+    std::optional<LayoutUnit> fixedLogicalWidthContribution(const Style::PreferredSize&) const;
+    std::pair<LayoutUnit, LayoutUnit> logicalWidthContributionsForSize(const Style::PreferredSize&, LayoutUnit minContentLogicalWidth, LayoutUnit maxContentLogicalWidth) const;
     
     std::optional<LayoutUnit> firstLineBaseline() const override;
     std::optional<LayoutUnit> lastLineBaseline() const override;
@@ -332,10 +332,14 @@ protected:
     std::pair<LayoutUnit, LayoutUnit> computeChildIntrinsicLogicalWidths(RenderBox&) const;
 
     RenderBlockRareData& ensureBlockRareData() LIFETIME_BOUND;
-    RenderBlockRareData* NODELETE blockRareData() const LIFETIME_BOUND;
+    RenderBlockRareData* LEGACY_NODELETE blockRareData() const LIFETIME_BOUND;
     bool recomputeLogicalWidth();
 
     LayoutSize intrinsicSize() const override;
+
+    // Hit-tests a fieldset's legend, which is excluded from normal layout and placed in the border,
+    // so it is positioned against the unscrolled offset rather than the scrolled content.
+    bool hitTestExcludedChildrenInBorder(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction);
 
 private:
     // FIXME-BLOCKFLOW: Remove virtualizaion when all callers have moved to RenderBlockFlow
@@ -364,7 +368,6 @@ private:
     virtual bool hitTestFloats(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint&) { return false; }
     virtual bool hitTestChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& adjustedLocation, HitTestAction);
     virtual bool hitTestInlineChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint&, HitTestAction) { return false; }
-    bool hitTestExcludedChildrenInBorder(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction);
 
     std::pair<LayoutUnit, LayoutUnit> computeBlockIntrinsicLogicalWidths() const;
     
@@ -402,8 +405,8 @@ private:
     static bool s_canPropagateFloatIntoSibling;
 };
 
-LayoutUnit NODELETE blockDirectionOffset(RenderBlock& rootBlock, const LayoutSize& offsetFromRootBlock);
-LayoutUnit NODELETE inlineDirectionOffset(RenderBlock& rootBlock, const LayoutSize& offsetFromRootBlock);
+LayoutUnit LEGACY_NODELETE blockDirectionOffset(RenderBlock& rootBlock, const LayoutSize& offsetFromRootBlock);
+LayoutUnit LEGACY_NODELETE inlineDirectionOffset(RenderBlock& rootBlock, const LayoutSize& offsetFromRootBlock);
 PositionWithAffinity positionForPointRespectingEditingBoundaries(RenderBlock&, RenderBox&, const LayoutPoint&, HitTestSource);
 
 } // namespace WebCore

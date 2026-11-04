@@ -72,11 +72,6 @@ Ref<DeprecatedCSSOMPrimitiveValue> DeprecatedCSSOMPrimitiveValue::create(const C
     return create(DeprecatedCSSOMPrimitiveValueData { value.value }, owner);
 }
 
-Ref<DeprecatedCSSOMPrimitiveValue> DeprecatedCSSOMPrimitiveValue::create(const CSS::ContentLegacyAttrFunctionWrapper& value, CSSStyleDeclaration& owner)
-{
-    return create(DeprecatedCSSOMPrimitiveValueData { value.value }, owner);
-}
-
 Ref<DeprecatedCSSOMPrimitiveValue> DeprecatedCSSOMPrimitiveValue::create(const CSS::CustomIdent& value, CSSStyleDeclaration& owner)
 {
     return create(DeprecatedCSSOMPrimitiveValueData { value }, owner);
@@ -139,13 +134,13 @@ unsigned short DeprecatedCSSOMPrimitiveValue::cssValueType() const
 
     if (auto* keyword = std::get_if<CSS::Keyword>(&m_data->value)) {
         switch (keyword->value) {
-        case CSSValueInherit:
+        case CSSValueID::Inherit:
             return CSS_INHERIT;
-        case CSSValueInitial:
+        case CSSValueID::Initial:
             return CSS_INITIAL;
-        case CSSValueUnset:
+        case CSSValueID::Unset:
             return CSS_UNSET;
-        case CSSValueRevert:
+        case CSSValueID::Revert:
             return CSS_REVERT;
         default:
             break;
@@ -216,9 +211,6 @@ unsigned short DeprecatedCSSOMPrimitiveValue::primitiveType() const
         },
         [](const CSS::ContentCountersFunction&) -> unsigned short {
             return CSS_COUNTER;
-        },
-        [](const CSS::ContentLegacyAttrFunction&) -> unsigned short {
-            return CSS_ATTR;
         },
         [](const CSS::ClipRect&) -> unsigned short {
             return CSS_RECT;
@@ -349,9 +341,6 @@ ExceptionOr<String> DeprecatedCSSOMPrimitiveValue::getStringValue() const
         },
         [](const CSS::URL& url) -> ExceptionOr<String> {
             return String { url.specified };
-        },
-        [](const CSS::ContentLegacyAttrFunction& attrFunction) -> ExceptionOr<String> {
-            return CSS::serializationForCSS(CSS::defaultSerializationContext(), attrFunction);
         },
         [](const auto&) -> ExceptionOr<String> {
             return Exception { ExceptionCode::InvalidAccessError };

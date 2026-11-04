@@ -1,0 +1,66 @@
+# The listed reads of a value with several results keep their ids, and a read that is not listed reads the Results
+# FORM: Prepared
+# RUN: expand function=f0 value=v2 arms=1 reads=v3,v5,v7
+# RUN(COVERED): expand function=f2 value=v2 arms=1 reads=v3
+# RUN(BAD): expand function=f0 value=v2 arms=1 reads=v4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=anything}, {type=number}] results=[{type=anything}, {type=number}] {
+    v2 = CallDirect v0, v1 function=f1
+    v3 = ResultAt v2 index=0
+    v4 = TypeTest v3 testedType=object
+    v5 = ResultAt v2 index=0
+    v6 = TypeTest v5 testedType=object
+    Jump -> next b1()
+  b1():
+    v7 = ResultAt v2 index=1
+    v8 = ResultAt v2 index=1
+    v9 = Add v7, v8
+    Return v2
+}
+function f1 name="pair" parameters=[{type=anything}, {type=number}] results=[{type=anything}, {type=number}] {
+    v2 = Results v0, v1
+    Return v2
+}
+function f2 name="underHandler" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: anything, v1: number) handler=b2():
+    v2 = CallDirect v0, v1 function=f1
+    Jump -> next b1()
+  b1():
+    v3 = ResultAt v2 index=1
+    Return v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Return v1
+}
+# CHECK: function f0
+# CHECK: b0(v0: anything, v1: number):
+# CHECK-NEXT: [[CALL]]: undefined = CallDirect v0, v1 function=f1
+# CHECK-NEXT: [[R0]]: anything = ResultAt [[CALL]]
+# CHECK-NEXT: [[R1]]: number = ResultAt [[CALL]] index=1
+# CHECK-NEXT: Jump -> next [[C]]([[R0]], [[R1]])
+# CHECK: b1():
+# CHECK-NEXT: v7: number = Upcast [[P1]] castType=number
+# CHECK-NEXT: v8: number = ResultAt v2 index=1
+# CHECK-NEXT: v9: number = Add v7, v8
+# CHECK-NEXT: Return v2
+# CHECK: [[C]](v3: anything, [[P1]]: number):
+# CHECK-NEXT: v2: undefined = Results v3, [[P1]]
+# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=object
+# CHECK-NEXT: v5: anything = Upcast v3 castType=anything
+# CHECK-NEXT: v6: boolean = TypeTest v5 testedType=object
+# CHECK-NEXT: Jump -> next b1()
+# COVERED: function f2
+# COVERED-NEXT: b0(v0: anything, v1: number) handler=b2():
+# COVERED-NEXT: [[CALL]]: undefined = CallDirect v0, v1 function=f1
+# COVERED-NEXT: [[R0]]: anything = ResultAt [[CALL]]
+# COVERED-NEXT: [[R1]]: number = ResultAt [[CALL]] index=1
+# COVERED-NEXT: Jump -> next [[C]]([[R0]], [[R1]])
+# COVERED-NEXT: b1():
+# COVERED-NEXT: v3: number = Upcast [[P1]] castType=number
+# COVERED-NEXT: Return v3
+# COVERED-NEXT: b2() role=CatchHandler:
+# COVERED: [[C]]([[P0]]: anything, [[P1]]: number) handler=b2():
+# COVERED-NEXT: v2: undefined = Results [[P0]], [[P1]]
+# COVERED-NEXT: Jump -> next b1()
+# BAD: error: bad argument reads=v4

@@ -1,0 +1,61 @@
+# A wrapper function that runs once compiles to code without an environment, and of the functions declared in it only the one that leaves it has a closure
+# FORM: AsRead
+# RUN: compile
+# OPTIONS: check=VerifyEachPass
+# STATISTIC: EnvironmentsPromotedToVariables = 1
+# STATISTIC: CapturesPromotedToVariables = 2
+# STATISTIC: EnvironmentsOnHeap = 0
+# STATISTIC: EnvironmentsInFrames = 0
+# STATISTIC: ClosuresFull = 0
+# STATISTIC: ClosuresSlim = 1
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="once" fields=[{key=@"counter.0" declared={type=anything|absent}}, {key=@"bump.1" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    Return
+}
+function f1 name="once" results=[{type=anything}] {
+    v0 = Absent
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1 function=f2
+    PutEnvironmentField v1, v2 layout=L0 field=1
+    v4 = Integer integer=10
+    PutEnvironmentField v1, v4 layout=L0 field=0
+    v6 = GetEnvironmentField v1 layout=L0 field=1
+    v7 = Call v6
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="id" [isFreeName]
+    v10 = Integer integer=100
+    v11 = Call v9, -, v10
+    v12 = NewClosure v1, v11 function=f3
+    v13 = PropGet v8 key="publish" [isFreeName]
+    v14 = Call v13, -, v13, v13, v12
+    Return
+}
+function f2 name="bump" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = CheckInitialized v1 name="counter"
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    PutEnvironmentField v0, v4 layout=L0 field=0
+    Return v4
+}
+function f3 name="published" captures=[{type=env L0}, {type=anything}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything, v2: anything):
+    v3 = GetEnvironmentField v0 layout=L0 field=1
+    v4 = Call v3
+    v5 = NewClosure v1, v2 function=f4
+    v6 = Call v5, -, v4
+    Return v6
+}
+function f4 name="inner" kind=Arrow captures=[{type=anything}, {type=anything}] parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = Add v0, v1
+    v4 = Add v3, v2
+    Return v4
+}

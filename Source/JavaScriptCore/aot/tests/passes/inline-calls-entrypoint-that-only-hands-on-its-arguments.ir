@@ -1,0 +1,39 @@
+# An entrypoint makes the list of its frame's arguments only to hand it to the body. Where code runs seldom the list that goes is worth its own bytes:
+# a body that only passes the list on is taken in, beside a call that keeps the body too
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass heat=EverythingIsCold only-passes=ComputeEffectSummaries,EstimateHeat,SummarizeForInlining,InlineCalls
+# RUN: pipeline InlineCalls
+# STATISTIC: InlineBenefitSunkAllocation >= 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewArray v2, v2 contents=anything
+    v4 = NewClosure function=f2
+    v5 = CallDirect v4, v3 function=f1
+    v6 = NewClosure v4 function=f1
+    v7 = PropGet v0 key="publish" [isFreeName]
+    v8 = Call v7, -, v6, v5
+    Return
+}
+
+function f1 name="passesItsArgumentsOn" flags=[HasRestParameter] captures=[{type=f2}] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v2 = CallList v0, -, v1
+    v3 = StrictEq v2, v0
+    v4 = StrictEq v3, v2
+    Return v4
+}
+
+function f2 name="takesTwo" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+# CHECK-LABEL: name="passesItsArgumentsOn" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = CallDirect
+# CHECK: = CallList

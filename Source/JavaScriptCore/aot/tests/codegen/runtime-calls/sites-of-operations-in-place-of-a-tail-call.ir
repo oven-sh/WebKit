@@ -1,0 +1,28 @@
+# The machine call sites of an operation that stands for a call in tail position are recorded as a tail call's, whatever the operation is
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: generate-code
+# CHECK: f0: size={{*}} tailCallSites=
+# CHECK-NEXT: f1: size=
+# CHECK-NOT: tailCallSites
+# CHECK: f2: size={{*}} tailCallSites=
+# CHECK-NEXT: f3: size=
+# CHECK-NOT: tailCallSites
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="markedToString" parameters=[{type=anything}] results=[{type=string}] {
+    v1 = ToString v0 form=Generic @7 tail
+    Return v1
+}
+function f1 name="toString" parameters=[{type=anything}] results=[{type=string}] {
+    v1 = ToString v0 form=Generic @7
+    Return v1
+}
+function f2 name="markedToNumber" parameters=[{type=anything}] results=[{type=number}] {
+    v1 = ToNumber v0 form=Generic @7 tail
+    Return v1
+}
+function f3 name="toNumber" parameters=[{type=anything}] results=[{type=number}] {
+    v1 = ToNumber v0 form=Generic @7
+    Return v1
+}

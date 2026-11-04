@@ -1,0 +1,64 @@
+# NarrowByField says nothing about a member that has no field under the key: the property may be among its extra properties or on a prototype.
+# The same holds for every other part of the holder's type. Only undefined and null go
+# FORM: Prepared
+# RUN: result-types
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Circle" fields=[{key="kind" declared={type=1} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="Square" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L2 name="Untagged" fields=[{key="size" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+# Untagged stays on both edges, in the type and in what is expected
+function f0 name="memberWithoutTheField" parameters=[{type=L0|L1|L2}] results=[{type=undefined}] {
+    v1 = PropGet v0 key="kind"
+    v2 = Integer integer=1
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = NarrowByField v0, v4 key="kind"
+    Return
+  b2(v6):
+    v7 = NarrowByField v0, v6 key="kind"
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v0: L0|L1|L2
+# CHECK-NEXT: v1: anything ~ undefined|int[1, 2]
+# CHECK: v4: 1
+# CHECK-NEXT: v5: L0|L2
+# CHECK-NOT: ~
+# CHECK: v6: anything ~ undefined|2
+# CHECK-NEXT: v7: L0|L1|L2 ~ L1|L2
+
+function f1 name="otherPartsOfTheType" parameters=[{type=undefined|string|L0|L1|Array<number>}] results=[{type=undefined}] {
+    v1 = PropGet v0 key="kind"
+    v2 = Integer integer=1
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = NarrowByField v0, v4 key="kind"
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v0: undefined|string|L0|L1|Array<number>
+# CHECK-NEXT: v1: anything ~ int[1, 2]
+# CHECK: v4: 1
+# CHECK-NEXT: v5: string|L0|Array<number>
+
+function f2 name="holderWithoutLayouts" parameters=[{type=undefined|null|object}] results=[{type=undefined}] {
+    v1 = PropGet v0 key="kind"
+    v2 = Integer integer=1
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = NarrowByField v0, v4 key="kind"
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v0: undefined|null|object
+# CHECK: v4: 1
+# CHECK-NEXT: v5: object

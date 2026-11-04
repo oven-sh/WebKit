@@ -1,0 +1,42 @@
+# Constant data is whole when the operation hands it out: the fields that it lists are set at creation, as those that a NewObject lists, also in an object inside it.
+# A field that one literal of the layout leaves out is not, and neither is the field always filled once some code deletes it.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Options" fields=[{key="dt" {{*}}initialization=SetAtCreation{{*}}occupancy=AlwaysFilled{{*}}}, {key="label" {{*}}initialization=SetAtCreation{{*}}occupancy=AlwaysFilled
+# CHECK: layout L1 name="Inner" fields=[{key="count" {{*}}initialization=SetAtCreation{{*}}occupancy=AlwaysFilled
+# CHECK: layout L2 name="Outer" fields=[{key="inner" {{*}}initialization=SetAtCreation{{*}}occupancy=AlwaysFilled
+# CHECK: layout L3 name="WithOptional" fields=[{key="always" {{*}}initialization=SetAtCreation{{*}}}, {key="sometimes"
+# CHECK-NOT: key="sometimes" {{*}}initialization=SetAtCreation
+# CHECK: layout L4 name="Deleted" fields=[{key="gone"
+# CHECK-NOT: key="gone" {{*}}occupancy=AlwaysFilled
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Options" fields=[{key="dt" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=string} flags=[IsRequired]}]
+layout L1 kind=Record name="Inner" fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Record name="Outer" fields=[{key="inner" declared={type=L1} flags=[IsRequired]}]
+layout L3 kind=Record name="WithOptional" fields=[{key="always" declared={type=number} flags=[IsRequired]}, {key="sometimes" declared={type=undefined|number}}]
+layout L4 kind=Record name="Deleted" fields=[{key="gone" declared={type=undefined|number}}]
+data d0 root=Object{layout=L0 members=[{key="dt" value=Number{value=0.5}}, {key="label" value=String{value="world"}}]} module=m0
+data d1 root=Object{layout=L2 members=[{key="inner" value=Object{layout=L1 members=[{key="count" value=Number{value=1}}]}}]} module=m0
+data d2 root=Object{layout=L3 members=[{key="always" value=Number{value=1}}, {key="sometimes" value=Number{value=2}}]} module=m0
+data d3 root=Object{layout=L3 members=[{key="always" value=Number{value=1}}]} module=m0
+data d4 root=Object{layout=L4 members=[{key="gone" value=Number{value=1}}]} module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Data data=d0
+    v1 = PropGet v0 key="dt"
+    v2 = PropGet v0 key="label"
+    v3 = Data data=d1
+    v4 = PropGet v3 key="inner"
+    v5 = PropGet v4 key="count"
+    v6 = Data data=d2
+    v7 = PropGet v6 key="sometimes"
+    v8 = Data data=d3
+    v9 = PropGet v8 key="sometimes"
+    v10 = PropGet v8 key="always"
+    v11 = Data data=d4
+    v12 = PropDelete v11 key="gone"
+    v13 = PropGet v11 key="gone"
+    v14 = Add v1, v5
+    v15 = Add v14, v10
+    Return v15
+}

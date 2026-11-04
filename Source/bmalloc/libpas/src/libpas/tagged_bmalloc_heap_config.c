@@ -31,6 +31,7 @@
 
 #if PAS_ENABLE_BMALLOC
 
+#include "bmalloc_heap_config.h"
 #include "tagged_bmalloc_heap_innards.h"
 #include "pas_designated_intrinsic_heap.h"
 #include "pas_heap_config_utils_inlines.h"
@@ -39,6 +40,31 @@
 PAS_BEGIN_EXTERN_C;
 
 const pas_heap_config tagged_bmalloc_heap_config = TAGGED_BMALLOC_HEAP_CONFIG;
+
+#define TAGGED_BMALLOC_CHECK_SMALL_SEGREGATED_MAX PAS_MAX_OBJECT_SIZE_WITH_MIN_OBJECTS( \
+    PAS_BASIC_SEGREGATED_PAYLOAD_SIZE_EXCLUSIVE(TAGGED_BMALLOC_MINALIGN_SHIFT, PAS_SMALL_PAGE_DEFAULT_SIZE, PAS_SMALL_PAGE_DEFAULT_SIZE), \
+    TAGGED_BMALLOC_PINNED_MIN_OBJECTS_PER_PAGE)
+#define TAGGED_BMALLOC_CHECK_MEDIUM_SEGREGATED_MAX PAS_MAX_OBJECT_SIZE_WITH_MIN_OBJECTS(PAS_MEDIUM_PAGE_DEFAULT_SIZE, TAGGED_BMALLOC_PINNED_MIN_OBJECTS_PER_PAGE)
+#define TAGGED_BMALLOC_CHECK_SMALL_BITFIT_MAX PAS_MAX_BITFIT_OBJECT_SIZE_WITH_MIN_OBJECTS( \
+    PAS_SMALL_BITFIT_PAGE_DEFAULT_SIZE - PAS_BITFIT_PAGE_HEADER_SIZE(PAS_SMALL_BITFIT_PAGE_DEFAULT_SIZE, PAS_SMALL_BITFIT_PAGE_DEFAULT_SIZE, TAGGED_BMALLOC_MINALIGN_SHIFT), \
+    TAGGED_BMALLOC_MINALIGN_SHIFT, TAGGED_BMALLOC_PINNED_MIN_OBJECTS_PER_PAGE)
+#define TAGGED_BMALLOC_CHECK_MEDIUM_BITFIT_MAX PAS_MAX_BITFIT_OBJECT_SIZE_WITH_MAX_BITS_AND_MIN_OBJECTS( \
+    PAS_MEDIUM_BITFIT_PAGE_DEFAULT_SIZE, PAS_MIN_MEDIUM_ALIGN_SHIFT, PAS_BITFIT_MAX_FREE_MAX_VALID_MEDIUM, TAGGED_BMALLOC_PINNED_MIN_OBJECTS_PER_PAGE)
+
+#if PAS_COMPILER(CLANG)
+_Static_assert(TAGGED_BMALLOC_CHECK_SMALL_SEGREGATED_MAX <= PAS_MAX_MTE_TAGGABLE_OBJECT_SIZE
+    && TAGGED_BMALLOC_CHECK_MEDIUM_SEGREGATED_MAX <= PAS_MAX_MTE_TAGGABLE_OBJECT_SIZE
+    && TAGGED_BMALLOC_CHECK_SMALL_BITFIT_MAX <= PAS_MAX_MTE_TAGGABLE_OBJECT_SIZE
+    && TAGGED_BMALLOC_CHECK_MEDIUM_BITFIT_MAX <= PAS_MAX_MTE_TAGGABLE_OBJECT_SIZE,
+    "Every page config the tagged heap tags in must stay within the taggable object size");
+_Static_assert(TAGGED_BMALLOC_CHECK_SMALL_SEGREGATED_MAX >= PAS_MAX_MTE_TAGGABLE_OBJECT_SIZE
+    || TAGGED_BMALLOC_CHECK_MEDIUM_SEGREGATED_MAX >= PAS_MAX_MTE_TAGGABLE_OBJECT_SIZE
+    || TAGGED_BMALLOC_CHECK_SMALL_BITFIT_MAX >= PAS_MAX_MTE_TAGGABLE_OBJECT_SIZE
+    || TAGGED_BMALLOC_CHECK_MEDIUM_BITFIT_MAX >= PAS_MAX_MTE_TAGGABLE_OBJECT_SIZE,
+    "At least one tagged heap page config must be able to allocate objects up to the taggable object size");
+#endif /* PAS_COMPILER(CLANG) */
+
+extern const pas_heap_config bmalloc_heap_config;
 
 PAS_BASIC_HEAP_CONFIG_DEFINITIONS(
     tagged_bmalloc, TAGGED_BMALLOC,
@@ -50,6 +76,11 @@ void tagged_bmalloc_heap_config_activate(void)
 #if PAS_OS(DARWIN)
     static const bool register_with_libmalloc = true;
 #endif
+
+    // Make sure that the bmalloc heap config initializes before we do anything else, since that
+    // one will want to be designated.
+    // FIXME: it's annoying that we need to do this in every heap-config other than bmalloc.
+    pas_heap_config_activate(&bmalloc_heap_config);
     
     // FIXME: Find a way to install our heap as the designated intrinsic heap instead of, or alongside,
     // the regular bmalloc heap's intrinsic heap. For now leave bmalloc's hot path undisturbed.

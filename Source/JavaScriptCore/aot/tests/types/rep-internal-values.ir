@@ -1,0 +1,32 @@
+# An opaque kind has its own representation: a cell, a raw word, or nothing for a guard or a fact. A cell that may be absent is a JSValue, a raw word stays one.
+# RUN: rep
+# CHECK: t0: rep RawWord slot Int64 cells no legal [RawWord]
+# CHECK-NEXT: t1: rep RawWord slot Int64 cells no legal [RawWord]
+# CHECK-NEXT: t2: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t3: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t4: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t5: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t6: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t7: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t8: rep JSValue slot JSValue cells yes legal [Cell32, JSValue]
+# CHECK-NEXT: t9: rep JSValue slot JSValue cells yes legal [Cell32, JSValue]
+# CHECK-NEXT: t10: rep RawWord slot Int64 cells no legal [RawWord]
+# CHECK: RawWord: never
+# CHECK-NEXT: iteratorstate: Cell legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: enumerator: Cell legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: exception: Cell legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: classtoken: Cell legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: stringbuilder: Cell legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: cursor: RawWord legal [RawWord]
+# CHECK-NEXT: keyorder: RawWord legal [RawWord]
+# CHECK-NEXT: guard: Void legal [Void]
+# CHECK-NEXT: fact: Void legal [Void]
+# CHECK-NEXT: flatstring: Cell legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: codeaddress: RawWord legal [RawWord]
+# CHECK-NEXT: jsonholders: RawWord legal [RawWord]
+# CHECK-NEXT: buildercursor: RawWord legal [RawWord]
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment
+function f0 name="types" parameters=[{type=cursor}, {type=keyorder}, {type=iteratorstate}, {type=enumerator}, {type=exception}, {type=classtoken}, {type=stringbuilder}, {type=env L0}, {type=absent|env L0}, {type=absent|classtoken}, {type=absent|cursor}] results=[{type=undefined}]

@@ -1,0 +1,17 @@
+# Date[0] = 1; Date.parse("x")
+# An index spells the name of no member but one that a number converts to, so Date.parse is what it was.
+# RUN: valueflow-results
+# CHECK: builtin-location Date."parse" Constant
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Date
+    v1 = Integer
+    v2 = Integer integer=1
+    ElemSet v0, v1, v2
+    v4 = PropGet v0 key="parse"
+    v5 = String string="x"
+    v6 = Call v4, v0, v5 calleeKey="parse"
+    Return
+}

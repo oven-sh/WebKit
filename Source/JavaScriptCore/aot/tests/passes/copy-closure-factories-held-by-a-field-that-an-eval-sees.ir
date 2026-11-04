@@ -1,0 +1,48 @@
+# The text of an eval that sees the variable can assign to it.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Unchanged
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs body=f0
+entry module=m0
+evalscope e0 flags=[IsInFunction] bindings=[{name="once" kind=Variable layout=L0 field=0 operand=0}]
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=anything}}, {key=@"binding.1" declared={type=anything}}]
+function f0 name="main" module=m0 kind=CommonJsModule results=[{type=anything}] {
+    v0 = CallDirect function=f5
+    Return
+}
+function f1 name="once" module=m0 position=10 kind=Arrow length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = NewClosure v1 function=f2
+    Return v2
+}
+function f2 name="get" module=m0 position=20 kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+function f3 name="loadA" module=m0 position=30 kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f4 name="loadB" module=m0 position=40 kind=Arrow results=[{type=anything}] {
+    v0 = String string="b"
+    Return v0
+}
+function f5 name="text" module=m0 position=1 results=[{type=anything}] {
+    v0 = Undefined
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = NewClosure v1 function=f1
+    PutEnvironmentField v1, v2 layout=L0
+    v4 = GetEnvironmentField v1 layout=L0
+    v5 = NewClosure function=f3
+    v6 = Call v4, -, v5
+    v7 = GetEnvironmentField v1 layout=L0
+    v8 = NewClosure function=f4
+    v9 = Call v7, -, v8
+    v10 = NewClosure v1 function=f6
+    Return
+}
+function f6 name="evaluate" module=m0 position=50 captures=[{type=env L0 flags=[IsFromCompiler]}] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = DirectEval v1, v2, -, v0 evalScope=e0
+    Return v3
+}

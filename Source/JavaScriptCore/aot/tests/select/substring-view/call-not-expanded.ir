@@ -1,0 +1,78 @@
+# A call of slice, substring or substr that was not expanded to a Substring is a range too: its bounds are computed in front of each use
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 9
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeSlice/0
+    v4 = String string="ab"
+    v5 = StrictEq v3, v4
+    Return v5
+# CHECK-NOT: StringPrototypeSlice
+# CHECK: [[length0]]: {{*}} = GetStringLength v0
+# CHECK-NEXT: [[range0]]: {{*}} = StringRange [[length0]], v1, v2
+# CHECK-NEXT: [[from0]]: {{*}} = ResultAt [[range0]]
+# CHECK-NEXT: [[to0]]: {{*}} = ResultAt [[range0]] index=1
+# CHECK-NEXT: [[result0]]: boolean = StringRangeEqualsLiteral v0, [[from0]], [[to0]] literal="ab"
+# CHECK-NEXT: Return [[result0]]
+}
+
+function f1 name="substring-without-end" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSubstring/0
+    v3 = String string="ab"
+    v4 = StrictEq v2, v3
+    Return v4
+# CHECK-NOT: StringPrototypeSubstring
+# CHECK: [[range1]]: {{*}} = StringRange [[length1]], v1 method=Substring
+# CHECK-NEXT: [[from1]]: {{*}} = ResultAt [[range1]]
+# CHECK-NEXT: [[to1]]: {{*}} = ResultAt [[range1]] index=1
+# CHECK-NEXT: : boolean = StringRangeEqualsLiteral v0, [[from1]], [[to1]] literal="ab"
+}
+
+function f2 name="substr" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeSubstr/0
+    v4 = String string="ab"
+    v5 = StrictEq v3, v4
+    Return v5
+# CHECK-NOT: StringPrototypeSubstr
+# CHECK: [[range2]]: {{*}} = StringRange [[length2]], v1, v2 method=Substr
+# CHECK: : boolean = StringRangeEqualsLiteral v0,
+}
+
+function f3 name="undefined-end" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = Undefined
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeSlice/0
+    v4 = String string="ab"
+    v5 = StrictEq v3, v4
+    Return v5
+# CHECK-NOT: StringPrototypeSlice
+# CHECK: [[range3]]: {{*}} = StringRange [[length3]], v1
+# CHECK-NEXT: [[from3]]: {{*}} = ResultAt [[range3]]
+# CHECK: : boolean = StringRangeEqualsLiteral v0, [[from3]],
+}
+
+function f4 name="stored-and-compared" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeSlice/0
+    PutModuleVariable v3 variable=g0
+    v5 = String string="ab"
+    v6 = StrictEq v3, v5
+    Return v6
+}
+variable g0 name="last" declared={type=anything} initialization=Undefined
+# CHECK-LABEL: function f4 name="stored-and-compared"
+# CHECK: v3: string = Call{{*}} overload=StringPrototypeSlice/0
+# CHECK-NEXT: PutModuleVariable v3 variable=g0
+# CHECK: [[range4]]: {{*}} = StringRange [[length4]], v1, v2
+# CHECK-NOT: = String string=
+# CHECK: : boolean = StringRangeEqualsLiteral v0,
+
+function f5 name="end-may-be-undefined" parameters=[{type=string}, {type=int}, {type=undefined|int}] results=[{type=boolean}] {
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeSlice/0
+    v4 = String string="ab"
+    v5 = StrictEq v3, v4
+    Return v5
+# CHECK-NOT: StringRange
+# CHECK: v3: string = Call{{*}} overload=StringPrototypeSlice/0
+# CHECK-NOT: StringRange
+}

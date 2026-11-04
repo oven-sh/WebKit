@@ -56,12 +56,44 @@ bool shouldDumpIRAtEachPhase(B3CompilationMode mode)
 
 bool shouldValidateIR()
 {
+#if ENABLE(DFG_JIT)
     return DFG::validationEnabled() || shouldValidateIRAtEachPhase();
+#elif ASSERT_ENABLED
+    return true;
+#else
+    return Options::validateGraph() || shouldValidateIRAtEachPhase();
+#endif
 }
 
 bool shouldValidateIRAtEachPhase()
 {
     return Options::validateGraphAtEachPhase();
+}
+
+bool shouldValidateIR(const Procedure& procedure)
+{
+    switch (procedure.policy().validation.level) {
+    case ValidationLevel::FromOptions:
+        return shouldValidateIR();
+    case ValidationLevel::AtBoundaries:
+    case ValidationLevel::AtEachPhase:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return true;
+}
+
+bool shouldValidateIRAtEachPhase(const Procedure& procedure)
+{
+    switch (procedure.policy().validation.level) {
+    case ValidationLevel::FromOptions:
+    case ValidationLevel::AtBoundaries:
+        return shouldValidateIRAtEachPhase();
+    case ValidationLevel::AtEachPhase:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return true;
 }
 
 bool shouldSaveIRBeforePhase()

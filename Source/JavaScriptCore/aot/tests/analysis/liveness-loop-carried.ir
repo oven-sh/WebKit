@@ -1,0 +1,38 @@
+# Live sets around a loop where a parameter is not live at the head of its block
+# FORM: Prepared
+# RUN: analyses liveness live-points
+# RUN(TRACKED): analyses liveness tracked-values=v0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sum" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Add v3, v0
+    Jump -> next b1(v5)
+  b3():
+    Return v3
+}
+# CHECK: function f0
+# CHECK-NEXT: liveness:
+# CHECK-NEXT: b0 live at head: []
+# CHECK-NEXT: b1 live at head: [v0 v1]
+# CHECK-NEXT: b2 live at head: [v0 v1 v3]
+# CHECK-NEXT: b3 live at head: [v3]
+# CHECK-NEXT: live-points:
+# CHECK-NEXT: b0:0 live: [v0 v1]
+# CHECK-NEXT: b0:1 live: [v0 v1 v2]
+# CHECK-NEXT: b1:0 live: [v0 v1 v3]
+# CHECK-NEXT: b1:1 live: [v0 v1 v3]
+# CHECK-NEXT: b2:0 live: [v0 v1 v3]
+# CHECK-NEXT: b2:1 live: [v0 v1 v5]
+# CHECK-NEXT: b3:0 live: [v3]
+# TRACKED: function f0
+# TRACKED-NEXT: liveness:
+# TRACKED-NEXT: b0 live at head: []
+# TRACKED-NEXT: b1 live at head: [v0]
+# TRACKED-NEXT: b2 live at head: [v0]
+# TRACKED-NEXT: b3 live at head: []

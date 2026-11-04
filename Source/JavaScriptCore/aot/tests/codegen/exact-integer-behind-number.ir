@@ -1,0 +1,74 @@
+# The position y * w + x and the operand of (a * b) | 0 are doubles by type, and code generation computes them in integers: a sum of integers and one product of two is rounded only beyond 2^52. Two products, and a factor that may hold a fraction, stay doubles
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: generate-code calls ExactIntegersBehindNumbers
+# Where the target converts a number to an int32 in one instruction (ARM64 with FEAT_JSCVT) there is no call to see.
+# RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): x86_64
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="cells" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    v5 = NewArray v4, v4, v4
+    PutModuleVariable v5 variable=g0
+    v7 = CallDirect v4, v4 function=f1
+    v8 = CallDirect v4, v2 function=f2
+    v9 = CallDirect v4, v4, v4, v4 function=f3
+    v10 = CallDirect v4, v4, v4 function=f4
+    v11 = CallDirect v4, v4, v4, v4 function=f5
+    v12 = Add v7, v8
+    v13 = Add v12, v9
+    v14 = Add v13, v10
+    v15 = Add v14, v11
+    Return v15
+}
+function f1 name="lowWordOfProduct" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+    v2 = Mul v0, v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    Return v4
+}
+function f2 name="lowWordOfProductWithNumber" parameters=[{type=i32}, {type=number}] results=[{type=anything}] {
+    v2 = Mul v0, v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    Return v4
+}
+function f3 name="lowWordOfTwoProducts" parameters=[{type=i32}, {type=i32}, {type=i32}, {type=i32}] results=[{type=anything}] {
+    v4 = Mul v0, v1
+    v5 = Mul v2, v3
+    v6 = Sub v4, v5
+    v7 = Integer integer=0
+    v8 = BitOr v6, v7
+    Return v8
+}
+function f4 name="elementAtProductAndTerm" parameters=[{type=i32}, {type=i32}, {type=i32}] results=[{type=anything}] {
+    v3 = GetModuleVariable variable=g0
+    v4 = Mul v0, v1
+    v5 = Add v4, v2
+    v6 = ElemGet v3, v5
+    Return v6
+}
+function f5 name="elementAtTwoProducts" parameters=[{type=i32}, {type=i32}, {type=i32}, {type=i32}] results=[{type=anything}] {
+    v4 = GetModuleVariable variable=g0
+    v5 = Mul v0, v1
+    v6 = Mul v2, v3
+    v7 = Sub v5, v6
+    v8 = ElemGet v4, v7
+    Return v8
+}
+# CHECK-LABEL: f1:
+# CHECK-NOT: operationAOTToInt32
+# CHECK-LABEL: f2:
+# CALLS-LABEL: f2:
+# CALLS: operation operationAOTToInt32 x1
+# CALLS-LABEL: f3:
+# CALLS: operation operationAOTToInt32 x1
+# One in f1 and three in f4, where the test that the element is there and the read on either side of it each take the position. None in f5.
+# CHECK: statistic ExactIntegersBehindNumbers 4

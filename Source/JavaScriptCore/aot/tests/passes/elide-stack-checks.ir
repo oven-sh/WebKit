@@ -1,0 +1,99 @@
+# A function that is entered behind a check needs none of its own: by a direct call from a function that checked, or through a closure, whose callers test the stack
+# FORM: Selected
+# RUN: pass ElideStackChecks
+# STATISTIC: StackChecksCoveredByCallers = 18
+# STATISTIC: StackChecksDeferredToCallee = 0
+# LOSS: UncheckedStackBytes x1 f7
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f3
+    v2 = CallDirect function=f4
+    v3 = CallDirect function=f6
+    v4 = CallDirect function=f16
+    v5 = CallDirect function=f18
+    v6 = NewClosure function=f16
+    v7 = NewClosure function=f18
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="register" [isFreeName]
+    v10 = Call v9, -, v6, v7
+    Return v10
+}
+
+function f1 name="outer" results=[{type=undefined}] {
+    v0 = CallDirect function=f2
+    Return v0
+}
+
+function f2 name="inner" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+
+function f3 name="selfRecursive" results=[{type=undefined}] {
+    v0 = CallDirect function=f3
+    Return v0
+}
+
+function f4 name="cycleA" results=[{type=undefined}] {
+    v0 = CallDirect function=f5
+    Return v0
+}
+
+function f5 name="cycleB" results=[{type=undefined}] {
+    v0 = CallDirect function=f4
+    Return v0
+}
+# REPEAT: i = 0..8
+
+function f%(i+6) name="chain%(i)" results=[{type=undefined}] {
+    v0 = CallDirect function=f%(i+7)
+    Return v0
+}
+# END REPEAT
+
+function f15 name="chain9" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+
+function f16 name="closure" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+
+function f17 name="closure" role=GenericEntrypoint flags=[HasThis] captures=[{type=f16}] thisType={type=anything} results=[{type=anything}] derivation={source=f16} creator=Entrypoint{target=f16 arguments=Registers} {
+    v2 = CallDirect function=f16
+    ReturnCall v2
+}
+
+function f18 name="closureNeverCalledByValue" results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v0 = Undefined
+    Return v0
+}
+
+function f19 name="closureNeverCalledByValue" role=GenericEntrypoint flags=[HasThis] captures=[{type=f18}] thisType={type=anything} results=[{type=anything}] derivation={source=f18} creator=Entrypoint{target=f18 arguments=Registers} {
+    v2 = CallDirect function=f18
+    ReturnCall v2
+}
+
+function f20 name="closure" role=GenericEntrypoint flags=[HasThis] captures=[{type=f16}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f16} creator=Entrypoint{target=f16 arguments=Registers} {
+    v3 = Call v2
+    v4 = CallDirect function=f16
+    ReturnCall v4
+}
+# CHECK: f0 stack check: CoveredByCallers
+# CHECK-NEXT: f1 stack check: CoveredByCallers
+# CHECK-NEXT: f2 stack check: CoveredByCallers
+# CHECK-NEXT: f3 stack check: Required
+# CHECK-NEXT: f4 stack check: Required
+# CHECK-NEXT: f5 stack check: CoveredByCallers
+# CHECK-NEXT: f6 stack check: CoveredByCallers
+# CHECK-NEXT: f7 stack check: Required
+# REPEAT: i = 8..20
+# CHECK-NEXT: f%(i) stack check: CoveredByCallers
+# END REPEAT
+# CHECK-NEXT: outcome: Unchanged

@@ -1,0 +1,71 @@
+# The ramp keeps every flag of the signature; in the body a rest is an ordinary parameter, so the driver is the last entry parameter
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+# STATISTIC: CoroutinesSplit = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="hasHiddenRest" position=7 text={start=7 end=60} flags=[IsAsync, HasThis, HasArgumentCount, HasHiddenRest] length=1 captures=[{type=number}] thisType={type=object} parameters=[{type=string}] results=[{type=Promise}] {
+  b0(v0: number, v1: object, v2: int[0, 4294967295], v3: string, v4: Array):
+    v5 = CreateUnmappedArguments v2, v4, v3
+    v6 = Await v5 @10
+    Return v6
+# CHECK: position=7 text={start=7 end=60} role=CoroutineRamp flags=[IsAsync, HasThis, HasArgumentCount, HasHiddenRest] length=1 captures=[{type=number}] thisType={type=object} parameters=[{type=string}] results=[{type=Promise}]
+# CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f4 entryWithoutPromise=f4 promiseType=Promise promiseParameter=5}
+# CHECK-NEXT: b0(v0: number, v1: object, v2: int[0, 4294967295], v3: string, v4: Array):
+# CHECK-NEXT: [[promise0]]: Promise = NewPromise @7
+# CHECK-NEXT: = CallDirect v0, v1, v2, v3, v4, [[promise0]] function=f4 @7
+}
+function f1 name="hasRestParameter" flags=[IsAsync, HasRestParameter, HasThis, HasArgumentCount] thisType={type=object} parameters=[{type=string}, {type=Array<number>}] results=[{type=Promise}] {
+  b0(v0: object, v1: int[0, 4294967295], v2: string, v3: Array<number>):
+    v4 = Await v3 @20
+    Return v4
+# CHECK: role=CoroutineRamp flags=[IsAsync, HasRestParameter, HasThis, HasArgumentCount] thisType={type=object} parameters=[{type=string}, {type=Array<number>}] results=[{type=Promise}]
+# CHECK: creator=Coroutine{kind=AsyncFunction ramp=f1 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=4}
+# CHECK-NEXT: b0(v0: object, v1: int[0, 4294967295], v2: string, v3: Array<number>):
+# CHECK-NEXT: [[promise1]]: Promise = NewPromise
+# CHECK-NEXT: = CallDirect v0, v1, v2, v3, [[promise1]] function=f5
+}
+function f2 name="generatorHasHiddenRest" flags=[IsGenerator, TakesCallee, HasArgumentCount, HasHiddenRest] parameters=[{type=string}] results=[{type=Generator}] {
+  b0(v0: function, v1: int[0, 4294967295], v2: string, v3: Array):
+    InitialYield @30
+    v5 = CreateUnmappedArguments v1, v3, v2
+    Return v5
+# CHECK: role=CoroutineRamp flags=[IsGenerator, TakesCallee, HasArgumentCount, HasHiddenRest] {{*}} parameters=[{type=string}] results=[{type=Generator}]
+# CHECK: creator=Coroutine{ramp=f2 body=f6 promiseParameter=4}
+# CHECK-NEXT: b0(v0: function, v1: int[0, 4294967295], v2: string, v3: Array):
+# CHECK-NEXT: [[generator2]]: Generator = NewGenerator v0 function=f2
+# CHECK-NEXT: = CallDirect v0, v1, v2, v3, [[generator2]] function=f6
+}
+function f3 name="hasNoRest" flags=[IsAsync, HasThis, HasArgumentCount] thisType={type=object} parameters=[{type=string}] results=[{type=Promise}] {
+  b0(v0: object, v1: int[0, 4294967295], v2: string):
+    v3 = Await v2 @40
+    Return v3
+# CHECK: role=CoroutineRamp flags=[IsAsync, HasThis, HasArgumentCount] thisType={type=object} parameters=[{type=string}] results=[{type=Promise}]
+# CHECK: promiseParameter=3}
+# CHECK: = CallDirect v0, v1, v2, {{*}} function=f7
+}
+
+# CHECK-LABEL: function f4 name="hasHiddenRest"
+# CHECK: position=7 role=CoroutineBody flags=[IsAsync, HasThis, HasArgumentCount] length=1 captures=[{type=number}] thisType={type=object} parameters=[{type=string}, {type=Array}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {original=4}, {}]}
+# CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f4 entryWithoutPromise=f4 promiseType=Promise promiseParameter=5}
+# CHECK-NEXT: b0(v0: number, v1: object, v2: int[0, 4294967295], v3: string, v4: Array, [[driver0]]: undefined|Promise):
+# CHECK-NEXT: v5{{*}}= CreateUnmappedArguments v2, v4, v3
+# CHECK-NEXT: v6{{*}}= AwaitBySavingFrame v5, [[driver0]], v1 @10
+
+# CHECK-LABEL: function f5 name="hasRestParameter"
+# CHECK: role=CoroutineBody flags=[IsAsync, HasThis, HasArgumentCount] thisType={type=object} parameters=[{type=string}, {type=Array<number>}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f1 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {}]}
+# CHECK: promiseParameter=4}
+# CHECK-NEXT: b0(v0: object, v1: int[0, 4294967295], v2: string, v3: Array<number>, [[driver1]]: undefined|Promise):
+# CHECK-NEXT: = AwaitBySavingFrame v3, [[driver1]], v0 @20
+
+# CHECK-LABEL: function f6 name="generatorHasHiddenRest"
+# CHECK: role=CoroutineBody flags=[IsGenerator, TakesCallee, HasArgumentCount] {{*}} parameters=[{type=string}, {type=Array}, {type=Generator}] results=[{type=anything}] derivation={source=f2 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {}]}
+# CHECK: promiseParameter=4}
+# CHECK-NEXT: b0(v0: function, v1: int[0, 4294967295], v2: string, v3: Array, [[driver2]]: Generator):
+# CHECK: = YieldBySavingFrame [[driver2]], {{*}} @30
+
+# CHECK-LABEL: function f7 name="hasNoRest"
+# CHECK: role=CoroutineBody flags=[IsAsync, HasThis, HasArgumentCount] thisType={type=object} parameters=[{type=string}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f3 parameterMap=[{original=0}, {original=1}, {original=2}, {}]}
+# CHECK: promiseParameter=3}
+# CHECK-NEXT: b0(v0: object, v1: int[0, 4294967295], v2: string, [[driver3]]: undefined|Promise):

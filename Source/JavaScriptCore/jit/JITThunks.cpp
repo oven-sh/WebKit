@@ -28,6 +28,7 @@
 
 #if ENABLE(JIT)
 
+#include "AOTRemovableFeature.h"
 #include "CommonSlowPaths.h"
 #include "JIT.h"
 #include "JITCode.h"
@@ -54,22 +55,29 @@ JITThunks::~JITThunks() = default;
 
 using SharedCommonThunks = std::array<MacroAssemblerCodeRef<JITThunkPtrTag>, numberOfVMIndependentCommonThunkIDs>;
 
+NEVER_INLINE static void generateSharedCommonThunks(SharedCommonThunks& thunks)
+{
+    JSC_REMOVABLE_DEFINITION(JIT, generateSharedCommonThunks);
+    unsigned index = 0;
+#define JSC_DEFINE_SHARED_JIT_THUNK(name, func) thunks[index++] = func();
+JSC_FOR_EACH_VM_INDEPENDENT_COMMON_THUNK(JSC_DEFINE_SHARED_JIT_THUNK)
+#undef JSC_DEFINE_SHARED_JIT_THUNK
+}
+
 static const SharedCommonThunks& sharedCommonThunks()
 {
     static LazyNeverDestroyed<SharedCommonThunks> thunks;
     static std::once_flag onceKey;
     std::call_once(onceKey, [] {
         thunks.construct();
-        unsigned index = 0;
-#define JSC_DEFINE_SHARED_JIT_THUNK(name, func) thunks.get()[index++] = func();
-JSC_FOR_EACH_VM_INDEPENDENT_COMMON_THUNK(JSC_DEFINE_SHARED_JIT_THUNK)
-#undef JSC_DEFINE_SHARED_JIT_THUNK
+        generateSharedCommonThunks(thunks.get());
     });
     return thunks.get();
 }
 
-static ThunkGenerator generatorForLazyCommonThunk(CommonJITThunkID thunkID)
+NEVER_INLINE static ThunkGenerator generatorForLazyCommonThunk(CommonJITThunkID thunkID)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, generatorForLazyCommonThunk);
     switch (thunkID) {
 #define JSC_CASE_COMMON_JIT_THUNK(name, func) \
     case CommonJITThunkID::name: return func;
@@ -81,8 +89,9 @@ JSC_FOR_EACH_VM_DEPENDENT_LAZY_COMMON_THUNK(JSC_CASE_COMMON_JIT_THUNK)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void JITThunks::initialize(VM& vm)
+NEVER_INLINE void JITThunks::initialize(VM& vm)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &JITThunks::initialize);
     ASSERT(!isCompilationThread());
     sharedCommonThunks();
 #define JSC_DEFINE_COMMON_JIT_THUNK(name, func) \
@@ -91,7 +100,7 @@ JSC_FOR_EACH_VM_DEPENDENT_EAGER_COMMON_THUNK(JSC_DEFINE_COMMON_JIT_THUNK)
 #undef JSC_DEFINE_COMMON_JIT_THUNK
 }
 
-static inline NativeExecutable& NODELETE getMayBeDyingNativeExecutable(const Weak<NativeExecutable>& weak)
+static inline NativeExecutable& LEGACY_NODELETE getMayBeDyingNativeExecutable(const Weak<NativeExecutable>& weak)
 {
     // This never gets Deleted / Empty slots.
     WeakImpl* impl = weak.unsafeImpl();
@@ -281,13 +290,13 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiSlowPathFunctionStub(VM& vm,
 }
 
 struct JITThunks::HostKeySearcher {
-    static unsigned NODELETE hash(const HostFunctionKey& key) { return WeakNativeExecutableHash::hash(key); }
-    static bool NODELETE equal(const Weak<NativeExecutable>& a, const HostFunctionKey& b) { return WeakNativeExecutableHash::equal(a, b); }
+    static unsigned LEGACY_NODELETE hash(const HostFunctionKey& key) { return WeakNativeExecutableHash::hash(key); }
+    static bool LEGACY_NODELETE equal(const Weak<NativeExecutable>& a, const HostFunctionKey& b) { return WeakNativeExecutableHash::equal(a, b); }
 };
 
 struct JITThunks::NativeExecutableTranslator {
-    static unsigned NODELETE hash(const NativeExecutable* key) { return WeakNativeExecutableHash::hash(key); }
-    static bool NODELETE equal(const Weak<NativeExecutable>& a, const NativeExecutable* b) { return WeakNativeExecutableHash::equal(a, b); }
+    static unsigned LEGACY_NODELETE hash(const NativeExecutable* key) { return WeakNativeExecutableHash::hash(key); }
+    static bool LEGACY_NODELETE equal(const Weak<NativeExecutable>& a, const NativeExecutable* b) { return WeakNativeExecutableHash::equal(a, b); }
     static void translate(Weak<NativeExecutable>& location, NativeExecutable* executable, unsigned)
     {
         location = Weak<NativeExecutable>(executable, executable->vm().jitStubs.get());

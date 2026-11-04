@@ -1,0 +1,51 @@
+# A handler inside the loop: an exception thrown before the test reaches the back edge without passing the test, one thrown after the test has passed it
+# FORM: Prepared
+# RUN: induction
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="throwsBeforeTest" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3) handler=b3():
+    LoopHint
+    v5 = Call v1, -, v3
+    v6 = Less v3, v0
+    Branch v6 -> taken b2(), notTaken b4()
+  b2():
+    v7 = Increment v3
+    Jump -> next b1(v7)
+  b3() role=CatchHandler:
+    v8 = CatchValue
+    Jump -> next b2()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v3 start v2 step +1 Increasing stepped [v7] tests [b1 v3 Less v0 Invariant BeforeStep entry Unknown exits Unknown]
+# CHECK-NEXT: loop b1 counter: none
+
+function f1 name="throwsAfterTest" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b5()
+  b2() handler=b4():
+    v6 = Call v1, -, v3
+    Jump -> next b3()
+  b3():
+    v7 = Increment v3
+    Jump -> next b1(v7)
+  b4() role=CatchHandler:
+    v8 = CatchValue
+    Jump -> next b3()
+  b5():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v3 start v2 step +1 Increasing stepped [v7] tests [b1 v3 Less v0 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v3

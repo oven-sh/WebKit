@@ -1,0 +1,21 @@
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Response" constructor=f0 fields=[{key="id" declared={type=anything}}, {key="code" declared={type=number flags=[IsExpected]} flags=[IsAddedLate]}, {key="other" declared={type=anything} flags=[IsAddedLate]}] classFlow={evaluations=AtMostOnce prototypeNamesAreComplete=true namedMembers=[{key="code" function=f2}]}
+
+function f0 name="Response" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+
+function f1 name="countsTheFieldDown" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="code"
+    v2 = Decrement v1
+    v3 = Upcast v2 castType=anything|absent
+    PropSet v0, v3 key="code" mode=Strict
+    Return v3
+}
+# CHECK-LABEL: name="countsTheFieldDown"
+# CHECK-NOT: PutSlotOrAdd
+# CHECK: PutSlot {{*}} key="code"
+
+function f2 name="code" kind=Method flags=[HasThis] results=[{type=anything}]

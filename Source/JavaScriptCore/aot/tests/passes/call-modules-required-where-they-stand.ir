@@ -1,0 +1,120 @@
+# A `require` with a constant name evaluates the module where it stands. Where every run of a body passes the site once and no handler stands around it, the order is known as it is for imports:
+# the first site that the walk comes to calls the body of the module, every later one does nothing, and a module that only such sites lead to has no state.
+# FORM: Prepared
+# RUN: pass CallModules
+# STATISTIC: ModulesWithState = 1
+# STATISTIC: ModulesWithoutState = 4
+# STATISTIC: RequireSitesBound = 8
+# CHECK: outcome: Changed
+
+variable g0 name="later" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="a" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="b" module=m2 declared={type=anything} initialization=Undefined
+variable g3 name="c" module=m3 declared={type=anything} initialization=Undefined
+variable g4 name="d" module=m4 declared={type=anything} initialization=Undefined
+variable g5 name="e" module=m5 declared={type=anything} initialization=Undefined
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}, {target=m3 kind=Require completes=true}]
+module m1 path="/a.cjs" displayPath="a.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 requests=[{target=m2 kind=Require completes=true}]
+module m2 path="/b.cjs" displayPath="b.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f2 requests=[{target=m0 kind=Require completes=true}]
+module m3 path="/also-later.cjs" displayPath="also-later.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f3 requests=[{target=m4 kind=Require completes=true}]
+module m4 path="/es.mjs" displayPath="es.mjs" body=f4 requests=[{target=m5 completes=true}] exports=[{name="d" variable=g4}]
+module m5 path="/below.mjs" displayPath="below.mjs" body=f6 exports=[{name="e" variable=g5}]
+entry module=m0
+# The loader calls the entry point, which nothing of the image evaluates: its body stays its body.
+# CHECK: module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f0
+# CHECK: module m1 path="/a.cjs" displayPath="a.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports requests=
+# CHECK: module m2 path="/b.cjs" displayPath="b.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports requests=
+# CHECK: module m3 {{*}}flags=[KeepsError, EvaluatesItself] requireResult=ModuleExports body=f3
+# CHECK: module m4 path="/es.mjs" displayPath="es.mjs" requests=
+# CHECK: module m5 path="/below.mjs" displayPath="below.mjs" exports=
+
+# a.cjs: the first site. b.cjs: a.cjs has required it. a.cjs again: it has run. also-later.cjs: a function requires it too, and nobody knows which comes first: it looks at its state.
+function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    EvaluateModule module=m2 referrer=m0 [isBare]
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    EvaluateModule module=m3 referrer=m0 [isBare]
+    v4 = NewClosure function=f5
+    PutModuleVariable v4 variable=g0
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: = CallDirect function=f1
+# CHECK-NEXT: = CallDirect function=f3
+# CHECK-NEXT: = NewClosure function=f5
+# CHECK-NEXT: PutModuleVariable
+# CHECK-NEXT: Return
+}
+function f1 name="a" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    EvaluateModule module=m2 referrer=m1 [isBare]
+    v1 = GetModuleVariable variable=g2
+    PutModuleVariable v1 variable=g1
+    Return
+}
+# CHECK-LABEL: function f1 name="a"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: = CallDirect function=f2
+# CHECK-NEXT: = GetModuleVariable variable=g2
+
+# The entry point is running: the cycle ends here, in the build, and b.cjs goes on with what main.cjs has exported so far.
+function f2 name="b" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    EvaluateModule module=m0 referrer=m2 [isBare]
+    v1 = GetModuleVariable variable=g0
+    PutModuleVariable v1 variable=g2
+    Return
+}
+# CHECK-LABEL: function f2 name="b"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: = GetModuleVariable variable=g0
+
+# Whoever calls the function below may catch what the module throws and go on: the module keeps its error.
+function f3 name="alsoLater" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    EvaluateModule module=m4 referrer=m3 [isBare]
+    v1 = GetModuleVariable variable=g4
+    PutModuleVariable v1 variable=g3
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Jump -> next [[run]]()
+# CHECK-NEXT: [[threw]]() role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: [[exception]]: exception = CatchException
+# CHECK-NEXT: AbandonModuleEvaluation [[exception]] module=m3
+# CHECK-NEXT: Rethrow [[exception]]
+# CHECK-NEXT: [[run]]() handler=[[threw]]():
+# CHECK-NEXT: = CallDirect function=f7
+# CHECK-NOT: ModuleEvaluation
+}
+function f4 name="es" module=m4 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g5
+    PutModuleVariable v0 variable=g4
+    Return
+}
+# CHECK-LABEL: function f4 name="es"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NOT: ModuleEvaluation
+function f5 name="later" module=m0 results=[{type=anything}] {
+    EvaluateModule module=m3 referrer=m0
+    v1 = GetModuleVariable variable=g3
+    Return v1
+# CHECK-NEXT: b0():
+# CHECK-NEXT: = CallDirect function=f3
+# CHECK-NEXT: = GetModuleVariable variable=g3
+}
+function f6 name="below" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=5
+    PutModuleVariable v0 variable=g5
+    Return
+}
+# CHECK-LABEL: function f6 name="below"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
+
+# To require an ES module is to import it at that point: what it imports runs in front of it, at the site.
+# A CommonJS module begins in its code, behind the stack check of that frame: where the stack ends there, no statement has run, and the next require() evaluates the module.
+# CHECK-LABEL: function f7 name="alsoLater"{{*}}derivation={source=f3} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[begins]]: boolean = BeginModuleEvaluation module=m3
+# CHECK-NEXT: Branch [[begins]]
+# CHECK-NEXT: b1():
+# CHECK-NEXT: = CallDirect function=f6
+# CHECK-NEXT: = CallDirect function=f4
+# CHECK-NEXT: = GetModuleVariable variable=g4
+# CHECK-NEXT: PutModuleVariable
+# CHECK-NEXT: FinishModuleEvaluation module=m3
+# CHECK-NOT: EvaluateModule
+# CHECK-NOT: function f8

@@ -34,7 +34,6 @@
 #include "PseudoElementUtilitiesInlines.h"
 #include "RenderElement.h"
 #include "RenderImage.h"
-#include "RenderQuote.h"
 #include "StyleableInlines.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleResolver.h"
@@ -51,7 +50,7 @@ const QualifiedName& pseudoElementTagName()
 }
 
 PseudoElement::PseudoElement(Element& host, PseudoElementType pseudoElementType)
-    : Element(pseudoElementTagName(), host.document(), { TypeFlag::IsPseudoElementOrSpecialInternalNode })
+    : Element(pseudoElementTagName(), protect(host.document()), { TypeFlag::IsPseudoElementOrSpecialInternalNode })
     , m_hostElement(host)
     , m_pseudoElementType(pseudoElementType)
 {

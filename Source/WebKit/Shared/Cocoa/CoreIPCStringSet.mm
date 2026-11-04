@@ -26,6 +26,7 @@
 #import "config.h"
 #import "CoreIPCStringSet.h"
 
+#import <wtf/Borrow.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/WTFString.h>
 
@@ -39,7 +40,8 @@ CoreIPCStringSet::CoreIPCStringSet(NSSet *stringSet)
 {
     if (![stringSet isKindOfClass:[NSSet class]])
         return;
-    for (id value in stringSet) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id value in stringSet) {
         if (![value isKindOfClass:[NSString class]])
             continue;
         m_stringSet.append(value);
@@ -54,7 +56,7 @@ CoreIPCStringSet::~CoreIPCStringSet() = default;
 RetainPtr<id> CoreIPCStringSet::toID() const
 {
     RetainPtr result = adoptNS([[NSMutableArray alloc] init]);
-    for (auto& s : m_stringSet)
+    for (auto& s : borrow(m_stringSet))
         [result addObject:s.createNSString().get()];
 
     RetainPtr<NSSet> set = [NSSet setWithArray:result.get()];

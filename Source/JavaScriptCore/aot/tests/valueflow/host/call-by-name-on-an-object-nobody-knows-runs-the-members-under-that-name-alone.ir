@@ -1,0 +1,20 @@
+# member = handedIn[someName]; handedIn.has(1)
+# The read under a key nobody knows hands out every member, and all of them are held. `x.has(..)` on an object nobody knows calls what the read of `has` has answered:
+# of the built-ins that have escaped a member under that name, and no other. Beside the unknown object the callees do not list what has escaped, so the call applies those members itself.
+# RUN: valueflow-solve used
+# CHECK-NOT: run MapPrototypeGet
+# CHECK: used MapPrototypeGet
+# CHECK: run MapPrototypeHas
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = PropGet v0 key="someName" [isFreeName]
+    v3 = ElemGet v1, v2
+    v4 = PropGet v1 key="has"
+    v5 = Integer integer=1
+    v6 = Call v4, v1, v5 calleeKey="has"
+    Return
+}

@@ -1,0 +1,19 @@
+# A closure is an instance of Function, so a class of functions met with a listed function is the function: it covers its closures. Met with `function`, the result names the objects as the second type does, so that a cast stays inside the cast type
+# RUN: intersect
+# CHECK: t0 & t1 = f1
+# CHECK-NEXT: t0 - t1 = f1
+# CHECK-NEXT: t0 & t2 = f1
+# CHECK: t0 & t4 = never
+# CHECK: t1 & t0 = f1
+# CHECK-NEXT: t1 - t0 = Function
+# CHECK: t1 & t3 = function
+# CHECK: t1 & t5 = f1|f2
+# CHECK: t2 & t0 = f1
+# CHECK: t3 & t1 = Function
+# CHECK: t5 & t1 = f1|f2
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=f1}, {type=Function}, {type=Function<pristine[Names]>}, {type=function}, {type=Map}, {type=number|f1|f2}] results=[{type=undefined}]
+function f1 name="listed" results=[{type=anything}]
+function f2 name="other" results=[{type=anything}]

@@ -41,11 +41,15 @@
 #include "Event.h"
 #include "EventTargetInlines.h"
 #include "FrameCSSAgent.h"
+#include "FrameCanvasAgent.h"
 #include "FrameDOMAgent.h"
+#include "FrameDOMStorageAgent.h"
 #include "FrameDebuggerAgent.h"
 #include "FrameInspectorController.h"
 #include "FrameRuntimeAgent.h"
 #include "GPUCanvasContext.h"
+#include "HTMLFrameOwnerElement.h"
+#include "HitTestResult.h"
 #include "InspectorAnimationAgent.h"
 #include "InspectorCSSAgent.h"
 #include "InspectorCanvasAgent.h"
@@ -79,6 +83,7 @@
 #include "RenderView.h"
 #include "ScriptController.h"
 #include "ScriptExecutionContext.h"
+#include "SecurityOrigin.h"
 #include "ServiceWorkerGlobalScope.h"
 #include "WebConsoleAgent.h"
 #include "WebDebuggerAgent.h"
@@ -98,7 +103,7 @@ namespace WebCore {
 
 using namespace Inspector;
 
-static HashSet<InstrumentingAgents*>& instrumentingAgentsSet()
+static HashSet<InstrumentingAgents*>& LEGACY_NODELETE instrumentingAgentsSet()
 {
     static NeverDestroyed<HashSet<InstrumentingAgents*>> set;
     return set;
@@ -112,6 +117,17 @@ void InspectorInstrumentation::firstFrontendCreated()
 void InspectorInstrumentation::lastFrontendDeleted()
 {
     platformStrategies()->loaderStrategy()->setCaptureExtraNetworkLoadMetricsEnabled(false);
+}
+
+static void evaluatePageProxyBootstrapScript(InstrumentingAgents& instrumentingAgents, LocalFrame& frame, DOMWrapperWorld& world)
+{
+    String bootstrapScript;
+    if (CheckedPtr pageProxy = instrumentingAgents.enabledPageProxy())
+        bootstrapScript = pageProxy->bootstrapScriptToEvaluate(world);
+
+    // Evaluate only after the CheckedPtr is gone: the script can detach the frame (e.g. `frameElement.remove()`), which destroys its per-frame page proxy.
+    if (!bootstrapScript.isEmpty())
+        InspectorPageAgent::evaluateBootstrapScript(frame, bootstrapScript);
 }
 
 void InspectorInstrumentation::didClearWindowObjectInWorldImpl(InstrumentingAgents& instrumentingAgents, LocalFrame& frame, DOMWrapperWorld& world)
@@ -130,6 +146,7 @@ void InspectorInstrumentation::didClearWindowObjectInWorldImpl(InstrumentingAgen
         frameRuntimeAgent->didClearWindowObjectInWorld(world);
         if (CheckedPtr pageAgent = instrumentingAgents.enabledPageAgent())
             pageAgent->didClearWindowObjectInWorld(frame, world);
+        evaluatePageProxyBootstrapScript(instrumentingAgents, frame, world);
         return;
     }
 
@@ -138,6 +155,8 @@ void InspectorInstrumentation::didClearWindowObjectInWorldImpl(InstrumentingAgen
 
     if (CheckedPtr pageAgent = instrumentingAgents.enabledPageAgent())
         pageAgent->didClearWindowObjectInWorld(frame, world);
+
+    evaluatePageProxyBootstrapScript(instrumentingAgents, frame, world);
 }
 
 bool InspectorInstrumentation::isDebuggerPausedImpl(InstrumentingAgents& instrumentingAgents)
@@ -171,9 +190,13 @@ void InspectorInstrumentation::didInsertDOMNodeImpl(InstrumentingAgents& instrum
     if (RefPtr frame = node.document().frame()) {
         if (CheckedPtr frameDOMAgent = frame->inspectorController().instrumentingAgents().persistentFrameDOMAgent())
             frameDOMAgent->didInsertDOMNode(node);
+        if (CheckedPtr frameCSSAgent = frame->inspectorController().instrumentingAgents().enabledFrameCSSAgent())
+            frameCSSAgent->didInsertDOMNode(node);
     }
     if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
         domAgent->didInsertDOMNode(node);
+    if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
+        cssAgent->didInsertDOMNode(node);
 }
 
 void InspectorInstrumentation::willRemoveDOMNodeImpl(InstrumentingAgents& instrumentingAgents, Node& node)
@@ -187,11 +210,15 @@ void InspectorInstrumentation::didRemoveDOMNodeImpl(InstrumentingAgents& instrum
     if (RefPtr frame = node.document().frame()) {
         if (CheckedPtr frameDOMAgent = frame->inspectorController().instrumentingAgents().persistentFrameDOMAgent())
             frameDOMAgent->didRemoveDOMNode(node);
+        if (CheckedPtr frameCSSAgent = frame->inspectorController().instrumentingAgents().enabledFrameCSSAgent())
+            frameCSSAgent->didRemoveDOMNode(node);
     }
     if (CheckedPtr pageDOMDebuggerAgent = instrumentingAgents.enabledPageDOMDebuggerAgent())
         pageDOMDebuggerAgent->didRemoveDOMNode(node);
     if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
         domAgent->didRemoveDOMNode(node);
+    if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
+        cssAgent->didRemoveDOMNode(node);
 }
 
 void InspectorInstrumentation::willDestroyDOMNodeImpl(InstrumentingAgents& instrumentingAgents, Node& node)
@@ -199,23 +226,33 @@ void InspectorInstrumentation::willDestroyDOMNodeImpl(InstrumentingAgents& instr
     if (RefPtr frame = node.document().frame()) {
         if (CheckedPtr frameDOMAgent = frame->inspectorController().instrumentingAgents().persistentFrameDOMAgent())
             frameDOMAgent->willDestroyDOMNode(node);
+        if (CheckedPtr frameCSSAgent = frame->inspectorController().instrumentingAgents().enabledFrameCSSAgent())
+            frameCSSAgent->willDestroyDOMNode(node);
     }
     if (CheckedPtr pageDOMDebuggerAgent = instrumentingAgents.enabledPageDOMDebuggerAgent())
         pageDOMDebuggerAgent->willDestroyDOMNode(node);
     if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
         domAgent->willDestroyDOMNode(node);
+    if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
+        cssAgent->willDestroyDOMNode(node);
 }
 
 void InspectorInstrumentation::didChangeRendererForDOMNodeImpl(InstrumentingAgents& instrumentingAgents, Node& node)
 {
     if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
         cssAgent->didChangeRendererForDOMNode(node);
+
+    if (RefPtr frame = node.document().frame()) {
+        if (CheckedPtr frameCSSAgent = frame->inspectorController().instrumentingAgents().enabledFrameCSSAgent())
+            frameCSSAgent->didChangeRendererForDOMNode(node);
+    }
 }
 
 void InspectorInstrumentation::didAddOrRemoveScrollbarsImpl(InstrumentingAgents& instrumentingAgents, LocalFrameView& frameView)
 {
     CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent();
-    if (!cssAgent)
+    CheckedPtr frameCSSAgent = instrumentingAgents.enabledFrameCSSAgent();
+    if (!cssAgent && !frameCSSAgent)
         return;
     RefPtr document = frameView.frame().document();
     if (!document)
@@ -223,15 +260,21 @@ void InspectorInstrumentation::didAddOrRemoveScrollbarsImpl(InstrumentingAgents&
     RefPtr documentElement = document->documentElement();
     if (!documentElement)
         return;
-    cssAgent->didChangeRendererForDOMNode(*documentElement);
+    if (cssAgent)
+        cssAgent->didChangeRendererForDOMNode(*documentElement);
+    if (frameCSSAgent)
+        frameCSSAgent->didChangeRendererForDOMNode(*documentElement);
 }
 
 void InspectorInstrumentation::didAddOrRemoveScrollbarsImpl(InstrumentingAgents& instrumentingAgents, RenderObject& renderer)
 {
-    if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent()) {
-        if (RefPtr node = renderer.node())
-            cssAgent->didChangeRendererForDOMNode(*node);
-    }
+    RefPtr node = renderer.node();
+    if (!node)
+        return;
+    if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
+        cssAgent->didChangeRendererForDOMNode(*node);
+    if (CheckedPtr frameCSSAgent = instrumentingAgents.enabledFrameCSSAgent())
+        frameCSSAgent->didChangeRendererForDOMNode(*node);
 }
 
 void InspectorInstrumentation::willModifyDOMAttrImpl(InstrumentingAgents& instrumentingAgents, Element& element, const AtomString& oldValue, const AtomString& newValue)
@@ -251,9 +294,13 @@ void InspectorInstrumentation::didModifyDOMAttrImpl(InstrumentingAgents& instrum
     if (RefPtr frame = element.document().frame()) {
         if (CheckedPtr frameDOMAgent = frame->inspectorController().instrumentingAgents().persistentFrameDOMAgent())
             frameDOMAgent->didModifyDOMAttr(element, name, value);
+        if (CheckedPtr frameCSSAgent = frame->inspectorController().instrumentingAgents().enabledFrameCSSAgent())
+            frameCSSAgent->didModifyDOMAttr(element);
     }
     if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
         domAgent->didModifyDOMAttr(element, name, value);
+    if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
+        cssAgent->didModifyDOMAttr(element);
 }
 
 void InspectorInstrumentation::didRemoveDOMAttrImpl(InstrumentingAgents& instrumentingAgents, Element& element, const AtomString& name)
@@ -261,9 +308,13 @@ void InspectorInstrumentation::didRemoveDOMAttrImpl(InstrumentingAgents& instrum
     if (RefPtr frame = element.document().frame()) {
         if (CheckedPtr frameDOMAgent = frame->inspectorController().instrumentingAgents().persistentFrameDOMAgent())
             frameDOMAgent->didRemoveDOMAttr(element, name);
+        if (CheckedPtr frameCSSAgent = frame->inspectorController().instrumentingAgents().enabledFrameCSSAgent())
+            frameCSSAgent->didRemoveDOMAttr(element);
     }
     if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
         domAgent->didRemoveDOMAttr(element, name);
+    if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
+        cssAgent->didRemoveDOMAttr(element);
 }
 
 void InspectorInstrumentation::willInvalidateStyleAttrImpl(InstrumentingAgents& instrumentingAgents, Element& element)
@@ -277,9 +328,13 @@ void InspectorInstrumentation::didInvalidateStyleAttrImpl(InstrumentingAgents& i
     if (RefPtr frame = element.document().frame()) {
         if (CheckedPtr frameDOMAgent = frame->inspectorController().instrumentingAgents().persistentFrameDOMAgent())
             frameDOMAgent->didInvalidateStyleAttr(element);
+        if (CheckedPtr frameCSSAgent = frame->inspectorController().instrumentingAgents().enabledFrameCSSAgent())
+            frameCSSAgent->didInvalidateStyleAttr(element);
     }
     if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
         domAgent->didInvalidateStyleAttr(element);
+    if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
+        cssAgent->didInvalidateStyleAttr(element);
 }
 
 void InspectorInstrumentation::documentDetachedImpl(InstrumentingAgents& instrumentingAgents, Document& document)
@@ -303,6 +358,17 @@ void InspectorInstrumentation::frameWindowDiscardedImpl(InstrumentingAgents& ins
 
     if (CheckedPtr consoleAgent = instrumentingAgents.webConsoleAgent())
         consoleAgent->frameWindowDiscarded(*window);
+}
+
+void InspectorInstrumentation::fontDataChangedImpl(InstrumentingAgents& instrumentingAgents, Document& document)
+{
+    if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
+        cssAgent->fontDataChanged();
+
+    if (RefPtr frame = document.frame()) {
+        if (CheckedPtr frameCSSAgent = frame->inspectorController().instrumentingAgents().enabledFrameCSSAgent())
+            frameCSSAgent->fontDataChanged();
+    }
 }
 
 void InspectorInstrumentation::mediaQueryResultChangedImpl(InstrumentingAgents& instrumentingAgents, Document& document)
@@ -351,12 +417,22 @@ void InspectorInstrumentation::didChangeAssignedSlotImpl(InstrumentingAgents& in
 {
     if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
         cssAgent->didChangeAssignedSlot(slotable);
+
+    if (RefPtr frame = slotable.document().frame()) {
+        if (CheckedPtr frameCSSAgent = frame->inspectorController().instrumentingAgents().enabledFrameCSSAgent())
+            frameCSSAgent->didChangeAssignedSlot(slotable);
+    }
 }
 
 void InspectorInstrumentation::didChangeAssignedNodesImpl(InstrumentingAgents& instrumentingAgents, Element& slotElement)
 {
     if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
         cssAgent->didChangeAssignedNodes(slotElement);
+
+    if (RefPtr frame = slotElement.document().frame()) {
+        if (CheckedPtr frameCSSAgent = frame->inspectorController().instrumentingAgents().enabledFrameCSSAgent())
+            frameCSSAgent->didChangeAssignedNodes(slotElement);
+    }
 }
 
 void InspectorInstrumentation::didChangeCustomElementStateImpl(InstrumentingAgents& instrumentingAgents, Element& element)
@@ -391,10 +467,39 @@ void InspectorInstrumentation::pseudoElementDestroyedImpl(InstrumentingAgents& i
         layerTreeAgent->pseudoElementDestroyed(pseudoElement);
 }
 
+static void clearMousedOverNodes(LocalFrame& localRoot, const LocalFrame* hoveredFrame = nullptr)
+{
+    for (RefPtr<Frame> frame = &localRoot; frame; frame = frame->tree().traverseNext(&localRoot)) {
+        RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
+        if (!localFrame || localFrame == hoveredFrame || &localFrame->rootFrame() != &localRoot)
+            continue;
+        if (CheckedPtr frameDOMAgent = localFrame->inspectorController().instrumentingAgents().persistentFrameDOMAgent())
+            frameDOMAgent->mouseDidLeaveFrame();
+    }
+}
+
 void InspectorInstrumentation::mouseDidMoveOverElementImpl(InstrumentingAgents& instrumentingAgents, const HitTestResult& result, OptionSet<PlatformEventModifier> modifiers)
 {
+    // This hook arrives with the page's agents, so resolve the frame agent from the hit-tested frame.
+    if (RefPtr frame = result.innerNodeFrame()) {
+        clearMousedOverNodes(protect(frame->rootFrame()), frame.get());
+        if (CheckedPtr frameDOMAgent = frame->inspectorController().instrumentingAgents().persistentFrameDOMAgent())
+            frameDOMAgent->mouseDidMoveOverElement(result, modifiers);
+    }
     if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
         domAgent->mouseDidMoveOverElement(result, modifiers);
+}
+
+void InspectorInstrumentation::mouseDidMoveOverRemoteFrameImpl(InstrumentingAgents& instrumentingAgents, LocalFrame& frame)
+{
+    clearMousedOverNodes(protect(frame.rootFrame()));
+    if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
+        domAgent->mouseDidMoveOverRemoteFrame();
+}
+
+void InspectorInstrumentation::mouseDidLeaveLocalRootImpl(LocalFrame& localRoot)
+{
+    clearMousedOverNodes(localRoot);
 }
 
 void InspectorInstrumentation::didScrollImpl(InstrumentingAgents& instrumentingAgents)
@@ -403,15 +508,31 @@ void InspectorInstrumentation::didScrollImpl(InstrumentingAgents& instrumentingA
         pageAgent->didScroll();
 }
 
-bool InspectorInstrumentation::handleTouchEventImpl(InstrumentingAgents& instrumentingAgents, Node& node)
+bool InspectorInstrumentation::handleTouchEventImpl(Node& node)
 {
-    if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
+    // The tap's hit test descends into subframes, so use the agents of the frame the node is in.
+    RefPtr frame = node.document().frame();
+    if (!frame)
+        return false;
+    Ref instrumentingAgents = InspectorInstrumentation::instrumentingAgents(*frame);
+
+    // A frame target owns element selection for its own frame, so give it the tap first. Only one
+    // agent may consume the tap: both would call inspect() and the frontend would select twice.
+    if (CheckedPtr frameDOMAgent = instrumentingAgents->persistentFrameDOMAgent()) {
+        if (frameDOMAgent->handleTouchEvent(node))
+            return true;
+    }
+    if (CheckedPtr domAgent = instrumentingAgents->persistentDOMAgent())
         return domAgent->handleTouchEvent(node);
     return false;
 }
 
 bool InspectorInstrumentation::handleMousePressImpl(InstrumentingAgents& instrumentingAgents)
 {
+    if (CheckedPtr frameDOMAgent = instrumentingAgents.persistentFrameDOMAgent()) {
+        if (frameDOMAgent->handleMousePress())
+            return true;
+    }
     if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
         return domAgent->handleMousePress();
     return false;
@@ -434,21 +555,25 @@ void InspectorInstrumentation::characterDataModifiedImpl(InstrumentingAgents& in
     if (RefPtr frame = characterData.document().frame()) {
         if (CheckedPtr frameDOMAgent = frame->inspectorController().instrumentingAgents().persistentFrameDOMAgent())
             frameDOMAgent->characterDataModified(characterData);
+        if (CheckedPtr frameCSSAgent = frame->inspectorController().instrumentingAgents().enabledFrameCSSAgent())
+            frameCSSAgent->characterDataModified(characterData);
     }
     if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
         domAgent->characterDataModified(characterData);
+    if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
+        cssAgent->characterDataModified(characterData);
 }
 
 void InspectorInstrumentation::willSendXMLHttpRequestImpl(InstrumentingAgents& instrumentingAgents, const String& url)
 {
     if (CheckedPtr domDebuggerAgent = instrumentingAgents.enabledDOMDebuggerAgent())
-        domDebuggerAgent->willSendXMLHttpRequest(instrumentingAgents.enabledWebDebuggerAgent(), url);
+        domDebuggerAgent->willSendXMLHttpRequest(protect(instrumentingAgents.enabledWebDebuggerAgent()), url);
 }
 
 void InspectorInstrumentation::willFetchImpl(InstrumentingAgents& instrumentingAgents, const String& url)
 {
     if (CheckedPtr domDebuggerAgent = instrumentingAgents.enabledDOMDebuggerAgent())
-        domDebuggerAgent->willFetch(instrumentingAgents.enabledWebDebuggerAgent(), url);
+        domDebuggerAgent->willFetch(protect(instrumentingAgents.enabledWebDebuggerAgent()), url);
 }
 
 void InspectorInstrumentation::didInstallTimerImpl(InstrumentingAgents& instrumentingAgents, int timerId, Seconds timeout, bool singleShot, ScriptExecutionContext& context)
@@ -476,6 +601,8 @@ void InspectorInstrumentation::didAddEventListenerImpl(InstrumentingAgents& inst
         domAgent->didAddEventListener(target);
     if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
         cssAgent->didAddEventListener(target);
+    if (CheckedPtr frameCSSAgent = instrumentingAgents.enabledFrameCSSAgent())
+        frameCSSAgent->didAddEventListener(target);
 }
 
 void InspectorInstrumentation::willRemoveEventListenerImpl(InstrumentingAgents& instrumentingAgents, EventTarget& target, const AtomString& eventType, EventListener& listener, bool capture)
@@ -486,6 +613,8 @@ void InspectorInstrumentation::willRemoveEventListenerImpl(InstrumentingAgents& 
         domAgent->willRemoveEventListener(target, eventType, listener, capture);
     if (CheckedPtr cssAgent = instrumentingAgents.enabledCSSAgent())
         cssAgent->willRemoveEventListener(target);
+    if (CheckedPtr frameCSSAgent = instrumentingAgents.enabledFrameCSSAgent())
+        frameCSSAgent->willRemoveEventListener(target);
 }
 
 bool InspectorInstrumentation::isEventListenerDisabledImpl(InstrumentingAgents& instrumentingAgents, EventTarget& target, const AtomString& eventType, EventListener& listener, bool capture)
@@ -720,14 +849,26 @@ void InspectorInstrumentation::applyEmulatedMediaImpl(InstrumentingAgents& instr
         pageAgent->applyEmulatedMedia(media);
 }
 
+// These resolve through renderer.frame(), so `instrumentingAgents` is the *frame's*. Both agents are
+// notified, because either may own the overlay that later reads the cache: a frame overlay reads its own
+// FrameDOMAgent, while a node highlighted from the page target draws through the page overlay and reads
+// InspectorDOMAgent. Under Site Isolation even the main frame has a FrameDOMAgent, so notifying only the
+// first match would starve the page agent's cache and silently drop main-frame flex line separators.
+// Both getters walk the frame->page fallback chain, but only the agent that owns a slot ever populates
+// it, so each call resolves to the agent that will be asked for this renderer. The caches are weak and
+// keyed by renderer, so notifying both is harmless.
 void InspectorInstrumentation::flexibleBoxRendererBeganLayoutImpl(InstrumentingAgents& instrumentingAgents, const RenderObject& renderer)
 {
+    if (CheckedPtr frameDOMAgent = instrumentingAgents.persistentFrameDOMAgent())
+        frameDOMAgent->flexibleBoxRendererBeganLayout(renderer);
     if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
         domAgent->flexibleBoxRendererBeganLayout(renderer);
 }
 
 void InspectorInstrumentation::flexibleBoxRendererWrappedToNextLineImpl(InstrumentingAgents& instrumentingAgents, const RenderObject& renderer, size_t lineStartItemIndex)
 {
+    if (CheckedPtr frameDOMAgent = instrumentingAgents.persistentFrameDOMAgent())
+        frameDOMAgent->flexibleBoxRendererWrappedToNextLine(renderer, lineStartItemIndex);
     if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
         domAgent->flexibleBoxRendererWrappedToNextLine(renderer, lineStartItemIndex);
 }
@@ -739,7 +880,7 @@ void InspectorInstrumentation::willSendRequestImpl(InstrumentingAgents& instrume
     if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
         networkProxy->willSendRequest(identifier, loader, request, redirectResponse, cachedResource, resourceLoader);
     if (CheckedPtr domDebuggerAgent = instrumentingAgents.enabledDOMDebuggerAgent())
-        domDebuggerAgent->willSendRequest(instrumentingAgents.enabledWebDebuggerAgent(), request);
+        domDebuggerAgent->willSendRequest(protect(instrumentingAgents.enabledWebDebuggerAgent()), request);
 }
 
 void InspectorInstrumentation::willSendRequestOfTypeImpl(InstrumentingAgents& instrumentingAgents, ResourceLoaderIdentifier identifier, DocumentLoader* loader, ResourceRequest& request, Inspector::UncachedLoadType loadType)
@@ -749,7 +890,7 @@ void InspectorInstrumentation::willSendRequestOfTypeImpl(InstrumentingAgents& in
     if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
         networkProxy->willSendRequestOfType(identifier, loader, request, loadType);
     if (CheckedPtr domDebuggerAgent = instrumentingAgents.enabledDOMDebuggerAgent())
-        domDebuggerAgent->willSendRequestOfType(instrumentingAgents.enabledWebDebuggerAgent(), request);
+        domDebuggerAgent->willSendRequestOfType(protect(instrumentingAgents.enabledWebDebuggerAgent()), request);
 }
 
 void InspectorInstrumentation::didLoadResourceFromMemoryCacheImpl(InstrumentingAgents& instrumentingAgents, DocumentLoader* loader, CachedResource* cachedResource)
@@ -926,16 +1067,41 @@ void InspectorInstrumentation::didCommitLoadImpl(InstrumentingAgents& instrument
     if (CheckedPtr pageCanvasAgent = instrumentingAgents.enabledPageCanvasAgent())
         pageCanvasAgent->frameNavigated(frame);
 
+    if (CheckedPtr frameCanvasAgent = frame.inspectorController().instrumentingAgents().enabledFrameCanvasAgent())
+        frameCanvasAgent->frameNavigated(frame);
+
     if (CheckedPtr animationAgent = instrumentingAgents.enabledAnimationAgent())
         animationAgent->frameNavigated(frame);
 
     if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
         domAgent->didCommitLoad(protect(frame.document()));
 
+    if (RefPtr document = frame.document()) {
+        if (RefPtr frameOwner = document->ownerElement()) {
+            if (RefPtr parentFrame = frameOwner->document().frame()) {
+                if (CheckedPtr frameDOMAgent = parentFrame->inspectorController().instrumentingAgents().persistentFrameDOMAgent())
+                    frameDOMAgent->frameOwnerContentFrameChanged(*frameOwner);
+            }
+        }
+    }
+
     if (frame.isMainFrame()) {
         if (CheckedPtr pageTimelineAgent = instrumentingAgents.trackingPageTimelineAgent())
             pageTimelineAgent->mainFrameNavigated();
     }
+}
+
+void InspectorInstrumentation::frameOwnerContentFrameChangedImpl(InstrumentingAgents& instrumentingAgents, HTMLFrameOwnerElement& frameOwner)
+{
+    if (!instrumentingAgents.developerExtrasEnabled()) [[likely]]
+        return;
+
+    if (RefPtr frame = frameOwner.document().frame()) {
+        if (CheckedPtr frameDOMAgent = frame->inspectorController().instrumentingAgents().persistentFrameDOMAgent())
+            frameDOMAgent->frameOwnerContentFrameChanged(frameOwner);
+    }
+    if (CheckedPtr domAgent = instrumentingAgents.persistentDOMAgent())
+        domAgent->frameOwnerContentFrameChanged(frameOwner);
 }
 
 void InspectorInstrumentation::frameDocumentUpdatedImpl(InstrumentingAgents& instrumentingAgents, LocalFrame& frame)
@@ -1009,6 +1175,8 @@ bool InspectorInstrumentation::willInterceptImpl(InstrumentingAgents& instrument
 {
     if (CheckedPtr networkAgent = instrumentingAgents.enabledNetworkAgent())
         return networkAgent->willIntercept(request);
+    if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
+        return networkProxy->willIntercept(request);
     return false;
 }
 
@@ -1016,6 +1184,8 @@ bool InspectorInstrumentation::shouldInterceptRequestImpl(InstrumentingAgents& i
 {
     if (CheckedPtr networkAgent = instrumentingAgents.enabledNetworkAgent())
         return networkAgent->shouldInterceptRequest(loader);
+    if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
+        return networkProxy->shouldInterceptRequest(loader);
     return false;
 }
 
@@ -1023,6 +1193,8 @@ bool InspectorInstrumentation::shouldInterceptResponseImpl(InstrumentingAgents& 
 {
     if (CheckedPtr networkAgent = instrumentingAgents.enabledNetworkAgent())
         return networkAgent->shouldInterceptResponse(response);
+    if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
+        return networkProxy->shouldInterceptResponse(response);
     return false;
 }
 
@@ -1030,16 +1202,20 @@ void InspectorInstrumentation::interceptRequestImpl(InstrumentingAgents& instrum
 {
     if (CheckedPtr networkAgent = instrumentingAgents.enabledNetworkAgent())
         networkAgent->interceptRequest(loader, WTF::move(handler));
+    else if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
+        networkProxy->interceptRequest(loader, WTF::move(handler));
 }
 
 void InspectorInstrumentation::interceptResponseImpl(InstrumentingAgents& instrumentingAgents, const ResourceResponse& response, ResourceLoaderIdentifier identifier, CompletionHandler<void(const ResourceResponse&, RefPtr<FragmentedSharedBuffer>)>&& handler)
 {
     if (CheckedPtr networkAgent = instrumentingAgents.enabledNetworkAgent())
         networkAgent->interceptResponse(response, identifier, WTF::move(handler));
+    else if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
+        networkProxy->interceptResponse(response, identifier, WTF::move(handler));
 }
 
 // JavaScriptCore InspectorDebuggerAgent should know Console MessageTypes.
-static bool NODELETE isConsoleAssertMessage(MessageSource source, MessageType type)
+static bool LEGACY_NODELETE isConsoleAssertMessage(MessageSource source, MessageType type)
 {
     return source == MessageSource::ConsoleAPI && type == MessageType::Assert;
 }
@@ -1187,8 +1363,27 @@ void InspectorInstrumentation::consoleStopRecordingCanvasImpl(InstrumentingAgent
         canvasAgent->consoleStopRecordingCanvas(device);
 }
 
-void InspectorInstrumentation::didDispatchDOMStorageEventImpl(InstrumentingAgents& instrumentingAgents, const String& key, const String& oldValue, const String& newValue, StorageType storageType, const SecurityOrigin& securityOrigin)
+void InspectorInstrumentation::didDispatchDOMStorageEventImpl(InstrumentingAgents& instrumentingAgents, Page& page, const String& key, const String& oldValue, const String& newValue, StorageType storageType, const SecurityOrigin& securityOrigin)
 {
+    // Notify at most one agent: same-origin frames share a StorageArea, and the frontend keys
+    // DOMStorageObject on the StorageId alone.
+    CheckedPtr<FrameDOMStorageAgent> frameDOMStorageAgent;
+    page.forEachLocalFrame([&](LocalFrame& frame) {
+        if (frameDOMStorageAgent)
+            return;
+
+        RefPtr document = frame.document();
+        if (!document || !document->securityOrigin().equal(securityOrigin))
+            return;
+
+        frameDOMStorageAgent = frame.inspectorController().instrumentingAgents().enabledFrameDOMStorageAgent();
+    });
+
+    if (frameDOMStorageAgent) {
+        frameDOMStorageAgent->didDispatchDOMStorageEvent(key, oldValue, newValue, storageType, securityOrigin);
+        return;
+    }
+
     if (CheckedPtr domStorageAgent = instrumentingAgents.enabledDOMStorageAgent())
         domStorageAgent->didDispatchDOMStorageEvent(key, oldValue, newValue, storageType, securityOrigin);
 }
@@ -1262,22 +1457,21 @@ void InspectorInstrumentation::didSendWebSocketFrameImpl(InstrumentingAgents& in
 
 void InspectorInstrumentation::didChangeCSSCanvasClientNodesImpl(InstrumentingAgents& instrumentingAgents, CanvasBase& canvasBase)
 {
-    CheckedPtr<PageCanvasAgent> pageCanvasAgent;
+    RefPtr<InstrumentingAgents> agents = &instrumentingAgents;
 
     if (RefPtr gpuCanvasContext = dynamicDowncast<GPUCanvasContext>(canvasBase.renderingContext())) {
         RefPtr device = gpuCanvasContext->device();
         if (!device)
             return;
 
-        RefPtr agents = InspectorInstrumentation::instrumentingAgents(protect(device->scriptExecutionContext()));
+        agents = InspectorInstrumentation::instrumentingAgents(protect(device->scriptExecutionContext()));
         if (!agents)
             return;
+    }
 
-        pageCanvasAgent = agents->enabledPageCanvasAgent();
-    } else
-        pageCanvasAgent = instrumentingAgents.enabledPageCanvasAgent();
-
-    if (pageCanvasAgent)
+    if (CheckedPtr frameCanvasAgent = agents->enabledFrameCanvasAgent())
+        frameCanvasAgent->didChangeCSSCanvasClientNodes(canvasBase);
+    else if (CheckedPtr pageCanvasAgent = agents->enabledPageCanvasAgent())
         pageCanvasAgent->didChangeCSSCanvasClientNodes(canvasBase);
 }
 
@@ -1373,6 +1567,12 @@ void InspectorInstrumentation::willDestroyWebGPUDeviceImpl(InstrumentingAgents& 
         canvasAgent->willDestroyWebGPUDevice(device);
 }
 
+void InspectorInstrumentation::didChangeWebGPUDeviceLabelImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->didChangeWebGPUDeviceLabel(device);
+}
+
 void InspectorInstrumentation::didChangeGPUDeviceClientNodesImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device)
 {
     if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
@@ -1397,6 +1597,12 @@ void InspectorInstrumentation::willDestroyWebGPUComputePipelineImpl(Instrumentin
         canvasAgent->willDestroyWebGPUComputePipeline(pipeline);
 }
 
+void InspectorInstrumentation::didChangeWebGPUComputePipelineLabelImpl(InstrumentingAgents& instrumentingAgents, GPUComputePipeline& pipeline)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->didChangeWebGPUComputePipelineLabel(pipeline);
+}
+
 void InspectorInstrumentation::didCreateWebGPURenderPipelineImpl(InstrumentingAgents& instrumentingAgents, GPUDevice& device, GPURenderPipeline& pipeline)
 {
     if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
@@ -1407,6 +1613,12 @@ void InspectorInstrumentation::willDestroyWebGPURenderPipelineImpl(Instrumenting
 {
     if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
         canvasAgent->willDestroyWebGPURenderPipeline(pipeline);
+}
+
+void InspectorInstrumentation::didChangeWebGPURenderPipelineLabelImpl(InstrumentingAgents& instrumentingAgents, GPURenderPipeline& pipeline)
+{
+    if (CheckedPtr canvasAgent = instrumentingAgents.enabledCanvasAgent())
+        canvasAgent->didChangeWebGPURenderPipelineLabel(pipeline);
 }
 
 bool InspectorInstrumentation::isWebGPURenderPipelineDisabledImpl(InstrumentingAgents& instrumentingAgents, GPURenderPipeline& pipeline)
@@ -1610,6 +1822,9 @@ InstrumentingAgents& InspectorInstrumentation::instrumentingAgents(Page& page)
 
 InstrumentingAgents* InspectorInstrumentation::instrumentingAgents(ScriptExecutionContext& context)
 {
+    if (context.isInDestructor())
+        return nullptr;
+
     // Using RefPtr makes us hit the m_inRemovedLastRefFunction assert.
     if (WeakPtr document = dynamicDowncast<Document>(context)) {
         if (auto* frame = document->frame())

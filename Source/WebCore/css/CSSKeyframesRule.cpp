@@ -172,7 +172,7 @@ String CSSKeyframesRule::cssText() const
     result.append(" { \n"_s);
 
     for (unsigned i = 0, size = length(); i < size; ++i)
-        result.append("  "_s, protect(m_keyframesRule)->keyframes()[i]->cssText(), '\n');
+        result.append("  "_s, protect(protect(m_keyframesRule)->keyframes()[i])->cssText(), '\n');
     result.append('}');
     return result.toString();
 }
@@ -188,8 +188,9 @@ CSSKeyframeRule* CSSKeyframesRule::item(unsigned index) const
         return nullptr;
     ASSERT(m_childRuleCSSOMWrappers.size() == m_keyframesRule->keyframes().size());
     auto& rule = m_childRuleCSSOMWrappers[index];
-    if (!rule)
+    if (!rule) {
         rule = adoptRef(*new CSSKeyframeRule(m_keyframesRule->keyframes()[index], const_cast<CSSKeyframesRule*>(this)));
+    }
     return rule.get(); 
 }
 

@@ -1,0 +1,26 @@
+# The callee returns strings on every way out, so its result is proven. In the caller the conversion of that result to a string does nothing any more: one pass makes a cast of it, and a later one takes the cast away, which nobody uses.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ProveResults
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="text" parameters=[{type=string}, {type=boolean}] results=[{type=string flags=[IsExpected]}] {
+    Return v0
+}
+# CHECK-LABEL: function f0 name="text"{{*}}results=[{type=string}] 
+
+function f1 name="convertsWhatItIsAnswered" parameters=[{type=string}, {type=boolean}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f0
+    v3 = ToString v2
+    v4 = TypeTest v2 testedType=string
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    Return v5
+  b2(v6):
+    Return v6
+}
+# CHECK-LABEL: function f1 name="convertsWhatItIsAnswered"
+# CHECK: : string = CallDirect v0, v1 function=f0
+# CHECK-NOT: ToString
+# CHECK: Return

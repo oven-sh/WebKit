@@ -81,6 +81,33 @@ static inline JSValue wrapReturnValue(JSGlobalObject* globalObject, JSGlobalObje
     RELEASE_AND_RETURN(scope, result);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static EncodedJSValue hideExceptionFromCallingRealm(VM& vm, JSRemoteFunction* remoteFunction)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Exception* exception = scope.exception();
+    if (vm.isTerminationException(exception)) {
+        scope.release();
+        return { };
+    }
+    DeferTerminationForAWhile deferScope(vm);
+    JSGlobalObject* globalObject = remoteFunction->realm();
+    JSValue exceptionValue = exception->value();
+    TRY_CLEAR_EXCEPTION(scope, { });
+
+    String message;
+    if (exceptionValue.isPrimitive())
+        message = exceptionValue.toWTFString(globalObject);
+    else if (auto* error = dynamicDowncast<ErrorInstance>(exceptionValue.asCell()))
+        message = error->sanitizedMessageString(globalObject);
+    TRY_CLEAR_EXCEPTION(scope, { });
+
+    if (message.length())
+        return throwVMTypeError(globalObject, scope, message);
+    return throwVMTypeError(globalObject, scope);
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallForJSFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -117,7 +144,12 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallForJSFunction, (JSGlobalObject* globa
     auto callData = JSC::getCallData(targetFunction);
     ASSERT(callData.type != CallData::Type::None);
     auto result = call(targetGlobalObject, targetFunction, callData, jsUndefined(), args);
+#if USE(BUN_JSC_ADDITIONS)
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, hideExceptionFromCallingRealm(vm, remoteFunction));
+#else
     RETURN_IF_EXCEPTION(scope, { });
+#endif
 
     RELEASE_AND_RETURN(scope, JSValue::encode(wrapReturnValue(globalObject, globalObject, result)));
 }
@@ -153,7 +185,12 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallGeneric, (JSGlobalObject* globalObjec
     auto callData = JSC::getCallData(targetFunction);
     ASSERT(callData.type != CallData::Type::None);
     auto result = call(targetGlobalObject, targetFunction, callData, jsUndefined(), args);
+#if USE(BUN_JSC_ADDITIONS)
+    if (scope.exception()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, hideExceptionFromCallingRealm(vm, remoteFunction));
+#else
     RETURN_IF_EXCEPTION(scope, { });
+#endif
 
     RELEASE_AND_RETURN(scope, JSValue::encode(wrapReturnValue(globalObject, targetGlobalObject, result)));
 }

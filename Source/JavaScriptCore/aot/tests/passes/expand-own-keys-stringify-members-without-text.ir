@@ -1,0 +1,125 @@
+# A member that can hold only what has no JSON text (a function that nothing gave a toJSON, undefined, a symbol) is neither read nor handed to the host, and such an element is written as null. A function that has got a toJSON, and one that has reached native code where a store under an unknown key goes to an unknown object, go to the host, which looks the method up
+# TODO: flow-termination: one value that unknown code has seen among everything handed to JSON.stringify makes every object handed to it reach unknown JavaScript
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot only-passes=AnalyzeFlow,ApplyFlowResults,ResolveBuiltins,ResolveCalls,ExpandOwnKeys
+# RUN: pipeline ExpandOwnKeys
+# STATISTIC: SerializersCreated = 5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Handlers" fields=[{key="id" declared={type=anything} flags=[IsRequired]}, {key="run" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=anything} flags=[IsRequired]}, {key="nothing" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="HandlerOrNumber" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="HandlerList" fields=[{key="list" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="HandlerWithToJSON" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="HandlerSeenOutside" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v0 key="sink" [isFreeName]
+    v3 = Builtin builtin=JSONStringify
+    v4 = Integer integer=1
+    v5 = NewClosure function=f1
+    v6 = Builtin builtin=SymbolIterator
+    v7 = Undefined
+    v8 = String string="n"
+    v9 = NewObject -, v4, v5, v6, v7, v8 layout=L0 fields=[0, 1, 2, 3, 4]
+    v10 = Call v3, -, v9
+    v11 = Call v2, -, v10
+    v12 = ToBoolean v1
+    Branch v12 -> taken b1(), notTaken b2()
+  b1():
+    v13 = NewClosure function=f2
+    Jump -> next b3(v13)
+  b2():
+    v14 = Integer integer=7
+    Jump -> next b3(v14)
+  b3(v15):
+    v16 = NewObject -, v15 layout=L1 fields=[0]
+    v17 = Call v3, -, v16
+    v18 = Call v2, -, v17
+    v19 = NewClosure function=f3
+    v20 = NewArray v19, v19 contents=anything holes=[]
+    v21 = NewObject -, v20 layout=L2 fields=[0]
+    v22 = Call v3, -, v21
+    v23 = Call v2, -, v22
+    v24 = NewClosure function=f4
+    v25 = NewClosure function=f5
+    PropSet v24, v25 key="toJSON"
+    v27 = NewObject -, v24 layout=L3 fields=[0]
+    v28 = Call v3, -, v27
+    v29 = Call v2, -, v28
+    v30 = NewClosure function=f6
+    v31 = Call v2, -, v30
+    v32 = PropGet v0 key="name" [isFreeName]
+    ElemSet v1, v32, v4
+    v34 = NewObject -, v30 layout=L4 fields=[0]
+    v35 = Call v3, -, v34
+    v36 = Call v2, -, v35
+    Return
+}
+function f1 name="run" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="orNumber" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f3 name="listed" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f4 name="withToJSON" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f5 name="toJSON" kind=Arrow results=[{type=anything}] {
+    v0 = String string="text"
+    Return v0
+}
+function f6 name="seenOutside" kind=Arrow results=[{type=anything}] {
+    Return
+}
+
+# CHECK: function {{*}}creator=Serializer{layout=L0}
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2, 3, 4]
+# CHECK: [[id]]:{{*}}= GetSlot v0, {{*}} key="id" receivers=[L0] level=Expected
+# CHECK: [[idKey]]: buildercursor = JSONAppendKey v1, {{*}} string="id" [opensObject]
+# CHECK-NEXT: [[idWritten]]: buildercursor = JSONAppendInteger v1, [[idKey]], [[id]]
+# CHECK-NEXT: [[name]]:{{*}}= GetSlot v0, {{*}} key="name" receivers=[L0] level=Expected
+# CHECK-NEXT: [[nameKey]]: buildercursor = JSONAppendKey v1, [[idWritten]] string="name" [followsMember]
+# CHECK-NEXT: [[nameWritten]]: buildercursor = JSONAppendString v1, [[nameKey]], [[name]]
+# CHECK-NEXT: = JSONAppendToken v1, [[nameWritten]] jsonToken=CloseObject
+# CHECK-NOT: GetSlot
+# CHECK-NOT: PropGet
+# CHECK-NOT: TypeTest
+# CHECK-NOT: StringBuilderAppendJSON
+
+# CHECK: function {{*}}creator=Serializer{layout=L1}
+# CHECK: [[value]]: 7|f2 = GetSlot v0, {{*}} key="value" receivers=[L1] level=Expected
+# CHECK: [[hasText]]: boolean = TypeTest [[value]] testedType=null|boolean|number|string
+# CHECK-NEXT: Branch [[hasText]] -> taken [[number]](| 0), notTaken [[handler]](| 0)
+# CHECK: [[number]]({{*}}: 7):
+# CHECK-NEXT: = JSONAppendKey v1, {{*}} string="value"
+# CHECK: [[handler]]({{*}}: f2)
+# CHECK-NEXT: Jump -> next
+# CHECK-NOT: TypeTest
+# CHECK-NOT: StringBuilderAppendJSON
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=CloseObjectOverComma
+# CHECK-NOT: StringBuilderAppendJSON
+
+# CHECK: function {{*}}creator=Serializer{layout=L2}
+# CHECK: = GetArrayElement {{*}} arrayStorage=Contiguous
+# CHECK-NOT: TypeTest
+# CHECK-NOT: StringBuilderAppendJSON
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=Null
+# CHECK-NOT: TypeTest
+# CHECK-NOT: IsPristine
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=CloseArray
+
+# CHECK: function {{*}}creator=Serializer{layout=L3}
+# CHECK: [[withToJSON]]: f4 = GetSlot v0, {{*}} key="run" receivers=[L3] level=Expected
+# CHECK: [[keyOfL3]]: "run" = String string="run"
+# CHECK: = StringBuilderAppendJSON v1, [[withToJSON]], [[keyOfL3]]
+
+# CHECK: function {{*}}creator=Serializer{layout=L4}
+# CHECK: [[seenOutside]]: f6 = GetSlot v0, {{*}} key="run" receivers=[L4] level=Expected
+# CHECK: [[keyOfL4]]: "run" = String string="run"
+# CHECK: = StringBuilderAppendJSON v1, [[seenOutside]], [[keyOfL4]]

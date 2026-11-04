@@ -87,7 +87,7 @@ public:
     };
     // Runs as part of the snapshot post-layout state steps, invalidating the containers whose state changed.
     void updateScrollStateSnapshots();
-    ScrollState scrollStateSnapshotFor(const Element&) const;
+    ScrollState LEGACY_NODELETE scrollStateSnapshotFor(const Element&) const;
 
     AnchorPositionedToAnchorMap& anchorPositionedToAnchorMap() LIFETIME_BOUND { return m_anchorPositionedToAnchorMap; }
     const AnchorPositionedToAnchorMap& anchorPositionedToAnchorMap() const LIFETIME_BOUND { return m_anchorPositionedToAnchorMap; }
@@ -102,7 +102,7 @@ private:
 
     using ResolverScopes = HashMap<Ref<Resolver>, Vector<WeakPtr<Scope>>>;
     ResolverScopes collectResolverScopes();
-    template <typename TestFunction> void evaluateMediaQueries(TestFunction&&);
+    template <typename TestFunction> void evaluateMediaQueries(NOESCAPE const TestFunction&);
 
     using MediaQueryViewportState = std::tuple<IntSize, float, bool>;
     static MediaQueryViewportState mediaQueryViewportStateForDocument(const Document&);
@@ -132,7 +132,7 @@ private:
 
     std::unique_ptr<MatchResultCache> m_matchResultCache;
 
-    std::unique_ptr<EnvironmentVariables> m_environmentVariables;
+    const std::unique_ptr<EnvironmentVariables> m_environmentVariables;
 
     HashMap<ResolverSharingKey, Ref<Resolver>> m_sharedShadowTreeResolvers;
 

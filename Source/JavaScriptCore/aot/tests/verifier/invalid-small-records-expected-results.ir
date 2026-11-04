@@ -1,0 +1,11 @@
+# an expected result lists object layouts
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 1
+
+module m0 path="main" displayPath="main"
+entry module=m0
+layout L0 kind=Environment fields=[{key="c" declared={type=anything}}]
+layout L1 fields=[{key="c" declared={type=anything}}]
+expectedresult x0 type=anything layouts=[L1]
+expectedresult x1 type=anything layouts=[L0]

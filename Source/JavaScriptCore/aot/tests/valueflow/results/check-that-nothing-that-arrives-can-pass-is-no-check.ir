@@ -1,0 +1,44 @@
+# interface Settings { level: number }   export const made = Object.create(null) as Settings;   export let either: Settings = made; either = { level: 1 }
+# function readsMade() { made.level }   function readsEither() { either.level }
+# A check tells what the type expects from all else, which goes on by name behind it. The type of the two variables is only expected, so a check stands behind each read.
+# Flow knows every store to `made`: an object that Object.create has made, which has no layout of the program. The check would fail at every read, and the read by name would run behind it:
+# it is no check, and the value has the type of what arrives. Beside it: a check that something of what arrives passes stays one.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f1 name="readsMade"
+# CHECK: v0: {{*}} = GetModuleVariable variable=g0
+# CHECK-NEXT: [[made]]: undefined|Object {{*}}= AssumeType v0 provenType=undefined|Object
+# CHECK-NEXT: = PropGet [[made]] key="level"
+# CHECK-LABEL: function f2 name="readsEither"
+# CHECK: = Check v0 expectedType=undefined|null|L0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Settings" fields=[{key="level" declared={type=number} flags=[IsRequired]}]
+variable g0 name="made" module=m0 declared={type=undefined|null|L0 flags=[IsExpected]} initialization=Undefined
+variable g1 name="either" module=m0 declared={type=undefined|null|L0 flags=[IsExpected]} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ObjectCreate
+    v1 = Builtin builtin=Object
+    v2 = Null
+    v3 = Call v0, v1, v2
+    PutModuleVariable v3 variable=g0
+    PutModuleVariable v3 variable=g1
+    v6 = Integer integer=1
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    PutModuleVariable v7 variable=g1
+    v9 = CallDirect function=f1
+    v10 = CallDirect function=f2
+    Return
+}
+function f1 name="readsMade" module=m0 results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Check v0 expectedType=undefined|null|L0
+    v2 = PropGet v1 key="level"
+    Return v2
+}
+function f2 name="readsEither" module=m0 results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = Check v0 expectedType=undefined|null|L0
+    v2 = PropGet v1 key="level"
+    Return v2
+}

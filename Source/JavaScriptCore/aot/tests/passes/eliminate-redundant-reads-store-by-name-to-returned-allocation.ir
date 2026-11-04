@@ -1,0 +1,31 @@
+# A store by name to a local allocation does not clobber a field of a parameter, even when the allocation is returned
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+
+function f0 name="copy" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    PropSet v2, v3 key="x" mode=Strict receivers=[L0]
+    v5 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    PropSet v2, v5 key="x" mode=Strict receivers=[L0]
+    Return v2
+}
+# CHECK-LABEL: function f0 name="copy"
+# CHECK: PropSet v2, v3 key="x"
+# CHECK-NEXT: v5: anything = Upcast v3 castType=anything
+
+function f1 name="storeToOtherParameter" parameters=[{type=L0}, {type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: L0, v2: anything):
+    v3 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    PropSet v1, v2 key="x" mode=Strict receivers=[L0]
+    v5 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    Return v5
+}
+# CHECK-LABEL: function f1 name="storeToOtherParameter"
+# CHECK: PropSet v1, v2 key="x"
+# CHECK-NEXT: v5: anything = GetSlot v0 key="x"

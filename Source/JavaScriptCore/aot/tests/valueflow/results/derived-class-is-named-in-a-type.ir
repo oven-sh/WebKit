@@ -1,0 +1,90 @@
+# class Base {}  class Derived extends Base { run() {} }  made = new Derived(); made.run()
+# class Plain {}  class Unused extends Plain {}  plain = new Plain()
+# class Host {}  class Unrelated {}  other = Reflect.construct(Host, [], Unrelated)
+# The constructor of a base class allocates the instances of the classes below it too, and the prototype object that it is given picks the layout. So what a derived class constructs has the layout of
+# that class: the variable that holds it, the receivers of a read from it and `this` of its method name the layout. A class below that nothing constructs is not named.
+# Where the prototype object of a class arrives that does not extend the allocated one, the allocation makes an ordinary object, and no layout is named
+# RUN: valueflow-apply
+# CHECK: variable g0 name="made" {{*}}declared={type={{*}}L1}
+# CHECK: variable g1 name="plain" {{*}}declared={type=L2}
+# CHECK: variable g2 name="other" {{*}}declared={type=object}
+# CHECK: = PropGet {{*}}key="run" {{*}}receivers=[{{*}}L1]
+# CHECK: function f3 name="run" {{*}}thisType={type={{*}}L1}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1
+layout L1 kind=Instance name="Derived" base=L0 constructor=f2 flags=[HasHeritage]
+layout L2 kind=Instance name="Plain" constructor=f4
+layout L3 kind=Instance name="Unused" base=L2 constructor=f5 flags=[HasHeritage]
+layout L4 kind=Instance name="Host" constructor=f6
+layout L5 kind=Instance name="Unrelated" constructor=f7
+variable g0 name="made" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="plain" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="other" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4, v2, v3 layout=L1
+    v6 = NewClosure function=f3
+    DefineMethod v5, v6 layout=L1 key="run"
+    v8 = FinishClass v5 layout=L1
+    v9 = Construct v8
+    PutModuleVariable v9 variable=g0
+    v11 = PropGet v9 key="run"
+    v12 = Call v11, v9 calleeKey="run"
+    v13 = NewClosure function=f4
+    v14 = NewClass v13 layout=L2
+    v15 = FinishClass v14 layout=L2
+    v16 = ResolveHeritage v15
+    v17 = NewClosure function=f5
+    v18 = NewClass v17, v15, v16 layout=L3
+    v19 = FinishClass v18 layout=L3
+    v20 = Construct v15
+    PutModuleVariable v20 variable=g1
+    v22 = NewClosure function=f6
+    v23 = NewClass v22 layout=L4
+    v24 = FinishClass v23 layout=L4
+    v25 = NewClosure function=f7
+    v26 = NewClass v25 layout=L5
+    v27 = FinishClass v26 layout=L5
+    v28 = Construct v24, v27
+    PutModuleVariable v28 variable=g2
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f4 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    Return v2
+}
+function f5 name="Unused" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L3
+    Return v3
+}
+function f6 name="Host" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4 fields=[]
+    Return v2
+}
+function f7 name="Unrelated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L5
+    v2 = NewObject v1 layout=L5 fields=[]
+    Return v2
+}

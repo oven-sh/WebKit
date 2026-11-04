@@ -31,12 +31,13 @@ class RenderCombineText final : public RenderText {
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderCombineText);
 public:
     RenderCombineText(Text&, const String&);
+    RenderCombineText(Document&, const String&);
     virtual ~RenderCombineText();
 
     Text& textNode() const { return downcast<Text>(nodeForNonAnonymous()); }
 
     void combineTextIfNeeded();
-    std::optional<FloatPoint> NODELETE computeTextOrigin(const FloatRect& boxRect) const;
+    std::optional<FloatPoint> LEGACY_NODELETE computeTextOrigin(const FloatRect& boxRect) const;
     String combinedStringForRendering() const;
     bool isCombined() const { return m_isCombined; }
     float combinedTextWidth(const FontCascade& font) const { return font.size(); }
@@ -54,8 +55,8 @@ private:
     float m_combinedTextWidth { 0 };
     float m_combinedTextAscent { 0 };
     float m_combinedTextDescent { 0 };
-    bool m_isCombined : 1;
-    bool m_needsFontUpdate : 1;
+    bool m_isCombined : 1 { false };
+    bool m_needsFontUpdate : 1 { false };
 };
 
 } // namespace WebCore

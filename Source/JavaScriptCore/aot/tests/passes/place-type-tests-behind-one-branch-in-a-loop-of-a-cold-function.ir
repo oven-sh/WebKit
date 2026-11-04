@@ -1,0 +1,82 @@
+# In a very large program an operator in a cold block gets no test. A loop in a cold function is warm, and so is what stands behind one even branch in it: the body runs one time less than the head,
+# so that block runs a little less than half as often as the head. What stands behind two branches is cold
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls limit=MaxWarmCodeValues:1
+# In a very large program the tests of a cold function are placed behind the rounds: the pipeline is stopped behind that step
+# RUN: pipeline RemoveDeadCountedLoops
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return
+}
+
+function f1 name="oneCaller" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f3
+    v3 = CallDirect v0, v1 function=f4
+    Return v2
+}
+
+function f2 name="anotherCaller" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f3
+    v3 = CallDirect v0, v1 function=f4
+    Return v2
+}
+
+function f3 name="behindOneBranch" flags=[IsChecked] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="next" [isFreeName]
+    Jump -> next b1(v0)
+  b1(v4: anything ~ number):
+    LoopHint
+    v6 = Call v3, -, v4
+    v7 = ToBoolean v6
+    Branch v7 -> taken b2(), notTaken b5()
+  b2():
+    v8 = Call v3, -, v6
+    v9 = ToBoolean v8
+    Branch v9 -> taken b3(), notTaken b4(v4)
+  b3():
+    v10 = Mul v4, v4
+    Jump -> next b4(v10)
+  b4(v11: anything ~ number):
+    Jump -> next b1(v11)
+  b5():
+    Return v4
+}
+
+function f4 name="behindTwoBranches" flags=[IsChecked] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="next" [isFreeName]
+    Jump -> next b1(v0)
+  b1(v4: anything ~ number):
+    LoopHint
+    v6 = Call v3, -, v4
+    v7 = ToBoolean v6
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = Call v3, -, v6
+    v9 = ToBoolean v8
+    Branch v9 -> taken b3(), notTaken b5(v4)
+  b3():
+    v10 = Call v3, -, v8
+    v11 = ToBoolean v10
+    Branch v11 -> taken b4(), notTaken b5(v4)
+  b4():
+    v12 = Mul v4, v4
+    Jump -> next b5(v12)
+  b5(v13: anything ~ number):
+    Jump -> next b1(v13)
+  b6():
+    Return v4
+}
+# CHECK-LABEL: function f3 name="behindOneBranch"
+# CHECK: = TypeTest {{*}} testedType=number
+# CHECK-LABEL: function f4 name="behindTwoBranches"
+# CHECK-NOT: TypeTest

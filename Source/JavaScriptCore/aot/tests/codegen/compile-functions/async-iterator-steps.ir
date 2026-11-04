@@ -1,0 +1,53 @@
+# A loop over an async iterator nobody knows has code for its steps, those of an async generator and those of the protocol, in an async function, in an async generator and in a module body
+# FORM: AsRead
+# RUN: compile
+# OPTIONS: check=validate-back-end,validate-references
+# STATISTIC: IterationsExpandedGenerically = 0
+# STATISTIC: IterationsExpandedByClass = 3
+# STATISTIC: CoroutinesSplit = 3
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" flags=[HasTopLevelAwait] body=f0
+entry module=m0
+
+function f0 name="main" kind=Module flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    v5 = IteratorOpen v4 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = IteratorResume v5 iteratorKind=Async
+    v8 = ResultAt v7 index=0
+    Branch v8 -> taken b2(), notTaken b1()
+  b2():
+    Return
+}
+function f1 name="inFunction" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = IteratorOpen v0 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1 iteratorKind=Async [readsValueWhenDone]
+    v4 = ResultAt v3 index=0
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    v5 = ResultAt v3 index=1
+    Return v5
+}
+function f2 name="inGenerator" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    InitialYield
+    v4 = IteratorOpen v1 iteratorKind=Async
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4, v2 iteratorKind=Async [readsValueWhenDone]
+    v7 = ResultAt v6 index=0
+    Branch v7 -> taken b2(), notTaken b1()
+  b2():
+    v8 = ResultAt v6 index=1
+    Return v8
+}

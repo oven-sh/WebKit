@@ -23,6 +23,7 @@
 #if ENABLE(MEDIA_STREAM) && USE(GSTREAMER)
 
 #include "GRefPtrGStreamer.h"
+#include "GStreamerCommon.h"
 #include <gio/gunixfdlist.h>
 #include <gst/video/video-format.h>
 #include <optional>
@@ -30,6 +31,7 @@
 #include <wtf/Scope.h>
 #include <wtf/UUID.h>
 #include <wtf/WeakRandomNumber.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GMallocString.h>
 #include <wtf/glib/GUniquePtr.h>
 
@@ -48,7 +50,7 @@ static GRefPtr<GDBusProxy> createDBusProxy(ASCIILiteral interfaceName)
         static_cast<GDBusProxyFlags>(G_DBUS_PROXY_FLAGS_DO_NOT_CONNECT_SIGNALS | G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES), nullptr,
         "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", interfaceName.characters(), nullptr, &error.outPtr()));
     if (error) {
-        gst_printerrln("Unable to connect to the Deskop portal: %s", error->message);
+        SAFE_GST_PRINTERRLN("Unable to connect to the Deskop portal: %s", UTF8CStringView::unsafeFromUTF8(error->message));
         return nullptr;
     }
     return proxy;
@@ -110,7 +112,7 @@ GRefPtr<GVariant> DesktopPortal::getProperty(ASCIILiteral name)
     return nullptr;
 }
 
-void DesktopPortal::waitResponseSignal(CStringView objectPath, ResponseCallback&& callback)
+void DesktopPortal::waitResponseSignal(UTF8CStringView objectPath, ResponseCallback&& callback)
 {
     RELEASE_ASSERT(!m_currentResponseCallback);
     m_currentResponseCallback = WTF::move(callback);
@@ -151,7 +153,7 @@ void DesktopPortalCamera::accessCamera(Function<void(std::optional<int>)>&& call
     auto token = makeString("WebKit"_s, weakRandomNumber<uint32_t>());
     GVariantBuilder options;
     g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
-    g_variant_builder_add(&options, "{sv}", "handle_token", g_variant_new_string(token.utf8().legacyCStringPointer()));
+    g_variant_builder_add(&options, "{sv}", "handle_token", gVariantNewString(token.utf8()));
 
     auto connection = g_dbus_proxy_get_connection(m_proxy.get());
     auto connectionString = StringView::fromLatin1(g_dbus_connection_get_unique_name(connection));
@@ -195,7 +197,7 @@ std::optional<int> DesktopPortalCamera::openCameraPipewireRemote()
     GRefPtr result = adoptGRef(g_dbus_proxy_call_with_unix_fd_list_sync(m_proxy.get(), "OpenPipeWireRemote",
         g_variant_new("(a{sv})", &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &fdList.outPtr(), nullptr, &error.outPtr()));
     if (error) {
-        gst_printerrln("Unable to open pipewire remote. Error: %s", error->message);
+        SAFE_GST_PRINTERRLN("Unable to open pipewire remote. Error: %s", UTF8CStringView::unsafeFromUTF8(error->message));
         return { };
     }
 
@@ -203,7 +205,7 @@ std::optional<int> DesktopPortalCamera::openCameraPipewireRemote()
     g_variant_get(result.get(), "(h)", &index);
     fd = g_unix_fd_list_get(fdList.get(), index, &error.outPtr());
     if (fd == -1) {
-        gst_printerrln("Unable to open pipewire remote. Error: %s", error->message);
+        SAFE_GST_PRINTERRLN("Unable to open pipewire remote. Error: %s", UTF8CStringView::unsafeFromUTF8(error->message));
         return { };
     }
     return fd;
@@ -222,14 +224,14 @@ std::optional<DesktopPortalScreenCast::ScreencastSession> DesktopPortalScreenCas
     GRefPtr result = adoptGRef(g_dbus_proxy_call_sync(m_proxy.get(), "CreateSession", g_variant_new("(a{sv})", &options),
         G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &error.outPtr()));
     if (error) {
-        gst_printerrln("Unable to create a Deskop portal session: %s", error->message);
+        SAFE_GST_PRINTERRLN("Unable to create a Deskop portal session: %s", UTF8CStringView::unsafeFromUTF8(error->message));
         return { };
     }
 
     GUniqueOutPtr<char> objectPathChars;
     g_variant_get(result.get(), "(o)", &objectPathChars.outPtr());
     auto objectPath = GMallocString::unsafeAdoptFromUTF8(WTF::move(objectPathChars));
-    waitResponseSignal(toCStringView(objectPath));
+    waitResponseSignal(toUTF8CStringView(objectPath));
 
     auto sessionPath = makeStringByReplacingAll(objectPath.span(), "/request/"_s, "/session/"_s);
     sessionPath = makeStringByReplacingAll(sessionPath, token, sessionToken);
@@ -243,14 +245,14 @@ void DesktopPortalScreenCast::closeSession(const String& path)
         static_cast<GDBusProxyFlags>(G_DBUS_PROXY_FLAGS_DO_NOT_CONNECT_SIGNALS | G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES), nullptr,
         "org.freedesktop.portal.Desktop", path.ascii().data(), "org.freedesktop.portal.Session", nullptr, &error.outPtr()));
     if (error) {
-        gst_printerrln("Unable to connect to the Desktop portal: %s", error->message);
+        SAFE_GST_PRINTERRLN("Unable to connect to the Desktop portal: %s", UTF8CStringView::unsafeFromUTF8(error->message));
         return;
     }
     auto dbusCallTimeout = 100_ms;
     GRefPtr result = adoptGRef(g_dbus_proxy_call_sync(proxy.get(), "Close", nullptr, G_DBUS_CALL_FLAGS_NONE,
         dbusCallTimeout.millisecondsAs<int>(), nullptr, &error.outPtr()));
     if (error)
-        gst_printerrln("Portal session could not be closed: %s", error->message);
+        SAFE_GST_PRINTERRLN("Portal session could not be closed: %s", UTF8CStringView::unsafeFromUTF8(error->message));
 }
 
 GRefPtr<GVariant> DesktopPortalScreenCast::ScreencastSession::selectSources(GVariantBuilder& options)
@@ -260,9 +262,9 @@ GRefPtr<GVariant> DesktopPortalScreenCast::ScreencastSession::selectSources(GVar
 
     GUniqueOutPtr<GError> error;
     GRefPtr result = adoptGRef(g_dbus_proxy_call_sync(m_proxy.get(), "SelectSources",
-        g_variant_new("(oa{sv})", m_path.ascii().data(), &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &error.outPtr()));
+        gVariantNew("(oa{sv})", m_path.ascii(), &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &error.outPtr()));
     if (error) {
-        gst_printerrln("SelectSources error: %s", error->message);
+        SAFE_GST_PRINTERRLN("SelectSources error: %s", UTF8CStringView::unsafeFromUTF8(error->message));
         return nullptr;
     }
 
@@ -278,9 +280,9 @@ GRefPtr<GVariant> DesktopPortalScreenCast::ScreencastSession::start()
 
     GUniqueOutPtr<GError> error;
     GRefPtr result = adoptGRef(g_dbus_proxy_call_sync(m_proxy.get(), "Start",
-        g_variant_new("(osa{sv})", m_path.ascii().data(), "", &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &error.outPtr()));
+        gVariantNew("(osa{sv})", m_path.ascii(), "", &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &error.outPtr()));
     if (error) {
-        gst_printerrln("Start error: %s", error->message);
+        SAFE_GST_PRINTERRLN("Start error: %s", UTF8CStringView::unsafeFromUTF8(error->message));
         return nullptr;
     }
     return result;
@@ -293,9 +295,9 @@ std::optional<PipeWireNodeData> DesktopPortalScreenCast::ScreencastSession::open
     g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
     GUniqueOutPtr<GError> error;
     GRefPtr result = adoptGRef(g_dbus_proxy_call_with_unix_fd_list_sync(m_proxy.get(), "OpenPipeWireRemote",
-        g_variant_new("(oa{sv})", m_path.ascii().data(), &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &fdList.outPtr(), nullptr, &error.outPtr()));
+        gVariantNew("(oa{sv})", m_path.ascii(), &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &fdList.outPtr(), nullptr, &error.outPtr()));
     if (error) {
-        gst_printerrln("Unable to open pipewire remote. Error: %s", error->message);
+        SAFE_GST_PRINTERRLN("Unable to open pipewire remote. Error: %s", UTF8CStringView::unsafeFromUTF8(error->message));
         return { };
     }
 
@@ -303,7 +305,7 @@ std::optional<PipeWireNodeData> DesktopPortalScreenCast::ScreencastSession::open
     g_variant_get(result.get(), "(h)", &index);
     int fd = g_unix_fd_list_get(fdList.get(), index, &error.outPtr());
     if (fd == -1) {
-        gst_printerrln("Unable to open pipewire remote. Error: %s", error->message);
+        SAFE_GST_PRINTERRLN("Unable to open pipewire remote. Error: %s", UTF8CStringView::unsafeFromUTF8(error->message));
         return { };
     }
 

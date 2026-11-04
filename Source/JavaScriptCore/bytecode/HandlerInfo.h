@@ -112,7 +112,7 @@ struct HandlerInfo : public HandlerInfoBase {
         typeBits = unlinkedInfo.typeBits;
     }
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     void initialize(const UnlinkedHandlerInfo& unlinkedInfo, CodeLocationLabel<ExceptionHandlerPtrTag> label)
     {
         initialize(unlinkedInfo);

@@ -34,6 +34,7 @@
 #include "FrameLoaderClient.h"
 #include "HTMLFrameOwnerElement.h"
 #include "HTMLIFrameElement.h"
+#include "InspectorInstrumentation.h"
 #include "LocalDOMWindow.h"
 #include "LocalFrameView.h"
 #include "NavigationScheduler.h"
@@ -47,10 +48,15 @@
 #include "ScrollingCoordinator.h"
 #include "Settings.h"
 #include "WindowProxy.h"
+#include <ranges>
 #include <wtf/Assertions.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
+
+static_assert(std::ranges::viewable_range<FrameAncestorRange<Frame>>);
+static_assert(std::ranges::viewable_range<FrameAncestorRange<LocalFrame>>);
+static_assert(std::ranges::viewable_range<FrameAncestorRange<RemoteFrame>>);
 
 #if ASSERT_ENABLED
 class FrameLifetimeVerifier {
@@ -159,7 +165,7 @@ void Frame::detachFromPage()
 {
     if (isRootFrame()) {
         if (RefPtr page = m_page.get()) {
-            // WebPage::suspendWithFrameItem may have already removed this frame from
+            // CachedFrame construtor may have already removed this frame from
             // Page::rootFrames(), so there is no need to remove it again.
             if (page->rootFrames().contains(downcast<LocalFrame>(*this)))
                 page->removeRootFrame(downcast<LocalFrame>(*this));
@@ -304,6 +310,7 @@ void Frame::setOwnerElement(HTMLFrameOwnerElement* element)
     if (element) {
         element->clearContentFrame();
         element->setContentFrame(*this);
+        InspectorInstrumentation::frameOwnerContentFrameChanged(protect(element->document()), *element);
     }
     updateScrollingMode();
 }

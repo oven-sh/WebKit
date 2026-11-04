@@ -42,6 +42,9 @@ public:
     
     virtual void* tryAllocateAlignedMemory(size_t alignment, size_t size) = 0;
     virtual void freeAlignedMemory(void*) = 0;
+
+    // A MarkedBlock for a directory that has blocks already, so this one is likely to be filled.
+    virtual void* tryAllocateBlockToFill() { return tryAllocateAlignedMemory(MarkedBlock::blockSize, MarkedBlock::blockSize); }
     
     // This can't be pure virtual as it breaks our Dumpable concept.
     // FIXME: Make this virtual after we stop suppporting the Montery Clang.

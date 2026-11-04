@@ -34,6 +34,7 @@
 #import <WebCore/ShareableBitmap.h>
 #import <WebCore/WebCoreObjCExtras.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
 
@@ -99,7 +100,7 @@
     RetainPtr result = adoptNS([[NSMutableArray alloc] initWithCapacity:_info->selectors().size()]);
     for (auto& selectors : _info->selectors()) {
         RetainPtr nsSelectors = adoptNS([[NSMutableArray alloc] initWithCapacity:selectors.size()]);
-        for (auto& selector : selectors)
+        for (auto& selector : borrow(selectors))
             [nsSelectors addObject:selector.createNSString().get()];
         [result addObject:nsSelectors.get()];
     }
@@ -138,11 +139,6 @@
 
 - (void)getChildFrames:(void(^)(NSArray<_WKFrameTreeNode *> *))completion
 {
-    return protect(*_info)->childFrames([completion = makeBlockPtr(completion)](auto&& nodes) {
-        completion(createNSArray(WTF::move(nodes), [](API::FrameTreeNode& node) {
-            return wrapper(node);
-        }).autorelease());
-    });
 }
 
 - (BOOL)isSameElement:(_WKTargetedElementInfo *)other

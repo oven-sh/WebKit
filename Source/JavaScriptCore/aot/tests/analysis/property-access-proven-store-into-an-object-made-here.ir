@@ -1,0 +1,20 @@
+# A store by name runs the same operations whether its receiver is named by a parameter or by the allocation that lists the field
+# FORM: Prepared
+# RUN: proven-access
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="next" declared={type=anything} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype] keys=NeverEnumerated addedKeysAreComplete=true}
+
+function f0 name="storeIntoParameter" parameters=[{type=L0}] results=[{type=anything}] {
+    PropSet v0, v0 key="next" mode=Sloppy
+    Return
+}
+# CHECK: F0 v1 PropSet: complete operations=[PutSlot] key=K{{*}} receivers=S
+function f1 name="storeIntoObjectMadeHere" parameters=[{type=int}] results=[{type=anything}] {
+    v1 = Null
+    v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    PropSet v3, v3 key="next" mode=Sloppy
+    Return
+}
+# CHECK-NEXT: F1 v4 PropSet: complete operations=[PutSlot] key=K{{*}} receivers=S

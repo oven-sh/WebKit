@@ -26,7 +26,7 @@
 #include "config.h"
 #include "CCallHelpers.h"
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "JITOperations.h"
 #include "LinkBuffer.h"
@@ -48,6 +48,7 @@ void CCallHelpers::logShadowChickenProloguePacket(GPRReg shadowPacket, GPRReg sc
     storePtr(scope, Address(shadowPacket, OBJECT_OFFSETOF(ShadowChicken::Packet, scope)));
 }
 
+#if ENABLE(JIT)
 void CCallHelpers::ensureShadowChickenPacket(VM& vm, GPRReg shadowPacket, GPRReg scratch1NonArgGPR, GPRReg scratch2)
 {
     ShadowChicken* shadowChicken = vm.shadowChicken();
@@ -66,6 +67,7 @@ void CCallHelpers::ensureShadowChickenPacket(VM& vm, GPRReg shadowPacket, GPRReg
     addPtr(TrustedImm32(sizeof(ShadowChicken::Packet)), shadowPacket, scratch2);
     storePtr(scratch2, Address(scratch1NonArgGPR));
 }
+#endif
 
 
 template <typename CodeBlockType>
@@ -120,4 +122,4 @@ void CCallHelpers::emitCTIThunkEpilogue()
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

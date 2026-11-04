@@ -77,7 +77,6 @@
 #include "WebKitWindowPropertiesPrivate.h"
 #include "WebPageMessages.h"
 #include <JavaScriptCore/APICast.h>
-#include <JavaScriptCore/JSRetainPtr.h>
 #include <WebCore/CertificateInfo.h>
 #include <WebCore/FloatPoint.h>
 #include <WebCore/FloatSize.h>
@@ -93,12 +92,13 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
-#include <wtf/text/CStringView.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if ENABLE(POINTER_LOCK)
 #include "WebKitPointerLockPermissionRequest.h"
@@ -133,6 +133,7 @@
 #endif
 
 #if ENABLE(2022_GLIB_API)
+#include "WebKitApplicationManifestPrivate.h"
 #include "WebKitImagePrivate.h"
 #include "WebKitNetworkSessionPrivate.h"
 #else
@@ -246,6 +247,7 @@ enum {
     PROP_MAGNIFICATION,
     PROP_IS_LOADING,
     PROP_IS_PLAYING_AUDIO,
+    PROP_HAS_PROTECTED_MEDIA,
 #if !ENABLE(2022_GLIB_API)
     PROP_IS_EPHEMERAL,
 #endif
@@ -532,6 +534,11 @@ void webkitWebViewIsPlayingAudioChanged(WebKitWebView* webView)
     g_object_notify_by_pspec(G_OBJECT(webView), sObjProperties[PROP_IS_PLAYING_AUDIO]);
 }
 
+void webkitWebViewHasProtectedMediaChanged(WebKitWebView* webView)
+{
+    g_object_notify_by_pspec(G_OBJECT(webView), sObjProperties[PROP_HAS_PROTECTED_MEDIA]);
+}
+
 void webkitWebViewMediaCaptureStateDidChange(WebKitWebView* webView, WebCore::MediaProducer::MediaStateFlags mediaStateFlags)
 {
     if (mediaStateFlags.isEmpty()) {
@@ -799,24 +806,24 @@ static void webkitWebViewRequestFavicon(WebKitWebView* webView)
         return;
 
     priv->faviconCancellable = adoptGRef(g_cancellable_new());
-    webkitFaviconDatabaseGetFaviconInternal(database, priv->activeURI.legacyCStringPointer(), webkitWebViewIsEphemeral(webView), priv->faviconCancellable.get(), gotFaviconCallback, webView);
+    webkitFaviconDatabaseGetFaviconInternal(database, priv->activeURI, webkitWebViewIsEphemeral(webView), priv->faviconCancellable.get(), gotFaviconCallback, webView);
 }
 
-static void webkitWebViewUpdateFaviconURI(WebKitWebView* webView, const char* faviconURI)
+static void webkitWebViewUpdateFaviconURI(WebKitWebView* webView, UTF8CString&& faviconURI)
 {
     if (webView->priv->faviconURI == faviconURI)
         return;
 
-    webView->priv->faviconURI = UTF8CString { byteCast<char8_t>(faviconURI) };
+    webView->priv->faviconURI = WTF::move(faviconURI);
     webkitWebViewRequestFavicon(webView);
 }
 
 static void faviconChangedCallback(WebKitFaviconDatabase*, const char* pageURI, const char* faviconURI, WebKitWebView* webView)
 {
-    if (webView->priv->activeURI != pageURI)
+    if (webView->priv->activeURI != UTF8CString::unsafeFromUTF8(pageURI))
         return;
 
-    webkitWebViewUpdateFaviconURI(webView, faviconURI);
+    webkitWebViewUpdateFaviconURI(webView, UTF8CString::unsafeFromUTF8(faviconURI));
 }
 #endif // PLATFORM(GTK)
 
@@ -963,7 +970,9 @@ static void webkitWebViewCreatePage(WebKitWebView* webView, Ref<API::PageConfigu
 #endif
 #endif
 #if USE(LIBWPE)
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     webView->priv->view = WKWPE::ViewLegacy::create(webkit_web_view_backend_get_wpe_backend(webView->priv->backend.get()), configuration.get());
+    ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 #endif
 }
@@ -1193,7 +1202,7 @@ static void webkitWebViewSetProperty(GObject* object, guint propId, const GValue
         webView->priv->webExtensionMode = static_cast<WebKitWebExtensionMode>(g_value_get_enum(value));
         break;
     case PROP_DEFAULT_CONTENT_SECURITY_POLICY:
-        webView->priv->defaultContentSecurityPolicy = UTF8CString { byteCast<char8_t>(g_value_get_string(value)) };
+        webView->priv->defaultContentSecurityPolicy = UTF8CString::unsafeFromUTF8(g_value_get_string(value));
         break;
 #if ENABLE(WK_WEB_EXTENSIONS)
     case PROP_WEB_EXTENSION_CONTEXT:
@@ -1237,7 +1246,7 @@ static void webkitWebViewGetProperty(GObject* object, guint propId, GValue* valu
         break;
 #endif
     case PROP_TITLE:
-        g_value_set_string(value, webView->priv->title.legacyCStringPointer());
+        gValueSetString(value, webView->priv->title);
         break;
     case PROP_ESTIMATED_LOAD_PROGRESS:
         g_value_set_double(value, webkit_web_view_get_estimated_load_progress(webView));
@@ -1265,6 +1274,9 @@ static void webkitWebViewGetProperty(GObject* object, guint propId, GValue* valu
         break;
     case PROP_IS_PLAYING_AUDIO:
         g_value_set_boolean(value, webkit_web_view_is_playing_audio(webView));
+        break;
+    case PROP_HAS_PROTECTED_MEDIA:
+        g_value_set_boolean(value, webkit_web_view_has_protected_media(webView));
         break;
 #if !ENABLE(2022_GLIB_API)
     case PROP_IS_EPHEMERAL:
@@ -1398,19 +1410,23 @@ static void webkit_web_view_class_init(WebKitWebViewClass* webViewClass)
 
 #if PLATFORM(WPE)
 #if USE(LIBWPE)
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     /**
      * WebKitWebView:backend:
      *
      * The #WebKitWebViewBackend of the view.
      *
      * Since: 2.20
+     *
+     * Deprecated: 2.56: Use WPE Platform API instead.
      */
     sObjProperties[PROP_BACKEND] =
         g_param_spec_boxed(
             "backend",
             nullptr, nullptr,
             WEBKIT_TYPE_WEB_VIEW_BACKEND,
-            static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
+            static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_DEPRECATED));
+    ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 #if ENABLE(WPE_PLATFORM)
     /**
@@ -1637,6 +1653,25 @@ static void webkit_web_view_class_init(WebKitWebViewClass* webViewClass)
     sObjProperties[PROP_IS_PLAYING_AUDIO] =
         g_param_spec_boolean(
             "is-playing-audio",
+            nullptr, nullptr,
+            FALSE,
+            WEBKIT_PARAM_READABLE);
+
+    /**
+     * WebKitWebView:has-protected-media:
+     *
+     * Whether a page in the #WebKitWebView has a media element with
+     * Encrypted Media Extensions (EME) MediaKeys attached, i.e. it may be
+     * presenting DRM-protected content. This property becomes %TRUE as soon
+     * as MediaKeys are attached to a media element, independently of whether
+     * playback is running, and is set back to %FALSE once no media element
+     * has MediaKeys attached anymore.
+     *
+     * Since: 2.56
+     */
+    sObjProperties[PROP_HAS_PROTECTED_MEDIA] =
+        g_param_spec_boolean(
+            "has-protected-media",
             nullptr, nullptr,
             FALSE,
             WEBKIT_PARAM_READABLE);
@@ -2763,7 +2798,7 @@ void webkitWebViewWillStartLoad(WebKitWebView* webView)
 
     GUniquePtr<GError> error(g_error_new_literal(WEBKIT_NETWORK_ERROR, WEBKIT_NETWORK_ERROR_CANCELLED, _("Load request cancelled")));
     webkitWebViewLoadFailed(webView, pageLoadState.isProvisional() ? WEBKIT_LOAD_STARTED : WEBKIT_LOAD_COMMITTED,
-        pageLoadState.isProvisional() ? pageLoadState.provisionalURL().string().utf8().legacyCStringPointer() : pageLoadState.url().string().utf8().legacyCStringPointer(),
+        pageLoadState.isProvisional() ? pageLoadState.provisionalURL().string() : pageLoadState.url().string(),
         error.get());
 }
 
@@ -2792,7 +2827,7 @@ void webkitWebViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent loadEvent)
 #if PLATFORM(GTK)
         if (auto* database = webkitWebViewGetFaviconDatabase(webView)) {
             GUniquePtr<char> faviconURI(webkit_favicon_database_get_favicon_uri(database, priv->activeURI.legacyCStringPointer()));
-            webkitWebViewUpdateFaviconURI(webView, faviconURI.get());
+            webkitWebViewUpdateFaviconURI(webView, UTF8CString::unsafeFromUTF8(faviconURI.get()));
         }
 #endif
         break;
@@ -2807,16 +2842,16 @@ void webkitWebViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent loadEvent)
     g_signal_emit(webView, signals[LOAD_CHANGED], 0, loadEvent);
 }
 
-void webkitWebViewLoadFailed(WebKitWebView* webView, WebKitLoadEvent loadEvent, const char* failingURI, GError *error)
+void webkitWebViewLoadFailed(WebKitWebView* webView, WebKitLoadEvent loadEvent, const String& failingURI, GError *error)
 {
     webkitWebViewCompleteAuthenticationRequest(webView);
 
     gboolean returnValue;
-    g_signal_emit(webView, signals[LOAD_FAILED], 0, loadEvent, failingURI, error, &returnValue);
+    gSignalEmit(webView, signals[LOAD_FAILED], 0, loadEvent, failingURI.utf8(), error, &returnValue);
     g_signal_emit(webView, signals[LOAD_CHANGED], 0, WEBKIT_LOAD_FINISHED);
 }
 
-void webkitWebViewLoadFailedWithTLSErrors(WebKitWebView* webView, const char* failingURI, GError* error, GTlsCertificateFlags tlsErrors, GTlsCertificate* certificate)
+void webkitWebViewLoadFailedWithTLSErrors(WebKitWebView* webView, const String& failingURI, GError* error, GTlsCertificateFlags tlsErrors, GTlsCertificate* certificate)
 {
     webkitWebViewCompleteAuthenticationRequest(webView);
 
@@ -2827,10 +2862,11 @@ void webkitWebViewLoadFailedWithTLSErrors(WebKitWebView* webView, const char* fa
     WebKitTLSErrorsPolicy tlsErrorsPolicy = webkit_website_data_manager_get_tls_errors_policy(websiteDataManager);
 #endif
     if (tlsErrorsPolicy == WEBKIT_TLS_ERRORS_POLICY_FAIL) {
+        auto failingURIUTF8 = failingURI.utf8();
         gboolean returnValue;
-        g_signal_emit(webView, signals[LOAD_FAILED_WITH_TLS_ERRORS], 0, failingURI, certificate, tlsErrors, &returnValue);
+        gSignalEmit(webView, signals[LOAD_FAILED_WITH_TLS_ERRORS], 0, failingURIUTF8, certificate, tlsErrors, &returnValue);
         if (!returnValue)
-            g_signal_emit(webView, signals[LOAD_FAILED], 0, WEBKIT_LOAD_STARTED, failingURI, error, &returnValue);
+            gSignalEmit(webView, signals[LOAD_FAILED], 0, WEBKIT_LOAD_STARTED, failingURIUTF8, error, &returnValue);
     }
 
     g_signal_emit(webView, signals[LOAD_CHANGED], 0, WEBKIT_LOAD_FINISHED);
@@ -3403,6 +3439,8 @@ RendererBufferDescription webkitWebViewGetRendererBufferDescription(WebKitWebVie
  * Returns: (transfer none): the #WebKitWebViewBackend of @web_view
  *
  * Since: 2.20
+ *
+ * Deprecated: 2.56: Use WPE Platform API instead.
  */
 WebKitWebViewBackend* webkit_web_view_get_backend(WebKitWebView* webView)
 {
@@ -3647,7 +3685,7 @@ void webkit_web_view_load_html(WebKitWebView* webView, const gchar* content, con
     g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
     g_return_if_fail(content);
 
-    auto contentData = spanReinterpretCast<const uint8_t>(CStringView::unsafeFromUTF8(content).span());
+    auto contentData = spanReinterpretCast<const uint8_t>(UTF8CStringView::unsafeFromUTF8(content).span());
     getPage(webView).loadData(WebCore::SharedBuffer::create(WTF::move(contentData)), "text/html"_s, "UTF-8"_s, String::fromUTF8(baseURI));
 }
 
@@ -3671,7 +3709,7 @@ void webkit_web_view_load_alternate_html(WebKitWebView* webView, const gchar* co
     g_return_if_fail(content);
     g_return_if_fail(contentURI);
 
-    Vector contentData(spanReinterpretCast<const uint8_t>(CStringView::unsafeFromUTF8(content).span()));
+    Vector contentData(spanReinterpretCast<const uint8_t>(UTF8CStringView::unsafeFromUTF8(content).span()));
     getPage(webView).loadAlternateHTML(WebCore::DataSegment::create(WTF::move(contentData)), "UTF-8"_s, URL { String::fromUTF8(baseURI) }, URL { String::fromUTF8(contentURI) }, nullptr);
 }
 
@@ -3864,6 +3902,29 @@ gboolean webkit_web_view_is_playing_audio(WebKitWebView* webView)
     g_return_val_if_fail(WEBKIT_IS_WEB_VIEW(webView), FALSE);
 
     return getPage(webView).isPlayingAudio();
+}
+
+/**
+ * webkit_web_view_has_protected_media:
+ * @web_view: a #WebKitWebView
+ *
+ * Gets the value of the #WebKitWebView:has-protected-media property.
+ *
+ * You can monitor when a page in a #WebKitWebView may be presenting
+ * DRM-protected media by connecting to the notify::has-protected-media
+ * signal of @web_view. This is useful when the application needs to keep
+ * protected content out of screenshots or recordings.
+ *
+ * Returns: %TRUE if a page in @web_view has a media element with MediaKeys
+ *    attached or %FALSE otherwise.
+ *
+ * Since: 2.56
+ */
+gboolean webkit_web_view_has_protected_media(WebKitWebView* webView)
+{
+    g_return_val_if_fail(WEBKIT_IS_WEB_VIEW(webView), FALSE);
+
+    return getPage(webView).hasProtectedMedia();
 }
 
 /**
@@ -4488,8 +4549,8 @@ static void webkitWebViewRunJavaScriptWithParams(WebKitWebView* webView, WebKit:
                 builder.append(": "_s);
             }
             builder.append(exceptionDetails.message);
-            g_task_return_new_error(task.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_SCRIPT_FAILED,
-                "%s", builder.toString().utf8().legacyCStringPointer());
+            SAFE_G_TASK_RETURN_NEW_ERROR(task.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_SCRIPT_FAILED,
+                "%s", builder.toString().utf8());
         }
     });
 }
@@ -5653,7 +5714,7 @@ void webkit_web_view_send_message_to_page(WebKitWebView* webView, WebKitUserMess
             g_task_return_pointer(task.get(), g_object_ref_sink(webkitUserMessageCreate(WTF::move(replyMessage))), static_cast<GDestroyNotify>(g_object_unref));
             break;
         case UserMessage::Type::Error:
-            g_task_return_new_error(task.get(), WEBKIT_USER_MESSAGE_ERROR, replyMessage.errorCode, _("Message %s was not handled"), replyMessage.name.legacyCStringPointer());
+            SAFE_G_TASK_RETURN_NEW_ERROR(task.get(), WEBKIT_USER_MESSAGE_ERROR, replyMessage.errorCode, _("Message %s was not handled"), replyMessage.name);
             break;
         }
     };
@@ -6180,9 +6241,71 @@ WebKitImageList* webkit_web_view_get_page_icons(WebKitWebView* webView)
     g_return_val_if_fail(WEBKIT_IS_WEB_VIEW(webView), nullptr);
     return webView->priv->pageIcons.get();
 }
+
+/**
+ * webkit_web_view_get_application_manifest:
+ * @web_view: a #WebKitWebView
+ * @cancellable: (nullable): a #GCancellable or %NULL to ignore
+ * @callback: (scope async): a #GAsyncReadyCallback to call when the request is satisfied
+ * @user_data: the data to pass to callback function
+ *
+ * Asynchronously get the application manifest of the currently loaded page.
+ *
+ * The manifest is loaded from the `<link rel="manifest">` element of the main
+ * frame document, so this should be called once the page has finished loading,
+ * for example on [signal@WebView::load-changed] with %WEBKIT_LOAD_FINISHED.
+ *
+ * When the operation is finished, @callback will be called. You can then call
+ * webkit_web_view_get_application_manifest_finish() to get the result of the operation.
+ *
+ * Since: 2.56
+ */
+void webkit_web_view_get_application_manifest(WebKitWebView* webView, GCancellable* cancellable, GAsyncReadyCallback callback, gpointer userData)
+{
+    g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
+
+    GRefPtr<GTask> task = adoptGRef(g_task_new(webView, cancellable, callback, userData));
+#if ENABLE(APPLICATION_MANIFEST)
+    getPage(webView).getApplicationManifest([task = WTF::move(task)](const std::optional<WebCore::ApplicationManifest>& coreManifest) {
+        if (g_task_return_error_if_cancelled(task.get()))
+            return;
+
+        if (!coreManifest) {
+            g_task_return_pointer(task.get(), nullptr, nullptr);
+            return;
+        }
+
+        auto* webView = WEBKIT_WEB_VIEW(g_task_get_source_object(task.get()));
+        g_task_return_pointer(task.get(), webkitApplicationManifestCreate(webView, *coreManifest), g_object_unref);
+    });
+#else
+    g_task_return_pointer(task.get(), nullptr, nullptr);
+#endif
+}
+
+/**
+ * webkit_web_view_get_application_manifest_finish:
+ * @web_view: a #WebKitWebView
+ * @result: a #GAsyncResult
+ * @error: return location for error or %NULL to ignore
+ *
+ * Finish an asynchronous operation started with webkit_web_view_get_application_manifest().
+ *
+ * Returns: (transfer full) (nullable): the page [class@ApplicationManifest], or %NULL
+ *    if the page does not have a valid manifest or in case of error.
+ *
+ * Since: 2.56
+ */
+WebKitApplicationManifest* webkit_web_view_get_application_manifest_finish(WebKitWebView* webView, GAsyncResult* result, GError** error)
+{
+    g_return_val_if_fail(WEBKIT_IS_WEB_VIEW(webView), nullptr);
+    g_return_val_if_fail(g_task_is_valid(result, webView), nullptr);
+
+    return static_cast<WebKitApplicationManifest*>(g_task_propagate_pointer(G_TASK(result), error));
+}
 #endif
 
-void webkitWebViewLoadServiceWorker(WebKitWebView* webView, const gchar* url, bool usingModules, CompletionHandler<void(bool success)>&& completionHandler)
+void webkitWebViewLoadServiceWorker(WebKitWebView* webView, const URL& url, bool usingModules, CompletionHandler<void(bool success)>&& completionHandler)
 {
     Ref page = getPage(webView);
 
@@ -6191,7 +6314,7 @@ void webkitWebViewLoadServiceWorker(WebKitWebView* webView, const gchar* url, bo
         return;
     }
 
-    page->loadServiceWorker(URL { String::fromUTF8(url) }, usingModules, [completionHandler = WTF::move(completionHandler)](bool success) mutable {
+    page->loadServiceWorker(url, usingModules, [completionHandler = WTF::move(completionHandler)](bool success) mutable {
         completionHandler(success);
     });
 }

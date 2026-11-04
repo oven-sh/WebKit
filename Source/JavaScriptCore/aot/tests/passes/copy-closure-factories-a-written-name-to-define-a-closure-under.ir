@@ -1,0 +1,40 @@
+# function define(object, name) { object[name] = function () { return name; }; }   define(object, "a");  define(object, "b");  define(object, other);
+# A call that hands a written name gets a copy, and the copy defines a member whose name flow can read. The call that hands another value keeps the function.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[first]]{{*}} = NewClosure function=f4
+# CHECK-NEXT: Call [[first]], -, v2, v3
+# CHECK: [[second]]{{*}} = NewClosure function=f6
+# CHECK-NEXT: Call [[second]], -, v2, v5
+# CHECK: Call v1, -, v2, v7
+# CHECK-LABEL: function f4 name="define"
+# CHECK: NewClosure v1 function=f3
+# CHECK-LABEL: function f6 name="define"
+# CHECK: NewClosure v1 function=f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[]
+variable g0 name="other" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewObject layout=L0
+    v3 = String string="a"
+    v4 = Call v1, -, v2, v3
+    v5 = String string="b"
+    v6 = Call v1, -, v2, v5
+    v7 = GetModuleVariable variable=g0
+    v8 = Call v1, -, v2, v7
+    Return
+}
+function f1 name="define" module=m0 position=10 length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure v1 function=f2
+    ElemSet v0, v1, v2 mode=Sloppy
+    Return
+}
+function f2 name="member" module=m0 position=20 captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

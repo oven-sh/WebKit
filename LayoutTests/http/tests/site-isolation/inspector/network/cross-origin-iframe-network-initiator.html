@@ -25,6 +25,16 @@ function test() {
             // the call contributes frames of its own.
             let functionNames = resource.initiatorStackTrace.callFrames.map((frame) => frame.functionName);
             InspectorTest.expectThat(functionNames.includes("triggerScriptInitiatedFetch"), "Initiator stack should name the function that called fetch.");
+
+            // Script identifiers collide across processes, and Network events from every process are
+            // resolved against the page target, so no frame should resolve to another target's script.
+            let initiatorCallFrame = resource.initiatorStackTrace.callFrames.find((callFrame) => callFrame.functionName === "triggerScriptInitiatedFetch");
+            InspectorTest.expectThat(initiatorCallFrame?.sourceCodeLocation?.sourceCode.url?.endsWith("script-initiated-fetch.js"), "Initiator frame should resolve to the iframe's own script.");
+            let misresolvedCallFrames = resource.initiatorStackTrace.callFrames.filter((callFrame) => {
+                let sourceCode = callFrame.sourceCodeLocation?.sourceCode;
+                return sourceCode instanceof WI.Script && sourceCode.target !== frameTarget;
+            });
+            InspectorTest.expectEmpty(misresolvedCallFrames, "No initiator frame should resolve to a script owned by another target.");
         }
     });
 

@@ -1,0 +1,38 @@
+# namespace Debug { export let level = 0; export let isDebugging = false; export let depth = 0; export let isQuiet = true }   function state() { return [Debug.level, Debug.isDebugging, Debug.depth, Debug.isQuiet] }
+# A namespace is born empty and no construction lists its members, as with a record whose options are left out. But the code around it fills it once, and it is read full from then on:
+# a function that reads four of its members handles no options. Each read tests its slot. What a filled slot holds is the answer whatever has become of the other members:
+# a library that replaces one of its own functions under a computed name (`Debug[name] = noop`) leaves the reads of the others as they were
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Container name="Debug" fields=[{key="level" declared={type=number}}, {key="isDebugging" declared={type=boolean}}, {key="depth" declared={type=number}}, {key="isQuiet" declared={type=boolean}}] flow={constructorOrders=[{}]}
+layout L1 name="Options" fields=[{key="level" declared={type=number}}, {key="isDebugging" declared={type=boolean}}, {key="depth" declared={type=number}}, {key="isQuiet" declared={type=boolean}}] flow={constructorOrders=[{}]}
+
+function f0 name="membersOfNamespace" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="level"
+    v2 = PropGet v0 key="isDebugging"
+    v3 = PropGet v0 key="depth"
+    v4 = PropGet v0 key="isQuiet"
+    v5 = NewArray v1, v2, v3, v4
+    Return v5
+# CHECK-NOT: HasNoFieldOutsideSlot
+# CHECK-NOT: GetSlotOrUndefined
+# CHECK: = IsSlotFilled {{*}} key="level"
+# CHECK: = IsSlotFilled {{*}} key="isDebugging"
+# CHECK: = IsSlotFilled {{*}} key="depth"
+# CHECK: = IsSlotFilled {{*}} key="isQuiet"
+}
+
+function f1 name="optionsOfRecord" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="level"
+    v2 = PropGet v0 key="isDebugging"
+    v3 = PropGet v0 key="depth"
+    v4 = PropGet v0 key="isQuiet"
+    v5 = NewArray v1, v2, v3, v4
+    Return v5
+# CHECK-NOT: IsSlotFilled
+# CHECK: = GetSlotOrUndefined {{*}} key="level"
+# CHECK: = GetSlotOrUndefined {{*}} key="isQuiet"
+}

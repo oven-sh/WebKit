@@ -1,0 +1,18 @@
+# A join that adds no layout to the longer of its two sets keeps that set, however long it is: the set of a base and a set inside it give the set of the base. One layout from outside makes a longer set, and that one is widened.
+# OPTIONS: limit=MaxLayoutsInType:8
+# RUN: union-widening
+# LOSS: MaxLayoutsInType x4 f0
+# CHECK: t0 | t0 = L0|L1|L2|L3|L4|L5|L6|L7|L8
+# CHECK-NEXT: t0 | t1 = L0|L1|L2|L3|L4|L5|L6|L7|L8
+# CHECK-NEXT: t0 | t2 = object
+# CHECK-NEXT: t0 | t3 = L0|L1|L2|L3|L4|L5|L6|L7|L8
+# CHECK-NEXT: t0 | t4 = undefined|L0|L1|L2|L3|L4|L5|L6|L7|L8
+# CHECK: t2 | t3 = object
+# CHECK: loss MaxLayoutsInType x4
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+# REPEAT: i = 0..9
+layout L%(i)
+# END REPEAT
+function f0 name="types" parameters=[{type=L0|L1|L2|L3|L4|L5|L6|L7|L8}, {type=L3}, {type=L9}, {type=L1|L2|L3|L4|L5|L6|L7|L8}, {type=undefined}] results=[{type=undefined}]

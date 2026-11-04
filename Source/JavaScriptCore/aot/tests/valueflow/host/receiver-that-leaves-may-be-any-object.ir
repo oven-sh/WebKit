@@ -1,0 +1,96 @@
+# class V { constructor(x) { this.x = x; } get g() { return (() => this.x)(); } get h() { return this.x; } } JSON.parse("0", () => new V(3))
+# An object of V leaves the program, and whoever holds it may call what stands above it on another object. `g` hands its receiver on to the arrow, so what the arrow
+# captures is only expected to be a V. `h` reads off its receiver and hands it to nobody: it keeps what it knows.
+# FORM: AsRead
+# RUN: valueflow-apply
+# OPTIONS: exclude=CodeOutsideImage
+# CHECK: name="h"
+# CHECK: PropGet v0 key="x" {{*}}receivers=[L0]
+# CHECK: kind=Arrow captures=[{type=L0 flags=[IsExpected] variableName="this"}]
+# CHECK-NOT: receivers=[L0]
+
+layout L0 kind=Instance name="V" module=m0 position=6 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="V" module=m0 declared={type=absent|f1 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="/$bunfs/root/held.mjs" displayPath="held.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 10, 29, 45, 49, 61, 90, 94, 106, 125, 129, 131, 164] textPrintedInPlace="\x93\x01\x0e\x0c\x03\x04(\x05\x01\x0d" textOfBody="\x00\x0ct\x02\x01\x10\x0e\x02"} functionText="class V {\x0a  constructor(x) {\x0a    this.x = x;\x0a  }\x0a  get g() {\x0a    return (() => this.x)();\x0a  }\x0a  get h() {\x0a    return this.x;\x0a  }\x0a}\x0aJSON.parse(\x220\x22, () => new V(3));\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = NewClass v0 layout=L0 @0
+    PutModuleVariable v1 variable=g1 @0
+    v3 = NewClosure function=f2 @55
+    DefineMethod v1, v3 layout=L0 methodKind=Getter key="g" @55
+    v5 = NewClosure function=f3 @100
+    DefineMethod v1, v5 layout=L0 methodKind=Getter index=1 key="h" @100
+    v7 = FinishClass v1 layout=L0 @0
+    v8 = Convert v7 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v9 = Convert v7 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    PutModuleVariable v9 variable=g0 @0
+    v11 = Builtin builtin=JSON @131
+    v12 = PropGet v11 key="parse" @131
+    v13 = Convert v12 declared={type=builtin(JSONParse) flags=[IsExpected]} @131
+    v14 = String string="0" @142
+    v15 = NewClosure function=f4 @147
+    v16 = Call v13, v11, v14, v15 calleeKey="parse" calleeName="JSON.parse" @136
+    v17 = Undefined @131
+    Return v17 @131
+}
+function f1 name="V" module=m0 position=23 text={end=130} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @23
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0 @42
+    v3 = NewObject v2 layout=L0 @42
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @42
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]} @33
+    PropSet v5, v1 key="x" @33
+    v7 = Undefined @33
+    v8 = TypeTest v7 testedType=object @33
+    Branch v8 -> taken b2(| 0), notTaken b3(| 0) @33
+  b2(v9):
+    Jump -> next b4(v9) @33
+  b3(v10):
+    Jump -> next b4(v4) @33
+  b4(v11):
+    Return v11 @33
+}
+function f2 name="g" module=m0 position=51 text={start=51 end=93} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @51
+  b1():
+    v1 = NewClosure v0 function=f5 @73
+    v2 = Call v1 @84
+    ReturnCall v2 @84
+}
+function f3 name="h" module=m0 position=96 text={start=96 end=128} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @96
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @117
+    v2 = PropGet v1 key="x" @117
+    Return v2 @117
+}
+function f4 module=m0 position=147 text={start=147 end=161} kind=Arrow thisType={type=anything} results=[{type=undefined|null|L0 flags=[IsExpected]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @147
+  b1():
+    v0 = GetModuleVariable variable=g0 @157
+    v1 = CheckInitialized v0 name="V" @157
+    v2 = Integer integer=3 @159
+    v3 = Construct v1, -, v2 calleeName="V" @157 constructs
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]} @153
+    Return v4 @153
+}
+function f5 module=m0 position=73 text={start=73 end=85} kind=Arrow captures=[{type=L0 flags=[IsExpected] variableName="this"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @73
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @79
+    v2 = PropGet v1 key="x" @79
+    Return v2 @79
+}
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]

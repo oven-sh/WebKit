@@ -68,7 +68,6 @@
 #include "NodeRenderStyle.h"
 #include "Page.h"
 #include "Position.h"
-#include "RenderInline.h"
 #include "RenderText.h"
 #include "ScriptDisallowedScope.h"
 #include "ScriptElement.h"
@@ -108,15 +107,15 @@ class ReplacementFragment {
 public:
     ReplacementFragment(RefPtr<DocumentFragment>&&, const VisibleSelection&);
 
-    DocumentFragment* NODELETE fragment() { return m_fragment.get(); }
+    DocumentFragment* LEGACY_NODELETE fragment() { return m_fragment.get(); }
 
     Node* firstChild() const;
     Node* lastChild() const;
 
-    bool isEmpty() const;
+    bool LEGACY_NODELETE isEmpty() const;
     
-    bool NODELETE hasInterchangeNewlineAtStart() const { return m_hasInterchangeNewlineAtStart; }
-    bool NODELETE hasInterchangeNewlineAtEnd() const { return m_hasInterchangeNewlineAtEnd; }
+    bool LEGACY_NODELETE hasInterchangeNewlineAtStart() const { return m_hasInterchangeNewlineAtStart; }
+    bool LEGACY_NODELETE hasInterchangeNewlineAtEnd() const { return m_hasInterchangeNewlineAtEnd; }
     
     void removeNode(Node&);
     void removeNodePreservingChildren(Node&);
@@ -137,13 +136,13 @@ private:
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ReplacementFragment);
 
-static bool NODELETE isInterchangeNewlineNode(const Node& node)
+static bool LEGACY_NODELETE isInterchangeNewlineNode(const Node& node)
 {
     auto* br = dynamicDowncast<HTMLBRElement>(node);
     return br && br->attributeWithoutSynchronization(classAttr) == AppleInterchangeNewline;
 }
 
-static bool NODELETE isInterchangeConvertedSpaceSpan(const Node& node)
+static bool LEGACY_NODELETE isInterchangeConvertedSpaceSpan(const Node& node)
 {
     auto* element = dynamicDowncast<HTMLElement>(node);
     return element && element->attributeWithoutSynchronization(classAttr) == AppleConvertedSpace;
@@ -287,12 +286,12 @@ bool ReplacementFragment::isEmpty() const
     return (!m_fragment || !m_fragment->firstChild()) && !m_hasInterchangeNewlineAtStart && !m_hasInterchangeNewlineAtEnd;
 }
 
-Node *NODELETE ReplacementFragment::firstChild() const 
+Node *LEGACY_NODELETE ReplacementFragment::firstChild() const 
 { 
     return m_fragment ? m_fragment->firstChild() : 0; 
 }
 
-Node *NODELETE ReplacementFragment::lastChild() const 
+Node *LEGACY_NODELETE ReplacementFragment::lastChild() const 
 { 
     return m_fragment ? m_fragment->lastChild() : 0; 
 }
@@ -539,7 +538,7 @@ bool ReplaceSelectionCommand::shouldMergeEnd(bool selectionEndWasEndOfParagraph)
         && shouldMerge(endOfInsertedContent, next);
 }
 
-static bool NODELETE isMailPasteAsQuotationNode(const Node& node)
+static bool LEGACY_NODELETE isMailPasteAsQuotationNode(const Node& node)
 {
     return node.hasTagName(blockquoteTag) && downcast<Element>(node).attributeWithoutSynchronization(classAttr) == ApplePasteAsQuotation;
 }
@@ -573,7 +572,7 @@ bool ReplaceSelectionCommand::shouldMerge(const VisiblePosition& source, const V
         && !isBlock(*sourceNode) && !isBlock(*destinationNode);
 }
 
-static bool isLightEnoughToTreatAsBackground(double lightness)
+static bool LEGACY_NODELETE isLightEnoughToTreatAsBackground(double lightness)
 {
     return lightness > 0.6;
 }
@@ -615,8 +614,8 @@ static bool nodeTreeHasInlineStyleWithLegibleColorForInvertLightness(const Node&
 
     if (RefPtr element = dynamicDowncast<StyledElement>(node)) {
         if (RefPtr inlineStyle = element->inlineStyle()) {
-            currentTextLightness = lightnessIgnoringSemanticColors(inlineStyle->propertyAsColor(CSSPropertyColor));
-            currentBackgroundLightness = lightnessIgnoringSemanticColors(inlineStyle->propertyAsColor(CSSPropertyBackgroundColor));
+            currentTextLightness = lightnessIgnoringSemanticColors(inlineStyle->propertyAsColor(CSSPropertyID::Color));
+            currentBackgroundLightness = lightnessIgnoringSemanticColors(inlineStyle->propertyAsColor(CSSPropertyID::BackgroundColor));
         }
     }
 
@@ -774,14 +773,14 @@ void ReplaceSelectionCommand::removeRedundantStylesAndKeepStyleSpanInline(Insert
 
             // Mutate using the CSSOM wrapper so we get the same event behavior as a script.
             if (isBlock(*element))
-                protect(element->cssomStyle())->setPropertyInternal(CSSPropertyDisplay, "inline"_s, IsImportant::No);
+                protect(element->cssomStyle())->setPropertyInternal(CSSPropertyID::Display, "inline"_s, IsImportant::No);
             if (element->renderer() && element->renderer()->style().floating() != Float::None)
-                protect(element->cssomStyle())->setPropertyInternal(CSSPropertyFloat, noneAtom(), IsImportant::No);
+                protect(element->cssomStyle())->setPropertyInternal(CSSPropertyID::Float, noneAtom(), IsImportant::No);
         }
     }
 }
 
-static bool NODELETE isProhibitedParagraphChild(const QualifiedName& name)
+static bool LEGACY_NODELETE isProhibitedParagraphChild(const QualifiedName& name)
 {
     using namespace ElementNames;
 
@@ -1190,8 +1189,8 @@ void ReplaceSelectionCommand::doApply()
         m_matchStyle = false;
     
     if (m_matchStyle) {
-        m_insertionStyle = EditingStyle::create(selection.start());
-        protect(m_insertionStyle)->mergeTypingStyle(document());
+        lazyInitialize(m_insertionStyle, EditingStyle::create(selection.start()));
+        m_insertionStyle->mergeTypingStyle(document());
     }
 
     VisiblePosition visibleStart = selection.visibleStart();
@@ -1894,7 +1893,7 @@ void ReplaceSelectionCommand::updateNodesInserted(Node *node)
 ReplacementFragment* ReplaceSelectionCommand::ensureReplacementFragment()
 {
     if (!m_replacementFragment)
-        m_replacementFragment = makeUnique<ReplacementFragment>(protect(m_documentFragment), endingSelection());
+        lazyInitialize(m_replacementFragment, makeUnique<ReplacementFragment>(protect(m_documentFragment), endingSelection()));
     return m_replacementFragment.get();
 }
 
@@ -2013,7 +2012,7 @@ void ReplaceSelectionCommand::updateDirectionForStartOfInsertedContentIfNeeded(c
 
         if (CheckedPtr renderer = blockContainer->renderer(); renderer && renderer->writingMode().bidiDirection() != newDirection) {
             auto directionValueID = toCSSValueID(*newDirection);
-            Ref style = EditingStyle::create(CSSPropertyDirection, directionValueID);
+            Ref style = EditingStyle::create(CSSPropertyID::Direction, directionValueID);
             applyStyle(style.ptr(), paragraphEnd, paragraphEnd, EditAction::SetBlockWritingDirection, ApplyStylePropertyLevel::ForceBlock);
             setNodeAttribute(*blockContainer, dirAttr, nameLiteral(directionValueID));
             restoreOriginalEndingSelection = true;
@@ -2048,19 +2047,19 @@ using ElementToStyleProperties = HashMap<Ref<StyledElement>, Vector<CSSPropertyI
 
         Ref document = node.document();
         Vector<CSSPropertyID, 3> propertiesToRemove;
-        if (auto inlineBackgroundColor = style->propertyAsColor(CSSPropertyBackgroundColor)) {
+        if (auto inlineBackgroundColor = style->propertyAsColor(CSSPropertyID::BackgroundColor)) {
             bool inlineColorIsValid = inlineBackgroundColor->isValid();
-            auto backgroundColor = inlineColorIsValid ? *inlineBackgroundColor : protect(renderer->style())->visitedDependentBackgroundColor();
+            auto backgroundColor = inlineColorIsValid ? *inlineBackgroundColor : protect(renderer->style())->visitedDependentUsedBackgroundColor();
             auto compositeOperator = document->compositeOperatorForBackgroundColor(backgroundColor, *renderer);
             if (compositeOperator != CompositeOperator::DestinationIn && compositeOperator != CompositeOperator::DestinationOut) {
                 bool inlineColorIsSemantic = inlineColorIsValid && inlineBackgroundColor->isSemantic();
                 if (inlineColorIsSemantic || !document->settings().punchOutWhiteBackgroundsInDarkMode() || !backgroundColor.isOpaque() || !isLightOrDarkNeutralBackgroundColor(backgroundColor))
                     return;
-                propertiesToRemove.append(CSSPropertyBackgroundColor);
+                propertiesToRemove.append(CSSPropertyID::BackgroundColor);
             }
         }
 
-        for (auto property : { CSSPropertyColor, CSSPropertyCaretColor }) {
+        for (auto property : { CSSPropertyID::Color, CSSPropertyID::CaretColor }) {
             auto color = style->propertyAsColor(property);
             if (!color)
                 continue;

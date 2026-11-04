@@ -1,0 +1,22 @@
+# Reflect.set({}, "extra", one, Set.prototype); new Set().extra()
+# RUN: valueflow-solve calls
+# CHECK: f0 v9 -> {{*}}unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+    v0 = Builtin builtin=SetPrototype
+    v1 = NewClosure function=f1
+    v2 = NewDictionary
+    v3 = String string="extra"
+    v4 = Builtin builtin=ReflectSet
+    v5 = Call v4, -, v2, v3, v1, v0
+    v6 = Builtin builtin=Set
+    v7 = Construct v6
+    v8 = PropGet v7 key="extra"
+    v9 = Call v8, v7
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}

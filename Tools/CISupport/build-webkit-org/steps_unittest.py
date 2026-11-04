@@ -456,6 +456,47 @@ class TestCompileWebKit(BuildStepMixinAdditions, unittest.TestCase):
         self.expect_outcome(result=SUCCESS, state_string='compiled')
         return self.run_step()
 
+    def test_success_cmake_mac(self):
+        self.setup_step(CompileWebKit())
+        self.setProperty('platform', 'mac')
+        self.setProperty('fullPlatform', 'mac-sequoia')
+        self.setProperty('configuration', 'debug')
+        self.setProperty('architecture', 'x86_64 arm64')
+        self.setProperty('additionalArguments', ['--cmake'])
+        self.setProperty('builddir', 'BuildDir')
+        self.expectRemoteCommands(
+            ExpectShell(
+                workdir='wkdir',
+                timeout=3600,
+                log_environ=True,
+                env={'PATH': '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/CMake.app/Contents/bin/:BuildDir'},
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'perl Tools/Scripts/build-webkit --no-fatal-warnings --debug --cmake --architecture "x86_64 arm64" 2>&1 | perl Tools/Scripts/filter-build-webkit -logfile build-log.txt'],
+            ).exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='compiled')
+        return self.run_step()
+
+    def test_success_cmake_mac_build_only(self):
+        self.setup_step(CompileWebKit())
+        self.setProperty('platform', 'mac')
+        self.setProperty('fullPlatform', 'mac-sequoia')
+        self.setProperty('configuration', 'release')
+        self.setProperty('buildOnly', True)
+        self.setProperty('deployment_target', '15.0')
+        self.setProperty('additionalArguments', ['--cmake'])
+        self.setProperty('builddir', 'BuildDir')
+        self.expectRemoteCommands(
+            ExpectShell(
+                workdir='wkdir',
+                timeout=3600,
+                log_environ=True,
+                env={'PATH': '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/CMake.app/Contents/bin/:BuildDir'},
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'perl Tools/Scripts/build-webkit --no-fatal-warnings --release --cmake --dsym --cmakeargs="-DCMAKE_C_FLAGS=-gline-tables-only -DCMAKE_CXX_FLAGS=-gline-tables-only -DCMAKE_OBJC_FLAGS=-gline-tables-only -DCMAKE_OBJCXX_FLAGS=-gline-tables-only -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0" 2>&1 | perl Tools/Scripts/filter-build-webkit -logfile build-log.txt'],
+            ).exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='compiled')
+        return self.run_step()
+
     def test_bigsur_timeout(self):
         self.setup_step(CompileWebKit())
         self.setProperty('fullPlatform', 'mac-sonoma')
@@ -905,6 +946,69 @@ class TestRunWebKitTests(BuildStepMixinAdditions, unittest.TestCase):
             .log('stdio', stdout='9 failures found.'),
         )
         self.expect_outcome(result=FAILURE, state_string='layout-tests (failure)')
+        return self.run_step()
+
+    def test_failure_with_failed_results_upload(self):
+        # When the upload to the results server fails, run-webkit-tests exits with -1 (255), but it still prints the results.
+        self.configureStep()
+        self.setProperty('fullPlatform', 'ios-simulator')
+        self.setProperty('configuration', 'release')
+        self.expectRemoteCommands(
+            ExpectShell(
+                workdir='wkdir',
+                timeout=10800,
+                log_environ=False,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c',
+                         f'python3 Tools/Scripts/run-webkit-tests --no-build --no-show-results --no-new-test-results --clobber-old-results --builder-name iOS-14-Simulator-WK2-Tests-EWS --build-number 101 --buildbot-worker ews100 --buildbot-master {CURRENT_HOSTNAME} --exit-after-n-crashes-or-timeouts 50 --exit-after-n-failures 500 --release --report {RESULTS_WEBKIT_URL} --results-directory layout-test-results --debug-rwt-logging 2>&1 | python3 Tools/Scripts/filter-test-logs layout'],
+                env={'RESULTS_SERVER_API_KEY': 'test-api-key'}
+            ).exit(255)
+            .log('stdio', stdout='''=> Results: 2/5 tests passed (40.0%)
+
+=> Tests to be fixed (3):
+      1 crashes                  (33.3%)
+
+Unexpected flakiness: text-only failures (1)
+  failures/flaky/text.html [ Pass Failure ]
+
+
+Regressions: Unexpected crashes (1)
+  failures/unexpected/crash.html [ Crash ]
+
+Regressions: Unexpected image and text failures (1)
+  failures/unexpected/text-image-checksum.html [ Failure ]
+
+------------------------------------------------------------------------------
+
+Failed to upload test results to https://results.webkit.org (1 failed), exiting with status -1.
+'''),
+        )
+        self.expect_outcome(result=FAILURE, state_string='1 flakes 2 failures results upload failed')
+        return self.run_step()
+
+    def test_passing_with_failed_results_upload(self):
+        self.configureStep()
+        self.setProperty('fullPlatform', 'ios-simulator')
+        self.setProperty('configuration', 'release')
+        self.expectRemoteCommands(
+            ExpectShell(
+                workdir='wkdir',
+                timeout=10800,
+                log_environ=False,
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c',
+                         f'python3 Tools/Scripts/run-webkit-tests --no-build --no-show-results --no-new-test-results --clobber-old-results --builder-name iOS-14-Simulator-WK2-Tests-EWS --build-number 101 --buildbot-worker ews100 --buildbot-master {CURRENT_HOSTNAME} --exit-after-n-crashes-or-timeouts 50 --exit-after-n-failures 500 --release --report {RESULTS_WEBKIT_URL} --results-directory layout-test-results --debug-rwt-logging 2>&1 | python3 Tools/Scripts/filter-test-logs layout'],
+                env={'RESULTS_SERVER_API_KEY': 'test-api-key'}
+            ).exit(255)
+            .log('stdio', stdout='''=> Results: 2/2 tests passed (100.0%)
+
+=> Tests to be fixed (0):
+
+=> Tests that will only be fixed if they crash (WONTFIX) (0):
+
+
+Failed to upload test results to https://results.webkit.org (1 failed), exiting with status -1.
+'''),
+        )
+        self.expect_outcome(result=FAILURE, state_string='results upload failed')
         return self.run_step()
 
     def test_unexpected_error(self):
@@ -2837,6 +2941,11 @@ class TestBuildSwift(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir=SWIFT_DIR,
                         log_environ=False,
                         timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'rm -rf webkit/{SWIFT_DIR}/swift-nightly-install webkit/{SWIFT_DIR}/swift-nightly-symroot'])
+            .exit(0),
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
                         command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -rf "$(getconf DARWIN_USER_CACHE_DIR)org.llvm.clang"'])
             .exit(0),
             ExpectShell(workdir=SWIFT_DIR,
@@ -2873,6 +2982,11 @@ class TestBuildSwift(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir=SWIFT_DIR,
                         log_environ=False,
                         timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'rm -rf webkit/{SWIFT_DIR}/swift-nightly-install webkit/{SWIFT_DIR}/swift-nightly-symroot'])
+            .exit(0),
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
                         command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -rf "$(getconf DARWIN_USER_CACHE_DIR)org.llvm.clang"'])
             .exit(0),
             ExpectShell(workdir=SWIFT_DIR,
@@ -2902,6 +3016,11 @@ class TestBuildSwift(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir=SWIFT_DIR,
                         log_environ=False,
                         timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'rm -rf webkit/{SWIFT_DIR}/swift-nightly-install webkit/{SWIFT_DIR}/swift-nightly-symroot'])
+            .exit(0),
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
                         command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -rf "$(getconf DARWIN_USER_CACHE_DIR)org.llvm.clang"'])
             .exit(0),
             ExpectShell(workdir=SWIFT_DIR,
@@ -2926,6 +3045,11 @@ class TestBuildSwift(BuildStepMixinAdditions, unittest.TestCase):
                         log_environ=False,
                         timeout=1200,
                         command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -rf ../build'])
+            .exit(0),
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'rm -rf webkit/{SWIFT_DIR}/swift-nightly-install webkit/{SWIFT_DIR}/swift-nightly-symroot'])
             .exit(0),
             ExpectShell(workdir=SWIFT_DIR,
                         log_environ=False,

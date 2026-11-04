@@ -1,0 +1,50 @@
+# Invalidating an analysis drops what depends on it and nothing else
+# FORM: Prepared
+# RUN(VALUES): invalidate function=f0 compute=control-flow,dominators,natural-loops,cycles,use-lists,identities,liveness,effects,escape,escape-history,frequencies,guards,failed-tests,induction invalidate=use-lists,identities,liveness,effects,escape,escape-history,frequencies,guards,failed-tests,induction
+# RUN(USES): invalidate function=f0 compute=control-flow,dominators,natural-loops,cycles,use-lists,identities,liveness,effects,escape,escape-history,frequencies,guards,failed-tests,induction invalidate=use-lists
+# RUN(CYCLES): invalidate function=f0 compute=control-flow,dominators,natural-loops,cycles,use-lists,identities,liveness,effects,escape,escape-history,frequencies,guards,failed-tests,induction invalidate=cycles
+# RUN(TREE): invalidate function=f0 compute=control-flow,dominators,natural-loops,cycles,use-lists,identities,liveness,effects,escape,escape-history,frequencies,guards,failed-tests,induction invalidate=dominators
+# RUN(LOOPS): invalidate function=f0 compute=control-flow,dominators,natural-loops,cycles,use-lists,identities,liveness,effects,escape,escape-history,frequencies,guards,failed-tests,induction invalidate=natural-loops
+# RUN(GRAPH): invalidate function=f0 compute=control-flow,dominators,natural-loops,cycles,use-lists,identities,liveness,effects,escape,escape-history,frequencies,guards,failed-tests,induction invalidate=control-flow
+# RUN(IDENTITIES): invalidate function=f0 compute=control-flow,dominators,natural-loops,cycles,use-lists,identities,liveness,effects,escape,escape-history,frequencies,guards,failed-tests,induction invalidate=identities
+# RUN(EFFECTS): invalidate function=f0 compute=control-flow,dominators,natural-loops,cycles,use-lists,identities,liveness,effects,escape,escape-history,frequencies,guards,failed-tests,induction invalidate=effects
+# RUN(ESCAPE): invalidate function=f0 compute=control-flow,dominators,natural-loops,cycles,use-lists,identities,liveness,effects,escape,escape-history,frequencies,guards,failed-tests,induction invalidate=escape
+# RUN(HISTORY): invalidate function=f0 compute=control-flow,dominators,natural-loops,cycles,use-lists,identities,liveness,effects,escape,escape-history,frequencies,guards,failed-tests,induction invalidate=escape-history
+# RUN(LEAF): invalidate function=f0 compute=control-flow,dominators,natural-loops,cycles,use-lists,identities,liveness,effects,escape,escape-history,frequencies,guards,failed-tests,induction invalidate=liveness
+# RUN(LAZY): invalidate function=f0 compute=liveness invalidate=escape
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Empty"
+function f0 name="loopAndObject" parameters=[{type=boolean}] results=[{type=object}] {
+    v1 = NewObject layout=L0 fields=[]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return v1
+}
+# VALUES: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects escape escape-history frequencies guards failed-tests induction]
+# VALUES-NEXT: computed: [control-flow dominators natural-loops cycles]
+# USES: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects escape escape-history frequencies guards failed-tests induction]
+# USES-NEXT: computed: [control-flow dominators natural-loops cycles identities effects frequencies failed-tests]
+# CYCLES: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects escape escape-history frequencies guards failed-tests induction]
+# CYCLES-NEXT: computed: [control-flow dominators natural-loops use-lists identities liveness effects failed-tests induction]
+# TREE: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects escape escape-history frequencies guards failed-tests induction]
+# TREE-NEXT: computed: [control-flow cycles use-lists identities liveness effects escape escape-history frequencies]
+# LOOPS: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects escape escape-history frequencies guards failed-tests induction]
+# LOOPS-NEXT: computed: [control-flow dominators cycles use-lists identities liveness effects escape escape-history frequencies guards failed-tests]
+# GRAPH: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects escape escape-history frequencies guards failed-tests induction]
+# GRAPH-NEXT: computed: []
+# IDENTITIES: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects escape escape-history frequencies guards failed-tests induction]
+# IDENTITIES-NEXT: computed: [control-flow dominators natural-loops cycles use-lists liveness effects escape escape-history frequencies]
+# EFFECTS: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects escape escape-history frequencies guards failed-tests induction]
+# EFFECTS-NEXT: computed: [control-flow dominators natural-loops cycles use-lists identities liveness frequencies failed-tests]
+# ESCAPE: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects escape escape-history frequencies guards failed-tests induction]
+# ESCAPE-NEXT: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects frequencies failed-tests induction]
+# HISTORY: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects escape escape-history frequencies guards failed-tests induction]
+# HISTORY-NEXT: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects escape frequencies failed-tests induction]
+# LEAF: computed: [control-flow dominators natural-loops cycles use-lists identities liveness effects escape escape-history frequencies guards failed-tests induction]
+# LEAF-NEXT: computed: [control-flow dominators natural-loops cycles use-lists identities effects escape escape-history frequencies guards failed-tests induction]
+# LAZY: computed: [control-flow use-lists liveness]
+# LAZY-NEXT: computed: [control-flow use-lists liveness]

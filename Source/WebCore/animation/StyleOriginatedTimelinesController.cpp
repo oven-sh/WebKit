@@ -56,26 +56,26 @@
 namespace WebCore {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StyleOriginatedTimelinesController);
 
-static const WeakStyleable& originatingStyleable(const Ref<ScrollTimeline>& timeline LIFETIME_BOUND)
+static const WeakStyleable& LEGACY_NODELETE originatingStyleable(const Ref<ScrollTimeline>& timeline LIFETIME_BOUND)
 {
     if (auto* viewTimeline = dynamicDowncast<ViewTimeline>(timeline.get()))
         return viewTimeline->subjectStyleable();
     return timeline->sourceStyleable();
 }
 
-static Element* NODELETE originatingElement(const Ref<ScrollTimeline>& timeline)
+static Element* LEGACY_NODELETE originatingElement(const Ref<ScrollTimeline>& timeline)
 {
     return originatingStyleable(timeline).element().get();
 }
 
-static Element* NODELETE originatingElementIncludingTimelineScope(const Ref<ScrollTimeline>& timeline)
+static Element* LEGACY_NODELETE originatingElementIncludingTimelineScope(const Ref<ScrollTimeline>& timeline)
 {
     if (auto* timelineScopeElement = timeline->timelineScopeDeclaredElement())
         return timelineScopeElement;
     return originatingElement(timeline);
 }
 
-static Element* NODELETE originatingElementExcludingTimelineScope(const Ref<ScrollTimeline>& timeline)
+static Element* LEGACY_NODELETE originatingElementExcludingTimelineScope(const Ref<ScrollTimeline>& timeline)
 {
     return timeline->timelineScopeDeclaredElement() ? nullptr : originatingElement(timeline);
 }
@@ -181,7 +181,7 @@ ScrollTimeline* StyleOriginatedTimelinesController::determineTimelineForElement(
         RefPtr elementForTimeline = originatingElementIncludingTimelineScope(timeline);
         if (!elementForTimeline)
             continue;
-        if (elementForTimeline == targetElement.ptr() || targetElement->isComposedTreeDescendantOf(*elementForTimeline))
+        if (targetElement->isComposedTreeInclusiveDescendantOf(*elementForTimeline))
             timelinesInTargetHierarchy.append(timeline);
         else
             timelinesOutsideTargetHierarchy.append(timeline);

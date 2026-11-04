@@ -24,6 +24,8 @@
 #if compiler(>=6.4) && !SWIFT_WEBKIT_TOOLCHAIN
 
 import WebKit_Internal
+// FIXME: (rdar://191085916) Remove this import.
+import JavaScriptCore_Private.Cxx
 
 extension WebKit.RunJavaScriptResult: @unsafe CxxConsumingExpected {
     // swift-format-ignore: AlwaysUseLowerCamelCase,NoLeadingUnderscores

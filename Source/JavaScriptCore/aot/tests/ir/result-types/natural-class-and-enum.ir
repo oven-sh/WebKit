@@ -1,0 +1,20 @@
+# A natural rule can name a built-in class, and an enum stands for the numbers of its members
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v2: RegExp<"a"[], pristine[Storage, Names, AsCreated]>
+# CHECK-NEXT: v3: int[0, 3]
+# CHECK-NEXT: v4.0: anything
+# CHECK-NEXT: v4.1: int[0, 2]
+# CHECK-NEXT: v5: anything
+# CHECK-NEXT: v6: int[0, 2]
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="n" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Array, v1: anything):
+    v2 = SharedRegExpLiteral pattern="a"
+    v3 = ArrayStorageKind v0
+    v4 = StepGenerator v1, v1 resumeMode=Next check=IsGenerator
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    Return
+}

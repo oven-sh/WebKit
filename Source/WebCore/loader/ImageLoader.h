@@ -41,6 +41,8 @@ class Page;
 class RenderImageResource;
 struct ImageCandidate;
 
+enum class ImageRequestState : uint8_t;
+
 template<typename T, typename Counter> class EventSender;
 using ImageEventSender = EventSender<ImageLoader, SingleThreadWeakPtrImpl>;
 
@@ -53,7 +55,7 @@ public:
     virtual ~ImageLoader();
 
     // CachedResourceClient.
-    void NODELETE ref() const final;
+    void LEGACY_NODELETE ref() const final;
     void deref() const final;
 
     // This function should be called when the element is attached to a document; starts
@@ -74,6 +76,9 @@ public:
     bool shouldIgnoreCandidateWhenLoadingFromArchive(const ImageCandidate&) const;
 
     bool imageComplete() const { return m_imageComplete; }
+
+    // https://html.spec.whatwg.org/multipage/images.html#img-req-state
+    ImageRequestState currentRequestState() const;
 
     CachedImage* image() const { return m_image.get(); }
     void clearImage(); // Cancels pending load events, and doesn't dispatch new ones.
@@ -114,7 +119,7 @@ private:
     void dispatchPendingLoadEvent();
     void dispatchPendingErrorEvent();
 
-    RenderImageResource* NODELETE renderImageResource();
+    RenderImageResource* LEGACY_NODELETE renderImageResource();
     void updateRenderer();
 
     void clearImageWithoutConsideringPendingLoadEvent();

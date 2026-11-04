@@ -1,0 +1,37 @@
+# a message names functions and layouts as the program has them; what the template leaves out follows for an internal error only; L1 is a layout the reader adds
+# RUN: diagnostics LimitExceeded,f0,v0,limit=MaxLayoutsInType,count=1025 FrameTooLarge,f1,limit=MaxFrameSizeInBytes,count=2000000 FrameTooLarge,f2,limit=MaxFrameSizeInBytes,count=2000000 InvalidLayout,L0 OperandTypeMismatch,f0,b0 OperandTypeMismatch,f0,v9 OperandTypeMismatch,f0 OperandTypeMismatch,f0,pass=FoldConstants OperandTypeMismatch,f0,v0 OperandTypeMismatch,f1 OperandTypeMismatch,f2 InvalidLayout,L1,at=0:99 OperandTypeMismatch,f9 VerificationFailedAfterPass,pass=FoldConstants ListOutOfBounds,limit=MaxCaptures,count=3
+# RUN: diagnostics LimitExceeded,f0,v0,limit=MaxLayoutsInType,count=1025 FrameTooLarge,f1,limit=MaxFrameSizeInBytes,count=2000000 FrameTooLarge,f2,limit=MaxFrameSizeInBytes,count=2000000 InvalidLayout,L0 OperandTypeMismatch,f0,b0 OperandTypeMismatch,f0,v9 OperandTypeMismatch,f0 OperandTypeMismatch,f0,pass=FoldConstants OperandTypeMismatch,f0,v0 OperandTypeMismatch,f1 OperandTypeMismatch,f2 InvalidLayout,L1,at=0:99 OperandTypeMismatch,f9 VerificationFailedAfterPass,pass=FoldConstants ListOutOfBounds,limit=MaxCaptures,count=3 threads=16 seed=5
+# CHECK: user records 3
+# CHECK-NEXT: LimitExceeded f0 - v0 - MaxLayoutsInType 1025 0:44 Error | the program exceeds a compiler limit: MaxLayoutsInType (object shapes in one inferred type), needed 1025
+# CHECK-NOT: parse
+# CHECK: FrameTooLarge f1 - - - MaxFrameSizeInBytes 2000000 0:60 Error | f1 needs a stack frame of 2000000 bytes, over the limit: MaxFrameSizeInBytes (stack frame size)
+# CHECK-NEXT: FrameTooLarge f0 - - - MaxFrameSizeInBytes 2000000 0:80 Error | 'parse' (f2) needs a stack frame of 2000000 bytes, over the limit: MaxFrameSizeInBytes (stack frame size)
+# CHECK-NEXT: internal records 12
+# CHECK-NEXT: InvalidLayout - - - L0 None 0 0:7 - | 'Point' (L0) is not a valid layout
+# CHECK-NEXT: OperandTypeMismatch f0 b0 - - None 0 0:40 - | the operand has the wrong type; function 'parse' (f0), block b0 (ends in Return)
+# CHECK-NEXT: OperandTypeMismatch f0 - v9 - None 0 0:40 - | the operand has the wrong type; function 'parse' (f0), value v9
+# CHECK-NEXT: OperandTypeMismatch f0 - - - None 0 0:40 - | the operand has the wrong type; function 'parse' (f0)
+# CHECK-NEXT: OperandTypeMismatch f0 - - - None 0 0:40 FoldConstants | the operand has the wrong type; function 'parse' (f0), after pass FoldConstants
+# CHECK-NEXT: OperandTypeMismatch f0 - v0 - None 0 0:44 - | the operand has the wrong type; function 'parse' (f0), value v0 (Undefined)
+# CHECK-NEXT: OperandTypeMismatch f1 - - - None 0 0:60 - | the operand has the wrong type; function f1
+# CHECK-NEXT: OperandTypeMismatch f0 - - - None 0 0:80 - | the operand has the wrong type; function 'parse' (f2)
+# CHECK-NEXT: InvalidLayout - - - - None 0 0:99 - | {{*}}L1{{*}} is not a valid layout
+# CHECK-NEXT: OperandTypeMismatch - - - - None 0 - - | the operand has the wrong type; function f9
+# CHECK-NEXT: VerificationFailedAfterPass - - - - None 0 - FoldConstants | verification failed after FoldConstants
+# CHECK-NEXT: ListOutOfBounds - - - - MaxCaptures 3 - - | a list is outside its section, in record 3; limit MaxCaptures (variables a closure captures)
+# CHECK-NEXT: of 15 added
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" module=m0 position=7
+function f0 name="parse" position=40 results=[{type=undefined}] {
+    v0 = Undefined @44
+    Return v0
+}
+function f1 position=60 results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+function f2 name="parse" position=80 role=OutlinedBody results=[{type=undefined}] derivation={source=f0} {
+    v0 = Undefined
+    Return v0
+}

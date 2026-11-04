@@ -1,0 +1,25 @@
+# class Filled { count: number; ratio: number; label: string; link: Filled | null; next: Filled; constructor(seed) { show("made"); this.count = seed | 0; .. this.next = this } }
+# The definitions of its fields store 0, 0.5 or 0, "", null instead of undefined, and nobody can tell. Where somebody can, undefined is what is seen:
+# ReadsFirst reads the field before it stores, StoresOnOnePath leaves it alone on one path, HeldBeforeInitializer is in a variable before its fields are defined, where a function that is called reads it,
+# and the base class of BelowRegisters has put the object into a variable. The keys of ReverseOrder come in the order of the definitions, not of the stores
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: validate
+# CHECK: made
+# CHECK-NEXT: 7
+# CHECK-NEXT: 7.5
+# CHECK-NEXT: 7
+# CHECK-NEXT: null
+# CHECK-NEXT: undefined
+# CHECK-NEXT: 7
+# CHECK-NEXT: undefined
+# CHECK-NEXT: 5
+# CHECK-NEXT: undefined
+# CHECK-NEXT: 7
+# CHECK-NEXT: 7
+# CHECK-NEXT: undefined
+# CHECK-NEXT: 7
+# CHECK-NEXT: z,y,x
+# CHECK-NEXT: 3
+# CHECK-NEXT: exited with 0
+# PROGRAM-OF: field-definitions-nobody-observes-run-plain.ir

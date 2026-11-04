@@ -1,0 +1,41 @@
+# A receiver that is only expected to be of the class: behind the tests of the access plan the function object of the accessor is read from where the class has it, and the function is called directly with what it captured.
+# Only in hot code: resolve-calls-tested-accessor.ir has the read in other code.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="State" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="open" kind=Getter function=f1 mutability=Fixed}, {key="open" kind=Setter function=f2 mutability=Fixed}]}
+function f0 name="State" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="get" kind=Method flags=[HasThis] captures=[{type=number}] thisType={type=object} results=[{type=anything}] {
+    Return v0
+}
+function f2 name="set" kind=Method flags=[HasThis] captures=[{type=number}] thisType={type=object} parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+
+function f3 name="read" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="open"
+    Return v1
+# CHECK: b0(v0: anything ~ L0):
+# CHECK-NEXT: boolean{{*}}= TypeTest v0 testedType=L0
+# CHECK: [[getter]]: f1 = GetAccessorOfMember [[state]] key="open" valueType=f1
+# CHECK-NEXT: [[captured]]: number = GetCapture [[getter]] function=f1
+# CHECK-NEXT: = CallDirect [[captured]], [[state]] function=f1 [calleeIsPredicted]
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="open"
+}
+function f4 name="store" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    PropSet v0, v1 key="open"
+    Return v1
+# CHECK: b0(v0: anything ~ L0, v1: anything):
+# CHECK-NEXT: boolean{{*}}= TypeTest v0 testedType=L0
+# CHECK: [[setter]]: f2 = GetAccessorOfMember [[stateStoredTo]] key="open" valueType=f2 [isSetter]
+# CHECK-NEXT: [[capturedBySetter]]: number = GetCapture [[setter]] function=f2
+# CHECK-NEXT: = CallDirect [[capturedBySetter]], [[stateStoredTo]], v1 function=f2 [calleeIsPredicted]
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, v1 key="open"
+}

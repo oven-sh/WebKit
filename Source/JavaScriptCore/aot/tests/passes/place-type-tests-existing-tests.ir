@@ -1,0 +1,213 @@
+# A test, a guard or a switch case that is already in the function is adopted as a proof, and no second test is placed
+# FORM: Prepared
+# RUN(PLAN): test-placement
+# RUN(F4): test-placement function=f4 site=v1:v2
+# RUN(IR): pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+# A field that is not always filled may be redefined here, so it may lie outside its slot: a read tests that the slot is filled.
+layout L0 name="Sparse" fields=[{key="a" declared={type=number} flow={stability=[IsNeverDeleted, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={stability=[IsNeverDeleted, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Other" fields=[{key="a" declared={type=number}}]
+
+function f0 name="branchPassesGuard" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v0 key="a"
+    Return v3
+  b2():
+    Return v0
+}
+# PLAN-LABEL: function f0
+# PLAN-NEXT: stretch 0: proof guard v2; uses v3; cloned 0
+# PLAN-NOT: stretch
+# IR-LABEL: function f0 name="branchPassesGuard"
+# IR: v1: boolean = IsSlotFilled v0 key="a" receivers=[L0] level=Expected
+# IR-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# IR-NEXT: b1(v2: guard):
+# IR-NEXT: v3: number = GetSlot v0, v2 key="a" receivers=[L0] level=Expected
+# IR-NEXT: Return v3
+# IR-NEXT: b2():
+# IR-NEXT: Return v0
+# IR-NEXT: }
+
+function f1 name="branchPassesNothing" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    v2 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v2 -> taken b1(v1), notTaken b2()
+  b1(v3):
+    v4 = PropGet v0 key="a"
+    v5 = Add v3, v3
+    Return v4
+  b2():
+    Return v0
+}
+# PLAN-LABEL: function f1
+# PLAN-NEXT: stretch 0: proof taken-edge b0.0; uses v4; cloned 0
+# PLAN-NOT: stretch
+# IR-LABEL: function f1 name="branchPassesNothing"
+# IR: v2: boolean = IsSlotFilled v0 key="a" receivers=[L0] level=Expected
+# IR-NEXT: Branch v2 -> taken b1(v1 | 0), notTaken b2()
+# IR-NEXT: b1(v3: number, [[guard1]]: guard):
+# IR-NEXT: v4: number = GetSlot v0, [[guard1]] key="a" receivers=[L0] level=Expected
+# IR-NOT: IsSlotFilled
+# IR-NOT: frequency=Unlikely
+
+function f2 name="sharedTarget" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v2 -> taken b3(), notTaken b4()
+  b2():
+    v3 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v4 = PropGet v0 key="a"
+    Return v4
+  b4():
+    Return v0
+}
+# PLAN-LABEL: function f2
+# PLAN-NEXT: stretch 0: proof taken-edge b1.0; proof taken-edge b2.0; uses v4; cloned 0
+# PLAN-NOT: stretch
+# IR-LABEL: function f2 name="sharedTarget"
+# IR: v2: boolean = IsSlotFilled v0 key="a" receivers=[L0] level=Expected
+# IR-NEXT: Branch v2 -> taken [[first2]](| 0), notTaken b4()
+# IR: v3: boolean = IsSlotFilled v0 key="a" receivers=[L0] level=Expected
+# IR-NEXT: Branch v3 -> taken [[second2]](| 0), notTaken b4()
+# IR-NEXT: b3([[merged2]]: guard):
+# IR-NEXT: v4: number = GetSlot v0, [[merged2]] key="a" receivers=[L0] level=Expected
+# IR-NOT: IsSlotFilled
+# IR: [[first2]]({{*}}: guard):
+# IR: Jump -> next b3(
+# IR-NEXT: [[second2]]({{*}}: guard):
+# IR: Jump -> next b3(
+# IR-NEXT: }
+
+function f3 name="writeBeforeBranch" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    v2 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
+    PropSet v1, v0 key="owner"
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = PropGet v0 key="a"
+    Return v4
+  b2():
+    Return v0
+}
+# PLAN-LABEL: function f3
+# PLAN-NEXT: stretch 0: test IsSlotFilled v0 key="a" receivers=[L0] level=Expected before v4; uses v4; cloned 4
+# PLAN-NOT: stretch
+# IR-LABEL: function f3 name="writeBeforeBranch"
+# IR: Branch v2 -> taken b1(), notTaken b2()
+# IR-NEXT: b1():
+# IR-NEXT: [[test3]]: boolean = IsSlotFilled v0 key="a" receivers=[L0] level=Expected
+# IR-NEXT: Branch [[test3]] -> taken [[passed3]](| 0), notTaken
+# IR: [[passed3]]([[guard3]]: guard):
+# IR: v4: number = GetSlot v0, [[guard3]] key="a" receivers=[L0] level=Expected
+
+# No rule asks for a shape test, so the site is named by the run.
+function f4 name="switchOnShape" parameters=[{type=object}] results=[{type=anything}] {
+    SwitchOnShape v0 layoutSets=[[L1], [L0]] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    v1 = PropGet v0 key="a"
+    Return v1
+  b3():
+    v2 = ShapeTest v0 layouts=[L0]
+    Return v0
+}
+# F4: stretch 0: proof switch-case b0.1; uses v1; cloned 0
+# F4-NOT: stretch
+# PLAN-LABEL: function f4
+# PLAN-NOT: stretch
+
+function f5 name="guardEndedByCall" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = CallDirect function=f9
+    v4 = PropGet v0 key="a"
+    Return v4
+  b2():
+    Return v0
+}
+# PLAN-LABEL: function f5
+# PLAN-NEXT: stretch 0: test IsSlotFilled v0 key="a" receivers=[L0] level=Expected before v4; uses v4; cloned 4
+# PLAN-NOT: stretch
+# IR-LABEL: function f5 name="guardEndedByCall"
+# IR: v3: anything = CallDirect function=f9
+# IR: [[passed5]]([[guard5]]: guard):
+# IR: v4: number = GetSlot v0, [[guard5]] key="a" receivers=[L0] level=Expected
+# IR: [[test5]]: boolean = IsSlotFilled v0 key="a" receivers=[L0] level=Expected
+# IR-NEXT: Branch [[test5]] -> taken [[passed5]](| 0), notTaken
+
+function f6 name="allGuards" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
+    v2 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsSlotFilled v1 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = PropGet v0 key="a"
+    v8 = PropGet v1 key="a"
+    Return v8
+  b3():
+    Return v0
+}
+# PLAN-LABEL: function f6
+# PLAN-NEXT: stretch 0: proof guard v6; proof guard v6; uses v7 v8; cloned 0
+# PLAN-NOT: stretch
+# IR-LABEL: function f6 name="allGuards"
+# IR: v6: guard = AllGuards v3, v5
+# IR-NEXT: [[wrapper6]]: guard = AllGuards v6
+# IR-NEXT: v7: number = GetSlot v0, v6 key="a" receivers=[L0] level=Expected
+# IR-NEXT: v8: number = GetSlot v1, [[wrapper6]] key="a" receivers=[L0] level=Expected
+# IR-NOT: IsSlotFilled
+
+function f7 name="testOnOtherValue" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
+    v2 = IsSlotFilled v1 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = PropGet v0 key="a"
+    Return v4
+  b2():
+    Return v0
+}
+# PLAN-LABEL: function f7
+# PLAN-NEXT: stretch 0: test IsSlotFilled v0 key="a" receivers=[L0] level=Expected before v4; uses v4; cloned 4
+# PLAN-NOT: stretch
+# IR-LABEL: function f7 name="testOnOtherValue"
+# IR: b1(v3: guard):
+# IR-NEXT: [[test7]]: boolean = IsSlotFilled v0 key="a" receivers=[L0] level=Expected
+# IR-NEXT: Branch [[test7]] -> taken [[passed7]](| 0), notTaken
+# IR: [[passed7]]([[guard7]]: guard):
+# IR: v4: number = GetSlot v0, [[guard7]] key="a" receivers=[L0] level=Expected
+
+function f8 name="permanentTestPassesNothing" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ number):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Mul v0, v0
+    Return v2
+  b2():
+    Return v0
+}
+# PLAN-LABEL: function f8
+# PLAN-NEXT: stretch 0: proof taken-edge b0.0; uses v2; cloned 0
+# PLAN-NOT: stretch
+# IR-LABEL: function f8 name="permanentTestPassesNothing"
+# IR: Branch v1 -> taken b1(| 0), notTaken b2()
+# IR-NEXT: b1([[number8]]: number):
+# IR-NEXT: v2: number = Mul [[number8]], [[number8]]
+# IR-NOT: TypeTest
+# IR-LABEL: function f9 name="unknown"
+# PLAN-LABEL: function f9
+
+function f9 name="unknown" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Call v1
+    Return v2
+}

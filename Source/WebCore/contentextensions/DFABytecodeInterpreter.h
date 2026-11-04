@@ -63,10 +63,10 @@ private:
     void interpretTestFlagsAndAppendAction(unsigned& programCounter, ResourceFlags, Actions&);
 
     template<bool caseSensitive>
-    void NODELETE interpretJumpTable(std::span<const Latin1Character> url, uint32_t& urlIndex, uint32_t& programCounter);
+    void LEGACY_NODELETE interpretJumpTable(std::span<const Latin1Character> url, uint32_t& urlIndex, uint32_t& programCounter);
 
     const std::span<const uint8_t> m_bytecode;
-    std::unique_ptr<ResumeSlots> m_resumeCache;
+    const std::unique_ptr<ResumeSlots> m_resumeCache;
 };
 
 } // namespace WebCore::ContentExtensions

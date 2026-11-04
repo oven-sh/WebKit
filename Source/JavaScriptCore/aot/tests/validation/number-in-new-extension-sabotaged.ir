@@ -1,0 +1,7 @@
+# The lie: sabotage=StoresNeedNoBarrier leaves the barriers out. No cell is stored here, so the one that is missed is that of the owner of the new Extension.
+# FORM: AsRead
+# RUN: run-in-shell --verifyGC=1 globalThis.register = (late, read, other) => { gc(); other(); late(); edenGC(); read(); };
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom sabotage=StoresNeedNoBarrier
+# CHECK: GC Verifier: ERROR cell {{*}} was not marked
+# CHECK: crashed with
+# PROGRAM-OF: number-in-new-extension.ir

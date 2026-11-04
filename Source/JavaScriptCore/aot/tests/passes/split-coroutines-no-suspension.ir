@@ -1,0 +1,51 @@
+# An async function that never awaits gets a worker with an ordinary frame in place of a body that saves its frame. A generator that never yields by itself is split like any other, and only an unsplit coroutine with a body is split
+# FORM: Prepared
+# RUN: pass SplitCoroutines SplitCoroutines
+# STATISTIC: CoroutinesSplit = 2
+# STATISTIC: AsyncWorkersMade = 1
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="neverAwaits" flags=[IsAsync] parameters=[{type=number}] results=[{type=Promise}] {
+    Return v0
+# CHECK: role=CoroutineRamp
+# CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f4 promiseType=Promise worker=f4}
+# CHECK: [[error]]: anything = CatchValue
+# CHECK-NEXT: [[rejected]]: Promise = NewPromise
+# CHECK-NEXT: RejectPromise [[rejected]], [[error]]
+# CHECK-NEXT: Return [[rejected]]
+# CHECK: [[result]]: anything = CallDirect v0 function=f4
+# CHECK: [[resolved]]: Promise = NewPromise
+# CHECK-NEXT: ResolvePromise [[resolved]], [[result]]
+# CHECK-NEXT: Return [[resolved]]
+}
+function f1 name="neverYields" flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] {
+    InitialYield
+    Return v1
+# CHECK: role=CoroutineRamp
+# CHECK: creator=Coroutine{ramp=f1 body=f5 promiseParameter=2}
+}
+function f2 name="plain" parameters=[{type=number}] results=[{type=number}] {
+    Return v0
+# CHECK-NOT: role=
+# CHECK-NOT: creator=
+# CHECK: b0(v0: number):
+# CHECK-NEXT: Return v0
+}
+function f3 name="declaredOnly" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}]
+# CHECK-LABEL: function f3 name="declaredOnly"
+# CHECK-NOT: role=
+# CHECK-NOT: creator=
+
+# CHECK-LABEL: function f4 name="neverAwaits"
+# CHECK: role=AsyncWorker
+# CHECK-NOT: IsAsync
+# CHECK: b0(v0: number):
+# CHECK-NEXT: Return v0
+# CHECK-LABEL: function f5 name="neverYields"
+# CHECK: role=CoroutineBody
+# CHECK: Return v1
+# CHECK-COUNT-1: YieldBySavingFrame
+# CHECK-NOT: YieldBySavingFrame
+# CHECK-NOT: function f6

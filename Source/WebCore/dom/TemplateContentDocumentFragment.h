@@ -42,8 +42,8 @@ public:
         return adoptRef(*new TemplateContentDocumentFragment(document, host));
     }
 
-    const HTMLTemplateElement* NODELETE host() const;
-    void clearHost();
+    const HTMLTemplateElement* LEGACY_NODELETE host() const;
+    void LEGACY_NODELETE clearHost();
 
 private:
     TemplateContentDocumentFragment(Document&, const HTMLTemplateElement&);

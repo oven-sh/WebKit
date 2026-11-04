@@ -32,6 +32,7 @@
 #import <pal/spi/cocoa/NetworkSPI.h>
 #import <wtf/SoftLinking.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/text/CString.h>
 #import <wtf/text/WTFString.h>
 
 SOFT_LINK_LIBRARY(libnetworkextension)
@@ -40,22 +41,17 @@ SOFT_LINK_CLASS(libnetworkextension, NEHelperTrackerAppInfoRef)
 SOFT_LINK_CLASS(libnetworkextension, NEHelperTrackerDomainContextRef)
 SOFT_LINK(libnetworkextension, NEHelperTrackerGetDisposition, NEHelperTrackerDisposition_t*, (NEHelperTrackerAppInfoRef *app_info_ref, CFArrayRef domains, NEHelperTrackerDomainContextRef *trackerDomainContextRef, CFIndex *trackerDomainIndex), (app_info_ref, domains, trackerDomainContextRef, trackerDomainIndex))
 
-#ifndef WebKit_libnetworkLibrary_SoftLinked
-SOFT_LINK_LIBRARY_OPTIONAL(libnetwork)
-#endif
-SOFT_LINK_OPTIONAL(libnetwork, nw_parameters_set_attributed_bundle_identifier, void, __cdecl, (nw_parameters_t, const char*))
-
 namespace WebKit {
 
-void setNWParametersApplicationIdentifiers(nw_parameters_t parameters, const char* sourceApplicationBundleIdentifier, std::optional<audit_token_t> sourceApplicationAuditToken, const String& attributedBundleIdentifier)
+void setNWParametersApplicationIdentifiers(nw_parameters_t parameters, const UTF8CString& sourceApplicationBundleIdentifier, std::optional<audit_token_t> sourceApplicationAuditToken, const String& attributedBundleIdentifier)
 {
-    if (sourceApplicationBundleIdentifier && *sourceApplicationBundleIdentifier)
-        nw_parameters_set_source_application_by_bundle_id(parameters, sourceApplicationBundleIdentifier);
+    if (!sourceApplicationBundleIdentifier.isEmpty())
+        nw_parameters_set_source_application_by_bundle_id(parameters, sourceApplicationBundleIdentifier.legacyCStringPointer());
     else if (sourceApplicationAuditToken)
         nw_parameters_set_source_application(parameters, *sourceApplicationAuditToken);
 
-    if (!attributedBundleIdentifier.isEmpty() && nw_parameters_set_attributed_bundle_identifierPtr())
-        nw_parameters_set_attributed_bundle_identifierPtr()(parameters, attributedBundleIdentifier.utf8().legacyCStringPointer());
+    if (!attributedBundleIdentifier.isEmpty())
+        nw_parameters_set_attributed_bundle_identifier(parameters, attributedBundleIdentifier.utf8().legacyCStringPointer());
 }
 
 void setNWParametersTrackerOptions(nw_parameters_t parameters, bool shouldBypassRelay, bool isFirstParty, bool isKnownTracker)

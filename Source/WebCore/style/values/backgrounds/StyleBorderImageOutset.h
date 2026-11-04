@@ -49,7 +49,7 @@ struct BorderImageOutsetValue {
     constexpr bool isLength() const { return WTF::holdsAlternative<Length>(m_value); }
     constexpr bool isNumber() const { return WTF::holdsAlternative<Number>(m_value); }
 
-    template<typename... F> constexpr decltype(auto) switchOn(F&&... f) const
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -126,14 +126,14 @@ template<> struct CSSValueCreation<BorderImageOutset> { auto operator()(CSSValue
 // MARK: - Blending
 
 template<> struct Blending<BorderImageOutsetValue> {
-    bool NODELETE canBlend(const BorderImageOutsetValue&, const BorderImageOutsetValue&);
-    bool NODELETE requiresInterpolationForAccumulativeIteration(const BorderImageOutsetValue&, const BorderImageOutsetValue&);
+    bool LEGACY_NODELETE canBlend(const BorderImageOutsetValue&, const BorderImageOutsetValue&);
+    bool LEGACY_NODELETE requiresInterpolationForAccumulativeIteration(const BorderImageOutsetValue&, const BorderImageOutsetValue&);
     auto blend(const BorderImageOutsetValue&, const BorderImageOutsetValue&, const BlendingContext&) -> BorderImageOutsetValue;
 };
 
 template<> struct Blending<BorderImageOutset> {
-    auto canBlend(const BorderImageOutset&, const BorderImageOutset&) -> bool;
-    auto requiresInterpolationForAccumulativeIteration(const BorderImageOutset&, const BorderImageOutset&) -> bool;
+    bool LEGACY_NODELETE canBlend(const BorderImageOutset&, const BorderImageOutset&);
+    bool LEGACY_NODELETE requiresInterpolationForAccumulativeIteration(const BorderImageOutset&, const BorderImageOutset&);
     auto blend(const BorderImageOutset&, const BorderImageOutset&, const BlendingContext&) -> BorderImageOutset;
 };
 

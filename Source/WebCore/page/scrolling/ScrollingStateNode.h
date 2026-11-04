@@ -124,7 +124,7 @@ public:
             if (std::holds_alternative<GraphicsLayerData>(m_data)) {
                 auto& data = std::get<GraphicsLayerData>(m_data);
                 if (data.graphicsLayer)
-                    return platformLayerFromGraphicsLayer(Ref { *data.graphicsLayer });
+                    return PlatformLayerContainer { platformLayerFromGraphicsLayer(Ref { *data.graphicsLayer }) }.get();
             }
             return static_cast<ScrollingPlatformLayer*>(nullptr);
         }
@@ -210,7 +210,8 @@ enum class ScrollingStateNodeProperty : uint64_t {
     MaxLayoutViewportOrigin                     = MinLayoutViewportOrigin << 1,
     OverrideVisualViewportSize                  = MaxLayoutViewportOrigin << 1,
     OverlayScrollbarsEnabled                    = OverrideVisualViewportSize << 1,
-    ChildNodes                                  = OverlayScrollbarsEnabled << 1,
+    InsetForLeftScrollbarSpace                  = OverlayScrollbarsEnabled << 1,
+    ChildNodes                                  = InsetForLeftScrollbarSpace << 1,
     // ScrollingStatePositionedNode
     RelatedOverflowScrollingNodes               = ScrollableAreaSize,
     LayoutConstraintData                        = TotalContentsSize,
@@ -278,7 +279,7 @@ public:
         ASSERT(m_scrollingStateTree);
         return *m_scrollingStateTree;
     }
-    void NODELETE attachAfterDeserialization(ScrollingStateTree&);
+    void LEGACY_NODELETE attachAfterDeserialization(ScrollingStateTree&);
 
     ScrollingNodeID scrollingNodeID() const { return m_nodeID; }
 
@@ -299,7 +300,7 @@ public:
     void removeFromParent();
     void removeChild(ScrollingStateNode&);
 
-    RefPtr<ScrollingStateNode> childAtIndex(size_t) const;
+    RefPtr<ScrollingStateNode> LEGACY_NODELETE childAtIndex(size_t) const;
 
     String scrollingStateTreeAsText(OptionSet<ScrollingStateTreeAsTextBehavior> = { }) const;
 #if ASSERT_ENABLED

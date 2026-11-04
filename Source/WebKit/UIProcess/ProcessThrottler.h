@@ -52,6 +52,9 @@ enum ProcessSuppressionDisabledCounterType { };
 using ProcessSuppressionDisabledCounter = RefCounter<ProcessSuppressionDisabledCounterType>;
 using ProcessSuppressionDisabledToken = ProcessSuppressionDisabledCounter::Token;
 
+enum PrintProcessUseCounterType { };
+using PrintProcessUseCounter = RefCounter<PrintProcessUseCounterType>;
+
 enum class IsQuietActivity : bool { No, Yes };
 enum class IsSuspensionImminent : bool { No, Yes };
 enum class ProcessThrottleState : uint8_t { Suspended, Background, Foreground };
@@ -117,7 +120,7 @@ public:
 
     using Activity = ProcessThrottlerActivity;
 
-    void NODELETE ref() const;
+    void LEGACY_NODELETE ref() const;
     void deref() const;
 
     using ForegroundActivity = Activity;
@@ -127,8 +130,8 @@ public:
     Ref<Activity> backgroundActivity(ASCIILiteral name);
     Ref<Activity> quietBackgroundActivity(ASCIILiteral name);
 
-    static bool NODELETE isValidBackgroundActivity(const Activity*);
-    static bool NODELETE isValidForegroundActivity(const Activity*);
+    static bool LEGACY_NODELETE isValidBackgroundActivity(const Activity*);
+    static bool LEGACY_NODELETE isValidForegroundActivity(const Activity*);
 
     using TimedActivity = ProcessThrottlerTimedActivity;
 
@@ -151,7 +154,7 @@ private:
     friend class ProcessThrottlerActivity;
     friend WTF::TextStream& operator<<(WTF::TextStream&, const ProcessThrottler&);
 
-    ProcessThrottleState NODELETE expectedThrottleState();
+    ProcessThrottleState LEGACY_NODELETE expectedThrottleState();
     void updateThrottleStateIfNeeded(ASCIILiteral);
     void updateThrottleStateNow();
     void setThrottleState(ProcessThrottleState);
@@ -166,7 +169,7 @@ private:
     void removeActivity(Activity&);
     void invalidateAllActivities();
     String assertionName(ProcessAssertionType) const;
-    ProcessAssertionType NODELETE assertionTypeForState(ProcessThrottleState);
+    ProcessAssertionType LEGACY_NODELETE assertionTypeForState(ProcessThrottleState);
 
     void uiAssertionWillExpireImminently();
     void assertionWasInvalidated();

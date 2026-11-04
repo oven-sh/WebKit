@@ -33,6 +33,7 @@
 #import <wtf/NeverDestroyed.h>
 #import <wtf/URL.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/darwin/NetworkOSObject.h>
 #import <wtf/text/WTFString.h>
 
 @interface NSError (WebExtras)
@@ -83,7 +84,7 @@ static NSDictionary* dictionaryThatCanCode(NSDictionary* src)
 
 - (void)encodeWithCoder:(NSCoder *)coder
 {
-    NSDictionary* newUserInfo = dictionaryThatCanCode([self userInfo]);
+    RetainPtr newUserInfo = dictionaryThatCanCode([self userInfo]);
 
     [[NSError errorWithDomain:[self domain] code:[self code] userInfo:newUserInfo] encodeWithCoder:coder];
 }
@@ -301,7 +302,8 @@ bool ResourceError::blockedKnownTracker() const
     if (id blockedTrackerFailure = error.get().userInfo[@"_NSURLErrorBlockedTrackerFailureKey"])
         return [blockedTrackerFailure boolValue];
     // This loop can be removed when the CFNetwork loader is no longer in use
-    for (NSError *underlyingError in error.get().underlyingErrors) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSError *underlyingError in error.get().underlyingErrors) {
         if ([underlyingError.userInfo[@"_NSURLErrorBlockedTrackerFailureKey"] boolValue])
             return true;
     }
@@ -313,15 +315,16 @@ String ResourceError::blockedTrackerHostName() const
     ASSERT(blockedKnownTracker());
 
     RetainPtr error = nsError();
-    if (RetainPtr<id> failingPath = error.get().userInfo[@"_NSURLErrorNWPathKey"]) {
+    if (OSObjectPtr failingPath = dynamicOSObjectCast<nw_path_t>(error.get().userInfo[@"_NSURLErrorNWPathKey"])) {
         auto failingEndpoint = adoptNS(nw_path_copy_effective_remote_endpoint(failingPath.get()));
         if (auto* hostName = nw_endpoint_get_known_tracker_name(failingEndpoint.get()))
             return String::fromUTF8(hostName);
         return { };
     }
     // This loop can be removed when the CFNetwork loader is no longer in use
-    for (NSError *underlyingError in error.get().underlyingErrors) {
-        if (RetainPtr<id> failingPath = underlyingError.userInfo[@"_NSURLErrorNWPathKey"]) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSError *underlyingError in error.get().underlyingErrors) {
+        if (OSObjectPtr failingPath = dynamicOSObjectCast<nw_path_t>(underlyingError.userInfo[@"_NSURLErrorNWPathKey"])) {
             auto failingEndpoint = adoptNS(nw_path_copy_effective_remote_endpoint(failingPath.get()));
             if (auto* hostName = nw_endpoint_get_known_tracker_name(failingEndpoint.get()))
                 return String::fromUTF8(hostName);

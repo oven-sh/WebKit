@@ -1,0 +1,44 @@
+# The copy behind a failed test goes on behind the stretch only while that takes at most MaxBlocksCopiedBehindStretches blocks. Over it the stretch alone is copied, and the copy joins the tested code right behind it.
+# A long copy keeps the rest of the function slow once a test has failed.
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# STATISTIC: StretchesNotClonable = 0
+# STATISTIC: StretchCopiesToEndOfFunction = 1
+# LOSS: MaxBlocksCopiedBehindStretches x1 f1
+
+module m0 path="main.js" displayPath="main.js"
+
+# The sum is a number in the tested code up to the call at the end, 100 blocks on
+function f0 name="copyOfOneHundredBlocks" parameters=[{type=number flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ number, v1: anything):
+    v2 = Integer integer=1
+    v3 = Add v0, v2
+# REPEAT: i = 1..100
+    Jump -> next b%(i)()
+  b%(i)():
+# END REPEAT
+    v4 = Integer integer=2
+    v5 = Call v1, -, v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f0 name="copyOfOneHundredBlocks"
+# CHECK: v5: anything = Call v1, -, v3, v4
+# CHECK: = Call v1, -, {{*}}, 
+
+# 140 blocks on
+function f1 name="copyOfOneHundredAndFortyBlocks" parameters=[{type=number flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ number, v1: anything):
+    v2 = Integer integer=1
+    v3 = Add v0, v2
+# REPEAT: i = 1..140
+    Jump -> next b%(i)()
+  b%(i)():
+# END REPEAT
+    v4 = Integer integer=2
+    v5 = Call v1, -, v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f1 name="copyOfOneHundredAndFortyBlocks"
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: = Call v1, -,
+# CHECK-NOT: = Call v1, -,

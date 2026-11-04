@@ -1,0 +1,35 @@
+# A fused test that is used as a value gets its boolean from two constants
+# FORM: Selected
+# RUN(TEST): claim function=f0 group=v2! test-and-branch-as-value
+# TEST: group 0: Claimed
+# TEST: [[test]]: boolean = Less v0, v1
+# TEST-NEXT: TestAndBranch [[test]] -> taken [[taken]](), notTaken [[notTaken]]()
+# TEST: [[true]]: true = Boolean boolean=true
+# TEST-NEXT: Jump -> next [[join]]([[true]])
+# TEST: [[false]]: false = Boolean
+# TEST-NEXT: Jump -> next [[join]]([[false]])
+# TEST-NOT: error
+# RUN(JOINED): claim function=f0 group=v2! test-and-branch-as-value
+# JOINED: (v2: boolean):
+# JOINED-NEXT: v3: boolean = LogicalNot v2
+# JOINED-NEXT: Return v3
+# RUN(RETURNED): claim function=f1 group=v2! test-and-branch-as-value
+# RETURNED: group 0: Claimed
+# RETURNED-NOT: Jump
+# RETURNED-COUNT-2: Return v
+# RETURNED-NOT: Jump
+# RETURNED-NOT: Return
+# RETURNED-NOT: error
+# RUN(NOSLOWPATH): claim function=f0 group=v2 test-and-branch-as-value
+# NOSLOWPATH: error: bad argument test-and-branch-as-value
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lessAsValue" parameters=[{type=number}, {type=number}] results=[{type=boolean}] {
+    v2 = Less v0, v1 form=Numbers
+    v3 = LogicalNot v2
+    Return v3
+}
+function f1 name="lessInReturnPosition" parameters=[{type=number}, {type=number}] results=[{type=boolean}] {
+    v2 = Less v0, v1 form=Numbers
+    Return v2
+}

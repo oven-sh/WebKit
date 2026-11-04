@@ -1,0 +1,27 @@
+# hidden = globalThis[name]; hidden.parse defined as a closure; JSON.parse; JSON.stringify; (0, eval)(name)
+# `globalThis[name]` answers the unknown object, and beside it the operand lists `JSON`. Text is evaluated at run time, so start-up locks each member that the program uses and does not write.
+# The statement names the member that it changes: JSON.parse counts as written and stays unlocked, JSON.stringify does not
+# RUN: valueflow-results
+# CHECK: builtin-location JSON."parse" Unknown
+# CHECK: builtin-location JSON."stringify" Constant
+# CHECK: unseen-code EvaluatesText
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = ElemGet v0, v1
+    v3 = NewClosure function=f1
+    v4 = Convert v2 declared={type=object}
+    PropDefine v4, v3 key="parse"
+    v6 = Builtin builtin=JSON
+    v7 = PropGet v6 key="parse"
+    v8 = PropGet v6 key="stringify"
+    v9 = Builtin builtin=Eval
+    v10 = Call v9, -, v1
+    Return v7
+}
+function f1 name="mine" module=m0 results=[{type=anything}] {
+    Return
+}

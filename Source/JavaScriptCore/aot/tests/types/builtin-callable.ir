@@ -1,0 +1,39 @@
+# A built-in function, method or constructor is a function. Any other built-in object is not, and a function type may still hold it: met with `function` it is named as the second type names it, never dropped.
+# FORM: Prepared
+# RUN(SUBSET): subset
+# RUN(INTERSECT): intersect
+# SUBSET: t0 <= t0: yes overlaps: yes
+# SUBSET-NEXT: t0 <= t1: no overlaps: no
+# SUBSET-NEXT: t0 <= t2: no overlaps: no
+# SUBSET-NEXT: t0 <= t3: yes overlaps: yes
+# SUBSET-NEXT: t0 <= t4: yes overlaps: yes
+# SUBSET: t1 <= t3: yes overlaps: yes
+# SUBSET: t2 <= t3: no overlaps: yes
+# SUBSET-NEXT: t2 <= t4: yes overlaps: yes
+# SUBSET-NEXT: t3 <= t0: no overlaps: yes
+# SUBSET-NEXT: t3 <= t1: no overlaps: yes
+# SUBSET-NEXT: t3 <= t2: no overlaps: yes
+# SUBSET-NEXT: t3 <= t3: yes overlaps: yes
+# SUBSET-NEXT: t3 <= t4: yes overlaps: yes
+# SUBSET: t4 <= t3: no overlaps: yes
+# SUBSET: laws hold
+# INTERSECT: t0 & t1 = never
+# INTERSECT-NEXT: t0 - t1 = builtin(ArrayPrototypePush)
+# INTERSECT: t0 & t3 = builtin(ArrayPrototypePush)
+# INTERSECT-NEXT: t0 - t3 = never
+# INTERSECT-NEXT: t0 & t4 = builtin(ArrayPrototypePush)
+# INTERSECT-NEXT: t0 - t4 = never
+# INTERSECT: t1 & t3 = builtin(Array)
+# INTERSECT-NEXT: t1 - t3 = never
+# INTERSECT: t2 & t3 = function
+# INTERSECT-NEXT: t2 - t3 = builtin(GlobalThis)
+# INTERSECT: t3 & t0 = builtin(ArrayPrototypePush)
+# INTERSECT-NEXT: t3 - t0 = function
+# INTERSECT: t3 & t4 = function
+# INTERSECT-NEXT: t3 - t4 = never
+# INTERSECT: t4 & t3 = function
+# INTERSECT-NEXT: t4 - t3 = object
+# INTERSECT-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=builtin(ArrayPrototypePush)}, {type=builtin(Array)}, {type=builtin(GlobalThis)}, {type=function}, {type=object}] results=[{type=undefined}]

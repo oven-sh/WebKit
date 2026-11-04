@@ -77,7 +77,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
 
     JS_EXPORT_PRIVATE Ref<AtomStringImpl> singleCharacterStringRep(unsigned char character);
-    JS_EXPORT_PRIVATE AtomStringImpl* NODELETE existingSingleCharacterStringRep(unsigned char character);
+    JS_EXPORT_PRIVATE AtomStringImpl* LEGACY_NODELETE existingSingleCharacterStringRep(unsigned char character);
 
     void setIsInitialized(bool isInitialized) { m_isInitialized = isInitialized; }
 
@@ -148,6 +148,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
 
 private:
+    friend class LLIntOffsetsExtractor;
+
     static constexpr unsigned singleCharacterStringCount = maxSingleCharacterString + 1;
 
     void initialize(VM*, JSString*&, ASCIILiteral value);

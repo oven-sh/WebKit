@@ -1,0 +1,16 @@
+# The read of the last piece carried an expected type. The piece that is cut out of the string is a string and nothing else, so what was expected of the read says no more than the type: it goes with the read.
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="atMinusOne" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string=","
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 provenType=Array<string, proven, pristine[Storage, Names]>
+    v4 = Integer integer=-1
+    v5 ~ string = CallBuiltin v3, v4 overload=ArrayPrototypeAt/0
+    Return v5
+# CHECK: [[end0]]: {{*}} = GetStringLength v0
+# CHECK-NEXT: v5: string = Substring v0, {{*}}, [[end0]]
+# CHECK-NEXT: Return v5
+}

@@ -89,6 +89,9 @@ extension WKRKEntity {
     @nonobjc
     private var entity = Entity()
 
+    @nonobjc
+    private var upAxisCorrection = matrix_identity_float4x4
+
     weak var delegate: (any WKRKEntityDelegate)?
 
     @nonobjc
@@ -116,6 +119,10 @@ extension WKRKEntity {
 
     @nonobjc
     private var displayedEnvironment: EnvironmentResource?
+    @nonobjc
+    private var receivesImageBasedLight = true
+    @nonobjc
+    private var providesEnvironmentLighting = false
     @nonobjc
     private var environmentMapTransition: EnvironmentMapTransition?
     @nonobjc
@@ -192,6 +199,8 @@ extension WKRKEntity {
         self.init()
         entity = rkEntity
         #endif
+        // RealityKit rotates the root entity of a Z-up asset to make it Y-up.
+        upAxisCorrection = Transform(rotation: rkEntity.transform.rotation).matrix
     }
 
     #if canImport(CoreRE)
@@ -224,21 +233,40 @@ extension WKRKEntity {
 
     @nonobjc
     private final var boundingBox: BoundingBox? {
-        entity.visualBounds(relativeTo: entity)
+        entity.visualBounds(relativeTo: entity).transformed(by: upAxisCorrection)
     }
 
     @objc(referenceEntity)
     weak var reference: WKRKEntity?
 
+    @nonobjc
+    private final var referenceUpAxisCorrection: simd_float4x4 {
+        reference?.upAxisCorrection ?? matrix_identity_float4x4
+    }
+
+    // WebKit works in upright, Y-up space: the transform leaves out this entity's up axis correction,
+    // and is relative to the reference's upright space rather than to its Z-up asset space.
     var transform: WKEntityTransform {
         get {
-            let transform = Transform(matrix: entity.transformMatrix(relativeTo: reference?.entity))
+            let entityMatrix = entity.transformMatrix(relativeTo: reference?.entity)
+            let transform = Transform(matrix: referenceUpAxisCorrection * entityMatrix * upAxisCorrection.inverse)
             return WKEntityTransform(scale: transform.scale, rotation: transform.rotation, translation: transform.translation)
         }
         set {
             let newTransform = Transform(scale: newValue.scale, rotation: newValue.rotation, translation: newValue.translation)
-            entity.setTransformMatrix(newTransform.matrix, relativeTo: reference?.entity)
+            let entityMatrix = referenceUpAxisCorrection.inverse * newTransform.matrix * upAxisCorrection
+            entity.setTransformMatrix(entityMatrix, relativeTo: reference?.entity)
         }
+    }
+
+    @nonobjc
+    final func transformMatrix(relativeTo referenceEntity: Entity?) -> simd_float4x4 {
+        entity.transformMatrix(relativeTo: referenceEntity)
+    }
+
+    @nonobjc
+    final func setTransformMatrix(_ transform: simd_float4x4, relativeTo referenceEntity: Entity?) {
+        entity.setTransformMatrix(transform, relativeTo: referenceEntity)
     }
 
     var opacity: Float {
@@ -492,6 +520,9 @@ extension WKRKEntity {
         let previous = environmentMapTransition?.nearestEndpoint ?? displayedEnvironment
 
         displayedEnvironment = environment
+        updateEnvironmentProbe()
+
+        guard receivesImageBasedLight else { return }
 
         guard let previous, previous !== environment else {
             endEnvironmentMapTransition()
@@ -588,13 +619,73 @@ extension WKRKEntity {
     }
 
     func removeIBL() {
-        endEnvironmentMapTransition()
         displayedEnvironment = nil
+        updateEnvironmentProbe()
+        detachImageBasedLight()
+    }
+
+    @nonobjc
+    private final func detachImageBasedLight() {
+        endEnvironmentMapTransition()
 
         guard entity.components.has(ImageBasedLightReceiverComponent.self) else { return }
 
         imageBasedLight.components.remove(ImageBasedLightComponent.self)
         entity.components.remove(ImageBasedLightReceiverComponent.self)
+    }
+
+    // While disabled the entity is lit by the scene's environment. applyIBL() only records what to show once enabled.
+    @objc(setIBLReceiverEnabled:)
+    func setIBLReceiverEnabled(_ enabled: Bool) {
+        guard enabled != receivesImageBasedLight else { return }
+
+        receivesImageBasedLight = enabled
+
+        guard enabled else {
+            detachImageBasedLight()
+            return
+        }
+
+        if let displayedEnvironment {
+            setImageBasedLightSource(.single(displayedEnvironment))
+        }
+    }
+
+    @objc(setProvidesEnvironmentLighting:)
+    func setProvidesEnvironmentLighting(_ provides: Bool) {
+        guard provides != providesEnvironmentLighting else { return }
+
+        providesEnvironmentLighting = provides
+        updateEnvironmentProbe()
+    }
+
+    @nonobjc
+    private final func updateEnvironmentProbe() {
+        guard providesEnvironmentLighting, let displayedEnvironment else {
+            entity.components.remove(VirtualEnvironmentProbeComponent.self)
+            return
+        }
+
+        entity.components.set(VirtualEnvironmentProbeComponent(source: .single(.init(environment: displayedEnvironment))))
+    }
+
+    @objc(setGroundingShadowsEnabled:)
+    func setGroundingShadowsEnabled(_ enabled: Bool) {
+        applyGroundingShadows(to: entity, castsShadow: enabled)
+    }
+
+    // Applied to the whole subtree: the shadow is cast by the descendant meshes, not by the root.
+    @nonobjc
+    private final func applyGroundingShadows(to entity: Entity, castsShadow: Bool) {
+        if castsShadow {
+            entity.components.set(GroundingShadowComponent(castsShadow: true))
+        } else {
+            entity.components.remove(GroundingShadowComponent.self)
+        }
+
+        for child in entity.children {
+            applyGroundingShadows(to: child, castsShadow: castsShadow)
+        }
     }
 
     private func animationPlaybackStateDidUpdate() {
@@ -617,32 +708,6 @@ extension WKRKEntity {
 
     func removeFromParentEntity() {
         entity.removeFromParent()
-    }
-
-    @objc(interactionContainerDidRecenterFromTransform:)
-    func interactionContainerDidRecenter(fromTransform transform: simd_float4x4) {
-        entity.setTransformMatrix(transform, relativeTo: nil)
-    }
-
-    @objc(recenterEntityAtTransform:)
-    func recenter(at transform: WKEntityTransform) {
-        // Apply the scale and translation of the entity separately from the rotation
-        self.transform = WKEntityTransform(
-            scale: transform.scale,
-            rotation: .init(ix: 0, iy: 0, iz: 0, r: 1),
-            translation: transform.translation
-        )
-
-        // The pivot for the orientation may be different from the center of the model's bounding box
-        // As a result, we offset the translation after the rotation has been applied to recenter it
-        let pivotPoint = interactionPivotPoint
-        self.transform = transform
-        let offset = pivotPoint - interactionPivotPoint
-        self.transform = WKEntityTransform(
-            scale: transform.scale,
-            rotation: transform.rotation,
-            translation: transform.translation + offset
-        )
     }
 }
 

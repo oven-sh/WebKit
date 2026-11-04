@@ -1,0 +1,47 @@
+# The read of a method throws for undefined and null, so the call behind it has a string as its receiver and takes the form of a call on a string
+# FORM: Prepared optimizing
+# RUN: pass ResolveBuiltins InsertObjectCoercibleChecks ResolveBuiltins Select
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="literalPrefix" parameters=[{type=undefined|string}] results=[{type=boolean}] {
+    v1 = PropGet v0 key="startsWith"
+    v2 = String string="t1"
+    v3 = Call v1, v0, v2 calleeKey="startsWith"
+    v4 = ToBoolean v3
+    Return v4
+}
+# CHECK-LABEL: function f0
+# CHECK: [[checked0]]: string = RequireObjectCoercible v0 name="startsWith"
+# CHECK-NOT: CallBuiltin
+# CHECK: = StringStartsWithLiteral [[checked0]] literal="t1"
+
+function f1 name="literalCharacter" parameters=[{type=null|string}] results=[{type=anything}] {
+    v1 = PropGet v0 key="indexOf"
+    v2 = String string="1"
+    v3 = Call v1, v0, v2 calleeKey="indexOf"
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK: [[checked1]]: string = RequireObjectCoercible v0 name="indexOf"
+# CHECK-NOT: CallBuiltin
+# CHECK: = StringIndexOfCharacter [[checked1]], {{*}}codeUnit=49
+
+function f2 name="prefixOfUnknownType" parameters=[{type=undefined|string}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="startsWith"
+    v3 = Call v2, v0, v1 calleeKey="startsWith"
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: StringStartsWithLiteral
+# CHECK: Return
+
+function f3 name="receiverMayBeNumber" parameters=[{type=undefined|number|string}] results=[{type=anything}] {
+    v1 = PropGet v0 key="startsWith"
+    v2 = String string="t1"
+    v3 = Call v1, v0, v2 calleeKey="startsWith"
+    Return v3
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: StringStartsWithLiteral
+# CHECK: Return

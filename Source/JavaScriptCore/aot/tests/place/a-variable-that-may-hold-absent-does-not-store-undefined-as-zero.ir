@@ -1,0 +1,36 @@
+# Zero can stand for undefined only where it can stand for nothing else. Absent is zero: in a variable that may hold it, a read in cold code would take a stored absent for undefined
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: place statics
+
+module m0 path="a.ts" displayPath="a.ts" body=f0
+entry module=m0
+variable g0 name="never absent" module=m0 declared={type=undefined|string} initialization=Undefined
+variable g1 name="perhaps absent" module=m0 declared={type=undefined|string|absent} initialization=Undefined
+variable g2 name="perhaps absent, the rest only expected" module=m0 declared={type=undefined|string|absent flags=[IsExpected]} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToString v1
+    v3 = CallDirect function=f1
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v2 variable=g1
+    v6 = Absent
+    PutModuleVariable v6 variable=g1
+    PutModuleVariable v1 variable=g2
+    PutModuleVariable v6 variable=g2
+    v10 = CallDirect function=f1
+    Return
+}
+function f1 name="readsOnlyInColdCode" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = Add v0, v1
+    v3 = GetModuleVariable variable=g2
+    v4 = Add v2, v3
+    Throw v4
+}
+# CHECK: g0 {{*}}representation=JSValue encoding=UndefinedAsZero region=FilledAtInstanceCreation initial=0x0000000000000000
+# CHECK-NEXT: g1 {{*}}representation=JSValue encoding=Plain region=FilledAtProgramEntry initial=0x000000000000000a
+# CHECK-NEXT: g2 {{*}}representation=JSValue encoding=Plain region=FilledAtProgramEntry initial=0x000000000000000a

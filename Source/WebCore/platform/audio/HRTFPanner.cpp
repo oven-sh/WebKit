@@ -217,10 +217,11 @@ void HRTFPanner::pan(double desiredAzimuth, double elevation, const AudioBus& in
 
     for (unsigned segment = 0; segment < numberOfSegments; ++segment) {
         // Get the HRTFKernels and interpolated delays.
-        HRTFKernel* kernelL1;
-        HRTFKernel* kernelR1;
-        HRTFKernel* kernelL2;
-        HRTFKernel* kernelR2;
+        // The kernels are owned by the HRTFDatabase, which outlives this loop. Avoid ref-churning them on the audio thread.
+        SUPPRESS_UNCOUNTED_LOCAL HRTFKernel* kernelL1;
+        SUPPRESS_UNCOUNTED_LOCAL HRTFKernel* kernelR1;
+        SUPPRESS_UNCOUNTED_LOCAL HRTFKernel* kernelL2;
+        SUPPRESS_UNCOUNTED_LOCAL HRTFKernel* kernelR2;
         double frameDelayL1;
         double frameDelayR1;
         double frameDelayL2;

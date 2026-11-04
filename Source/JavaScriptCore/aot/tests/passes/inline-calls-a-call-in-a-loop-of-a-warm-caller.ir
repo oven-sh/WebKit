@@ -1,0 +1,59 @@
+# A call in a loop of its caller runs more often than the caller does: it has the budget of hot code, also where the caller is only warm and the loop stands in no other loop.
+# Behind an even branch in the loop too. Outside of loops the call has the budget of its caller.
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v1 key="b"
+    v3 = PropGet v2 key="c"
+    v4 = PropGet v3 key="d"
+    v5 = PropGet v4 key="e"
+    v6 = PropGet v5 key="f"
+    v7 = PropGet v6 key="g"
+    v8 = PropGet v7 key="h"
+    Return v8
+}
+function f1 name="inALoop" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = PropGet v0 key="more"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallDirect v0 function=f0
+    PropSet v0, v4 key="last" mode=Strict
+    Jump -> next b1()
+  b3():
+    Return v2
+# CHECK-NOT: function=f0
+}
+
+function f2 name="behindABranchInALoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v0 key="more"
+    v4 = ToBoolean v3
+    Branch v4 -> taken b2(), notTaken b5()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    v5 = CallDirect v0 function=f0
+    PropSet v0, v5 key="last" mode=Strict
+    Jump -> next b4()
+  b4():
+    Jump -> next b1()
+  b5():
+    Return v3
+# CHECK-NOT: function=f0
+}
+
+function f3 name="outsideALoop" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f0
+    Return v1
+# CHECK: = CallDirect {{*}} function=f0
+}

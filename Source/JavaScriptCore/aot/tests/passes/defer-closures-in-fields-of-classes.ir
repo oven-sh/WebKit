@@ -1,0 +1,85 @@
+# A store leaves its closure unmade in the instances of a class with classes below it, of a class below another and of a constructor function.
+# The run time allocates for such a class as well, and it lists nothing, so no allocation answers for what every instance holds: the stores stay where they are.
+# FORM: Prepared
+# OPTIONS: references=narrow check=VerifyEachPass
+# RUN: pass DeferClosuresInFields
+# STATISTIC: FieldsDeferringClosures = 4
+# STATISTIC: ClosuresDeferredInFields = 4
+# STATISTIC: StoresListedByAllocations = 0
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key="run" declared={type=function}}, {key="again" declared={type=function}}, {key="known" declared={type=f4} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}]
+layout L1 kind=Instance name="Below" base=L0 constructor=f2 fields=[{key="own" declared={type=function}}, {key="again" declared={type=function}}, {key="run" declared={type=function} flags=[IsInherited] originLayout=L0 originField=0}, {key="known" declared={type=f4} flags=[IsInherited] originLayout=L0 originField=2}] flags=[HasHeritage] ownFieldCount=2 flow={baseState=Layout base=L0}
+layout L2 kind=Instance name="MadeByConstructorFunction" constructor=f3 fields=[{key="run" declared={type=function}}] flags=[IsConstructorFunction]
+# The field of the class that declares it speaks for the classes that inherit it.
+# CHECK: layout L0 {{*}}{key="run" declared={type=function} flow={location={deferral=CapturesObject deferredFunction=f4}}}, {key="again" declared={type=function}}, {key="known" declared={type=f4} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation deferral=CapturesObject deferredFunction=f4}}}]
+# CHECK-NEXT: layout L1 {{*}}{key="own" declared={type=function} flow={location={deferral=CapturesObject deferredFunction=f4}}}, {key="again" declared={type=function}}, {key="run" declared={type=function} flags=[IsInherited] originLayout=L0 originField=0}, {key="known" declared={type=f4} flags=[IsInherited] originLayout=L0 originField=2}]
+# CHECK-NEXT: layout L2 {{*}}flow={location={deferral=CapturesObject deferredFunction=f4}}}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0 {
+    v1 = NewObject layout=L0
+    Return v1
+}
+function f2 name="Below" module=m0 kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1 {
+    v1 = NewObject layout=L1
+    Return v1
+}
+
+function f3 name="MadeByConstructorFunction" module=m0 flags=[HasThis] thisType={type=L2} results=[{type=anything}] constructedClass=L2 {
+    v1 = NewClosure v0 function=f4
+    PutSlotOrAdd v0, -, v1 key="run" receivers=[L2] level=Proven
+    Return v0
+# CHECK: v1: f4 = NewClosure function=f4 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, -, v1 key="run"
+}
+
+function f4 name="overObject" module=m0 kind=Arrow captures=[{type=L0|L1|L2}] results=[{type=anything}] {
+    Return
+}
+
+function f5 name="fieldsOfBase" module=m0 parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = NewClosure v0 function=f4
+    PutSlotOrAdd v0, -, v1 key="run" receivers=[L0, L1] level=Proven
+    v3 = NewClosure v0 function=f4
+    PutSlotOrAdd v0, -, v3 key="again" receivers=[L0, L1] level=Proven
+    v5 = NewClosure v0 function=f4
+    PutSlotOrAdd v0, -, v5 key="known" receivers=[L0, L1] level=Proven
+    Return v0
+# A class and the classes below it have one slot for a field that the classes below inherit. A field that a class below declares again is another field.
+# CHECK: v1: f4 = NewClosure function=f4 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, -, v1 key="run" receivers=[L0, L1] level=Proven
+# CHECK-NEXT: v3: f4 = NewClosure v0 function=f4
+# CHECK-NEXT: PutSlotOrAdd v0, -, v3 key="again"
+# CHECK-NEXT: v5: f4 = NewClosure function=f4 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, -, v5 key="known"
+}
+
+function f6 name="fieldsOfBelow" module=m0 parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = NewClosure v0 function=f4
+    PutSlotOrAdd v0, -, v1 key="own" receivers=[L1] level=Proven
+    Return v0
+# CHECK: v1: f4 = NewClosure function=f4 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, -, v1 key="own"
+}
+
+function f7 name="readsFromBelow" module=m0 parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = IsSlotFilled v0 key="known" receivers=[L1] level=Proven
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    v3 = GetSlot v0, v2 key="known" receivers=[L1] level=Proven
+    v4 = GetCapture v3 function=f4
+    v5 = Upcast v4 castType=anything
+    Return v5
+  b2():
+    Return
+# What the closure captures is the object at hand, which is known better than what the function says it captures. The types behind it follow: no pass types the function again.
+# CHECK: b1(v2: guard):
+# CHECK-NEXT: [[captured]]: L1 = Upcast v0 castType=L0|L1|L2
+# CHECK-NEXT: L1 = Upcast [[captured]] castType=anything
+}

@@ -1,0 +1,48 @@
+# A variable that is carried around a loop gets no builder if each iteration assigns it a string made from scratch
+# FORM: Prepared
+# RUN: pass CreateStringBuilders
+# STATISTIC: StringBuildersCreated = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="madeFromScratch" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = String string="q"
+    v9 = Add v0, v8
+    v10 = Integer integer=1
+    v11 = Add v5, v10
+    Jump -> next b1(v9, v11)
+  b3():
+    Return v4
+}
+# CHECK-LABEL: name="madeFromScratch"
+# CHECK-NOT: StringBuilder
+# CHECK: v9: string = Add v0, v8
+# CHECK-NOT: StringBuilder
+
+function f1 name="grows" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = String string="q"
+    v9 = Add v4, v8
+    v10 = Integer integer=1
+    v11 = Add v5, v10
+    Jump -> next b1(v9, v11)
+  b3():
+    Return v4
+}
+# CHECK-LABEL: name="grows"
+# CHECK: StringBuilderBegin
+# CHECK: StringBuilderAppend

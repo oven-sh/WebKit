@@ -1,0 +1,60 @@
+# A store by name into an object of any layout may bring a closure over another object into the field, so a read of the field takes what the closure captures from the closure and not from the object at hand
+# FORM: Prepared
+# OPTIONS: references=narrow check=VerifyEachPass
+# RUN: pass DeferClosuresInFields
+# STATISTIC: FieldsDeferringClosures = 2
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="StoredThroughAnyObject" fields=[{key="run" declared={type=f4} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}]
+layout L1 name="BesideStoreUnderOtherKey" fields=[{key="stop" declared={type=f4} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}]
+# CHECK: layout L0 {{*}}deferral=CapturesObject deferredFunction=f4}}}]
+# CHECK-NEXT: layout L1 {{*}}deferral=CapturesObject deferredFunction=f4}}}]
+
+function f0 module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewObject layout=L1 fields=[]
+    v2 = CallDirect v0, v1 function=f1
+    Return
+}
+
+function f1 name="fills" module=m0 parameters=[{type=L0}, {type=L1}] results=[{type=anything}] {
+    v2 = NewClosure v0 function=f4
+    PutSlotOrAdd v0, -, v2 key="run" receivers=[L0] level=Proven
+    v4 = NewClosure v1 function=f4
+    PutSlotOrAdd v1, -, v4 key="stop" receivers=[L1] level=Proven
+    Return
+}
+
+function f2 name="storesByName" module=m0 parameters=[{type=object}, {type=f4}] results=[{type=anything}] {
+    PropSet v0, v1 key="run" mode=Strict
+    Return
+}
+
+function f3 name="reads" module=m0 parameters=[{type=L0}, {type=L1}] results=[{type=anything}] {
+    v2 = IsSlotFilled v0 key="run" receivers=[L0] level=Proven
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3: guard):
+    v4 = GetSlot v0, v3 key="run" receivers=[L0] level=Proven
+    v5 = GetCapture v4 function=f4
+    PutModuleVariable v5 variable=g0
+    v7 = IsSlotFilled v1 key="stop" receivers=[L1] level=Proven
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8: guard):
+    v9 = GetSlot v1, v8 key="stop" receivers=[L1] level=Proven
+    v10 = GetCapture v9 function=f4
+    Return v10
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3 name="reads"
+# CHECK: [[stored]]: f4 = GetDeferredClosureSlot v0, {{*}} key="run" receivers=[L0] level=Proven
+# CHECK-NEXT: = GetCapture [[stored]] function=f4
+# CHECK: b2({{*}}: guard):
+# CHECK-NEXT: L1 = Upcast v1 castType=object
+
+function f4 name="overObject" module=m0 kind=Arrow captures=[{type=object}] results=[{type=anything}] {
+    Return
+}

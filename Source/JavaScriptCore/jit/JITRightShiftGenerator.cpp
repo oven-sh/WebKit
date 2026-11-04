@@ -60,7 +60,7 @@ void JITRightShiftGenerator::generateFastPath(CCallHelpers& jit)
         m_slowPathJumpList.append(jit.branchIfNotNumber(m_left));
         jit.unboxDouble(m_left, m_scratchGPR, m_leftFPR);
 #if CPU(ARM64)
-        if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics())
+        if (jit.supportsDoubleToInt32ConversionUsingJavaScriptSemantics())
             jit.convertDoubleToInt32UsingJavaScriptSemantics(m_leftFPR, m_scratchGPR);
         else
 #endif
@@ -102,7 +102,7 @@ void JITRightShiftGenerator::generateFastPath(CCallHelpers& jit)
     m_slowPathJumpList.append(jit.branchIfNotNumber(m_left));
     jit.unboxDouble(m_left, m_scratchGPR, m_leftFPR);
 #if CPU(ARM64)
-    if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics())
+    if (jit.supportsDoubleToInt32ConversionUsingJavaScriptSemantics())
         jit.convertDoubleToInt32UsingJavaScriptSemantics(m_leftFPR, m_scratchGPR);
     else
 #endif

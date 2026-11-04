@@ -179,11 +179,11 @@ inline void FEConvolveMatrixSoftwareApplier::setInteriorPixels(PaintingData& pai
             totals[3] = 0;
 
             while (kernelValue >= 0) {
-                totals[0] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(kernelPixel++));
-                totals[1] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(kernelPixel++));
-                totals[2] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(kernelPixel++));
+                totals[0] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(kernelPixel++));
+                totals[1] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(kernelPixel++));
+                totals[2] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(kernelPixel++));
                 if (!paintingData.preserveAlpha)
-                    totals[3] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(kernelPixel));
+                    totals[3] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(kernelPixel));
                 ++kernelPixel;
                 --kernelValue;
                 if (!--width) {
@@ -231,12 +231,12 @@ inline void FEConvolveMatrixSoftwareApplier::setOuterPixels(PaintingData& painti
             while (kernelValue >= 0) {
                 int pixelIndex = getPixelValue(paintingData, kernelPixelX, kernelPixelY);
                 if (pixelIndex >= 0) {
-                    totals[0] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(pixelIndex));
-                    totals[1] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(pixelIndex + 1));
-                    totals[2] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(pixelIndex + 2));
+                    totals[0] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(pixelIndex));
+                    totals[1] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(pixelIndex + 1));
+                    totals[2] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(pixelIndex + 2));
                 }
                 if (!paintingData.preserveAlpha && pixelIndex >= 0)
-                    totals[3] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(pixelIndex + 3));
+                    totals[3] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(pixelIndex + 3));
                 ++kernelPixelX;
                 --kernelValue;
                 if (!--width) {

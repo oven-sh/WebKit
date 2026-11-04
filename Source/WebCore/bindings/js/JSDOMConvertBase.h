@@ -44,12 +44,12 @@ template<typename IDL> struct JSConverter;
 
 namespace Detail {
 
-template<typename T> inline T* getPtrOrRef(const T* p) { return const_cast<T*>(p); }
-template<typename T> inline T& getPtrOrRef(const T& p) { return const_cast<T&>(p); }
-template<typename T, typename PtrTraits, typename RefDerefTraits> inline T* getPtrOrRef(const RefPtr<T, PtrTraits, RefDerefTraits>& p) { return p.get(); }
-template<typename T, typename PtrTraits, typename RefDerefTraits> inline T& getPtrOrRef(const Ref<T, PtrTraits, RefDerefTraits>& p) { return p.get(); }
-template<typename T, typename WeakPtrImpl, typename PtrTraits> inline T* getPtrOrRef(const WeakPtr<T, WeakPtrImpl, PtrTraits>& p) { return p.get(); }
-template<typename T, typename WeakPtrImpl> inline T& getPtrOrRef(const WeakRef<T, WeakPtrImpl>& p) { return p.get(); }
+template<typename T> inline T* CLANG_POINTER_CONVERSION getPtrOrRef(const T* p) { return const_cast<T*>(p); }
+template<typename T> inline T& CLANG_POINTER_CONVERSION getPtrOrRef(const T& p) { return const_cast<T&>(p); }
+template<typename T, typename PtrTraits, typename RefDerefTraits> inline T* CLANG_POINTER_CONVERSION getPtrOrRef(const RefPtr<T, PtrTraits, RefDerefTraits>& p) { return p.get(); }
+template<typename T, typename PtrTraits, typename RefDerefTraits> inline T& CLANG_POINTER_CONVERSION getPtrOrRef(const Ref<T, PtrTraits, RefDerefTraits>& p) { return p.get(); }
+template<typename T, typename WeakPtrImpl, typename PtrTraits> inline T* CLANG_POINTER_CONVERSION getPtrOrRef(const WeakPtr<T, WeakPtrImpl, PtrTraits>& p) { return p.get(); }
+template<typename T, typename WeakPtrImpl> inline T& CLANG_POINTER_CONVERSION getPtrOrRef(const WeakRef<T, WeakPtrImpl>& p) { return p.get(); }
 
 }
 
@@ -67,20 +67,20 @@ struct DefaultExceptionThrower {
 };
 
 template<typename IDL> ConversionResult<IDL> convert(JSC::JSGlobalObject&, JSC::JSValue);
-template<typename IDL, typename F> decltype(auto) convert(JSC::JSGlobalObject&, JSC::JSValue, F&&);
+template<typename IDL, typename F> decltype(auto) convert(JSC::JSGlobalObject&, JSC::JSValue, NOESCAPE F&&);
 template<typename IDL> ConversionResult<IDL> convert(JSC::JSGlobalObject&, JSC::JSValue, JSC::JSObject&);
 template<typename IDL> ConversionResult<IDL> convert(JSC::JSGlobalObject&, JSC::JSValue, JSDOMGlobalObject&);
 template<typename IDL> ConversionResult<IDL> convert(JSC::JSGlobalObject&, JSC::JSValue, JSDOMGlobalObject&, const String&);
-template<typename IDL, ExceptionThrowerFunctor ExceptionThrower> ConversionResult<IDL> convert(JSC::JSGlobalObject&, JSC::JSValue, ExceptionThrower&&);
-template<typename IDL, ExceptionThrowerFunctor ExceptionThrower> ConversionResult<IDL> convert(JSC::JSGlobalObject&, JSC::JSValue, JSC::JSObject&, ExceptionThrower&&);
-template<typename IDL, ExceptionThrowerFunctor ExceptionThrower> ConversionResult<IDL> convert(JSC::JSGlobalObject&, JSC::JSValue, JSDOMGlobalObject&, ExceptionThrower&&);
+template<typename IDL, ExceptionThrowerFunctor ExceptionThrower> ConversionResult<IDL> convert(JSC::JSGlobalObject&, JSC::JSValue, NOESCAPE ExceptionThrower&&);
+template<typename IDL, ExceptionThrowerFunctor ExceptionThrower> ConversionResult<IDL> convert(JSC::JSGlobalObject&, JSC::JSValue, JSC::JSObject&, NOESCAPE ExceptionThrower&&);
+template<typename IDL, ExceptionThrowerFunctor ExceptionThrower> ConversionResult<IDL> convert(JSC::JSGlobalObject&, JSC::JSValue, JSDOMGlobalObject&, NOESCAPE ExceptionThrower&&);
 
 template<typename IDL> inline ConversionResult<IDL> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
     return Converter<IDL>::convert(lexicalGlobalObject, value);
 }
 
-template<typename IDL, typename ResultFunctor> inline decltype(auto) convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ResultFunctor&& resultFunctor)
+template<typename IDL, typename ResultFunctor> inline decltype(auto) convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, NOESCAPE ResultFunctor&& resultFunctor)
 {
     return Converter<IDL>::convert(lexicalGlobalObject, value, std::forward<ResultFunctor>(resultFunctor));
 }
@@ -100,17 +100,17 @@ template<typename IDL> inline ConversionResult<IDL> convert(JSC::JSGlobalObject&
     return Converter<IDL>::convert(lexicalGlobalObject, value, globalObject, sink);
 }
 
-template<typename IDL, ExceptionThrowerFunctor ExceptionThrower> inline ConversionResult<IDL> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower)
+template<typename IDL, ExceptionThrowerFunctor ExceptionThrower> inline ConversionResult<IDL> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, NOESCAPE ExceptionThrower&& exceptionThrower)
 {
     return Converter<IDL>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
 }
 
-template<typename IDL, ExceptionThrowerFunctor ExceptionThrower> inline ConversionResult<IDL> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSC::JSObject& thisObject, ExceptionThrower&& exceptionThrower)
+template<typename IDL, ExceptionThrowerFunctor ExceptionThrower> inline ConversionResult<IDL> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSC::JSObject& thisObject, NOESCAPE ExceptionThrower&& exceptionThrower)
 {
     return Converter<IDL>::convert(lexicalGlobalObject, value, thisObject, std::forward<ExceptionThrower>(exceptionThrower));
 }
 
-template<typename IDL, ExceptionThrowerFunctor ExceptionThrower> inline ConversionResult<IDL> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, ExceptionThrower&& exceptionThrower)
+template<typename IDL, ExceptionThrowerFunctor ExceptionThrower> inline ConversionResult<IDL> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, NOESCAPE ExceptionThrower&& exceptionThrower)
 {
     return Converter<IDL>::convert(lexicalGlobalObject, value, globalObject, std::forward<ExceptionThrower>(exceptionThrower));
 }
@@ -226,8 +226,10 @@ template<typename IDL, typename U> inline JSC::JSValue toJS(JSC::JSGlobalObject&
                 return { };
             }
             return JSC::jsUndefined();
-        } else
-            return toJS<IDL>(lexicalGlobalObject, globalObject, throwScope, valueOrFunctor());
+        } else {
+            // The result is passed straight to the converter, which refs it before anything else can run.
+            SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG return toJS<IDL>(lexicalGlobalObject, globalObject, throwScope, valueOrFunctor());
+        }
     } else {
         if constexpr (IsExceptionOr<U>) {
             if (valueOrFunctor.hasException()) [[unlikely]] {
@@ -235,7 +237,8 @@ template<typename IDL, typename U> inline JSC::JSValue toJS(JSC::JSGlobalObject&
                 return { };
             }
 
-            return toJS<IDL>(lexicalGlobalObject, globalObject, valueOrFunctor.releaseReturnValue());
+            // The result is passed straight to the converter, which refs it before anything else can run.
+            SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG return toJS<IDL>(lexicalGlobalObject, globalObject, valueOrFunctor.releaseReturnValue());
         } else
             return toJS<IDL>(lexicalGlobalObject, globalObject, std::forward<U>(valueOrFunctor));
     }

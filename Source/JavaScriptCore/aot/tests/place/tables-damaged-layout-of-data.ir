@@ -1,0 +1,6 @@
+# The check of the encoded tables finds the references in the body of a constant object by the record of its layout. Where the shape has no record, it reports that and reads no body.
+# RUN(SHAPE): tables damage=ShapeWithoutLayout
+# DIAGNOSTIC: ProgramTableCheckFailed
+
+# SHAPE: rule ShapeWithoutLayout
+# PROGRAM-OF: tables-data.ir

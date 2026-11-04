@@ -1,0 +1,46 @@
+# class A { static $call(o) { return o + 1 } }  class B extends A {}  const k = same(B)  print(k.$call(1))
+# Nothing outside the library can write the name, so the method leaves with neither class. The read through what the shell hands back finds it on the class that stands above the one that has left.
+# OPTIONS: check=VerifyEachPass,FlowFixpoint
+# RUN: run-in-shell globalThis.same = value => value;
+# CHECK: 2
+# CHECK-NEXT: exited with 0
+
+layout L0 kind=Instance name="A" module=m0 position=6 constructor=f1
+layout L1 kind=Instance name="B" module=m0 position=52 base=L0 constructor=f3 supertypes=[L0] flags=[HasHeritage]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 side=Static key=@#"call"
+    v4 = FinishClass v1 layout=L0
+    v5 = ResolveHeritage v4
+    v6 = NewClosure function=f3
+    v7 = NewClass v6, v4, v5 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="same" [isFreeName]
+    v11 = Call v10, -, v8 calleeName="same"
+    v12 = PropGet v11 key=@#"call"
+    v13 = Integer integer=1
+    v14 = Call v12, v11, v13 calleeKey=@#"call" calleeName="call"
+    v15 = PropGet v9 key="print" [isFreeName]
+    v16 = Call v15, -, v14 calleeName="print"
+    Return
+}
+function f1 name="A" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="call" module=m0 position=10 kind=Method length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f3 name="B" module=m0 position=52 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    Return v4
+}

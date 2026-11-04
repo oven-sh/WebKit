@@ -1,0 +1,106 @@
+# A suspended function holds what its suspension lists. Where a listed object is never built and a member of it is an object of the same function that is built
+# in front of the suspension, the suspension lists that member, once, and none of the members of the member.
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
+layout L0 fields=[{key="held" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}, {key="n" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}]
+
+function f0 name="memberIsBuilt" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=3} {
+    v3 = NewPromise
+    v4 = CallDirect v0, v1, v2, v3 function=f1
+    Return v3
+}
+
+function f1 name="memberIsBuilt" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=3} {
+    v4 = Integer
+    v5 = NewObject -, v0, v4 layout=L0 fields=[0, 1]
+    PropSet v5, v1 key="n" receivers=[L0]
+    v7 = FinishObject v5
+    PutModuleVariable v7 variable=g0
+    v9 = NewObject -, v7, v1 layout=L0 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = AwaitBySavingFrame v2, v3, v10
+    v12 = PropGet v10 key="n" receivers=[L0]
+    Return v12
+# CHECK: [[first]]{{*}} = NewObject -, v0, v1
+# CHECK-NOT: NewObject
+# CHECK: AwaitBySavingFrame v2, v3, [[first]]
+# CHECK-NOT: ,
+# CHECK: Return
+}
+
+function f2 name="memberIsListedToo" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=3} {
+    v3 = NewPromise
+    v4 = CallDirect v0, v1, v2, v3 function=f3
+    Return v3
+}
+
+function f3 name="memberIsListedToo" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=3} {
+    v4 = Integer
+    v5 = NewObject -, v0, v4 layout=L0 fields=[0, 1]
+    PropSet v5, v1 key="n" receivers=[L0]
+    v7 = FinishObject v5
+    PutModuleVariable v7 variable=g0
+    v9 = NewObject -, v7, v1 layout=L0 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = AwaitBySavingFrame v2, v3, v7, v10
+    v12 = PropGet v10 key="n" receivers=[L0]
+    PutModuleVariable v7 variable=g0
+    Return v12
+# CHECK: [[second]]{{*}} = NewObject -, v0, v1
+# CHECK-NOT: NewObject
+# CHECK: AwaitBySavingFrame v2, v3, [[second]]
+# CHECK-NOT: ,
+# CHECK: Return
+}
+
+function f4 name="memberOfMemberIsBuilt" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=3} {
+    v3 = NewPromise
+    v4 = CallDirect v0, v1, v2, v3 function=f5
+    Return v3
+}
+
+function f5 name="memberOfMemberIsBuilt" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=3} {
+    v4 = Integer
+    v5 = NewObject -, v0, v4 layout=L0 fields=[0, 1]
+    PropSet v5, v1 key="n" receivers=[L0]
+    v7 = FinishObject v5
+    PutModuleVariable v7 variable=g0
+    v9 = NewObject -, v7, v1 layout=L0 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = NewObject -, v10, v1 layout=L0 fields=[0, 1]
+    v12 = FinishObject v11
+    v13 = AwaitBySavingFrame v2, v3, v12
+    v14 = PropGet v12 key="n" receivers=[L0]
+    Return v14
+# CHECK: [[third]]{{*}} = NewObject -, v0, v1
+# CHECK-NOT: NewObject
+# CHECK: AwaitBySavingFrame v2, v3, [[third]]
+# CHECK-NOT: ,
+# CHECK: Return
+}
+
+function f6 name="holderIsNotListed" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f6 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=3} {
+    v3 = NewPromise
+    v4 = CallDirect v0, v1, v2, v3 function=f7
+    Return v3
+}
+
+function f7 name="holderIsNotListed" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f6 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=3} {
+    v4 = Integer
+    v5 = NewObject -, v0, v4 layout=L0 fields=[0, 1]
+    PropSet v5, v1 key="n" receivers=[L0]
+    v7 = FinishObject v5
+    PutModuleVariable v7 variable=g0
+    v9 = NewObject -, v7, v1 layout=L0 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = PropGet v10 key="n" receivers=[L0]
+    v12 = AwaitBySavingFrame v2, v3
+    Return v11
+# CHECK: NewObject -, v0, v1
+# CHECK-NOT: NewObject
+# CHECK-NOT: AwaitBySavingFrame v2, v3,
+# CHECK: AwaitBySavingFrame v2, v3
+}

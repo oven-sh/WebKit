@@ -1,0 +1,165 @@
+# A spread into an object literal reads every slot of the source, then defines by name, names and symbols in the order of the source, and the copy by the run time stays on the rare path
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 7
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Copy" fields=[{key="first" declared={type=number}}]
+layout L1 name="Options" fields=[{key=@@iterator declared={type=anything}}, {key="a" declared={type=number}}, {key=#"p"@L1 declared={type=number} flags=[IsPrivate]}, {key="b" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1, 2, 3]}, {fields=[3, 2, 1]}]}
+layout L2 name="WithMethod" fields=[{key="run" declared={type=function} flow={location={deferral=CapturesObject deferredFunction=f8}}}] flow={constructorOrders=[{fields=[0]}]}
+
+function f0 name="expected" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ~ L1, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    CopyDataProperties v2, v0
+    v4 = FinishObject v2
+    Return v4
+# CHECK: v2:{{*}}= NewObject -, v1 layout=L0 fields=[0]
+# CHECK-NEXT: = ShapeTest v0 layouts=[L1]
+# CHECK: [[done0]]():
+# CHECK-NEXT: v4:{{*}}= FinishObject v2
+# CHECK-NEXT: Return v4
+# CHECK: frequency=Rare:
+# CHECK-NEXT: CopyDataProperties v2, v0
+# CHECK-NEXT: Jump -> next [[done0]]()
+# CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0, 1, 2, 3]
+# CHECK: = HasNoExtraProperties v0,
+# CHECK-NOT: PropDefine
+# CHECK: [[allA]]: guard = AllGuards
+# CHECK-NEXT: [[iteratorA]]: anything = GetSlot v0, [[allA]] key=@@iterator receivers=[L1] level=Expected
+# CHECK-NEXT: [[aA]]: undefined|null|number ~ number = GetSlot v0, [[allA]] key="a" receivers=[L1] level=Expected
+# CHECK-NEXT: [[bA]]: string = GetSlot v0, [[allA]] key="b" receivers=[L1] level=Expected
+# CHECK-NEXT: PropDefine v2, [[iteratorA]] key=@@iterator
+# CHECK-NEXT: PropDefine v2, [[aA]] key="a"
+# CHECK-NEXT: PropDefine v2, [[bA]] key="b"
+# CHECK-NEXT: Jump -> next [[done0]]()
+# CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[3, 2, 1]
+# CHECK: [[allB]]: guard = AllGuards
+# CHECK-NEXT: [[bB]]: string = GetSlot v0, [[allB]] key="b" receivers=[L1] level=Expected
+# CHECK-NEXT: [[aB]]: undefined|null|number ~ number = GetSlot v0, [[allB]] key="a" receivers=[L1] level=Expected
+# CHECK-NEXT: PropDefine v2, [[bB]] key="b"
+# CHECK-NEXT: PropDefine v2, [[aB]] key="a"
+# CHECK-NEXT: Jump -> next [[done0]]()
+# CHECK-NOT: CopyDataProperties
+}
+
+function f1 name="nullishOrExpected" parameters=[{type=undefined|null|object}] results=[{type=anything}] {
+  b0(v0: undefined|null|object ~ L1):
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+# CHECK: v1:{{*}}= NewObject layout=L0
+# CHECK-NEXT: = TypeTest v0 testedType=undefined|null
+# CHECK-NOT: testedType=object
+# CHECK: ([[object1]]: object ~ L1):
+# CHECK-NEXT: = ShapeTest [[object1]] layouts=[L1]
+# CHECK: frequency=Rare:
+# CHECK-NEXT: CopyDataProperties v1, v0
+# CHECK: = GetSlot [[object1]], {{*}} key="a" receivers=[L1] level=Expected
+}
+
+function f2 name="deferredClosure" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L2):
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+# CHECK: [[all2]]: guard = AllGuards
+# CHECK-NEXT: [[run2]]:{{*}}= GetDeferredClosureSlot v0, [[all2]] key="run" receivers=[L2] level=Expected
+# CHECK-NEXT: PropDefine v1, [[run2]] key="run"
+}
+
+function f3 name="unchangedAllocation" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = NewObject -, v1, v0 layout=L1 fields=[3, 1]
+    v3 = NewObject layout=L0 fields=[]
+    CopyDataProperties v3, v2
+    v5 = FinishObject v3
+    Return v2
+# The source is read again behind the copy. One that is made for the spread alone is never made: passes/expand-own-keys-spread-of-literals-that-meet.ir
+# CHECK: v3:{{*}}= NewObject layout=L0
+# CHECK-NEXT: [[b3]]: string = GetSlot v2, v2 key="b" receivers=[L1] level=Expected
+# CHECK-NEXT: [[a3]]: undefined|null|number ~ number = GetSlot v2, v2 key="a" receivers=[L1] level=Expected
+# CHECK-NEXT: PropDefine v3, [[b3]] key="b"
+# CHECK-NEXT: PropDefine v3, [[a3]] key="a"
+# CHECK-NOT: ShapeTest
+# CHECK-NOT: HasKeyOrder
+# CHECK-NOT: CopyDataProperties
+}
+
+function f4 name="unchangedAllocationThroughWideningCast" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = NewObject -, v1, v0 layout=L1 fields=[3, 1]
+    v3: undefined|object = Upcast v2 castType=undefined|object
+    v4 = NewObject layout=L0 fields=[]
+    CopyDataProperties v4, v3
+    v6 = FinishObject v4
+    Return v2
+# CHECK: v4:{{*}}= NewObject layout=L0
+# CHECK-NEXT: [[b4]]: string = GetSlot v2, v2 key="b" receivers=[L1] level=Expected
+# CHECK-NEXT: [[a4]]: undefined|null|number ~ number = GetSlot v2, v2 key="a" receivers=[L1] level=Expected
+# CHECK-NEXT: PropDefine v4, [[b4]] key="b"
+# CHECK-NEXT: PropDefine v4, [[a4]] key="a"
+# CHECK-NOT: ShapeTest
+# CHECK-NOT: HasKeyOrder
+# CHECK-NOT: CopyDataProperties
+}
+
+function f5 name="restPatternWithConstantKeys" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L1):
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0 excludedKeys=["a"]
+    v3 = FinishObject v1
+    Return v3
+# CHECK: v1:{{*}}= NewObject layout=L0
+# CHECK-NEXT: = ShapeTest v0 layouts=[L1]
+# CHECK: frequency=Rare:
+# CHECK-NEXT: CopyDataProperties v1, v0 excludedKeys=["a"]
+# CHECK-NOT: key="a"
+# CHECK: PropDefine v1, {{*}} key="b"
+# CHECK-NOT: key="a"
+}
+
+function f6 name="restPatternWithComputedKey" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
+  b0(v0: object ~ L1, v1: string):
+    v2 = NewObject layout=L0 fields=[]
+    CopyDataProperties v2, v0, v1
+    v4 = FinishObject v2
+    Return v4
+# CHECK: v2:{{*}}= NewObject layout=L0
+# CHECK-NEXT: CopyDataProperties v2, v0, v1
+# CHECK-NEXT: v4:{{*}}= FinishObject v2
+# CHECK-NEXT: Return v4
+}
+
+function f7 name="nothingExpected" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+# CHECK: v1:{{*}}= NewObject layout=L0
+# CHECK-NEXT: CopyDataProperties v1, v0
+# CHECK-NEXT: v3:{{*}}= FinishObject v1
+# CHECK-NEXT: Return v3
+}
+
+function f8 name="run" results=[{type=undefined}] {
+    Return
+}
+
+function f9 name="expectedPosition" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L1):
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+# CHECK: v1:{{*}}= NewObject layout=L0
+# CHECK-NEXT: = TypeTest v0 testedType=undefined|null
+# CHECK: ([[something9]]: boolean|number|string|symbol|bigint|object ~ L1):
+# CHECK-NEXT: = TypeTest [[something9]] testedType=object
+# CHECK: frequency=Rare:
+# CHECK-NEXT: CopyDataProperties v1, v0
+# CHECK: ([[object9]]: object ~ L1):
+# CHECK-NEXT: = ShapeTest [[object9]] layouts=[L1]
+# CHECK: = GetSlot [[object9]], {{*}} key="a" receivers=[L1] level=Expected
+}

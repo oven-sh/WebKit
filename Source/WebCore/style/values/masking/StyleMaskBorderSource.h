@@ -54,7 +54,7 @@ struct MaskBorderSource {
     std::optional<ImageWrapper> tryImage() const { return m_image ? std::make_optional(ImageWrapper { *m_image }) : std::nullopt; }
     RefPtr<Image> tryStyleImage() const { return m_image; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -83,7 +83,7 @@ template<> struct CSSValueCreation<MaskBorderSource> { auto operator()(CSSValueP
 // MARK: - Blending
 
 template<> struct Blending<MaskBorderSource> {
-    bool NODELETE canBlend(const MaskBorderSource&, const MaskBorderSource&);
+    bool LEGACY_NODELETE canBlend(const MaskBorderSource&, const MaskBorderSource&);
     auto blend(const MaskBorderSource&, const MaskBorderSource&, const Style::ComputedStyle&, const Style::ComputedStyle&, const BlendingContext&) -> MaskBorderSource;
 };
 

@@ -184,7 +184,7 @@ void WebAssemblyGlobalConstructor::finishCreation(VM& vm, WebAssemblyGlobalProto
 }
 
 WebAssemblyGlobalConstructor::WebAssemblyGlobalConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callJSWebAssemblyGlobal, constructJSWebAssemblyGlobal)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callJSWebAssemblyGlobal), JSC_REGISTERED_HOST_FUNCTION(constructJSWebAssemblyGlobal))
 {
 }
 

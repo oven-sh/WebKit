@@ -35,7 +35,7 @@
 #include <wtf/DateMath.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/TZoneMalloc.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/TinyLRUCache.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
@@ -71,7 +71,7 @@ static RefPtr<TimeZoneCacheEntry> timeZoneCacheEntry(const TimeZone& timeZone)
 }
 
 template<typename F>
-static auto withTimeZone(const TimeZone& timeZone, F&& fn) -> decltype(fn(static_cast<UCalendar*>(nullptr)))
+static auto withTimeZone(const TimeZone& timeZone, NOESCAPE const F& fn) -> decltype(fn(static_cast<UCalendar*>(nullptr)))
 {
     ASSERT(timeZone.isID());
     auto entry = timeZoneCacheEntry(timeZone);

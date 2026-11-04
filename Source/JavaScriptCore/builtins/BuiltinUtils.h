@@ -45,6 +45,18 @@ class SourceCode;
 class UnlinkedFunctionExecutable;
 class VM;
 
+// Every field is a function of the source characters alone, which is what lets the builtins generator
+// compute these at build time.
+struct BuiltinSourceMetadata {
+    unsigned sourceLength { 0 };
+    unsigned parametersStart { 0 };
+    unsigned parameterCount { 0 };
+    int closeBraceOffsetFromEnd { 0 };
+    bool isAsyncFunction { false };
+    bool isInStrictContext { false };
+};
+
 JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* createBuiltinExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute);
+JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* createBuiltinExecutable(VM&, const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute);
     
 } // namespace JSC

@@ -1,0 +1,64 @@
+# function add(n) { return n + 1 }   let kept   try { BigInt64Array(); kept = add } catch { }
+# function bindAgain() { kept = kept.bind(null) }   function read() { return kept }
+# Flow saw closures of one function arrive at the bind, so the bind tests for one and creates a closure of the bound function, which holds the closure it has tested.
+# The call in front of the store always throws, which is found behind flow: no code creates a closure of `add`, and the function has no entrypoint.
+# The test never passes and the row of the bound function names no target.
+# FORM: AsRead
+# RUN(IR): pipeline Select
+# RUN(TABLES): tables functions
+# RUN: run-in-shell globalThis.register = (bindAgain, read) => { print(read()); try { bindAgain(); } catch (error) { print(error.constructor.name); } print(read()); };
+# IR-NOT: = NewClosure {{*}}function=f1
+# IR: name="bindAgain"
+# IR: = TypeTest {{*}}testedType=f1
+# IR: = NewClosure {{*}}function=[[bound]]
+# TABLES: bound function={{*}} target=- arguments=0 targetClosureSlot=
+# CHECK: undefined
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: undefined
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b3():
+    v0 = Builtin builtin=BigInt64Array
+    v1 = Call v0 calleeName="BigInt64Array"
+    v2 = NewClosure function=f1
+    PutModuleVariable v2 variable=g0
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Jump -> next b4()
+  b4():
+    v5 = NewClosure function=f2
+    v6 = NewClosure function=f3
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="register" [isFreeName]
+    v9 = Call v8, -, v5, v6
+    Return
+}
+function f1 name="add" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="bindAgain" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="bind"
+    v2 = Null
+    v3 = Call v1, v0, v2 calleeKey="bind"
+    PutModuleVariable v3 variable=g0
+    Return
+}
+function f3 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

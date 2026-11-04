@@ -1,0 +1,12 @@
+# The program of deferred-closure.ir without validate: the same deferred slot
+# FORM: AsRead
+# RUN: compile
+# RUN(PLACED): pipeline CheckPlacement
+# OPTIONS: check=validate-back-end references=narrow disable=pass:InlineCalls,pass:SinkAllocations,pass:PromoteEnvironmentsToVariables
+# STATISTIC: FieldsDeferringClosures >= 1
+# STATISTIC: DeferredClosureSlots >= 1
+# CHECK: image not empty
+# PLACED: = GetDeferredClosureSlot
+# PLACED: [[closure]]: f2 = NewClosure function=f2 allocationSite=2 closureForm=Deferred [isMadeOnDemand]
+# PLACED-NEXT: = NewObject {{*}}, [[closure]] layout=L0 fields=[0]
+# PROGRAM-OF: deferred-closure.ir

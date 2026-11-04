@@ -1,0 +1,165 @@
+# What is entered where the first turn of a loop is sure to get to, with every variable as it is ahead of the loop, may as well be entered ahead of the loop: the fact leaves the loop and the read that names it follows, with its type. Behind anything that may leave the loop or store to a variable the fact stays, and the read that goes ahead finds a word that may be anything
+# FORM: Prepared
+# RUN: pass HoistLoopInvariantReads
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="storedOnce" declared={type=number} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g1 name="other" declared={type=number} flow={writers=AllKnown}
+
+function f0 name="inTheHeader" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = Entered function=f7
+    v3 = GetModuleVariable fact=v2 variable=g0
+    v4 = ToBoolean v3
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK: b0(
+# CHECK-NEXT: = Entered function=f7
+# CHECK-NEXT: number = GetModuleVariable fact=v2 variable=g0
+# CHECK-NEXT: ToBoolean
+# CHECK-NEXT: Jump
+# CHECK-NOT: Entered
+# CHECK-NOT: AssumeType
+}
+
+function f1 name="behindATestThatHoldsOnEntry" results=[{type=anything}] {
+    v0 = Integer
+    Jump -> next b1(v0)
+  b1(v1):
+    LoopHint
+    v3 = Integer integer=10
+    v4 = Less v1, v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Entered function=f7
+    v6 = GetModuleVariable fact=v5 variable=g0
+    v7 = ToBoolean v6
+    v8 = Increment v1
+    Jump -> next b1(v8)
+  b3():
+    Return
+# CHECK: b0(
+# CHECK: = Entered function=f7
+# CHECK-NEXT: number = GetModuleVariable fact=v5 variable=g0
+# CHECK: b1(
+# CHECK-NOT: Entered
+# CHECK-NOT: AssumeType
+}
+
+function f2 name="theFactInTheHeaderAndTwoReadsBehindTheTest" results=[{type=anything}] {
+    v0 = Integer
+    Jump -> next b1(v0)
+  b1(v1):
+    LoopHint
+    v3 = Entered function=f7
+    v4 = Integer integer=10
+    v5 = Less v1, v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = GetModuleVariable fact=v3 variable=g0
+    v7 = ToBoolean v6
+    v8 = GetModuleVariable fact=v3 variable=g0
+    v9 = ToBoolean v8
+    v10 = Increment v1
+    Jump -> next b1(v10)
+  b3():
+    Return
+# CHECK: b0(
+# CHECK: = Entered function=f7
+# CHECK-NEXT: number = GetModuleVariable fact=v3 variable=g0
+# CHECK: number = GetModuleVariable fact=v3 variable=g0
+# CHECK: b1(
+# CHECK-NOT: Entered
+# CHECK-NOT: AssumeType
+}
+
+function f3 name="behindATestThatMayFailAtOnce" parameters=[{type=i32}] results=[{type=anything}] {
+    v1 = Integer
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Entered function=f7
+    v6 = GetModuleVariable fact=v5 variable=g0
+    v7 = ToBoolean v6
+    v8 = Increment v2
+    Jump -> next b1(v8)
+  b3():
+    Return
+# CHECK: b0(
+# CHECK-NOT: Entered
+# CHECK-NOT: GetModuleVariable
+# CHECK: b2():
+# CHECK-NEXT: = Entered function=f7
+# CHECK-NEXT: = GetModuleVariable fact=v5 variable=g0
+}
+
+function f4 name="behindWhatMayThrow" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = RequireObjectCoercible v0
+    v4 = Entered function=f7
+    v5 = GetModuleVariable fact=v4 variable=g0
+    v6 = ToBoolean v5
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK: b0(
+# CHECK-NOT: Entered
+# CHECK: number|unspecified = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK: b1(
+# CHECK: = Entered function=f7
+# CHECK-NEXT: number = AssumeType {{*}}, v4 provenType=number
+# CHECK-NEXT: ToBoolean
+}
+
+function f5 name="behindAStoreToAnotherVariable" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutModuleVariable v0 variable=g1
+    v4 = Entered function=f7
+    v5 = GetModuleVariable fact=v4 variable=g0
+    v6 = ToBoolean v5
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK: b0(
+# CHECK-NOT: Entered
+# CHECK: number|unspecified = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK: b1(
+# CHECK: = Entered function=f7
+# CHECK-NEXT: number = AssumeType {{*}}, v4 provenType=number
+}
+
+function f6 name="behindACall" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Call v0
+    v4 = Entered function=f7
+    v5 = GetModuleVariable fact=v4 variable=g0
+    v6 = ToBoolean v5
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK: b0(
+# CHECK-NEXT: Jump
+# CHECK: = Entered function=f7
+# CHECK-NEXT: = GetModuleVariable fact=v4 variable=g0
+}
+
+function f7 name="reader" results=[{type=number}] {
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

@@ -1,0 +1,29 @@
+# A test run reads what it quotes from the file, so its image says what is printed in place of which piece of the file, as the front end does:
+#   const K = "x", N = null;
+#   publish(function one(o: T) { const r = f(o); return r.y + o[K] }, function two() { return N.z });
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: tables function-texts
+# CHECK: printed in place, from the start of the file
+# CHECK-NEXT: printed m0 77..78 copy=64..68
+# CHECK-NEXT: printed m0 84..87 ".x"
+# CHECK-NEXT: printed m0 85..86 copy=10..13
+# CHECK-NEXT: printed m0 115..116 copy=19..23
+# CHECK-NOT: printed
+
+module m0 path="/a.ts" displayPath="a.ts" body=f0 positions={lineStarts=[0, 25] textPrintedInPlace="\x4d\x01\x11\x1a\x07\x03\x04\x2e\x78\x01\x01\x0d\x96\x01\x1e\x01\x11\xc0\x01"} functionText="const K = \x22x\x22, N = null;\x0apublish(function one(o) { const r = f(o); return r.y + o[K] }, function two() { return N.z });" typesCutFromFunctionText="\x2f\x03"
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="one" module=m0 text={start=33 end=86} results=[{type=anything}] {
+    Return
+}
+function f2 name="two" module=m0 text={start=88 end=117} results=[{type=anything}] {
+    Return
+}

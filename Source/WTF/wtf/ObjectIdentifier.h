@@ -34,12 +34,23 @@ namespace WTF {
 
 class PrintStream;
 
+// Type to mark the object identifier domains. Each domain can generate
+// identifiers in isolation with respective to other domains and the identifiers
+// are guaranteed to be unique. Use for example:
+// constexpr ObjectIdentifierDomain gpuProcessObjectIdentifierDomain { static_cast<uint64_t>(1) << 63 };
+enum class ObjectIdentifierDomain : uint64_t {
+};
+
+// Initializes the process to produce unique identifiers among process domains.
+// By default, the process in the default domain.
+WTF_EXPORT_PRIVATE void initializeObjectIdentifierDomain(ObjectIdentifierDomain);
+
 struct ObjectIdentifierThreadSafeAccessTraits {
     WTF_EXPORT_PRIVATE static uint64_t generateIdentifierInternal();
 };
 
 struct ObjectIdentifierMainThreadAccessTraits {
-    WTF_EXPORT_PRIVATE static uint64_t NODELETE generateIdentifierInternal();
+    WTF_EXPORT_PRIVATE static uint64_t LEGACY_NODELETE generateIdentifierInternal();
 };
 
 // Extracted from ObjectIdentifierGeneric to avoid binary bloat.
@@ -194,3 +205,4 @@ using WTF::AtomicObjectIdentifier;
 using WTF::ObjectIdentifierGenericBase;
 using WTF::ObjectIdentifierGeneric;
 using WTF::ObjectIdentifier;
+using WTF::ObjectIdentifierDomain;

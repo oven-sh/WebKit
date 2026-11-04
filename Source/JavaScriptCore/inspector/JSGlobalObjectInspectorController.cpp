@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSGlobalObjectInspectorController.h"
 
+#include "AOTRemovableFeature.h"
 #include "Completion.h"
 #include "ConsoleMessage.h"
 #include "ErrorHandlingScope.h"
@@ -171,8 +172,9 @@ void JSGlobalObjectInspectorController::disconnectFrontend(FrontendChannel& fron
     m_strongVM = nullptr;
 }
 
-void JSGlobalObjectInspectorController::dispatchMessageFromFrontend(const String& message)
+NEVER_INLINE void JSGlobalObjectInspectorController::dispatchMessageFromFrontend(const String& message)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &JSGlobalObjectInspectorController::dispatchMessageFromFrontend);
     m_backendDispatcher->dispatch(message);
 }
 

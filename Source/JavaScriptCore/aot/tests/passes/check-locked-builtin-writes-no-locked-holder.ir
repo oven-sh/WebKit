@@ -1,0 +1,19 @@
+# A program that stores only to its own objects and to built-ins that are not locked gets no diagnostic, and the pass changes nothing
+# RUN: pipeline CheckLockedBuiltinWrites
+# CHECK: PropSet {{*}} key="x"
+# CHECK: PropSet {{*}} key="x"
+# RUN(PASS): pass CheckLockedBuiltinWrites
+# PASS: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    v2 = NewObject layout=L0 fields=[]
+    PropSet v2, v1 key="x" mode=Strict @10
+    v4 = PropGet v0 key="Date" [isFreeName] @20
+    PropSet v4, v1 key="x" mode=Strict @30
+    Return
+}

@@ -1,11 +1,9 @@
 //@ runDefault
-//@ runDefault("--useUnboxedFastArrayIteration=0")
-//@ runDefault("--useUnboxedFastArrayIteration=1")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--useJIT=0")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--useFTLJIT=0", "--useConcurrentJIT=0")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20", "--thresholdForOptimizeSoon=20", "--thresholdForFTLOptimizeAfterWarmUp=50", "--thresholdForFTLOptimizeSoon=50")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--forceOSRExitToLLInt=1", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20")
+//@ runDefault("--useJIT=0")
+//@ runDefault("--useDFGJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10")
+//@ runDefault("--useFTLJIT=0", "--useConcurrentJIT=0")
+//@ runDefault("--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20", "--thresholdForOptimizeSoon=20", "--thresholdForFTLOptimizeAfterWarmUp=50", "--thresholdForFTLOptimizeSoon=50")
+//@ runDefault("--forceOSRExitToLLInt=1", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20")
 
 // A loop over an Array that runs without an iterator object changes tier in the middle: OSR entry from a long loop, OSR
 // exit when a speculation fails half way, and code compiled only after IteratorClose became observable that has to take

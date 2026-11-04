@@ -1,0 +1,57 @@
+# Whether a lookup of a name on an object finds the member that its class declares or inherits. The bits of the class that a read of the member tests answer `true`: the name on every prototype that the lookup passes,
+# the links between them, and that no instance hides the name. Where they do not hold, and where nobody knows the class or the member, the operation stays. Code generation makes it `false`, and the library asks the objects.
+# FORM: Prepared
+# OPTIONS: limit=MaxDeclarationsPredictedFromNames:0
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Stream" constructor=f0 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true members=[{key="readable" kind=Getter function=f1}, {key="resume" function=f2}] namedMembers=[{key="readable" kind=Getter function=f1}, {key="resume" function=f2}]}
+layout L1 kind=Instance name="Socket" base=L0 constructor=f3 fields=[{key="port" declared={type=number}}] flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce}
+
+function f0 name="Stream" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="readable" kind=Getter flags=[HasThis] results=[{type=anything}]
+function f2 name="resume" kind=Method flags=[HasThis] results=[{type=anything}]
+function f3 name="Socket" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+
+function f4 name="accessor-of-the-class-above" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = FindsDeclaredMember v0 key="readable"
+    Return v1
+# CHECK-NEXT: b0(v0: L1):
+# CHECK-NEXT: [[test]]: boolean = AreMembersUnchanged conditions=[{layout=L1 key="readable"}, {kind=PrototypeLinkUnchanged layout=L1}, {kind=MemberNotHidden layout=L1 key="readable"}]
+# CHECK-NEXT: Branch [[test]] -> taken [[found]](| 0), notTaken [[unknown]]()
+# CHECK: [[found]]({{*}}: guard):
+# CHECK-NEXT: : true = Boolean
+# CHECK: [[unknown]]() frequency=Unlikely:
+# CHECK-NEXT: = FindsDeclaredMember v0 key="readable"
+}
+function f5 name="method-of-the-class-above" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = FindsDeclaredMember v0 key="resume"
+    Return v1
+# CHECK-NEXT: b0(v0: L1):
+# CHECK-NEXT: [[test]]: boolean = AreMembersUnchanged conditions=[{layout=L1 key="resume"}, {kind=PrototypeLinkUnchanged layout=L1}, {kind=MemberNotHidden layout=L1 key="resume"}]
+# CHECK: : true = Boolean
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = FindsDeclaredMember v0 key="resume"
+}
+function f6 name="object-that-nobody-knows" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = FindsDeclaredMember v0 key="readable"
+    Return v1
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: = FindsDeclaredMember v0 key="readable"
+# CHECK-NEXT: Return
+}
+function f7 name="field-of-the-object" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = FindsDeclaredMember v0 key="port"
+    Return v1
+# CHECK-NEXT: b0(v0: L1):
+# CHECK-NEXT: = FindsDeclaredMember v0 key="port"
+# CHECK-NEXT: Return
+}
+function f8 name="name-that-no-class-declares" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = FindsDeclaredMember v0 key="other"
+    Return v1
+# CHECK-NEXT: b0(v0: L1):
+# CHECK-NEXT: = FindsDeclaredMember v0 key="other"
+# CHECK-NEXT: Return
+}

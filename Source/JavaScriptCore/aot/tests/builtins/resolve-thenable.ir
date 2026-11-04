@@ -1,0 +1,139 @@
+# Promise.resolve of a value that cannot be a promise becomes a fresh promise and the ordinary resolve operation, which alone knows about thenables
+# FORM: Prepared
+# RUN: pass ResolveBuiltins SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="a" declared={type=number}}] flow={baseState=None}
+layout L1 kind=Instance name="Task" constructor=f0 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Promise impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Task" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+
+function f1 name="constant" results=[{type=anything}] {
+    v0 = Builtin builtin=Promise
+    v1 = PropGet v0 key="resolve"
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey="resolve"
+    Return v3
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: IsNotThenable
+# CHECK: [[promise1]]: Promise = NewPromise
+# CHECK-NEXT: ResolvePromise [[promise1]], v2
+# CHECK-NEXT: v3: Promise<1> = Upcast [[promise1]] castType=Promise<1>
+# CHECK-NOT: IsNotThenable
+}
+
+function f2 name="primitive" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=Promise
+    v2 = PropGet v1 key="resolve"
+    v3 = Call v2, v1, v0 calleeKey="resolve"
+    Return v3
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: IsNotThenable
+# CHECK: [[promise2]]: Promise = NewPromise
+# CHECK-NEXT: ResolvePromise [[promise2]], v0
+# CHECK-NEXT: v3: Promise<string> = Upcast [[promise2]] castType=Promise<string>
+# CHECK-NOT: IsNotThenable
+}
+
+function f3 name="objectLiteral" results=[{type=anything}] {
+    v0 = Builtin builtin=Promise
+    v1 = PropGet v0 key="resolve"
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Call v1, v0, v3 calleeKey="resolve"
+    Return v4
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: IsNotThenable
+# CHECK: [[promise3]]: Promise = NewPromise
+# CHECK-NEXT: ResolvePromise [[promise3]], v3
+# CHECK-NEXT: v4: Promise{{*}} = Upcast [[promise3]] castType=Promise
+# CHECK-NOT: IsNotThenable
+}
+
+function f4 name="instanceOfOtherClass" parameters=[{type=Array}] results=[{type=anything}] {
+    v1 = Builtin builtin=Promise
+    v2 = PropGet v1 key="resolve"
+    v3 = Call v2, v1, v0 calleeKey="resolve"
+    Return v3
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: IsNotThenable
+# CHECK: [[promise4]]: Promise = NewPromise
+# CHECK-NEXT: ResolvePromise [[promise4]], v0
+# CHECK-NOT: IsNotThenable
+}
+
+function f5 name="noArgument" results=[{type=anything}] {
+    v0 = Builtin builtin=Promise
+    v1 = PropGet v0 key="resolve"
+    v2 = Call v1, v0 calleeKey="resolve"
+    Return v2
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: IsNotThenable
+# CHECK: [[promise5]]: Promise = NewPromise
+# CHECK-NEXT: [[nothing5]]: undefined = Undefined
+# CHECK-NEXT: ResolvePromise [[promise5]], [[nothing5]]
+# CHECK-NOT: IsNotThenable
+}
+
+function f6 name="pristinePromise" parameters=[{type=Promise<anything, pristine[Names]>}] results=[{type=anything}] {
+    v1 = Builtin builtin=Promise
+    v2 = PropGet v1 key="resolve"
+    v3 = Call v2, v1, v0 calleeKey="resolve"
+    Return v3
+# CHECK-NOT: NewPromise
+# CHECK-NOT: IsNotThenable
+# CHECK: v3: {{*}} = CallBuiltin v1, v0 overload=PromiseResolve/0
+# CHECK-NEXT: Return v3
+}
+
+function f7 name="promise" parameters=[{type=Promise}] results=[{type=anything}] {
+    v1 = Builtin builtin=Promise
+    v2 = CallBuiltin v1, v0 overload=PromiseResolve/1
+    Return v2
+# CHECK-NOT: NewPromise
+# CHECK-NOT: IsNotThenable
+# CHECK: v2: Promise = CallBuiltin v1, v0 overload=PromiseResolve/1
+# CHECK-NEXT: Return v2
+}
+
+function f8 name="promiseOrPrimitive" parameters=[{type=undefined|Promise}] results=[{type=anything}] {
+    v1 = Builtin builtin=Promise
+    v2 = PropGet v1 key="resolve"
+    v3 = Call v2, v1, v0 calleeKey="resolve"
+    Return v3
+# CHECK-NOT: NewPromise
+# CHECK-NOT: IsNotThenable
+# CHECK: v3: Promise = CallBuiltin v1, v0 overload=PromiseResolve/{{*}} builtinCallForm=AnyReceiver
+}
+
+function f9 name="instanceOfPromiseSubclass" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = Builtin builtin=Promise
+    v2 = PropGet v1 key="resolve"
+    v3 = Call v2, v1, v0 calleeKey="resolve"
+    Return v3
+# CHECK-NOT: NewPromise
+# CHECK-NOT: IsNotThenable
+# CHECK: v3: Promise = CallBuiltin v1, v0 overload=PromiseResolve/1
+}
+
+function f10 name="unknownValue" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+    v2 = Builtin builtin=Promise
+    v3 = PropGet v2 key="resolve"
+    v4 = Call v3, v2, v0 calleeKey="resolve"
+    v5 = Call v3, v2, v1 calleeKey="resolve"
+    Return v5
+# CHECK-NOT: NewPromise
+# CHECK-NOT: IsNotThenable
+# CHECK: v4: Promise = CallBuiltin v2, v0 overload=PromiseResolve/{{*}} builtinCallForm=AnyReceiver
+# CHECK-NEXT: v5: Promise = CallBuiltin v2, v1 overload=PromiseResolve/{{*}} builtinCallForm=AnyReceiver
+}
+
+function f11 name="subclassReceiver" parameters=[{type=f0}, {type=number}] results=[{type=anything}] {
+    v2 = Builtin builtin=PromiseResolve
+    v3 = Call v2, v0, v1 calleeKey="resolve"
+    Return v3
+# CHECK-NOT: NewPromise
+# CHECK-NOT: IsNotThenable
+# CHECK: v3: anything = CallBuiltin v0, v1 overload=PromiseResolve/{{*}} builtinCallForm=AnyReceiver
+}

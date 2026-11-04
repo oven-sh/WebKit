@@ -45,6 +45,7 @@ namespace Wasm {
 
 struct ModuleDebugInfo;
 struct FunctionDebugInfo;
+struct ModuleInImage;
 
 struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> {
 
@@ -223,6 +224,8 @@ struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> 
     mutable Atomic<bool> m_usesModernExceptions { false };
 
     Vector<FunctionData> functions;
+    const ModuleInImage* moduleWithSkippedFunctions { nullptr };
+    Lock interpreterMetadataLock;
 
     Vector<Export> exports;
     std::optional<uint32_t> startFunctionIndexSpace;
@@ -242,6 +245,9 @@ struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> 
     };
     Vector<ConstantExpression> constantExpressions;
     Name sourceURL;
+    std::array<uint8_t, 20> sourceDigest { };
+    size_t sourceSize { 0 };
+    bool hasSourceDigest { false };
     uint64_t requestIdentifier { 0 };
     Name sourceMappingURL;
 #if ENABLE(WEBASSEMBLY_DEBUGGER)

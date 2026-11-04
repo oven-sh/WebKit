@@ -36,6 +36,7 @@
 #include "InspectorInstrumentation.h"
 #include "LoaderStrategy.h"
 #include "PlatformStrategies.h"
+#include "ProcessIdentifier.h"
 #if ENABLE(WEB_RTC)
 #include "RTCRtpScriptTransform.h"
 #include "RTCRtpScriptTransformer.h"
@@ -62,7 +63,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
 static Lock allWorkersLock;
-static HashSet<ScriptExecutionContextIdentifier>& NODELETE allWorkerContexts() WTF_REQUIRES_LOCK(allWorkersLock)
+static HashSet<ScriptExecutionContextIdentifier>& LEGACY_NODELETE allWorkerContexts() WTF_REQUIRES_LOCK(allWorkersLock)
 {
     static NeverDestroyed<HashSet<ScriptExecutionContextIdentifier>> map;
     return map;
@@ -83,7 +84,8 @@ void Worker::networkStateChanged(bool isOnline)
 Worker::Worker(ScriptExecutionContext& context, JSC::RuntimeFlags runtimeFlags, WorkerOptions&& options)
     : ActiveDOMObject(&context)
     , m_options(WTF::move(options))
-    , m_identifier(makeString("worker:"_s, Inspector::IdentifiersFactory::createIdentifier()))
+    // Unique across processes, since Web Inspector aggregates workers from every process hosting the page's frames.
+    , m_identifier(makeString("worker:"_s, Process::identifier().toUInt64(), '.', Inspector::IdentifiersFactory::createIdentifier()))
     , m_contextProxy(WorkerGlobalScopeProxy::create(*this))
     , m_runtimeFlags(runtimeFlags)
     , m_clientIdentifier(ScriptExecutionContextIdentifier::generate())
@@ -284,7 +286,7 @@ void Worker::reportError(const String& errorMessage)
         Ref event = Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No);
         worker.AbstractWorker::dispatchEvent(event);
         if (!event->defaultPrevented() && worker.scriptExecutionContext())
-            worker.scriptExecutionContext()->addConsoleMessage(makeUnique<Inspector::ConsoleMessage>(MessageSource::JS, MessageType::Log, MessageLevel::Error, errorMessage));
+            protect(worker.scriptExecutionContext())->addConsoleMessage(makeUnique<Inspector::ConsoleMessage>(MessageSource::JS, MessageType::Log, MessageLevel::Error, errorMessage));
     });
 }
 

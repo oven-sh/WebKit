@@ -26,19 +26,10 @@
 import Testing
 @_spi(Testing) import WebKit
 private import TestWebKitAPILibrary
-private import WebKit_Private._WKWebsiteDataStoreConfiguration
-private import WebKit_Private.WKWebsiteDataStorePrivate
+private import WebKit_Private.WKProcessPoolPrivate
+private import WebKit_Private._WKFrameTreeNode
 import struct Swift.String
 import struct Foundation.URL
-
-@MainActor
-private struct JSHandleNavigationDecider: WebPage.NavigationDeciding {
-    mutating func decideAuthenticationChallengeDisposition(
-        for challenge: URLAuthenticationChallenge
-    ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
-        (.useCredential, challenge.protectionSpace.serverTrust.map(URLCredential.init(trust:)))
-    }
-}
 
 @MainActor
 struct JSHandleTests {
@@ -59,8 +50,8 @@ struct JSHandleTests {
         }
 
         try await server.run {
-            let configuration = WebPage.Configuration($0)
-            let page = WebPage(configuration: configuration, navigationDecider: JSHandleNavigationDecider())
+            let configuration = WebPage.Configuration(httpsProxyFor: $0)
+            let page = WebPage(configuration: configuration, navigationDecider: NavigationDeciderAllowingAnyTLSCertificate())
 
             try await page.load(URL(string: "https://example.com/example")).wait()
 
@@ -197,16 +188,6 @@ struct JSHandleTests {
                 #expect(isUndefined)
             }
         }
-    }
-}
-
-extension WebPage.Configuration {
-    fileprivate init(_ serverConfiguration: HTTPServer.Configuration) {
-        self.init()
-
-        let storeConfiguration = _WKWebsiteDataStoreConfiguration(nonPersistentConfiguration: ())
-        storeConfiguration.httpsProxy = serverConfiguration.httpsProxy
-        self.websiteDataStore = WKWebsiteDataStore._store(with: storeConfiguration)
     }
 }
 

@@ -1,0 +1,58 @@
+# The definition of a base class and of a derived class, their methods, and both constructors pass the back-end checks in fast code
+# RUN: compile
+# OPTIONS: heat=everything-is-hot check=validate-back-end only-passes=EstimateHeat
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f2
+layout L1 kind=Instance name="Derived" base=L0 constructor=f3 flags=[HasHeritage]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="defines" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f2
+    v2 = NewClass v1 layout=L0
+    v3 = NewClosure function=f4
+    DefineMethod v2, v3 layout=L0 key="m"
+    DefineMethod v2, v3 layout=L0 methodKind=Getter index=1 key="g"
+    DefineMethod v2, v3 layout=L0 side=Static methodKind=Setter index=2 key="s"
+    v7 = FinishClass v2 layout=L0
+    v8 = ResolveHeritage v7
+    v9 = NewClassToken layout=L1
+    v10 = NewClosure function=f3
+    v11 = NewClass v10, v7, v8 layout=L1
+    v12 = GetClassPrototype v11 layout=L1
+    v13 = ToPropertyKey v0
+    DefineMethod v11, v3, v13 layout=L1
+    DefineMethod v11, v3, v13 layout=L1 side=Static index=1
+    v16 = FinishClass v11 layout=L1
+    v17 = Construct v16, -, v0
+    v18 = NewArray v12, v17 contents=anything
+    Return v18
+}
+function f2 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f3 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = ToBoolean v2
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = SuperConstruct v3, v1, v2 layout=L1
+    Return v5
+  b2():
+    v6 = NewArray v2 contents=anything
+    v7 = SuperConstructList v3, v1, v6 layout=L1
+    Return v7
+}
+function f4 name="method" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return v0
+}

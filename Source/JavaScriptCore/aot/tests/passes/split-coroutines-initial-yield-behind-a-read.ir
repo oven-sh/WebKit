@@ -1,0 +1,23 @@
+# A generator whose head reads what the program may store to in the meantime is started where it is called, so its body does not ask whether it is running
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+# STATISTIC: CoroutinesSplit = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="step" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="readsVariableFirst" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
+    v2 = GetModuleVariable variable=g0 @10
+    InitialYield @11
+    Return v2
+}
+function f1 name="addsFirst" flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] {
+    v2 = Add v1, v1 @20
+    InitialYield @21
+    Return v2
+}
+
+# CHECK-LABEL: function f2 name="readsVariableFirst"
+# CHECK-NOT: IsGeneratorRunning
+# CHECK-LABEL: function f3 name="addsFirst"
+# CHECK: IsGeneratorRunning

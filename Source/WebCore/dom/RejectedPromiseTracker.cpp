@@ -68,17 +68,17 @@ public:
 
     UnhandledPromise(UnhandledPromise&&) = default;
 
-    ScriptCallStack* NODELETE callStack()
+    ScriptCallStack* LEGACY_NODELETE callStack()
     {
         return m_stack.get();
     }
 
-    DOMPromise& NODELETE promise()
+    DOMPromise& LEGACY_NODELETE promise()
     {
         return m_promise.get();
     }
 
-    const String& unmaskedSourceURL() const { return m_unmaskedSourceURL; }
+    const String& LEGACY_NODELETE unmaskedSourceURL() const { return m_unmaskedSourceURL; }
 
 private:
     const Ref<DOMPromise> m_promise;

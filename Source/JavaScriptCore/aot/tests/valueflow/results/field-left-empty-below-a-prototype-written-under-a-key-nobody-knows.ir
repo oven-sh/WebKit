@@ -1,0 +1,22 @@
+# bare = { a: 1 }; above = { early: 1 }; Object.setPrototypeOf(bare, above); above[key] = 1; bare.late
+# Nobody knows the key of the store to the prototype, so it may be the name of the field that the object leaves empty.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Options"
+# CHECK-NOT: AbsentOnPrototypes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="late" declared={type=anything}}]
+layout L1 name="Above" fields=[{key="early" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = Builtin builtin=ObjectSetPrototypeOf
+    v4 = Call v3, -, v1, v2
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="someName" [isFreeName]
+    ElemSet v2, v6, v0 mode=Strict
+    v8 = PropGet v1 key="late"
+    Return
+}

@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "AssemblyHelpers.h"
 #include "DisallowMacroScratchRegisterUsage.h"
@@ -65,7 +65,7 @@ public:
     // argument without using any argument registers. You usually want one of the setupArguments*()
     // methods below instead of this. This thing is most useful if you have *a lot* of arguments.
     template<typename Functor>
-    void setupArgument(unsigned argumentIndex, const Functor& functor)
+    void setupArgument(unsigned argumentIndex, NOESCAPE const Functor& functor)
     {
         unsigned numberOfRegs = GPRInfo::numberOfArgumentRegisters; // Disguise the constant from clang's tautological compare warning.
         if (argumentIndex < numberOfRegs) {
@@ -584,7 +584,7 @@ public:
         preserved.add(temp1, IgnoreVectors);
         GPRReg temp2 = selectScratchGPR(preserved);
         preserved.add(temp2, IgnoreVectors);
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
         GPRReg temp3 = selectScratchGPR(preserved);
         preserved.add(temp3, IgnoreVectors);
 #endif
@@ -640,7 +640,7 @@ public:
 #if CPU(ARM64) || CPU(RISCV64)
         loadPtr(Address(framePointerRegister, CallFrame::returnPCOffset()), linkRegister);
         subPtr(TrustedImm32(2 * sizeof(void*)), newFrameSizeGPR);
-#if CPU(ARM64E)
+#if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
         GPRReg tempGPR = temp3;
         ASSERT(tempGPR != newFramePointer && tempGPR != newFrameSizeGPR);
         addPtr(TrustedImm32(sizeof(CallerFrameAndPC)), MacroAssembler::framePointerRegister, tempGPR);
@@ -719,4 +719,4 @@ public:
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

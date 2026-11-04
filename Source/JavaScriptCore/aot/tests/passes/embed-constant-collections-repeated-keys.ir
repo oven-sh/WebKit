@@ -1,0 +1,205 @@
+# A repeated key keeps its first position and, in a Map, takes its last value, and keys are compared as the constructor compares them
+# FORM: Prepared
+# RUN: pass EmbedConstantCollections
+# STATISTIC: ConstantCollectionsEmbedded = 14
+# CHECK: table 0 keys: [String("x") String("y")]
+# CHECK-NEXT: table 1 keys: [Number(0)]
+# CHECK-NEXT: table 2 keys: [Number(0) Number(1)]
+# CHECK-NEXT: table 2 values: [String("last") String("one")]
+# CHECK-NEXT: table 3 keys: [String("k")]
+# CHECK-NEXT: table 3 values: [Number(-0)]
+# CHECK-NEXT: table 4 keys: [String("k")]
+# CHECK-NEXT: table 4 values: [Number(0)]
+# CHECK-NEXT: table 5 keys: [String("k") String("j")]
+# CHECK-NEXT: table 5 values: [Number(3) Number(2)]
+# CHECK-NEXT: table 6 keys: [Number(NaN) Number(1)]
+# CHECK-NEXT: table 7 keys: [Undefined() Null() Boolean(true) BigInt("7") Boolean(false)]
+# CHECK-NEXT: table 8 keys: [Number(0) String("0") String("-0") String("a") String("A")]
+# CHECK-NEXT: table 9 keys: [String("k") String("j")]
+# CHECK-NEXT: table 9 values: [Number(1) Number(1)]
+# CHECK-NEXT: table 10 keys: [String("a") String("b")]
+# CHECK-NEXT: table 11 keys: [Number(5) Number(4294967296)]
+# CHECK-NEXT: outcome: Changed
+# RUN(AGAIN): pass EmbedConstantCollections EmbedConstantCollections
+# AGAIN: outcome: Changed
+# AGAIN: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+data d0 root=Array{contents=string elements=[String{value="x"}, String{value="y"}]} module=m0
+data d1 root=Array{contents=string elements=[String{value="a"}, String{value="b"}, String{value="a"}]} module=m0
+function f0 name="negativeZeroThenZero" results=[{type=Set<number>}] {
+    v0 = Double number=-0
+    v1 = Integer integer=0
+    v2 = NewArray v0, v1 contents=number
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v3
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d2
+}
+
+function f1 name="zeroThenNegativeZero" results=[{type=Set<number>}] {
+    v0 = Integer integer=0
+    v1 = Double number=-0
+    v2 = NewArray v0, v1 contents=number
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v3
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d2
+}
+
+function f2 name="onlyNegativeZero" results=[{type=Set<number>}] {
+    v0 = Double number=-0
+    v1 = NewArray v0 contents=number
+    v2 = CallBuiltin -, v1 overload=Set/2 builtinCallForm=Whole
+    Return v2
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d2
+}
+
+function f3 name="zeroesAsMapKeys" results=[{type=Map<number, string>}] {
+    v0 = Double number=-0
+    v1 = String string="first"
+    v2 = NewArray v0, v1 contents=anything
+    v3 = Integer integer=1
+    v4 = String string="one"
+    v5 = NewArray v3, v4 contents=anything
+    v6 = Integer integer=0
+    v7 = String string="last"
+    v8 = NewArray v6, v7 contents=anything
+    v9 = NewArray v2, v5, v8 contents=Array<anything>
+    v10 = CallBuiltin -, v9 overload=Map/2 builtinCallForm=Whole
+    Return v10
+# CHECK-NOT: NewArray
+# CHECK: = NewMapFromData data=d3
+}
+
+function f4 name="negativeZeroAsMapValue" results=[{type=Map<string, number>}] {
+    v0 = String string="k"
+    v1 = Double number=-0
+    v2 = NewArray v0, v1 contents=anything
+    v3 = NewArray v2 contents=Array<anything>
+    v4 = CallBuiltin -, v3 overload=Map/2 builtinCallForm=Whole
+    Return v4
+# CHECK-NOT: NewArray
+# CHECK: = NewMapFromData data=d4
+}
+
+function f5 name="zeroAsMapValue" results=[{type=Map<string, number>}] {
+    v0 = String string="k"
+    v1 = Integer integer=0
+    v2 = NewArray v0, v1 contents=anything
+    v3 = NewArray v2 contents=Array<anything>
+    v4 = CallBuiltin -, v3 overload=Map/2 builtinCallForm=Whole
+    Return v4
+# CHECK-NOT: NewArray
+# CHECK: = NewMapFromData data=d5
+}
+
+function f6 name="repeatedStringWithAnotherValue" results=[{type=Map<string, number>}] {
+    v0 = String string="k"
+    v1 = Integer integer=1
+    v2 = NewArray v0, v1 contents=anything
+    v3 = String string="j"
+    v4 = Integer integer=2
+    v5 = NewArray v3, v4 contents=anything
+    v6 = String string="k"
+    v7 = Integer integer=3
+    v8 = NewArray v6, v7 contents=anything
+    v9 = NewArray v2, v5, v8 contents=Array<anything>
+    v10 = CallBuiltin -, v9 overload=Map/2 builtinCallForm=Whole
+    Return v10
+# CHECK-NOT: NewArray
+# CHECK: = NewMapFromData data=d6
+}
+
+function f7 name="notANumberTwice" results=[{type=Set<number>}] {
+    v0 = Double number=NaN
+    v1 = Integer integer=1
+    v2 = Double number=NaN
+    v3 = NewArray v0, v1, v2 contents=number
+    v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
+    Return v4
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d7
+}
+
+function f8 name="otherPrimitivesTwice" results=[{type=Set<anything>}] {
+    v0 = Undefined
+    v1 = Null
+    v2 = Boolean boolean=true
+    v3 = BigInt digits="7"
+    v4 = Undefined
+    v5 = Null
+    v6 = Boolean boolean=true
+    v7 = BigInt digits="7"
+    v8 = Boolean boolean=false
+    v9 = NewArray v0, v1, v2, v3, v4, v5, v6, v7, v8 contents=anything
+    v10 = CallBuiltin -, v9 overload=Set/2 builtinCallForm=Whole
+    Return v10
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d8
+}
+
+function f9 name="keysThatOnlyLookAlike" results=[{type=Set<anything>}] {
+    v0 = Integer integer=0
+    v1 = String string="0"
+    v2 = String string="-0"
+    v3 = String string="a"
+    v4 = String string="A"
+    v5 = NewArray v0, v1, v2, v3, v4 contents=anything
+    v6 = CallBuiltin -, v5 overload=Set/2 builtinCallForm=Whole
+    Return v6
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d9
+}
+
+function f10 name="repeatedValueUnderTwoKeys" results=[{type=Map<string, number>}] {
+    v0 = String string="k"
+    v1 = Integer integer=1
+    v2 = NewArray v0, v1 contents=anything
+    v3 = String string="j"
+    v4 = Integer integer=1
+    v5 = NewArray v3, v4 contents=anything
+    v6 = NewArray v2, v5 contents=Array<anything>
+    v7 = CallBuiltin -, v6 overload=Map/2 builtinCallForm=Whole
+    Return v7
+# CHECK-NOT: NewArray
+# CHECK: = NewMapFromData data=d10
+}
+
+function f11 name="recordWithRepeatedKey" results=[{type=Set<string>}] {
+    v0 = Data data=d1
+    v1 = CallBuiltin -, v0 overload=Set/2 builtinCallForm=Whole
+    Return v1
+# CHECK-NOT: = Data
+# CHECK: = NewSetFromData data=d11
+}
+
+function f12 name="recordWithoutRepeatedKey" results=[{type=Set<string>}] {
+    v0 = Data data=d0
+    v1 = CallBuiltin -, v0 overload=Set/2 builtinCallForm=Whole
+    Return v1
+# CHECK-NOT: = Data
+# CHECK: = NewSetFromData data=d0
+}
+
+function f13 name="oneNumberAsIntegerAndAsDouble" results=[{type=Set<number>}] {
+    v0 = Integer integer=5
+    v1 = Double number=5
+    v2 = Double number=4294967296
+    v3 = Integer integer=4294967296
+    v4 = NewArray v0, v1, v2, v3 contents=number
+    v5 = CallBuiltin -, v4 overload=Set/2 builtinCallForm=Whole
+    Return v5
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d12
+# CHECK: data d0 root=Array{contents=string elements=[String{value="x"}, String{value="y"}]}
+# CHECK-NEXT: data d1 root=Array{contents=string elements=[String{value="a"}, String{value="b"}, String{value="a"}]}
+# CHECK-NEXT: data d2 root=Array{contents=number elements=[Number{}]}
+# CHECK: data d4 root=Array{contents=Array elements=[Array{contents=anything elements=[String{value="k"}, Number{value=-0}]}]}
+# CHECK-NEXT: data d5 root=Array{contents=Array elements=[Array{contents=anything elements=[String{value="k"}, Number{}]}]}
+# CHECK-NEXT: data d6 root=Array{contents=Array elements=[Array{contents=anything elements=[String{value="k"}, Number{value=3}]}, Array{contents=anything elements=[String{value="j"}, Number{value=2}]}]}
+# CHECK: data d11 root=Array{contents=string elements=[String{value="a"}, String{value="b"}]}
+# CHECK-NEXT: data d12 root=Array{contents=number elements=[Number{value=5}, Number{value=4294967296}]}
+# CHECK-NOT: data d13
+}

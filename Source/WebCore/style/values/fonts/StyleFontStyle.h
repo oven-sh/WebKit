@@ -56,7 +56,7 @@ struct FontStyle {
 
     std::optional<Angle> angle() const { return m_platformSlope ? std::make_optional(Angle { static_cast<float>(*m_platformSlope) }) : std::nullopt; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -87,13 +87,13 @@ private:
 
 template<> struct CSSValueConversion<FontStyle> { FontStyle operator()(BuilderState&, const CSSValue&); };
 // `FontStyle` is special-cased to return a `CSSFontStyleWithAngleValue`.
-template<> struct CSSValueCreation<FontStyle> { Ref<CSSValue> NODELETE operator()(CSSValuePool&, const Style::ComputedStyle&, const FontStyle&); };
+template<> struct CSSValueCreation<FontStyle> { Ref<CSSValue> LEGACY_NODELETE operator()(CSSValuePool&, const Style::ComputedStyle&, const FontStyle&); };
 
 // MARK: - Blending
 
 template<> struct Blending<FontStyle> {
-    bool NODELETE canBlend(const FontStyle&, const FontStyle&);
-    auto blend(const FontStyle&, const FontStyle&, const BlendingContext&) -> FontStyle;
+    bool LEGACY_NODELETE canBlend(const FontStyle&, const FontStyle&);
+    FontStyle LEGACY_NODELETE blend(const FontStyle&, const FontStyle&, const BlendingContext&);
 };
 
 } // namespace Style

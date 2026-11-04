@@ -401,7 +401,7 @@ private:
     const Logger& logger() { return mediaPlayerLogger(); }
     uint64_t logIdentifier() { return mediaPlayerLogIdentifier(); }
     ASCIILiteral logClassName() const { return "RemoteMediaPlayerProxy"_s; }
-    WTFLogChannel& NODELETE logChannel() const;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const;
 #endif
 
     Vector<Ref<RemoteAudioTrackProxy>> m_audioTracks;
@@ -412,7 +412,7 @@ private:
     WebCore::MediaPlayerClientIdentifier m_clientIdentifier;
     RefPtr<SandboxExtension> m_sandboxExtension;
     const Ref<IPC::Connection> m_webProcessConnection;
-    RefPtr<WebCore::MediaPlayer> m_player;
+    const RefPtr<WebCore::MediaPlayer> m_player;
     WeakPtr<RemoteMediaPlayerManagerProxy> m_manager;
     WebCore::MediaPlayerEnums::MediaEngineIdentifier m_engineIdentifier;
     Vector<WebCore::ContentType> m_typesRequiringHardwareSupport;
@@ -439,7 +439,7 @@ private:
 #endif
 
 #if ENABLE(WEB_AUDIO) && PLATFORM(COCOA)
-    RefPtr<RemoteAudioSourceProviderProxy> m_remoteAudioSourceProvider;
+    const RefPtr<RemoteAudioSourceProviderProxy> m_remoteAudioSourceProvider;
 #endif
     ScopedRenderingResourcesRequest m_renderingResourcesRequest;
 

@@ -102,6 +102,10 @@ set(LD_SUPPORTS_ALLOW_MULTIPLE_DEFINITION FALSE)
 if (LD_USAGE MATCHES "allow-multiple-definition")
     set(LD_SUPPORTS_ALLOW_MULTIPLE_DEFINITION TRUE)
 endif ()
+set(LD_SUPPORTS_PACK_RELATIVE_RELOCS FALSE)
+if (LD_USAGE MATCHES "pack-relative-relocs" OR LD_USAGE MATCHES "--pack-dyn-relocs=[^ ]*relr")
+    set(LD_SUPPORTS_PACK_RELATIVE_RELOCS TRUE)
+endif ()
 unset(LD_USAGE)
 
 message(STATUS "Linker variant in use: ${LD_VARIANT} ")
@@ -110,6 +114,7 @@ message(STATUS "  Linker supports split debug info - ${LD_SUPPORTS_SPLIT_DEBUG}"
 message(STATUS "  Linker supports --gdb-index - ${LD_SUPPORTS_GDB_INDEX}")
 message(STATUS "  Linker supports --disable-new-dtags - ${LD_SUPPORTS_DISABLE_NEW_DTAGS}")
 message(STATUS "  Linker supports --gc-sections - ${LD_SUPPORTS_GC_SECTIONS}")
+message(STATUS "  Linker supports -z pack-relative-relocs - ${LD_SUPPORTS_PACK_RELATIVE_RELOCS}")
 
 # Determine whether the archiver in use supports thin archives.
 separate_arguments(AR_VERSION_COMMAND UNIX_COMMAND "${CMAKE_AR} -V")
@@ -155,6 +160,11 @@ if (LD_SUPPORTS_DISABLE_NEW_DTAGS)
     add_link_options("LINKER:--disable-new-dtags")
 endif ()
 
+option(LD_PACK_RELATIVE_RELOCS "Pack relative relocations using DT_RELR" ${LD_SUPPORTS_PACK_RELATIVE_RELOCS})
+if (LD_PACK_RELATIVE_RELOCS)
+    add_link_options("LINKER:-z,pack-relative-relocs")
+endif ()
+
 # Prefer thin archives by default if they can be both created by the
 # archiver and read back by the linker.
 if (AR_SUPPORTS_THIN_ARCHIVES AND LD_SUPPORTS_THIN_ARCHIVES)
@@ -193,6 +203,8 @@ option(CLANG_TIME_TRACE "Generate Clang time trace profiling output" OFF)
 if (CLANG_TIME_TRACE AND COMPILER_IS_CLANG)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ftime-trace")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ftime-trace")
+    set(CMAKE_OBJC_FLAGS "${CMAKE_OBJC_FLAGS} -ftime-trace")
+    set(CMAKE_OBJCXX_FLAGS "${CMAKE_OBJCXX_FLAGS} -ftime-trace")
 endif ()
 
 option(SWIFT_NINJA_TRACE "Collect ninja and swift driver execution data and produce a Perfetto-style trace" OFF)

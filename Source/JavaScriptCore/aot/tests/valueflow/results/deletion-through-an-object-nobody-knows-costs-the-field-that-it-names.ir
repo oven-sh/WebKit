@@ -1,0 +1,17 @@
+# o = { x: 1, y: 2, z: 3 }; holder.kept = o; delete holder.z; o.x
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Kept" fields=[{key="x" {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined{{*}}{key="y" {{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined{{*}}{key="z" {{*}}stability=[IsNeverRedefined
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Kept" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}, {key="z" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="holder" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2, v2, v2 layout=L0 fields=[0, 1, 2]
+    PropSet v1, v3 key="kept"
+    v5 = PropDelete v1 key="z"
+    v6 = PropGet v3 key="x"
+    Return v6
+}

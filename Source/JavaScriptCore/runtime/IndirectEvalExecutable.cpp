@@ -26,6 +26,7 @@
 #include "config.h"
 #include "IndirectEvalExecutable.h"
 
+#include "AOTRemovableFeature.h"
 #include "CodeCache.h"
 #include "Debugger.h"
 #include "Error.h"
@@ -47,6 +48,7 @@ inline IndirectEvalExecutable* IndirectEvalExecutable::createImpl(JSGlobalObject
         return nullptr;
     }
 
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Interpreter, Abort, IndirectEvalExecutable*)
     auto* executable = new (NotNull, allocateCell<IndirectEvalExecutable>(vm)) IndirectEvalExecutable(globalObject, source, lexicallyScopedFeatures, derivedContextType, isArrowFunctionContext, evalContextType);
     executable->finishCreation(vm);
 
@@ -68,6 +70,7 @@ inline IndirectEvalExecutable* IndirectEvalExecutable::createImpl(JSGlobalObject
     executable->m_unlinkedCodeBlock.set(vm, executable, unlinkedEvalCode);
 
     return executable;
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
 IndirectEvalExecutable* IndirectEvalExecutable::create(JSGlobalObject* globalObject, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, DerivedContextType derivedContextType, bool isArrowFunctionContext, EvalContextType evalContextType, NakedPtr<JSObject>& resultingError)

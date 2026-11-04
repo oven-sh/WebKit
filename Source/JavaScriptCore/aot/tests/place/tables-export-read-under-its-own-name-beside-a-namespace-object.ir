@@ -1,0 +1,38 @@
+# A namespace object that is made only to be `this` of a call has rows for the exports that something reads out of it. An export that is read as the variable it is has none, however often it is read
+#   import * as all from "./made.js"; all.look(); all.direct    with    export function look() { return this.looked }
+# RUN(FLOW): flow
+# RUN(ROWS): tables modules
+# FLOW: module m1 namespaceUse=NamedReadsOnly exportsReadByName=[g1]
+# ROWS-NOT: name="direct"
+# ROWS: export 0 name="looked" kind=Variable
+# ROWS-NOT: name="direct"
+# ROWS-NOT: name="look"
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="made.js" displayPath="made.js" body=f1 exports=[{name="direct" variable=g0}, {name="look" variable=g2}, {name="looked" variable=g1}]
+entry module=m0
+variable g0 name="direct" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="looked" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="look" module=m1 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g2
+    v1 = ModuleNamespace module=m1
+    v2 = Call v0, v1
+    v3 = GetModuleVariable variable=g0
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="publish" [isFreeName]
+    v6 = Call v5, -, v2, v3
+    Return
+}
+function f1 name="made" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=2
+    PutModuleVariable v2 variable=g1
+    Return
+}
+function f2 name="look" module=m1 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="looked"
+    Return v1
+}

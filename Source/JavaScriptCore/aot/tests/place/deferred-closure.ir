@@ -1,0 +1,75 @@
+# A slot holds deferred closures if an allocation of its layout lists a new closure for the field, also where another allocation lists a closure of another function, where the field may leave the slot later and in an object that lives in a frame
+# FORM: AsRead
+# OPTIONS: only-passes=AllocateInFrames,ResolveAccesses,DeferClosuresInFields references=narrow
+# RUN: plan-slots layouts
+# STATISTIC: DeferredClosureSlots = 5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="CapturesObject" constructor=f1 fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+layout L1 name="CapturesNothing" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+layout L2 name="TwoFunctions" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+layout L3 name="MayBeDeleted" fields=[{key="run" declared={type=function}}]
+layout L4 name="InFrame" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f3
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    v9 = NewClosure function=f3
+    v10 = NewObject -, v9 layout=L2 fields=[0]
+    v11 = FinishObject v10
+    PutModuleVariable v11 variable=g0
+    v13 = NewClosure function=f4
+    v14 = NewObject -, v13 layout=L2 fields=[0]
+    v15 = FinishObject v14
+    PutModuleVariable v15 variable=g0
+    v17 = NewClosure function=f4
+    v18 = NewObject -, v17 layout=L3 fields=[0]
+    v19 = FinishObject v18
+    v20 = PropDelete v19 key="run"
+    PutModuleVariable v19 variable=g0
+    v22 = NewClosure function=f5
+    v23 = NewObject -, v22 layout=L4 fields=[0]
+    v24 = FinishObject v23
+    v25 = PropGet v24 key="run"
+    PutModuleVariable v25 variable=g0
+    Return
+}
+function f1 name="CapturesObject" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = NewClosure v2 function=f2
+    PropDefine v2, v3 key="run"
+    Return v2
+}
+function f2 name="run" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
+    Return
+}
+function f3 name="first" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f4 name="second" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f5 name="third" kind=Arrow results=[{type=anything}] {
+    Return
+}
+
+# CHECK: L0 CompiledObject size=32
+# CHECK-NEXT: .0 "run" DeferredClosure @16 f2 capturesObject record=0
+# CHECK-NEXT: L1 CompiledObject size=32
+# CHECK-NEXT: .0 "run" DeferredClosure @16 f3 record=0
+# CHECK-NEXT: L2 CompiledObject size=32
+# CHECK-NEXT: .0 "run" DeferredClosure @16 f3 record=0
+# What deletes the field makes the closure first, and then the slot reads empty like any other.
+# CHECK: L3 CompiledObject size=32
+# CHECK-NEXT: .0 "run" DeferredClosure @16 f4 record=0
+# CHECK-NEXT: L4 CompiledObject size=32
+# CHECK-NEXT: .0 "run" DeferredClosure @16 f5 record=0

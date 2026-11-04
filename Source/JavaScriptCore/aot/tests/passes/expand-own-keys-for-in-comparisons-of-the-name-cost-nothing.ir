@@ -1,0 +1,81 @@
+# for (const name in config) "key" !== name && "ref" !== name && "__self" !== name && (props[name] = config[name]): in the copy of the body for one name each comparison of the name with a text is decided,
+# and is gone. So it does not count where the copies are held against MaxVersionedIterationBytes. Beside it: the same loop with comparisons of the VALUE, which stay in every copy, is too much code
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass limit=MaxVersionedIterationBytes:600
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+# LOSS: MaxVersionedIterationBytes f1 v2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Config" fields=[{key="alpha" declared={type=anything}}, {key="bravo" declared={type=anything}}, {key="charlie" declared={type=anything}}] flow={constructorOrders=[{fields=[0, 1, 2]}]}
+
+function f0 name="skipsNames" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+  b0(v0: object ~ L0, v1: object):
+    v2 = ForInOpen v0
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4: int[0, 8589934591]):
+    LoopHint
+    v6 = ForInStep v2, v0 position=v4
+    v7 = ResultAt v6 index=0
+    v8 = ResultAt v6 index=1
+    v9 = ResultAt v6 index=2
+    v10 = Integer integer=1
+    v11 = Add v9, v10
+    Branch v7 -> taken b6(), notTaken b2()
+  b2():
+    v12 = String string="key"
+    v13 = StrictEq v12, v8
+    Branch v13 -> taken b1(v11), notTaken b3()
+  b3():
+    v14 = String string="ref"
+    v15 = StrictEq v14, v8
+    Branch v15 -> taken b1(v11), notTaken b4()
+  b4():
+    v16 = String string="__self"
+    v17 = StrictEq v8, v16
+    Branch v17 -> taken b1(v11), notTaken b5()
+  b5():
+    v18 = ElemGet v0, v8
+    ElemSet v1, v8, v18
+    Jump -> next b1(v11)
+  b6():
+    Return
+# CHECK: = ShapeTest v0 layouts=[L0]
+# CHECK: = String string="charlie"
+}
+
+function f1 name="skipsValues" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+  b0(v0: object ~ L0, v1: object):
+    v2 = ForInOpen v0
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4: int[0, 8589934591]):
+    LoopHint
+    v6 = ForInStep v2, v0 position=v4
+    v7 = ResultAt v6 index=0
+    v8 = ResultAt v6 index=1
+    v9 = ResultAt v6 index=2
+    v10 = Integer integer=1
+    v11 = Add v9, v10
+    Branch v7 -> taken b6(), notTaken b2()
+  b2():
+    v12 = ElemGet v0, v8
+    v13 = String string="key"
+    v14 = StrictEq v13, v12
+    Branch v14 -> taken b1(v11), notTaken b3()
+  b3():
+    v15 = String string="ref"
+    v16 = StrictEq v15, v12
+    Branch v16 -> taken b1(v11), notTaken b4()
+  b4():
+    v17 = String string="__self"
+    v18 = StrictEq v12, v17
+    Branch v18 -> taken b1(v11), notTaken b5()
+  b5():
+    ElemSet v1, v8, v12
+    Jump -> next b1(v11)
+  b6():
+    Return
+# CHECK-NOT: = ShapeTest
+}

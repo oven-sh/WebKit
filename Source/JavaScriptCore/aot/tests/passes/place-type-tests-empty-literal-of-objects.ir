@@ -1,0 +1,54 @@
+# const out: Shape[] = []; out[0] = shape
+# An empty literal whose elements are declared to be objects or strings is born with Contiguous storage on every way that it is allocated, and the kind that its site has learned is never less general:
+# the allocation is the proof, as it is for a literal with elements. Declared numbers begin as Int32 or Double and may begin as what the site has learned;
+# those are tested. Where nothing is declared, what is pushed decides when code is generated, with a planned capacity too: the store names no kind and asks the array
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Shape" fields=[{key="a" declared={type=number}}]
+
+function f0 name="objects" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = NewArray contents=L0
+    v2 = Integer
+    ElemSet v1, v2, v0 mode=Strict
+    Return v1
+# CHECK-NOT: HasArrayStorage
+# CHECK: PutArrayElement v1, v2, v0, {{*}} arrayStorage=Contiguous
+# CHECK-NOT: ElemSet
+}
+
+function f1 name="strings" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = NewArray contents=undefined|string
+    v2 = Integer
+    ElemSet v1, v2, v0 mode=Strict
+    Return v1
+# CHECK-NOT: HasArrayStorage
+# CHECK: PutArrayElement v1, v2, v0, {{*}} arrayStorage=Contiguous
+# CHECK-NOT: ElemSet
+}
+
+function f2 name="numbers" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewArray contents=number
+    v2 = Integer
+    ElemSet v1, v2, v0 mode=Strict
+    Return v1
+# CHECK: = HasArrayStorage v1 arrayStorage=Double
+}
+
+function f3 name="nothingDeclared" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    v2 = Integer
+    ElemSet v1, v2, v0 mode=Strict
+    Return v1
+# CHECK: PutArrayElement v1, v2, v0, v1 level=Expected
+}
+
+function f4 name="nothingDeclaredWithCapacity" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = Integer integer=4
+    v2 = NewArray contents=anything capacity=v1
+    v3 = Integer
+    ElemSet v2, v3, v0 mode=Strict
+    Return v2
+# CHECK: PutArrayElement v2, v3, v0, v2 level=Expected
+}

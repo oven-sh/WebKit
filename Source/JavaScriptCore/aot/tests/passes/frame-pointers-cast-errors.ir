@@ -1,0 +1,29 @@
+# A cast that lets objects through passes a pointer into the frame on, a cast that lets none through does not
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: CalleeRetainsFramePointer 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="y" declared={type=anything} flow={occupancy=AlwaysFilled}}]
+
+function f0 name="castToText" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0] storage=Frame
+    v4 = Undefined
+    Branch v0 -> taken b1(v3), notTaken b1(v4)
+  b1(v5):
+    v6 = AssumeType v5 provenType=undefined|null|string
+    v7 = Call v1, -, v6
+    Return v7
+}
+
+function f1 name="castToObject" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0] storage=Frame
+    v4 = Undefined
+    Branch v0 -> taken b1(v3), notTaken b1(v4)
+  b1(v5):
+    v6 = AssumeType v5 provenType=undefined|null|object
+    v7 = Call v1, -, v6
+    Return v7
+}

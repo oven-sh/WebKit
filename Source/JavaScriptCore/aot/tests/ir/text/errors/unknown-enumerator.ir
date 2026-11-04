@@ -1,0 +1,5 @@
+# A word that is no member of the enumeration
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+layout L0 kind=Class

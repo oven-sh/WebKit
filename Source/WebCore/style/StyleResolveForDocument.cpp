@@ -91,8 +91,8 @@ Style::ComputedStyle resolveForDocument(const Document& document)
         fontDescription.setOneFamily(WebCore::FontFamily { standardFamily, FontFamilyKind::Generic });
         fontDescription.setShouldAllowUserInstalledFonts(settings.shouldAllowUserInstalledFonts() ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No);
 
-        fontDescription.setKeywordSizeFromIdentifier(CSSValueMedium);
-        int size = fontSizeForKeyword(CSSValueMedium, false, document);
+        fontDescription.setKeywordSizeFromIdentifier(CSSValueID::Medium);
+        int size = fontSizeForKeyword(CSSValueID::Medium, false, document);
         fontDescription.setComputedSize(size);
         bool useSVGZoomRules = document.isSVGDocument();
         auto usedFontSize = usedFontSizeFromComputedSize(size, fontDescription.isAbsoluteSize(), useSVGZoomRules, documentStyle, document);
@@ -104,7 +104,7 @@ Style::ComputedStyle resolveForDocument(const Document& document)
         return fontDescription;
     }();
 
-    auto fontCascade = FontCascade { WTF::move(fontDescription), documentStyle.fontCascade() };
+    auto fontCascade = FontCascade { WTF::move(fontDescription), protect(documentStyle.fontCascade()) };
 
     // We don't just call setFontDescription() because we need to provide the fontSelector to the FontCascade.
     RefPtr fontSelector = document.fontSelector();

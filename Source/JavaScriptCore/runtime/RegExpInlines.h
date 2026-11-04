@@ -235,7 +235,16 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
 #endif
     } else
 #endif
+#if ENABLE(AOT)
+    if (m_state == ImageCode) [[unlikely]]
+        result = matchWithImageCode(nullOrGlobalObject, vm, s, startOffset, offsetVector);
+    else
+#endif
     {
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode()) [[unlikely]]
+            countInterpretedMatch(vm);
+#endif
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
     }
@@ -386,7 +395,16 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     Vector<int, 32> nonReturnedOvector;
     nonReturnedOvector.grow(offsetVectorSize());
     offsetVector = nonReturnedOvector.mutableSpan().data();
+#if ENABLE(AOT)
+    if (m_state == ImageCode) [[unlikely]]
+        result = matchWithImageCode(nullOrGlobalObject, vm, s, startOffset, offsetVector);
+    else
+#endif
     {
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode()) [[unlikely]]
+            countInterpretedMatch(vm);
+#endif
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
     }

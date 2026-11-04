@@ -26,7 +26,7 @@
 #include "config.h"
 #include "CorpseSnapshot.h"
 
-#if (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#if ENABLE(LIB_JSC_TOOLS)
 
 #include "CorpseError.h"
 
@@ -43,26 +43,35 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Snapshot);
 
 unsigned Snapshot::s_nextId = 1;
 
+// Returns MACH_PORT_NULL if the snapshot could not be taken, having reported why.
+static mach_port_t takeSnapshot(Process* process)
+{
+    if (!process || !process->isAttached()) {
+        Error::report("Could not snapshot: No process attached");
+        return MACH_PORT_NULL;
+    }
+
+    mach_port_t corpsePort = MACH_PORT_NULL;
+    kern_return_t kr = task_generate_corpse(process->taskPort(), &corpsePort);
+    if (kr == KERN_SUCCESS)
+        return corpsePort;
+
+    if (!process->holdsLiveTask()) {
+        Error::report("Could not snapshot PID %d: the process has terminated",
+            static_cast<int>(process->pid()));
+    } else {
+        Error::report("Could not snapshot PID %d: %s (0x%x)",
+            static_cast<int>(process->pid()), mach_error_string(kr), kr);
+    }
+    return MACH_PORT_NULL;
+}
+
 Snapshot::Snapshot(RefPtr<Process> process)
     : m_process(WTF::move(process))
+    , m_corpsePort(takeSnapshot(m_process.get()))
     , m_id(s_nextId++)
+    , m_memory(m_corpsePort)
 {
-    if (!m_process || !m_process->isAttached())
-        return;
-
-    // Snapshot the target into a corpse; only a read port is required from here
-    // on, and the corpse is independent of the live target.
-    kern_return_t kr = task_generate_corpse(m_process->taskPort(), &m_corpsePort);
-    if (kr != KERN_SUCCESS) {
-        m_corpsePort = MACH_PORT_NULL;
-        if (!m_process->holdsLiveTask()) {
-            Error::report("Could not snapshot PID %d: the process has terminated",
-                static_cast<int>(m_process->pid()));
-        } else {
-            Error::report("Could not snapshot PID %d: %s (0x%x)",
-                static_cast<int>(m_process->pid()), mach_error_string(kr), kr);
-        }
-    }
 }
 
 Snapshot::~Snapshot()
@@ -95,4 +104,4 @@ Address Snapshot::symbol(const char* name)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#endif // ENABLE(LIB_JSC_TOOLS)

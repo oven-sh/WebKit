@@ -1,0 +1,60 @@
+# function f(x, ...list) { switch (list.length) { .. } }: a switch on the length of a list parameter costs the one arm that stays where the site makes the list for the call. A list that comes from
+# elsewhere, or that the caller also holds for another use, has a length that the site does not know: every arm is charged
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# LOSS: MaxInlineHeadBytes
+# STATISTIC: InlineDecisionInline = 2
+# STATISTIC: InlineDecisionCostExceedsBenefit = 2
+# STATISTIC: InlineBenefitFoldedCode = 2
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="byLength" flags=[HasRestParameter] parameters=[{type=number}, {type=Array<number>}] results=[{type=number}] {
+    v2 = CallBuiltin v1 overload=ArrayPrototypeLength/0
+    Switch v2 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
+# REPEAT: i = 1..4
+  b%(i)():
+    v%(i*8-5) = Mul v0, v0
+    v%(i*8-4) = Mul v%(i*8-5), v0
+    v%(i*8-3) = Mul v%(i*8-4), v0
+    v%(i*8-2) = Mul v%(i*8-3), v0
+    v%(i*8-1) = Mul v%(i*8-2), v0
+    v%(i*8) = Mul v%(i*8-1), v0
+    v%(i*8+1) = Mul v%(i*8), v0
+    v%(i*8+2) = Mul v%(i*8+1), v0
+    Return v%(i*8+2)
+# END REPEAT
+}
+
+function f1 name="passesOne" parameters=[{type=number}] results=[{type=number}] {
+    v1 = NewArray v0 contents=number
+    v2 = CallDirect v0, v1 function=f0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="passesOne"
+# CHECK-NOT: CallDirect
+
+function f2 name="passesMoreThanAnyCaseLists" parameters=[{type=number}] results=[{type=number}] {
+    v1 = NewArray v0, v0, v0, v0, v0 contents=number
+    v2 = CallDirect v0, v1 function=f0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="passesMoreThanAnyCaseLists"
+# CHECK-NOT: CallDirect
+
+function f3 name="passesSomeList" parameters=[{type=number}, {type=Array<number>}] results=[{type=number}] {
+    v2 = CallDirect v0, v1 function=f0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="passesSomeList"
+# CHECK: = CallDirect v0, v1 function=f0
+
+function f4 name="alsoKeepsTheList" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+    v2 = NewArray v0 contents=number
+    PropSet v1, v2 key="list" mode=Strict
+    v4 = CallDirect v0, v2 function=f0
+    Return v4
+}
+# CHECK-LABEL: function f4 name="alsoKeepsTheList"
+# CHECK: = CallDirect v0, v2 function=f0

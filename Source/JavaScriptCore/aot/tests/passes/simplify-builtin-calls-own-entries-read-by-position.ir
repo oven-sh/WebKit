@@ -1,0 +1,277 @@
+# const entries = Object.entries(object); for (let i = 0; i < entries.length; i++) use(entries[i][0], entries[i][1])
+# Nobody but the reads has the list, each read is below the length, and nobody but what takes it apart has a pair. So the run time is asked for the keys and values one behind the other in one list:
+# the length is half of that list's, and a pair is made of two of its elements where it is read
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="keyAndValue" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: int[0, 4294967295]):
+    LoopHint
+    v6 = CallBuiltin v2 overload=ArrayPrototypeLength/0
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8: int[0, 4294967294]):
+    v9 = ElemGet v2, v8
+    v10 = RequireObjectCoercible v9
+    v11 = Integer
+    v12 = ElemGet v10, v11
+    v13 = ElemGet v2, v8
+    v14 = RequireObjectCoercible v13
+    v15 = Integer integer=1
+    v16 = ElemGet v14, v15
+    v17 = Call v1, -, v12, v16
+    v18 = Increment v8
+    Jump -> next b1(v18)
+  b3():
+    Return
+# CHECK-NOT: ObjectEntries
+# CHECK: v2: Array = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0
+# CHECK: [[elements0]]: {{*}} = CallBuiltin v2 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: [[one0]]: 1 = Integer integer=1
+# CHECK-NEXT: v6: int[0, 2147483647] = URShift [[elements0]], [[one0]]
+# CHECK-NEXT: v7: boolean = Less v4, v6
+# CHECK: [[atKey0]]: {{*}} = Add v8, v8
+# CHECK-NEXT: [[read0]]: anything = ElemGet v2, [[atKey0]] [keyIsIntegral]
+# CHECK-NEXT: [[key0]]: string = AssumeType [[read0]] provenType=string
+# CHECK-NEXT: = Integer integer=1
+# CHECK-NEXT: [[atValue0]]: {{*}} = Add [[atKey0]],
+# CHECK-NEXT: [[value0]]: anything = ElemGet v2, [[atValue0]] [keyIsIntegral]
+# CHECK-NEXT: [[pair0]]: {{*}} = NewArray [[key0]], [[value0]] contents=anything arrayStorage=Contiguous
+# CHECK-NEXT: v9: {{*}} = AssumeType [[pair0]]
+# CHECK: [[pair1]]: {{*}} = NewArray
+# CHECK-NEXT: v13: {{*}} = AssumeType [[pair1]]
+}
+
+function f1 name="theLengthIsReadOnceAndTheListIsCast" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=Object
+    v3 = CallBuiltin v2, v0 overload=ObjectEntries/0 builtinCallForm=AnyReceiver
+    v4 = AssumeType v3 provenType=Array<Array<number|string, proven>, proven>
+    v5 = CallBuiltin v4 overload=ArrayPrototypeLength/0
+    v6 = Integer
+    Jump -> next b1(v6)
+  b1(v7: int[0, 4294967296]):
+    LoopHint
+    v9 = Less v7, v5
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10: int[0, 4294967294]):
+    v11 = ElemGet v4, v10
+    v12 = RequireObjectCoercible v11
+    v13 = Integer integer=1
+    v14 = ElemGet v12, v13
+    v15 = CallBuiltin v12 overload=ArrayPrototypeLength/0
+    v16 = Call v1, -, v14, v15
+    v17 = Integer integer=2
+    v18 = Add v10, v17
+    Jump -> next b1(v18)
+  b3():
+    Return
+# What was known of all that a pair holds is known of the value
+# CHECK-NOT: ObjectEntries
+# CHECK: v3: Array = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0
+# CHECK-NEXT: v4: Array = Upcast v3 castType=Array
+# CHECK: v5: int[0, 2147483647] = URShift
+# CHECK: [[value1]]: number|string = AssumeType {{*}} provenType=number|string
+# CHECK-NEXT: [[pair2]]: {{*}} = NewArray {{*}}, [[value1]]
+# CHECK-NEXT: v11: Array<number|string, proven> = AssumeType [[pair2]]
+}
+
+function f2 name="fromTheLastToTheFirst" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = CallBuiltin v2 overload=ArrayPrototypeLength/0
+    v4 = Integer integer=1
+    v5 = Sub v3, v4
+    Jump -> next b1(v5)
+  b1(v6: int[-1, 4294967294]):
+    LoopHint
+    v8 = Integer
+    v9 = GreaterEq v6, v8
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10: int[0, 4294967294]):
+    v11 = ElemGet v2, v10
+    v12 = RequireObjectCoercible v11
+    v13 = Integer
+    v14 = ElemGet v12, v13
+    v15 = Call v1, -, v14
+    v16 = Decrement v10
+    Jump -> next b1(v16)
+  b3():
+    Return
+# CHECK-NOT: ObjectEntries
+# CHECK: overload=CompilerHelpersOwnEntriesFlat/0
+}
+
+function f3 name="upToTheLengthItself" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: int[0, 4294967296]):
+    LoopHint
+    v6 = CallBuiltin v2 overload=ArrayPrototypeLength/0
+    v7 = LessEq v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8: int[0, 4294967295]):
+    v9 = ElemGet v2, v8
+    v10 = RequireObjectCoercible v9
+    v11 = Integer
+    v12 = ElemGet v10, v11
+    v13 = Call v1, -, v12
+    v14 = Increment v8
+    Jump -> next b1(v14)
+  b3():
+    Return
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectEntries/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
+
+function f4 name="belowTheLengthOfAnotherList" parameters=[{type=object}, {type=Array}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = CallBuiltin v2 overload=ArrayPrototypeLength/0
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5: int[0, 4294967295]):
+    LoopHint
+    v7 = CallBuiltin v1 overload=ArrayPrototypeLength/0
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9: int[0, 4294967294]):
+    v10 = ElemGet v2, v9
+    v11 = RequireObjectCoercible v10
+    v12 = Integer
+    v13 = ElemGet v11, v12
+    PutModuleVariable v13 variable=g0
+    v15 = Increment v9
+    Jump -> next b1(v15)
+  b3():
+    Return v3
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectEntries/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
+
+function f5 name="aPairIsKept" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: int[0, 4294967295]):
+    LoopHint
+    v6 = CallBuiltin v2 overload=ArrayPrototypeLength/0
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8: int[0, 4294967294]):
+    v9 = ElemGet v2, v8
+    PutModuleVariable v9 variable=g0
+    v11 = Increment v8
+    Jump -> next b1(v11)
+  b3():
+    Return
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectEntries/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
+
+function f6 name="aPairIsStoredInto" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: int[0, 4294967295]):
+    LoopHint
+    v6 = CallBuiltin v2 overload=ArrayPrototypeLength/0
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8: int[0, 4294967294]):
+    v9 = ElemGet v2, v8
+    v10 = RequireObjectCoercible v9
+    v11 = Integer integer=1
+    ElemSet v10, v11, v1
+    v13 = ElemGet v2, v8
+    v14 = RequireObjectCoercible v13
+    v15 = ElemGet v14, v11
+    PutModuleVariable v15 variable=g0
+    v17 = Increment v8
+    Jump -> next b1(v17)
+  b3():
+    Return
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectEntries/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
+
+function f7 name="aPairIsComparedWithItself" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: int[0, 4294967295]):
+    LoopHint
+    v6 = CallBuiltin v2 overload=ArrayPrototypeLength/0
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8: int[0, 4294967294]):
+    v9 = ElemGet v2, v8
+    v10 = ElemGet v2, v8
+    v11 = StrictEq v9, v10
+    PutModuleVariable v11 variable=g0
+    v13 = Increment v8
+    Jump -> next b1(v13)
+  b3():
+    Return
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectEntries/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
+
+function f8 name="theListIsKept" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    PutModuleVariable v2 variable=g0
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5: int[0, 4294967295]):
+    LoopHint
+    v7 = CallBuiltin v2 overload=ArrayPrototypeLength/0
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9: int[0, 4294967294]):
+    v10 = ElemGet v2, v9
+    v11 = RequireObjectCoercible v10
+    v12 = Integer
+    v13 = ElemGet v11, v12
+    v14 = Call v1, -, v13
+    v15 = Increment v9
+    Jump -> next b1(v15)
+  b3():
+    Return
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectEntries/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
+
+function f9 name="aPositionThatMayBeAFraction" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: number):
+    LoopHint
+    v6 = CallBuiltin v2 overload=ArrayPrototypeLength/0
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8: number):
+    v9 = ElemGet v2, v8
+    v10 = RequireObjectCoercible v9
+    v11 = Integer
+    v12 = ElemGet v10, v11
+    v13 = Call v1, -, v12
+    v14 = Double number=0.5
+    v15 = Add v8, v14
+    Jump -> next b1(v15)
+  b3():
+    Return
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectEntries/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}

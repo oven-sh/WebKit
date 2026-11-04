@@ -1,0 +1,171 @@
+# An access on a proven union of layouts whose lookups differ gets one copy per arm behind type tests, and each copy is resolved by its own rule
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SplitUnions
+# RUN(BOTH): pass SplitUnions ResolveAccesses
+# STATISTIC: UnionsSplit = 8
+# CHECK: outcome: Changed
+# CHECK-NOT: SwitchOnShape
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Empty" flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Label" fields=[{key="x" declared={type=string} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L3 kind=Instance name="Computed" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="x" kind=Getter function=f1 mutability=Fixed}]}
+layout L4 kind=Instance name="Callable" constructor=f2 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="x" function=f3 mutability=Fixed}]}
+layout L5 kind=Instance name="Plugin" constructor=f4 flags=[HasHeritage] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Computed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="x" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f2 name="Callable" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="x" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f4 name="Plugin" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f5 name="field-and-absent" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+# CHECK-NEXT: b0(v0: L0|L1):
+# CHECK-NEXT: [[isPoint]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[isPoint]] -> taken [[pointArm]](| 0), notTaken [[emptyArm]](| 0)
+# CHECK-NEXT: [[join]](v1{{*}}):
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: [[pointArm]]([[point]]: L0):
+# CHECK-NEXT: [[fromPoint]]:{{*}}= PropGet [[point]] key="x" receivers=[L0]
+# CHECK-NEXT: Jump -> next [[join]]([[fromPoint]])
+# CHECK-NEXT: [[emptyArm]]([[empty]]: L1):
+# CHECK-NEXT: [[fromEmpty]]:{{*}}= PropGet [[empty]] key="x" receivers=[L1]
+# CHECK-NEXT: Jump -> next [[join]]([[fromEmpty]])
+# CHECK-NEXT: }
+# BOTH: : number = GetSlot {{*}} key="x" receivers=[L0] level=Proven
+# BOTH: : undefined = Undefined
+# BOTH-NOT: PropGet
+}
+function f6 name="fields-of-one-key-are-one-arm" parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+# CHECK: = TypeTest v0 testedType=L0|L2
+# CHECK-NOT: TypeTest
+# CHECK: ([[withField]]: L0|L2):
+# CHECK-NEXT: = PropGet [[withField]] key="x" receivers=[L0, L2]
+# CHECK: ([[withoutField]]: L1):
+# CHECK-NEXT: = PropGet [[withoutField]] key="x" receivers=[L1]
+# BOTH: : number|string = GetSlot {{*}} key="x" receivers=[L0, L2] level=Proven
+# BOTH: : undefined = Undefined
+}
+function f7 name="member-nothing-is-known-about" parameters=[{type=L0|L5}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: ([[knownPoint]]: L0):
+# CHECK-NEXT: = PropGet [[knownPoint]] key="x" receivers=[L0]
+# CHECK: ([[plugin]]: L5) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[plugin]] key="x" receivers=[L5]
+# BOTH: = GetSlot {{*}} key="x" receivers=[L0] level=Proven
+# BOTH: = PropGet {{*}} key="x" receivers=[L5]
+}
+function f8 name="method-arm-is-not-split-off" parameters=[{type=L0|L1|L4}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f8 name="method-arm-is-not-split-off"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = TypeTest {{*}} testedType=L1
+# CHECK-NOT: TypeTest
+# CHECK: ([[callable]]: L4) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[callable]] key="x" receivers=[L4]
+# BOTH-LABEL: function f8 name="method-arm-is-not-split-off"
+function f9 name="getter-arm-is-not-split-off" parameters=[{type=L0|L3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f9 name="getter-arm-is-not-split-off"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-NOT: TypeTest
+# CHECK: ([[computed]]: L3) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[computed]] key="x" receivers=[L3]
+# BOTH-LABEL: function f9 name="getter-arm-is-not-split-off"
+function f10 name="test" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = PropHas v0 key="x"
+    Return v1
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = PropHas {{*}} key="x" receivers=[L0]
+# CHECK: = PropHas {{*}} key="x" receivers=[L1]
+# BOTH: : true = Boolean boolean=true
+# BOTH: : false = Boolean
+# BOTH-NOT: PropHas
+}
+function f11 name="store" parameters=[{type=L0|L1}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="x"
+    Return
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: ([[storedPoint]]: L0):
+# CHECK-NEXT: PropSet [[storedPoint]], v1 key="x" receivers=[L0]
+# CHECK-NEXT: Jump -> next [[afterStore]]()
+# CHECK: ([[extended]]: L1) frequency=Unlikely:
+# CHECK-NEXT: PropSet [[extended]], v1 key="x" receivers=[L1]
+# CHECK-NEXT: Jump -> next [[afterStore]]()
+# BOTH: PutSlot {{*}}, -, v1 key="x" receivers=[L0] level=Proven
+# BOTH: PropSet {{*}}, v1 key="x" receivers=[L1]
+}
+
+function f12 name="one-arm" parameters=[{type=L0|L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f12 name="one-arm"
+# CHECK-NEXT: b0(v0: L0|L2):
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# BOTH-LABEL: function f12 name="one-arm"
+function f13 name="no-arm-of-this-pass" parameters=[{type=L3|L4}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f13 name="no-arm-of-this-pass"
+# CHECK-NEXT: b0(v0: L3|L4):
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# BOTH-LABEL: function f13 name="no-arm-of-this-pass"
+function f14 name="nullable-receiver" parameters=[{type=undefined|L0|L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+# Undefined and null stop no split. The access throws for them, which is what the copy by name in the unlikely rest does.
+# CHECK-NEXT: b0(v0: undefined|L0|L1):
+# CHECK-NEXT: [[isPoint14]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[isPoint14]] -> taken [[pointArm14]](| 0), notTaken [[others14]](| 0)
+# CHECK-NEXT: [[join14]](v1{{*}}):
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: [[pointArm14]]([[point14]]: L0):
+# CHECK-NEXT: [[fromPoint14]]:{{*}}= PropGet [[point14]] key="x" receivers=[L0]
+# CHECK-NEXT: Jump -> next [[join14]]([[fromPoint14]])
+# CHECK-NEXT: [[others14]]([[other14]]: undefined|L1):
+# CHECK-NEXT: [[isEmpty14]]: boolean = TypeTest [[other14]] testedType=L1
+# CHECK-NEXT: Branch [[isEmpty14]] -> taken [[emptyArm14]](| 0), notTaken [[rest14]](| 0)
+# CHECK-NEXT: [[emptyArm14]]([[empty14]]: L1):
+# CHECK-NEXT: [[fromEmpty14]]:{{*}}= PropGet [[empty14]] key="x" receivers=[L1]
+# CHECK-NEXT: Jump -> next [[join14]]([[fromEmpty14]])
+# CHECK-NEXT: [[rest14]]([[nullish14]]: undefined) frequency=Unlikely:
+# CHECK-NEXT: {{*}}: never = PropGet [[nullish14]] key="x"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# BOTH: : number = GetSlot {{*}} key="x" receivers=[L0] level=Proven
+# BOTH: : undefined = Undefined
+# BOTH: ([[nullishInBoth14]]: undefined) frequency=Unlikely:
+# BOTH-NEXT: = PropGet [[nullishInBoth14]] key="x"
+}
+function f15 name="expected-union" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f15 name="expected-union"
+# CHECK-NEXT: b0(v0: anything ~ L0|L1):
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# BOTH-LABEL: function f15 name="expected-union"

@@ -36,6 +36,7 @@
 {
     id target;
     RetainPtr<id> exception;
+    RetainPtr<id> returnValue;
 }
 @end
 
@@ -60,7 +61,7 @@ static bool returnTypeIsObject(NSInvocation *invocation)
 
 - (void)forwardInvocation:(NSInvocation *)invocation
 {
-    [invocation setTarget:target];
+    [invocation setTarget:protect(target)];
     [invocation performSelectorOnMainThread:@selector(_webkit_invokeAndHandleException:) withObject:self waitUntilDone:YES];
     if (exception) {
         auto exceptionToThrow = std::exchange(exception, nil);
@@ -68,21 +69,25 @@ static bool returnTypeIsObject(NSInvocation *invocation)
     } else if (returnTypeIsObject(invocation)) {
         // _webkit_invokeAndHandleException retained the return value on the main thread.
         // Now autorelease it on the calling thread.
-        id returnValue;
-        [invocation getReturnValue:&returnValue];
-        adoptNS(returnValue).autorelease();
+        std::exchange(returnValue, nil).autorelease();
     }
 }
 
 - (NSMethodSignature *)methodSignatureForSelector:(SEL)selector
 {
-    return [target methodSignatureForSelector:selector];
+    return [protect(target) methodSignatureForSelector:selector];
 }
 
 - (void)handleException:(id)passedException
 {
     ASSERT(!exception);
     exception = passedException;
+}
+
+- (void)_webkit_setReturnValue:(id)value
+{
+    ASSERT(!returnValue);
+    returnValue = value;
 }
 
 @end
@@ -100,9 +105,10 @@ static bool returnTypeIsObject(NSInvocation *invocation)
     if (returnTypeIsObject(self)) {
         // Retain the return value on the main thread.
         // -[WebMainThreadInvoker forwardInvocation:] will autorelease it on the calling thread.
-        id value;
+        // This is an out-parameter which is retained by -_webkit_setReturnValue: below.
+        SUPPRESS_UNRETAINED_LOCAL id value;
         [self getReturnValue:&value];
-        [value retain];
+        [exceptionHandler _webkit_setReturnValue:value];
     }
 }
 

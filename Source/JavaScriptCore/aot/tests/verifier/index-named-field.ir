@@ -1,0 +1,11 @@
+# no field is named like an array index or another canonical numeric string; an export may be
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidLayout 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="badIndex" fields=[{key="0" declared={type=anything}}]
+layout L1 name="badFraction" fields=[{key="1.5" declared={type=anything}}]
+layout L2 name="badNegativeZero" fields=[{key="-0" declared={type=anything}}]
+layout L3 name="goodNotCanonical" fields=[{key="01" declared={type=anything}}, {key="-01" declared={type=anything}}, {key="x1" declared={type=anything}}]
+layout L4 kind=ModuleNamespace name="goodExport" fields=[{key="0" declared={type=anything}}] namespaceOf=m0

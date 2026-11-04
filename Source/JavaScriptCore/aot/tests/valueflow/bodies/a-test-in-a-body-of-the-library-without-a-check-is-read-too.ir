@@ -1,0 +1,50 @@
+# function F(options) { const signal = options.signal; if (signal) listen(signal) }   F({})
+# A statement runs only where the tests in front of its block can pass, in a body of the library without a check as well: nothing truthy arrives under `signal`, so `listen` does not run.
+# With an object under `signal` it runs.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f2
+# RUN(GIVEN): valueflow-solve unreached
+# GIVEN-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="None"
+layout L1 name="Given" fields=[{key="signal" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L0
+    v2 = Call v0, -, v1
+    v3 = NewClosure function=f3
+    v4 = NewObject layout=L0
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = Call v3, -, v5
+    Return
+}
+function f1 name="F" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="signal"
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = NewClosure function=f2
+    v5 = Call v4, -, v3
+    Return
+  b2(v6):
+    Return
+}
+function f2 name="listen" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f3 name="G" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="signal"
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = NewClosure function=f4
+    v5 = Call v4, -, v3
+    Return
+  b2(v6):
+    Return
+}
+function f4 name="listenToGiven" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}

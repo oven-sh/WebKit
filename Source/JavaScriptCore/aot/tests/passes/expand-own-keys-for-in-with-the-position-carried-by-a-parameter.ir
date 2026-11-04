@@ -1,0 +1,37 @@
+# The next position comes back to the header through a block parameter, so the edge goes to the loop as written and no edge enters the turn of the second name. Only the turn of the first name tests the enumerator.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Record" fields=[{key="alpha" declared={type=number}}, {key="bravo" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1]}]}
+
+function f0 name="carriesThePosition" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object ~ L0):
+    v1 = ForInOpen v0
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3: int[0, 8589934591]):
+    LoopHint
+    v5 = ForInStep v1, v0 position=v3
+    v6 = ResultAt v5 index=0
+    v7 = ResultAt v5 index=1
+    v8 = ResultAt v5 index=2
+    v9 = Integer integer=1
+    v10 = Add v8, v9
+    Branch v6 -> taken b3(), notTaken b2(v10)
+  b2(v11: int[0, 8589934591]):
+    v12 = ElemGet v0, v7
+    Jump -> next b1(v11)
+  b3():
+    v13 = Undefined
+    Return v13
+# CHECK-NOT: -> next b5(
+# CHECK: b7(v26: int[0, 8589934591]):
+# CHECK-NEXT: : 0 = Integer
+# CHECK-NEXT: = IsEnumeratorCurrent v1, v0,
+# CHECK-NOT: IsEnumeratorCurrent
+# CHECK: Jump -> next b7(v2)
+# CHECK-NOT: -> next b5(
+}

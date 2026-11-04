@@ -103,6 +103,10 @@ imported/w3c/web-platform-tests/css/css-ui/select-author-level-padding-applies.h
 # Test only passes with UIKit support for scrollbar color, added in iOS 26
 fast/scrolling/ios/scrollbar-color-body.html [ Skip ]
 fast/scrolling/ios/scrollbar-color.html [ Skip ]
+css3/color-filters/color-filter-scrollbar-color.html [ Skip ]
+css3/color-filters/color-filter-scrollbar-color-of-composited-box.html [ Skip ]
+css3/color-filters/ios/color-filter-scrollbar-color.html [ Skip ]
+css3/color-filters/ios/color-filter-scrollbar-color-of-composited-box.html [ Skip ]
 
 imported/w3c/web-platform-tests/mixed-content/gen/top.http-rp/opt-in/sharedworker-import-data.https.html [ Skip ]
 imported/w3c/web-platform-tests/mixed-content/gen/top.meta/opt-in/sharedworker-import-data.https.html [ Skip ]

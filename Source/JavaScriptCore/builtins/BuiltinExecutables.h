@@ -25,7 +25,9 @@
 
 #pragma once
 
+#include "BuiltinUtils.h"
 #include "ExecutableInfo.h"
+#include "Intrinsic.h"
 #include "JSCBuiltins.h"
 #include "ParserModes.h"
 #include "SourceCode.h"
@@ -35,9 +37,11 @@
 
 namespace JSC {
 
+class FunctionExecutable;
 class UnlinkedFunctionExecutable;
 class Identifier;
 class VM;
+struct BuiltinCode;
 
 #define BUILTIN_NAME_ONLY(name, functionName, overriddenName, length) name,
 enum class BuiltinCodeIndex {
@@ -48,17 +52,6 @@ enum class BuiltinCodeIndex {
 #define COUNT_BUILTIN_CODE(name, functionName, overriddenName, length) + 1
 static constexpr unsigned numberOfBuiltinCodes = 0 JSC_FOREACH_BUILTIN_CODE(COUNT_BUILTIN_CODE);
 #undef COUNT_BUILTIN_CODE
-
-// Every field is a function of the source characters alone, which is what lets the builtins generator
-// compute these at build time.
-struct BuiltinSourceMetadata {
-    unsigned sourceLength { 0 };
-    unsigned parametersStart { 0 };
-    unsigned parameterCount { 0 };
-    int closeBraceOffsetFromEnd { 0 };
-    bool isAsyncFunction { false };
-    bool isInStrictContext { false };
-};
 
 // Emitted by the builtins generator, indexed by BuiltinCodeIndex.
 extern constinit const BuiltinSourceMetadata s_JSCBuiltinSourceMetadata[numberOfBuiltinCodes];
@@ -76,19 +69,25 @@ SourceCode name##Source();
     JSC_FOREACH_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
+    static_assert(numberOfBuiltinCodes < 0x10000);
+    bool hasCompiledFunction(BuiltinCodeIndex);
+    BuiltinCode codeFor(BuiltinCodeIndex, Intrinsic);
+    FunctionExecutable* linkFromText(BuiltinCodeIndex, Intrinsic);
+
     static SourceCode defaultConstructorSourceCode(ConstructorKind);
     UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, const Identifier& name, NeedsClassFieldInitializer, PrivateBrandRequirement);
 
     static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement = PrivateBrandRequirement::None);
+    static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement);
 
     DECLARE_VISIT_AGGREGATE;
 
-    void NODELETE clear();
+    void LEGACY_NODELETE clear();
 
 private:
     VM& m_vm;
 
-    static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement);
+    UnlinkedFunctionExecutable* executableFor(BuiltinCodeIndex);
 
     UnlinkedFunctionExecutable* createBuiltinExecutable(const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute);
 

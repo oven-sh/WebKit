@@ -1,0 +1,69 @@
+# The entrypoint of a function that records its callee writes the closure it is entered through into a list that the collector visits: such a closure is a cell of the heap, also where everybody who gets it only calls it
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# RUN(PLAN): frame-plan flow
+# OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,AllocateInFrames
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="readByRecordedClosure" fields=[{key="node" declared={type=anything}}]
+layout L1 kind=Environment name="readByClosure" fields=[{key="node" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    v4 = CallDirect v1 function=f3
+    Return
+}
+
+function f1 name="lendsClosureThatIsRecorded" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1 function=f5
+    v3 = CallDirect v2 function=f4
+    Return v3
+}
+# CHECK-LABEL: function f1 name="lendsClosureThatIsRecorded"
+# CHECK-NOT: storage=
+# PLAN-LABEL: function f1
+# PLAN: v2: Heap ClosureIsNotOnlyCalled
+
+function f2 name="callsClosureThatIsRecorded" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1 function=f5
+    v3 = Call v2
+    Return v3
+}
+# CHECK-LABEL: function f2 name="callsClosureThatIsRecorded"
+# CHECK-NOT: storage=
+# PLAN-LABEL: function f2
+# PLAN: v2: Heap ClosureIsNotOnlyCalled
+
+function f3 name="lendsClosure" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure v1 function=f6
+    v3 = CallDirect v2 function=f4
+    Return v3
+}
+# CHECK-LABEL: function f3 name="lendsClosure"
+# CHECK: = NewClosure v1 function=f6 {{*}}storage=Frame
+# PLAN-LABEL: function f3
+# PLAN: v2: Frame
+
+function f4 name="callsParameter" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+
+function f5 name="returnsNode" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCallee] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+
+function f6 name="returnsNode" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    Return v1
+}

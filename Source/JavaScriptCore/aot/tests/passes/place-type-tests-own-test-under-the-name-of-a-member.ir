@@ -1,0 +1,47 @@
+# Whether an instance has a property of its own under the name of a member of its class: the bit of the class that a read of the member tests answers, whatever other properties the object has got.
+# Under a name that the class does not have, the object is asked whether it has got any property.
+# FORM: Prepared
+# OPTIONS: limit=MaxDeclarationsPredictedFromNames:0
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Response" constructor=f0 fields=[{key="x" declared={type=number}}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true namedMembers=[{key="end" function=f2 mutability=Fixed}, {key="socket" kind=Getter function=f1 mutability=Fixed}]}
+
+function f0 name="Response" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="socket" kind=Getter flags=[HasThis] results=[{type=anything}]
+function f2 name="end" kind=Method flags=[HasThis] results=[{type=anything}]
+
+function f3 name="name-of-an-accessor" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropHasOwn v0 key="socket"
+    Return v1
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: [[test]]: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="socket"}]
+# CHECK-NEXT: Branch [[test]] -> taken [[absent]](| 0), notTaken [[byName]]()
+# CHECK: [[absent]]({{*}}: guard):
+# CHECK-NEXT: : false = Boolean
+# CHECK: [[byName]]() frequency=Unlikely:
+# CHECK-NEXT: = PropHasOwn v0 key="socket"
+}
+function f4 name="name-of-a-method" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropHasOwn v0 key="end"
+    Return v1
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: [[test]]: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="end"}]
+# CHECK-NEXT: Branch [[test]] -> taken [[absent]](| 0), notTaken [[byName]]()
+# CHECK: [[absent]]({{*}}: guard):
+# CHECK-NEXT: : false = Boolean
+# CHECK: [[byName]]() frequency=Unlikely:
+# CHECK-NEXT: = PropHasOwn v0 key="end"
+}
+function f5 name="name-that-the-class-does-not-have" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropHasOwn v0 key="other"
+    Return v1
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: [[test]]: boolean = HasNoExtraProperties v0
+# CHECK-NEXT: Branch [[test]] -> taken [[absent]](| 0), notTaken [[byName]]()
+# CHECK: [[absent]]({{*}}: guard):
+# CHECK-NEXT: : false = Boolean
+# CHECK: [[byName]]() frequency=Unlikely:
+# CHECK-NEXT: = PropHasOwn v0 key="other"
+}

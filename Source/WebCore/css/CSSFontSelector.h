@@ -60,7 +60,7 @@ public:
 
     USING_CAN_MAKE_WEAKPTR(FontSelector);
 
-    unsigned NODELETE version() const final { return m_version; }
+    unsigned LEGACY_NODELETE version() const final { return m_version; }
     unsigned uniqueId() const final { return m_uniqueId; }
 
     FontRanges fontRangesForFamily(const FontDescription&, const FontFamily&) final;
@@ -78,7 +78,7 @@ public:
 
     void fontCacheInvalidated() final;
 
-    bool NODELETE isEmpty() const;
+    bool LEGACY_NODELETE isEmpty() const;
 
     void registerForInvalidationCallbacks(FontSelectorClient&) final;
     void unregisterForInvalidationCallbacks(FontSelectorClient&) final;
@@ -89,7 +89,7 @@ public:
 
     ScriptExecutionContext* scriptExecutionContext() const { return m_context.get(); }
 
-    FontFaceSet* NODELETE fontFaceSetIfExists();
+    FontFaceSet* LEGACY_NODELETE fontFaceSetIfExists();
     FontFaceSet& fontFaceSet();
     CSSFontFaceSet& cssFontFaceSet() { return m_cssFontFaceSet; }
 
@@ -109,7 +109,7 @@ private:
 
     std::optional<AtomString> resolveGenericFamily(const FontDescription&, const AtomString& family);
 
-    const FontPaletteValues& lookupFontPaletteValues(const AtomString& familyName, const FontDescription&) const;
+    FontPaletteValues lookupFontPaletteValues(const AtomString& familyName, const FontDescription&) const;
     RefPtr<FontFeatureValues> lookupFontFeatureValues(const AtomString& familyName) const;
 
     // CSSFontFaceClient
@@ -125,7 +125,7 @@ private:
     Vector<PendingFontFaceRule> m_stagingArea;
 
     WeakPtr<ScriptExecutionContext> m_context;
-    RefPtr<FontFaceSet> m_fontFaceSet;
+    const RefPtr<FontFaceSet> m_fontFaceSet;
     const Ref<CSSFontFaceSet> m_cssFontFaceSet;
     HashSet<FontSelectorClient*> m_clients;
 
@@ -140,7 +140,7 @@ private:
             return ASCIICaseInsensitiveHash::equal(a.first, b.first) && DefaultHash<AtomString>::equal(a.second, b.second);
         }
     };
-    HashMap<std::pair<AtomString, AtomString>, FontPaletteValues, PaletteMapHash> m_paletteMap;
+    HashMap<std::pair<AtomString, AtomString>, FontPaletteValues::CustomPalette, PaletteMapHash> m_paletteMap;
     HashMap<String, Ref<FontFeatureValues>> m_featureValues;
 
     HashSet<Ref<CSSFontFace>> m_cssConnectionsPossiblyToRemove;

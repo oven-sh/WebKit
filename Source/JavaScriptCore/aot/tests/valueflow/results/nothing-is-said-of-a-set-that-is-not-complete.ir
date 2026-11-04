@@ -1,0 +1,18 @@
+# A set that holds the unknown object is not complete: the position keeps the type it was read with, whatever else the set holds
+# RUN: valueflow-apply
+# CHECK: variable g0 name="open" {{*}}declared={type=anything}
+# CHECK: variable g1 name="closed" {{*}}declared={type=1}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="open" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="closed" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    PutModuleVariable v1 variable=g0
+    v3 = Integer integer=1
+    PutModuleVariable v3 variable=g0
+    PutModuleVariable v3 variable=g1
+    Return
+}

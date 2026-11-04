@@ -1,0 +1,71 @@
+# function build(name) { const made = Object.create(null); Object.defineProperty(made, name, { get: () => name + "!", enumerable: true, configurable: true }); return made }
+# const held = globalThis.bare ? Object.create(null) : build("fi" + "rst")   const atStart = held.first   function read() { return held.first }
+# `held` is an object with a slot for the accessor or one that Object.create makes as it is written. The getter in a slot is called behind a test of the slot, and nobody places a test in code that runs once.
+# So the read in the module's body is not split by the type of its receiver: both arms would read by name. The read in read(), which may run often, is split and tests the slot.
+# FORM: AsRead
+# RUN(IR): pipeline Select
+# RUN: run-in-shell globalThis.bare = false; globalThis.register = (read, atStart) => { print(atStart, read(), read()); };
+# IR-LABEL: name="main"
+# IR-NOT: TypeTest
+# IR-NOT: IsSlotFilled
+# IR: = PropGet {{*}} key="first"
+# IR-NOT: = PropGet {{*}} key="first"
+# IR-LABEL: name="read"
+# IR: = TypeTest
+# IR: = IsSlotFilled {{*}} key="first"
+# CHECK: first! first! first!
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="held" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="bare" [isFreeName]
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectCreate
+    v7 = Null
+    v8 = Call v6, v5, v7
+    Jump -> next b3(v8)
+  b2():
+    v9 = String string="fi"
+    v10 = String string="rst"
+    v11 = Add v9, v10
+    v12 = Call v0, -, v11
+    Jump -> next b3(v12)
+  b3(v13):
+    PutModuleVariable v13 variable=g0
+    v15 = PropGet v13 key="first"
+    v16 = PropGet v2 key="register" [isFreeName]
+    v17 = Call v16, -, v1, v15
+    Return
+}
+function f1 name="build" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Null
+    v4 = Call v2, v1, v3
+    v5 = NewClosure v0 function=f3
+    v6 = Boolean boolean=true
+    v7 = NewObject -, v5, v6, v6 layout=L0 fields=[0, 1, 2]
+    v8 = FinishObject v7
+    v9 = Builtin builtin=ObjectDefineProperty
+    v10 = Call v9, v1, v4, v0, v8
+    Return v4
+}
+function f2 name="read" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="first"
+    Return v1
+}
+function f3 kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="!"
+    v2 = Add v0, v1
+    Return v2
+}

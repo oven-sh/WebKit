@@ -157,6 +157,9 @@ class BuildFactory(Factory):
             self.addStep(InstallGtkDependencies())
         elif platform == 'wpe':
             self.addStep(InstallWpeDependencies())
+        if '--cmake' in (additionalArguments or []):
+            self.addStep(InstallCMake())
+            self.addStep(InstallNinja())
         self.addStep(ValidateChange(addURLs=False))
         if platform in ['gtk', 'wpe']:
             self.addStep(CleanDerivedSources())

@@ -1,0 +1,118 @@
+# function twiceTheTotal(cart: Cart): number {
+#   return cart.total * 2;
+# }
+# function makeCart(price: number, count: number) {
+#   return {
+#     price,
+#     count,
+#     get total(): number {
+#       return this.price * this.count;
+#     },
+#   };
+# }
+# type Cart = ReturnType<typeof makeCart>;
+# declare const input: any;
+# (globalThis as any).answer = twiceTheTotal(makeCart(+input, +input));
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable-in=0:1
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 kind=Result
+typesite w1 module=m0 position=90 kind=Parameter function=f2
+typesite w2 module=m0 position=105 kind=Parameter function=f2
+typesite w3 module=m0 position=72 kind=Result
+typesite w4 module=m0 position=343 kind=CallResult
+typesite w5 module=m0 position=329 kind=CallResult
+typesite w6 module=m0 position=159 kind=Result
+layout L0 module=m0 position=131 fields=[{key="count" declared={type=number} flags=[IsRequired]}, {key="price" declared={type=number} flags=[IsRequired]}, {key="total" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0, 2] ownFieldCount=3
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="globalThis" [isFreeName]
+    v6 = Convert v5 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v7 = Convert v6 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="input" [isFreeName]
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = ToNumber v10
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="input" [isFreeName]
+    v14 = Convert v13 declared={type=number flags=[IsExpected]}
+    v15 = ToNumber v14
+    v16 = Call v3, -, v11, v15 calleeName="makeCart"
+    v17 = Convert v16 declared={type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}
+    v18 = Call v1, -, v17 calleeName="twiceTheTotal"
+    v19 = Convert v18 declared={type=number site=w5}
+    PropSet v7, v19 key="answer"
+    v21 = Undefined
+    Return v21
+}
+function f1 name="twiceTheTotal" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=number site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="total"
+    v2 = Integer integer=2
+    v3 = Mul v1, v2
+    v4 = Convert v3 declared={type=number site=w0}
+    Return v4
+}
+function f2 name="makeCart" module=m0 position=72 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w1}, {type=number site=w2}] results=[{type=undefined|null|L0 site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Convert v0 declared={type=number}
+    v3 = Convert v1 declared={type=number}
+    v4 = NewObject -, v2, v3 layout=L0 fields=[1, 0]
+    v5 = NewClosure function=f3
+    DefineGetter v4, v5 key="total"
+    v7 = FinishObject v4
+    v8 = Convert v7 declared={type=undefined|null|L0 site=w3 flags=[OmitsNull, OmitsUndefined]}
+    Return v8
+}
+function f3 name="total" module=m0 position=159 kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L0} illTypedCause=Assertion
+    v2 = PropGet v1 key="price"
+    v3 = Convert v0 declared={type=undefined|null|L0} illTypedCause=Assertion
+    v4 = PropGet v3 key="count"
+    v5 = Mul v2, v4
+    v6 = Convert v5 declared={type=number site=w6}
+    Return v6
+}
+
+# Calls are inlined everywhere but in the body of the module. The accessor of a literal has a slot in the object. One test that the slot still holds it stands in front of the body of the getter,
+# which is two loads and a product. The getter is not loaded and not called.
+# CHECK-LABEL: name="twiceTheTotal" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[cart]] = ArgumentReg(
+# CHECK-NEXT: Int64 b@[[accessor]] = Load(b@[[cart]], offset = 32, ControlDependent|Reads:ObjectFields{{*}}:IsSlotFilled)
+# CHECK-NEXT: Branch(b@[[accessor]], Terminal,
+# CHECK-NEXT: Successors: Then:#[[inlined]], Else:Rare:#
+# CHECK-NEXT: BB#[[inlined]]:
+# CHECK-NEXT: Predecessors:
+# CHECK-NEXT: Double b@[[price]] = Load(b@[[cart]], offset = [[priceSlot]], ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@[[count]] = Load(b@[[cart]], offset = [[countSlot]], ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@[[total]] = Mul(b@[[price]], b@[[count]],
+# CHECK-NEXT: Double b@[[twice]] = Add(b@[[total]], b@[[total]],
+# CHECK-NEXT: Return(b@[[twice]], Terminal)
+# CHECK-LABEL: end of function
+# X64-LABEL: name="twiceTheTotal" role=Source
+# X64-NEXT: instructions: 5, patchpoints: 0
+# ARM64-LABEL: name="twiceTheTotal" role=Source
+# ARM64-NEXT: instructions: 7, patchpoints: 0

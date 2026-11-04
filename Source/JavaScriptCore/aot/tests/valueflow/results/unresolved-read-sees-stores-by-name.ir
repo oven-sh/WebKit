@@ -1,0 +1,52 @@
+# function listener(request) { const members = {}; members.handle = handle; const app = create(); unknown(app, members); app.handle(request) }   function handle(request) { request.url }
+# unknown(listener)   listener(new Request())
+# The object that is asked for `handle` is in sight. What it holds under that name is not: code that nobody sees has been handed it. Nothing is seen to come to the read, so it sees what the program
+# writes under that name, as a read off a receiver nobody knows does, and the call hands on what is seen at its operand. Nothing is proven of either.
+# RUN: valueflow-apply
+# CHECK: function f2 name="handle"
+# CHECK: = PropGet v0 key="url" {{*}}receivers=[L0, ..]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Request" constructor=f3 fields=[{key="url" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Record name="App"
+layout L2 kind=Record name="Members" fields=[{key="handle" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="unknown" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = NewClosure function=f3
+    v5 = Construct v4
+    v6 = Call v0, -, v5
+    Return
+}
+function f1 name="listener" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L2
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="handle" mode=Strict
+    v4 = NewClosure function=f4
+    v5 = Call v4, -
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="unknown" [isFreeName]
+    v8 = Call v7, -, v5, v1
+    v9 = PropGet v5 key="handle"
+    v10 = Call v9, v5, v0
+    Return v10
+}
+function f2 name="handle" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="url"
+    Return v1
+}
+function f3 name="Request" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="/"
+    PropSet v0, v1 key="url" mode=Strict
+    Return
+}
+function f4 name="create" module=m0 results=[{type=anything}] {
+    v0 = NewObject layout=L1
+    Return v0
+}

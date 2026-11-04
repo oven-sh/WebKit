@@ -117,6 +117,8 @@ public:
 
     static bool supportsFloatingPointRounding() { return true; }
     static bool supportsFloat16() { return false; }
+    static constexpr bool supportsFloatingPointRounding(CPUFeatureSet) { return true; }
+    static constexpr bool supportsFloat16(CPUFeatureSet) { return false; }
 
     enum RelationalCondition {
         Equal = Assembler::ConditionEQ,
@@ -2082,6 +2084,7 @@ public:
     }
 
     static bool supportsCountPopulation() { return false; }
+    static constexpr bool supportsCountPopulation(CPUFeatureSet) { return false; }
     MACRO_ASSEMBLER_RISCV64_TEMPLATED_NOOP_METHOD(countPopulation32);
     MACRO_ASSEMBLER_RISCV64_TEMPLATED_NOOP_METHOD(countPopulation64);
 

@@ -1,0 +1,20 @@
+# const kFirst = Symbol("one"), kSecond = Symbol("one"), kLate = Symbol("late")
+# class Meter { total: number; [kSecond]: number; [kFirst]: number; [kLate]?: number; constructor(n) { this[kFirst] = n; this.total = n; this[kSecond] = n + 1 } }
+# function readBy(o, key) { return o[key] }  function writeBy(o, key, value) { o[key] = value }  function late(m: Meter) { return m[kLate] }
+# Two symbols with one description are two fields. The keys come in the order of the stores, names in front of symbols. A key that compiled code knows nothing of finds the slot by the symbol.
+# A field that was never stored is looked for above the object
+# FORM: AsRead
+# OPTIONS: validate
+# RUN: run-in-shell globalThis.register = (Meter, readBy, writeBy, late, first, second, lateKey) => { const symbols = o => { let text = ""; for (const s of Object.getOwnPropertySymbols(o)) text += (text ? "," : "") + (s === first ? "first" : s === second ? "second" : "late"); return text; }; const m = new Meter(5); print(readBy(m, first), readBy(m, second), readBy(m, "total"), readBy(m, lateKey)); print(symbols(m), Reflect.ownKeys(m).length); writeBy(m, second, 20); print(m[second], readBy(m, second), m[first]); print(late(m), lateKey in m); Meter.prototype[lateKey] = 77; print(late(m), readBy(m, lateKey), Object.hasOwn(m, lateKey)); writeBy(m, lateKey, 8); print(late(m), Object.hasOwn(m, lateKey), symbols(m)); Object.freeze(m); try { "use strict"; writeBy(m, first, 1); } catch (e) { print(e.constructor.name); } print(readBy(m, first), Object.isFrozen(m)); const n = new Meter(1); Object.defineProperty(n, first, { value: 3, writable: false }); try { writeBy(n, first, 4); } catch (e) { print(e.constructor.name); } print(readBy(n, first)); };
+# CHECK: 5 6 5 undefined
+# CHECK-NEXT: first,second 3
+# CHECK-NEXT: 20 20 5
+# CHECK-NEXT: undefined false
+# CHECK-NEXT: 77 77 false
+# CHECK-NEXT: 8 true first,second,late
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: 5 true
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: 3
+# CHECK-NEXT: exited with 0
+# PROGRAM-OF: class-fields-under-created-symbols-have-slots.ir

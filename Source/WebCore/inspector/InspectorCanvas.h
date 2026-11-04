@@ -65,14 +65,14 @@ template<typename> struct InspectorCanvasArgumentProcessor;
 
 class InspectorCanvas final : public RefCountedAndCanMakeWeakPtr<InspectorCanvas> {
 public:
-    static Ref<InspectorCanvas> create(CanvasRenderingContext&);
-    static Ref<InspectorCanvas> create(GPUDevice&);
+    static Ref<InspectorCanvas> LEGACY_NODELETE create(CanvasRenderingContext&);
+    static Ref<InspectorCanvas> LEGACY_NODELETE create(GPUDevice&);
     ~InspectorCanvas();
 
     const String& identifier() const LIFETIME_BOUND { return m_identifier; }
 
-    CanvasRenderingContext* canvasContext() const;
-    GPUDevice* deviceContext() const;
+    CanvasRenderingContext* LEGACY_NODELETE canvasContext() const;
+    GPUDevice* LEGACY_NODELETE deviceContext() const;
 
     HashSet<HTMLCanvasElement*> canvasElements() const;
 
@@ -92,8 +92,8 @@ public:
     void setHasActiveInspectorCanvasCallTracer(bool);
 
     void resetRecordingData();
-    bool NODELETE hasRecordingData() const;
-    bool NODELETE currentFrameHasData() const;
+    bool LEGACY_NODELETE hasRecordingData() const;
+    bool LEGACY_NODELETE currentFrameHasData() const;
 
     void recordAction(String&&, InspectorCanvasProcessedArguments&& = { });
     void recordAction(String&&, InspectorCanvasProcessedArgument&& receiver, InspectorCanvasProcessedArguments&& = { });
@@ -106,12 +106,12 @@ public:
 
     void setRecordingName(const String& name) { m_recordingName = name; }
 
-    void setBufferLimit(long);
-    bool NODELETE hasBufferSpace() const;
+    void LEGACY_NODELETE setBufferLimit(long);
+    bool LEGACY_NODELETE hasBufferSpace() const;
     long bufferUsed() const { return m_bufferUsed; }
 
-    void setFrameCount(long);
-    bool NODELETE overFrameCount() const;
+    void LEGACY_NODELETE setFrameCount(long);
+    bool LEGACY_NODELETE overFrameCount() const;
 
     Ref<Inspector::Protocol::Canvas::Canvas> buildObjectForCanvas(bool captureBacktrace);
     Ref<Inspector::Protocol::Recording::Recording> releaseObjectForRecording();

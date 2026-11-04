@@ -50,9 +50,9 @@ struct ClipEdge : ValueOrKeyword<Length<>, CSS::Keyword::Auto> {
 
 // <rect()> = rect( <clip-edge> , <clip-edge> , <clip-edge> , <clip-edge> )
 struct ClipRect {
-    FunctionNotation<CSSValueRect, CommaSeparatedRectEdges<ClipEdge>> value;
+    FunctionNotation<CSSValueID::Rect, CommaSeparatedRectEdges<ClipEdge>> value;
 
-    ClipRect(FunctionNotation<CSSValueRect, CommaSeparatedRectEdges<ClipEdge>> value)
+    ClipRect(FunctionNotation<CSSValueID::Rect, CommaSeparatedRectEdges<ClipEdge>> value)
         : value { WTF::move(value) }
     {
     }
@@ -95,7 +95,7 @@ struct Clip {
     bool isAuto() const { return !value; }
     bool isRect() const { return !isAuto(); }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -126,9 +126,9 @@ template<> struct CSSValueCreation<Clip> { Ref<CSSValue> operator()(CSSValuePool
 // MARK: - Blending
 
 template<> struct Blending<Clip> {
-    bool NODELETE canBlend(const Clip&, const Clip&);
-    bool NODELETE requiresInterpolationForAccumulativeIteration(const Clip&, const Clip&);
-    auto blend(const Clip&, const Clip&, const BlendingContext&) -> Clip;
+    bool LEGACY_NODELETE canBlend(const Clip&, const Clip&);
+    bool LEGACY_NODELETE requiresInterpolationForAccumulativeIteration(const Clip&, const Clip&);
+    Clip LEGACY_NODELETE blend(const Clip&, const Clip&, const BlendingContext&);
 };
 
 } // namespace Style

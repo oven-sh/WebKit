@@ -40,7 +40,6 @@
 
 namespace WebCore {
 
-class LegacyInlineTextBox;
 struct PaintInfo;
 
 namespace InlineDisplay {
@@ -50,7 +49,7 @@ struct Box;
 class GlyphDisplayListCacheEntry : public RefCounted<GlyphDisplayListCacheEntry>, public CanMakeSingleThreadWeakPtr<GlyphDisplayListCacheEntry> {
     WTF_MAKE_TZONE_ALLOCATED(GlyphDisplayListCacheEntry);
     friend struct GlyphDisplayListCacheKeyTranslator;
-    friend void NODELETE add(Hasher&, const GlyphDisplayListCacheEntry&);
+    friend void LEGACY_NODELETE add(Hasher&, const GlyphDisplayListCacheEntry&);
 public:
     static Ref<GlyphDisplayListCacheEntry> create(Ref<const DisplayList::DisplayList>&& displayList, const TextRun& textRun, const FontCascade& font, GraphicsContext& context)
     {
@@ -96,19 +95,16 @@ class GlyphDisplayListCache {
 public:
     GlyphDisplayListCache() = default;
 
-    static GlyphDisplayListCache& NODELETE singleton();
+    static GlyphDisplayListCache& LEGACY_NODELETE singleton();
 
-    RefPtr<const DisplayList::DisplayList> get(const LegacyInlineTextBox&, const FontCascade&, GraphicsContext&, const TextRun&, const PaintInfo&);
     RefPtr<const DisplayList::DisplayList> get(const InlineDisplay::Box&, const FontCascade&, GraphicsContext&, const TextRun&, const PaintInfo&);
 
-    RefPtr<const DisplayList::DisplayList> getIfExists(const LegacyInlineTextBox&);
     RefPtr<const DisplayList::DisplayList> getIfExists(const InlineDisplay::Box&);
 
-    void remove(const LegacyInlineTextBox& run) { remove(&run); }
-    void remove(const InlineDisplay::Box& run) { remove(&run); }
+    void remove(const InlineDisplay::Box& box) { m_entriesForBox.remove(&box); }
 
     void clear();
-    unsigned NODELETE size() const;
+    unsigned LEGACY_NODELETE size() const;
 
     void setForceUseGlyphDisplayListForTesting(bool flag)
     {
@@ -116,15 +112,9 @@ public:
     }
 
 private:
-    static bool NODELETE canShareDisplayList(const DisplayList::DisplayList&);
+    static bool LEGACY_NODELETE canShareDisplayList(const DisplayList::DisplayList&);
 
-    template<typename LayoutRun>
-    RefPtr<const DisplayList::DisplayList> getDisplayList(const LayoutRun&, const FontCascade&, GraphicsContext&, const TextRun&, const PaintInfo&);
-    template<typename LayoutRun>
-    RefPtr<const DisplayList::DisplayList> getIfExistsImpl(const LayoutRun&);
-    void remove(const void* run);
-
-    HashMap<const void*, Ref<GlyphDisplayListCacheEntry>> m_entriesForLayoutRun;
+    HashMap<const InlineDisplay::Box*, Ref<GlyphDisplayListCacheEntry>> m_entriesForBox;
     Deque<WeakPtr<GlyphDisplayListCacheEntry, SingleThreadWeakPtrImpl>> m_entries;
     bool m_forceUseGlyphDisplayListForTesting { false };
     static constexpr unsigned s_maxDeduplicationCacheSize { 20 };

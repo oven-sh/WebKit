@@ -42,11 +42,13 @@
 #include "SVGImageElement.h"
 #include "Settings.h"
 #include "ScriptExecutionContextInlines.h"
+#include "VP9Utilities.h"
 #include "WebCodecsControlMessage.h"
 #include "WebCodecsEncodedVideoChunk.h"
 #include "WebCodecsErrorCallback.h"
 #include "WebCodecsUtilities.h"
 #include "WebCodecsVideoFrame.h"
+#include "WebCodecsVideoFrameAlgorithms.h"
 #include "WebCodecsVideoFrameOutputCallback.h"
 #include <wtf/ASCIICType.h>
 #include <wtf/Scope.h>
@@ -72,12 +74,32 @@ WebCodecsVideoDecoder::WebCodecsVideoDecoder(ScriptExecutionContext& context, In
 
 WebCodecsVideoDecoder::~WebCodecsVideoDecoder() = default;
 
+static bool isSupportedVP9DecoderCodec(const String& codec, const SettingsValues& settings)
+{
+#if !ENABLE(WEB_RTC)
+    UNUSED_PARAM(settings);
+#endif
+    auto parameters = parseVPCodecParametersIgnoringColorFields(codec);
+    if (!parameters)
+        return false;
+
+    bool is420 = parameters->chromaSubsampling <= VPConfigurationChromaSubsampling::Subsampling_420_Colocated;
+    switch (parameters->profile) {
+    case 0:
+        return parameters->bitDepth == 8 && is420;
+#if ENABLE(WEB_RTC)
+    case 2:
+        return settings.webRTCVP9Profile2CodecEnabled && parameters->bitDepth == 10 && is420;
+#endif
+    default:
+        return false;
+    }
+}
+
 static bool isSupportedDecoderCodec(const String& codec, const SettingsValues& settings)
 {
-    return codec.startsWith("vp8"_s) || codec.startsWith("vp09.00"_s) || codec.startsWith("avc1."_s)
-#if ENABLE(WEB_RTC)
-        || (codec.startsWith("vp09.02"_s) && settings.webRTCVP9Profile2CodecEnabled)
-#endif
+    return codec.startsWith("vp8"_s) || codec.startsWith("avc1."_s)
+        || (codec.startsWith("vp09."_s) && isSupportedVP9DecoderCodec(codec, settings))
         || (codec.startsWith("hev1."_s) && settings.webCodecsHEVCEnabled)
         || (codec.startsWith("hvc1."_s) && settings.webCodecsHEVCEnabled)
         || (codec.startsWith("av01.0"_s) && settings.webCodecsAV1Enabled);
@@ -132,7 +154,9 @@ static VideoDecoder::Config createVideoDecoderConfig(const WebCodecsVideoDecoder
         .width = config.codedWidth.value_or(0),
         .height = config.codedHeight.value_or(0),
         .colorSpace = config.colorSpace,
-        .decoding = config.hardwareAcceleration == HardwareAcceleration::PreferSoftware ? VideoDecoder::HardwareAcceleration::No : VideoDecoder::HardwareAcceleration::Yes
+        .decoding = config.hardwareAcceleration == HardwareAcceleration::PreferSoftware ? VideoDecoder::HardwareAcceleration::No : VideoDecoder::HardwareAcceleration::Yes,
+        .rotation = parseVideoFrameRotation(config.rotation),
+        .isMirrored = config.flip
     };
 }
 
@@ -149,6 +173,8 @@ ExceptionOr<void> WebCodecsVideoDecoder::configure(ScriptExecutionContext& conte
 
     bool isSupportedCodec = isSupportedDecoderCodec(config.codec, context.settingsValues());
     queueControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, codec = config.codec, config = createVideoDecoderConfig(config), isSupportedCodec]() mutable {
+        auto rotation = config.rotation;
+        auto isMirrored = config.isMirrored;
         RefPtr context = scriptExecutionContext();
 
         auto identifier = context->identifier();
@@ -162,8 +188,8 @@ ExceptionOr<void> WebCodecsVideoDecoder::configure(ScriptExecutionContext& conte
             return WebCodecsControlMessageOutcome::Processed;
         }
 
-        Ref createDecoderPromise = VideoDecoder::create(codec, WTF::move(config), [identifier, weakThis = ThreadSafeWeakPtr { *this }, decoderCount = ++m_decoderCount] (auto&& result) {
-            postTaskToCodec<WebCodecsVideoDecoder>(identifier, weakThis, [result = WTF::move(result), decoderCount] (auto& decoder) mutable {
+        Ref createDecoderPromise = VideoDecoder::create(codec, WTF::move(config), [identifier, weakThis = ThreadSafeWeakPtr { *this }, decoderCount = ++m_decoderCount, rotation, isMirrored](auto&& result) {
+            postTaskToCodec<WebCodecsVideoDecoder>(identifier, weakThis, [result = WTF::move(result), decoderCount, rotation, isMirrored](auto& decoder) mutable {
                 if (decoder.state() != WebCodecsCodecState::Configured || decoder.m_decoderCount != decoderCount)
                     return;
 
@@ -173,16 +199,22 @@ ExceptionOr<void> WebCodecsVideoDecoder::configure(ScriptExecutionContext& conte
                 }
 
                 auto decodedResult = WTF::move(result).value();
+                Ref frame = WTF::move(decodedResult.frame);
+                // Decoders should create frames with the orientation of the configuration, we override for decoders that do not know about orientation.
+                frame = frame->updateOrientation(rotation, isMirrored, VideoFrame::ShouldClone::No);
+                auto presentationSize = frame->presentationSize();
                 WebCodecsVideoFrame::BufferInit init {
-                    .format = convertVideoFramePixelFormat(decodedResult.frame->pixelFormat()),
-                    .codedWidth = static_cast<size_t>(decodedResult.frame->presentationSize().width()),
-                    .codedHeight = static_cast<size_t>(decodedResult.frame->presentationSize().height()),
+                    .format = convertVideoFramePixelFormat(frame->pixelFormat()),
+                    .codedWidth = static_cast<size_t>(presentationSize.width()),
+                    .codedHeight = static_cast<size_t>(presentationSize.height()),
                     .timestamp = decodedResult.timestamp,
                     .duration = decodedResult.duration,
-                    .colorSpace = decodedResult.frame->colorSpace()
+                    .displayWidth = static_cast<size_t>(frame->rotatedSize().width()),
+                    .displayHeight = static_cast<size_t>(frame->rotatedSize().height()),
+                    .colorSpace = frame->colorSpace()
                 };
 
-                auto videoFrame = WebCodecsVideoFrame::create(*decoder.scriptExecutionContext(), WTF::move(decodedResult.frame), WTF::move(init));
+                auto videoFrame = WebCodecsVideoFrame::create(protect(*decoder.scriptExecutionContext()), WTF::move(frame), WTF::move(init));
                 decoder.m_output->invoke(WTF::move(videoFrame));
             });
         });
@@ -217,10 +249,12 @@ ExceptionOr<void> WebCodecsVideoDecoder::decode(Ref<WebCodecsEncodedVideoChunk>&
         m_isKeyChunkRequired = false;
     }
 
-    queueCodecControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, chunk = WTF::move(chunk)]() mutable {
+    queueCodecControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, data = chunk->encodedData()] mutable {
         incrementCodecOperationCount();
         Ref internalDecoder = *m_internalDecoder;
-        protect(scriptExecutionContext())->enqueueTaskWhenSettled(internalDecoder->decode({ chunk->buffer(), chunk->type() == WebCodecsEncodedVideoChunkType::Key, chunk->timestamp(), chunk->duration() }), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { * this }, pendingActivity = makePendingActivity(*this)] (auto&& result) {
+        // An empty chunk is a decoding error, see https://github.com/w3c/webcodecs/issues/983.
+        auto decodePromise = data.data->isEmpty() ? VideoDecoder::DecodePromise::createAndReject("Empty chunk"_s) : internalDecoder->decode(WTF::move(data));
+        protect(scriptExecutionContext())->enqueueTaskWhenSettled(WTF::move(decodePromise), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }, pendingActivity = makePendingActivity(*this)](auto&& result) {
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis)
                 return;

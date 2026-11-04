@@ -55,11 +55,11 @@ public:
     explicit WebNavigationState(WebPageProxy&);
     ~WebNavigationState();
 
-    void NODELETE ref() const;
+    void LEGACY_NODELETE ref() const;
     void deref() const;
 
-    Ref<API::Navigation> createBackForwardNavigation(WebCore::ProcessIdentifier, Ref<WebBackForwardListFrameItem>&& targetFrameItem, RefPtr<WebBackForwardListItem>&& currentItem, WebCore::FrameLoadType);
-    Ref<API::Navigation> createLoadRequestNavigation(WebCore::ProcessIdentifier, WebCore::ResourceRequest&&, RefPtr<WebBackForwardListItem>&& currentItem);
+    Ref<API::Navigation> createBackForwardNavigation(WebCore::ProcessIdentifier, Ref<WebBackForwardListFrameItem>&& targetFrameItem, RefPtr<WebBackForwardListItem>&& currentItem, WebCore::FrameLoadType, std::optional<WebCore::NavigationIdentifier> = std::nullopt);
+    Ref<API::Navigation> createLoadRequestNavigation(WebCore::ProcessIdentifier, WebCore::ResourceRequest&&, RefPtr<WebBackForwardListItem>&& currentItem, std::optional<WebCore::NavigationIdentifier> = std::nullopt);
     Ref<API::Navigation> createReloadNavigation(WebCore::ProcessIdentifier, RefPtr<WebBackForwardListItem>&& currentAndTargetItem);
     Ref<API::Navigation> createLoadDataNavigation(WebCore::ProcessIdentifier, std::unique_ptr<API::SubstituteData>&&);
     Ref<API::Navigation> createSimulatedLoadWithDataNavigation(WebCore::ProcessIdentifier, WebCore::ResourceRequest&&, std::unique_ptr<API::SubstituteData>&&, RefPtr<WebBackForwardListItem>&& currentItem);

@@ -158,14 +158,16 @@ protected:
         return std::bit_cast<uint8_t*>(this) + sizeof(MarkedVectorBase);
     }
 
-    Status expandCapacity();
-    Status expandCapacity(unsigned newCapacity);
-    JS_EXPORT_PRIVATE Status slowEnsureCapacity(size_t requestedCapacity);
+    enum class Request : bool { MayFail, MayNotFail };
+
+    Status expandCapacity(Request);
+    Status expandCapacity(unsigned newCapacity, Request);
+    JS_EXPORT_PRIVATE Status slowEnsureCapacity(size_t requestedCapacity, Request = Request::MayFail);
     JS_EXPORT_PRIVATE void slowEnsureCapacityAndCrashOnOverflow(size_t requestedCapacity);
 
     JS_EXPORT_PRIVATE void addMarkSet(JSValue);
 
-    JS_EXPORT_PRIVATE Status slowAppend(JSValue);
+    JS_EXPORT_PRIVATE Status slowAppend(JSValue, Request);
 
 #if CPU(ADDRESS64)
     template<typename U>
@@ -180,7 +182,7 @@ protected:
         addMarkSet(JSValue(std::bit_cast<JSCell*>(v)));
     }
 #else
-    JS_EXPORT_PRIVATE Status slowAppend(const void*);
+    JS_EXPORT_PRIVATE Status slowAppend(const void*, Request);
     JS_EXPORT_PRIVATE void addMarkSet(const void*);
 
     void*& pointerSlotFor(unsigned item) const
@@ -345,7 +347,7 @@ public:
 
     [[nodiscard]] T& at(size_t i) LIFETIME_BOUND
     {
-        if (i >= size()) { [[unlikely]]
+        if (i >= size()) [[unlikely]] {
             OverflowHandler::overflowed();
             if constexpr (!std::is_same_v<OverflowHandler, CrashOnOverflow>) {
                 T* oobStorage = std::bit_cast<T*>(&m_storageForOutOfBoundsAccess);
@@ -357,7 +359,7 @@ public:
     }
     [[nodiscard]] const T& at(size_t i) const LIFETIME_BOUND
     {
-        if (i >= size()) { [[unlikely]]
+        if (i >= size()) [[unlikely]] {
             const_cast<MarkedVector*>(this)->OverflowHandler::overflowed();
             if constexpr (!std::is_same_v<OverflowHandler, CrashOnOverflow>) {
                 T* oobStorage = std::bit_cast<T*>(&m_storageForOutOfBoundsAccess);
@@ -380,32 +382,24 @@ public:
 
     void append(T v)
     {
-        ASSERT(m_size <= m_capacity);
-        if (m_size == m_capacity || (mallocBase() && !m_markSet)) {
-            if (slowAppend<T>(v) == Status::Overflowed)
-                this->overflowed();
-            return;
-        }
-
-        *end() = v;
-        ++m_size;
+        appendAsRequest(v, WTF::shouldCrashOnOverflow(OverflowHandler::policy) ? Request::MayNotFail : Request::MayFail);
     }
 
 #if CPU(ADDRESS64)
     template<typename U>
-    Status slowAppend(U v) { return Base::slowAppend(std::bit_cast<JSValue>(v)); }
+    Status slowAppend(U v, Request request) { return Base::slowAppend(std::bit_cast<JSValue>(v), request); }
 #else
     template<typename U>
     requires std::is_pointer_v<U>
-    Status slowAppend(U v) { return Base::slowAppend(v); }
+    Status slowAppend(U v, Request request) { return Base::slowAppend(v, request); }
 
     template<typename U>
-    Status slowAppend(JSValue v) { return Base::slowAppend(v); }
+    Status slowAppend(JSValue v, Request request) { return Base::slowAppend(v, request); }
 #endif
 
     void appendWithCrashOnOverflow(T v)
     {
-        append(v);
+        appendAsRequest(v, Request::MayNotFail);
         if constexpr (!std::is_same<OverflowHandler, CrashOnOverflow>::value)
             RELEASE_ASSERT(!this->hasOverflowed());
     }
@@ -442,7 +436,7 @@ public:
     }
 
     template<typename Functor>
-    void fill(VM& vm, size_t count, const Functor& func)
+    void fill(VM& vm, size_t count, NOESCAPE const Functor& func)
     {
         ASSERT(!m_size);
         ensureCapacity(count);
@@ -467,7 +461,7 @@ public:
         func(buffer);
     }
 
-    void fillWith(VM& vm, MarkedVectorHelper::Iterable auto const& iterable, auto&& mapValue)
+    void fillWith(VM& vm, MarkedVectorHelper::Iterable auto const& iterable, NOESCAPE const auto& mapValue)
     {
         ensureCapacity(iterable.size());
         if constexpr (!WTF::shouldCrashOnOverflow(OverflowHandler::policy)) {
@@ -490,6 +484,19 @@ public:
     }
 
 private:
+    ALWAYS_INLINE void appendAsRequest(T v, Request request)
+    {
+        ASSERT(m_size <= m_capacity);
+        if (m_size == m_capacity || (mallocBase() && !m_markSet)) {
+            if (slowAppend<T>(v, request) == Status::Overflowed)
+                this->overflowed();
+            return;
+        }
+
+        *end() = v;
+        ++m_size;
+    }
+
     bool isUsingInlineBuffer() const { return m_buffer == m_inlineBuffer; }
 
     template<typename U>

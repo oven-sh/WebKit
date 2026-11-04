@@ -1,0 +1,24 @@
+# `o.run(function( a: number ): number { return a }, 2)` is quoted with `function(a) {\n      return a;\n    }`. The front end counts what is passed over in the file, the image in the text without types.
+# RUN: tables function-texts
+# CHECK: printed in place, from the start of the text
+# CHECK-NEXT: printed m0 52..78 from the printer in 18 bytes "function(a) {
+# CHECK-NEXT: return a;
+# CHECK-NEXT: }"
+# CHECK-NEXT: printed m0 94..128 from the printer in 5 bytes "function() {
+# CHECK-NEXT: return o;
+# CHECK-NEXT: }"
+# CHECK-NOT: printed
+
+module m0 path="/a.ts" displayPath="a.ts" body=f0 positions={lineStarts=[0, 29, 53, 111, 134, 150, 158] textPrintedInPlace="\x3f\x2a\x24\x03\x04\x05\x00\x09\x61\x29\x20\x7b\x06\x03\x05\x17\x08\x3b\x06\x02\x7d\x3a\x22\x0a\x03\x04\x05\x00\x22"} functionText="publish(function one(o) {\x0a    // says what it got\x0a    o.run(function( a ) { return a }, 2);\x0a    o.run(function() {\x0a      return o;\x0a    });\x0a});" typesCutFromFunctionText="\x16\x03\x31\x08\x02\x08"
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="one" module=m0 text={start=8 end=140} results=[{type=anything}] {
+    Return
+}

@@ -1,0 +1,23 @@
+# No walk of the stack can stand in a body without a call, a fault or a poll, so it keeps no record of the functions it took in: two such bodies with the same bytes can be one.
+# A body that calls keeps the site of the inlined call beside the site of its own.
+# FORM: Selected
+# RUN: generate-code
+# CHECK: f0: size={{*}} frame=none entries=1 sites=0 handlers=0 faults=0
+# CHECK-NEXT: f1: size={{*}} entries=1 sites=2 handlers=0 faults=0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="tookInALeaf" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f2 callPosition=7 module=m0}] {
+    v1 = Add v0, v0 form=Numbers @20:1
+    Return v1
+}
+function f1 name="tookInACall" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f2 callPosition=7 module=m0}] {
+    v1 = CallDirect v0 function=f3 @20:1
+    Return v1
+}
+function f2 name="inlined" parameters=[{type=number}] results=[{type=number}] {
+    Return v0
+}
+function f3 name="called" parameters=[{type=anything}] results=[{type=anything}] {
+    LoopHint
+    Return v0
+}

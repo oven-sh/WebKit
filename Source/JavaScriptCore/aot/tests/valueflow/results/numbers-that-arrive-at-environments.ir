@@ -1,0 +1,43 @@
+# Which numbers lie in a field of an environment is asked of the proven types of what the allocation lists and of what is stored there later, like for a variable.
+# `count` is listed as an int32 and stored as that int32 plus one. `total` is computed from `count`. `ratio` is also stored a fraction.
+# What a direct call passes and what it answers are followed the same way: `twice` gets `count` and answers the sum of it with itself
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Environment name="scope" fields=[{key="count" declared={type=int[-2147483648, 2147483648]} {{*}}{key="total" declared={type=int[-2147483648, 2147483658]} {{*}}{key="ratio" declared={type=i32|fractional}
+# CHECK: function f2 name="twice" {{*}}parameters=[{type=int[-2147483648, 2147483648]}] results=[{type=int[-4294967296, 4294967296]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="scope" fields=[{key="count" declared={type=number}}, {key="total" declared={type=number}}, {key="ratio" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    v5 = NewObject -, v4, v4, v4 layout=L0 fields=[0, 1, 2]
+    v6 = Integer integer=1
+    v7 = Add v4, v6
+    PutEnvironmentField v5, v7 layout=L0 field=0
+    v9 = GetEnvironmentField v5 layout=L0 field=0
+    v10 = Integer integer=10
+    v11 = Add v9, v10
+    PutEnvironmentField v5, v11 layout=L0 field=1
+    v13 = Double number=0.5
+    PutEnvironmentField v5, v13 layout=L0 field=2
+    v15 = NewClosure v5 function=f1
+    v16 = Call v15
+    Return v16
+}
+function f1 name="reader" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = GetEnvironmentField v0 layout=L0 field=1
+    v3 = GetEnvironmentField v0 layout=L0 field=2
+    v4 = CallDirect v1 function=f2
+    v5 = NewArray v1, v2, v3, v4 contents=anything holes=[]
+    Return v5
+}
+function f2 name="twice" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}

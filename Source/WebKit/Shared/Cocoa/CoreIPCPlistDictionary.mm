@@ -35,8 +35,10 @@
 #import "CoreIPCPlistObject.h"
 #import "CoreIPCString.h"
 #import <wtf/Assertions.h>
+#import <wtf/Borrow.h>
 #import <wtf/RuntimeApplicationChecks.h>
 #import <wtf/TZoneMallocInlines.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 namespace WebKit {
 
@@ -48,7 +50,8 @@ CoreIPCPlistDictionary::CoreIPCPlistDictionary(NSDictionary *dictionary)
 
     m_keyValuePairs.reserveInitialCapacity(dictionary.count);
 
-    for (id key in dictionary) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id key in dictionary) {
         RetainPtr<id> value = dictionary[key];
 
         if (!key || ![key isKindOfClass:[NSString class]]) {
@@ -61,7 +64,7 @@ CoreIPCPlistDictionary::CoreIPCPlistDictionary(NSDictionary *dictionary)
             continue;
         }
 
-        m_keyValuePairs.append({ CoreIPCString(key), CoreIPCPlistObject(value.get()) });
+        m_keyValuePairs.append({ CoreIPCString(checked_objc_cast<NSString>(key)), CoreIPCPlistObject(value.get()) });
     }
 }
 
@@ -78,7 +81,7 @@ CoreIPCPlistDictionary::CoreIPCPlistDictionary(ValueType&& keyValuePairs)
 RetainPtr<id> CoreIPCPlistDictionary::toID() const
 {
     auto result = adoptNS([[NSMutableDictionary alloc] initWithCapacity:m_keyValuePairs.size()]);
-    for (auto& keyValuePair : m_keyValuePairs) {
+    for (auto& keyValuePair : borrow(m_keyValuePairs)) {
         auto key = keyValuePair.key.toID();
         auto value = keyValuePair.value.toID();
         if (key && value)

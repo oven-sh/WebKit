@@ -42,13 +42,15 @@
 @end
 
 using WorldMap = HashMap<SingleThreadWeakRef<WebCore::DOMWrapperWorld>, WebScriptWorld*>;
-static WorldMap& NODELETE allWorlds()
+static WorldMap& LEGACY_NODELETE allWorlds()
 {
     static WorldMap& map = *new WorldMap;
     return map;
 }
 
-@implementation WebScriptWorld
+@implementation WebScriptWorld {
+    RetainPtr<WebScriptWorldPrivate> _private;
+}
 
 - (id)initWithWorld:(Ref<WebCore::DOMWrapperWorld>&&)world
 {
@@ -56,7 +58,7 @@ static WorldMap& NODELETE allWorlds()
     if (!self)
         return nil;
 
-    _private = [[WebScriptWorldPrivate alloc] init];
+    _private = adoptNS([[WebScriptWorldPrivate alloc] init]);
     _private->world = WTF::move(world);
 
     ASSERT_ARG(world, !allWorlds().contains(*_private->world));
@@ -79,9 +81,6 @@ static WorldMap& NODELETE allWorlds()
 {
     ASSERT(allWorlds().contains(*_private->world));
     allWorlds().remove(protect(*_private->world));
-
-    [_private release];
-    _private = nil;
     [super dealloc];
 }
 

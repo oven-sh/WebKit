@@ -148,7 +148,7 @@ template<> ConversionResult<IDLDictionary<TestCallbackInterface::Dictionary>> co
 }
 
 JSTestCallbackInterface::JSTestCallbackInterface(JSObject* callback, JSDOMGlobalObject* globalObject)
-    : TestCallbackInterface(globalObject->scriptExecutionContext())
+    : TestCallbackInterface(protect(globalObject->scriptExecutionContext()))
     , m_data(new JSCallbackData(callback, globalObject, this))
 {
 }
@@ -702,8 +702,13 @@ CallbackResult<typename IDLPromise<IDLUndefined>::CallbackReturnType> JSTestCall
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto returnValue = convert<IDLPromise<IDLUndefined>>(lexicalGlobalObject, jsResult);
-    if (returnValue.hasException(throwScope)) [[unlikely]]
-        return CallbackResultType::ExceptionThrown;
+    if (returnValue.hasException(throwScope)) [[unlikely]] {
+        auto exceptionValue = throwScope.exception()->value();
+        TRY_CLEAR_EXCEPTION(throwScope, CallbackResultType::ExceptionThrown);
+        auto* jsPromise = JSC::JSPromise::create(vm, globalObject.promiseStructure());
+        jsPromise->rejectAsHandled(vm, exceptionValue);
+        return { DOMPromise::create(globalObject, *jsPromise) };
+    }
     return { returnValue.releaseReturnValue() };
 }
 

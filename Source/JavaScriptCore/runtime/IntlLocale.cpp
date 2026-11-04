@@ -27,6 +27,7 @@
 #include "config.h"
 #include "IntlLocale.h"
 
+#include "AOTRemovableFeature.h"
 #include "IntlDateTimeFormat.h"
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
@@ -42,6 +43,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 const ClassInfo IntlLocale::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlLocale) };
+
+NEVER_INLINE void IntlLocale::destroy(JSCell* cell)
+{
+    JSC_REMOVABLE_DEFINITION(IntlOther, &IntlLocale::destroy);
+    static_cast<IntlLocale*>(cell)->IntlLocale::~IntlLocale();
+}
 
 namespace IntlLocaleInternal {
 static constexpr bool verbose = false;

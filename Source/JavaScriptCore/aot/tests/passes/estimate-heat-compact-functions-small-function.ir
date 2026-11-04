@@ -1,0 +1,32 @@
+# A small function is never compact: without its tests it saves few bytes, and the small ones are what is entered most. The size of a function is the number of its values and one for the end of each block
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat limit=MaxWarmCodeValues:1
+# RUN: pipeline EstimateHeat
+# CHECK: f1 Cold 10 1
+# CHECK-NEXT: f2 Compact 10 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return
+}
+
+function f1 name="small" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..31
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}
+
+function f2 name="oneValueMore" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..32
+    v%(i) = ToBoolean v0
+# END REPEAT
+    Return v0
+}

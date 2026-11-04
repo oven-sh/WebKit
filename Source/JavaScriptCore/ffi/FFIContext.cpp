@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFIContext.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "JSCJSValueInlines.h"
 #include "JSFFICallback.h"
@@ -83,7 +83,7 @@ void FFIContext::visitLiveCallbacks(JSGlobalObject& owner, Visitor& visitor)
 template void FFIContext::visitLiveCallbacks(JSGlobalObject&, AbstractSlotVisitor&);
 template void FFIContext::visitLiveCallbacks(JSGlobalObject&, SlotVisitor&);
 
-const CString* FFIContext::cachedUTF8(StringImpl& impl)
+const UTF8CString* FFIContext::cachedUTF8(StringImpl& impl)
 {
     for (auto& entry : m_utf8Cache) {
         if (entry.key.get() == &impl) {
@@ -94,7 +94,7 @@ const CString* FFIContext::cachedUTF8(StringImpl& impl)
     return nullptr;
 }
 
-const CString& FFIContext::cacheUTF8(StringImpl& impl, CString&& utf8)
+const UTF8CString& FFIContext::cacheUTF8(StringImpl& impl, UTF8CString&& utf8)
 {
     if (m_utf8Cache.size() < utf8CacheCapacity) {
         UTF8CacheEntry entry;
@@ -158,4 +158,4 @@ std::span<char> StringArena::allocate(size_t bytes)
 
 } } // namespace JSC::FFI
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

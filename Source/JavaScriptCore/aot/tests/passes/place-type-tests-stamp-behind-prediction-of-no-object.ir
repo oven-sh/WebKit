@@ -1,0 +1,47 @@
+# An expected type whose layouts no object has says nothing. The layouts that flow saw arrive at the access are what is expected there, and without them nothing is.
+# An expected layout that is allocated stays expected
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxDeclarationsPredictedFromNames:0
+# RUN: pass PlaceTypeTests
+# RUN(CANDIDATES): receiver-candidates
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="First" fields=[{key="tag" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="tag" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Third" fields=[{key="tag" declared={type=number} flags=[IsRequired]}]
+layout L3 name="NeverMade" fields=[{key="tag" declared={type=number} flags=[IsRequired]}, {key="ghost" declared={type=number} flags=[IsRequired]}] flow={allocation=NeverAllocated}
+
+function f0 name="expectedLayoutIsNeverAllocated" parameters=[{type=L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L3):
+    v1 = PropGet v0 key="tag" receivers=[L1, ..]
+    Return v1
+}
+# CANDIDATES: F0 v1: proof=Unknown level=Expected {{*}}=[L1] otherParts nullish
+# CHECK-LABEL: function f0 name="expectedLayoutIsNeverAllocated"
+# CHECK-NOT: testedType={{*}}L3
+# CHECK: = TypeTest v0 testedType=L1
+# CHECK-NOT: testedType={{*}}L3
+# CHECK: = GetSlot {{*}} key="tag" receivers=[L1] level=Expected
+# CHECK-NOT: testedType={{*}}L3
+
+function f1 name="expectedLayoutIsAllocated" parameters=[{type=L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L2):
+    v1 = PropGet v0 key="tag" receivers=[L1, ..]
+    Return v1
+}
+# CANDIDATES: F1 v1: proof=Unknown level=Expected {{*}}=[L1, L2] otherParts nullish
+# CHECK-LABEL: function f1 name="expectedLayoutIsAllocated"
+# CHECK: = TypeTest v0 testedType=L1|L2
+# CHECK: = GetSlot {{*}} key="tag" receivers=[L1, L2] level=Expected
+
+# The limit of 0 keeps the name from predicting the three allocated layouts that declare it
+function f2 name="expectedLayoutIsNeverAllocatedAndFlowSawNothing" parameters=[{type=L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L3):
+    v1 = PropGet v0 key="tag"
+    Return v1
+}
+# CANDIDATES: F2 v1: proof=Unknown level=Unknown otherParts nullish
+# CHECK-LABEL: function f2 name="expectedLayoutIsNeverAllocatedAndFlowSawNothing"
+# CHECK-NOT: = TypeTest
+# CHECK: = PropGet v0 key="tag"
+# CHECK-NOT: = TypeTest

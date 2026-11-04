@@ -69,7 +69,7 @@ inline EventSource::EventSource(ScriptExecutionContext& context, const URL& url,
     : ActiveDOMObject(&context)
     , m_url(url)
     , m_withCredentials(eventSourceInit.withCredentials)
-    , m_decoder(TextResourceDecoder::create("text/plain"_s, "UTF-8"_s))
+    , m_decoder(TextResourceDecoder::createUTF8())
 {
 }
 
@@ -117,8 +117,15 @@ void EventSource::connect()
     request.setHTTPMethod("GET"_s);
     request.setHTTPHeaderField(HTTPHeaderName::Accept, "text/event-stream"_s);
     request.setHTTPHeaderField(HTTPHeaderName::CacheControl, "no-cache"_s);
-    if (!m_lastEventId.isEmpty())
+    if (!m_lastEventId.isEmpty()) {
+#if PLATFORM(COCOA)
+        // CFNetwork sends header values as Latin-1 bytes, so pass the UTF-8 bytes as Latin-1 characters.
+        // Other network backends UTF-8 encode header values themselves.
+        request.setHTTPHeaderField(HTTPHeaderName::LastEventID, String(byteCast<Latin1Character>(m_lastEventId.utf8().span())));
+#else
         request.setHTTPHeaderField(HTTPHeaderName::LastEventID, m_lastEventId);
+#endif
+    }
 
     RefPtr context = scriptExecutionContext();
 

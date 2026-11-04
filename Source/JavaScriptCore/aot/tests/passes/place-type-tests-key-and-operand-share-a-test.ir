@@ -1,0 +1,46 @@
+# A value that is the key of an element access and the operand of an operator is tested once: both ask for the kind of number that is expected, int32 or any number, and not for the range in the expected type. Where nothing is expected of the value, the array says that its key is an index, and the key is tested for an int32
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# RUN(TESTS): pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="expectedInt32" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 9] flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage, Names]>, v1: anything ~ int[0, 9]):
+    v2 = ElemGet v0, v1
+    v3 = Integer integer=1
+    v4 = Add v1, v3
+    v5 = ElemGet v0, v4
+    v6 = NewArray v2, v5 contents=anything
+    Return v6
+# TESTS-NOT: = TypeTest v1 testedType=
+# TESTS-COUNT-1: = TypeTest v1 testedType=i32
+# TESTS-NOT: = TypeTest v1 testedType=
+# CHECK: = GetArrayElement v0, [[key0]]
+# CHECK: = Add [[key0]], v3
+}
+
+function f1 name="expectedNumber" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage, Names]>, v1: anything ~ number):
+    v2 = ElemGet v0, v1
+    v3 = Integer integer=1
+    v4 = Add v1, v3
+    v5 = NewArray v2, v4 contents=anything
+    Return v5
+# TESTS-NOT: = TypeTest v1 testedType=
+# TESTS-COUNT-1: = TypeTest v1 testedType=number
+# TESTS-NOT: = TypeTest v1 testedType=
+}
+
+function f2 name="nothingExpected" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    v3 = Integer integer=1
+    v4 = Add v1, v3
+    v5 = NewArray v2, v4 contents=anything
+    Return v5
+# TESTS-NOT: = TypeTest v1 testedType=
+# TESTS-COUNT-1: = TypeTest v1 testedType=i32
+# TESTS-NOT: = TypeTest v1 testedType=
+# CHECK: = GetArrayElement v0, [[key2]]
+# CHECK: [[one2]]: 1 = Integer integer=1
+# CHECK: = Add [[key2]], [[one2]]
+}

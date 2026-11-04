@@ -1,0 +1,29 @@
+# What is no object cannot be called: the call throws, so it has no result. A callee that may be an object says nothing.
+# FORM: AsRead
+# RUN: pass TypeValues
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="undefined" results=[{type=anything}] {
+    v0 = Undefined
+    v1 = Call v0, -
+    Return v1
+# CHECK: : never = Call v0
+}
+
+function f1 name="primitives" parameters=[{type=undefined|null|boolean|number|string|symbol|bigint}] results=[{type=anything}] {
+    v1 = Call v0, -
+    Return v1
+# CHECK: : never = Call v0
+}
+
+function f2 name="perhapsAFunction" parameters=[{type=undefined|function}] results=[{type=anything}] {
+    v1 = Call v0, -
+    Return v1
+# CHECK: : anything = Call v0
+}
+
+function f3 name="perhapsAnObject" parameters=[{type=undefined|object}] results=[{type=anything}] {
+    v1 = Call v0, -
+    Return v1
+# CHECK: : anything = Call v0
+}

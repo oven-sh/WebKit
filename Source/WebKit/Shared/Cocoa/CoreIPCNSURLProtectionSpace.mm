@@ -27,7 +27,9 @@
 #import "CoreIPCNSURLProtectionSpace.h"
 
 #import "ArgumentCoders.h"
+#import <wtf/Borrow.h>
 #import <wtf/TZoneMallocInlines.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if PLATFORM(COCOA) && HAVE(WK_SECURE_CODING_NSURLPROTECTIONSPACE)
 
@@ -41,9 +43,8 @@ namespace WebKit {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CoreIPCNSURLProtectionSpace);
 
 #define SET_OBJECT(NAME, CLASS, WRAPPER)    \
-    id NAME = dict[@#NAME];                 \
-    if ([NAME isKindOfClass:CLASS.class]) { \
-        auto var = WRAPPER(NAME);           \
+    if (RetainPtr NAME = dynamic_objc_cast<CLASS>(dict[@#NAME])) { \
+        auto var = WRAPPER(NAME.get());     \
         m_data.NAME = WTF::move(var);         \
     }
 
@@ -82,7 +83,8 @@ CoreIPCNSURLProtectionSpace::CoreIPCNSURLProtectionSpace(NSURLProtectionSpace *p
         bool allElementsValid = true;
         Vector<WebKit::CoreIPCData> data;
         data.reserveInitialCapacity(distnames.count);
-        for (NSData *d in distnames) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSData *d in distnames) {
             if (![d isKindOfClass:NSData.class]) {
                 allElementsValid = false;
                 break;
@@ -122,7 +124,7 @@ RetainPtr<id> CoreIPCNSURLProtectionSpace::toID() const
 
     if (m_data.distnames) {
         auto array = adoptNS([[NSMutableArray alloc] initWithCapacity:m_data.distnames->size()]);
-        for (auto& value : *m_data.distnames)
+        for (auto& value : borrow(*m_data.distnames))
             [array addObject:value.toID().get()];
         [dict setObject:array.get() forKey:@"distnames"];
     }

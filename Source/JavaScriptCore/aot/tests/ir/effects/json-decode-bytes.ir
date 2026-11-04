@@ -1,0 +1,13 @@
+# Decoding the bytes of a body can throw, as json() rejects a body without bytes; opening a source over the same bytes cannot
+# FORM: Prepared
+# RUN: effects
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="decodes" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = JSONDecodeBytes v0
+    v2 = JSONSourceOpen v0
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v1 JSONDecodeBytes: {{*}} throws collects
+# CHECK-NOT: throws

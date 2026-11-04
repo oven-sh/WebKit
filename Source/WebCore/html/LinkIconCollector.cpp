@@ -38,7 +38,7 @@ namespace WebCore {
 
 constexpr unsigned defaultTouchIconWidth = 60;
 
-static unsigned NODELETE iconSize(const LinkIcon& icon)
+static unsigned LEGACY_NODELETE iconSize(const LinkIcon& icon)
 {
     if (icon.size)
         return *icon.size;
@@ -49,7 +49,7 @@ static unsigned NODELETE iconSize(const LinkIcon& icon)
     return 0;
 }
 
-static int NODELETE compareIcons(const LinkIcon& a, const LinkIcon& b)
+static int LEGACY_NODELETE compareIcons(const LinkIcon& a, const LinkIcon& b)
 {
     // Apple Touch icons always come first.
     if (a.type == LinkIconType::Favicon && b.type != LinkIconType::Favicon)
@@ -98,8 +98,9 @@ auto LinkIconCollector::iconsOfTypes(OptionSet<LinkIconType> iconTypes) -> Vecto
         // part of the size, "60x70" becomes "60". This is for compatibility reasons
         // and is probably good enough for now.
         std::optional<unsigned> iconSize;
-        if (linkElement->sizes().length())
-            iconSize = parseIntegerAllowingTrailingJunk<unsigned>(linkElement->sizes().item(0));
+        Ref sizes = linkElement->sizes();
+        if (sizes->length())
+            iconSize = parseIntegerAllowingTrailingJunk<unsigned>(sizes->item(0));
 
         Vector<std::pair<String, String>> attributes;
         if (protect(linkElement)->hasAttributes()) {

@@ -1,0 +1,42 @@
+# function Parent() { this.shared = 1; this.late = 2 }   function Child() { Parent.call(this) }   Child.prototype.__proto__ = Parent.prototype
+# Every object of a class below passes the constructor of the class above, so what that stores through its `this` counts as filled by the constructor for the lower layout too.
+# It matters for a field that the lower layout alone has (`late`; flow adds such fields): it is inherited from nobody, so the uses of no other row are added to its own.
+# What another function stores through a parameter does not count (`other`)
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,EstimateHeat heat=EverythingIsHot
+# RUN: plan-slots fill
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Parent" constructor=f1 fields=[{key="shared" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Child" base=L0 constructor=f2 fields=[{key="shared" declared={type=anything}}, {key="late" declared={type=anything}}, {key="other" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Construct v0, -
+    PutModuleVariable v1 variable=g0
+    v3 = CallDirect v1 function=f3
+    Return
+}
+function f1 name="Parent" flags=[HasThis] thisType={type=L0|L1} results=[{type=anything}] constructedClass=L0 {
+    v1 = Integer integer=1
+    PropSet v0, v1 key="shared"
+    v3 = Integer integer=2
+    PropSet v0, v3 key="late"
+    Return
+}
+function f2 name="Child" flags=[HasThis] thisType={type=L1} results=[{type=anything}] constructedClass=L1 {
+    v1 = CallDirect v0 function=f1
+    Return
+}
+function f3 name="storesLater" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=3
+    PropSet v0, v1 key="other"
+    Return
+}
+
+# CHECK-LABEL: L1 allocated=
+# CHECK-NEXT: .0 "shared" filled={{*}} byConstructor likely
+# CHECK-NEXT: .1 "late" filled={{*}} byConstructor likely
+# CHECK-NEXT: .2 "other" filled=
+# CHECK-NOT: byConstructor

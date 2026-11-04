@@ -355,8 +355,7 @@ class CppBackendDispatcherImplementationGenerator(CppGenerator):
                     '[backendDispatcher = m_backendDispatcher.copyRef(), protocol_requestId](%s<%s> result) {' % (result_type_alias, ", ".join(type_arguments)),
                     '        if (!result) {',
                     '           ASSERT(!result.error().isEmpty());',
-                    '           backendDispatcher->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, result.error());',
-                    '           backendDispatcher->sendPendingErrors();',
+                    '           backendDispatcher->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, result.error());',
                     '           return;',
                     '        }',
                 ]

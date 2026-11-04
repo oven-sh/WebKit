@@ -254,6 +254,32 @@ int bssl::x509_marshal_tbs_cert(CBB *cbb, const X509 *x509) {
   return CBB_flush(cbb);
 }
 
+int bssl::x509_get_or_marshal_tbs_cert(CBS *out, Array<uint8_t> *scratch,
+                                       const X509 *x509) {
+  auto *impl = FromOpaque(x509);
+  if (impl->buf != nullptr) {
+    // If there is a cached TBSCertificate encoding, just use it and avoid
+    // making a copy.
+    CBS cbs, cert;
+    CRYPTO_BUFFER_init_CBS(impl->buf.get(), &cbs);
+    if (!CBS_get_asn1(&cbs, &cert, CBS_ASN1_SEQUENCE) ||
+        !CBS_get_asn1_element(&cert, out, CBS_ASN1_SEQUENCE)) {
+      // This should be impossible.
+      OPENSSL_PUT_ERROR(X509, ERR_R_INTERNAL_ERROR);
+      return 0;
+    }
+  } else {
+    ScopedCBB cbb;
+    if (!CBB_init(cbb.get(), 128) || !x509_marshal_tbs_cert(cbb.get(), x509) ||
+        !CBBFinishArray(cbb.get(), scratch)) {
+      OPENSSL_PUT_ERROR(X509, ERR_R_INTERNAL_ERROR);
+      return 0;
+    }
+    CBS_init(out, scratch->data(), scratch->size());
+  }
+  return 1;
+}
+
 static int x509_marshal(CBB *cbb, const X509 *x509) {
   CBB cert;
   auto *impl = FromOpaque(x509);

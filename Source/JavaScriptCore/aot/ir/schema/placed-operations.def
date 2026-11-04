@@ -1,0 +1,9 @@
+family Representation Placed..Placed
+operation Box (value: Convertible/returns) -> natural(same(value)) ; none
+operation Unbox (value: Convertible/returns) -> natural(same(value)) ; none
+operation IntegerToNumber (value: Integer/returns) -> natural(same(value)) ; none
+operation NumberToInteger (value: Number/returns) -> natural(same(value)) ; none
+operation WidenInteger (value: Integer/returns) -> natural(same(value)) ; none
+operation NarrowInteger (value: Integer/returns) -> natural(same(value)) ; none
+operation Decode (value: Convertible/returns) -> natural(same(value)) ; CreatesConstant
+operation Compress (value: Convertible/returns) -> natural(same(value)) ; none

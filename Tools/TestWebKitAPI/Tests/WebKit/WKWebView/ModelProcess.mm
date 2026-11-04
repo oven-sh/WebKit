@@ -29,6 +29,7 @@
 
 #import "Helpers/cocoa/ModelLoadingMessageHandler.h"
 #import "Helpers/PlatformUtilities.h"
+#import "Helpers/cocoa/TestNSBundleExtras.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
 #import "Helpers/cocoa/WKWebViewConfigurationExtras.h"
@@ -122,6 +123,71 @@ TEST(ModelProcess, CleanUpOnHide)
 
     EXPECT_EQ([webView modelProcessModelPlayerCount], 0u);
 }
+
+#if ENABLE(SPATIAL_PORTAL)
+
+TEST(ModelProcess, WebProcessTerminationAfterTooManyModelProcessCrashesWithSpatialPortals)
+{
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    [configuration _setAllowTestOnlyIPC:YES];
+    WKPreferencesSetBoolValueForKeyForTesting((__bridge WKPreferencesRef)[configuration preferences], true, WKStringCreateWithUTF8CString("ModelElementEnabled"));
+    WKPreferencesSetBoolValueForKeyForTesting((__bridge WKPreferencesRef)[configuration preferences], true, WKStringCreateWithUTF8CString("ModelProcessEnabled"));
+    WKPreferencesSetBoolValueForKeyForTesting((__bridge WKPreferencesRef)[configuration preferences], true, WKStringCreateWithUTF8CString("SpatialPortalEnabled"));
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:configuration.get()]);
+
+    // A spatial portal recreates its model player synchronously when the model process exits. With two portals,
+    // the WebProcess's model player count never drops to zero, so it never sends StartedPlayingModels again.
+    [webView synchronouslyLoadHTMLString:@"<style>.portal { spatial: portal; width: 300px; height: 150px; }</style>"
+        "<div class='portal'><model><source src='cube.usdz'></model></div>"
+        "<div class='portal'><model><source src='cube.usdz'></model></div>"
+        baseURL:NSBundle.test_resourcesBundle.resourceURL];
+
+    __block bool done = false;
+    [webView callAsyncJavaScript:@"await Promise.all([...document.querySelectorAll('model')].map(model => model.ready))" arguments:nil inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id, NSError *error) {
+        EXPECT_TRUE(!error);
+        done = true;
+    }];
+    Util::run(&done);
+
+    EXPECT_EQ([webView modelProcessModelPlayerCount], 2u);
+
+    RetainPtr navigationDelegate = adoptNS([[TestNavigationDelegate alloc] init]);
+    auto terminationReason = std::make_shared<std::optional<_WKProcessTerminationReason>>();
+    [navigationDelegate setWebContentProcessDidTerminate:^(WKWebView *, _WKProcessTerminationReason reason) {
+        *terminationReason = reason;
+    }];
+    [webView setNavigationDelegate:navigationDelegate.get()];
+
+    auto webProcessPID = [webView _webProcessIdentifier];
+    auto modelProcessPID = [webView _modelProcessIdentifier];
+    ASSERT_NE(modelProcessPID, 0);
+
+    // The first two model process crashes are below the limit, so the WebProcess must survive them.
+    for (unsigned i = 0; i < 2; ++i) {
+        kill(modelProcessPID, SIGKILL);
+
+        ASSERT_TRUE(Util::waitFor([&] {
+            auto relaunchedModelProcessPID = [webView _modelProcessIdentifier];
+            return relaunchedModelProcessPID && relaunchedModelProcessPID != modelProcessPID;
+        }));
+        modelProcessPID = [webView _modelProcessIdentifier];
+
+        EXPECT_FALSE(terminationReason->has_value());
+        EXPECT_EQ(webProcessPID, [webView _webProcessIdentifier]);
+    }
+
+    // The third crash exceeds the limit. The WebProcess is still using models, so it must be terminated.
+    kill(modelProcessPID, SIGKILL);
+
+    ASSERT_TRUE(Util::waitFor([&] {
+        return terminationReason->has_value();
+    }, 50));
+    EXPECT_EQ(terminationReason->value(), _WKProcessTerminationReasonExceededSharedProcessCrashLimit);
+    EXPECT_EQ([webView _webProcessIdentifier], 0);
+}
+
+#endif // ENABLE(SPATIAL_PORTAL)
 
 } // namespace TestWebKitAPI
 

@@ -1,0 +1,41 @@
+# `Object.hasOwn(value, "socket")` and `"socket" in value` ask whether the name is there: alone they do not say that the object is one of the layouts that have it. Beside a read of the name they are answered by its test.
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Connection" fields=[{key="socket" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="own-question-alone" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToObject v0
+    v2 = PropHasOwn v1 key="socket"
+    Return v2
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: object = ToObject v0
+# CHECK-NEXT: = PropHasOwn v1 key="socket"
+# CHECK-NEXT: Return v2
+}
+function f1 name="question-alone" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = PropHas v0 key="socket"
+    Return v1
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: = PropHas v0 key="socket"
+# CHECK-NEXT: Return v1
+}
+function f2 name="read-alone" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="socket"
+    Return v1
+# CHECK-NEXT: b0(v0: object ~ L0):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: = GetSlot {{*}} key="socket" receivers=[L0] level=Expected
+}
+function f3 name="question-beside-a-read" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = PropHasOwn v0 key="socket"
+    v2 = PropGet v0 key="socket"
+    Return v2
+# CHECK-NEXT: b0(v0: object ~ L0):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: v1: boolean = IsSlotFilled {{*}} key="socket" receivers=[L0] level=Expected
+# CHECK: = GetSlot {{*}} key="socket" receivers=[L0] level=Expected
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropHasOwn v0 key="socket"
+}

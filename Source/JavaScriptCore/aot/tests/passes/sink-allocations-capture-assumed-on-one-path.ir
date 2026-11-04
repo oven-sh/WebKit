@@ -1,0 +1,33 @@
+# A closure that is built late captures an array that is built late too. What was assumed of the array on the one path that makes the closure holds for the capture
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="kept" kind=Arrow captures=[{type=Array<anything, Contiguous, pristine[Storage]>}] results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+
+function f1 name="closureMadeOnOnePath" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewArray v0 contents=anything
+    v4 = Null
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = AssumeType v3 provenType=Array<anything, Contiguous, pristine[Storage]>
+    v6 = NewClosure v5 function=f0
+    Jump -> next b3(v6)
+  b2():
+    Jump -> next b3(v4)
+  b3(v7):
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    v8 = Call v0, -, v7, v3
+    Return v8
+  b5():
+    v9 = Undefined
+    Return v9
+# CHECK: [[array]]:{{*}}= NewArray
+# CHECK: [[capture]]:{{*}}= AssumeType [[array]] provenType=Array<anything, Contiguous, pristine[Storage]>
+# CHECK-NEXT: = NewClosure [[capture]] function=f0
+}

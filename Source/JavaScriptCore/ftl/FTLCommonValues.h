@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 #include "FTLAbbreviatedTypes.h"
 #include "FTLValueRange.h"
@@ -59,9 +59,6 @@ public:
     LValue intPtrEight { nullptr };
     LValue doubleZero { nullptr };
     LValue doubleEncodeOffsetAsDouble { nullptr };
-#if USE(BIGINT32)
-    LValue bigInt32Zero { nullptr };
-#endif
 
     const unsigned rangeKind { 0 };
     const unsigned profKind { 0 };
@@ -70,4 +67,4 @@ public:
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)

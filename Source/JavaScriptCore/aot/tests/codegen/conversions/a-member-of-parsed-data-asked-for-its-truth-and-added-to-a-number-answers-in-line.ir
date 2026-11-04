@@ -1,0 +1,290 @@
+# `sum += row.amount || 0` over what JSON.parse made, of which nothing is known. What is found true is tested for a number next, so a number is what the program reckons with: an integer is compared with zero and a fraction with zero and NaN in line, behind the tests for an object and for the small values, which stay as they were. Only a text, a symbol or a bigint calls.
+# names: what is found true is joined to a text. counted: it goes nowhere. Nothing says that these are numbers, and a number calls.
+# -- source: main.js
+# let text = "[";
+# for (let i = 0; i < 3; i++) text += (i ? "," : "") + (i % 2 ? `{"id":${i}}` : `{"amount":${i + 0.5},"name":"n","seen":${i}}`);
+# const rows = JSON.parse(text + "]");
+# function total() {
+#   let sum = 0;
+#   for (let i = 0; i < 3; i++) sum += rows[i].amount || 0;
+#   return sum;
+# }
+# function names() {
+#   let all = "";
+#   for (let i = 0; i < 3; i++) all += rows[i].name || "";
+#   return all;
+# }
+# function counted() {
+#   let count = 0;
+#   for (let i = 0; i < 3; i++) if (rows[i].seen) count++;
+#   return count;
+# }
+# globalThis.answer = total() + names() + counted();
+# -- end of source
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot
+# That a number is neither zero nor NaN is asked by a comparison with zero on x86_64 and of its size on arm64.
+# RUN(X64): lower-to-b3 optimized f1 f2 f3
+# REQUIRES(X64): x86_64 unsanitized-code
+# X64-LABEL: name="total" role=Source
+# X64: = BelowEqual({{*}}, $10({{*}}), {{*}}:ToBoolean)
+# X64: = Trunc({{*}}:ToBoolean)
+# X64: = EqualOrUnordered({{*}}, $0.000000({{*}}), {{*}}:ToBoolean)
+# X64-LABEL: end of function
+# X64-LABEL: name="names" role=Source
+# X64: = BelowEqual({{*}}, $10({{*}}), {{*}}:ToBoolean)
+# X64-NOT: = EqualOrUnordered({{*}}:ToBoolean)
+# X64-LABEL: end of function
+# X64-LABEL: name="counted" role=Source
+# X64: = BelowEqual({{*}}, $10({{*}}), {{*}}:ToBoolean)
+# X64-NOT: = EqualOrUnordered({{*}}:ToBoolean)
+# X64-LABEL: end of function
+# RUN(ARM64): lower-to-b3 optimized f1 f2 f3
+# REQUIRES(ARM64): arm64 unsanitized-code
+# ARM64-LABEL: name="total" role=Source
+# ARM64: = BelowEqual({{*}}, $10({{*}}), {{*}}:ToBoolean)
+# ARM64: = Trunc({{*}}:ToBoolean)
+# ARM64: = GreaterThan({{*}}, $0.000000({{*}}), {{*}}:ToBoolean)
+# ARM64-LABEL: end of function
+# ARM64-LABEL: name="names" role=Source
+# ARM64: = BelowEqual({{*}}, $10({{*}}), {{*}}:ToBoolean)
+# ARM64-NOT: = GreaterThan({{*}}:ToBoolean)
+# ARM64-LABEL: end of function
+# ARM64-LABEL: name="counted" role=Source
+# ARM64: = BelowEqual({{*}}, $10({{*}}), {{*}}:ToBoolean)
+# ARM64-NOT: = GreaterThan({{*}}:ToBoolean)
+# ARM64-LABEL: end of function
+
+layout L0 fields=[{key="amount" declared={type=anything} flags=[IsNeverWritten]}, {key="name" declared={type=anything} flags=[IsNeverWritten]}, {key="seen" declared={type=anything} flags=[IsNeverWritten]}] flags=[IsNeverAllocated] ownFieldCount=3 flow={allocation=NeverAllocated}
+variable g0 name="rows" module=m0 declared={type=undefined|null|absent|Array<undefined|null|number|string|symbol|bigint|object> flags=[IsExpected]} flags=[IsImmutable]
+module m0 path="/main.js" displayPath="main.js" flags=[KeepsError] body=f0 positions={lineStarts=[0, 16, 143, 180, 199, 214, 272, 286, 288, 307, 323, 380, 394, 396, 417, 434, 491, 507, 509, 560] textOfBody="\x10~\x01$\xca\x022" whereThisIsMade=[180, 232, 288, 341, 396, 452]} functionText="let text = \x22[\x22;\x0afor (let i = 0; i < 3; i++) text += (i ? \x22,\x22 : \x22\x22) + (i % 2 ? `{\x22id\x22:${i}}` : `{\x22amount\x22:${i + 0.5},\x22name\x22:\x22n\x22,\x22seen\x22:${i}}`);\x0aconst rows = JSON.parse(text + \x22]\x22);\x0afunction total() {\x0a  let sum = 0;\x0a  for (let i = 0; i < 3; i++) sum += rows[i].amount || 0;\x0a  return sum;\x0a}\x0afunction names() {\x0a  let all = \x22\x22;\x0a  for (let i = 0; i < 3; i++) all += rows[i].name || \x22\x22;\x0a  return all;\x0a}\x0afunction counted() {\x0a  let count = 0;\x0a  for (let i = 0; i < 3; i++) if (rows[i].seen) count++;\x0a  return count;\x0a}\x0aglobalThis.answer = total() + names() + counted();\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = String string="[" @11
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]} @11
+    v8 = Integer @29
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @29
+    Jump -> next b2(v7, v9) @25
+  b2(v10, v11):
+    LoopHint @25
+    v13 = Integer integer=3 @36
+    v14 = Less v11, v13 @32
+    Branch v14 -> taken b3(| 0), notTaken b16(| 0) @32
+  b3(v15):
+    Jump -> next b4() @32
+  b4():
+    v16 = ToBoolean v15 @53
+    Branch v16 -> taken b5(| 0), notTaken b7(| 0) @53
+  b5(v17):
+    Jump -> next b6() @53
+  b6():
+    v18 = String string="," @57
+    Jump -> next b9(v18, v17) @57
+  b7(v19):
+    Jump -> next b8() @53
+  b8():
+    v20 = String string="" @63
+    Jump -> next b9(v20, v19) @63
+  b9(v21, v22):
+    v23 = Integer integer=2 @74
+    v24 = Mod v22, v23 @70
+    v25 = ToBoolean v24 @70
+    Branch v25 -> taken b10(| 0), notTaken b12(| 0) @70
+  b10(v26):
+    Jump -> next b11() @70
+  b11():
+    v27 = String string="{\"id\":" @78
+    v28 = ToString v22 @87
+    v29 = String string="}" @87
+    v30 = Strcat v27, v28, v29 @78
+    Jump -> next b14(v30) @78
+  b12(v31):
+    Jump -> next b13() @70
+  b13():
+    v32 = String string="{\"amount\":" @94
+    v33 = Double number=0.5 @111
+    v34 = Add v22, v33 @107
+    v35 = ToString v34 @107
+    v36 = String string=",\"name\":\"n\",\"seen\":" @107
+    v37 = ToString v22 @136
+    v38 = String string="}" @136
+    v39 = Strcat v32, v35, v36, v37, v38 @94
+    Jump -> next b14(v39) @94
+  b14(v40):
+    v41 = Add v21, v40 @44
+    v42 = Add v10, v41 @44
+    v43 = Convert v42 declared={type=undefined|null|string flags=[IsExpected]} @44
+    Jump -> next b15() @44
+  b15():
+    v44 = Increment v22 @44
+    v45 = Convert v44 declared={type=number flags=[IsExpected]} @39
+    Jump -> next b2(v43, v45) @39
+  b16(v46):
+    Jump -> next b17() @32
+  b17():
+    v47 = Builtin builtin=JSON @156
+    v48 = PropGet v47 key="parse" @156
+    v49 = Convert v48 declared={type=builtin(JSONParse) flags=[IsExpected]} @156
+    v50 = String string="]" @174
+    v51 = Add v10, v50 @167
+    v52 = Call v49, v47, v51 calleeKey="parse" calleeName="JSON.parse" @161
+    v53 = Convert v52 declared={type=undefined|null|Array<undefined|null|number|string|symbol|bigint|object> flags=[IsExpected]} @156
+    PutModuleVariable v53 variable=g0 @149
+    v55 = Builtin builtin=GlobalThis @509
+    v56 = PropGet v55 key="globalThis" [isFreeName] @509
+    v57 = Convert v56 declared={type=builtin(GlobalThis) flags=[IsExpected]} @509
+    v58 = Call v1 calleeName="total" @529
+    v59 = Convert v58 declared={type=number flags=[IsExpected]} @529
+    v60 = Call v3 calleeName="names" @539
+    v61 = Convert v60 declared={type=undefined|null|string flags=[IsExpected]} @539
+    v62 = Add v59, v61 @529
+    v63 = Call v5 calleeName="counted" @549
+    v64 = Convert v63 declared={type=number flags=[IsExpected]} @549
+    v65 = Add v62, v64 @529
+    PropSet v57, v65 key="answer" @509
+    v67 = Undefined @509
+    Return v67 @509
+}
+function f1 name="total" module=m0 position=180 text={start=180 end=287} flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @180
+  b1():
+    v0 = Integer @211
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @211
+    v2 = Integer @229
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @229
+    Jump -> next b2(v1, v3) @225
+  b2(v4, v5):
+    LoopHint @225
+    v7 = Integer integer=3 @236
+    v8 = Less v5, v7 @232
+    Branch v8 -> taken b3(| 0), notTaken b10(| 0) @232
+  b3(v9):
+    Jump -> next b4() @232
+  b4():
+    v10 = GetModuleVariable variable=g0 @251
+    v11 = CheckInitialized v10 name="rows" @251
+    v12 = ElemGet v11, v9 @251
+    v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @251
+    v14 = PropGet v13 key="amount" @256
+    v15 = ToBoolean v14 @251
+    Branch v15 -> taken b5(| 0), notTaken b6(| 0) @251
+  b5(v16):
+    Jump -> next b8(v16) @251
+  b6(v17):
+    Jump -> next b7() @251
+  b7():
+    v18 = Integer @269
+    Jump -> next b8(v18) @269
+  b8(v19):
+    v20 = Add v4, v19 @256
+    v21 = Convert v20 declared={type=number flags=[IsExpected]} @244
+    Jump -> next b9() @244
+  b9():
+    v22 = Increment v9 @256
+    v23 = Convert v22 declared={type=i32 flags=[IsExpected]} @239
+    Jump -> next b2(v21, v23) @239
+  b10(v24):
+    Jump -> next b11() @232
+  b11():
+    v25 = Convert v4 declared={type=number flags=[IsExpected]} @281
+    Return v25 @281
+}
+function f2 name="names" module=m0 position=288 text={start=288 end=395} flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @288
+  b1():
+    v0 = String string="" @319
+    v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]} @319
+    v2 = Integer @338
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @338
+    Jump -> next b2(v1, v3) @334
+  b2(v4, v5):
+    LoopHint @334
+    v7 = Integer integer=3 @345
+    v8 = Less v5, v7 @341
+    Branch v8 -> taken b3(| 0), notTaken b10(| 0) @341
+  b3(v9):
+    Jump -> next b4() @341
+  b4():
+    v10 = GetModuleVariable variable=g0 @360
+    v11 = CheckInitialized v10 name="rows" @360
+    v12 = ElemGet v11, v9 @360
+    v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @360
+    v14 = PropGet v13 key="name" @365
+    v15 = ToBoolean v14 @360
+    Branch v15 -> taken b5(| 0), notTaken b6(| 0) @360
+  b5(v16):
+    Jump -> next b8(v16) @360
+  b6(v17):
+    Jump -> next b7() @360
+  b7():
+    v18 = String string="" @376
+    Jump -> next b8(v18) @376
+  b8(v19):
+    v20 = Add v4, v19 @365
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]} @353
+    Jump -> next b9() @353
+  b9():
+    v22 = Increment v9 @365
+    v23 = Convert v22 declared={type=i32 flags=[IsExpected]} @348
+    Jump -> next b2(v21, v23) @348
+  b10(v24):
+    Jump -> next b11() @341
+  b11():
+    v25 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]} @389
+    Return v25 @389
+}
+function f3 name="counted" module=m0 position=396 text={start=396 end=508} flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @396
+  b1():
+    v0 = Integer @431
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @431
+    v2 = Integer @449
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @449
+    Jump -> next b2(v1, v3) @445
+  b2(v4, v5):
+    LoopHint @445
+    v7 = Integer integer=3 @456
+    v8 = Less v5, v7 @452
+    Branch v8 -> taken b3(| 0), notTaken b10(| 0) @452
+  b3(v9):
+    Jump -> next b4() @452
+  b4():
+    v10 = GetModuleVariable variable=g0 @468
+    v11 = CheckInitialized v10 name="rows" @468
+    v12 = ElemGet v11, v9 @468
+    v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @468
+    v14 = PropGet v13 key="seen" @473
+    v15 = ToBoolean v14 @468
+    Branch v15 -> taken b5(| 0), notTaken b7(| 0) @468
+  b5(v16):
+    Jump -> next b6() @468
+  b6():
+    v17 = Increment v4 @473
+    v18 = Convert v17 declared={type=number flags=[IsExpected]} @482
+    Jump -> next b8(v18) @482
+  b7(v19):
+    Jump -> next b8(v4) @468
+  b8(v20):
+    Jump -> next b9() @482
+  b9():
+    v21 = Increment v9 @473
+    v22 = Convert v21 declared={type=i32 flags=[IsExpected]} @459
+    Jump -> next b2(v20, v22) @459
+  b10(v23):
+    Jump -> next b11() @452
+  b11():
+    v24 = Convert v4 declared={type=number flags=[IsExpected]} @500
+    Return v24 @500
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]

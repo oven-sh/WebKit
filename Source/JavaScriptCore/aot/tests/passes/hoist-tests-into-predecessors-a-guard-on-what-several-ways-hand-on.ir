@@ -1,0 +1,60 @@
+# A type is expected of what several ways hand on together. A way that proves the type needs no guard, so the guard goes to the ends of the other ways: a test in its place asks those alone.
+# It stays where no way proves the type, and where the parameter is used beside the guard.
+# FORM: Prepared optimizing
+# RUN: pass HoistTestsIntoPredecessors
+
+module m0 path="main.ts" displayPath="main.ts"
+
+function f0 name="oneWayProvesTheType" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3: anything):
+    v4 = Expect v3 expectedType=number
+    Return v4
+}
+# CHECK-LABEL: function f0 name="oneWayProvesTheType"
+# CHECK: b1():
+# CHECK-NEXT: Integer integer=1
+# CHECK-NEXT: Jump -> next b3(v2)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: [[guard]]: anything ~ number = Expect v0 expectedType=number
+# CHECK-NEXT: Jump -> next b3([[guard]])
+# CHECK-NEXT: b3(v3: anything ~ number):
+# CHECK-NEXT: Return v3
+
+function f1 name="noWayProvesTheType" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: anything):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3: anything):
+    v4 = Expect v3 expectedType=number
+    Return v4
+}
+# CHECK-LABEL: function f1 name="noWayProvesTheType"
+# CHECK: b3(v3: anything):
+# CHECK-NEXT: = Expect v3 expectedType=number
+
+function f2 name="theParameterIsUsedBesideTheGuard" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3: anything):
+    v4 = Expect v3 expectedType=number
+    v5 = StrictEq v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f2 name="theParameterIsUsedBesideTheGuard"
+# CHECK: b3(v3: anything):
+# CHECK-NEXT: = Expect v3 expectedType=number

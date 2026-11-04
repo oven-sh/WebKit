@@ -1,0 +1,31 @@
+# A store of the value that a locked member holds succeeds at run time, so the build says nothing about it. Where the stored value is the member in some runs and a function of the program in others, the store does not throw in every run: a warning
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Math
+    v1 = PropGet v0 key="imul" @10
+    PropSet v0, v1 key="imul" mode=Strict @20
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectAssign
+    PropSet v3, v4 key="assign" mode=Strict @30
+    v6 = Builtin builtin=GlobalThis
+    PropSet v6, v0 key="Math" mode=Strict @40
+    v8 = PropGet v6 key="unknown" [isFreeName] @50
+    v9 = ToBoolean v8
+    Branch v9 -> taken b1(), notTaken b2()
+  b1():
+    v10 = Builtin builtin=ObjectKeys
+    Jump -> next b3(v10)
+  b2():
+    v11 = NewClosure function=f1
+    Jump -> next b3(v11)
+  b3(v12):
+    PropSet v3, v12 key="keys" mode=Strict @60
+    Return
+}
+function f1 name="polyfill" results=[{type=anything}] {
+    Return
+}

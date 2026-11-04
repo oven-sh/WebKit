@@ -1,0 +1,41 @@
+# ToPropertyKey of a value that is always a string or a symbol is the value. Behind the fold a key that is one text is known as that text: hasOwnProperty.call(object, "pos") is a test by name
+# FORM: Prepared
+# RUN: pass FoldConstants
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="string" parameters=[{type=string}] results=[{type=string|symbol}] {
+    v1 = ToPropertyKey v0
+    Return v1
+}
+# CHECK-LABEL: name="string"
+# CHECK: v1: string = Upcast v0 castType=string|symbol
+
+function f1 name="oneText" results=[{type=string|symbol}] {
+    v0 = String string="pos"
+    v1 = ToPropertyKey v0
+    Return v1
+}
+# CHECK-LABEL: name="oneText"
+# CHECK-NOT: ToPropertyKey
+
+function f2 name="stringOrSymbol" parameters=[{type=string|symbol}] results=[{type=string|symbol}] {
+    v1 = ToPropertyKey v0
+    Return v1
+}
+# CHECK-LABEL: name="stringOrSymbol"
+# CHECK: v1: string|symbol = Upcast v0 castType=string|symbol
+
+function f3 name="stringOrNumber" parameters=[{type=number|string}] results=[{type=string|symbol}] {
+    v1 = ToPropertyKey v0
+    Return v1
+}
+# CHECK-LABEL: name="stringOrNumber"
+# CHECK: v1: string|symbol = ToPropertyKey v0
+
+function f4 name="unknown" parameters=[{type=anything}] results=[{type=string|symbol}] {
+    v1 = ToPropertyKey v0
+    Return v1
+}
+# CHECK-LABEL: name="unknown"
+# CHECK: v1: string|symbol = ToPropertyKey v0

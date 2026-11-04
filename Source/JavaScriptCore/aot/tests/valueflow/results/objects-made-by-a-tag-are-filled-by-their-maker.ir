@@ -1,0 +1,36 @@
+# interface Node { kind: number; pos: number }  interface Num extends Node { kind: 1; value: number }  interface Add extends Node { kind: 2; left: Node }
+# function NodeObject(this: Node, kind: number, pos: number) { this.kind = kind; this.pos = pos }       new NodeObject(1, 7), new NodeObject(2, 8): nothing else makes a node, and nothing leaves the program.
+# AllocateTaggedLayouts gives the function a copy of its body that allocates `this` itself, with the layout of the tag. The copy does to its object what the function does to `this`:
+# it is the constructor of those objects, so what it stores before the object leaves its hands is set at the creation of every node, whatever its tag. No reader tests a slot or the cell
+# FORM: AsRead
+# RUN: pipeline ApplyFlowResults
+# CHECK: layout L0 kind=Instance name="NodeObject" {{*}}{key="kind" {{*}}initialization=SetAtCreation{{*}} occupancy=AlwaysFilled {{*}}{key="pos" {{*}}initialization=SetAtCreation{{*}} occupancy=AlwaysFilled
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}, {key="pos" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Num" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="Add" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="left" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    v2 = Integer integer=7
+    v3 = Construct v0, -, v1, v2
+    v4 = Integer integer=2
+    v5 = Integer integer=8
+    v6 = Construct v0, -, v4, v5
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v3
+    v9 = Call v7, -, v6
+    Return v8
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=number}, {type=number}] results=[{type=anything}] constructedClass=L0 {
+    PropSet v0, v1 key="kind" mode=Strict
+    PropSet v0, v2 key="pos" mode=Strict
+    Return
+}
+function f2 name="positionOf" parameters=[{type=undefined|null|L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pos"
+    Return v1
+}

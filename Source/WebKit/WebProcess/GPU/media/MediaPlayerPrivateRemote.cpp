@@ -209,8 +209,8 @@ MediaPlayerPrivateRemote::~MediaPlayerPrivateRemote()
     manager()->deleteRemoteMediaPlayer(m_id);
 
 #if ENABLE(WEB_AUDIO) && PLATFORM(COCOA)
-    if (RefPtr audioSourceProvider = m_audioSourceProvider)
-        audioSourceProvider->close();
+    if (m_audioSourceProvider)
+        m_audioSourceProvider->close();
 #endif
 
     // Shutdown any stale MediaResources.
@@ -1006,12 +1006,12 @@ void MediaPlayerPrivateRemote::load(MediaStreamPrivate&)
 }
 #endif
 
-PlatformLayer* MediaPlayerPrivateRemote::platformLayer() const
+PlatformLayer* MediaPlayerPrivateRemote::platformLayer()
 {
 #if PLATFORM(COCOA)
     if (!m_videoLayer && m_layerHostingContext.contextID) {
         auto expandedVideoLayerSize = expandedIntSize(videoLayerSize());
-        m_videoLayer = createVideoLayerRemote(const_cast<MediaPlayerPrivateRemote&>(*this), m_layerHostingContext.contextID, m_videoFullscreenGravity, expandedVideoLayerSize);
+        m_videoLayer = createVideoLayerRemote(*this, m_layerHostingContext.contextID, m_videoFullscreenGravity, expandedVideoLayerSize);
         m_videoLayerManager->setVideoLayer(m_videoLayer.get(), expandedVideoLayerSize);
     }
     return m_videoLayerManager->videoInlineLayer();
@@ -1338,7 +1338,7 @@ AudioSourceProvider* MediaPlayerPrivateRemote::audioSourceProvider()
 {
 #if PLATFORM(COCOA)
     if (!m_audioSourceProvider)
-        m_audioSourceProvider = RemoteAudioSourceProvider::create(m_id, *this);
+        lazyInitialize(m_audioSourceProvider, RemoteAudioSourceProvider::create(m_id, *this));
 
     return m_audioSourceProvider.get();
 #else

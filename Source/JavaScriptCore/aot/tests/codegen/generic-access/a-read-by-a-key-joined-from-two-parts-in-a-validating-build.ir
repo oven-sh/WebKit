@@ -1,0 +1,23 @@
+# Nothing makes the key that a read takes by its two parts, so a validating build asks nothing about it.
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end validate
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="ofObject" parameters=[{type=object}, {type=string}, {type=string}] results=[{type=anything}] {
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = ElemGet v0, v3
+    Return v4
+}
+# CHECK: f0: size=
+# CHECK-NOT: Concatenate
+# CHECK: stub GetByValOfKeyOfPair.OfCell x1
+function f1 name="throughCast" parameters=[{type=object}, {type=string}, {type=string}] results=[{type=anything}] {
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = Upcast v3 castType=anything
+    v5 = ElemGet v0, v4
+    Return v5
+}
+# CHECK: f1: size=
+# CHECK-NOT: Concatenate
+# CHECK: stub GetByValOfKeyOfPair.OfCell x1

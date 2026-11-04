@@ -1,0 +1,161 @@
+# The terminator that makes an object on an edge begins a new life for it: what happened to the result of an earlier round of the loop does not end a guard on the result of this one. A result that is stored in this round, or whose earlier instance is still named, is no longer held by the function alone. Another object that is in use at the terminator and meets the result on some other path keeps its own past and takes nothing from the result
+# FORM: Selected
+# RUN: guards points
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="handedOnInAnotherRound" parameters=[{type=object}, {type=object}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b2(), miss b7()
+  b2(v4):
+    Branch v2 -> taken b3(), notTaken b5()
+  b3():
+    v5 = IsPristine v4 builtinClass=Array aspects=[Storage]
+    TestAndBranch v5 -> taken b4(| 0), notTaken b1()
+  b4(v6):
+    PropSet v1, v0 key="source"
+    v8 = Integer integer=0
+    v9 = GetArrayElement v4, v8, v6 level=Expected [keyIsIntegral]
+    Jump -> next b1()
+  b5():
+    TryCallInline -, v4 inlineBuiltin=SetFromIterable overload=Set/2 -> done b6(), miss b8()
+  b6(v10):
+    Jump -> next b1()
+  b7() frequency=Rare:
+    v11 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Jump -> next b2(v11)
+  b8() frequency=Rare:
+    v12 = CallBuiltin -, v4 overload=Set/2
+    Jump -> next b6(v12)
+}
+# CHECK-LABEL: function f0
+# CHECK: b4:0 available: [v6]
+# CHECK-NEXT: b4:1 available: [v6]
+
+function f1 name="storedInThisRound" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b2(), miss b4()
+  b2(v3):
+    v4 = IsPristine v3 builtinClass=Array aspects=[Storage]
+    TestAndBranch v4 -> taken b3(| 0), notTaken b1()
+  b3(v5):
+    PropSet v1, v3 key="kept"
+    PropSet v1, v0 key="source"
+    Jump -> next b1()
+  b4() frequency=Rare:
+    v8 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Jump -> next b2(v8)
+}
+# CHECK-LABEL: function f1
+# CHECK: b3:0 available: [v5]
+# CHECK-NEXT: b3:1 available: []
+
+function f2 name="earlierResultIsStillNamed" parameters=[{type=object}, {type=object}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1(v0)
+  b1(v3: object):
+    LoopHint
+    TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b2(), miss b6()
+  b2(v5):
+    Branch v2 -> taken b3(), notTaken b5()
+  b3():
+    v6 = IsPristine v5 builtinClass=Array aspects=[Storage]
+    TestAndBranch v6 -> taken b4(| 0), notTaken b1(v5)
+  b4(v7):
+    PropSet v1, v0 key="source"
+    Jump -> next b1(v5)
+  b5():
+    PropSet v1, v3 key="kept"
+    Jump -> next b1(v5)
+  b6() frequency=Rare:
+    v10 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Jump -> next b2(v10)
+}
+# CHECK-LABEL: function f2
+# CHECK: b4:0 available: [v7]
+# CHECK-NEXT: b4:1 available: []
+
+function f3 name="resultsMeetBehindABlockOfTheInlineResult" parameters=[{type=object}, {type=object}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b2(), miss b8()
+  b2(v4):
+    Jump -> next b3(v4)
+  b3(v5):
+    Branch v2 -> taken b4(), notTaken b6()
+  b4():
+    v6 = IsPristine v5 builtinClass=Array aspects=[Storage]
+    TestAndBranch v6 -> taken b5(| 0), notTaken b1()
+  b5(v7):
+    PropSet v1, v0 key="source"
+    v9 = Integer integer=0
+    v10 = GetArrayElement v5, v9, v7 level=Expected [keyIsIntegral]
+    Jump -> next b1()
+  b6():
+    TryCallInline -, v5 inlineBuiltin=SetFromIterable overload=Set/2 -> done b7(), miss b9()
+  b7(v11):
+    Jump -> next b1()
+  b8() frequency=Rare:
+    v12 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Jump -> next b3(v12)
+  b9() frequency=Rare:
+    v13 = CallBuiltin -, v5 overload=Set/2
+    Jump -> next b7(v13)
+}
+# CHECK-LABEL: function f3
+# CHECK: b5:0 available: [v7]
+# CHECK-NEXT: b5:1 available: [v7]
+
+function f4 name="olderObjectMeetsTheResult" parameters=[{type=object}, {type=object}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+    v4 = NewArray v3 contents=anything
+    PropSet v1, v4 key="kept"
+    TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b1(), miss b5()
+  b1(v6):
+    Branch v2 -> taken b2(v6), notTaken b2(v4)
+  b2(v7):
+    v8 = IsPristine v7 builtinClass=Array aspects=[Storage]
+    TestAndBranch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    PropSet v1, v0 key="source"
+    Return
+  b4():
+    Return
+  b5() frequency=Rare:
+    v11 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Jump -> next b1(v11)
+}
+# CHECK-LABEL: function f4
+# CHECK: b3:0 available: [v9]
+# CHECK-NEXT: b3:1 available: []
+
+function f5 name="objectInUseMeetsTheResultOnAnotherPath" parameters=[{type=object}, {type=object}, {type=boolean}, {type=anything}, {type=object}] results=[{type=undefined}] {
+    v5 = NewArray v3 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b2(), miss b7()
+  b2(v7):
+    Branch v2 -> taken b3(), notTaken b5()
+  b3():
+    v8 = IsPristine v7 builtinClass=Array aspects=[Storage]
+    TestAndBranch v8 -> taken b4(| 0), notTaken b1()
+  b4(v9):
+    PropSet v1, v0 key="source"
+    v11 = Integer integer=0
+    v12 = GetArrayElement v7, v11, v9 level=Expected [keyIsIntegral]
+    Jump -> next b1()
+  b5():
+    Branch v2 -> taken b6(v7), notTaken b6(v5)
+  b6(v13):
+    PropSet v4, v13 key="kept"
+    Jump -> next b1()
+  b7() frequency=Rare:
+    v15 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Jump -> next b2(v15)
+}
+# CHECK-LABEL: function f5
+# CHECK: b4:0 available: [v9]
+# CHECK-NEXT: b4:1 available: [v9]

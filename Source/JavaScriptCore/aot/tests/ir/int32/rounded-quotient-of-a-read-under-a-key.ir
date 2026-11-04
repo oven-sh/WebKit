@@ -1,0 +1,46 @@
+# A read under a key says nothing about its result. The type that the checker gave the read arrives as a request without a promise, TypeValues makes it a Check,
+# and the flows behind it are judged by the type that the Check names: half of an int32, rounded down, is an int32, and the build reports nothing
+# FORM: AsRead
+# RUN: pass TypeValues CheckInt32Promises
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Result
+typesite w2 module=m0 position=30 kind=CallResult
+layout L0 name="Point" fields=[{key="x" declared={type=i32 flags=[IsInt32Promise]} flags=[IsRequired]}, {key="y" declared={type=i32 flags=[IsInt32Promise]} flags=[IsRequired]}]
+function f0 name="half" parameters=[{type=undefined|null|L0}, {type=undefined|null|"x"|"y"}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+    v2 = Builtin builtin=Math
+    v3 = Builtin builtin=MathFloor
+    v4 = ElemGet v0, v1
+    v5 = Convert v4 declared={type=i32} illTypedCause=Assertion
+    v6 = Integer integer=2
+    v7 = Div v5, v6
+    v8 = Call v3, v2, v7
+    v9 = Convert v8 declared={type=number site=w2} illTypedCause=DeclarationWithoutBody
+    v10 = Convert v9 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v10
+}
+# CHECK-LABEL: function f0 name="half"
+# CHECK: v4: anything = ElemGet v0, v1
+# CHECK-NEXT: v5: i32 = Check v4 expectedType=i32
+# CHECK: v9: number = Check v8 expectedType=number site=w2
+# CHECK-NEXT: v10: i32 = Check v9 expectedType=i32 site=w1
+# CHECK-NEXT: Return v10
+function f1 name="oneMoreThanHalf" parameters=[{type=undefined|null|L0}, {type=undefined|null|"x"|"y"}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+    v2 = Builtin builtin=Math
+    v3 = Builtin builtin=MathFloor
+    v4 = ElemGet v0, v1
+    v5 = Convert v4 declared={type=i32} illTypedCause=Assertion
+    v6 = Integer integer=2
+    v7 = Div v5, v6
+    v8 = Call v3, v2, v7
+    v9 = Convert v8 declared={type=number site=w2} illTypedCause=DeclarationWithoutBody
+    v10 = Integer integer=1
+    v11 = Add v9, v10
+    v12 = Convert v11 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v12
+}
+# CHECK-LABEL: function f1 name="oneMoreThanHalf"
+# CHECK: v12: i32 = Check v11 expectedType=i32 site=w1
+# CHECK-NEXT: Return v12

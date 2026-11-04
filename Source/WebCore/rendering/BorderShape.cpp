@@ -42,11 +42,12 @@
 #include "Path.h"
 #include "PathUtilities.h"
 #include "StyleComputedStyle+GettersInlines.h"
+#include "UsedStyle.h"
 #include <cmath>
 
 namespace WebCore {
 
-static void zeroRadiiForOpenEdges(LayoutRoundedRectRadii& radii, RectEdges<bool> closedEdges)
+static void LEGACY_NODELETE zeroRadiiForOpenEdges(LayoutRoundedRectRadii& radii, RectEdges<bool> closedEdges)
 {
     if (!closedEdges.top()) {
         radii.setTopLeft({ });
@@ -66,7 +67,7 @@ static void zeroRadiiForOpenEdges(LayoutRoundedRectRadii& radii, RectEdges<bool>
     }
 }
 
-static RectEdges<LayoutUnit> applyClosedEdges(const RectEdges<LayoutUnit>& widths, RectEdges<bool> closedEdges)
+static RectEdges<LayoutUnit> LEGACY_NODELETE applyClosedEdges(const RectEdges<LayoutUnit>& widths, RectEdges<bool> closedEdges)
 {
     return {
         LayoutUnit(closedEdges.top() ? widths.top() : 0_lu),
@@ -76,7 +77,7 @@ static RectEdges<LayoutUnit> applyClosedEdges(const RectEdges<LayoutUnit>& width
     };
 }
 
-static RectCorners<float> cornerCurvaturesFromStyle(const Style::ComputedStyle& style)
+static RectCorners<float> LEGACY_NODELETE cornerCurvaturesFromStyle(const Style::ComputedStyle& style)
 {
     auto& border = style.border();
     return {
@@ -101,11 +102,16 @@ float BorderShape::constrainedRadiiScale(const LayoutRect& borderRect, const Lay
     return std::min(adjacent, opposite);
 }
 
+BorderShape BorderShape::shapeForBorderRect(const UsedStyle& usedStyle, const LayoutRect& borderRect, RectEdges<bool> closedEdges)
+{
+    return shapeForBorderRect(usedStyle.computedStyle(), borderRect, usedStyle.borderWidths(), closedEdges);
+}
+
 BorderShape BorderShape::shapeForBorderRect(const Style::ComputedStyle& style, const LayoutRect& borderRect, RectEdges<bool> closedEdges)
 {
     auto zoom = style.usedZoomForLength();
     auto deviceScaleFactor = style.deviceScaleFactor();
-    auto borderWidths = RectEdges<LayoutUnit>::map(style.usedBorderWidths(), [&](auto width) {
+    auto borderWidths = RectEdges<LayoutUnit>::map(Style::effectiveBorderWidths(style), [&](const auto& width) {
         return Style::evaluate<LayoutUnit>(width, zoom, deviceScaleFactor);
     });
     return shapeForBorderRect(style, borderRect, borderWidths, closedEdges);
@@ -318,7 +324,7 @@ static void addRoundedRectToPath(const FloatRoundedRect& roundedRect, Path& path
         path.addRect(roundedRect.rect());
 }
 
-static void buildCornerInputs(const FloatRoundedRect& outerSnapped, const RectCorners<float>& cornerCurvatures,
+static void LEGACY_NODELETE buildCornerInputs(const FloatRoundedRect& outerSnapped, const RectCorners<float>& cornerCurvatures,
     double leftWidth, double topWidth, double rightWidth, double bottomWidth, RectCorners<CornerInput>& cornerRects)
 {
     auto tr = outerSnapped.topRightCorner();
@@ -333,14 +339,14 @@ static void buildCornerInputs(const FloatRoundedRect& outerSnapped, const RectCo
 }
 
 // Bevel, notch and square corners have no radius to expand or inset the way round and superellipse corners do.
-static bool cornerIsRebuiltFromReference(float curvature)
+static bool LEGACY_NODELETE cornerIsRebuiltFromReference(float curvature)
 {
     return curvature == 0.0f || std::isinf(curvature);
 }
 
 // Bevel, notch, and square have no radius to expand or inset (the way round/superellipse corners are offset), so they're rebuilt by offsetting the border-box corner to the moved rect.
 // Returns true if any corner was rebuilt.
-static bool rebuildOffsetCornersFromReference(RectCorners<CornerInput>& contourCorners, const std::optional<FloatRoundedRect>& borderBoxReference, const RectCorners<float>& cornerCurvatures, const FloatRect& contourRect)
+static bool LEGACY_NODELETE rebuildOffsetCornersFromReference(RectCorners<CornerInput>& contourCorners, const std::optional<FloatRoundedRect>& borderBoxReference, const RectCorners<float>& cornerCurvatures, const FloatRect& contourRect)
 {
     if (!borderBoxReference)
         return false;
@@ -373,7 +379,7 @@ static bool rebuildOffsetCornersFromReference(RectCorners<CornerInput>& contourC
     return true;
 }
 
-static bool isShaped(float curvature, const LayoutSize& radius, const LayoutSize& shapingRadius)
+static bool LEGACY_NODELETE isShaped(float curvature, const LayoutSize& radius, const LayoutSize& shapingRadius)
 {
     if (curvature == 1.0f)
         return false;

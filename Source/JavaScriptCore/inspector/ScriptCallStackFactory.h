@@ -39,6 +39,7 @@ class CallFrame;
 class Exception;
 class JSGlobalObject;
 class JSValue;
+class StackFrame;
 }
 
 namespace Inspector {

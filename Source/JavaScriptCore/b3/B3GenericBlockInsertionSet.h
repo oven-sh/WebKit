@@ -27,6 +27,8 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3Arena.h"
+#include "B3Limits.h"
 #include "PureNaN.h"
 #include <climits>
 #include <wtf/BubbleSort.h>
@@ -55,7 +57,12 @@ public:
     // Insert a new block at a given index.
     BasicBlock* insert(unsigned index, double frequency = PNaN)
     {
-        std::unique_ptr<BasicBlock> block(new BasicBlock(BasicBlock::uninsertedIndex, frequency));
+        std::unique_ptr<BasicBlock> block;
+        if constexpr (requires { BasicBlock::mayLiveInArena; }) {
+            block.reset(new (m_arena) BasicBlock(BasicBlock::uninsertedIndex, frequency));
+            block->m_isInArena = !!m_arena;
+        } else
+            block.reset(new BasicBlock(BasicBlock::uninsertedIndex, frequency));
         BasicBlock* result = block.get();
         insert(BlockInsertion(index, WTF::move(block)));
         return result;
@@ -83,6 +90,10 @@ public:
         // We allow insertions to be given to us in any order. So, we need to sort them before
         // running WTF::executeInsertions. We strongly prefer a stable sort and we want it to be
         // fast, so we use bubble sort.
+        if (m_insertions.size() > Limits::maxSizeToBubbleSort) {
+            if (!std::is_sorted(m_insertions.begin(), m_insertions.end()))
+                std::stable_sort(m_insertions.begin(), m_insertions.end());
+        } else
         bubbleSort(m_insertions.mutableSpan());
         
         executeInsertions(m_blocks, m_insertions);
@@ -100,6 +111,9 @@ public:
         
         return true;
     }
+
+protected:
+    Arena* m_arena { nullptr };
 
 private:
     Vector<std::unique_ptr<BasicBlock>>& m_blocks;

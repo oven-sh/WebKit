@@ -26,6 +26,7 @@
 #include "config.h"
 #include "DebuggerScope.h"
 
+#include "AOTRemovableFeature.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironment.h"
 #include "StructureCreateInlines.h"
@@ -229,8 +230,9 @@ JSValue DebuggerScope::caughtValue(JSGlobalObject* globalObject) const
     return slot.getValue(globalObject, errorName);
 }
 
-Structure* DebuggerScope::createStructure(VM& vm, JSGlobalObject* globalObject)
+NEVER_INLINE Structure* DebuggerScope::createStructure(VM& vm, JSGlobalObject* globalObject)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &DebuggerScope::createStructure);
     return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info());
 }
 

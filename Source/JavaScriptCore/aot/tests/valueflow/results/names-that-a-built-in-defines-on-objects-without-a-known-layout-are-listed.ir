@@ -1,0 +1,52 @@
+# function Rule() { Object.defineProperty(this, "inner", { value: 1 }); this.limit = 2 }   publish(new Rule)
+# Object.defineProperty(given, "hidden", { value: 1 })   Object.defineProperty(given, "size", { get: one })   Object.defineProperty(given, "run", { value: one })
+# const literal = { depth: 4 }; Object.defineProperty(literal, "depth", { value: 1 })
+# What a plain function without a layout constructs is an ordinary object. The names under which a built-in puts a value on such an object, or on an object that nobody has followed, stand in one list
+# of the program: an object that is asked for such a name need not have a layout. A plain store is not listed: it may be a store to a field. Nor is an accessor or a method, which are defined on prototype objects as a rule, nor a name defined on an object with a layout.
+# RUN: valueflow-results
+# CHECK: defined-on-objects-without-known-layout ["hidden", "inner"]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Literal" fields=[{key="depth" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="AccessorDescriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Construct v0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = PropGet v2 key="given" [isFreeName]
+    v6 = Integer integer=1
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    v8 = String string="hidden"
+    v9 = Builtin builtin=ObjectDefineProperty
+    v10 = Call v9, -, v5, v8, v7
+    v11 = NewClosure function=f2
+    v12 = NewObject -, v11 layout=L2 fields=[0]
+    v13 = String string="size"
+    v14 = Call v9, -, v5, v13, v12
+    v15 = Integer integer=4
+    v16 = NewObject -, v15 layout=L1 fields=[0]
+    v17 = String string="depth"
+    v18 = NewObject -, v6 layout=L0 fields=[0]
+    v19 = Call v9, -, v16, v17, v18
+    v20 = NewObject -, v11 layout=L0 fields=[0]
+    v21 = String string="run"
+    v22 = Call v9, -, v5, v21, v20
+    Return
+}
+function f1 name="Rule" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = String string="inner"
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = Call v4, -, v0, v3, v2
+    v6 = Integer integer=2
+    PropSet v0, v6 key="limit" mode=Strict
+    Return
+}
+function f2 name="one" module=m0 results=[{type=anything}] {
+    Return
+}

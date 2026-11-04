@@ -32,7 +32,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGTitleElement);
 
 inline SVGTitleElement::SVGTitleElement(const QualifiedName& tagName, Document& document)
-    : SVGElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGElement(tagName, document, PropertyRegistry::singleton())
 {
     ASSERT(hasTagName(SVGNames::titleTag));
 }
@@ -50,7 +50,7 @@ Node::NeedsPostConnectionSteps SVGTitleElement::insertionSteps(InsertionType ins
     return result;
 }
 
-static bool NODELETE isTitleElementRemovedFromSVGSVGElement(SVGTitleElement& title, ContainerNode& oldParentOfRemovedTree)
+static bool LEGACY_NODELETE isTitleElementRemovedFromSVGSVGElement(SVGTitleElement& title, ContainerNode& oldParentOfRemovedTree)
 {
     if (!title.parentNode() && is<SVGSVGElement>(oldParentOfRemovedTree) && title.document().documentElement() == &oldParentOfRemovedTree)
         return true;

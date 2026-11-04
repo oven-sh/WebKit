@@ -36,6 +36,7 @@
 #include <glib/gi18n-lib.h>
 #include <unistd.h>
 #include <wtf/SafeStrerror.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/GWeakPtr.h>
@@ -359,7 +360,7 @@ static void webkitPrintOperationFailed(WebKitPrintOperation* printOperation, GUn
 
 static void webkitPrintOperationFailed(WebKitPrintOperation* printOperation, WebCore::ResourceError&& error)
 {
-    webkitPrintOperationFailed(printOperation, GUniquePtr<GError> { g_error_new_literal(g_quark_from_string(error.domain().utf8().legacyCStringPointer()),
+    webkitPrintOperationFailed(printOperation, GUniquePtr<GError> { g_error_new_literal(gQuarkFromString(error.domain().utf8()),
         toWebKitError(error.errorCode()), error.localizedDescription().utf8().legacyCStringPointer()) });
     webkitPrintOperationFinished(printOperation);
 }
@@ -537,7 +538,7 @@ static void webkitPrintOperationSendPagesToPrintPortal(WebKitPrintOperation* pri
 
             auto fd = UnixFileDescriptor { open(filename.get(), O_RDWR | O_CLOEXEC), UnixFileDescriptor::Adopt };
             if (!fd) {
-                webkitPrintOperationFailed(printOperation.get(), GUniquePtr<GError> { g_error_new(WEBKIT_PRINT_ERROR, WEBKIT_PRINT_ERROR_GENERAL, _("Error opening %s: %s"), filename.get(), safeStrerror(errno).legacyCStringPointer()) });
+                webkitPrintOperationFailed(printOperation.get(), GUniquePtr<GError> { SAFE_G_ERROR_NEW(WEBKIT_PRINT_ERROR, WEBKIT_PRINT_ERROR_GENERAL, _("Error opening %s: %s"), filename.get(), safeStrerror(errno)) });
                 return;
             }
 

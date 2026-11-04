@@ -1,0 +1,26 @@
+# publish(globalThis);  input.__throughAHolder = function stored() {};  keep(globalThis.__throughAHolder)
+# Under a name that the table does not list nothing is locked on the global object: once it is in unknown hands, a store through an object nobody knows may be a store into it.
+# RUN: valueflow-why values=f0:v7
+# CHECK: values=f0:v7
+# CHECK: result {{*}} f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Call v1, -, v0
+    v3 = PropGet v0 key="input" [isFreeName]
+    v4 = NewClosure function=f1
+    PropSet v3, v4 key="__throughAHolder" mode=Strict
+    v6 = NewClosure function=f2
+    v7 = PropGet v0 key="__throughAHolder"
+    v8 = Call v6, -, v7
+    Return
+}
+function f1 name="stored" module=m0 results=[{type=anything}] {
+    Return
+}
+function f2 name="keep" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}

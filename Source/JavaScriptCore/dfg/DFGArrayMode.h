@@ -107,13 +107,19 @@ enum Conversion : uint8_t {
 };
 } // namespace Array
 
-IndexingType NODELETE toIndexingShape(Array::Type);
+IndexingType LEGACY_NODELETE toIndexingShape(Array::Type);
 
-TypedArrayType NODELETE toTypedArrayType(Array::Type);
-Array::Type NODELETE toArrayType(TypedArrayType);
-Array::Type NODELETE refineTypedArrayType(Array::Type, TypedArrayType);
+TypedArrayType LEGACY_NODELETE toTypedArrayType(Array::Type);
+Array::Type LEGACY_NODELETE toArrayType(TypedArrayType);
+Array::Type LEGACY_NODELETE refineTypedArrayType(Array::Type, TypedArrayType);
 
-bool NODELETE permitsBoundsCheckLowering(Array::Type);
+bool LEGACY_NODELETE permitsBoundsCheckLowering(Array::Type);
+
+// Only arrays with ArrayStorage can have a non-writable length.
+inline bool arrayModeImpliesWritableLength(Array::Type type)
+{
+    return type == Array::Int32 || type == Array::Double || type == Array::Contiguous;
+}
 
 class ArrayMode {
 public:

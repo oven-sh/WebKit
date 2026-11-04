@@ -1,0 +1,51 @@
+# Flow has seen an ordinary object arrive at the first parameter, one that the program only calls by the type. A test for it at the entrance would send ordinary calls into the generic version.
+# The function is split for its second parameter alone, and the check of the first stays in both bodies. A function that has no other check stays whole
+# FORM: Prepared
+# RUN: pass SplitBehindEntryChecks VerifyProgram
+# STATISTIC: FunctionsSplitBehindEntryChecks = 1
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f1 name="run" {{*}}role=EntryChecks
+# CHECK-NOT: testedType=L0
+# CHECK: = TypeTest v1 testedType=L1
+# CHECK-NOT: testedType=L0
+# CHECK-LABEL: function f2 name="reads"
+# CHECK-NOT: role=EntryChecks
+# CHECK: = Check v0 expectedType=L0 site=w0 cause=MayFail
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+layout L0 name="Rule" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Payload" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = CallDirect v0, v0 function=f1
+    v3 = CallDirect v0 function=f2
+    v4 = ToBoolean v2
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+
+function f1 name="run" module=m0 position=5 flags=[IsChecked] length=2 parameters=[{type=L0 site=w0 flags=[IsExpected]}, {type=L1 site=w1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything ~ L1):
+    v2 = Check v0 expectedType=L0 site=w0 cause=MayFail
+    v3 = Check v1 expectedType=L1 site=w1
+    v4 = PropGet v2 key="limit"
+    v5 = PropGet v3 key="value"
+    v6 = Less v5, v4
+    Return v6
+}
+
+function f2 name="reads" module=m0 position=15 flags=[IsChecked] length=1 parameters=[{type=L0 site=w0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = Check v0 expectedType=L0 site=w0 cause=MayFail
+    v2 = PropGet v1 key="limit"
+    Return v2
+}

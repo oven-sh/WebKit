@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FunctionAllowlist.h"
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "CodeBlock.h"
 #include <stdio.h>
@@ -121,4 +121,4 @@ bool FunctionAllowlist::containsWasmFunction(uint32_t index) const
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

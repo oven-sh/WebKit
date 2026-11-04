@@ -1,0 +1,44 @@
+# On the wire the method definitions of one class head have distinct indexes, and two heads in one function count on their own
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 1
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 kind=Instance constructor=f3
+function f0 name="badIndexTwice" results=[{type=undefined}] {
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f4
+    DefineMethod v1, v2 layout=L0 index=1 key="m"
+    v4 = NewClosure function=f5
+    DefineMethod v1, v4 layout=L0 side=Static index=1 key="n"
+    v6 = FinishClass v1 layout=L0
+    Return
+}
+function f1 name="goodDistinctIndexes" results=[{type=undefined}] {
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f4
+    DefineMethod v1, v2 layout=L0 index=1 key="m"
+    v4 = NewClosure function=f5
+    DefineMethod v1, v4 layout=L0 side=Static key="n"
+    v6 = FinishClass v1 layout=L0
+    Return
+}
+function f2 name="goodTwoHeads" results=[{type=undefined}] {
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f4
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = FinishClass v1 layout=L0
+    v5 = NewClosure function=f3
+    v6 = NewClass v5 layout=L0
+    v7 = NewClosure function=f4
+    DefineMethod v6, v7 layout=L0 key="m"
+    v9 = FinishClass v6 layout=L0
+    Return
+}
+function f3 name="C" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f4 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f5 name="n" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]

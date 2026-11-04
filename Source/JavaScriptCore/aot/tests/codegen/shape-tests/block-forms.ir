@@ -1,0 +1,46 @@
+# A set of layouts that is tested at hundreds of sites gets a block of shape numbers of its own, and its test compares the block byte: the heaviest set has the first block, the next one a later block
+# FORM: Selected
+# RUN: generate-code
+# RUN(SHAPES): pass PlanSlots NumberAndEncode
+# OPTIONS: check=validate-back-end validate
+# SHAPES: set {L0 L1} block>= 0x
+# SHAPES: set {L2 L3} block 0x
+# CHECK: f1: size=
+# CHECK: f2: size=
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="T0" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="T1" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 name="T2" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L3 name="T3" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L4 name="T4" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L5 name="T5" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+function f0 name="allocate" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = NewObject -, v0 layout=L3 fields=[0]
+    v5 = NewObject -, v0 layout=L4 fields=[0]
+    v6 = NewObject -, v0 layout=L5 fields=[0]
+    Return
+}
+function f1 name="firstBlock" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..300
+    v%(i) = ShapeTest v0 layouts=[L0, L1]
+# END REPEAT
+    TestAndBranch v300 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return
+}
+function f2 name="laterBlock" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..270
+    v%(i) = ShapeTest v0 layouts=[L2, L3]
+# END REPEAT
+    TestAndBranch v270 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return
+}

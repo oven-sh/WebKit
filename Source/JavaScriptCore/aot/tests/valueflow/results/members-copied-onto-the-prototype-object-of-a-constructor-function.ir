@@ -1,0 +1,45 @@
+# function Point() {}; Object.assign(Point.prototype, { norm: f, count: 1, get half() { .. } }); Object.assign(Point.prototype, { norm: f, scale: f }, { scale: g })
+# Object.assign stores the values of the fields of its sources. A name under which the literals hold one function is listed with that function, as if the program had stored it under the name:
+# a call under the name tests the bit of the class, which the run time sets where the prototype object holds that function. A name that may hold something else is listed without a function.
+# What a getter of a source answers is not followed.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Point" {{*}}members=[{key="norm" function=f2}] namedMembers=[{key="norm" function=f2}, {key="count"}, {key="scale"}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1 flags=[IsConstructorFunction]
+layout L1 fields=[{key="norm" declared={type=anything}}, {key="count" declared={type=anything}}, {key="half" declared={type=anything}}] ownFieldCount=3
+layout L2 fields=[{key="norm" declared={type=anything}}, {key="scale" declared={type=anything}}] ownFieldCount=2
+layout L3 fields=[{key="scale" declared={type=anything}}] ownFieldCount=1
+variable g0 name="Point" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="prototype"
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectAssign
+    v4 = NewClosure function=f2
+    v5 = Integer integer=1
+    v6 = NewObject -, v4, v5 layout=L1 fields=[0, 1]
+    v7 = NewClosure function=f4
+    DefineGetter v6, v7 key="half"
+    v9 = Call v3, v2, v1, v6
+    v10 = NewObject -, v4, v4 layout=L2 fields=[0, 1]
+    v11 = NewClosure function=f3
+    v12 = NewObject -, v11 layout=L3 fields=[0]
+    v13 = Call v3, v2, v1, v10, v12
+    v14 = Construct v0
+    Return
+}
+function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="first" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f3 name="second" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f4 name="half" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}

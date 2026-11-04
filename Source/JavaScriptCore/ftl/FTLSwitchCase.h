@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 #include "FTLAbbreviatedTypes.h"
 #include "FTLWeight.h"
@@ -59,4 +59,4 @@ private:
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)

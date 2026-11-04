@@ -63,8 +63,14 @@ public:
         return result;
     }
 
+    // Grows the table once it has room for fewer than capacity / 8 more keys. Returns false if the allocation fails; the remaining room is still usable.
+    bool tryGrowEarly()
+    {
+        return m_map.tryReserveCapacityForAdd(std::max(m_map.capacity() / 8, 1u));
+    }
+
     template<typename Functor>
-    ValueArg* ensureValue(const KeyType& key, Functor&& functor)
+    ValueArg* ensureValue(const KeyType& key, NOESCAPE const Functor& functor)
     {
         // If functor invokes GC, GC can prune WeakGCMap, and manipulate UncheckedKeyHashMap while we are touching it in ensure function.
         // The functor must not invoke GC.

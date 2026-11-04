@@ -110,7 +110,8 @@ SOFT_LINK(UIKitMacHelper, UINSSharedRevealController, id<UINSRevealController>, 
 {
     UNUSED_PARAM(item);
     
-    for (NSValue *rectVal in context.itemRectsInView) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSValue *rectVal in context.itemRectsInView) {
         NSRect rect = rectVal.rectValue;
 
         // Get current font attributes from the attributed string above, and add paragraph style attribute in order to center text.
@@ -145,18 +146,18 @@ SOFT_LINK(UIKitMacHelper, UINSSharedRevealController, id<UINSRevealController>, 
 
 @interface WebRevealHighlight : NSObject<UIRVPresenterHighlightDelegate>
 
-- (instancetype)initWithHighlightRect:(NSRect)highlightRect view:(UIView *)view image:(RefPtr<WebCore::BitmapImage>&&)image;
+- (instancetype)initWithHighlightRect:(NSRect)highlightRect view:(UIView *)view image:(RefPtr<WebCore::NativeImage>&&)image;
 
 @end
 
 @implementation WebRevealHighlight {
-    RefPtr<WebCore::BitmapImage> _image;
+    RefPtr<WebCore::NativeImage> _image;
     CGRect _highlightRect;
     BOOL _highlighting;
     UIView *_view;
 }
 
-- (instancetype)initWithHighlightRect:(NSRect)highlightRect view:(UIView *)view image:(RefPtr<WebCore::BitmapImage>&&)image
+- (instancetype)initWithHighlightRect:(NSRect)highlightRect view:(UIView *)view image:(RefPtr<WebCore::NativeImage>&&)image
 {
     if (!(self = [super init]))
         return nil;
@@ -169,7 +170,7 @@ SOFT_LINK(UIKitMacHelper, UINSSharedRevealController, id<UINSRevealController>, 
     return self;
 }
 
-- (void)setImage:(RefPtr<WebCore::BitmapImage>&&)image
+- (void)setImage:(RefPtr<WebCore::NativeImage>&&)image
 {
     _image = WTF::move(image);
 }
@@ -233,9 +234,8 @@ SOFT_LINK(UIKitMacHelper, UINSSharedRevealController, id<UINSRevealController>, 
     
     for (NSValue *v in rects) {
         CGRect imgSrcRect = [_view convertRect:v.CGRectValue fromView:nil];
-        auto nativeImage = _image->nativeImage();
         CGRect origin = CGRectMake(imgSrcRect.origin.x - highlightRect.origin.x, imgSrcRect.origin.y - highlightRect.origin.y, highlightRect.size.width, highlightRect.size.height);
-        CGContextDrawImage(context, origin, nativeImage->platformImage().get());
+        CGContextDrawImage(context, origin, _image->platformImage().get());
     }
 }
 
@@ -311,11 +311,14 @@ std::optional<SimpleRange> DictionaryLookup::rangeAtHitTestResult(const HitTestR
     if (position.isNull())
         position = firstPositionInOrBeforeNode(node.get());
 
-    RefPtr focusedOrMainFrame = frame->page()->focusController().focusedOrMainFrame();
-    if (!focusedOrMainFrame)
-        return std::nullopt;
 
-    auto selection = focusedOrMainFrame->selection().selection();
+    // The frame with focus might be in another process.
+    // If so, fall back to the frame that was hit tested.
+    RefPtr selectionFrame = frame->page()->focusController().focusedOrMainFrame();
+    if (!selectionFrame)
+        selectionFrame = frame;
+
+    auto selection = selectionFrame->selection().selection();
     NSRange selectionRange;
     NSUInteger hitIndex;
     std::optional<SimpleRange> fullCharacterRange;

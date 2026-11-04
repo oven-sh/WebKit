@@ -1,0 +1,64 @@
+# A branch that becomes a jump keeps the chosen edge, passes what the edge proved as arguments and drops its condition
+# FORM: Prepared
+# RUN: convert-branch function=f0 block=b0 target=1
+# RUN(TAKEN): convert-branch function=f0 block=b0 target=0
+# RUN(BAD): convert-branch function=f0 block=b1 target=0
+# RUN(NARROWED): convert-branch function=f1 block=b0 target=0
+# RUN(GUARD): convert-branch function=f2 block=b0 target=0
+# RUN(OTHER): convert-branch function=f2 block=b0 target=1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+function f0 name="branch" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(v1), notTaken b2(v2)
+  b1(v3):
+    Return v3
+  b2(v4):
+    Return v4
+}
+# CHECK: function f0
+# CHECK: b0(v0: boolean, v1: number, v2: number):
+# CHECK-NEXT: Jump -> next b2(v2)
+# CHECK-NEXT: b1(v3: number):
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2(v4: number):
+# CHECK-NEXT: Return v4
+# TAKEN: function f0
+# TAKEN: b0(v0: boolean, v1: number, v2: number):
+# TAKEN-NEXT: Jump -> next b1(v1)
+# TAKEN-NEXT: b1(v3: number):
+# BAD: error: bad argument block=b1
+function f1 name="narrowedOperand" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(v1 | 0), notTaken b2()
+  b1(v3, v4):
+    Return v4
+  b2():
+    Unreachable
+}
+# NARROWED: function f1
+# NARROWED: b0(v0: string, v1: number):
+# NARROWED-NEXT: = TypeTest v0 testedType=string
+# NARROWED-NEXT: Jump -> next b1(v1, v0)
+# NARROWED-NEXT: b1(v3: number, v4: string):
+# NARROWED-NEXT: Return v4
+function f2 name="guard" parameters=[{type=object}] results=[{type=undefined}] {
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return
+  b2():
+    Return
+}
+# GUARD: function f2
+# GUARD: b0(v0: object):
+# GUARD-NEXT: = ShapeTest v0 layouts=[L0]
+# GUARD-NEXT: [[empty]]: guard = AllGuards
+# GUARD-NEXT: Jump -> next b1([[empty]])
+# GUARD-NEXT: b1(v2: guard):
+# GUARD-NEXT: Return
+# OTHER: function f2
+# OTHER: b0(v0: object):
+# OTHER-NEXT: = ShapeTest v0 layouts=[L0]
+# OTHER-NEXT: Jump -> next b2()
+# OTHER-NEXT: b1(v2: guard):

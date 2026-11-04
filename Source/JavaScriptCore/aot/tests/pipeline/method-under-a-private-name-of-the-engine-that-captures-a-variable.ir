@@ -1,0 +1,46 @@
+# function make(tag) { return class { $call(o) { return tag + o } } }  print(new (make("a"))().$call(1), new (make("b"))().$call(2))
+# $call is a private name that native code knows too. The method captures a variable, so it is defined where the class is evaluated, under a key that the run time is handed.
+# OPTIONS: check=VerifyEachPass
+# RUN: run-in-shell void 0;
+# CHECK: a1 b2
+# CHECK-NEXT: exited with 0
+
+layout L0 kind=Instance module=m0 position=28 constructor=f2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = String string="a"
+    v2 = Call v0, -, v1 calleeName="make"
+    v3 = String string="b"
+    v4 = Call v0, -, v3 calleeName="make"
+    v5 = Construct v2, v2
+    v6 = Construct v4, v4
+    v7 = PropGet v5 key=@"call"
+    v8 = Integer integer=1
+    v9 = Call v7, v5, v8 calleeKey=@"call" calleeName="call"
+    v10 = PropGet v6 key=@"call"
+    v11 = Integer integer=2
+    v12 = Call v10, v6, v11 calleeKey=@"call" calleeName="call"
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="print" [isFreeName]
+    v15 = Call v14, -, v9, v12 calleeName="print"
+    Return
+}
+function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f2
+    v2 = NewClass v1 layout=L0
+    v3 = NewClosure v0 function=f3
+    DefineMethod v2, v3 layout=L0 side=Prototype key=@"call"
+    v5 = FinishClass v2 layout=L0
+    Return v5
+}
+function f2 module=m0 position=28 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f3 name="call" module=m0 position=36 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Add v0, v1
+    Return v2
+}

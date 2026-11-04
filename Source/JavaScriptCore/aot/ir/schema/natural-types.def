@@ -1,0 +1,5 @@
+natural Addition (numberLike, numberLike) => number ; (bigint, bigint) => bigint ; (string, any) => string ; (any, string) => string ; else number | bigint | string
+natural Arithmetic (numberLike, bigint) => never ; (bigint, numberLike) => never ; (string, bigint) => never ; (bigint, string) => never ; (numberLike, any) => number ; (any, numberLike) => number ; (string, any) => number ; (any, string) => number ; (bigint, any) => bigint ; (any, bigint) => bigint ; else number | bigint
+natural Bitwise (numberLike, bigint) => never ; (bigint, numberLike) => never ; (string, bigint) => never ; (bigint, string) => never ; (numberLike, any) => int32 ; (any, numberLike) => int32 ; (string, any) => int32 ; (any, string) => int32 ; (bigint, any) => bigint ; (any, bigint) => bigint ; else int32 | bigint
+natural Numeric (numberLike) => number ; (string) => number ; (bigint) => bigint ; else number | bigint
+natural BitwiseNot (numberLike) => int32 ; (string) => int32 ; (bigint) => bigint ; else int32 | bigint

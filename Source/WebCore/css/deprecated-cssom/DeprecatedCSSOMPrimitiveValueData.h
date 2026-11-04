@@ -60,11 +60,10 @@ struct DeprecatedCSSOMPrimitiveValueData {
         CSS::Color,
         CSS::ContentCounterFunction,
         CSS::ContentCountersFunction,
-        CSS::ContentLegacyAttrFunction,
         CSS::ClipRect
     > value;
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(value, std::forward<F>(f)...);
     }

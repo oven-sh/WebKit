@@ -1,0 +1,6 @@
+# Without the selection rule a fresh promise takes the tested inline path
+# RUN: compile
+# OPTIONS: heat=everything-is-hot check=validate-back-end disable=rule:FreshPromiseFulfillment
+# STATISTIC: FreshPromiseFulfillmentGroups = 0
+# CHECK: image not empty
+# PROGRAM-OF: fast.ir

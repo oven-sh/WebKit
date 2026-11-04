@@ -1,0 +1,67 @@
+# A class whose base the front end does not name, as a mixin makes it, inherits a typed field from the base that the analysis proves. A store of another type on one of its instances counts for the field,
+# which the base class declares, and for both classes. The same pair of classes beside it, stored with a number, keeps both proofs.
+# The numbers are no integers: a field that is seen to hold small integers gets a range of its own before the analysis runs, and the analysis follows no ranges
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="StoredWithText" {{*}}fields=[{key="x" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}
+# CHECK: layout L1 kind=Instance name="MixedOverStoredWithText" {{*}}baseState=Layout base=L0
+# CHECK: layout L2 kind=Instance name="StoredWithNumber" {{*}}fields=[{key="x" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: layout L3 kind=Instance name="MixedOverStoredWithNumber" {{*}}baseState=Layout base=L2
+# RUN(TEXT): valueflow-results
+# TEXT-NOT: layout=L0 impossibleMutations=[{{*}}StoreOfOtherType
+# TEXT-NOT: layout=L1 impossibleMutations=[{{*}}StoreOfOtherType
+# RUN(NUMBER): valueflow-results
+# NUMBER: class [[mixedOverStoredWithNumber]] layout=L3 impossibleMutations=[{{*}}StoreOfOtherType
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="StoredWithText" constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="MixedOverStoredWithText" constructor=f2 flags=[HasHeritage]
+layout L2 kind=Instance name="StoredWithNumber" constructor=f3 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L3 kind=Instance name="MixedOverStoredWithNumber" constructor=f4 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = Construct v6
+    v8 = String string="text"
+    PropSet v7, v8 key="x" mode=Strict
+    v10 = NewClosure function=f3
+    v11 = NewClass v10 layout=L2
+    v12 = FinishClass v11 layout=L2
+    v13 = NewClosure function=f4
+    v14 = ResolveHeritage v12
+    v15 = NewClass v13, v12, v14 layout=L3
+    v16 = FinishClass v15 layout=L3
+    v17 = Construct v16
+    v18 = Double number=2.5
+    PropSet v17, v18 key="x" mode=Strict
+    Return
+}
+function f1 name="StoredWithText" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = Double number=1.5
+    PropSet v2, v3 key="x" mode=Strict
+    Return v2
+}
+function f2 name="MixedOverStoredWithText" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="StoredWithNumber" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    v3 = Double number=1.5
+    PropSet v2, v3 key="x" mode=Strict
+    Return v2
+}
+function f4 name="MixedOverStoredWithNumber" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L3
+    Return v3
+}

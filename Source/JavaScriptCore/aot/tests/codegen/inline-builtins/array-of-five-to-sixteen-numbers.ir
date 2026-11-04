@@ -1,0 +1,27 @@
+# Array.of() and Array() take their arguments boxed. A list of five to sixteen numbers is stored behind its allocation only where no element needs a test.
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: generate-code
+# CHECK-COUNT-1: : size=
+# CHECK-NOT: no code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="arrayOfNumbers" parameters=[{type=i32}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+    v3 = Builtin builtin=Array
+    v4 = CallInline v3, v0, v0, v0, v0, v0 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v5 = CallInline v3, v0, v0, v0, v0, v0, v0 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v6 = CallInline v3, v1, v1, v1, v1, v1 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v7 = CallInline v3, v0, v1, v0, v1, v0 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v8 = CallInline -, v0, v0, v0, v0, v0 inlineBuiltin=ArrayOf overload=Array/3
+    v9 = CallInline v3, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v11 = Builtin builtin=Array
+    v12 = CallInline v11, v0, v0, v0, v0, v0 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v13 = CallInline v11, v1, v1, v1, v1, v1 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v14 = CallInline -, v0, v0, v0, v0, v0 inlineBuiltin=ArrayOf overload=Array/3
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}

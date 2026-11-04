@@ -18,7 +18,6 @@
 
 #include <assert.h>
 #include <ctype.h>
-#include <inttypes.h>
 #include <string.h>
 
 #include "../asn1/internal.h"
@@ -730,12 +729,6 @@ int CBS_is_unsigned_asn1_integer(const CBS *cbs) {
   return CBS_is_valid_asn1_integer(cbs, &is_negative) && !is_negative;
 }
 
-static int add_decimal(CBB *out, uint64_t v) {
-  char buf[DECIMAL_SIZE(uint64_t) + 1];
-  snprintf(buf, sizeof(buf), "%" PRIu64, v);
-  return CBB_add_bytes(out, (const uint8_t *)buf, strlen(buf));
-}
-
 int CBS_is_valid_asn1_oid(const CBS *cbs) {
   if (CBS_len(cbs) == 0) {
     return 0;  // OID encodings cannot be empty.
@@ -774,17 +767,17 @@ char *CBS_asn1_oid_to_text(const CBS *cbs) {
 
   if (v >= 80) {
     if (!CBB_add_bytes(&cbb, (const uint8_t *)"2.", 2) ||
-        !add_decimal(&cbb, v - 80)) {
+        !cbb_add_decimal_ascii(&cbb, v - 80)) {
       goto err;
     }
-  } else if (!add_decimal(&cbb, v / 40) || !CBB_add_u8(&cbb, '.') ||
-             !add_decimal(&cbb, v % 40)) {
+  } else if (!cbb_add_decimal_ascii(&cbb, v / 40) || !CBB_add_u8(&cbb, '.') ||
+             !cbb_add_decimal_ascii(&cbb, v % 40)) {
     goto err;
   }
 
   while (CBS_len(&copy) != 0) {
     if (!CBS_get_asn1_oid_component(&copy, &v) || !CBB_add_u8(&cbb, '.') ||
-        !add_decimal(&cbb, v)) {
+        !cbb_add_decimal_ascii(&cbb, v)) {
       goto err;
     }
   }
@@ -807,23 +800,13 @@ int CBS_is_valid_asn1_relative_oid(const CBS *cbs) {
 }
 
 char *CBS_asn1_relative_oid_to_text(const CBS *cbs) {
-  CBS copy = *cbs;
   ScopedCBB cbb;
   if (!CBB_init(cbb.get(), 32)) {
     return nullptr;
   }
-
-  // Relative OIDs must have at least one component.
-  uint64_t v;
-  if (!CBS_get_asn1_oid_component(&copy, &v) || !add_decimal(cbb.get(), v)) {
+  if (!CBB_add_asn1_relative_oid_from_der_to_text(cbb.get(), CBS_data(cbs),
+                                                  CBS_len(cbs))) {
     return nullptr;
-  }
-
-  while (CBS_len(&copy) != 0) {
-    if (!CBS_get_asn1_oid_component(&copy, &v) || !CBB_add_u8(cbb.get(), '.') ||
-        !add_decimal(cbb.get(), v)) {
-      return nullptr;
-    }
   }
 
   uint8_t *txt;

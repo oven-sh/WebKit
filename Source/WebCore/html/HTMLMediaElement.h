@@ -116,6 +116,7 @@ class SleepDisabler;
 class SourceBuffer;
 class SpeechSynthesis;
 class TextTrackList;
+class TrackOpaqueRoot;
 class TimeRanges;
 class VideoPlaybackQuality;
 class VideoTrackList;
@@ -134,7 +135,7 @@ template<typename, typename> class PODInterval;
 class RemotePlayback;
 #endif
 
-using CueInterval = PODInterval<MediaTime, TextTrackCue*>;
+using CueInterval = PODInterval<MediaTime, CheckedPtr<TextTrackCue>>;
 using CueList = Vector<CueInterval>;
 using PlatformDisplayID = uint32_t;
 
@@ -203,6 +204,8 @@ public:
     void ref() const final { HTMLElement::ref(); }
     void deref() const final { HTMLElement::deref(); }
 
+    TrackOpaqueRoot& trackOpaqueRoot() { return m_trackOpaqueRoot; }
+
     MediaPlayer* player() const { return m_player.get(); }
     WEBCORE_EXPORT std::optional<MediaPlayerIdentifier> playerIdentifier() const;
 
@@ -210,7 +213,7 @@ public:
     bool hasVideo() const override { return false; }
     WEBCORE_EXPORT bool hasAudio() const override;
 
-    WEBCORE_EXPORT static HashSet<WeakRef<HTMLMediaElement>>& NODELETE allMediaElements();
+    WEBCORE_EXPORT static HashSet<WeakRef<HTMLMediaElement>>& LEGACY_NODELETE allMediaElements();
 
     WEBCORE_EXPORT void rewind(double timeDelta);
     WEBCORE_EXPORT void returnToRealtime() override;
@@ -225,7 +228,7 @@ public:
     bool doesHaveAttribute(const AtomString&, AtomString* value = nullptr) const override;
 
     PlatformLayer* platformLayer() const;
-    bool NODELETE isVideoLayerInline();
+    bool LEGACY_NODELETE isVideoLayerInline();
     void setPreparedToReturnVideoLayerToInline(bool);
     void waitForPreparedForInlineThen(Function<void()>&& completionHandler);
 #if ENABLE(VIDEO_PRESENTATION_MODE)
@@ -262,7 +265,7 @@ public:
 
 // DOM API
 // error state
-    WEBCORE_EXPORT MediaError* NODELETE error() const;
+    WEBCORE_EXPORT MediaError* LEGACY_NODELETE error() const;
 
     const URL& currentSrc() const LIFETIME_BOUND { return m_currentSrc; }
 
@@ -273,7 +276,7 @@ public:
 
 // network state
     using HTMLMediaElementEnums::NetworkState;
-    WEBCORE_EXPORT NetworkState NODELETE networkState() const;
+    WEBCORE_EXPORT NetworkState LEGACY_NODELETE networkState() const;
 
     WEBCORE_EXPORT String preload() const;
     WEBCORE_EXPORT void setPreload(const AtomString&);
@@ -285,7 +288,7 @@ public:
 // ready state
     using HTMLMediaElementEnums::ReadyState;
     ReadyState readyState() const override;
-    WEBCORE_EXPORT bool NODELETE seeking() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE seeking() const;
     void setSeeking(bool);
 
 // playback state
@@ -303,7 +306,7 @@ public:
     WEBCORE_EXPORT double playbackRate() const override;
     void setPlaybackRate(double) override;
     double reportedPlaybackRate() const { return m_reportedPlaybackRate; }
-    WEBCORE_EXPORT bool NODELETE preservesPitch() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE preservesPitch() const;
     WEBCORE_EXPORT void setPreservesPitch(bool);
 
     WEBCORE_EXPORT double mediaPlayerCurrentTime() const;
@@ -321,10 +324,10 @@ public:
     double seekableTimeRangesLastModifiedTime() const;
     double liveUpdateInterval() const;
     WEBCORE_EXPORT bool ended() const;
-    bool NODELETE autoplay() const;
+    bool LEGACY_NODELETE autoplay() const;
     bool isAutoplaying() const { return m_autoplaying; }
     bool wasInterruptedForInvisibleAutoplay() const { return m_wasInterruptedForInvisibleAutoplay; }
-    bool NODELETE loop() const;
+    bool LEGACY_NODELETE loop() const;
     void setLoop(bool b);
 
     void play(DOMPromiseDeferred<void>&&);
@@ -343,7 +346,7 @@ public:
 
     using HTMLMediaElementEnums::BufferingPolicy;
     WEBCORE_EXPORT void setBufferingPolicy(BufferingPolicy);
-    WEBCORE_EXPORT BufferingPolicy NODELETE bufferingPolicy() const;
+    WEBCORE_EXPORT BufferingPolicy LEGACY_NODELETE bufferingPolicy() const;
     WEBCORE_EXPORT void purgeBufferedDataIfPossible();
 
 #if ENABLE(MEDIA_STATISTICS)
@@ -367,7 +370,7 @@ public:
 #endif
 
 #if ENABLE(ENCRYPTED_MEDIA)
-    MediaKeys* NODELETE mediaKeys() const;
+    MediaKeys* LEGACY_NODELETE mediaKeys() const;
 
     void setMediaKeys(MediaKeys*, Ref<DeferredPromise>&&);
 #endif
@@ -399,7 +402,7 @@ public:
 
     WEBCORE_EXPORT bool canPlay() const override;
 
-    bool shouldForceControlsDisplay() const;
+    WEBCORE_EXPORT bool shouldForceControlsDisplay() const;
 
     ExceptionOr<Ref<TextTrack>> addTextTrack(const AtomString& kind, const AtomString& label, const AtomString& language);
     ExceptionOr<void> removeTextTrack(TextTrack&);
@@ -466,7 +469,7 @@ public:
 
     // TextTrackClient
     void textTrackKindChanged(TextTrack&) final;
-    void textTrackModeChanged(TextTrack&) final;
+    void textTrackModeChanged(TextTrack&, TextTrack::ModeChangeType) final;
     void textTrackLabelChanged(TextTrack&) final;
     void textTrackLanguageChanged(TextTrack&) final;
     void textTrackAddCues(TextTrack&, const TextTrackCueList&) final;
@@ -485,7 +488,7 @@ public:
 
     void setTextTrackRepresentataionBounds(const IntRect&);
     void setRequiresTextTrackRepresentation(bool);
-    bool NODELETE requiresTextTrackRepresentation() const;
+    bool LEGACY_NODELETE requiresTextTrackRepresentation() const;
     void setTextTrackRepresentation(TextTrackRepresentation*);
     void syncTextTrackBounds();
 
@@ -493,6 +496,9 @@ public:
     using HTMLMediaElementEnums::TextTrackVisibilityCheckType;
     void textTrackReadyStateChanged(TextTrack*);
     void updateTextTrackRepresentationImageIfNeeded();
+#if PLATFORM(IOS_FAMILY)
+    void displayedCaptionsDidChange(Vector<String>&&);
+#endif
 
     WEBCORE_EXPORT void showCaptionDisplaySettingsPreview();
     WEBCORE_EXPORT void hideCaptionDisplaySettingsPreview();
@@ -509,7 +515,7 @@ public:
     void setShouldPlayToPlaybackTarget(bool) override;
     void playbackTargetPickerWasDismissed() override;
     bool hasWirelessPlaybackTargetAlternative() const;
-    bool NODELETE isWirelessPlaybackTargetDisabled() const;
+    bool LEGACY_NODELETE isWirelessPlaybackTargetDisabled() const;
     void isWirelessPlaybackTargetDisabledChanged();
     bool hasTargetAvailabilityListeners();
     bool hasEnabledTargetAvailabilityListeners();
@@ -553,7 +559,7 @@ public:
 
 #if ENABLE(FULLSCREEN_API)
     void documentFullscreenChanged(bool isChildOfElementFullscreen);
-    WEBCORE_EXPORT bool NODELETE isChildOfElementFullscreen() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE isChildOfElementFullscreen() const;
 #endif
 
     bool hasClosedCaptions() const override;
@@ -565,7 +571,7 @@ public:
 
     // Media cache management.
     WEBCORE_EXPORT static void setMediaCacheDirectory(const String&);
-    WEBCORE_EXPORT static const String& NODELETE mediaCacheDirectory();
+    WEBCORE_EXPORT static const String& LEGACY_NODELETE mediaCacheDirectory();
     WEBCORE_EXPORT static HashSet<SecurityOriginData> originsInMediaCache(const String&);
     WEBCORE_EXPORT static void clearMediaCache(const String&, WallTime modifiedSince = { });
     WEBCORE_EXPORT static void clearMediaCacheForOrigins(const String&, const HashSet<SecurityOriginData>&);
@@ -573,7 +579,7 @@ public:
     bool isPlaying() const final { return m_playing; }
 
 #if ENABLE(WEB_AUDIO)
-    MediaElementAudioSourceNode* NODELETE audioSourceNode();
+    MediaElementAudioSourceNode* LEGACY_NODELETE audioSourceNode();
     void setAudioSourceNode(MediaElementAudioSourceNode*);
 
     AudioSourceProvider* audioSourceProvider();
@@ -582,10 +588,10 @@ public:
     using HTMLMediaElementEnums::InvalidURLAction;
     bool isSafeToLoadURL(const URL&, InvalidURLAction, bool shouldLog = true) const;
 
-    const String& NODELETE mediaGroup() const;
+    const String& LEGACY_NODELETE mediaGroup() const;
     void setMediaGroup(const String&);
 
-    MediaController* NODELETE controller() const;
+    MediaController* LEGACY_NODELETE controller() const;
     void setController(RefPtr<MediaController>&&);
 
     MediaController* controllerForBindings() const { return controller(); }
@@ -601,7 +607,7 @@ public:
     Ref<VideoPlaybackQuality> getVideoPlaybackQuality() const;
 
     MediaPlayer::Preload preloadValue() const { return m_preload; }
-    MediaPlayer::Preload NODELETE effectivePreloadValue() const;
+    MediaPlayer::Preload LEGACY_NODELETE effectivePreloadValue() const;
     MediaElementSession* mediaSessionIfExists() const { return m_mediaSession.get(); }
     WEBCORE_EXPORT MediaElementSession& mediaSession() const;
 
@@ -627,10 +633,10 @@ public:
     inline RenderMedia* renderer() const; // Defined in RenderMediaInlines.h.
 
     void resetPlaybackSessionState();
-    WEBCORE_EXPORT bool NODELETE isVisibleInViewport() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE isVisibleInViewport() const;
     virtual bool isIntersectingViewport() const { return false; }
     WEBCORE_EXPORT ViewportVisibility viewportVisibility() const;
-    bool NODELETE hasEverNotifiedAboutPlaying() const;
+    bool LEGACY_NODELETE hasEverNotifiedAboutPlaying() const;
     void setShouldDelayLoadEvent(bool);
 
     bool hasEverHadAudio() const { return m_hasEverHadAudio; }
@@ -643,7 +649,7 @@ public:
     void isVisibleInViewportChanged();
     void updateRateChangeRestrictions();
 
-    WEBCORE_EXPORT const MediaResourceLoader* NODELETE lastMediaResourceLoaderForTesting() const;
+    WEBCORE_EXPORT const MediaResourceLoader* LEGACY_NODELETE lastMediaResourceLoaderForTesting() const;
 
 #if ENABLE(MEDIA_STREAM)
     void mediaStreamCaptureStarted();
@@ -685,7 +691,7 @@ public:
     void applicationWillResignActive();
     void applicationDidBecomeActive();
 
-    MediaUniqueIdentifier NODELETE mediaUniqueIdentifier() const;
+    MediaUniqueIdentifier LEGACY_NODELETE mediaUniqueIdentifier() const;
     String mediaSessionTitle() const;
     String sourceApplicationIdentifier() const;
 
@@ -722,7 +728,7 @@ public:
     WEBCORE_EXPORT Ref<HostingContextPromise> requestHostingContext();
     WEBCORE_EXPORT WebCore::HostingContext layerHostingContext();
     WEBCORE_EXPORT WebCore::FloatSize naturalSize();
-    WEBCORE_EXPORT WebCore::FloatSize NODELETE videoLayerSize() const;
+    WEBCORE_EXPORT WebCore::FloatSize LEGACY_NODELETE videoLayerSize() const;
     void setVideoLayerSizeFenced(const FloatSize&, WTF::MachSendRightAnnotated&&);
     void updateMediaState();
 
@@ -785,7 +791,7 @@ protected:
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void finishParsingChildren() override;
-    bool NODELETE isURLAttribute(const Attribute&) const override;
+    bool LEGACY_NODELETE isURLAttribute(const Attribute&) const override;
     void willAttachRenderers() override;
     void didAttachRenderers() override;
     void willDetachRenderers() override;
@@ -853,6 +859,10 @@ private:
     friend class Internals;
 
     void createMediaPlayer();
+
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    void updatePlayerVideoFullscreenLayer(MediaPlayer&);
+#endif
 
     bool supportsFocus() const override;
     bool rendererIsNeeded(const Style::ComputedStyle&) override;
@@ -972,8 +982,8 @@ private:
     void startPlaybackProgressTimer();
     void startProgressEventTimer();
     void stopPeriodicTimers();
-    void cancelPendingTasks();
-    void closeTaskQueues();
+    void LEGACY_NODELETE cancelPendingTasks();
+    void LEGACY_NODELETE closeTaskQueues();
 
     void seek(const MediaTime&);
     void seekInternal(const MediaTime&);
@@ -1002,8 +1012,8 @@ private:
 
     URL selectNextSourceChild(ContentType*, InvalidURLAction);
 
-    bool NODELETE ignoreTrackDisplayUpdateRequests() const;
-    void NODELETE beginIgnoringTrackDisplayUpdateRequests();
+    bool LEGACY_NODELETE ignoreTrackDisplayUpdateRequests() const;
+    void LEGACY_NODELETE beginIgnoringTrackDisplayUpdateRequests();
     void endIgnoringTrackDisplayUpdateRequests();
 
     void updateActiveTextTrackCues(const MediaTime&);
@@ -1023,7 +1033,7 @@ private:
     void markCaptionAndSubtitleTracksAsUnconfigured(ReconfigureMode);
     CaptionUserPreferences::CaptionDisplayMode captionDisplayMode();
 
-    bool NODELETE textTracksAreReady() const;
+    bool LEGACY_NODELETE textTracksAreReady() const;
     void configureTextTrackDisplay(TextTrackVisibilityCheckType = CheckTextTrackVisibility);
     void updateTextTrackDisplay();
 
@@ -1031,6 +1041,8 @@ private:
     void playInternal();
     void pauseInternal(bool dispatchPauseEvent = true);
     void completePlayInternal();
+
+    void playIfPermitted(MediaElementSession::ForAutoplay);
 
     enum class IsExplicitLoad : bool { No, Yes };
     void prepareForLoad(IsExplicitLoad = IsExplicitLoad::No);
@@ -1068,7 +1080,7 @@ private:
 
     void mediaCanStart(Document&) final;
 
-    void NODELETE invalidateOfficialPlaybackPosition();
+    void LEGACY_NODELETE invalidateOfficialPlaybackPosition();
 
     void configureMediaControls();
 
@@ -1126,7 +1138,7 @@ private:
     void routingContextUIDDidChange(const AudioSession&) final;
 #endif
 
-    bool NODELETE hasMediaSource() const;
+    bool LEGACY_NODELETE hasMediaSource() const;
     bool hasManagedMediaSource() const;
 
     bool processingUserGestureForMedia() const;
@@ -1186,7 +1198,7 @@ private:
     };
     void applyConfiguration(const RemotePlaybackConfiguration&);
 
-    bool NODELETE videoUsesElementFullscreen() const;
+    bool LEGACY_NODELETE videoUsesElementFullscreen() const;
 
 #if !RELEASE_LOG_DISABLED
     uint64_t mediaPlayerLogIdentifier() final { return logIdentifier(); }
@@ -1197,8 +1209,8 @@ private:
     WEBCORE_EXPORT PlatformDynamicRangeLimit computePlayerDynamicRangeLimit() const;
     void updatePlayerDynamicRangeLimit() const;
 
-    bool NODELETE shouldLogWatchtimeEvent() const;
-    bool NODELETE isWatchtimeTimerActive() const;
+    bool LEGACY_NODELETE shouldLogWatchtimeEvent() const;
+    bool LEGACY_NODELETE isWatchtimeTimerActive() const;
     void startWatchtimeTimer();
     void pauseWatchtimeTimer();
     void fireAndRestartWatchtimeTimer();
@@ -1247,6 +1259,11 @@ private:
     TaskCancellationGroup m_resourceSelectionTaskCancellationGroup;
     TaskCancellationGroup m_updateShouldAutoplayTaskCancellationGroup;
     TaskCancellationGroup m_updateAcceleratedRenderingStateTaskCancellationGroup;
+#if PLATFORM(IOS_FAMILY)
+    TaskCancellationGroup m_displayedCaptionsTaskCancellationGroup;
+    Vector<String> m_pendingDisplayedCaptions;
+    Vector<String> m_lastDisplayedCaptions;
+#endif
     RefPtr<TimeRanges> m_playedTimeRanges;
     TaskCancellationGroup m_asyncEventsCancellationGroup;
     TaskCancellationGroup m_periodicTimeupdateCancellationGroup;
@@ -1417,13 +1434,14 @@ private:
 
     std::optional<CaptionUserPreferences::CaptionDisplayMode> m_captionDisplayMode;
 
+    Ref<TrackOpaqueRoot> m_trackOpaqueRoot;
     const RefPtr<AudioTrackList> m_audioTracks;
     const RefPtr<TextTrackList> m_textTracks;
     const RefPtr<VideoTrackList> m_videoTracks;
     Vector<Ref<TextTrack>> m_textTracksWhenResourceSelectionBegan;
 
     struct CueData;
-    std::unique_ptr<CueData> m_cueData;
+    const std::unique_ptr<CueData> m_cueData;
 
     RefPtr<TextTrack> m_findCaptionTrack;
     std::optional<TextTrack::Mode> m_findCaptionTrackPreviousMode;
@@ -1455,7 +1473,6 @@ private:
     RefPtr<Blob> m_blob;
     URLKeepingBlobAlive m_blobURLForReading;
     std::optional<MediaProvider> m_mediaProvider;
-    const Ref<WTF::Observer<WebCoreOpaqueRoot()>> m_opaqueRootProvider;
 
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
     RefPtr<WebKitMediaKeys> m_webKitMediaKeys;

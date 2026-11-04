@@ -24,7 +24,6 @@
 #include "GraphicsLayer.h"
 #include "GraphicsLayerClient.h"
 #include "GraphicsLayerContentsDisplayDelegate.h"
-#include "Image.h"
 #include "NativeImage.h"
 #include "TextureMapperAnimation.h"
 #include "TextureMapperLayer.h"
@@ -76,7 +75,7 @@ public:
     void pauseAnimation(const String&, double) override;
     void removeAnimation(const String&, std::optional<AnimatedProperty>) override;
 
-    void setContentsToImage(Image*) override;
+    void setContentsToNativeImage(NativeImage*) override;
     void setContentsToSolidColor(const Color&) override;
     void setContentsToPlatformLayer(PlatformLayer*, ContentsLayerPurpose) override;
     void setContentsDisplayDelegate(RefPtr<GraphicsLayerContentsDisplayDelegate>&&, ContentsLayerPurpose) override;

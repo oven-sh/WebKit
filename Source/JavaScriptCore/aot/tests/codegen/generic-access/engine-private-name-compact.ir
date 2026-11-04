@@ -1,0 +1,9 @@
+# A read, a store, a definition and a method call under a private name of the engine have code on an untyped receiver and pass the back-end checks in compact code without site caches. The key is the engine's symbol whatever its text, so @length and @0 are read by name too
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end limit=MaxSiteCaches:0
+# STATISTIC: SiteCachesPlaced = 0
+# STATISTIC: SitesWithoutSiteCache >= 2
+# LOSS: MaxSiteCaches
+# STATISTIC: MethodCallGroups = 0
+# CHECK: image not empty
+# PROGRAM-OF: engine-private-name-fast.ir

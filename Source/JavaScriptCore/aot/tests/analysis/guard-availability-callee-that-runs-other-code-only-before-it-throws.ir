@@ -1,0 +1,85 @@
+# A callee that converts its argument to a string and then always throws runs other code only on the way to the handler. Where it is handed a string, a guard on an array stands behind the call, as it stands behind a call of its caller. In a try the handler has lost the guard
+# FORM: Prepared
+# RUN: guards points summaries
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callsTheCaller" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    v3 = CallDirect function=f5
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: b1:0 available: [v2]
+# CHECK-NEXT: b1:1 available: [v2]
+
+function f1 name="callsTheCalleeItself" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    v3 = String string="three"
+    v4 = CallDirect v3 function=f6
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: b1:1 available: [v2]
+# CHECK-NEXT: b1:2 available: [v2]
+
+function f2 name="callsTheCalleeByValue" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=f6}] results=[{type=anything}] {
+    v2 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: guard):
+    v4 = String string="three"
+    v5 = Call v1, -, v4 callees=[f6]
+    Return v5
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: b1:1 available: [v3]
+# CHECK-NEXT: b1:2 available: [v3]
+
+function f3 name="handsTheArrayToTheCallee" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    v3 = CallDirect v0 function=f6
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK: b1:0 available: [v2]
+# CHECK-NEXT: b1:1 available: []
+
+function f4 name="catchesWhatTheCalleeThrows" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
+    v2 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: guard) handler=b3():
+    v4 = CallDirect v1 function=f6
+    Jump -> next b4()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+  b4():
+    Return v4
+}
+# CHECK-LABEL: function f4
+# CHECK: b3 available at head: []
+
+function f5 name="callsWithAString" results=[{type=undefined}] {
+    v0 = String string="three"
+    v1 = CallDirect v0 function=f6
+    Return
+}
+function f6 name="alwaysThrows" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToString v0
+    Throw v1
+}

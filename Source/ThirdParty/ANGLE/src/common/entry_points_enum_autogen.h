@@ -1012,6 +1012,7 @@ enum class EntryPoint
     GLTransformFeedbackVaryings,
     GLTranslatef,
     GLTranslatex,
+    GLTrimMemoryANGLE,
     GLUniform1f,
     GLUniform1fv,
     GLUniform1i,

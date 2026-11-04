@@ -1,0 +1,126 @@
+# `turns++ < n`, `i-- > 0`, `while (i--)`: the step stands in front of the test, and only a turn that has passed the test hands it on. The step is repeated behind the test, on the counter that the test has bounded.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ConvertCountersToIntegers
+# STATISTIC: CountersConverted = 7
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="countsUp" parameters=[{type=i32}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Add v3, v2
+    v6 = Less v3, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v5)
+  b3():
+    Return
+# CHECK: b1(v3: int[0, 2147483647]):
+# CHECK: Branch v6 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[tested0]]: int[0, 2147483646]):
+# CHECK-NEXT: [[next0]]: int[1, 2147483647] = Add [[tested0]], v2
+# CHECK-NEXT: Jump -> next b1([[next0]])
+}
+
+function f1 name="countsDownThroughConversion" parameters=[{type=int[0, 4294967295]}] results=[{type=number}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = ToNumeric v2
+    v5 = Decrement v4
+    v6 = Greater v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v5)
+  b3():
+    Return v5
+# CHECK: b1(v2: int[0, 4294967295]):
+# CHECK: v5: int[-1, 4294967294] = Decrement v4
+# CHECK: Branch v6 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[tested1]]: int[1, 4294967295]):
+# CHECK-NEXT: [[next1]]: int[0, 4294967294] = Decrement [[tested1]]
+# CHECK-NEXT: Jump -> next b1([[next1]])
+# CHECK: Return v5
+}
+
+function f2 name="testedForTruth" parameters=[{type=int[0, 4294967295]}] results=[{type=undefined}] {
+    Jump -> next b1(v0)
+  b1(v1):
+    LoopHint
+    v3 = Decrement v1
+    v4 = ToBoolean v1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v3)
+  b3():
+    Return
+# CHECK: b1(v1: int[0, 4294967295]):
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2([[tested2]]: int[1, 4294967295]):
+# CHECK-NEXT: [[next2]]: int[0, 4294967294] = Decrement [[tested2]]
+}
+
+function f3 name="bodyReadsTheStep" parameters=[{type=i32}] results=[{type=number}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Increment v2
+    v6 = Less v2, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = BitOr v3, v5
+    Jump -> next b1(v5, v7)
+  b3():
+    Return v3
+# CHECK: b1(v2: int[0, 2147483647], v3: int[0, 2147483647]):
+# CHECK: b2([[tested3]]: int[0, 2147483646]):
+# CHECK-NEXT: [[next3]]: int[1, 2147483647] = Increment [[tested3]]
+# CHECK-NEXT: BitOr v3, [[next3]]
+# CHECK-NEXT: Jump -> next b1([[next3]],
+}
+
+function f4 name="aTallyBesideIt" parameters=[] results=[{type=number}] {
+    v0 = Integer integer=0
+    v1 = Integer integer=16
+    Jump -> next b1(v0, v0)
+  b1(v2, v3):
+    LoopHint
+    v5 = Increment v2
+    v6 = Less v2, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Increment v3
+    Jump -> next b1(v5, v7)
+  b3():
+    Return v3
+# CHECK: b1(v2: int[0, 16], v3: int[0, 16]):
+}
+
+function f5 name="aCastOfTheStepStandsThereToo" parameters=[{type=int[0, 4294967295]}] results=[{type=number}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v0, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = ToNumeric v2
+    v6 = Decrement v5
+    v7 = Upcast v6 castType=number|bigint
+    v8 = Greater v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = BitXor v3, v7
+    Jump -> next b1(v7, v9)
+  b3():
+    Return v7
+# CHECK: b1(v2: int[0, 4294967295], v3: i32):
+# CHECK: b2([[tested5]]: int[1, 4294967295]):
+# CHECK-NEXT: [[next5]]: int[0, 4294967294] = Decrement [[tested5]]
+# CHECK-NEXT: BitXor v3, [[next5]]
+# CHECK-NEXT: Jump -> next b1([[next5]],
+# CHECK: Return v7
+}

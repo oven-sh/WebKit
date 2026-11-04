@@ -1,0 +1,92 @@
+# const { kState } = require("./symbols")   function read(holder) { return holder[kState] }
+# Somebody may see the module before its body has ended, so the key is the symbol or undefined as far as anybody knows. The access is copied once for the symbol, whatever is known about the receiver:
+# with the symbol it is an access by name, and the name says what the receiver is expected to be. With undefined it is an access under "undefined", and that is rare
+# FORM: Prepared
+# RUN: pass SplitUnions
+# RUN(NAMED): pass SplitUnions FoldConstants
+# STATISTIC: UnionsSplit = 5
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="symbols.js" displayPath="symbols.js"
+layout L0 name="Holder" fields=[{key="plain" declared={type=number}}, {key=symbol("state")@m1:100 declared={type=number}}]
+
+function f0 name="read-of-anything" parameters=[{type=anything}, {type=undefined|symbol("state")@m1:100}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK: [[isSymbol]]: boolean = TypeTest v1 testedType=symbol("state")@m1:100
+# CHECK-NEXT: Branch [[isSymbol]] -> taken [[symbolArm]](| 0), notTaken [[rest]](| 0)
+# CHECK: [[symbolArm]]([[symbol]]: symbol("state")@m1:100):
+# CHECK-NEXT: = ElemGet v0, [[symbol]]
+# CHECK: [[rest]]([[nothing]]: undefined) frequency=Unlikely:
+# CHECK-NEXT: = ElemGet v0, [[nothing]]
+# CHECK-NOT: TypeTest
+# NAMED-NOT: ElemGet
+# NAMED: = PropGet v0 key=symbol("state")@m1:100
+# NAMED-NOT: ElemGet
+# NAMED: = PropGet v0 key="undefined"
+}
+
+function f1 name="store" parameters=[{type=L0}, {type=undefined|symbol("state")@m1:100}, {type=number}] results=[{type=undefined}] {
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+# CHECK: = TypeTest v1 testedType=symbol("state")@m1:100
+# CHECK: ([[storedUnder]]: symbol("state")@m1:100):
+# CHECK-NEXT: ElemSet v0, [[storedUnder]], v2
+# NAMED-NOT: ElemSet
+# NAMED: PropSet v0, v2 key=symbol("state")@m1:100
+# NAMED-NOT: ElemSet
+# NAMED: PropSet v0, v2 key="undefined"
+}
+
+function f2 name="definition" parameters=[{type=object}, {type=undefined|symbol("state")@m1:100}, {type=number}] results=[{type=undefined}] {
+    ElemDefine v0, v1, v2
+    Return
+# CHECK: = TypeTest v1 testedType=symbol("state")@m1:100
+# NAMED-NOT: ElemDefine
+# NAMED: PropDefine v0, v2 key=symbol("state")@m1:100
+}
+
+function f3 name="question" parameters=[{type=object}, {type=undefined|symbol("state")@m1:100}] results=[{type=boolean}] {
+    v2 = ElemHas v0, v1
+    Return v2
+# CHECK: = TypeTest v1 testedType=symbol("state")@m1:100
+# NAMED-NOT: ElemHas
+# NAMED: = PropHas v0 key=symbol("state")@m1:100
+}
+
+function f4 name="key-may-be-null-too" parameters=[{type=anything}, {type=undefined|null|symbol("state")@m1:100}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK: = TypeTest v1 testedType=symbol("state")@m1:100
+# CHECK: ([[nullish]]: undefined|null) frequency=Unlikely:
+# CHECK-NEXT: = ElemGet v0, [[nullish]]
+}
+
+function f5 name="the-symbol-alone" parameters=[{type=anything}, {type=symbol("state")@m1:100}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: = ElemGet v0, v1
+}
+
+function f6 name="one-of-two-symbols" parameters=[{type=anything}, {type=undefined|symbol("other")@m1:200|symbol("state")@m1:100}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: = ElemGet v0, v1
+}
+
+function f7 name="any-symbol" parameters=[{type=anything}, {type=undefined|symbol}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: = ElemGet v0, v1
+}
+
+function f8 name="the-symbol-or-a-string" parameters=[{type=anything}, {type=string|symbol("state")@m1:100}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: = ElemGet v0, v1
+}

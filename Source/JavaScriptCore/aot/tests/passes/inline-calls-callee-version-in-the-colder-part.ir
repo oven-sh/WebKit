@@ -1,0 +1,85 @@
+# In the colder part of the program, by how often a function is taken to run for its size, a call that passes one known function to a function of the application goes to one copy
+# for whatever function is passed. In the hotter part each function that is passed gets a copy of its own: `seldom` and `often` have the same body, and `often` is called in a loop
+# FORM: Prepared
+# RUN: pass InlineCalls
+# STATISTIC: CalleeVersions = 3
+# LOSS: MaxInlineHeadBytes
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" body=f6
+entry module=m0
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Negate v0
+    Return v1
+}
+function f2 name="each" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = TypeTest v0 testedType=function
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: function):
+    v5 = Integer integer=0
+    v6 = Call v4, v2, v1, v5, v1
+# REPEAT: i = 6..65
+    v%(i+1) = Add v%(i), v1
+# END REPEAT
+    Return v66
+  b2():
+    Return v1
+}
+
+function f3 name="seldom" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f0
+    v2 = NewClosure function=f1
+    v3 = CallDirect v1, v0, v0 function=f2
+    v4 = CallDirect v2, v0, v0 function=f2
+    Return v4
+}
+# CHECK-LABEL: function f3 name="seldom"
+# CHECK: v3{{*}}= CallDirect v1, v0, v0 function=[[forAnyFunction]]
+# CHECK-NEXT: v4{{*}}= CallDirect v2, v0, v0 function=[[forAnyFunction]]
+
+function f4 name="often" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f0
+    v2 = NewClosure function=f1
+    v3 = CallDirect v1, v0, v0 function=f2
+    v4 = CallDirect v2, v0, v0 function=f2
+    Return v4
+}
+# CHECK-LABEL: function f4 name="often"
+# CHECK: = CallDirect v2, v0, v0 function=[[forNegate]]
+# CHECK: = CallDirect v1, v0, v0 function=[[forDouble]]
+
+function f5 name="drive" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = CallDirect v0 function=f3 [isNeverInlined]
+    v3 = Integer integer=1
+    v4 = CallDirect v3 function=f7 [isNeverInlined]
+    v5 = CallDirect v3 function=f7 [isNeverInlined]
+    v6 = CallDirect v3 function=f7 [isNeverInlined]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v8 = CallDirect v0 function=f4 [isNeverInlined]
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v8
+}
+# CHECK-LABEL: function f5 name="drive"
+function f6 name="main" kind=Module results=[{type=anything}] {
+    v0 = Undefined
+    v1 = Boolean boolean=true
+    v2 = CallDirect v0, v1 function=f5 [isNeverInlined]
+    Return v2
+}
+# Most of the program's size runs more often than `seldom` and less often than `often`
+function f7 name="between" parameters=[{type=number}] results=[{type=number}] {
+# REPEAT: i = 0..238
+    v%(i+1) = Add v%(i), v0
+# END REPEAT
+    Return v239
+}
+# CHECK: function [[forDouble]] name="each" {{*}}parameters=[{type=f0},
+# CHECK: function [[forNegate]] name="each" {{*}}parameters=[{type=f1},
+# CHECK: function [[forAnyFunction]] name="each" {{*}}parameters=[{type=function},

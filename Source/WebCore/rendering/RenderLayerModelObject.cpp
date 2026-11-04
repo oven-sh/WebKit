@@ -32,6 +32,7 @@
 #include "LocalFrameView.h"
 #include "MotionPath.h"
 #include "ReferencedSVGResources.h"
+#include "RenderChildIterator.h"
 #include "RenderDescendantIterator.h"
 #include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
@@ -49,6 +50,7 @@
 #include "RenderSVGResourceMarker.h"
 #include "RenderSVGResourceMasker.h"
 #include "RenderSVGResourceRadialGradient.h"
+#include "RenderSVGShape.h"
 #include "RenderSVGText.h"
 #include "RenderView.h"
 #include "SVGClipPathElement.h"
@@ -180,6 +182,9 @@ void RenderLayerModelObject::styleWillChange(Style::Difference diff, const Style
 
 void RenderLayerModelObject::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
+    // Read before updateFromStyle() and RenderLayer::styleChanged() refresh the transform.
+    auto previousSVGTransform = oldStyle ? svgTransformBeforeStyleChange(*oldStyle) : std::nullopt;
+
     updateFromStyle();
     RenderElement::styleDidChange(diff, oldStyle);
 
@@ -213,7 +218,7 @@ void RenderLayerModelObject::styleDidChange(Style::Difference diff, const Style:
         }
     } else if (layer() && layer()->parent()) {
         gainedOrLostLayer = true;
-        if (oldStyle && oldStyle->blendMode() != BlendMode::Normal)
+        if (oldStyle && oldStyle->usedBlendMode() != BlendMode::Normal)
             layer()->willRemoveChildWithBlendMode();
         // For CSS renderers every transform-related property forces a layer, so reaching the
         // layer-removal branch means there is no transform and these flags can be cleared. Under
@@ -241,6 +246,9 @@ void RenderLayerModelObject::styleDidChange(Style::Difference diff, const Style:
         if (s_hadLayer && layer()->isSelfPaintingLayer() != s_layerWasSelfPainting)
             setChildNeedsLayout();
     }
+
+    if (previousSVGTransform)
+        markSVGTextForRelayoutIfScaleChanged(*previousSVGTransform, svgTransformAfterStyleChange());
 
     bool newStyleIsViewportConstrained = style().hasViewportConstrainedPosition();
     bool oldStyleIsViewportConstrained = oldStyle && oldStyle->hasViewportConstrainedPosition();
@@ -285,11 +293,6 @@ bool RenderLayerModelObject::shouldPlaceVerticalScrollbarOnLeft() const
     ASSERT_NOT_REACHED();
     return style().shouldPlaceVerticalScrollbarOnLeft();
 #endif
-}
-
-std::optional<LayoutRect> RenderLayerModelObject::cachedLayerClippedOverflowRect() const
-{
-    return hasLayer() ? layer()->cachedClippedOverflowRect() : std::nullopt;
 }
 
 bool RenderLayerModelObject::startAnimation(double timeOffset, const GraphicsLayerAnimation& animation, const BlendingKeyframes& keyframes)
@@ -340,18 +343,40 @@ void RenderLayerModelObject::updateLayerTransform()
         layer()->updateTransform();
 }
 
-bool RenderLayerModelObject::shouldPaintSVGRenderer(const PaintInfo& paintInfo, const OptionSet<PaintPhase> relevantPaintPhases) const
+bool RenderLayerModelObject::shouldPaintSVGLeafRenderer(const PaintInfo& paintInfo, const OptionSet<PaintPhase> relevantPaintPhases) const
 {
     if (paintInfo.context().paintingDisabled())
         return false;
 
-    if (!relevantPaintPhases.isEmpty() && !relevantPaintPhases.contains(paintInfo.phase))
+    if (!relevantPaintPhases.contains(paintInfo.phase))
         return false;
 
     if (!paintInfo.shouldPaintWithinRoot(*this))
         return false;
 
-    if (style().usedVisibility() == Visibility::Hidden || style().display() == Style::DisplayType::None)
+    if (usedStyle().visibility() == UsedVisibility::Hidden || style().display() == Style::DisplayType::None)
+        return false;
+
+    return true;
+}
+
+bool RenderLayerModelObject::shouldPaintSVGContainerRenderer(const PaintInfo& paintInfo, const OptionSet<PaintPhase> relevantPaintPhases) const
+{
+    if (paintInfo.phase != PaintPhase::EventRegion && paintInfo.context().paintingDisabled())
+        return false;
+
+    if (!relevantPaintPhases.contains(paintInfo.phase))
+        return false;
+
+    if (!paintInfo.shouldPaintWithinRoot(*this))
+        return false;
+
+    if (style().display() == Style::DisplayType::None)
+        return false;
+
+    // Children can override with "visibility: visible", per SVG spec.
+    static constexpr OptionSet<PaintPhase> phasesPaintedIfHidden { PaintPhase::Foreground, PaintPhase::ClippingMask, PaintPhase::Mask };
+    if (!phasesPaintedIfHidden.contains(paintInfo.phase) && usedStyle().visibility() == UsedVisibility::Hidden)
         return false;
 
     return true;
@@ -765,7 +790,7 @@ bool RenderLayerModelObject::pointInSVGClippingArea(const FloatPoint& point) con
         },
         [&](const auto&) {
             if (auto* referencedClipperRenderer = svgClipperResourceFromStyle())
-                return referencedClipperRenderer->hitTestClipContent(objectBoundingBox(), LayoutPoint(point));
+                return referencedClipperRenderer->hitTestClipContent(objectBoundingBox(), point);
             return true;
         }
     );
@@ -822,14 +847,6 @@ void RenderLayerModelObject::updateTransformAndRepaintForSVGAfterAttributeChange
         return { identity, identity };
     };
 
-    // A re-layout is only necessary when the effective x/y scale changes: the next RenderSVGText
-    // layout then sees a different screen font scaling factor, text metrics, etc.
-    auto scaleChangedBetween = [](const AffineTransform& previousTransform, const AffineTransform& currentTransform) {
-        return previousTransform != currentTransform
-            && (!WTF::areEssentiallyEqual(previousTransform.xScale(), currentTransform.xScale())
-                || !WTF::areEssentiallyEqual(previousTransform.yScale(), currentTransform.yScale()));
-    };
-
     auto [previousTransform, currentTransform] = refreshTransform();
 
     // A scale change re-measures the text at the new on-screen font size (SVG sizes glyphs by the
@@ -837,25 +854,9 @@ void RenderLayerModelObject::updateTransformAndRepaintForSVGAfterAttributeChange
     // otherwise the transformed container's text descendants - and let layout recompute its metrics,
     // refresh its cached transform and repaint. setNeedsLayout() also defers the flush's position
     // update, which would otherwise run with the new transform but pre-relayout metrics.
-    if (scaleChangedBetween(previousTransform, currentTransform)) {
-        auto markTextForRelayout = [](RenderSVGText& text) {
-            text.setNeedsTextMetricsUpdate();
-            text.setNeedsLayout();
-        };
-        if (auto* text = dynamicDowncast<RenderSVGText>(this)) {
-            markTextForRelayout(*text);
-            repaintClientsOfReferencedSVGResources();
-            return;
-        }
-        bool markedAny = false;
-        for (auto& text : descendantsOfType<RenderSVGText>(*this)) {
-            markTextForRelayout(text);
-            markedAny = true;
-        }
-        if (markedAny) {
-            repaintClientsOfReferencedSVGResources();
-            return;
-        }
+    if (markSVGTextForRelayoutIfScaleChanged(previousTransform, currentTransform)) {
+        repaintClientsOfReferencedSVGResources();
+        return;
     }
 
     // An ancestor container's own bounding boxes (its object, stroke and repaint bounding boxes) and
@@ -864,18 +865,8 @@ void RenderLayerModelObject::updateTransformAndRepaintForSVGAfterAttributeChange
     // recompute them, so when the transform actually
     // changed, invalidate both up the ancestor chain to the SVG root, giving getBBox() and paint or
     // hit-test culling a fresh rect. The scale-change paths above already scheduled a relayout for this.
-    if (previousTransform != currentTransform) {
-        for (CheckedPtr ancestor = parent(); ancestor; ancestor = ancestor->parent()) {
-            if (CheckedPtr svgAncestor = dynamicDowncast<RenderLayerModelObject>(ancestor.get())) {
-                svgAncestor->invalidateCachedSVGTransformDependentBoundingBoxes();
-                svgAncestor->invalidateCachedVisualOverflowRect();
-                if (svgAncestor->hasLayer())
-                    svgAncestor->layer()->setNeedsPositionUpdate();
-            }
-            if (ancestor->isRenderSVGRoot())
-                break;
-        }
-    }
+    if (previousTransform != currentTransform)
+        invalidateCachedSVGBoundingBoxesOfAncestors();
 
     // Scale unchanged, so no relayout is needed - just repaint the move. For a non-layered renderer
     // the batched transform flush repaints the moved region by comparing the renderer's repaint rect
@@ -898,11 +889,125 @@ void RenderLayerModelObject::updateTransformAndRepaintForSVGAfterAttributeChange
     repaintClientsOfReferencedSVGResources();
 }
 
+bool RenderLayerModelObject::markSVGTextForRelayoutIfScaleChanged(const AffineTransform& previousTransform, const AffineTransform& currentTransform)
+{
+    // A re-layout is only necessary when the effective x/y scale changes: the next RenderSVGText
+    // layout then sees a different screen font scaling factor, text metrics, etc.
+    if (previousTransform == currentTransform
+        || (WTF::areEssentiallyEqual(previousTransform.xScale(), currentTransform.xScale())
+            && WTF::areEssentiallyEqual(previousTransform.yScale(), currentTransform.yScale())))
+        return false;
+
+    auto markTextForRelayout = [](RenderSVGText& text) {
+        text.setNeedsTextMetricsUpdate();
+        text.setNeedsLayout();
+    };
+
+    if (auto* text = dynamicDowncast<RenderSVGText>(*this)) {
+        markTextForRelayout(*text);
+        return true;
+    }
+
+    bool markedAny = false;
+    for (auto& text : descendantsOfType<RenderSVGText>(*this)) {
+        markTextForRelayout(text);
+        markedAny = true;
+    }
+    return markedAny;
+}
+
+std::optional<AffineTransform> RenderLayerModelObject::svgTransformBeforeStyleChange(const Style::ComputedStyle& oldStyle) const
+{
+    if (!document().settings().layerBasedSVGEngineEnabled() || (!isRenderSVGContainer() && !isRenderSVGRoot()))
+        return std::nullopt;
+
+    if (oldStyle.transform() == style().transform() && oldStyle.translate() == style().translate()
+        && oldStyle.scale() == style().scale() && oldStyle.rotate() == style().rotate())
+        return std::nullopt;
+
+    if (auto* transform = layerTransform())
+        return transform->toAffineTransform();
+
+    if (auto* svgModel = dynamicDowncast<RenderSVGModelObject>(*this))
+        return svgModel->localTransform();
+
+    return AffineTransform();
+}
+
+AffineTransform RenderLayerModelObject::svgTransformAfterStyleChange() const
+{
+    if (auto* transform = layerTransform())
+        return transform->toAffineTransform();
+
+    if (auto* svgModel = dynamicDowncast<RenderSVGModelObject>(*this))
+        return svgModel->computeLocalTransform();
+
+    ASSERT(isRenderSVGRoot());
+    return AffineTransform();
+}
+
+void RenderLayerModelObject::invalidateCachedSVGBoundingBoxesOfAncestors() const
+{
+    for (CheckedPtr ancestor = parent(); ancestor; ancestor = ancestor->parent()) {
+        if (CheckedPtr svgAncestor = dynamicDowncast<RenderLayerModelObject>(ancestor.get())) {
+            svgAncestor->invalidateCachedSVGTransformDependentBoundingBoxes();
+            svgAncestor->invalidateCachedVisualOverflowRect();
+            if (svgAncestor->hasLayer())
+                svgAncestor->layer()->setNeedsPositionUpdate();
+        }
+        if (ancestor->isRenderSVGRoot())
+            break;
+    }
+}
+
+static void invalidateNonScalingStrokeCachesInSubtree(RenderElement& renderer)
+{
+    if (CheckedPtr shape = dynamicDowncast<RenderSVGShape>(renderer)) {
+        shape->invalidateNonScalingStrokeCaches();
+        return;
+    }
+
+    if (CheckedPtr text = dynamicDowncast<RenderSVGText>(renderer)) {
+        text->invalidateNonScalingStrokeCaches();
+        return;
+    }
+
+    if (CheckedPtr svgRenderer = dynamicDowncast<RenderLayerModelObject>(renderer)) {
+        svgRenderer->invalidateCachedSVGTransformDependentBoundingBoxes();
+        svgRenderer->invalidateCachedVisualOverflowRect();
+    }
+
+    for (auto& child : childrenOfType<RenderElement>(renderer)) {
+        if (child.mayHaveNonScalingStrokeInSubtree())
+            invalidateNonScalingStrokeCachesInSubtree(child);
+    }
+}
+
+bool RenderLayerModelObject::transformReferenceBoxIsSVGViewport() const
+{
+    return transformBoxToCSSBoxType(style().transformBox()) == CSSBoxType::ViewBox;
+}
+
+void RenderLayerModelObject::invalidateNonScalingStrokeCachesInSubtreeForSVG(const std::optional<AffineTransform>& oldTransform, const AffineTransform& newTransform)
+{
+    if (!mayHaveNonScalingStrokeInSubtree())
+        return;
+
+    // Translations leave non scaling stroke boxes unchanged.
+    if (oldTransform && oldTransform->a() == newTransform.a() && oldTransform->b() == newTransform.b()
+        && oldTransform->c() == newTransform.c() && oldTransform->d() == newTransform.d())
+        return;
+
+    invalidateNonScalingStrokeCachesInSubtree(*this);
+    invalidateCachedSVGBoundingBoxesOfAncestors();
+}
+
 void RenderLayerModelObject::paintSVGClippingMask(PaintInfo& paintInfo, const FloatRect& objectBoundingBox) const
 {
     ASSERT(paintInfo.phase == PaintPhase::ClippingMask);
     auto& context = paintInfo.context();
-    if (!paintInfo.shouldPaintWithinRoot(*this) || style().usedVisibility() != Visibility::Visible || context.paintingDisabled())
+    // No visibility check: visible descendants of hidden containers must still be clipped.
+    if (!paintInfo.shouldPaintWithinRoot(*this) || context.paintingDisabled())
         return;
 
     ASSERT(document().settings().layerBasedSVGEngineEnabled());
@@ -925,7 +1030,7 @@ void RenderLayerModelObject::paintSVGMask(PaintInfo& paintInfo, const LayoutPoin
 void RenderLayerModelObject::paintSVGEventRegion(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
     ASSERT(paintInfo.phase == PaintPhase::EventRegion);
-    if (style().usedVisibility() == Visibility::Hidden || objectBoundingBox().isEmpty())
+    if (usedStyle().visibility() == UsedVisibility::Hidden || objectBoundingBox().isEmpty())
         return;
 
     auto adjustedPaintOffset = paintOffset + currentSVGLayoutLocation();
@@ -976,14 +1081,14 @@ FloatRect snapRectToDevicePixelsIfNeeded(const LayoutRect& rect, const RenderLay
 {
     if (!rendererNeedsPixelSnapping(renderer))
         return rect;
-    return snapRectToDevicePixels(rect, renderer.document().deviceScaleFactor());
+    return snapRectToDevicePixels(rect, renderer.document().pixelSnappingScaleFactor());
 }
 
 FloatRect snapRectToDevicePixelsIfNeeded(const FloatRect& rect, const RenderLayerModelObject& renderer)
 {
     if (!rendererNeedsPixelSnapping(renderer))
         return rect;
-    return snapRectToDevicePixels(LayoutRect { rect }, renderer.document().deviceScaleFactor());
+    return snapRectToDevicePixels(LayoutRect { rect }, renderer.document().pixelSnappingScaleFactor());
 }
 
 } // namespace WebCore

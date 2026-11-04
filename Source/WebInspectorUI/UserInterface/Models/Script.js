@@ -103,11 +103,8 @@ WI.Script = class Script extends WI.SourceCode
 
     get contentIdentifier()
     {
-        if (this._url)
-            return this._url;
-
         if (!this._sourceURL)
-            return null;
+            return this._url;
 
         // Since reused content identifiers can cause breakpoints
         // to show up in completely unrelated files, sourceURLs should
@@ -115,10 +112,10 @@ WI.Script = class Script extends WI.SourceCode
         // where sourceURLs are intentionally reused and we would never
         // expect a breakpoint to be persisted across sessions.
         if (isWebInspectorConsoleEvaluationScript(this._sourceURL))
-            return null;
+            return this._url;
 
         if (isWebInspectorInternalScript(this._sourceURL))
-            return null;
+            return this._url;
 
         return this._sourceURL;
     }
@@ -400,7 +397,13 @@ WI.Script = class Script extends WI.SourceCode
         let resourceCollection = this._parentFrame?.resourceCollection || this._target?.resourceCollection;
         if (resourceCollection) {
             let hasMatchingScript = (resource) => resource.scripts.some((script) => script.sourceType === this._sourceType);
-            let isMatchingResource = (resource) => resource.url === this._url && resource.mimeTypeComponents.type === this.syntheticMIMEType;
+            let isMatchingResource = (resource) => {
+                if (resource.url !== this._url)
+                    return false;
+                if (this._sourceType === WI.Script.SourceType.WebAssembly)
+                    return resource.mimeTypeComponents.type === this.syntheticMIMEType;
+                return resource.type === WI.Resource.Type.Script;
+            };
 
             if (this._requestId) {
                 let resource = WI.networkManager.resourceForRequestIdentifier(this._requestId);

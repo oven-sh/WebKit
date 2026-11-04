@@ -1,0 +1,75 @@
+# function Options() { this.dt = 0.5; this.label = "x" }  const options = new Options()
+# let step: number = options.dt   let copy: number = step   let mixed: number = options.dt; mixed = <any>options.label   let fed: number = mixed
+# In flow the read `options.dt` may answer undefined, as every read off what a constructor function has made, so the sets of the variables hold undefined and flow leaves the checks of their reads in place.
+# The field is always filled, which the type of the read says. Every store to a variable of the module names it, so the variable is proven where the type of all that is stored fits:
+#   step, which takes the read . copy, which takes what was read from step, and rests on it.
+# Not proven: mixed, which a string is stored to behind a check that may fail . fed, which takes what was read from mixed.
+# FORM: AsRead
+# RUN: pipeline ApplyFlowResults
+# STATISTIC: PositionsProvenByTypes = 2
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Variable
+typesite w1 module=m0 position=20 kind=Variable
+typesite w2 module=m0 position=30 kind=Variable
+typesite w3 module=m0 position=40 kind=Variable
+layout L0 kind=Instance name="Options" constructor=f2 fields=[{key="dt" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=string} flags=[IsRequired]}] flags=[IsConstructorFunction]
+variable g0 name="options" module=m0 declared={type=L0} initialization=Uninitialized
+variable g1 name="step" module=m0 declared={type=number site=w0} initialization=Uninitialized
+variable g2 name="copy" module=m0 declared={type=number site=w1} initialization=Uninitialized
+variable g3 name="mixed" module=m0 declared={type=number site=w2} initialization=Uninitialized
+variable g4 name="fed" module=m0 declared={type=number site=w3} initialization=Uninitialized
+variable g5 name="sum" module=m0 declared={type=anything} initialization=Function function=f1
+# CHECK: variable g1 name="step" module=m0 declared={type=number site=w0} flow
+# CHECK: variable g2 name="copy" module=m0 declared={type=number site=w1} flow
+# CHECK: variable g3 name="mixed" module=m0 declared={type=number site=w2 flags=[IsExpected]}
+# CHECK: variable g4 name="fed" module=m0 declared={type=number site=w3 flags=[IsExpected]}
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Construct v0, -
+    v2 = Convert v1 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v2 variable=g0
+    v4 = PropGet v2 key="dt"
+    v5 = Convert v4 declared={type=number site=w0}
+    PutModuleVariable v5 variable=g1
+    v7 = GetModuleVariable variable=g1
+    v8 = Convert v7 declared={type=number site=w1}
+    PutModuleVariable v8 variable=g2
+    v10 = Convert v4 declared={type=number site=w2}
+    PutModuleVariable v10 variable=g3
+    v12 = PropGet v2 key="label"
+    v13 = Convert v12 declared={type=number site=w2}
+    PutModuleVariable v13 variable=g3
+    v15 = GetModuleVariable variable=g3
+    v16 = Convert v15 declared={type=number site=w3}
+    PutModuleVariable v16 variable=g4
+    v18 = GetModuleVariable variable=g5
+    v19 = Call v18, -
+    Return v19
+}
+function f1 name="sum" flags=[IsChecked] results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = GetModuleVariable variable=g2
+    v2 = Add v0, v1
+    v3 = GetModuleVariable variable=g3
+    v4 = GetModuleVariable variable=g4
+    v5 = Add v3, v4
+    v6 = Add v2, v5
+    Return v6
+# CHECK: : number = GetModuleVariable variable=g1
+# CHECK-NOT: = Check
+# CHECK: : number = GetModuleVariable variable=g2
+# CHECK-NOT: = Check
+# CHECK: = GetModuleVariable variable=g3
+# CHECK: = Check {{*}}expectedType=number site=w2
+# CHECK: = Check {{*}}expectedType=number site=w3
+}
+function f2 name="Options" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+    v1 = Double number=0.5
+    PropSet v0, v1 key="dt"
+    v3 = String string="x"
+    PropSet v0, v3 key="label"
+    v5 = Undefined
+    Return v5
+}

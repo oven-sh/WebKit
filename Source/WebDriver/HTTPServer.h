@@ -49,6 +49,8 @@ class HTTPRequestHandler
 #endif
 {
 public:
+    virtual ~HTTPRequestHandler() = default;
+
     struct Request {
         String method;
         String path;
@@ -57,7 +59,7 @@ public:
     };
     struct Response {
         unsigned statusCode { 0 };
-        CString data;
+        UTF8CString data;
         String contentType;
     };
     virtual void handleRequest(Request&&, Function<void (Response&&)>&& replyHandler) = 0;

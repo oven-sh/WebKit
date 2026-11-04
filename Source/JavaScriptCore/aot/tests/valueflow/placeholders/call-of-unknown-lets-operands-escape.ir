@@ -1,0 +1,57 @@
+# box = { go: kept }; answer = somethingNoTableLists.call(receiver, handed, box); answer(); box.go()    function handed(f) { f() }
+# The callee comes from a property of the global object that no table lists: it is the unknown object, and a call of it may run code that nobody compiles. Such code keeps the receiver and the arguments, so they escape,
+# with what the object among them holds. It calls the functions that it has got hold of, with operands nobody knows, and from now on it may store into the objects that it holds: a read of the object that was passed may find anything.
+# What the call gives is unknown. A function that stays in the program is not entered. call-of-untracked-lets-nothing-escape.ir has the same call with a callee that stands for functions of the program.
+# RUN: valueflow-solve calls
+# CHECK: f0 v7 -> unknown
+# CHECK-NEXT: f0 v8 -> unknown
+# CHECK-NEXT: f0 v10 -> unknown
+# CHECK-NEXT: f1 v1 -> unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED: unreached f4
+# RUN(ESCAPED): valueflow-why escaped=f1 escaped=f2 escaped=f3 escaped=f4
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: n0 escaped
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: n0 escaped
+# ESCAPED: escaped=f3
+# ESCAPED-NEXT: n0 escaped
+# ESCAPED: escaped=f4
+# ESCAPED-NEXT: not held
+# RUN(NUMBERS): valueflow-solve
+# NUMBERS: reached-functions-escaped 3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Box"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewObject layout=L0 fields=[]
+    v4 = NewClosure function=f2
+    PropSet v3, v4 key="go" mode=Strict
+    v6 = NewClosure function=f3
+    v7 = Call v1, v6, v2, v3
+    v8 = Call v7
+    v9 = PropGet v3 key="go"
+    v10 = Call v9, v3
+    v11 = NewClosure function=f4
+    Return
+}
+function f1 name="handed" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0, -
+    Return
+}
+function f2 name="kept" module=m0 results=[{type=anything}] {
+    Return
+}
+function f3 name="receiver" module=m0 results=[{type=anything}] {
+    Return
+}
+function f4 name="stays" module=m0 results=[{type=anything}] {
+    Return
+}

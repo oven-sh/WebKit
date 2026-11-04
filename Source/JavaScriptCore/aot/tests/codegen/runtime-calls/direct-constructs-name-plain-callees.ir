@@ -1,0 +1,35 @@
+# The site of a direct construct names its callee where that is a plain function: the last call of such a function may replace its frame. The site of a call names nothing.
+# FORM: Selected
+# RUN: generate-code
+# CHECK: f0: size=
+# CHECK-NOT: constructedCallees
+# CHECK: f1: size={{*}} constructedCallees=f0
+# CHECK-NEXT: f2: size=
+# CHECK-NOT: constructedCallees
+# CHECK: f3: size={{*}} constructedCallees=f0,f4
+# CHECK-NEXT: f4: size=
+# CHECK-NOT: constructedCallees
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="Forward" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Call v1
+    ReturnCall v2
+}
+function f1 name="constructs" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f0 [isConstruction]
+    Return v2
+}
+function f2 name="calls" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f0
+    v3 = Add v2, v2 form=Generic
+    Return v3
+}
+function f3 name="constructsTwo" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f0 [isConstruction]
+    v3 = CallDirect v0, v2 function=f0
+    v4 = CallDirect v0, v3 function=f4 [isConstruction]
+    Return v4
+}
+function f4 name="Other" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}

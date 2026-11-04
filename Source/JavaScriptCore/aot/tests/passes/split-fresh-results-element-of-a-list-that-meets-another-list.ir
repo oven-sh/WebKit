@@ -1,0 +1,37 @@
+# A list of fractions meets the result of a call that was handed a list of anything. Its element keeps the type that the list itself gives it
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SplitFreshResults VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="choose" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="fractionsOrWhatIsChosen" parameters=[{type=boolean}, {type=fractional}] results=[{type=Array<fractional>}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v1 contents=fractional
+    Jump -> next b3(v2)
+  b2():
+    v3 = NewArray contents=anything
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v3
+    v6 = AssumeType v5 provenType=Array<fractional>
+    Jump -> next b3(v6)
+  b3(v7: Array<fractional>):
+    v8 = GetModuleVariable variable=g0
+    v9 = Call v8, -
+    Return v7
+}
+# CHECK-LABEL: function f0 name="fractionsOrWhatIsChosen" module=m0 role=ResultWrapper
+# CHECK: [[call]]:{{*}}= CallDirect v0, v1 function=[[worker]]
+# CHECK-NEXT: [[tag]]: i32 = ResultAt [[call]]
+# CHECK-NEXT: [[cell]]: unspecified|Array<fractional> = ResultAt [[call]] index=1
+# CHECK-NEXT: [[element]]: fractional|unspecified = ResultAt [[call]] index=2
+# CHECK: [[elementThere]]: fractional = AssumeType [[element]], [[filled1]] provenType=fractional
+# CHECK-NEXT: = NewArray [[elementThere]] contents=fractional
+# CHECK: function [[worker]] name="fractionsOrWhatIsChosen" module=m0 role=ResultWorker{{*}}results=[{type=i32}, {type=unspecified|Array<fractional>}, {type=fractional|unspecified}]
+
+function f1 name="readsTheFirst" parameters=[{type=boolean}, {type=fractional}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f0
+    Return v2
+}

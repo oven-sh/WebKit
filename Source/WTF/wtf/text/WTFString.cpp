@@ -409,7 +409,7 @@ Latin1CString String::latin1() const
 
     size_t characterBufferIndex = 0;
     for (auto character : characters)
-        characterBuffer[characterBufferIndex++] = !isLatin1(character) ? '?' : static_cast<Latin1Character>(character);
+        characterBuffer[characterBufferIndex++] = !isLatin1(character) ? Latin1Character { '?' } : static_cast<Latin1Character>(character);
 
     return result;
 }
@@ -553,7 +553,7 @@ double charactersToFixedDouble(std::span<const char16_t> data, bool* ok)
     return toDoubleType<char16_t, TrailingJunkPolicy::Disallow, WhitespacePolicy::Preserve, ParseMode::Fixed>(data, ok, parsedLength);
 }
 
-static inline float doubleToFloatCheckingOverflow(double number, bool* isValid)
+static inline float LEGACY_NODELETE doubleToFloatCheckingOverflow(double number, bool* isValid)
 {
     float result = static_cast<float>(number);
     if (isValid && *isValid && std::isfinite(number) && !std::isfinite(result))

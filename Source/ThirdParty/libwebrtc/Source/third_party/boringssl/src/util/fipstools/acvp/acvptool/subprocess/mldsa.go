@@ -59,6 +59,7 @@ type mldsaSigGenTestGroup struct {
 	ID                 uint64            `json:"tgId"`
 	TestType           string            `json:"testType"`
 	ParameterSet       string            `json:"parameterSet"`
+	KeyFormat          string            `json:"keyFormat"`
 	Deterministic      bool              `json:"deterministic"`
 	SignatureInterface string            `json:"signatureInterface"`
 	Tests              []mldsaSigGenTest `json:"tests"`
@@ -68,6 +69,7 @@ type mldsaSigGenTest struct {
 	ID         uint64 `json:"tcId"`
 	Message    string `json:"message"`
 	PrivateKey string `json:"sk"`
+	Seed       string `json:"seed"`
 	Randomizer string `json:"rnd"`
 	Context    string `json:"context"`
 	Mu         string `json:"mu"`
@@ -200,12 +202,25 @@ func (m *mldsa) processSigGen(vectorSet []byte, t Transactable) (any, error) {
 			return nil, fmt.Errorf("invalid parameter set: %s", group.ParameterSet)
 		}
 		cmdName := group.ParameterSet + "/sigGen"
+		if group.KeyFormat == "seed" {
+			cmdName = group.ParameterSet + "/sigGen/seed"
+		}
 
 		for _, test := range group.Tests {
-			sk, err := hex.DecodeString(test.PrivateKey)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode private key in test case %d/%d: %s",
-					group.ID, test.ID, err)
+			var sk []byte
+			var err error
+			if group.KeyFormat == "seed" {
+				sk, err = hex.DecodeString(test.Seed)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decode seed in test case %d/%d: %s",
+						group.ID, test.ID, err)
+				}
+			} else {
+				sk, err = hex.DecodeString(test.PrivateKey)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decode private key in test case %d/%d: %s",
+						group.ID, test.ID, err)
+				}
 			}
 
 			msg, err := hex.DecodeString(test.Message)

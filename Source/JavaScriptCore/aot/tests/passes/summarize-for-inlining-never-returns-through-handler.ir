@@ -1,0 +1,100 @@
+# A block that ends in a call that never returns leaves only for its handler, so the handler decides whether the function returns
+# OPTIONS: only-passes=SummarizeForInlining
+# RUN: pipeline SummarizeForInlining
+# RUN(PASS): pass SummarizeForInlining
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return
+}
+function f1 name="handlerThrowsAgain" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = CallDirect v0 function=f6
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    v3 = Call v0, -, v2
+    Throw v3
+}
+# CHECK: f1: barrier=None {{*}} neverReturns
+# PASS: f1: barrier=None {{*}} noReturn=[b0 b2] neverReturns
+
+function f2 name="handlerReturns" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = CallDirect v0 function=f6
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# CHECK: f2: barrier=None
+# CHECK-NOT: noReturn
+# PASS: f2: barrier=None
+# PASS-NOT: noReturn
+
+function f3 name="noHandler" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f6
+    Jump -> next b1()
+  b1():
+    Return v1
+}
+# CHECK: f3: barrier=None {{*}} noReturn=[b0] neverReturns
+# PASS: f3: barrier=None {{*}} noReturn=[b0] neverReturns
+
+function f4 name="calleeReturns" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = CallDirect v0 function=f7
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    v3 = Call v0, -, v2
+    Throw v3
+}
+# CHECK: f4: barrier=None {{*}} noReturn=[b2]
+# CHECK-NOT: neverReturns
+# PASS: f4: barrier=None {{*}} noReturn=[b2]
+# PASS-NOT: neverReturns
+
+function f5 name="throwsUnderHandler" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b1():
+    Throw v0
+  b1() role=CatchHandler:
+    v1 = CatchValue
+    Return v1
+}
+# CHECK: f5: barrier=None
+# CHECK-NOT: noReturn
+# PASS: f5: barrier=None
+# PASS-NOT: noReturn
+
+function f6 name="fails" parameters=[{type=anything}] results=[{type=anything}] {
+    Throw v0
+}
+# CHECK: f6: barrier=None {{*}} noReturn=[b0] neverReturns
+# PASS: f6: barrier=None {{*}} noReturn=[b0] neverReturns
+
+function f7 name="callsAndReturns" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+# CHECK: f7: barrier=None
+# CHECK-NOT: noReturn
+# CHECK: f9:
+# PASS: f7: barrier=None
+# PASS-NOT: noReturn
+# PASS: outcome: Unchanged

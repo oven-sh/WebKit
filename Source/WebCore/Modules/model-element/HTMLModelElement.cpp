@@ -39,6 +39,7 @@
 #include "DiagnosticLoggingClient.h"
 #include "DocumentEventLoop.h"
 #include "DocumentPage.h"
+#include "DocumentQuirks.h"
 #include "DocumentResourceLoader.h"
 #include "DocumentView.h"
 #include "ElementChildIteratorInlines.h"
@@ -80,6 +81,7 @@
 #include "Page.h"
 #include "PlaceholderModelPlayer.h"
 #include "PlatformScreen.h"
+#include "Quirks.h"
 #include "RenderBoxInlines.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
@@ -95,6 +97,7 @@
 #include <wtf/Seconds.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
+#include <wtf/text/MakeString.h>
 
 #if ENABLE(MODEL_CONTEXT)
 #include "ModelContext.h"
@@ -104,8 +107,10 @@
 #include "DocumentImmersive.h"
 #endif
 
-#if ENABLE(TOUCH_EVENTS) && (ENABLE(GPU_PROCESS_MODEL) || ENABLE(MODEL_PROCESS))
-#include <WebCore/TouchEvent.h>
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+#include "Chrome.h"
+#include "ChromeClient.h"
+#include "ElementVolumetricScene.h"
 #endif
 
 #if ENABLE(SPATIAL_PORTAL)
@@ -170,6 +175,8 @@ HTMLModelElement::HTMLModelElement(const QualifiedName& tagName, Document& docum
     }))
 #endif
 {
+    m_hasFallbackContentQuirk = document.quirks().shouldRenderModelElementFallbackContentQuirk();
+
 #if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
     if (RefPtr screenPropertiesChangedObserver = m_screenPropertiesChangedObserver)
         document.addScreenPropertiesChangedObserver(*screenPropertiesChangedObserver);
@@ -235,7 +242,7 @@ RefPtr<Model> HTMLModelElement::model() const
     return m_model;
 }
 
-static bool isSupportedModelType(const AtomString& type)
+static bool LEGACY_NODELETE isSupportedModelType(const AtomString& type)
 {
     return type.isEmpty() || MIMETypeRegistry::isSupportedModelMIMEType(type);
 }
@@ -298,6 +305,7 @@ void HTMLModelElement::setSourceURL(const URL& url)
     if (url == m_sourceURL)
         return;
 
+    bool rendersFallbackContentBefore = rendersFallbackContent();
     m_sourceURL = url;
 
     m_data.reset();
@@ -333,6 +341,9 @@ void HTMLModelElement::setSourceURL(const URL& url)
     m_readyPromise = makeUniqueRef<ReadyPromise>(*this, &HTMLModelElement::readyPromiseResolve);
     m_shouldCreateModelPlayerUponRendererAttachment = false;
 
+    if (rendersFallbackContent() != rendersFallbackContentBefore)
+        invalidateStyleAndRenderersForSubtree();
+
 #if ENABLE(SPATIAL_PORTAL)
     if (CheckedPtr controller = findPortalController())
         controller->childModelDidChange(*this);
@@ -358,6 +369,15 @@ HTMLModelElement& HTMLModelElement::readyPromiseResolve()
 // MARK: - VisibilityChangeClient overrides.
 
 void HTMLModelElement::visibilityStateChanged()
+{
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    ElementVolumetricScene::documentVisibilityDidChange(*this);
+#endif
+
+    updatePlayerVisibility();
+}
+
+void HTMLModelElement::updatePlayerVisibility()
 {
 #if ENABLE(SPATIAL_PORTAL)
     if (CheckedPtr controller = m_lastRegisteredPortalController.get()) {
@@ -395,6 +415,7 @@ void HTMLModelElement::didMoveToNewDocument(Document& oldDocument, Document& new
 {
     ActiveDOMObject::didMoveToNewDocument(newDocument);
     HTMLElement::didMoveToNewDocument(oldDocument, newDocument);
+    m_hasFallbackContentQuirk = newDocument.quirks().shouldRenderModelElementFallbackContentQuirk();
     sourcesChanged();
 }
 
@@ -407,11 +428,24 @@ RenderPtr<RenderElement> HTMLModelElement::createElementRenderer(Style::Computed
         return nullptr;
 #endif
 
+    if (rendersFallbackContent())
+        return HTMLElement::createElementRenderer(WTF::move(style), position);
+
     if (RefPtr page = document().page()) {
         if (RefPtr provider = page->modelPlayerProvider(); provider && !provider->isAvailable())
             return HTMLElement::createElementRenderer(WTF::move(style), position);
     }
     return createRenderer<RenderModel>(*this, WTF::move(style));
+}
+
+bool HTMLModelElement::isReplaced(const Style::ComputedStyle*) const
+{
+    return !rendersFallbackContent();
+}
+
+bool HTMLModelElement::rendersFallbackContent() const
+{
+    return m_hasFallbackContentQuirk && m_sourceURL.isEmpty();
 }
 
 bool HTMLModelElement::rendererIsNeeded(const Style::ComputedStyle& style)
@@ -630,6 +664,13 @@ void HTMLModelElement::didFinishLoading(ModelPlayer& modelPlayer, NodeIdentifier
         renderer->updateFromElement();
     if (!m_readyPromise->isFulfilled())
         m_readyPromise->resolve(*this);
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (m_presentationMode == ModelPresentationMode::Volumetric) {
+        if (RefPtr page = document().page())
+            page->chrome().client().reconnectVolumetricSceneForElement(*this);
+    }
+#endif
 }
 
 void HTMLModelElement::didFailLoading(ModelPlayer& modelPlayer, NodeIdentifier nodeID, const ResourceError&)
@@ -784,8 +825,8 @@ bool HTMLModelElement::isVisible() const
     }
 #endif
     bool isVisibleInline = !protect(document())->hidden() && m_isIntersectingViewport;
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    return isVisibleInline || m_detachedForImmersive;
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    return isVisibleInline || m_presentationMode != ModelPresentationMode::Inline;
 #else
     return isVisibleInline;
 #endif
@@ -823,8 +864,8 @@ void HTMLModelElement::modelDidChange()
     }
 #endif
 
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    bool hasRenderer = this->renderer() || m_detachedForImmersive;
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    bool hasRenderer = this->renderer() || m_presentationMode != ModelPresentationMode::Inline;
 #else
     bool hasRenderer = this->renderer();
 #endif
@@ -922,7 +963,7 @@ void HTMLModelElement::createModelPlayer()
     // in with load probably doesn't make sense.
     bool isForImmersive = false;
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    isForImmersive = m_detachedForImmersive;
+    isForImmersive = m_presentationMode == ModelPresentationMode::Immersive;
 #endif
     modelPlayer->load(nodeID, *model, contentSize(), isForImmersive);
 
@@ -957,7 +998,7 @@ void HTMLModelElement::deleteModelPlayer()
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     // Let the document trigger the model player deletion after transitioning out the immersive element if needed
     RefPtr documentImmersive = document().immersiveIfExists();
-    if (m_detachedForImmersive && documentImmersive)
+    if (m_presentationMode == ModelPresentationMode::Immersive && documentImmersive)
         return documentImmersive->exitRemovedImmersiveElementIfNeeded(this, WTF::move(deleteModelPlayerBlock));
 #endif
     deleteModelPlayerBlock();
@@ -1073,8 +1114,8 @@ void HTMLModelElement::startLoadModelTimer()
     Ref document = this->document();
     Seconds delay = document->page() && document->page()->shouldDisableModelLoadDelaysForTesting() ? 0_s : reloadModelDelay;
     m_loadModelTimer = protect(document->eventLoop())->scheduleTask(delay, TaskSource::ModelElement, [weakThis = WeakPtr { *this }] {
-        if (weakThis)
-            weakThis->loadModelTimerFired();
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->loadModelTimerFired();
     });
 }
 
@@ -1131,8 +1172,8 @@ void HTMLModelElement::configureGraphicsLayer(GraphicsLayer& graphicsLayer, Colo
 #if ENABLE(MODEL_ELEMENT_PORTAL)
         .hasPortal = hasPortal(),
 #endif
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-        .detachedForImmersive = m_detachedForImmersive,
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+        .presentationMode = m_presentationMode,
 #endif
     });
 }
@@ -1216,9 +1257,10 @@ bool HTMLModelElement::canSetEntityTransform() const
 bool HTMLModelElement::supportsStageModeInteraction() const
 {
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    if (m_detachedForImmersive)
+    if (m_presentationMode == ModelPresentationMode::Immersive)
         return false;
 #endif
+    // Volumetric content is still interactive, in the volume. Callers exclude hit-tests over its blank inline box.
     return canSetEntityTransform();
 }
 
@@ -1351,57 +1393,18 @@ void HTMLModelElement::defaultEventHandler(Event& event)
     if (!modelPlayer || !modelPlayer->supportsMouseInteraction())
         return;
 
-    auto type = event.type();
-    bool isMouseEvent = type == eventNames().mousedownEvent || type == eventNames().mousemoveEvent || type == eventNames().mouseupEvent;
-
-#if ENABLE(TOUCH_EVENTS) && (ENABLE(GPU_PROCESS_MODEL) || ENABLE(MODEL_PROCESS))
-    bool isTouchEvent = type == eventNames().touchstartEvent || type == eventNames().touchmoveEvent || type == eventNames().touchendEvent || type == eventNames().touchcancelEvent;
-
-    if (isTouchEvent) {
-        auto& touchEvent = downcast<TouchEvent>(event);
-
+    auto phase = m_interactionGesture.handleEvent(*this, *modelPlayer, event, [&](FloatPoint location) {
 #if USE(SYSTEM_PREVIEW)
-        if (type == eventNames().touchstartEvent && !m_isDragging && isPointInSystemPreviewBadge(FloatPoint(touchEvent.offsetX(), touchEvent.offsetY())))
-            return;
+        if (isPointInSystemPreviewBadge(location))
+            return false;
+#else
+        UNUSED_PARAM(location);
 #endif
+        return isInteractive();
+    });
 
-        if (type == eventNames().touchstartEvent && !m_isDragging && !event.defaultPrevented() && isInteractive())
-            dragDidStart(touchEvent);
-        else if (type == eventNames().touchmoveEvent && m_isDragging)
-            dragDidChange(touchEvent);
-        else if ((type == eventNames().touchendEvent || type == eventNames().touchcancelEvent) && m_isDragging)
-            dragDidEnd(touchEvent);
-        return;
-    }
-#endif
-
-    if (!isMouseEvent)
-        return;
-
-    auto& mouseEvent = downcast<MouseEvent>(event);
-
-    if (mouseEvent.button() != MouseButton::Left)
-        return;
-
-#if USE(SYSTEM_PREVIEW)
-    if (type == eventNames().mousedownEvent && !m_isDragging && isPointInSystemPreviewBadge(FloatPoint(mouseEvent.offsetX(), mouseEvent.offsetY())))
-        return;
-#endif
-
-    if (type == eventNames().mousedownEvent && !m_isDragging && !event.defaultPrevented() && isInteractive())
-        dragDidStart(mouseEvent);
-    else if (type == eventNames().mousemoveEvent && m_isDragging)
-        dragDidChange(mouseEvent);
-    else if (type == eventNames().mouseupEvent && m_isDragging)
-        dragDidEnd(mouseEvent);
-}
-
-LayoutPoint HTMLModelElement::flippedLocationInElementForMouseEvent(WebCore::MouseRelatedEvent& event)
-{
-    LayoutUnit flippedY { event.offsetY() };
-    if (CheckedPtr renderModel = dynamicDowncast<RenderModel>(renderer()))
-        flippedY = renderModel->paddingBoxHeight() - flippedY;
-    return { LayoutUnit(event.offsetX()), flippedY };
+    if (phase == PortalInteractionGesture::Phase::Began)
+        logInteractionDiagnostic();
 }
 
 #if USE(SYSTEM_PREVIEW)
@@ -1455,50 +1458,6 @@ void HTMLModelElement::logInteractionDiagnostic()
     DiagnosticLoggingClient::ValueDictionary dictionary;
     dictionary.set("type"_s, modelType);
     protect(page->diagnosticLoggingClient())->logDiagnosticMessageWithValueDictionary("ModelElementInteraction"_s, "Safari"_s, dictionary, ShouldSample::No);
-}
-
-void HTMLModelElement::dragDidStart(WebCore::MouseRelatedEvent& event)
-{
-    ASSERT(!m_isDragging);
-
-    RefPtr frame = document().frame();
-    if (!frame)
-        return;
-
-    frame->eventHandler().setCapturingMouseEventsElement(this);
-    event.setDefaultHandled();
-    m_isDragging = true;
-
-    logInteractionDiagnostic();
-
-    if (RefPtr modelPlayer = m_modelPlayer)
-        modelPlayer->handleMouseDown(flippedLocationInElementForMouseEvent(event), event.timeStamp());
-}
-
-void HTMLModelElement::dragDidChange(WebCore::MouseRelatedEvent& event)
-{
-    ASSERT(m_isDragging);
-
-    event.setDefaultHandled();
-
-    if (RefPtr modelPlayer = m_modelPlayer)
-        modelPlayer->handleMouseMove(flippedLocationInElementForMouseEvent(event), event.timeStamp());
-}
-
-void HTMLModelElement::dragDidEnd(WebCore::MouseRelatedEvent& event)
-{
-    ASSERT(m_isDragging);
-
-    RefPtr frame = document().frame();
-    if (!frame)
-        return;
-
-    frame->eventHandler().setCapturingMouseEventsElement(nullptr);
-    event.setDefaultHandled();
-    m_isDragging = false;
-
-    if (RefPtr modelPlayer = m_modelPlayer)
-        modelPlayer->handleMouseUp(flippedLocationInElementForMouseEvent(event), event.timeStamp());
 }
 
 std::optional<PlatformLayerIdentifier> HTMLModelElement::layerID() const
@@ -1665,7 +1624,7 @@ void HTMLModelElement::updateStageMode()
 
 #if ENABLE(TOUCH_EVENTS)
     if (!m_eventListener)
-        m_eventListener = HTMLModelElementEventListener::create();
+        lazyInitialize(m_eventListener, HTMLModelElementEventListener::create());
 
     if (mode == WebCore::StageModeOperation::Orbit) {
         addEventListener(eventNames().touchstartEvent, *m_eventListener, { });
@@ -1811,7 +1770,7 @@ URL HTMLModelElement::selectEnvironmentMapURL() const
 void HTMLModelElement::environmentMapRequestResource()
 {
     if (!m_environmentMapLoader)
-        m_environmentMapLoader = EnvironmentMapLoader::create();
+        lazyInitialize(m_environmentMapLoader, EnvironmentMapLoader::create());
 
     RefPtr loader = m_environmentMapLoader;
     loader->load(*this, m_environmentMapURL, [weakThis = WeakPtr { *this }, url = m_environmentMapURL](RefPtr<SharedBuffer>&& data) {
@@ -2048,21 +2007,28 @@ void HTMLModelElement::requestImmersive(DOMPromiseDeferred<void>&& promise)
 
 void HTMLModelElement::ensureImmersivePresentation(CompletionHandler<void(ExceptionOr<LayerHostingContextIdentifier>)>&& completion)
 {
-    setDetachedForImmersive(true);
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (m_presentationMode == ModelPresentationMode::Volumetric) {
+        completion(Exception { ExceptionCode::InvalidStateError, "Model is presented in a volumetric scene"_s });
+        return;
+    }
+#endif
+
+    setPresentationMode(ModelPresentationMode::Immersive);
     ensureModelPlayer([weakThis = WeakPtr { *this }, completion = WTF::move(completion)](auto result) mutable {
         RefPtr protectedThis { weakThis };
         if (!protectedThis)
             return completion(Exception { ExceptionCode::AbortError });
 
         if (result.hasException()) {
-            protectedThis->setDetachedForImmersive(false);
+            protectedThis->setPresentationMode(ModelPresentationMode::Inline);
             completion(result.releaseException());
             return;
         }
 
         RefPtr modelPlayer = result.releaseReturnValue();
         if (!modelPlayer) {
-            protectedThis->setDetachedForImmersive(false);
+            protectedThis->setPresentationMode(ModelPresentationMode::Inline);
             completion(Exception { ExceptionCode::AbortError });
             return;
         }
@@ -2073,7 +2039,7 @@ void HTMLModelElement::ensureImmersivePresentation(CompletionHandler<void(Except
                 return completion(Exception { ExceptionCode::AbortError });
 
             if (!contextID.has_value()) {
-                protectedThis->setDetachedForImmersive(false);
+                protectedThis->setPresentationMode(ModelPresentationMode::Inline);
                 completion(Exception { ExceptionCode::TypeError, "Failed to decode model"_s });
                 return;
             }
@@ -2087,7 +2053,7 @@ void HTMLModelElement::exitImmersivePresentation(CompletionHandler<void()>&& com
 {
     RefPtr modelPlayer = m_modelPlayer;
     if (!modelPlayer) {
-        setDetachedForImmersive(false);
+        setPresentationMode(ModelPresentationMode::Inline);
         completion();
         return;
     }
@@ -2100,20 +2066,9 @@ void HTMLModelElement::exitImmersivePresentation(CompletionHandler<void()>&& com
 
         // Only reset if no new request has re-armed the flag since this exit started.
         if (protectedThis->m_immersiveDetachGeneration == generation)
-            protectedThis->setDetachedForImmersive(false);
+            protectedThis->setPresentationMode(ModelPresentationMode::Inline);
         completion();
     });
-}
-
-void HTMLModelElement::setDetachedForImmersive(bool detachedForImmersive)
-{
-    if (detachedForImmersive)
-        ++m_immersiveDetachGeneration;
-    m_detachedForImmersive = detachedForImmersive;
-    visibilityStateChanged();
-    invalidateStyleAndLayerComposition();
-    if (CheckedPtr renderer = this->renderer())
-        renderer->updateFromElement();
 }
 
 void HTMLModelElement::ensureModelPlayer(CompletionHandler<void(ExceptionOr<RefPtr<ModelPlayer>>)>&& completion)
@@ -2133,6 +2088,34 @@ void HTMLModelElement::ensureModelPlayer(CompletionHandler<void(ExceptionOr<RefP
 }
 
 #endif
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+
+void HTMLModelElement::setPresentationMode(ModelPresentationMode mode)
+{
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    // Bumped before the early return below, and even when the mode is unchanged: exitImmersivePresentation()
+    // leaves the mode Immersive until its completion runs, so a re-armed request has to invalidate an exit that
+    // is already in flight.
+    if (mode == ModelPresentationMode::Immersive)
+        ++m_immersiveDetachGeneration;
+#endif
+
+    if (m_presentationMode == mode)
+        return;
+
+    m_presentationMode = mode;
+
+    // Skips visibilityStateChanged() so that a mode change cannot itself start a volumetric scene exit.
+    updatePlayerVisibility();
+
+    // Re-running layer configuration is what moves the content between the page and its new host.
+    invalidateStyleAndLayerComposition();
+    if (CheckedPtr renderer = this->renderer())
+        renderer->updateFromElement();
+}
+
+#endif // ENABLE(MODEL_ELEMENT_IMMERSIVE) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
 
 void HTMLModelElement::triggerModelPlayerCreationCallbacksIfNeeded(ExceptionOr<RefPtr<ModelPlayer>>&& result)
 {
@@ -2179,6 +2162,11 @@ void HTMLModelElement::stop()
     m_lastRegisteredPortalController = nullptr;
 #endif
 
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    // Nothing else closes the volume once the element driving it is gone.
+    ElementVolumetricScene::exitVolumetricScene(*this);
+#endif
+
     // Once an active DOM object has been stopped it cannot be restarted,
     // so we can delete the model player now.
     deletePendingModelPlayer();
@@ -2207,8 +2195,8 @@ LayoutSize HTMLModelElement::contentSize() const
 
 bool HTMLModelElement::modelContainerSizeIsEmpty() const
 {
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    return contentSize().isEmpty() && !m_detachedForImmersive;
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    return contentSize().isEmpty() && m_presentationMode == ModelPresentationMode::Inline;
 #else
     return contentSize().isEmpty();
 #endif
@@ -2217,10 +2205,10 @@ bool HTMLModelElement::modelContainerSizeIsEmpty() const
 void HTMLModelElement::collectPresentationalHintsForAttribute(const QualifiedName& name, const AtomString& value, MutableStyleProperties& style)
 {
     if (name == widthAttr) {
-        addHTMLLengthToStyle(style, CSSPropertyWidth, value);
+        addHTMLLengthToStyle(style, CSSPropertyID::Width, value);
         applyAspectRatioFromWidthAndHeightAttributesToStyle(value, attributeWithoutSynchronization(heightAttr), style);
     } else if (name == heightAttr) {
-        addHTMLLengthToStyle(style, CSSPropertyHeight, value);
+        addHTMLLengthToStyle(style, CSSPropertyID::Height, value);
         applyAspectRatioFromWidthAndHeightAttributesToStyle(attributeWithoutSynchronization(widthAttr), value, style);
     } else
         HTMLElement::collectPresentationalHintsForAttribute(name, value, style);
@@ -2277,6 +2265,10 @@ void HTMLModelElement::removingSteps(RemovalType removalType, ContainerNode& old
         LazyLoadElementObserver::unobserve(*this, document);
 
         m_loadModelTimer = nullptr;
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+        ElementVolumetricScene::exitVolumetricScene(*this);
+#endif
 
         deletePendingModelPlayer();
         deleteModelPlayer();
@@ -2373,6 +2365,22 @@ bool HTMLModelElement::hasLiveModelPlayer() const
     return modelPlayer && !modelPlayer->isPlaceholder();
 }
 
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+RefPtr<ModelPlayer> HTMLModelElement::liveModelPlayer() const
+{
+    RefPtr modelPlayer = m_modelPlayer;
+    if (!modelPlayer || modelPlayer->isPlaceholder())
+        return nullptr;
+    return modelPlayer;
+}
+
+void HTMLModelElement::exitVolumetricPresentation()
+{
+    if (RefPtr modelPlayer = m_modelPlayer)
+        modelPlayer->exitVolumetricPresentation();
+}
+#endif
+
 bool HTMLModelElement::isModelLoading() const
 {
     if (!isVisible())
@@ -2415,6 +2423,35 @@ String HTMLModelElement::modelElementStateForTesting() const
     ASSERT_NOT_REACHED();
     return "Unknown"_s;
 }
+
+#if ENABLE(MODEL_PROCESS)
+void HTMLModelElement::sceneGraphAsTextForTesting(const ModelSceneGraphAsTextOptions& options, CompletionHandler<void(String&&)>&& completionHandler) const
+{
+    RefPtr modelPlayer = m_modelPlayer;
+    if (modelPlayer) {
+        modelPlayer->sceneGraphAsTextForTesting(std::nullopt, { { nodeIdentifier(), dumpLabelForTesting(1) } }, options, WTF::move(completionHandler));
+        return;
+    }
+
+#if ENABLE(SPATIAL_PORTAL)
+    CheckedPtr controller = m_lastRegisteredPortalController.get();
+    if (controller) {
+        controller->sceneGraphAsTextForTesting(nodeIdentifier(), options, WTF::move(completionHandler));
+        return;
+    }
+#endif
+
+    completionHandler({ });
+}
+
+String HTMLModelElement::dumpLabelForTesting(unsigned treeOrderPosition) const
+{
+    auto& id = getIdAttribute();
+    if (!id.isEmpty())
+        return makeString('#', id);
+    return makeString(localName(), '[', treeOrderPosition, ']');
+}
+#endif
 
 #if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
 void HTMLModelElement::dynamicRangeLimitDidChange(PlatformDynamicRangeLimit dynamicRangeLimit)

@@ -1,0 +1,60 @@
+# The cells of one frame take no more bytes than the limit: the smallest first, then in the order of the program, and the rest are on the heap
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,AllocateInFrames limit=MaxBytesOfCellsInFrame:64
+# LOSS: MaxBytesOfCellsInFrame x2 f1 v5
+# STATISTIC: CellsWithoutRoomInFrames = 2
+# STATISTIC: EnvironmentsInFrames = 4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="twoFields" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1 kind=Environment name="oneField" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    Return
+}
+function f1 name="oneTooMany" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = CallDirect v1 function=f4
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = CallDirect v3 function=f4
+    v5 = NewObject -, v0 layout=L1 fields=[0]
+    v6 = CallDirect v5 function=f4
+    Return v6
+}
+# CHECK-LABEL: function f1 name="oneTooMany"
+# CHECK: = NewObject {{*}}layout=L1 {{*}}storage=Frame
+# CHECK: = NewObject {{*}}layout=L1 {{*}}storage=Frame
+# CHECK: = NewObject {{*}}layout=L1
+# CHECK-NOT: storage=
+function f2 name="theLargestIsFirst" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = CallDirect v1 function=f3
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = CallDirect v3 function=f4
+    v5 = NewObject -, v0 layout=L1 fields=[0]
+    v6 = CallDirect v5 function=f4
+    Return v6
+}
+# CHECK-LABEL: function f2 name="theLargestIsFirst"
+# CHECK-NOT: layout=L0 {{*}}storage=
+# CHECK: = NewObject {{*}}layout=L1 {{*}}storage=Frame
+# CHECK: = NewObject {{*}}layout=L1 {{*}}storage=Frame
+# CHECK-LABEL: function f3 name="readsTwoFields"
+function f3 name="readsTwoFields" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=1
+    v2 = ToBoolean v1
+    Return v2
+}
+function f4 name="readsOneField" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    v2 = ToBoolean v1
+    Return v2
+}

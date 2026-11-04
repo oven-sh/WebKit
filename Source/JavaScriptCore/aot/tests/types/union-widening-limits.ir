@@ -1,0 +1,17 @@
+# The limit belongs to the widening union alone: under the same lowered limit a plain union and the canonical form keep nine layouts and report no loss
+# FORM: Prepared
+# OPTIONS: limit=MaxLayoutsInType:8
+# RUN: union
+# RUN(CANONICAL): canonical
+# CHECK: t0 | t0 = L0|L1|L2|L3|L4|L5|L6|L7
+# CHECK-NEXT: t0 | t1 = L0|L1|L2|L3|L4|L5|L6|L7|L8
+# CHECK-NEXT: t0 | t2 = L0|L1|L2|L3|L4|L5|L6|L7
+# CHECK-NEXT: t1 | t1 = L8
+# CHECK-NEXT: t1 | t2 = L0|L8
+# CHECK-NEXT: t2 | t2 = L0
+# CHECK-NEXT: laws hold
+# CANONICAL: t0..t0 = L0|L1|L2|L3|L4|L5|L6|L7
+# CANONICAL-NEXT: t0..t1 = L0|L1|L2|L3|L4|L5|L6|L7|L8
+# CANONICAL-NEXT: t0..t2 = L0|L1|L2|L3|L4|L5|L6|L7|L8
+# CANONICAL-NEXT: laws hold
+# PROGRAM-OF: union-widening-hits.ir

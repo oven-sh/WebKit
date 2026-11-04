@@ -1,0 +1,558 @@
+# An operator on operands with expected types gets the fewest type tests that give it a better form, and a copy that takes any operand
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# STATISTIC: TypeTestsPlaced = 36
+# STATISTIC: StretchesGuarded = 26
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+function f0 name="mulOfExpectedNumbers" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=number|bigint}] {
+  b0(v0: anything ~ number, v1: anything ~ number):
+    v2 = Mul v0, v1
+    Return v2
+# CHECK: [[test0f0]]:{{*}}= TypeTest v0 testedType=number
+# CHECK-NEXT: Branch [[test0f0]] -> taken [[passed0f0]](| 0), notTaken [[copy0]]()
+# CHECK-NEXT: [[fast0]]([[narrowed1f0]]: number):
+# CHECK-NEXT: v2: number = Mul [[narrowed0f0]], [[narrowed1f0]]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy0]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic0]]:{{*}}= Mul v0, v1
+# CHECK-NEXT: Return [[generic0]]
+# CHECK-NEXT: [[passed0f0]]([[narrowed0f0]]: number):
+# CHECK-NEXT: [[test1f0]]:{{*}}= TypeTest v1 testedType=number
+# CHECK-NEXT: Branch [[test1f0]] -> taken [[fast0]](| 0), notTaken [[copy0]]()
+# CHECK: }
+}
+
+function f1 name="addOfExpectedNumbers" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=number|string|bigint}] {
+  b0(v0: anything ~ number, v1: anything ~ number):
+    v2 = Add v0, v1
+    Return v2
+# CHECK: [[test0f1]]:{{*}}= TypeTest v0 testedType=number
+# CHECK-NEXT: Branch [[test0f1]] -> taken [[passed0f1]](| 0), notTaken [[copy1]]()
+# CHECK-NEXT: [[fast1]]([[narrowed1f1]]: number):
+# CHECK-NEXT: v2: number = Add [[narrowed0f1]], [[narrowed1f1]]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy1]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic1]]:{{*}}= Add v0, v1
+# CHECK-NEXT: Return [[generic1]]
+# CHECK-NEXT: [[passed0f1]]([[narrowed0f1]]: number):
+# CHECK-NEXT: [[test1f1]]:{{*}}= TypeTest v1 testedType=number
+# CHECK-NEXT: Branch [[test1f1]] -> taken [[fast1]](| 0), notTaken [[copy1]]()
+# CHECK: }
+}
+
+function f2 name="divOfExpectedNumbers" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=number|bigint}] {
+  b0(v0: anything ~ number, v1: anything ~ number):
+    v2 = Div v0, v1
+    Return v2
+# CHECK: [[test0f2]]:{{*}}= TypeTest v0 testedType=number
+# CHECK-NEXT: Branch [[test0f2]] -> taken [[passed0f2]](| 0), notTaken [[copy2]]()
+# CHECK-NEXT: [[fast2]]([[narrowed1f2]]: number):
+# CHECK-NEXT: v2: number = Div [[narrowed0f2]], [[narrowed1f2]]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy2]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic2]]:{{*}}= Div v0, v1
+# CHECK-NEXT: Return [[generic2]]
+# CHECK-NEXT: [[passed0f2]]([[narrowed0f2]]: number):
+# CHECK-NEXT: [[test1f2]]:{{*}}= TypeTest v1 testedType=number
+# CHECK-NEXT: Branch [[test1f2]] -> taken [[fast2]](| 0), notTaken [[copy2]]()
+# CHECK: }
+}
+
+function f3 name="lessWithExpectedInt32" parameters=[{type=i32 flags=[IsExpected]}, {type=int}] results=[{type=boolean}] {
+  b0(v0: anything ~ i32, v1: int):
+    v2 = Less v0, v1
+    Return v2
+# CHECK: [[test0f3]]:{{*}}= TypeTest v0 testedType=i32
+# CHECK-NEXT: Branch [[test0f3]] -> taken [[fast3]](| 0), notTaken [[copy3]]()
+# CHECK-NEXT: [[fast3]]([[narrowed0f3]]: i32):
+# CHECK-NEXT: v2: {{*}}= Less [[narrowed0f3]], v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy3]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic3]]:{{*}}= Less v0, v1
+# CHECK-NEXT: Return [[generic3]]
+# CHECK: }
+}
+
+function f4 name="negateOfExpectedInt32" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number|bigint}] {
+  b0(v0: anything ~ i32):
+    v1 = Negate v0
+    Return v1
+# CHECK: [[test0f4]]:{{*}}= TypeTest v0 testedType=i32
+# CHECK-NEXT: Branch [[test0f4]] -> taken [[fast4]](| 0), notTaken [[copy4]]()
+# CHECK-NEXT: [[fast4]]([[narrowed0f4]]: i32):
+# CHECK-NEXT: v1: {{*}}= Negate [[narrowed0f4]]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: [[copy4]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic4]]:{{*}}= Negate v0
+# CHECK-NEXT: Return [[generic4]]
+# CHECK: }
+}
+
+function f5 name="oneOperandProven" parameters=[{type=number flags=[IsExpected]}, {type=number}] results=[{type=number|bigint}] {
+  b0(v0: anything ~ number, v1: number):
+    v2 = Mul v0, v1
+    Return v2
+# CHECK: [[test0f5]]:{{*}}= TypeTest v0 testedType=number
+# CHECK-NEXT: Branch [[test0f5]] -> taken [[fast5]](| 0), notTaken [[failed0f5]](| 0)
+# CHECK-NEXT: [[fast5]]([[narrowed0f5]]: number):
+# CHECK-NEXT: v2: number = Mul [[narrowed0f5]], v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy5]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic5]]:{{*}}= Mul [[rest5]], v1
+# CHECK-NEXT: Return [[generic5]]
+# CHECK: [[failed0f5]]([[rest5]]: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy5]]()
+# CHECK-NEXT: }
+}
+
+function f6 name="addOfExpectedStrings" parameters=[{type=string flags=[IsExpected]}, {type=string flags=[IsExpected]}] results=[{type=number|string|bigint}] {
+  b0(v0: anything ~ string, v1: anything ~ string):
+    v2 = Add v0, v1
+    Return v2
+# CHECK: [[test0f6]]:{{*}}= TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[test0f6]] -> taken [[passed0f6]](| 0), notTaken [[copy6]]()
+# CHECK-NEXT: [[fast6]]([[narrowed1f6]]: string):
+# CHECK-NEXT: v2: string = Add [[narrowed0f6]], [[narrowed1f6]]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy6]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic6]]:{{*}}= Add v0, v1
+# CHECK-NEXT: Return [[generic6]]
+# CHECK-NEXT: [[passed0f6]]([[narrowed0f6]]: string):
+# CHECK-NEXT: [[test1f6]]:{{*}}= TypeTest v1 testedType=string
+# CHECK-NEXT: Branch [[test1f6]] -> taken [[fast6]](| 0), notTaken [[copy6]]()
+# CHECK: }
+}
+
+function f7 name="addOfExpectedAndProvenString" parameters=[{type=string flags=[IsExpected]}, {type=string}] results=[{type=string}] {
+  b0(v0: anything ~ string, v1: string):
+    v2 = Add v0, v1
+    Return v2
+# CHECK: [[test0f7]]:{{*}}= TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[test0f7]] -> taken [[fast7]](| 0), notTaken [[failed0f7]](| 0)
+# CHECK-NEXT: [[fast7]]([[narrowed0f7]]: string):
+# CHECK-NEXT: v2: string = Add [[narrowed0f7]], v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy7]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic7]]:{{*}}= Add [[rest7]], v1
+# CHECK-NEXT: Return [[generic7]]
+# CHECK: [[failed0f7]]([[rest7]]: undefined|null|boolean|number|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy7]]()
+# CHECK-NEXT: }
+}
+
+function f8 name="addOfStringAndExpectedInt32" parameters=[{type=string}, {type=i32 flags=[IsExpected]}] results=[{type=string}] {
+  b0(v0: string, v1: anything ~ i32):
+    v2 = Add v0, v1
+    Return v2
+# CHECK: [[test0f8]]:{{*}}= TypeTest v1 testedType=i32
+# CHECK-NEXT: Branch [[test0f8]] -> taken [[fast8]](| 0), notTaken [[copy8]]()
+# CHECK-NEXT: [[fast8]]([[narrowed0f8]]: i32):
+# CHECK-NEXT: v2: string = Add v0, [[narrowed0f8]]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy8]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic8]]:{{*}}= Add v0, v1
+# CHECK-NEXT: Return [[generic8]]
+# CHECK: }
+}
+
+function f9 name="addOfExpectedAndNullableString" parameters=[{type=string flags=[IsExpected]}, {type=undefined|null|string}] results=[{type=number|string|bigint}] {
+  b0(v0: anything ~ string, v1: undefined|null|string ~ string):
+    v2 = Add v0, v1
+    Return v2
+# CHECK: [[test0f9]]:{{*}}= TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[test0f9]] -> taken [[fast9]](| 0), notTaken [[failed0f9]](| 0)
+# CHECK-NEXT: [[fast9]]([[narrowed0f9]]: string):
+# CHECK-NEXT: v2: string = Add [[narrowed0f9]], v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy9]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic9]]:{{*}}= Add [[rest9]], v1
+# CHECK-NEXT: Return [[generic9]]
+# CHECK: [[failed0f9]]([[rest9]]: undefined|null|boolean|number|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy9]]()
+# CHECK-NEXT: }
+}
+
+function f10 name="strictEqOfExpectedString" parameters=[{type=string flags=[IsExpected]}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything ~ string, v1: anything):
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK: [[test0f10]]:{{*}}= TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[test0f10]] -> taken [[fast10]](| 0), notTaken [[failed0f10]](| 0)
+# CHECK-NEXT: [[fast10]]([[narrowed0f10]]: string):
+# CHECK-NEXT: v2: {{*}}= StrictEq [[narrowed0f10]], v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy10]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic10]]:{{*}}= StrictEq [[rest10]], v1
+# CHECK-NEXT: Return [[generic10]]
+# CHECK: [[failed0f10]]([[rest10]]: undefined|null|boolean|number|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy10]]()
+# CHECK-NEXT: }
+}
+
+function f11 name="strictEqOfTwoExpectedStrings" parameters=[{type=string flags=[IsExpected]}, {type=string flags=[IsExpected]}] results=[{type=boolean}] {
+  b0(v0: anything ~ string, v1: anything ~ string):
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK: [[test0f11]]:{{*}}= TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[test0f11]] -> taken [[fast11]](| 0), notTaken [[failed0f11]](| 0)
+# CHECK-NEXT: [[fast11]]([[narrowed0f11]]: string):
+# CHECK-NEXT: v2: {{*}}= StrictEq [[narrowed0f11]], v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy11]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic11]]:{{*}}= StrictEq [[rest11]], v1
+# CHECK-NEXT: Return [[generic11]]
+# CHECK: [[failed0f11]]([[rest11]]: undefined|null|boolean|number|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy11]]()
+# CHECK-NEXT: }
+}
+
+function f12 name="strictEqWithNullableString" parameters=[{type=string flags=[IsExpected]}, {type=undefined|null|string}] results=[{type=boolean}] {
+  b0(v0: anything ~ string, v1: undefined|null|string ~ string):
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK: [[test0f12]]:{{*}}= TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[test0f12]] -> taken [[fast12]](| 0), notTaken [[failed0f12]](| 0)
+# CHECK-NEXT: [[fast12]]([[narrowed0f12]]: string):
+# CHECK-NEXT: v2: {{*}}= StrictEq [[narrowed0f12]], v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy12]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic12]]:{{*}}= StrictEq [[rest12]], v1
+# CHECK-NEXT: Return [[generic12]]
+# CHECK: [[failed0f12]]([[rest12]]: undefined|null|boolean|number|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy12]]()
+# CHECK-NEXT: }
+}
+
+function f13 name="strictEqOfExpectedObject" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK: [[test0f13]]:{{*}}= TypeTest v0 testedType=object
+# CHECK-NEXT: Branch [[test0f13]] -> taken [[fast13]](| 0), notTaken [[failed0f13]](| 0)
+# CHECK-NEXT: [[fast13]]([[narrowed0f13]]: object ~ L0):
+# CHECK-NEXT: v2: {{*}}= StrictEq [[narrowed0f13]], v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy13]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic13]]:{{*}}= StrictEq [[rest13]], v1
+# CHECK-NEXT: Return [[generic13]]
+# CHECK: [[failed0f13]]([[rest13]]: undefined|null|boolean|number|string|symbol|bigint) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy13]]()
+# CHECK-NEXT: }
+}
+
+function f14 name="strictEqOfExpectedBoolean" parameters=[{type=boolean flags=[IsExpected]}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything ~ boolean, v1: anything):
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK: [[test0f14]]:{{*}}= TypeTest v0 testedType=boolean
+# CHECK-NEXT: Branch [[test0f14]] -> taken [[fast14]](| 0), notTaken [[failed0f14]](| 0)
+# CHECK-NEXT: [[fast14]]([[narrowed0f14]]: boolean):
+# CHECK-NEXT: v2: {{*}}= StrictEq [[narrowed0f14]], v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy14]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic14]]:{{*}}= StrictEq [[rest14]], v1
+# CHECK-NEXT: Return [[generic14]]
+# CHECK: [[failed0f14]]([[rest14]]: undefined|null|number|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy14]]()
+# CHECK-NEXT: }
+}
+
+function f15 name="eqWithNullableNumber" parameters=[{type=i32 flags=[IsExpected]}, {type=null|number}] results=[{type=boolean}] {
+  b0(v0: anything ~ i32, v1: null|number ~ number):
+    v2 = Eq v0, v1
+    Return v2
+# CHECK: [[test0f15]]:{{*}}= TypeTest v0 testedType=i32
+# CHECK-NEXT: Branch [[test0f15]] -> taken [[fast15]](| 0), notTaken [[copy15]]()
+# CHECK-NEXT: [[fast15]]([[narrowed0f15]]: i32):
+# CHECK-NEXT: v2: {{*}}= Eq [[narrowed0f15]], v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy15]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic15]]:{{*}}= Eq v0, v1
+# CHECK-NEXT: Return [[generic15]]
+# CHECK: }
+}
+
+function f16 name="eqWithInteger" parameters=[{type=i32 flags=[IsExpected]}, {type=int}] results=[{type=boolean}] {
+  b0(v0: anything ~ i32, v1: int):
+    v2 = Eq v0, v1
+    Return v2
+# CHECK: [[test0f16]]:{{*}}= TypeTest v0 testedType=i32
+# CHECK-NEXT: Branch [[test0f16]] -> taken [[fast16]](| 0), notTaken [[copy16]]()
+# CHECK-NEXT: [[fast16]]([[narrowed0f16]]: i32):
+# CHECK-NEXT: v2: {{*}}= Eq [[narrowed0f16]], v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy16]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic16]]:{{*}}= Eq v0, v1
+# CHECK-NEXT: Return [[generic16]]
+# CHECK: }
+}
+
+function f17 name="eqOfExpectedStrings" parameters=[{type=string flags=[IsExpected]}, {type=string flags=[IsExpected]}] results=[{type=boolean}] {
+  b0(v0: anything ~ string, v1: anything ~ string):
+    v2 = Eq v0, v1
+    Return v2
+# CHECK: [[test0f17]]:{{*}}= TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[test0f17]] -> taken [[passed0f17]](| 0), notTaken [[copy17]]()
+# CHECK-NEXT: [[fast17]]([[narrowed1f17]]: string):
+# CHECK-NEXT: v2: {{*}}= Eq [[narrowed0f17]], [[narrowed1f17]]
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[copy17]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic17]]:{{*}}= Eq v0, v1
+# CHECK-NEXT: Return [[generic17]]
+# CHECK-NEXT: [[passed0f17]]([[narrowed0f17]]: string):
+# CHECK-NEXT: [[test1f17]]:{{*}}= TypeTest v1 testedType=string
+# CHECK-NEXT: Branch [[test1f17]] -> taken [[fast17]](| 0), notTaken [[copy17]]()
+# CHECK: }
+}
+
+function f18 name="toStringOfExpectedString" parameters=[{type=string flags=[IsExpected]}] results=[{type=string}] {
+  b0(v0: anything ~ string):
+    v1 = ToString v0
+    Return v1
+# CHECK: [[test0f18]]:{{*}}= TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[test0f18]] -> taken [[fast18]](| 0), notTaken [[failed0f18]](| 0)
+# CHECK-NEXT: [[fast18]]([[narrowed0f18]]: string):
+# CHECK-NEXT: v1: {{*}}= ToString [[narrowed0f18]]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: [[copy18]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic18]]:{{*}}= ToString [[rest18]]
+# CHECK-NEXT: Return [[generic18]]
+# CHECK: [[failed0f18]]([[rest18]]: undefined|null|boolean|number|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy18]]()
+# CHECK-NEXT: }
+}
+
+function f19 name="toStringOfExpectedInt32" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=string}] {
+  b0(v0: anything ~ i32):
+    v1 = ToString v0
+    Return v1
+# CHECK: [[test0f19]]:{{*}}= TypeTest v0 testedType=i32
+# CHECK-NEXT: Branch [[test0f19]] -> taken [[fast19]](| 0), notTaken [[copy19]]()
+# CHECK-NEXT: [[fast19]]([[narrowed0f19]]: i32):
+# CHECK-NEXT: v1: {{*}}= ToString [[narrowed0f19]]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: [[copy19]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic19]]:{{*}}= ToString v0
+# CHECK-NEXT: Return [[generic19]]
+# CHECK: }
+}
+
+function f20 name="toStringOfNullableString" parameters=[{type=undefined|null|string}] results=[{type=string}] {
+  b0(v0: undefined|null|string ~ string):
+    v1 = ToString v0
+    Return v1
+# CHECK: [[test0f20]]:{{*}}= TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[test0f20]] -> taken [[fast20]](| 0), notTaken [[failed0f20]](| 0)
+# CHECK-NEXT: [[fast20]]([[narrowed0f20]]: string):
+# CHECK-NEXT: v1: {{*}}= ToString [[narrowed0f20]]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: [[copy20]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic20]]:{{*}}= ToString [[rest20]]
+# CHECK-NEXT: Return [[generic20]]
+# CHECK: [[failed0f20]]([[rest20]]: undefined|null) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy20]]()
+# CHECK-NEXT: }
+}
+
+function f21 name="toBooleanOfExpectedString" parameters=[{type=string flags=[IsExpected]}] results=[{type=boolean}] {
+  b0(v0: anything ~ string):
+    v1 = ToBoolean v0
+    Return v1
+# CHECK: [[test0f21]]:{{*}}= TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[test0f21]] -> taken [[fast21]](| 0), notTaken [[failed0f21]](| 0)
+# CHECK-NEXT: [[fast21]]([[narrowed0f21]]: string):
+# CHECK-NEXT: v1: {{*}}= ToBoolean [[narrowed0f21]]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: [[copy21]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic21]]:{{*}}= ToBoolean [[rest21]]
+# CHECK-NEXT: Return [[generic21]]
+# CHECK: [[failed0f21]]([[rest21]]: undefined|null|boolean|number|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy21]]()
+# CHECK-NEXT: }
+}
+
+function f22 name="toBooleanOfExpectedBoolean" parameters=[{type=boolean flags=[IsExpected]}] results=[{type=boolean}] {
+  b0(v0: anything ~ boolean):
+    v1 = ToBoolean v0
+    Return v1
+# CHECK: [[test0f22]]:{{*}}= TypeTest v0 testedType=boolean
+# CHECK-NEXT: Branch [[test0f22]] -> taken [[fast22]](| 0), notTaken [[failed0f22]](| 0)
+# CHECK-NEXT: [[fast22]]([[narrowed0f22]]: boolean):
+# CHECK-NEXT: v1: {{*}}= ToBoolean [[narrowed0f22]]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: [[copy22]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic22]]:{{*}}= ToBoolean [[rest22]]
+# CHECK-NEXT: Return [[generic22]]
+# CHECK: [[failed0f22]]([[rest22]]: undefined|null|number|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy22]]()
+# CHECK-NEXT: }
+}
+
+function f23 name="nothingExpected" parameters=[{type=anything}, {type=anything}] results=[{type=number|bigint}] {
+    v2 = Mul v0, v1
+    Return v2
+# CHECK-NOT: = TypeTest
+# CHECK: v2:{{*}}= Mul v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NOT: = TypeTest
+}
+
+function f24 name="expectedTypeIsEmpty" parameters=[{type=undefined|object}, {type=number}] results=[{type=number|string|bigint}] {
+  b0(v0: undefined|object ~ never, v1: number):
+    v2 = Add v0, v1
+    Return v2
+# CHECK-NOT: = TypeTest
+# CHECK: v2:{{*}}= Add v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NOT: = TypeTest
+}
+
+function f25 name="mixedExpectedType" parameters=[{type=number|string flags=[IsExpected]}, {type=number}] results=[{type=number|string|bigint}] {
+  b0(v0: anything ~ number|string, v1: number):
+    v2 = Add v0, v1
+    Return v2
+# CHECK-NOT: = TypeTest
+# CHECK: v2:{{*}}= Add v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NOT: = TypeTest
+}
+
+function f26 name="subOfExpectedString" parameters=[{type=string flags=[IsExpected]}, {type=number}] results=[{type=number|bigint}] {
+  b0(v0: anything ~ string, v1: number):
+    v2 = Sub v0, v1
+    Return v2
+# CHECK-NOT: = TypeTest
+# CHECK: v2:{{*}}= Sub v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NOT: = TypeTest
+}
+
+function f27 name="strictEqWithProvenString" parameters=[{type=string flags=[IsExpected]}, {type=string}] results=[{type=boolean}] {
+  b0(v0: anything ~ string, v1: string):
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK-NOT: = TypeTest
+# CHECK: v2:{{*}}= StrictEq v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NOT: = TypeTest
+}
+
+function f28 name="strictEqWithProvenInt32" parameters=[{type=i32 flags=[IsExpected]}, {type=i32}] results=[{type=boolean}] {
+  b0(v0: anything ~ i32, v1: i32):
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK-NOT: = TypeTest
+# CHECK: v2:{{*}}= StrictEq v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NOT: = TypeTest
+}
+
+function f29 name="strictEqComparesBitsByType" parameters=[{type=undefined|null|object}, {type=undefined|null|object}] results=[{type=boolean}] {
+  b0(v0: undefined|null|object ~ L0, v1: undefined|null|object ~ L0):
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK-NOT: = TypeTest
+# CHECK: v2:{{*}}= StrictEq v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NOT: = TypeTest
+}
+
+function f30 name="addOfNullableAndProvenString" parameters=[{type=undefined|null|string}, {type=string}] results=[{type=string}] {
+  b0(v0: undefined|null|string ~ string, v1: string):
+    v2 = Add v0, v1
+    Return v2
+# CHECK-NOT: = TypeTest
+# CHECK: v2:{{*}}= Add v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NOT: = TypeTest
+}
+
+function f31 name="toStringOfStringOrNumber" parameters=[{type=number|string}] results=[{type=string}] {
+  b0(v0: number|string ~ i32):
+    v1 = ToString v0
+    Return v1
+# CHECK-NOT: = TypeTest
+# CHECK: v1:{{*}}= ToString v0
+# CHECK-NEXT: Return v1
+# CHECK-NOT: = TypeTest
+}
+
+function f32 name="toBooleanTestedByType" parameters=[{type=undefined|null|string}] results=[{type=boolean}] {
+  b0(v0: undefined|null|string ~ string):
+    v1 = ToBoolean v0
+    Return v1
+# CHECK-NOT: = TypeTest
+# CHECK: v1:{{*}}= ToBoolean v0
+# CHECK-NEXT: Return v1
+# CHECK-NOT: = TypeTest
+}
+
+function f33 name="sharedOperand" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=number|string|bigint}] {
+  b0(v0: anything ~ number, v1: anything ~ number, v2: anything ~ number):
+    v3 = Mul v0, v1
+    v4 = Mul v0, v2
+    v5 = Add v3, v4
+    Return v5
+# CHECK: [[testA33]]:{{*}}= TypeTest v0 testedType=number
+# CHECK-NEXT: Branch [[testA33]] -> taken [[passedA33]](| 0), notTaken
+# CHECK-NEXT: [[passedA33]]([[a33]]: number):
+# CHECK-NEXT: [[testB33]]:{{*}}= TypeTest v1 testedType=number
+# CHECK-NEXT: Branch [[testB33]] -> taken [[passedB33]](| 0), notTaken
+# CHECK-NEXT: [[passedB33]]([[b33]]: number):
+# CHECK-NOT: = TypeTest v0
+# CHECK: : number = Mul [[a33]], [[b33]]
+# CHECK-NEXT: [[testC33]]:{{*}}= TypeTest v2 testedType=number
+# CHECK-NEXT: Branch [[testC33]] -> taken [[passedC33]](| 0), notTaken
+# CHECK-NEXT: [[passedC33]]([[c33]]: number):
+# CHECK-NOT: = TypeTest v0
+# CHECK: : number = Mul [[a33]], [[c33]]
+# CHECK-NOT: = TypeTest v0
+# CHECK: : number = Add
+# CHECK-NOT: = TypeTest v0
+# CHECK: frequency=Unlikely:
+# CHECK: = Mul v0, v1
+# CHECK: = Mul v0, v2
+}
+
+function f34 name="inRareBlock" parameters=[{type=i32 flags=[IsExpected]}, {type=int}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ i32, v1: int, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = Less v0, v1
+    Return v3
+  b2():
+    Return v0
+# CHECK-NOT: = TypeTest
+# CHECK: = Less v0, v1
+# CHECK-NOT: = TypeTest
+}
+
+function f35 name="expectedObjectBesideNumber" parameters=[{type=number}, {type=L0 flags=[IsExpected]}] results=[{type=number|string|bigint}] {
+  b0(v0: number, v1: anything ~ L0):
+    v2 = Add v0, v1
+    Return v2
+# CHECK: [[test35]]:{{*}}= TypeTest v1 testedType=number
+# CHECK-NEXT: Branch [[test35]] -> taken [[passed35]](| 0), notTaken
+# CHECK: [[passed35]]([[narrowed35]]: number):
+# CHECK: v2: number = Add v0, [[narrowed35]]
+}
+
+function f36 name="expectedObjectBesideExpectedNumber" parameters=[{type=number flags=[IsExpected]}, {type=L0 flags=[IsExpected]}] results=[{type=number|string|bigint}] {
+  b0(v0: anything ~ number, v1: anything ~ L0):
+    v2 = Add v0, v1
+    Return v2
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: v2: number = Add
+# CHECK: = TypeTest v1 testedType=number
+}
+
+function f37 name="expectedObjectBesideUnknown" parameters=[{type=anything}, {type=L0 flags=[IsExpected]}] results=[{type=number|string|bigint}] {
+  b0(v0: anything, v1: anything ~ L0):
+    v2 = Add v0, v1
+    Return v2
+# CHECK-NOT: = TypeTest
+# CHECK: = Add v0, v1
+# CHECK-NOT: = TypeTest
+}

@@ -26,6 +26,8 @@
 #import "config.h"
 #import "SandboxInitializationParameters.h"
 
+#import <wtf/Borrow.h>
+
 namespace WebKit {
 
 SandboxInitializationParameters::SandboxInitializationParameters()
@@ -42,7 +44,7 @@ void SandboxInitializationParameters::appendPathInternal(ASCIILiteral name, cons
         normalizedPath[0] = '\0';
 
     m_parameterNames.append(name);
-    m_parameterValues.append(normalizedPath.data());
+    m_parameterValues.append(UTF8CString::unsafeFromUTF8(normalizedPath.data()));
 }
 
 void SandboxInitializationParameters::addConfDirectoryParameter(ASCIILiteral name, int confID)
@@ -59,12 +61,12 @@ void SandboxInitializationParameters::addPathParameter(ASCIILiteral name, NSStri
     appendPathInternal(name, [path length] ? [path fileSystemRepresentation] : "");
 }
 
-void SandboxInitializationParameters::addPathParameter(ASCIILiteral name, const char* path)
+void SandboxInitializationParameters::addPathParameter(ASCIILiteral name, UTF8CStringView path)
 {
-    appendPathInternal(name, path);
+    appendPathInternal(name, path.utf8());
 }
 
-void SandboxInitializationParameters::addParameter(ASCIILiteral name, CString&& value)
+void SandboxInitializationParameters::addParameter(ASCIILiteral name, UTF8CString&& value)
 {
     m_parameterNames.append(name);
     m_parameterValues.append(WTF::move(value));
@@ -75,9 +77,11 @@ Vector<const char*> SandboxInitializationParameters::namedParameterVector() cons
     Vector<const char*> result;
     result.reserveInitialCapacity(m_parameterNames.size() * 2 + 1);
     ASSERT(m_parameterNames.size() == m_parameterValues.size());
+    Borrow borrowedNames = m_parameterNames;
+    Borrow borrowedValues = m_parameterValues;
     for (size_t i = 0; i < m_parameterNames.size(); ++i) {
-        result.append(m_parameterNames[i]);
-        result.append(m_parameterValues[i].data());
+        result.append(borrowedNames[i]);
+        result.append(borrowedValues[i].legacyCStringPointer());
     }
     result.append(nullptr);
     return result;
@@ -95,7 +99,7 @@ ASCIILiteral SandboxInitializationParameters::name(size_t index) const
 
 const char* SandboxInitializationParameters::value(size_t index) const
 {
-    return m_parameterValues[index].data();
+    return m_parameterValues[index].legacyCStringPointer();
 }
 
 } // namespace WebKit

@@ -1,0 +1,25 @@
+# table = { list: [1, { deep: "x" }], name: "n" } as one constant;  table.list[1].run = one;  table.list[1].run();  table.name.run
+# The objects and arrays of a constant are objects like any other: what is stored on one of them is found there.
+# RUN: valueflow-solve calls
+# CHECK: f0 v8 -> f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Table" fields=[{key="list" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Deep" fields=[{key="deep" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Data data=d0
+    v1 = PropGet v0 key="list"
+    v2 = Integer integer=1
+    v3 = ElemGet v1, v2
+    v4 = NewClosure function=f1
+    PropSet v3, v4 key="run" mode=Strict
+    v6 = ElemGet v1, v2
+    v7 = PropGet v6 key="run"
+    v8 = Call v7, v6
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}
+data d0 root=Object{layout=L0 members=[{key="list" value=Array{contents=anything elements=[Number{value=1}, Object{layout=L1 members=[{key="deep" value=String{value="x"}}]}]}}, {key="name" value=String{value="n"}}]} module=m0

@@ -1,0 +1,13 @@
+# what the host reads from an entry: an export, passed on as an argument that a call of the built-in declares
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidEntry 3
+
+module m0 path="good" displayPath="good"
+module m1 path="badParameterWithoutBuiltin" displayPath="badParameterWithoutBuiltin"
+module m2 path="badParameterPastOverloads" displayPath="badParameterPastOverloads"
+module m3 path="badBuiltinIsNotCalled" displayPath="badBuiltinIsNotCalled"
+entry module=m0 hostReads=[{exportName="a"}, {exportName="b" builtin=MathAbs}, {exportName="c" builtin=MathAtan2 parameter=1}]
+entry module=m1 hostReads=[{exportName="a" parameter=1}]
+entry module=m2 hostReads=[{exportName="a" builtin=MathAbs parameter=1}]
+entry module=m3 hostReads=[{exportName="a" builtin=MathPI}]

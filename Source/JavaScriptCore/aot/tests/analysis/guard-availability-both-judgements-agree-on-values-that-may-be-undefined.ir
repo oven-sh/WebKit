@@ -1,0 +1,47 @@
+# The judgement by definitions and the judgement by objects agree on values that may both be undefined
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: guards points uses summaries
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="A" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1 name="B" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}, {key="z" declared={type=anything}}]
+
+function f0 name="calleeWritesObjectOfAnotherLayout" parameters=[{type=undefined|null|L0}, {type=undefined|null|L1}, {type=anything}] results=[{type=anything}] {
+    v3 = RequireObjectCoercible v0 name="x"
+    v4 = HasKeyOrder v3 layout=L0 fields=[0]
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = CallDirect v1, v2 function=f2
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: b1:0 available: [v5]
+# CHECK-NEXT: b1:1 available: [v5]
+
+function f1 name="calleeWritesObjectOfTheSameLayout" parameters=[{type=undefined|null|L0}, {type=undefined|null|L0}, {type=anything}] results=[{type=anything}] {
+    v3 = RequireObjectCoercible v0 name="x"
+    v4 = HasKeyOrder v3 layout=L0 fields=[0]
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = CallDirect v1, v2 function=f3
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: b1:0 available: [v5]
+# CHECK-NEXT: b1:1 available: []
+
+function f2 name="addsFieldToB" parameters=[{type=undefined|null|L1}, {type=anything}] results=[{type=undefined}] {
+    v2 = RequireObjectCoercible v0 name="y"
+    PutSlotOrAdd v2, -, v1 key="y" receivers=[L1] level=Proven
+    Return
+}
+function f3 name="addsFieldToA" parameters=[{type=undefined|null|L0}, {type=anything}] results=[{type=undefined}] {
+    v2 = RequireObjectCoercible v0 name="y"
+    PutSlotOrAdd v2, -, v1 key="y" receivers=[L0] level=Proven
+    Return
+}

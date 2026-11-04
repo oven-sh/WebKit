@@ -55,6 +55,7 @@
 #include "LocalFrameLoaderClient.h"
 #include "NodeName.h"
 #include "NotImplemented.h"
+#include "ProcessingInstruction.h"
 #include "SVGElementInlines.h"
 #include "Settings.h"
 #include "ShadowRoot.h"
@@ -84,7 +85,7 @@ static inline void setAttributes(Element& element, AtomHTMLToken& token, OptionS
     setAttributes(element, token.attributes(), token.hasDuplicateAttribute() ? HasDuplicateAttribute::Yes : HasDuplicateAttribute::No, parserContentPolicy);
 }
 
-static bool NODELETE hasImpliedEndTag(const HTMLStackItem& item)
+static bool LEGACY_NODELETE hasImpliedEndTag(const HTMLStackItem& item)
 {
     switch (item.elementName()) {
     case HTML::dd:
@@ -103,7 +104,7 @@ static bool NODELETE hasImpliedEndTag(const HTMLStackItem& item)
     }
 }
 
-static bool NODELETE shouldUseLengthLimit(const ContainerNode& node)
+static bool LEGACY_NODELETE shouldUseLengthLimit(const ContainerNode& node)
 {
     auto* element = dynamicDowncast<Element>(node);
     if (!element)
@@ -119,7 +120,7 @@ static bool NODELETE shouldUseLengthLimit(const ContainerNode& node)
     }
 }
 
-static inline bool NODELETE causesFosterParenting(const HTMLStackItem& item)
+static inline bool LEGACY_NODELETE causesFosterParenting(const HTMLStackItem& item)
 {
     switch (item.elementName()) {
     case HTML::table:
@@ -515,6 +516,26 @@ void HTMLConstructionSite::insertDoctype(AtomHTMLToken&& token)
         setCompatibilityMode(DocumentCompatibilityMode::QuirksMode);
     else
         setCompatibilityModeFromDoctype(token.name(), publicId, systemId);
+}
+
+void HTMLConstructionSite::insertProcessingInstruction(AtomHTMLToken&& token)
+{
+    ASSERT(token.type() == HTMLToken::Type::ProcessingInstruction);
+    attachLater(protect(currentNode()), ProcessingInstruction::create(protect(ownerDocumentForCurrentNode()), token.processingInstructionTarget(), token.processingInstructionData()));
+}
+
+void HTMLConstructionSite::insertProcessingInstructionOnDocument(AtomHTMLToken&& token)
+{
+    ASSERT(token.type() == HTMLToken::Type::ProcessingInstruction);
+    attachLater(protect(m_attachmentRoot), ProcessingInstruction::create(protect(m_document), token.processingInstructionTarget(), token.processingInstructionData()));
+}
+
+void HTMLConstructionSite::insertProcessingInstructionOnHTMLHtmlElement(AtomHTMLToken&& token)
+{
+    ASSERT(token.type() == HTMLToken::Type::ProcessingInstruction);
+    Ref root = m_openElements.rootNode();
+    Ref rootDocument = root->document();
+    attachLater(WTF::move(root), ProcessingInstruction::create(rootDocument, token.processingInstructionTarget(), token.processingInstructionData()));
 }
 
 void HTMLConstructionSite::insertComment(AtomHTMLToken&& token)

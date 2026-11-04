@@ -58,6 +58,7 @@ struct OpInfo {
     explicit OpInfo(ECMAMode ecmaMode) : m_value(ecmaMode.value()) { }
     explicit OpInfo(JSTypeRange range)
         : m_value(range.rawValue()) { }
+    explicit OpInfo(JSType) = delete;
     explicit OpInfo(PrivateFieldPutKind putKind) : m_value(putKind.value()) { }
     template<typename EnumType>
     explicit OpInfo(OptionSet<EnumType> optionSet) : m_value(optionSet.toRaw()) { }
@@ -65,8 +66,8 @@ struct OpInfo {
     template <typename T>
     explicit OpInfo(T* ptr)
     {
-        static_assert(!std::is_base_of<HeapCell, T>::value, "To make an OpInfo with a cell in it, the cell must be registered or frozen.");
-        static_assert(!std::is_base_of<StructureSet, T>::value, "To make an OpInfo with a structure set in, make sure to use RegisteredStructureSet.");
+        static_assert(!std::derived_from<T, HeapCell>, "To make an OpInfo with a cell in it, the cell must be registered or frozen.");
+        static_assert(!std::derived_from<T, StructureSet>, "To make an OpInfo with a structure set in, make sure to use RegisteredStructureSet.");
         m_value = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(ptr));
     }
 

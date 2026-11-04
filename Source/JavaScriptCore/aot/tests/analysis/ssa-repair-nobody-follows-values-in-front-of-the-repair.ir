@@ -1,0 +1,18 @@
+# From the second definition that a repair is given until it has run, a use may name a value that does not reach it: nobody asks then what a value is handed through block parameters
+# FORM: Prepared
+# RUN: repair function=f0 variable=v3,v6 asksFirst=v3
+# DIAGNOSTIC: QuestionBeforeRepair
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="liveAtHeader" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    v3 = Add v1, v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = Mul v3, v3
+    v6 = Sub v5, v2
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    v7 = Negate v3
+    Return v7
+}

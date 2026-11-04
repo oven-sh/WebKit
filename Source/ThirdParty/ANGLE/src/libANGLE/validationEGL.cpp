@@ -173,7 +173,7 @@ bool ValidateCreateImageMipLevelCommon(const ValidationContext *val,
 }
 
 bool ValidateConfigAttribute(const ValidationContext *val,
-                             const Display *display,
+                             const ThreadSafeDisplay *display,
                              EGLAttrib attribute)
 {
     switch (attribute)
@@ -1178,7 +1178,7 @@ bool ValidateGetPlatformDisplayCommon(const ValidationContext *val,
     return true;
 }
 
-bool ValidateDisplay(const ValidationContext *val, const Display *display)
+bool ValidateDisplay(const ValidationContext *val, const ThreadSafeDisplay *display)
 {
     if (display == nullptr)
     {
@@ -1188,9 +1188,8 @@ bool ValidateDisplay(const ValidationContext *val, const Display *display)
         }
         return false;
     }
-    ASSERT(Display::isValidDisplay(display));
 
-    if (!display->isInitialized())
+    if (!display->isInitializedAndNotTerminating())
     {
         if (val)
         {
@@ -1285,10 +1284,11 @@ bool ValidateLabeledObject(const ValidationContext *val,
 
         case ObjectType::Surface:
         {
-            EGLSurface surface  = static_cast<EGLSurface>(object);
-            SurfaceID surfaceID = PackParam<SurfaceID>(surface);
-            ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
-            *outLabeledObject = display->getSurface(surfaceID);
+            EGLSurface surface          = static_cast<EGLSurface>(object);
+            SurfaceID surfaceID         = PackParam<SurfaceID>(surface);
+            ScopedSurfaceRef surfaceRef = display->getSurfaceRef(surfaceID);
+            ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceRef.get()));
+            *outLabeledObject = surfaceRef.get();
             break;
         }
 
@@ -1486,18 +1486,25 @@ bool ValidateSurfaceBadAccess(const ValidationContext *val,
                               const gl::Context *previousContext,
                               const Surface *surface)
 {
-    if (surface->isReferenced() &&
+    if (surface->isCurrentOnAnyContext() &&
         (previousContext == nullptr || (surface != previousContext->getCurrentDrawSurface() &&
                                         surface != previousContext->getCurrentReadSurface())))
     {
         val->setError(EGL_BAD_ACCESS, "Surface can only be current on one thread");
         return false;
     }
+
+    if (surface->isLocked())
+    {
+        val->setError(EGL_BAD_ACCESS, "<surface> is locked");
+        return false;
+    }
+
     return true;
 }
 
 bool ValidateSyncAttribute(const ValidationContext *val,
-                           const Display *display,
+                           const ThreadSafeDisplay *display,
                            EGLAttrib attribute)
 {
     switch (attribute)
@@ -1518,7 +1525,7 @@ bool ValidateSyncAttribute(const ValidationContext *val,
 }
 
 bool ValidateCreateSyncBase(const ValidationContext *val,
-                            const Display *display,
+                            const ThreadSafeDisplay *display,
                             EGLenum type,
                             const AttributeMap &attribs,
                             bool isExt)
@@ -1739,7 +1746,7 @@ bool ValidateCreateSyncBase(const ValidationContext *val,
 }
 
 bool ValidateGetSyncAttribBase(const ValidationContext *val,
-                               const Display *display,
+                               const ThreadSafeDisplay *display,
                                const Sync *sync,
                                EGLint attribute)
 {
@@ -1811,7 +1818,7 @@ bool ValidateQueryDisplayAttribBase(const ValidationContext *val,
 }
 
 bool ValidateCreateContextAttribute(const ValidationContext *val,
-                                    const Display *display,
+                                    const ThreadSafeDisplay *display,
                                     EGLAttrib attribute)
 {
     switch (attribute)
@@ -2344,7 +2351,7 @@ bool ValidateCreateContextAttributeValue(const ValidationContext *val,
 }
 
 bool ValidateCreatePbufferSurfaceAttribute(const ValidationContext *val,
-                                           const Display *display,
+                                           const ThreadSafeDisplay *display,
                                            EGLAttrib attribute)
 {
     const DisplayExtensions &displayExtensions = display->getExtensions();
@@ -2516,11 +2523,11 @@ void ValidationContext::setError(EGLint error, const char *message...) const
     eglThread->setError(error, entryPoint, labeledObject, buffer);
 }
 
-bool ValidateSurface(const ValidationContext *val, const Display *display, SurfaceID surfaceID)
+bool ValidateSurface(const ValidationContext *val, const Display *display, const Surface *surface)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
 
-    if (!display->isValidSurface(surfaceID))
+    if (!surface)
     {
         if (val)
         {
@@ -2549,7 +2556,7 @@ bool ValidateConfig(const ValidationContext *val, const Display *display, const 
 }
 
 bool ValidateThreadContext(const ValidationContext *val,
-                           const Display *display,
+                           const ThreadSafeDisplay *display,
                            EGLenum noContextError)
 {
     ASSERT(val);
@@ -2619,7 +2626,7 @@ bool ValidateDevice(const ValidationContext *val, const Device *device)
     return true;
 }
 
-bool ValidateSync(const ValidationContext *val, const Display *display, const Sync *sync)
+bool ValidateSync(const ValidationContext *val, const ThreadSafeDisplay *display, const Sync *sync)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
 
@@ -2847,30 +2854,48 @@ ScopedDisplayRef GetDisplayIfValid(Display *display)
     return ScopedDisplayRef(*display);
 }
 
-ScopedConstDisplayRefAndLock GetDisplayAndLockIfValid(const Display *display)
+ScopedThreadSafeDisplayRef GetThreadSafeDisplayIfValid(ThreadSafeDisplay *display)
+{
+    if (!ValidateDisplayPointer(nullptr, static_cast<const Display *>(display)))
+    {
+        return ScopedThreadSafeDisplayRef();
+    }
+
+    return ScopedThreadSafeDisplayRef(*display);
+}
+
+ScopedConstDisplayLockAndRef GetDisplayAndLockIfValid(const Display *display)
 {
     if (!ValidateDisplayPointer(nullptr, display))
     {
-        return ScopedConstDisplayRefAndLock();
+        return ScopedConstDisplayLockAndRef();
     }
 
-    return ScopedConstDisplayRefAndLock(*display);
+    return ScopedConstDisplayLockAndRef(*display);
 }
 
-ScopedDisplayRefAndLock GetDisplayAndLockIfValid(Display *display)
+ScopedDisplayLockAndRef GetDisplayAndLockIfValid(Display *display)
 {
     if (!ValidateDisplayPointer(nullptr, display))
     {
-        return ScopedDisplayRefAndLock();
+        return ScopedDisplayLockAndRef();
     }
 
-    return ScopedDisplayRefAndLock(*display);
+    return ScopedDisplayLockAndRef(*display);
 }
 
-const Surface *GetSurfaceIfValid(const Display *display, SurfaceID surfaceID)
+ScopedSurfaceRef GetSurfaceRefIfValid(const Display *display, SurfaceID surfaceID)
+{
+    // display->getSurfaceRef() - validates surfaceID
+    return ValidateDisplay(nullptr, display) ? display->getSurfaceRef(surfaceID)
+                                             : ScopedSurfaceRef();
+}
+
+ScopedSurfaceLockAndRef GetSurfaceIfValid(const Display *display, SurfaceID surfaceID)
 {
     // display->getSurface() - validates surfaceID
-    return ValidateDisplay(nullptr, display) ? display->getSurface(surfaceID) : nullptr;
+    return ValidateDisplay(nullptr, display) ? display->getSurface(surfaceID)
+                                             : ScopedSurfaceLockAndRef();
 }
 
 const Image *GetImageIfValid(const Display *display, ImageID imageID)
@@ -2900,7 +2925,7 @@ const Device *GetDeviceIfValid(const Device *device)
     return ValidateDevice(nullptr, device) ? device : nullptr;
 }
 
-ScopedSyncRef GetSyncIfValid(const Display *display, SyncID syncID)
+ScopedSyncRef GetSyncIfValid(const ThreadSafeDisplay *display, SyncID syncID)
 {
     // display->getSync() - validates syncID
     return ValidateDisplay(nullptr, display) ? display->getSync(syncID) : ScopedSyncRef();
@@ -3283,11 +3308,10 @@ bool ValidateCreatePbufferFromClientBuffer(const ValidationContext *val,
             return false;
     }
 
-    for (AttributeMap::const_iterator attributeIter = attributes.begin();
-         attributeIter != attributes.end(); attributeIter++)
+    for (const auto &attrib : attributes)
     {
-        EGLAttrib attribute = attributeIter->first;
-        EGLAttrib value     = attributeIter->second;
+        EGLAttrib attribute = attrib.first;
+        EGLAttrib value     = attrib.second;
 
         switch (attribute)
         {
@@ -3634,7 +3658,9 @@ bool ValidateCreatePixmapSurface(const ValidationContext *val,
 bool ValidateMakeCurrent(const ValidationContext *val,
                          const Display *display,
                          SurfaceID drawSurfaceID,
+                         const Surface *drawSurface,
                          SurfaceID readSurfaceID,
+                         const Surface *readSurface,
                          gl::ContextID contextID)
 {
     bool noDraw    = drawSurfaceID.value == 0;
@@ -3685,7 +3711,7 @@ bool ValidateMakeCurrent(const ValidationContext *val,
     }
 
     // EGL 1.5 spec: dpy can be uninitialized if all other parameters are null
-    if (!display->isInitialized() && (!noContext || !noDraw || !noRead))
+    if (!display->isInitializedAndNotTerminating() && (!noContext || !noDraw || !noRead))
     {
         val->setError(EGL_NOT_INITIALIZED, "<display> not initialized");
         return false;
@@ -3699,14 +3725,12 @@ bool ValidateMakeCurrent(const ValidationContext *val,
     // Allow "un-make" the lost context:
     // If the context is lost, but EGLContext passed to eglMakeCurrent is EGL_NO_CONTEXT, we should
     // not return EGL_CONTEXT_LOST error code.
-    if (display->isInitialized() && display->isDeviceLost() && !noContext)
+    if (display->isInitializedAndNotTerminating() && display->isDeviceLost() && !noContext)
     {
         val->setError(EGL_CONTEXT_LOST, "Context was lost");
         return false;
     }
 
-    const Surface *drawSurface = GetSurfaceIfValid(display, drawSurfaceID);
-    const Surface *readSurface = GetSurfaceIfValid(display, readSurfaceID);
     const gl::Context *context = GetContextIfValid(display, contextID);
 
     const gl::Context *previousContext = val->eglThread->getContext();
@@ -3718,14 +3742,14 @@ bool ValidateMakeCurrent(const ValidationContext *val,
 
     if (!noRead)
     {
-        ANGLE_VALIDATION_TRY(ValidateSurface(val, display, readSurfaceID));
+        ANGLE_VALIDATION_TRY(ValidateSurface(val, display, readSurface));
         ANGLE_VALIDATION_TRY(ValidateCompatibleSurface(val, display, context, readSurface));
         ANGLE_VALIDATION_TRY(ValidateSurfaceBadAccess(val, previousContext, readSurface));
     }
 
     if (drawSurface != readSurface && !noDraw)
     {
-        ANGLE_VALIDATION_TRY(ValidateSurface(val, display, drawSurfaceID));
+        ANGLE_VALIDATION_TRY(ValidateSurface(val, display, drawSurface));
         ANGLE_VALIDATION_TRY(ValidateCompatibleSurface(val, display, context, drawSurface));
         ANGLE_VALIDATION_TRY(ValidateSurfaceBadAccess(val, previousContext, drawSurface));
     }
@@ -3751,11 +3775,10 @@ bool ValidateCreateImage(const ValidationContext *val,
     // If the resource specified by <dpy>, <ctx>, <target>, <buffer> and <attrib_list> is itself an
     // EGLImage sibling, the error EGL_BAD_ACCESS is generated.
 
-    for (AttributeMap::const_iterator attributeIter = attributes.begin();
-         attributeIter != attributes.end(); attributeIter++)
+    for (const auto &attrib : attributes)
     {
-        EGLAttrib attribute = attributeIter->first;
-        EGLAttrib value     = attributeIter->second;
+        EGLAttrib attribute = attrib.first;
+        EGLAttrib value     = attrib.second;
 
         switch (attribute)
         {
@@ -4619,7 +4642,7 @@ bool ValidateReleaseDeviceANGLE(const ValidationContext *val, const Device *devi
 }
 
 bool ValidateCreateSync(const ValidationContext *val,
-                        const Display *display,
+                        const ThreadSafeDisplay *display,
                         EGLenum type,
                         const AttributeMap &attribs)
 {
@@ -4627,28 +4650,30 @@ bool ValidateCreateSync(const ValidationContext *val,
 }
 
 bool ValidateCreateSyncKHR(const ValidationContext *val,
-                           const Display *display,
+                           const ThreadSafeDisplay *display,
                            EGLenum type,
                            const AttributeMap &attribs)
 {
     return ValidateCreateSyncBase(val, display, type, attribs, true);
 }
 
-bool ValidateDestroySync(const ValidationContext *val, const Display *display, const Sync *sync)
+bool ValidateDestroySync(const ValidationContext *val,
+                         const ThreadSafeDisplay *display,
+                         const Sync *sync)
 {
     ANGLE_VALIDATION_TRY(ValidateSync(val, display, sync));
     return true;
 }
 
 bool ValidateDestroySyncKHR(const ValidationContext *val,
-                            const Display *dpyPacked,
+                            const ThreadSafeDisplay *dpyPacked,
                             const Sync *syncPacked)
 {
     return ValidateDestroySync(val, dpyPacked, syncPacked);
 }
 
 bool ValidateClientWaitSync(const ValidationContext *val,
-                            const Display *display,
+                            const ThreadSafeDisplay *display,
                             const Sync *sync,
                             EGLint flags,
                             EGLTime timeout)
@@ -4658,7 +4683,7 @@ bool ValidateClientWaitSync(const ValidationContext *val,
 }
 
 bool ValidateClientWaitSyncKHR(const ValidationContext *val,
-                               const Display *dpyPacked,
+                               const ThreadSafeDisplay *dpyPacked,
                                const Sync *syncPacked,
                                EGLint flags,
                                EGLTimeKHR timeout)
@@ -4667,7 +4692,7 @@ bool ValidateClientWaitSyncKHR(const ValidationContext *val,
 }
 
 bool ValidateWaitSync(const ValidationContext *val,
-                      const Display *display,
+                      const ThreadSafeDisplay *display,
                       const Sync *sync,
                       EGLint flags)
 {
@@ -4702,7 +4727,7 @@ bool ValidateWaitSync(const ValidationContext *val,
 }
 
 bool ValidateWaitSyncKHR(const ValidationContext *val,
-                         const Display *dpyPacked,
+                         const ThreadSafeDisplay *dpyPacked,
                          const Sync *syncPacked,
                          EGLint flags)
 {
@@ -4710,7 +4735,7 @@ bool ValidateWaitSyncKHR(const ValidationContext *val,
 }
 
 bool ValidateGetSyncAttrib(const ValidationContext *val,
-                           const Display *display,
+                           const ThreadSafeDisplay *display,
                            const Sync *sync,
                            EGLint attribute,
                            const EGLAttrib *value)
@@ -4724,7 +4749,7 @@ bool ValidateGetSyncAttrib(const ValidationContext *val,
 }
 
 bool ValidateGetSyncAttribKHR(const ValidationContext *val,
-                              const Display *display,
+                              const ThreadSafeDisplay *display,
                               const Sync *sync,
                               EGLint attribute,
                               const EGLint *value)
@@ -5274,9 +5299,9 @@ bool ValidateStreamPostD3DTextureANGLE(const ValidationContext *val,
 
 bool ValidateSyncControlCHROMIUM(const ValidationContext *val,
                                  const Display *display,
-                                 SurfaceID surfaceID)
+                                 const Surface *surface)
 {
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     const DisplayExtensions &displayExtensions = display->getExtensions();
     if (!displayExtensions.syncControlCHROMIUM)
@@ -5290,9 +5315,9 @@ bool ValidateSyncControlCHROMIUM(const ValidationContext *val,
 
 bool ValidateSyncControlRateANGLE(const ValidationContext *val,
                                   const Display *display,
-                                  SurfaceID surfaceID)
+                                  const Surface *surface)
 {
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     const DisplayExtensions &displayExtensions = display->getExtensions();
     if (!displayExtensions.syncControlRateANGLE)
@@ -5306,11 +5331,11 @@ bool ValidateSyncControlRateANGLE(const ValidationContext *val,
 
 bool ValidateGetMscRateANGLE(const ValidationContext *val,
                              const Display *display,
-                             SurfaceID surfaceID,
+                             const Surface *surface,
                              const EGLint *numerator,
                              const EGLint *denominator)
 {
-    ANGLE_VALIDATION_TRY(ValidateSyncControlRateANGLE(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSyncControlRateANGLE(val, display, surface));
 
     if (numerator == nullptr)
     {
@@ -5328,12 +5353,12 @@ bool ValidateGetMscRateANGLE(const ValidationContext *val,
 
 bool ValidateGetSyncValuesCHROMIUM(const ValidationContext *val,
                                    const Display *display,
-                                   SurfaceID surfaceID,
+                                   const Surface *surface,
                                    const EGLuint64KHR *ust,
                                    const EGLuint64KHR *msc,
                                    const EGLuint64KHR *sbc)
 {
-    ANGLE_VALIDATION_TRY(ValidateSyncControlCHROMIUM(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSyncControlCHROMIUM(val, display, surface));
 
     if (ust == nullptr)
     {
@@ -5356,9 +5381,9 @@ bool ValidateGetSyncValuesCHROMIUM(const ValidationContext *val,
 
 bool ValidateDestroySurface(const ValidationContext *val,
                             const Display *display,
-                            SurfaceID surfaceID)
+                            const Surface *surface)
 {
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
     return true;
 }
 
@@ -5370,9 +5395,11 @@ bool ValidateDestroyContext(const ValidationContext *val,
     return true;
 }
 
-bool ValidateSwapBuffers(const ValidationContext *val, const Display *display, SurfaceID surfaceID)
+bool ValidateSwapBuffers(const ValidationContext *val,
+                         const Display *display,
+                         const Surface *eglSurface)
 {
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, eglSurface));
 
     if (display->isDeviceLost())
     {
@@ -5380,7 +5407,6 @@ bool ValidateSwapBuffers(const ValidationContext *val, const Display *display, S
         return false;
     }
 
-    const Surface *eglSurface = display->getSurface(surfaceID);
     if (eglSurface->isLocked())
     {
         val->setError(EGL_BAD_ACCESS, "<surface> is locked");
@@ -5399,11 +5425,11 @@ bool ValidateSwapBuffers(const ValidationContext *val, const Display *display, S
 
 bool ValidateSwapBuffersWithDamageKHR(const ValidationContext *val,
                                       const Display *display,
-                                      SurfaceID surfaceID,
+                                      const Surface *surface,
                                       const EGLint *rects,
                                       EGLint n_rects)
 {
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     if (!display->getExtensions().swapBuffersWithDamage)
     {
@@ -5413,7 +5439,6 @@ bool ValidateSwapBuffersWithDamageKHR(const ValidationContext *val,
         return false;
     }
 
-    const Surface *surface = display->getSurface(surfaceID);
     if (surface == nullptr)
     {
         val->setError(EGL_BAD_SURFACE, "Swap surface cannot be EGL_NO_SURFACE.");
@@ -5465,10 +5490,10 @@ bool ValidateWaitNative(const ValidationContext *val, const EGLint engine)
 
 bool ValidateCopyBuffers(const ValidationContext *val,
                          const Display *display,
-                         SurfaceID surfaceID,
+                         const Surface *surface,
                          EGLNativePixmapType target)
 {
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     if (display->isDeviceLost())
     {
@@ -5481,10 +5506,10 @@ bool ValidateCopyBuffers(const ValidationContext *val,
 
 bool ValidateBindTexImage(const ValidationContext *val,
                           const Display *display,
-                          SurfaceID surfaceID,
+                          const Surface *surface,
                           const EGLint buffer)
 {
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     if (buffer != EGL_BACK_BUFFER)
     {
@@ -5492,7 +5517,6 @@ bool ValidateBindTexImage(const ValidationContext *val,
         return false;
     }
 
-    const Surface *surface = display->getSurface(surfaceID);
     if (surface->getType() == EGL_WINDOW_BIT)
     {
         val->setError(EGL_BAD_SURFACE, "<surface> does not support texture binding");
@@ -5536,10 +5560,10 @@ bool ValidateBindTexImage(const ValidationContext *val,
 
 bool ValidateReleaseTexImage(const ValidationContext *val,
                              const Display *display,
-                             SurfaceID surfaceID,
+                             const Surface *surface,
                              const EGLint buffer)
 {
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     if (buffer != EGL_BACK_BUFFER)
     {
@@ -5547,7 +5571,6 @@ bool ValidateReleaseTexImage(const ValidationContext *val,
         return false;
     }
 
-    const Surface *surface = display->getSurface(surfaceID);
     if (surface->getType() == EGL_WINDOW_BIT)
     {
         val->setError(EGL_BAD_SURFACE, "<surface> does not support texture binding");
@@ -5563,11 +5586,13 @@ bool ValidateReleaseTexImage(const ValidationContext *val,
     return true;
 }
 
-bool ValidateSwapInterval(const ValidationContext *val, const Display *display, EGLint interval)
+bool ValidateSwapInterval(const ValidationContext *val,
+                          const Display *display,
+                          const Surface *drawSurface,
+                          EGLint interval)
 {
     ANGLE_VALIDATION_TRY(ValidateThreadContext(val, display, EGL_BAD_CONTEXT));
 
-    Surface *drawSurface = val->eglThread->getCurrentDrawSurface();
     if (drawSurface == nullptr)
     {
         val->setError(EGL_BAD_SURFACE, "Current EGLSurface is null");
@@ -5596,7 +5621,7 @@ bool ValidateBindAPI(const ValidationContext *val, const EGLenum api)
 
 bool ValidatePresentationTimeANDROID(const ValidationContext *val,
                                      const Display *display,
-                                     SurfaceID surfaceID,
+                                     const Surface *surface,
                                      EGLnsecsANDROID time)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
@@ -5609,7 +5634,7 @@ bool ValidatePresentationTimeANDROID(const ValidationContext *val,
         return false;
     }
 
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     return true;
 }
@@ -5922,14 +5947,13 @@ bool ValidateProgramCacheResizeANGLE(const ValidationContext *val,
 
 bool ValidateSurfaceAttrib(const ValidationContext *val,
                            const Display *display,
-                           SurfaceID surfaceID,
+                           const Surface *surface,
                            EGLint attribute,
                            EGLint value)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
-    const Surface *surface = display->getSurface(surfaceID);
     if (surface == EGL_NO_SURFACE)
     {
         val->setError(EGL_BAD_SURFACE, "Surface cannot be EGL_NO_SURFACE.");
@@ -6080,14 +6104,13 @@ bool ValidateSurfaceAttrib(const ValidationContext *val,
 
 bool ValidateQuerySurface(const ValidationContext *val,
                           const Display *display,
-                          SurfaceID surfaceID,
+                          const Surface *surface,
                           EGLint attribute,
                           const EGLint *value)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
-    const Surface *surface = display->getSurface(surfaceID);
     if (surface == EGL_NO_SURFACE)
     {
         val->setError(EGL_BAD_SURFACE, "Surface cannot be EGL_NO_SURFACE.");
@@ -6384,7 +6407,7 @@ bool ValidateLabelObjectKHR(const ValidationContext *val,
 
 bool ValidateGetCompositorTimingSupportedANDROID(const ValidationContext *val,
                                                  const Display *display,
-                                                 SurfaceID surfaceID,
+                                                 const Surface *surface,
                                                  CompositorTiming name)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
@@ -6396,7 +6419,7 @@ bool ValidateGetCompositorTimingSupportedANDROID(const ValidationContext *val,
         return false;
     }
 
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     if (!ValidCompositorTimingName(name))
     {
@@ -6409,7 +6432,7 @@ bool ValidateGetCompositorTimingSupportedANDROID(const ValidationContext *val,
 
 bool ValidateGetCompositorTimingANDROID(const ValidationContext *val,
                                         const Display *display,
-                                        SurfaceID surfaceID,
+                                        const Surface *surface,
                                         EGLint numTimestamps,
                                         const EGLint *names,
                                         const EGLnsecsANDROID *values)
@@ -6423,7 +6446,7 @@ bool ValidateGetCompositorTimingANDROID(const ValidationContext *val,
         return false;
     }
 
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     if (names == nullptr && numTimestamps > 0)
     {
@@ -6453,7 +6476,6 @@ bool ValidateGetCompositorTimingANDROID(const ValidationContext *val,
             return false;
         }
 
-        const Surface *surface = display->getSurface(surfaceID);
         if (!surface->getSupportedCompositorTimings().test(name))
         {
             val->setError(EGL_BAD_PARAMETER, "compositor timing not supported by surface.");
@@ -6466,7 +6488,7 @@ bool ValidateGetCompositorTimingANDROID(const ValidationContext *val,
 
 bool ValidateGetNextFrameIdANDROID(const ValidationContext *val,
                                    const Display *display,
-                                   SurfaceID surfaceID,
+                                   const Surface *surface,
                                    const EGLuint64KHR *frameId)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
@@ -6478,7 +6500,7 @@ bool ValidateGetNextFrameIdANDROID(const ValidationContext *val,
         return false;
     }
 
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     if (frameId == nullptr)
     {
@@ -6491,7 +6513,7 @@ bool ValidateGetNextFrameIdANDROID(const ValidationContext *val,
 
 bool ValidateGetFrameTimestampSupportedANDROID(const ValidationContext *val,
                                                const Display *display,
-                                               SurfaceID surfaceID,
+                                               const Surface *surface,
                                                Timestamp timestamp)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
@@ -6503,7 +6525,7 @@ bool ValidateGetFrameTimestampSupportedANDROID(const ValidationContext *val,
         return false;
     }
 
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     if (!ValidTimestampType(timestamp))
     {
@@ -6516,7 +6538,7 @@ bool ValidateGetFrameTimestampSupportedANDROID(const ValidationContext *val,
 
 bool ValidateGetFrameTimestampsANDROID(const ValidationContext *val,
                                        const Display *display,
-                                       SurfaceID surfaceID,
+                                       const Surface *surface,
                                        EGLuint64KHR frameId,
                                        EGLint numTimestamps,
                                        const EGLint *timestamps,
@@ -6531,9 +6553,8 @@ bool ValidateGetFrameTimestampsANDROID(const ValidationContext *val,
         return false;
     }
 
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
-    const Surface *surface = display->getSurface(surfaceID);
     if (!surface->isTimestampsEnabled())
     {
         val->setError(EGL_BAD_SURFACE,
@@ -6669,10 +6690,9 @@ bool ValidateCreateNativeClientBufferANDROID(const ValidationContext *val,
     int alphaSize = attribMap.getAsInt(EGL_ALPHA_SIZE, 0);
     int usage     = attribMap.getAsInt(EGL_NATIVE_BUFFER_USAGE_ANDROID, 0);
 
-    for (AttributeMap::const_iterator attributeIter = attribMap.begin();
-         attributeIter != attribMap.end(); attributeIter++)
+    for (const auto &attrib : attribMap)
     {
-        EGLAttrib attribute = attributeIter->first;
+        EGLAttrib attribute = attrib.first;
         switch (attribute)
         {
             case EGL_WIDTH:
@@ -6724,7 +6744,7 @@ bool ValidateCreateNativeClientBufferANDROID(const ValidationContext *val,
 }
 
 bool ValidateCopyMetalSharedEventANGLE(const ValidationContext *val,
-                                       const Display *display,
+                                       const ThreadSafeDisplay *display,
                                        const Sync *sync)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
@@ -6741,7 +6761,7 @@ bool ValidateCopyMetalSharedEventANGLE(const ValidationContext *val,
 }
 
 bool ValidateDupNativeFenceFDANDROID(const ValidationContext *val,
-                                     const Display *display,
+                                     const ThreadSafeDisplay *display,
                                      const Sync *sync)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
@@ -6759,13 +6779,13 @@ bool ValidateDupNativeFenceFDANDROID(const ValidationContext *val,
 
 bool ValidatePrepareSwapBuffersANGLE(const ValidationContext *val,
                                      const Display *display,
-                                     SurfaceID surfaceID)
+                                     const Surface *surface)
 {
-    return ValidateSwapBuffers(val, display, surfaceID);
+    return ValidateSwapBuffers(val, display, surface);
 }
 
 bool ValidateSignalSyncKHR(const ValidationContext *val,
-                           const Display *display,
+                           const ThreadSafeDisplay *display,
                            const Sync *sync,
                            EGLenum mode)
 {
@@ -6796,7 +6816,7 @@ bool ValidateSignalSyncKHR(const ValidationContext *val,
 
 bool ValidateQuerySurfacePointerANGLE(const ValidationContext *val,
                                       const Display *display,
-                                      SurfaceID surfaceID,
+                                      const Surface *surface,
                                       EGLint attribute,
                                       void *const *value)
 {
@@ -6808,7 +6828,7 @@ bool ValidateQuerySurfacePointerANGLE(const ValidationContext *val,
         return false;
     }
 
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     // validate the attribute parameter
     switch (attribute)
@@ -6838,7 +6858,7 @@ bool ValidateQuerySurfacePointerANGLE(const ValidationContext *val,
 
 bool ValidatePostSubBufferNV(const ValidationContext *val,
                              const Display *display,
-                             SurfaceID surfaceID,
+                             const Surface *surface,
                              EGLint x,
                              EGLint y,
                              EGLint width,
@@ -6858,7 +6878,7 @@ bool ValidatePostSubBufferNV(const ValidationContext *val,
         return false;
     }
 
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     if (display->isDeviceLost())
     {
@@ -7112,11 +7132,11 @@ bool ValidateCreatePlatformWindowSurface(const ValidationContext *val,
 
 bool ValidateLockSurfaceKHR(const ValidationContext *val,
                             const egl::Display *dpy,
-                            SurfaceID surfaceID,
+                            const Surface *surface,
                             const AttributeMap &attributes)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, dpy));
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, dpy, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, dpy, surface));
 
     if (!dpy->getExtensions().lockSurface3KHR)
     {
@@ -7124,7 +7144,6 @@ bool ValidateLockSurfaceKHR(const ValidationContext *val,
         return false;
     }
 
-    const Surface *surface = dpy->getSurface(surfaceID);
     if (surface->isLocked())
     {
         val->setError(EGL_BAD_ACCESS, "<surface> is already locked");
@@ -7184,12 +7203,12 @@ bool ValidateLockSurfaceKHR(const ValidationContext *val,
 
 bool ValidateQuerySurface64KHR(const ValidationContext *val,
                                const egl::Display *dpy,
-                               SurfaceID surfaceID,
+                               const Surface *surface,
                                EGLint attribute,
                                const EGLAttribKHR *value)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, dpy));
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, dpy, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, dpy, surface));
 
     if (!dpy->getExtensions().lockSurface3KHR)
     {
@@ -7213,7 +7232,7 @@ bool ValidateQuerySurface64KHR(const ValidationContext *val,
         {
             EGLint querySurfaceValue = 0;
             ANGLE_VALIDATION_TRY(
-                ValidateQuerySurface(val, dpy, surfaceID, attribute, &querySurfaceValue));
+                ValidateQuerySurface(val, dpy, surface, attribute, &querySurfaceValue));
         }
         break;
     }
@@ -7230,7 +7249,6 @@ bool ValidateQuerySurface64KHR(const ValidationContext *val,
     //  generated.
     const bool surfaceShouldBeLocked =
         (attribute == EGL_BITMAP_POINTER_KHR) || (attribute == EGL_BITMAP_PITCH_KHR);
-    const Surface *surface = dpy->getSurface(surfaceID);
     if (surfaceShouldBeLocked && !surface->isLocked())
     {
         val->setError(EGL_BAD_ACCESS, "Surface is not locked");
@@ -7242,10 +7260,10 @@ bool ValidateQuerySurface64KHR(const ValidationContext *val,
 
 bool ValidateUnlockSurfaceKHR(const ValidationContext *val,
                               const egl::Display *dpy,
-                              SurfaceID surfaceID)
+                              const Surface *surface)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, dpy));
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, dpy, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, dpy, surface));
 
     if (!dpy->getExtensions().lockSurface3KHR)
     {
@@ -7253,7 +7271,6 @@ bool ValidateUnlockSurfaceKHR(const ValidationContext *val,
         return false;
     }
 
-    const Surface *surface = dpy->getSurface(surfaceID);
     if (!surface->isLocked())
     {
         val->setError(EGL_BAD_PARAMETER, "Surface is not locked.");
@@ -7294,12 +7311,12 @@ bool ValidateExportVkImageANGLE(const ValidationContext *val,
 
 bool ValidateSetDamageRegionKHR(const ValidationContext *val,
                                 const Display *display,
-                                SurfaceID surfaceID,
+                                const Surface *surface,
                                 const EGLint *rects,
                                 EGLint n_rects)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
-    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surfaceID));
+    ANGLE_VALIDATION_TRY(ValidateSurface(val, display, surface));
 
     if (!display->getExtensions().partialUpdateKHR)
     {
@@ -7307,7 +7324,6 @@ bool ValidateSetDamageRegionKHR(const ValidationContext *val,
         return false;
     }
 
-    const Surface *surface = display->getSurface(surfaceID);
     if (!(surface->getType() & EGL_WINDOW_BIT))
     {
         val->setError(EGL_BAD_MATCH, "surface is not a postable surface");
@@ -7448,7 +7464,7 @@ bool ValidateUnlockVulkanQueueANGLE(const ValidationContext *val, const egl::Dis
 
 bool ValidateAcquireExternalContextANGLE(const ValidationContext *val,
                                          const egl::Display *display,
-                                         SurfaceID drawAndReadPacked)
+                                         const Surface *drawAndReadPacked)
 {
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, display));
     ANGLE_VALIDATION_TRY(ValidateSurface(val, display, drawAndReadPacked));

@@ -1,0 +1,69 @@
+# A walk over the keys of an object that only writes the message of an error stays one call of the run time, however often the function is entered. The same walk on a way that returns is taken apart
+# FORM: AsRead
+# RUN: pipeline ExpandOwnKeys
+# OPTIONS: only-passes=BuildCallGraph,EstimateHeat,ComputeEffectSummaries,ResolveBuiltins,ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = ToString v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Jump -> next b3()
+  b3():
+    LoopHint
+    Jump -> next b4()
+  b4():
+    LoopHint
+    Jump -> next b5()
+  b5():
+    LoopHint
+    v9 = CallDirect v1, v2 function=f1
+    Branch v2 -> taken b5(), notTaken b6()
+  b6():
+    Branch v2 -> taken b4(), notTaken b7()
+  b7():
+    Branch v2 -> taken b3(), notTaken b8()
+  b8():
+    Branch v2 -> taken b2(), notTaken b9()
+  b9():
+    Branch v2 -> taken b1(), notTaken b10()
+  b10():
+    Return
+}
+
+function f1 name="listsValuesForAnError" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = Builtin builtin=ObjectValues
+    Branch v1 -> taken b1(), notTaken b5()
+  b1():
+    Jump -> next b2()
+  b2() handler=b3():
+    v4 = Call v3, -, v2
+    v5 = Call v0, -, v4
+    Jump -> next b4(v5)
+  b3() role=CatchHandler:
+    Jump -> next b4(v0)
+  b4(v6):
+    Throw v6
+  b5():
+    v7 = Call v3, -, v2
+    Return v7
+# CHECK: b2() handler=b3():
+# CHECK-NEXT: = CallBuiltin -, v2 overload=ObjectValues/0
+# CHECK: Throw
+# CHECK-NOT: CallBuiltin
+# CHECK: [[a]]:{{*}}= GetSlot v2{{*}} key="a" receivers=[L0]
+# CHECK-NEXT: [[b]]:{{*}}= GetSlot v2{{*}} key="b" receivers=[L0]
+# CHECK-NEXT: = NewArray [[a]], [[b]] contents=anything
+}

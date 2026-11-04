@@ -1,0 +1,83 @@
+# type Unary = (n: number) => number  interface Holder { run: Unary }  function hold(f: Unary): Holder { return { run: f } }  function callField(h: Holder, n) { return h.run(n) }
+# A field of a function type lists the functions that are converted to the type too, here more than a dispatch has arms. Its slot takes every function, listed or not.
+# A function of the shell that is stored there satisfies the type, no check turns it away, and it stays in the slot; the call of it goes by value as plain JavaScript does.
+# What is no function takes the property out of its slot
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (callField, hold, ...all) => { let text = ""; for (const f of all) text += " " + callField(hold(f), 10); print(text); const holder = hold(all[0]); holder.run = all[5]; print(callField(holder, 10)); holder.run = all[6]; print(callField(holder, 10)); holder.run = n => n * 3; print(callField(holder, 10)); holder.run = all[1]; print(callField(holder, 10)); for (const none of ["text", undefined, null]) { holder.run = none; try { callField(holder, 10); } catch (error) { print(error instanceof TypeError); } } delete holder.run; try { callField(holder, 10); } catch (error) { print(error instanceof TypeError); } };
+# CHECK: {{*}}11 12 13 14 15 16 110
+# CHECK-NEXT: 16
+# CHECK-NEXT: 110
+# CHECK-NEXT: 30
+# CHECK-NEXT: 12
+# CHECK-NEXT: true
+# CHECK-NEXT: true
+# CHECK-NEXT: true
+# CHECK-NEXT: true
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=40 kind=Parameter
+typesite w1 module=m0 position=80 kind=Parameter
+layout L0 name="Holder" fields=[{key="run" declared={type=undefined|null|f10} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = NewClosure function=f7
+    v7 = NewClosure function=f8
+    v8 = NewClosure function=f9
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="register" [isFreeName]
+    v11 = Call v10, -, v0, v1, v2, v3, v4, v5, v6, v7, v8
+    Return
+}
+function f1 name="hold" flags=[IsChecked] parameters=[{type=undefined|null|f10 site=w0}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 name="callField" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w1}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+}
+function f3 name="one" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f10] {
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    Return v2
+}
+function f4 name="two" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f10] {
+    v1 = Integer integer=2
+    v2 = Add v0, v1
+    Return v2
+}
+function f5 name="three" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f10] {
+    v1 = Integer integer=3
+    v2 = Add v0, v1
+    Return v2
+}
+function f6 name="four" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f10] {
+    v1 = Integer integer=4
+    v2 = Add v0, v1
+    Return v2
+}
+function f7 name="five" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f10] {
+    v1 = Integer integer=5
+    v2 = Add v0, v1
+    Return v2
+}
+function f8 name="six" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f10] {
+    v1 = Integer integer=6
+    v2 = Add v0, v1
+    Return v2
+}
+function f9 name="stranger" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=100
+    v2 = Add v0, v1
+    Return v2
+}
+function f10 role=Signature results=[{type=anything}]

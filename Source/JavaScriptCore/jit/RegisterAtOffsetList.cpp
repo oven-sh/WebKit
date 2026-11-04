@@ -39,12 +39,11 @@ RegisterAtOffsetList::RegisterAtOffsetList() { }
 RegisterAtOffsetList::RegisterAtOffsetList(RegisterSet registerSetBuilder, OffsetBaseType offsetBaseType)
     : m_registers(registerSetBuilder.numberOfSetRegisters())
 {
-    ASSERT(!registerSetBuilder.hasAnyWideRegisters() || Options::useWasmSIMD());
-
+    // Bun: no ASSERT on Options::useWasmSIMD(). A compile may use SIMD where WebAssembly may not: B3::UpstreamPolicy::allowsSIMD.
     size_t sizeOfAreaInBytes = registerSetBuilder.byteSizeOfSetRegisters();
     m_sizeOfAreaInBytes = sizeOfAreaInBytes;
     static_assert(sizeof(CPURegister) == sizeof(double));
-    ASSERT(this->sizeOfAreaInBytes() == registerCount() * sizeof(CPURegister) || Options::useWasmSIMD());
+    ASSERT(this->sizeOfAreaInBytes() == registerCount() * sizeof(CPURegister) || registerSetBuilder.hasAnyWideRegisters());
 
     ptrdiff_t startOffset = 0;
     if (offsetBaseType == FramePointerBased)
@@ -120,15 +119,6 @@ const RegisterAtOffsetList& RegisterAtOffsetList::ipintCalleeSaveRegisters()
     return result.get();
 }
 
-const RegisterAtOffsetList& RegisterAtOffsetList::bbqCalleeSaveRegisters()
-{
-    static std::once_flag onceKey;
-    static LazyNeverDestroyed<RegisterAtOffsetList> result;
-    std::call_once(onceKey, [] {
-        result.construct(RegisterSet::bbqCalleeSaveRegisters());
-    });
-    return result.get();
-}
 #endif
 
 } // namespace JSC

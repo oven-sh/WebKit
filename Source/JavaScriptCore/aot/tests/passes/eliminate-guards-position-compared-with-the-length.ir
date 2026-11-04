@@ -1,0 +1,166 @@
+# `k < list.length` says what the test in front of `list[k]` asks. The test stands behind the comparison, where it reads the length that the comparison has just read,
+# and the one in front of the access goes wherever nothing in between gives the list another length.
+# FORM: Prepared
+# RUN: pass EliminateGuards
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="allocationInBetween" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=int[0, 100]}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: int[0, 100], v2: number):
+    v3 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v4 = Less v1, v3
+    Branch v4 -> taken b1(| 0), notTaken b4()
+  b1(v5: int[0, 100]):
+    v6 = NewArray contents=number
+    v7 = IsInBounds v0, v5
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    Return v6
+  b3():
+    Return v2
+  b4():
+    Return
+}
+# CHECK-LABEL: name="allocationInBetween"
+# CHECK: = Less
+# CHECK-COUNT-1: = IsInBounds
+# CHECK: = NewArray
+# CHECK-NOT: IsInBounds
+
+function f1 name="lengthOnTheLeft" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=int[0, 100]}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: int[0, 100], v2: number):
+    v3 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v4 = Greater v3, v1
+    Branch v4 -> taken b1(| 1), notTaken b4()
+  b1(v5: int[0, 100]):
+    v6 = NewArray contents=number
+    v7 = IsInBounds v0, v5
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    Return v6
+  b3():
+    Return v2
+  b4():
+    Return
+}
+# CHECK-LABEL: name="lengthOnTheLeft"
+# CHECK: = Greater
+# CHECK-COUNT-1: = IsInBounds
+# CHECK: = NewArray
+# CHECK-NOT: IsInBounds
+
+# The list grows between the comparison and the access: the test in front of the access stays.
+function f2 name="listGrowsInBetween" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=int[0, 100]}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: int[0, 100], v2: number):
+    v3 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v4 = Less v1, v3
+    Branch v4 -> taken b1(| 0), notTaken b4()
+  b1(v5: int[0, 100]):
+    AppendElement v0, v2
+    v7 = IsInBounds v0, v5
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    Return v2
+  b3():
+    Return v2
+  b4():
+    Return
+}
+# CHECK-LABEL: name="listGrowsInBetween"
+# CHECK: AppendElement
+# CHECK-NEXT: = IsInBounds
+
+# The list has grown since its length was read, so the comparison says nothing of the list as it is.
+function f3 name="lengthIsOld" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=int[0, 100]}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: int[0, 100], v2: number):
+    v3 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    AppendElement v0, v2
+    v5 = Less v1, v3
+    Branch v5 -> taken b1(| 0), notTaken b4()
+  b1(v6: int[0, 100]):
+    v7 = NewArray contents=number
+    v8 = IsInBounds v0, v6
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9):
+    Return v7
+  b3():
+    Return v2
+  b4():
+    Return
+}
+# CHECK-LABEL: name="lengthIsOld"
+# CHECK: = Less
+# CHECK-NOT: IsInBounds
+# CHECK: = NewArray
+# CHECK-NEXT: = IsInBounds
+
+# Another list's length.
+function f4 name="lengthOfAnotherList" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=int[0, 100]}, {type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: int[0, 100], v2: Array<number, proven, pristine[Storage, Names]>):
+    v3 = CallBuiltin v2 overload=ArrayPrototypeLength/0
+    v4 = Less v1, v3
+    Branch v4 -> taken b1(| 0), notTaken b4()
+  b1(v5: int[0, 100]):
+    v6 = NewArray contents=number
+    v7 = IsInBounds v0, v5
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    Return v6
+  b3():
+    Return v2
+  b4():
+    Return
+}
+# CHECK-LABEL: name="lengthOfAnotherList"
+# CHECK: = Less
+# CHECK-NOT: IsInBounds
+# CHECK: = NewArray
+# CHECK-NEXT: = IsInBounds
+
+# A position that may be negative is below the length and outside the list.
+function f5 name="positionMayBeNegative" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=int[-5, 100]}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: int[-5, 100], v2: number):
+    v3 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v4 = Less v1, v3
+    Branch v4 -> taken b1(| 0), notTaken b4()
+  b1(v5: int[-5, 100]):
+    v6 = NewArray contents=number
+    v7 = IsInBounds v0, v5
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    Return v6
+  b3():
+    Return v2
+  b4():
+    Return
+}
+# CHECK-LABEL: name="positionMayBeNegative"
+# CHECK: = Less
+# CHECK-NOT: IsInBounds
+# CHECK: = NewArray
+# CHECK-NEXT: = IsInBounds
+
+# Only another test stands in between. Nothing there writes, so whoever generates code sees that the comparison and the test ask the same: the tests stay in their order.
+function f6 name="onlyATestInBetween" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=int[0, 100]}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: int[0, 100], v2: number):
+    v3 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v4 = Less v1, v3
+    Branch v4 -> taken b1(| 0), notTaken b5()
+  b1(v5: int[0, 100]):
+    v6 = HasArrayStorage v0 arrayStorage=Double
+    Branch v6 -> taken b2(| 0), notTaken b4()
+  b2(v7):
+    v8 = IsInBounds v0, v5
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    Return v2
+  b4():
+    Return v2
+  b5():
+    Return
+}
+# CHECK-LABEL: name="onlyATestInBetween"
+# CHECK: = Less
+# CHECK-NOT: IsInBounds
+# CHECK: = HasArrayStorage
+# CHECK-COUNT-1: = IsInBounds

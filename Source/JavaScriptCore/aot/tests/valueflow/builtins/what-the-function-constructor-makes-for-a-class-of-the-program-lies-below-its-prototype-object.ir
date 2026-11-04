@@ -1,0 +1,37 @@
+# class F extends Function { constructor() { super("return 7") }  n() { return 1 } }        new F().n()
+# Nobody follows what the Function constructor answers: it is the unknown object, which stands only for what has escaped. For a class of the program the constructor makes an object
+# that has the prototype object of that class above it. So that object has escaped, and a call of `n` on the instance enters the method.
+# FORM: AsRead
+# RUN: valueflow-solve unreached
+# CHECK-NOT: f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="F" module=m0 constructor=f1 flags=[HasHeritage]
+function f0 module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Function" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Function) flags=[IsExpected]}
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f1
+    v5 = NewClass v4, v2, v3 layout=L0
+    v6 = NewClosure function=f2
+    DefineMethod v5, v6 layout=L0 key="n"
+    v8 = FinishClass v5 layout=L0
+    v9 = Convert v8 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = Construct v9
+    v11 = Undefined
+    v12 = PropGet v10 key="n"
+    v13 = Call v12, v10
+    Return v13
+}
+function f1 name="F" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetSuperBase v0
+    v3 = String string="return 7"
+    v4 = SuperConstruct v2, v1, v3 layout=L0
+    Return v4
+}
+function f2 name="n" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=1
+    Return v1
+}

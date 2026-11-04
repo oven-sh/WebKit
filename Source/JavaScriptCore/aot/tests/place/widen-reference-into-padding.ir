@@ -1,0 +1,59 @@
+# A 32-bit reference becomes a 64-bit one where its cell has 8 free bytes. A slot that may hold a string stays narrow, a hidden word is not moved, and no cell grows
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=AnalyzeFlow testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Node" fields=[{key="next" declared={type=null|L0} flags=[IsRequired]}]
+layout L1 name="Owner" fields=[{key="node" declared={type=L0} flags=[IsRequired]}]
+layout L2 name="Named" fields=[{key="label" declared={type=string} flags=[IsRequired]}]
+layout L3 name="MaybeNamed" fields=[{key="title" declared={type=null|string} flags=[IsRequired]}]
+layout L4 name="Full" fields=[{key="left" declared={type=null|L0} flags=[IsRequired]}, {key="right" declared={type=null|L0} flags=[IsRequired]}, {key="parent" declared={type=null|L0} flags=[IsRequired]}, {key="child" declared={type=null|L0} flags=[IsRequired]}]
+layout L5 name="GetsOtherProperties" fields=[{key="link" declared={type=null|L0} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToString v1
+    v3 = Null
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    v8 = NewObject -, v5 layout=L1 fields=[0]
+    v9 = FinishObject v8
+    v10 = NewObject -, v2 layout=L2 fields=[0]
+    v11 = FinishObject v10
+    v12 = NewObject -, v2 layout=L3 fields=[0]
+    v13 = FinishObject v12
+    v14 = NewObject -, v3 layout=L3 fields=[0]
+    v15 = FinishObject v14
+    v16 = NewObject -, v3, v3, v3, v3 layout=L4 fields=[0, 1, 2, 3]
+    v17 = FinishObject v16
+    v18 = NewObject -, v5, v5, v5, v5 layout=L4 fields=[0, 1, 2, 3]
+    v19 = FinishObject v18
+    v20 = NewObject -, v3 layout=L5 fields=[0]
+    v21 = FinishObject v20
+    v22 = NewObject -, v5 layout=L5 fields=[0]
+    v23 = FinishObject v22
+    ElemSet v23, v2, v3
+    Return
+}
+# CHECK: L0 CompiledObject size=32
+# CHECK-NEXT: "next" JSValue @16
+# CHECK-NEXT: L1 CompiledObject size=32
+# CHECK-NEXT: "node" Cell @16
+# CHECK-NEXT: L2 CompiledObject size=32
+# CHECK-NEXT: "label" Cell32 @16
+# CHECK-NEXT: L3 CompiledObject size=32
+# CHECK-NEXT: "title" OptionalCell32 @16
+# CHECK-NEXT: L4 CompiledObject size=32
+# CHECK-NEXT: "left" OptionalCell32 @16
+# CHECK-NEXT: "right" OptionalCell32 @20
+# CHECK-NEXT: "parent" OptionalCell32 @24
+# CHECK-NEXT: "child" OptionalCell32 @28
+# The extra-properties word lies next to the narrow slot, so the wide slot takes the second half of the cell.
+# CHECK-NEXT: L5 CompiledObject size=32
+# CHECK-NEXT: "link" JSValue @24
+# CHECK-NEXT: extra Cell32 @20

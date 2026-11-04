@@ -17,7 +17,6 @@ import (
 	"math/big"
 	"slices"
 
-	"boringssl.googlesource.com/boringssl.git/ssl/test/runner/kyber"
 	"golang.org/x/crypto/cryptobyte"
 )
 
@@ -329,57 +328,6 @@ func (e *ecdhKEM) decap(config *Config, ciphertext []byte) (secret []byte, err e
 	return e.privateKey.ECDH(peerKey)
 }
 
-// kyberKEM implements Kyber-768
-type kyberKEM struct {
-	kyberPrivateKey *kyber.PrivateKey
-}
-
-func (e *kyberKEM) encapsulationKeySize() int {
-	return kyber.PublicKeySize
-}
-
-func (e *kyberKEM) ciphertextSize() int {
-	return kyber.CiphertextSize
-}
-
-func (e *kyberKEM) generate(config *Config) (publicKey []byte, err error) {
-	var kyberEntropy [64]byte
-	if _, err := io.ReadFull(config.rand(), kyberEntropy[:]); err != nil {
-		return nil, err
-	}
-	var kyberPublic *[kyber.PublicKeySize]byte
-	e.kyberPrivateKey, kyberPublic = kyber.NewPrivateKey(&kyberEntropy)
-	return kyberPublic[:], nil
-}
-
-func (e *kyberKEM) encap(config *Config, peerKey []byte) (ciphertext []byte, secret []byte, err error) {
-	if len(peerKey) != kyber.PublicKeySize {
-		return nil, nil, errors.New("tls: bad length Kyber offer")
-	}
-
-	kyberPublicKey, ok := kyber.UnmarshalPublicKey((*[kyber.PublicKeySize]byte)(peerKey))
-	if !ok {
-		return nil, nil, errors.New("tls: bad Kyber offer")
-	}
-
-	var kyberShared, kyberEntropy [32]byte
-	if _, err := io.ReadFull(config.rand(), kyberEntropy[:]); err != nil {
-		return nil, nil, err
-	}
-	kyberCiphertext := kyberPublicKey.Encap(kyberShared[:], &kyberEntropy)
-	return kyberCiphertext[:], kyberShared[:], nil
-}
-
-func (e *kyberKEM) decap(config *Config, ciphertext []byte) (secret []byte, err error) {
-	if len(ciphertext) != kyber.CiphertextSize {
-		return nil, errors.New("tls: bad length Kyber reply")
-	}
-
-	var kyberShared [32]byte
-	e.kyberPrivateKey.Decap(kyberShared[:], (*[kyber.CiphertextSize]byte)(ciphertext))
-	return kyberShared[:], nil
-}
-
 // mlkem768KEM implements ML-KEM-768
 type mlkem768KEM struct {
 	decapKey *mlkem.DecapsulationKey768
@@ -565,11 +513,8 @@ func kemForCurveID(id CurveID, config *Config) (kemImplementation, bool) {
 		kem = &ecdhKEM{curve: ecdh.P521()}
 	case CurveX25519:
 		kem = &ecdhKEM{curve: ecdh.X25519()}
-	case CurveX25519Kyber768:
-		// draft-tls-westerbaan-xyber768d00-03
-		kem = &concatKEM{kem1: &ecdhKEM{curve: ecdh.X25519()}, kem2: &kyberKEM{}}
 	case CurveX25519MLKEM768:
-		// draft-ietf-tls-ecdhe-mlkem-00
+		// RFC 10024
 		kem = &concatKEM{kem1: &mlkem768KEM{}, kem2: &ecdhKEM{curve: ecdh.X25519()}}
 	case CurveMLKEM1024:
 		// draft-ietf-tls-mlkem-04

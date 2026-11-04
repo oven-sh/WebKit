@@ -62,6 +62,7 @@ class ResolvedColors;
 struct ColorLayers;
 struct ColorMix;
 struct ContrastColor;
+struct KeywordColor;
 struct RelativeAlphaColor;
 template<typename Descriptor> struct RelativeColor;
 
@@ -79,6 +80,7 @@ private:
         UniqueRef<ColorLayers>,
         UniqueRef<ColorMix>,
         UniqueRef<ContrastColor>,
+        UniqueRef<KeywordColor>,
         UniqueRef<RelativeAlphaColor>,
         UniqueRef<RelativeColor<RGBFunctionModernRelative>>,
         UniqueRef<RelativeColor<HSLFunctionModern>>,
@@ -120,6 +122,7 @@ public:
     Color(ColorLayers&&);
     Color(ColorMix&&);
     Color(ContrastColor&&);
+    Color(KeywordColor&&);
     Color(RelativeAlphaColor&&);
     Color(RelativeColor<RGBFunctionModernRelative>&&);
     Color(RelativeColor<HSLFunctionModern>&&);
@@ -148,16 +151,16 @@ public:
 
     bool operator==(const Color&) const;
 
-    static const Color& currentColor();
+    static const Color& LEGACY_NODELETE currentColor();
 
     bool containsCurrentColor() const;
-    bool NODELETE isCurrentColor() const;
-    bool NODELETE isColorMix() const;
-    bool NODELETE isContrastColor() const;
-    bool NODELETE isRelativeAlphaColor() const;
-    bool NODELETE isRelativeColor() const;
+    bool LEGACY_NODELETE isCurrentColor() const;
+    bool LEGACY_NODELETE isColorMix() const;
+    bool LEGACY_NODELETE isContrastColor() const;
+    bool LEGACY_NODELETE isRelativeAlphaColor() const;
+    bool LEGACY_NODELETE isRelativeColor() const;
 
-    bool NODELETE isResolvedColor() const;
+    bool LEGACY_NODELETE isResolvedColor() const;
     const WebCore::Color& resolvedColor() const;
 
     WEBCORE_EXPORT WebCore::Color resolveColor(const ResolvedColors&) const;
@@ -166,7 +169,7 @@ public:
 
     // This helper allows us to treat all the alternatives in ColorKind
     // as const references, pretending the UniqueRefs don't exist.
-    template<typename... F> decltype(auto) switchOn(F&&...) const;
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&...) const;
 
     WTF::String debugDescription() const;
 
@@ -219,14 +222,14 @@ template<> struct DeprecatedCSSOMValueCreation<Color> {
 
 template<> struct Blending<Color> {
     auto equals(const Color&, const Color&, const Style::ComputedStyle&, const Style::ComputedStyle&) -> bool;
-    bool NODELETE canBlend(const Color&, const Color&);
+    bool LEGACY_NODELETE canBlend(const Color&, const Color&);
     constexpr auto requiresInterpolationForAccumulativeIteration(const Color&, const Color&) -> bool { return true; }
     auto blend(const Color&, const Color&, const Style::ComputedStyle&, const Style::ComputedStyle&, const BlendingContext&) -> Color;
 };
 
 // MARK: - Color Implementation
 
-template<typename... F> decltype(auto) Color::switchOn(F&&... f) const
+template<typename... F> decltype(auto) Color::switchOn(NOESCAPE F&&... f) const
 {
     auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
     using ResultType = decltype(visitor(std::declval<ResolvedColor>()));

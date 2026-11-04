@@ -54,6 +54,21 @@ if (CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_NAME STREQUAL "Wind
     message(STATUS "Cross-compile RC: ${CMAKE_RC_COMPILER}")
 endif ()
 
+# Swift only ships a release-CRT swiftrt.obj: https://github.com/swiftlang/swift/issues/87468
+# Bun: the static CRT that Bun links everything with is passed as -DCMAKE_MSVC_RUNTIME_LIBRARY, and has to win.
+if (NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
+endif ()
+
+# applocal looks in debug/bin for Debug builds, which release-only vcpkg doesn't have.
+if (DEFINED VCPKG_TARGET_TRIPLET AND DEFINED _VCPKG_INSTALLED_DIR)
+    set(VCPKG_APPLOCAL_DEPS OFF)
+    file(GLOB _vcpkg_dlls "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/*.dll")
+    if (_vcpkg_dlls)
+        file(COPY ${_vcpkg_dlls} DESTINATION "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+    endif ()
+endif ()
+
 function(MSVC_ADD_COMPILE_OPTIONS)
         foreach(_option ${ARGV})
                 add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:${_option}>)

@@ -1,0 +1,46 @@
+# A closure that is created again and again and captures the same written string each time needs no capture: its function holds the string.
+# FORM: AsRead
+# RUN: pipeline PromoteEnvironmentsToVariables
+# OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass
+# STATISTIC: EnvironmentsPromotedToVariables = 0
+# STATISTIC: CapturesPromotedToVariables = 1
+# CHECK-NOT: variable g0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = Call v0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v1, v2
+    Return
+}
+
+function f1 name="calledTwice" results=[{type=anything}] {
+    v0 = String string="name"
+    v1 = NewClosure v0 function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Call v3
+    v5 = NewClosure v4 function=f3
+    v6 = Call v5
+    Return v1
+# CHECK: = NewClosure function=f2
+# CHECK: = NewClosure v4 function=f3
+}
+
+function f2 name="copiesWrittenString" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+# CHECK-NOT: captures=
+# CHECK: b0():
+# CHECK-NEXT: [[copy]]: "name" = String string="name"
+# CHECK-NEXT: Return [[copy]]
+}
+
+function f3 name="copiesValueComputedTwice" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: function f3 name="copiesValueComputedTwice"{{*}}captures=[{type=anything}]

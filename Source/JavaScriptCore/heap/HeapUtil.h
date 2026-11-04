@@ -27,9 +27,12 @@
 
 #include "Heap.h"
 #include "HeapCell.h"
+#include "HeapInlines.h"
+#include "IndexingHeader.h"
 #include "JSCJSValue.h"
 #include "JSCell.h"
 #include "MarkedBlock.h"
+#include "MarkedBlockCage.h"
 
 namespace JSC {
 
@@ -48,6 +51,9 @@ namespace JSC {
 
 class HeapUtil {
 public:
+    static MarkStackArray& mutatorMarkStack(JSC::Heap& heap) { return *heap.m_mutatorMarkStack; }
+    static uintptr_t& barriersExecuted(JSC::Heap& heap) { return heap.m_barriersExecuted; }
+
     static bool isPointerGCObjectJSCell(JSC::Heap& heap, TinyBloomFilter<uintptr_t> filter, JSCell* pointer)
     {
         // It could point to a large allocation.
@@ -96,6 +102,56 @@ public:
         if (!value.isCell())
             return false;
         return isPointerGCObjectJSCell(heap, filter, value.asCell());
+    }
+
+    // Whether the pointer is where a block of this heap stores a JSCell, or is a precise allocation. It says nothing about liveness.
+    static bool isJSCellStorage(JSC::Heap& heap, TinyBloomFilter<uintptr_t> filter, JSCell* pointer)
+    {
+        if (pointer->isPreciseAllocation()) {
+            auto& set = heap.objectSpace().preciseAllocationSet();
+            ASSERT(set);
+            return set->isValidValue(pointer) && set->contains(pointer);
+        }
+
+        MarkedBlock* candidate = MarkedBlock::blockFor(pointer);
+        if (filter.ruleOut(std::bit_cast<uintptr_t>(candidate)))
+            return false;
+
+        if (!MarkedBlock::isAtomAligned(pointer))
+            return false;
+
+        if (!heap.objectSpace().blocks().set().contains(candidate))
+            return false;
+
+        return candidate->handle().cellKind() == HeapCell::JSCell && candidate->isAtom(pointer);
+    }
+
+    // False proves that both block lookups of ConservativeRoots::genericAddPointer fail. It says nothing about precise allocations.
+    static ALWAYS_INLINE bool mayBeCellInBlock(TinyBloomFilter<uintptr_t> filter, const void* pointer)
+    {
+        uintptr_t bits = std::bit_cast<uintptr_t>(pointer);
+        uintptr_t blockBits = bits & MarkedBlock::blockMask;
+        if (!filter.ruleOut(blockBits))
+            return true;
+        return bits - blockBits <= sizeof(IndexingHeader) && !filter.ruleOut((bits - sizeof(IndexingHeader) - 1) & MarkedBlock::blockMask);
+    }
+
+    enum class WordKind : uint8_t { NotACell, UnmarkedCell, MarkedCell };
+
+    // Call this only at the end of marking, with the world stopped: it may enable precise allocation tracking. An UnmarkedCell is dead or free.
+    static WordKind classifyWord(JSC::Heap& heap, const void* word)
+    {
+        if (!word)
+            return WordKind::NotACell;
+
+        JSCell* cell = static_cast<JSCell*>(const_cast<void*>(word));
+        if (cell->isPreciseAllocation() && !heap.objectSpace().preciseAllocationSet())
+            heap.objectSpace().enablePreciseAllocationTracking();
+
+        // Not isPointerGCObjectJSCell: after MarkedSpace::endMarking() no unmarked cell of a block is live.
+        if (!isJSCellStorage(heap, heap.objectSpace().blocks().filter(), cell))
+            return WordKind::NotACell;
+        return heap.isMarked(cell) ? WordKind::MarkedCell : WordKind::UnmarkedCell;
     }
 };
 

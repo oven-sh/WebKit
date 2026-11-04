@@ -18,6 +18,7 @@
 #include "libANGLE/renderer/vulkan/vk_utils.h"
 
 #include <EGL/eglext.h>
+#include <array>
 #include <fstream>
 
 #include "common/debug.h"
@@ -236,24 +237,6 @@ bool IsQualcommOpenSource(uint32_t vendorId, uint32_t driverId, const char *devi
 
     // Otherwise, look for Venus or Turnip in the device name.
     return strstr(deviceName, "Venus") != nullptr || strstr(deviceName, "Turnip") != nullptr;
-}
-
-bool IsXclipse()
-{
-    if (!IsAndroid())
-    {
-        return false;
-    }
-
-    std::string modelName;
-    if (!angle::android::GetSystemProperty(angle::android::kModelSystemPropertyName, &modelName))
-    {
-        return 0;
-    }
-
-    // Improve this when more Xclipse devices are available
-    return strstr(modelName.c_str(), "SM-S901B") != nullptr ||
-           strstr(modelName.c_str(), "SM-S926B") != nullptr;
 }
 
 bool StrLess(const char *a, const char *b)
@@ -605,7 +588,46 @@ constexpr vk::SkippedSyncvalMessage kSkippedSyncvalMessages[] = {
       "prior_access = "
       "VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT(VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)",
       "command = vkCmdBeginRenderPass", "prior_command = vkCmdEndRenderPass",
-      "load_op = VK_ATTACHMENT_LOAD_OP_LOAD"}}};
+      "load_op = VK_ATTACHMENT_LOAD_OP_LOAD"}},
+    // Observed on Intel after a VVL roll
+    // BufferDataTestES3.CopyBufferSubDataSelfDependency/ES3_Vulkan
+    // http://anglebug.com/565993690
+    {"SYNC-HAZARD-WRITE-AFTER-WRITE",
+     false,
+     {
+         "message_type = RenderPassStoreOpError",
+         "hazard_type = WRITE_AFTER_WRITE",
+         "access = "
+         "VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT(VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_"
+         "BIT)",
+         "prior_access = SYNC_IMAGE_LAYOUT_TRANSITION",
+         "write_barriers = "
+         "VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT(VK_ACCESS_2_UNIFORM_READ_BIT|VK_ACCESS_2_COLOR_"
+         "ATTACHMENT_READ_BIT|VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT):VK_PIPELINE_STAGE_2_"
+         "EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT(VK_ACCESS_2_DEPTH_"
+         "STENCIL_ATTACHMENT_READ_BIT):VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT(VK_ACCESS_2_"
+         "COLOR_ATTACHMENT_READ_BIT|VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)",
+         "command = vkCmdEndRenderPass",
+         "prior_command = vkCmdPipelineBarrier",
+         "store_op = VK_ATTACHMENT_STORE_OP_STORE",
+     }},
+    // Observed on Nvidia and Intel after a VVL roll
+    // FramebufferFetchES31.ReopenRenderPass/ES3_1_Vulkan
+    // http://anglebug.com/565993690
+    {"SYNC-HAZARD-WRITE-AFTER-WRITE",
+     false,
+     {
+         "message_type = RenderPassStoreOpError",
+         "hazard_type = WRITE_AFTER_WRITE",
+         "access = "
+         "VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT(VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT)",
+         "prior_access = SYNC_IMAGE_LAYOUT_TRANSITION",
+         "write_barriers = 0",
+         "command = vkCmdEndRenderPass",
+         "prior_command = vkCmdEndRenderPass",
+         "store_op = VK_ATTACHMENT_STORE_OP_STORE",
+     }},
+};
 
 // Messages that should not be generated if the feature to force-enable providing the size pointer
 // to vkCmdBindVertexBuffers2() is disabled.
@@ -1935,7 +1957,7 @@ VkResult RetrieveDeviceLostInfoFromDevice(VkDevice device,
                                           VkPhysicalDeviceFaultFeaturesEXT faultFeatures)
 {
     // For VkDeviceFaultAddressTypeEXT in VK_EXT_device_fault
-    constexpr const char *kDeviceFaultAddressTypeMessage[] = {
+    constexpr std::array kDeviceFaultAddressTypeMessage = {
         "None",
         "InvalidRead",
         "InvalidWrite",
@@ -2148,10 +2170,6 @@ Renderer::Renderer()
       mMemoryAllocationTracker(MemoryAllocationTracker(this)),
       mMaxMemoryAllocationSize(0),
       mMaxBufferMemorySizeLimit(0),
-      mNativeVectorWidthDouble(0),
-      mNativeVectorWidthHalf(0),
-      mPreferredVectorWidthDouble(0),
-      mPreferredVectorWidthHalf(0),
       mMinRPWriteCommandCountToEarlySubmit(UINT32_MAX)
 {
     VkFormatProperties invalid = {0, 0, kInvalidFormatFeatureFlags};
@@ -2285,13 +2303,13 @@ VkResult Renderer::retrieveDeviceLostDetails() const
 
 void Renderer::notifyDeviceLost()
 {
-    mDeviceLost = true;
+    mDeviceLost.store(true, std::memory_order_relaxed);
     mGlobalOps->notifyDeviceLost();
 }
 
 bool Renderer::isDeviceLost() const
 {
-    return mDeviceLost;
+    return mDeviceLost.load(std::memory_order_relaxed);
 }
 
 angle::Result Renderer::enableInstanceExtensions(vk::ErrorContext *context,
@@ -2368,17 +2386,12 @@ angle::Result Renderer::enableInstanceExtensions(vk::ErrorContext *context,
                                            instanceExtensionNames) &&
                                 useVulkanSwapchain == UseVulkanSwapchain::Yes);
 
-    const bool isSamsungDeviceWithSurfacelessQueryBug = IsXclipse() && GetAndroidSDKVersion() < 36;
-
     // TODO: Validation layer has a bug when vkGetPhysicalDeviceSurfaceFormats2KHR is called
     // on Mock ICD with surface handle set as VK_NULL_HANDLE. http://anglebug.com/42266098
-    // b/267953710: VK_GOOGLE_surfaceless_query isn't working on some Samsung Xclipse builds with
-    // Android API level below 36.
     ANGLE_FEATURE_CONDITION(
         &mFeatures, supportsSurfacelessQueryExtension,
         ExtensionFound(VK_GOOGLE_SURFACELESS_QUERY_EXTENSION_NAME, instanceExtensionNames) &&
-            useVulkanSwapchain == UseVulkanSwapchain::Yes && !isMockICDEnabled() &&
-            !isSamsungDeviceWithSurfacelessQueryBug);
+            useVulkanSwapchain == UseVulkanSwapchain::Yes && !isMockICDEnabled());
 
     // VK_KHR_external_fence_capabilities and VK_KHR_extenral_semaphore_capabilities are promoted to
     // core in Vulkan 1.1
@@ -2574,10 +2587,8 @@ angle::Result Renderer::initialize(vk::ErrorContext *context,
         {
             ANGLE_SCOPED_DISABLE_LSAN();
             ANGLE_SCOPED_DISABLE_MSAN();
-            ANGLE_VK_TRY(context,
-                         VK_CALL_WITH_GROUP(
-                             GetPerfCounterGroup(VulkanApiFunction::vkEnumerateInstanceVersion),
-                             enumerateInstanceVersion(&mInstanceVersion)));
+            ANGLE_VK_TRY(context, VK_CALL_WITH_API(VulkanApiFunction::vkEnumerateInstanceVersion,
+                                                   enumerateInstanceVersion(&mInstanceVersion)));
         }
 
         if (IsVulkan11(mInstanceVersion))
@@ -2634,24 +2645,21 @@ angle::Result Renderer::initialize(vk::ErrorContext *context,
     // Fine grain control of validation layer features
     const char *name                     = "VK_LAYER_KHRONOS_validation";
     const VkBool32 setting_validate_core = VK_TRUE;
-    // SyncVal is very slow (https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/7285)
-    // for VkEvent which causes a few tests fail on the bots. Disable syncVal if VkEvent is enabled
-    // for now.
     const VkBool32 setting_validate_sync = IsAndroid() ? VK_FALSE : VK_TRUE;
     const VkBool32 setting_thread_safety = VK_TRUE;
     // http://anglebug.com/42265520 - Shader validation caching is broken on Android
     const VkBool32 setting_check_shaders = IsAndroid() ? VK_FALSE : VK_TRUE;
     // http://b/316013423 Disable QueueSubmit Synchronization Validation. Lots of failures and some
     // test timeout due to https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/7285
-    const VkBool32 setting_syncval_submit_time_validation   = VK_FALSE;
+    const VkBool32 setting_syncval_full_validation          = VK_FALSE;
     const VkBool32 setting_syncval_message_extra_properties = VK_TRUE;
     const VkLayerSettingEXT layerSettings[]                 = {
         {name, "validate_core", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &setting_validate_core},
         {name, "validate_sync", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &setting_validate_sync},
         {name, "thread_safety", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &setting_thread_safety},
         {name, "check_shaders", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &setting_check_shaders},
-        {name, "syncval_submit_time_validation", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1,
-         &setting_syncval_submit_time_validation},
+        {name, "syncval_full_validation", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1,
+         &setting_syncval_full_validation},
         {name, "syncval_message_extra_properties", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1,
          &setting_syncval_message_extra_properties},
     };
@@ -2712,8 +2720,8 @@ angle::Result Renderer::initialize(vk::ErrorContext *context,
     std::vector<VkPhysicalDevice> physicalDevices(physicalDeviceCount);
     ANGLE_VK_TRY(context, VK_CALL(vkEnumeratePhysicalDevices, mInstance, &physicalDeviceCount,
                                   physicalDevices.data()));
-    VK_CALL_WITH_GROUP(
-        GetPerfCounterGroup(VulkanApiFunction::vkGetPhysicalDeviceProperties2),
+    VK_CALL_WITH_API(
+        VulkanApiFunction::vkGetPhysicalDeviceProperties2,
         ChoosePhysicalDevice(vkGetPhysicalDeviceProperties2, physicalDevices, mEnabledICD,
                              preferredVendorId, preferredDeviceId, preferredDeviceUuid,
                              preferredDriverUuid, preferredDriverId, &mPhysicalDevice,
@@ -2874,7 +2882,9 @@ angle::Result Renderer::initializeMemoryAllocator(vk::ErrorContext *context)
     // The first allocated buffer block from an empty buffer pool has a smaller size in order to
     // reduce the memory footprint.
     mPreferredInitialBufferBlockSize = 1 * 1024 * 1024;
+    mPreferredInitialImageBlockSize  = 1 * 1024 * 1024;
     ASSERT(mPreferredInitialBufferBlockSize <= mPreferredLargeHeapBlockSize);
+    ASSERT(mPreferredInitialImageBlockSize <= mPreferredLargeHeapBlockSize);
 
     // Create VMA allocator
     ANGLE_VK_TRY(context,
@@ -3466,11 +3476,26 @@ void Renderer::appendDeviceExtensionFeaturesPromotedTo14(
         vk::AddToPNextChain(deviceFeatures, &mLineRasterizationFeatures);
     }
 
-    if (ExtensionFound(VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, deviceExtensionNames) ||
-        ExtensionFound(VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, deviceExtensionNames))
+    const bool hasVertexAttributeDivisorKHR =
+        ExtensionFound(VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, deviceExtensionNames);
+    const bool hasVertexAttributeDivisorEXT =
+        ExtensionFound(VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, deviceExtensionNames);
+    if (hasVertexAttributeDivisorKHR || hasVertexAttributeDivisorEXT)
     {
         vk::AddToPNextChain(deviceFeatures, &mVertexAttributeDivisorFeatures);
-        vk::AddToPNextChain(deviceProperties, &mVertexAttributeDivisorProperties);
+        // VK_KHR_vertex_attribute_divisor is used by default, but it has an extra property
+        // |supportsNonZeroFirstInstance| that ANGLE needs to be true.  The EXT version doesn't have
+        // this property and is required to support the functionality.  Both properties are queried,
+        // and if the KHR extension does not support this functionality, ANGLE falls back to the EXT
+        // version.
+        if (hasVertexAttributeDivisorKHR)
+        {
+            vk::AddToPNextChain(deviceProperties, &mVertexAttributeDivisorProperties);
+        }
+        if (hasVertexAttributeDivisorEXT)
+        {
+            vk::AddToPNextChain(deviceProperties, &mVertexAttributeDivisorPropertiesEXT);
+        }
     }
 
     if (ExtensionFound(VK_KHR_INDEX_TYPE_UINT8_EXTENSION_NAME, deviceExtensionNames) ||
@@ -3524,15 +3549,14 @@ void Renderer::queryDeviceExtensionFeatures(const vk::ExtensionNameList &deviceE
     mVertexAttributeDivisorFeatures.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES;
 
-    // Note: VkPhysicalDeviceVertexAttributeDivisorProperties is different from the EXT version.
-    // It should be ok to set the EXT struct type on it though in the absence of KHR/Vulkan1.4 since
-    // the EXT struct can be laid over the KHR one, and the unfilled properties are automatically
-    // zeroed here.
     mVertexAttributeDivisorProperties = {};
     mVertexAttributeDivisorProperties.sType =
-        ExtensionFound(VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, deviceExtensionNames)
-            ? VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES
-            : VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES_EXT;
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES;
+
+    // Note: VkPhysicalDeviceVertexAttributeDivisorProperties is different from the EXT version.
+    mVertexAttributeDivisorPropertiesEXT = {};
+    mVertexAttributeDivisorPropertiesEXT.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES_EXT;
 
     mTransformFeedbackFeatures = {};
     mTransformFeedbackFeatures.sType =
@@ -3823,6 +3847,7 @@ void Renderer::queryDeviceExtensionFeatures(const vk::ExtensionNameList &deviceE
     mProvokingVertexFeatures.pNext                    = nullptr;
     mVertexAttributeDivisorFeatures.pNext             = nullptr;
     mVertexAttributeDivisorProperties.pNext           = nullptr;
+    mVertexAttributeDivisorPropertiesEXT.pNext        = nullptr;
     mTransformFeedbackFeatures.pNext                  = nullptr;
     mIndexTypeUint8Features.pNext                     = nullptr;
     mSubgroupProperties.pNext                         = nullptr;
@@ -4440,18 +4465,32 @@ void Renderer::enableDeviceExtensionsPromotedTo14(const vk::ExtensionNameList &d
 
     if (mVertexAttributeDivisorFeatures.vertexAttributeInstanceRateDivisor)
     {
+        // If KHR doesn't advertise support for supportsNonZeroFirstInstance, fall back to EXT where
+        // it is implicitly supported.
         const bool hasKHR =
-            ExtensionFound(VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, deviceExtensionNames);
+            ExtensionFound(VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, deviceExtensionNames) &&
+            mVertexAttributeDivisorProperties.supportsNonZeroFirstInstance;
+        const bool hasEXT =
+            ExtensionFound(VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, deviceExtensionNames);
 
-        mEnabledDeviceExtensions.push_back(hasKHR ? VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME
-                                                  : VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME);
-        vk::AddToPNextChain(&mEnabledFeatures, &mVertexAttributeDivisorFeatures);
+        // If only KHR is available, but it doesn't support supportsNonZeroFirstInstance, it's as if
+        // neither extension is available.
+        if (hasKHR || hasEXT)
+        {
+            mEnabledDeviceExtensions.push_back(
+                hasKHR ? VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME
+                       : VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME);
+            vk::AddToPNextChain(&mEnabledFeatures, &mVertexAttributeDivisorFeatures);
 
-        // We only store 8 bit divisor in GraphicsPipelineDesc so capping value & we emulate if
-        // exceeded
-        mMaxVertexAttribDivisor =
-            std::min(mVertexAttributeDivisorProperties.maxVertexAttribDivisor,
-                     static_cast<uint32_t>(std::numeric_limits<uint8_t>::max()));
+            mMaxVertexAttribDivisor =
+                hasKHR ? mVertexAttributeDivisorProperties.maxVertexAttribDivisor
+                       : mVertexAttributeDivisorPropertiesEXT.maxVertexAttribDivisor;
+            // We only store 8 bit divisor in GraphicsPipelineDesc so capping value & we emulate if
+            // exceeded
+            mMaxVertexAttribDivisor =
+                std::min(mMaxVertexAttribDivisor,
+                         static_cast<uint32_t>(std::numeric_limits<uint8_t>::max()));
+        }
     }
 
     if (mFeatures.supportsIndexTypeUint8.enabled)
@@ -7034,7 +7073,7 @@ void Renderer::initFeatures(const vk::ExtensionNameList &deviceExtensionNames,
     ANGLE_FEATURE_CONDITION(
         &mFeatures, supportsTileMemoryHeap,
         mTileMemoryHeapFeatures.tileMemoryHeap == VK_TRUE &&
-            !(isQualcommProprietary && driverVersion < angle::VersionTriple(512, 868, 1)));
+            !(isQualcommProprietary && driverVersion < angle::VersionTriple(512, 875, 0)));
 
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsAstc3d,
                             mTextureCompressionASTC3DFeatures.textureCompressionASTC_3D == VK_TRUE);
@@ -7155,19 +7194,6 @@ void Renderer::initOpenCLFeatures(const vk::ExtensionNameList &deviceExtensionNa
     ANGLE_FEATURE_CONDITION(
         &mFeatures, supportsAmdShaderCoreProperties,
         ExtensionFound(VK_AMD_SHADER_CORE_PROPERTIES_EXTENSION_NAME, deviceExtensionNames));
-
-    // Set limits to expose to OpenCL.
-    // This information cannot yet be queried from the Vulkan device.
-    if (isSamsung && mFeatures.supportsShaderFloat64.enabled)
-    {
-        mNativeVectorWidthDouble    = 1;
-        mPreferredVectorWidthDouble = 1;
-    }
-    if (isSamsung && mFeatures.supportsShaderFloat16.enabled)
-    {
-        mNativeVectorWidthHalf    = 2;
-        mPreferredVectorWidthHalf = 8;
-    }
 
     // The OpenCL extension cl_khr_subgroups needs support for
     // Basic - for subgroup size and related ops and barrier ops
@@ -8095,6 +8121,13 @@ VkDeviceSize Renderer::getPreferredInitialBufferBlockSize(uint32_t memoryTypeInd
     return std::min(heapSize / 64, mPreferredInitialBufferBlockSize);
 }
 
+VkDeviceSize Renderer::getPreferredInitialImageBlockSize(uint32_t memoryTypeIndex) const
+{
+    // Try not to exceed 1/64 of heap size to begin with.
+    const VkDeviceSize heapSize = getMemoryProperties().getHeapSizeForMemoryType(memoryTypeIndex);
+    return std::min(heapSize / 64, mPreferredInitialImageBlockSize);
+}
+
 VkDeviceSize Renderer::getPreferredLargeBufferBlockSize(uint32_t memoryTypeIndex) const
 {
     // Try not to exceed 1/64 of heap size to begin with.
@@ -8148,7 +8181,24 @@ const char *Renderer::GetVulkanObjectTypeName(VkObjectType type)
 ImageMemorySuballocator::ImageMemorySuballocator() {}
 ImageMemorySuballocator::~ImageMemorySuballocator() {}
 
-void ImageMemorySuballocator::destroy(Renderer *renderer) {}
+void ImageMemorySuballocator::destroy(Renderer *renderer)
+{
+    const Allocator &allocator = renderer->getAllocator();
+    for (auto &pool : mInitMemoryPools)
+    {
+        if (pool.valid())
+        {
+            pool.destroy(allocator);
+        }
+    }
+    for (auto &pool : mDefaultMemoryPools)
+    {
+        if (pool.valid())
+        {
+            pool.destroy(allocator);
+        }
+    }
+}
 
 VkResult ImageMemorySuballocator::allocateAndBindMemory(
     ErrorContext *context,
@@ -8182,17 +8232,78 @@ VkResult ImageMemorySuballocator::allocateAndBindMemory(
     ASSERT((preferredFlags & ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ==
            (requiredFlags & ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
 
+    const bool isDeviceLocalBitRequiredAndPreferred =
+        (requiredFlags & preferredFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
     uint32_t memoryTypeBits = memoryRequirements->memoryTypeBits;
-    if ((requiredFlags & preferredFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0)
+    if (isDeviceLocalBitRequiredAndPreferred)
     {
-        memoryTypeBits = GetMemoryTypeBitsExcludingHostVisible(renderer, preferredFlags,
-                                                               memoryRequirements->memoryTypeBits);
+        memoryTypeBits =
+            GetMemoryTypeBitsExcludingHostVisible(renderer, preferredFlags, memoryTypeBits);
     }
 
     // Allocate and bind memory for the image. Try allocating on the device first.
-    VkResult result = vma::AllocateAndBindMemoryForImage(
-        allocator.getHandle(), &image->mHandle, requiredFlags, preferredFlags, memoryTypeBits,
-        allocateDedicatedMemory, &allocationOut->mHandle, memoryTypeIndexOut, sizeOut);
+    //
+    // Custom pools are used to suballocate images from a specific block size, and prevent VMA
+    // from falling back to attempting dedicated allocation in case it failed to allocate a large
+    // block to suballocate from.
+    //
+    // Dedicated allocations are only allocated on a pool if the pool's block size is set to 0.
+    // Therefore, they use the default VMA pool.
+    VkResult result;
+    if (allocateDedicatedMemory)
+    {
+        result = vma::AllocateAndBindMemoryForImage(
+            allocator.getHandle(), &image->mHandle, requiredFlags, preferredFlags, memoryTypeBits,
+            allocateDedicatedMemory, &allocationOut->mHandle, memoryTypeIndexOut, sizeOut);
+    }
+    else
+    {
+        uint32_t poolMemoryTypeIndex;
+        VK_RESULT_TRY(vma::FindMemoryTypeIndexForImageInfo(
+            allocator.getHandle(), imageCreateInfo, requiredFlags, preferredFlags, memoryTypeBits,
+            allocateDedicatedMemory, &poolMemoryTypeIndex));
+
+        // Try allocating on the initial pools that would allocate a smaller block size (unless the
+        // allocation is too large for it). If the allocation was unsuccessful, retry on the default
+        // pools with the default block size.
+        Pool *selectedPool;
+        if (memoryRequirements->size <= getInitialPoolBlockSize(renderer, poolMemoryTypeIndex))
+        {
+            VK_RESULT_TRY(getInitMemoryPool(renderer, poolMemoryTypeIndex, &selectedPool));
+            ASSERT(selectedPool != nullptr);
+            result = vma::AllocateAndBindMemoryForImageFromPool(
+                allocator.getHandle(), &image->mHandle, selectedPool->getHandle(),
+                &allocationOut->mHandle, memoryTypeIndexOut, sizeOut);
+        }
+        else
+        {
+            result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        }
+
+        if (result != VK_SUCCESS)
+        {
+            VK_RESULT_TRY(getDefaultMemoryPool(renderer, poolMemoryTypeIndex, &selectedPool));
+            ASSERT(selectedPool != nullptr);
+            result = vma::AllocateAndBindMemoryForImageFromPool(
+                allocator.getHandle(), &image->mHandle, selectedPool->getHandle(),
+                &allocationOut->mHandle, memoryTypeIndexOut, sizeOut);
+        }
+
+        // In case allocation fails due to running out of device memory, but the device-local bit
+        // is not required, try allocating the image memory on another pool based on the required
+        // bits only.
+        if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY && !isDeviceLocalBitRequiredAndPreferred)
+        {
+            VK_RESULT_TRY(vma::FindMemoryTypeIndexForImageInfo(
+                allocator.getHandle(), imageCreateInfo, requiredFlags, requiredFlags,
+                memoryTypeBits, allocateDedicatedMemory, &poolMemoryTypeIndex));
+            VK_RESULT_TRY(getDefaultMemoryPool(renderer, poolMemoryTypeIndex, &selectedPool));
+            ASSERT(selectedPool != nullptr);
+            result = vma::AllocateAndBindMemoryForImageFromPool(
+                allocator.getHandle(), &image->mHandle, selectedPool->getHandle(),
+                &allocationOut->mHandle, memoryTypeIndexOut, sizeOut);
+        }
+    }
 
     // We need to get the property flags of the allocated memory if successful.
     if (result == VK_SUCCESS)
@@ -8234,9 +8345,56 @@ VkResult ImageMemorySuballocator::mapMemoryAndInitWithNonZeroValue(Renderer *ren
     return VK_SUCCESS;
 }
 
+VkResult ImageMemorySuballocator::getMemoryPoolImpl(
+    Renderer *renderer,
+    std::array<Pool, VK_MAX_MEMORY_TYPES> &poolGroup,
+    size_t maxBlockCount,
+    VkDeviceSize blockSize,
+    uint32_t poolMemoryTypeIndex,
+    Pool **poolOut)
+{
+    Pool &pool = poolGroup[poolMemoryTypeIndex];
+    if (!pool.valid())
+    {
+        VK_RESULT_TRY(
+            pool.init(renderer->getAllocator(), poolMemoryTypeIndex, maxBlockCount, blockSize));
+    }
+
+    *poolOut = &pool;
+    return VK_SUCCESS;
+}
+
+VkResult ImageMemorySuballocator::getInitMemoryPool(Renderer *renderer,
+                                                    uint32_t poolMemoryTypeIndex,
+                                                    Pool **poolOut)
+{
+    return getMemoryPoolImpl(renderer, mInitMemoryPools, 1,
+                             getInitialPoolBlockSize(renderer, poolMemoryTypeIndex),
+                             poolMemoryTypeIndex, poolOut);
+}
+
+VkResult ImageMemorySuballocator::getDefaultMemoryPool(Renderer *renderer,
+                                                       uint32_t poolMemoryTypeIndex,
+                                                       Pool **poolOut)
+{
+    return getMemoryPoolImpl(renderer, mDefaultMemoryPools, SIZE_MAX,
+                             getDefaultPoolBlockSize(renderer), poolMemoryTypeIndex, poolOut);
+}
+
 bool ImageMemorySuballocator::needsDedicatedMemory(VkDeviceSize size) const
 {
     return size >= kImageSizeThresholdForDedicatedMemoryAllocation;
+}
+
+VkDeviceSize ImageMemorySuballocator::getInitialPoolBlockSize(Renderer *renderer,
+                                                              uint32_t poolMemoryTypeIndex)
+{
+    return renderer->getPreferredInitialImageBlockSize(poolMemoryTypeIndex);
+}
+
+VkDeviceSize ImageMemorySuballocator::getDefaultPoolBlockSize(Renderer *renderer)
+{
+    return renderer->getPreferredLargeHeapBlockSize();
 }
 
 }  // namespace vk

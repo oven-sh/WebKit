@@ -1,0 +1,34 @@
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest check=VerifyEachPass
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="theTestStandsAheadOfTheLoop" flags=[IsChecked] parameters=[{type=i32 flags=[IsExpected]}, {type=bigint flags=[IsExpected]}, {type=boolean}, {type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ i32, v1: anything ~ bigint, v2: boolean, v3: anything ~ L0):
+    v4 = TypeTest v0 testedType=i32
+    Branch v4 -> taken b1(| 0), notTaken b5()
+  b1(v5):
+    v6 = StrictEq v1, v0
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v8 = PropGet v3 key="a"
+    Branch v6 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    Branch v2 -> taken b2(), notTaken b4()
+  b4():
+    Return v8
+  b5():
+    Return
+}
+# CHECK: function f0
+# CHECK: v6: boolean ~ false = StrictEq v1, v5
+# CHECK: b2():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = GetSlot
+# CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b4()
+# CHECK: = PropGet v3 key="a"
+# CHECK-NEXT: Branch v6 -> taken
+# CHECK-NOT: testedType=false

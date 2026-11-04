@@ -24,12 +24,10 @@
 #include <WebCore/FontCascade.h>
 #include <WebCore/RenderObjectNode.h>
 #include <WebCore/RenderText.h>
-#include <WebCore/SVGTextLayoutAttributes.h>
+#include <WebCore/SVGTextMetrics.h>
 #include <WebCore/Text.h>
 
 namespace WebCore {
-
-class SVGInlineTextBox;
 
 class RenderSVGInlineText final : public RenderText {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGInlineText);
@@ -40,9 +38,11 @@ public:
 
     Text& textNode() const { return downcast<Text>(nodeForNonAnonymous()); }
 
-    bool characterStartsNewTextChunk(int position) const;
-    SVGTextLayoutAttributes* layoutAttributes() LIFETIME_BOUND { return &m_layoutAttributes; }
-    const SVGTextLayoutAttributes* layoutAttributes() const LIFETIME_BOUND { return &m_layoutAttributes; }
+    // Used by SVGTextLayoutAlgorithm, which measures only when the text or the font changes.
+    Vector<SVGTextMetrics>& textMetrics() LIFETIME_BOUND { return m_textMetrics; }
+    const Vector<SVGTextMetrics>& textMetrics() const LIFETIME_BOUND { return m_textMetrics; }
+    bool hasValidTextMetrics() const { return m_hasValidTextMetrics; }
+    void setHasValidTextMetrics(bool value) { m_hasValidTextMetrics = value; }
 
     // computeScalingFactor() returns the font-size scaling factor, ignoring the text-rendering mode.
     // scalingFactor() takes it into account, and thus returns 1 whenever text-rendering is set to 'geometricPrecision'.
@@ -57,15 +57,7 @@ public:
     // Preserves floating point precision for the use in DRT. It knows how to round and does a better job than enclosingIntRect.
     FloatRect floatLinesBoundingBox() const;
 
-    void removeTextBox(LegacyInlineTextBox& box) { m_legacyLineBoxes.remove(box); }
-    LegacyInlineTextBox* createInlineTextBox() LIFETIME_BOUND { return m_legacyLineBoxes.createAndAppendLineBox(*this); }
-    void deleteLegacyLineBoxes();
-    LegacyInlineTextBox* firstLegacyTextBox() const LIFETIME_BOUND { return m_legacyLineBoxes.first(); }
-    void removeAndDestroyLegacyTextBoxes();
-    std::unique_ptr<LegacyInlineTextBox> createTextBox();
-
 private:
-    void willBeDestroyed() final;
     ASCIILiteral renderName() const override { return "RenderSVGInlineText"_s; }
 
     String originalText() const override;
@@ -80,8 +72,8 @@ private:
 
     float m_scalingFactor;
     FontCascade m_scaledFont;
-    SVGTextLayoutAttributes m_layoutAttributes;
-    RenderTextLineBoxes m_legacyLineBoxes;
+    Vector<SVGTextMetrics> m_textMetrics;
+    bool m_hasValidTextMetrics { false };
 };
 
 } // namespace WebCore

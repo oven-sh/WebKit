@@ -82,11 +82,13 @@ void AutomationSessionClient::requestNewPageWithOptions(WebKit::WebAutomationSes
                 false, /* isInitialFrameSrcLoad */
                 false, /* isContentExtensionRedirect */
                 { }, /* openedMainFrameName */
+                { }, /* openedByScriptDomain */
                 std::nullopt, /* targetBackForwardItemIdentifier */
                 std::nullopt, /* sourceBackForwardItemIdentifier */
                 WebCore::LockHistory::No, /* lockHistory */
                 WebCore::LockBackForwardList::No, /* lockBackForwardList */
                 WebCore::NavigationHistoryBehavior::Auto, /* navigationHistoryBehavior */
+                WebCore::ReplaceIfNotCompletelyLoaded::No, /* replaceIfNotCompletelyLoaded */
                 { }, /* clientRedirectSourceForHistory */
                 { }, /* effectiveSandboxFlags */
                 WebCore::ReferrerPolicy::EmptyString, /* effectiveReferrerPolicy */

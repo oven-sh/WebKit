@@ -1,0 +1,72 @@
+# A block runs at most once when the flow analysis proved that of its function and the block is in no cycle
+# FORM: AsRead
+# RUN: analyses execution-counts flow
+# RUN(NOFLOW): analyses execution-counts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = CallDirect v2 function=f1
+    v4 = CallDirect v2 function=f1
+    v5 = CallDirect v2 function=f2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v7 = CallDirect v2 function=f3
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: execution-counts:
+# CHECK-NEXT: b0 AtMostOnce
+# CHECK-NEXT: b1 Unknown
+# CHECK-NEXT: b2 Unknown
+# CHECK-NEXT: b3 AtMostOnce
+# NOFLOW-LABEL: function f0
+# NOFLOW-NEXT: execution-counts:
+# NOFLOW-NEXT: b0 Unknown
+# NOFLOW-NEXT: b1 Unknown
+# NOFLOW-NEXT: b2 Unknown
+# NOFLOW-NEXT: b3 Unknown
+function f1 name="calledTwice" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: execution-counts:
+# CHECK-NEXT: b0 Unknown
+# NOFLOW-LABEL: function f1
+# NOFLOW-NEXT: execution-counts:
+# NOFLOW-NEXT: b0 Unknown
+function f2 name="calledOnce" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: execution-counts:
+# CHECK-NEXT: b0 AtMostOnce
+# CHECK-NEXT: b1 Unknown
+# CHECK-NEXT: b2 AtMostOnce
+# NOFLOW-LABEL: function f2
+# NOFLOW-NEXT: execution-counts:
+# NOFLOW-NEXT: b0 Unknown
+# NOFLOW-NEXT: b1 Unknown
+# NOFLOW-NEXT: b2 Unknown
+function f3 name="calledInLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: execution-counts:
+# CHECK-NEXT: b0 Unknown
+# NOFLOW-LABEL: function f3
+# NOFLOW-NEXT: execution-counts:
+# NOFLOW-NEXT: b0 Unknown

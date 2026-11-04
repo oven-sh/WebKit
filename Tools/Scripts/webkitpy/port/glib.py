@@ -48,6 +48,8 @@ class GLibPort(Port):
     def __init__(self, *args, **kwargs):
         super(GLibPort, self).__init__(*args, **kwargs)
         self._display_server = self.get_option("display_server")
+        self._gl_rendering_backend = self.get_option("gl_rendering_backend")
+        self._skia_rendering_backend = self.get_option("skia_rendering_backend")
 
         if self.get_option("leaks"):
             self._leakdetector = LeakDetectorValgrind(self._executive, self._filesystem, self.results_directory())
@@ -121,6 +123,7 @@ class GLibPort(Port):
 
         # Copy all GStreamer related env vars
         self._copy_values_from_environ_with_prefix(environment, 'GST_')
+        self._copy_values_from_environ_with_prefix(environment, 'WEBKIT_GST_')
 
         gst_feature_rank_override = os.environ.get('GST_PLUGIN_FEATURE_RANK')
         # Disable hardware-accelerated device providers, encoders and decoders. Depending on the underlying platform

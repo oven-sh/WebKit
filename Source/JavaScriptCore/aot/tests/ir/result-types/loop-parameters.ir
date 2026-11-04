@@ -1,0 +1,91 @@
+# A loop parameter has the join of what flows around the loop: widening ends the ascent, and what it added beyond that join is taken back
+# FORM: Prepared
+# RUN: result-types
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="counterBelowSmallBound" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Add v6, v2
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: v3: int[0, 100]
+# CHECK: v6: int[0, 99]
+# CHECK: v7: int[1, 100]
+
+function f1 name="counterBelowAnyInt32" parameters=[{type=i32}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = Add v6, v2
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: v3: int[0, 2147483647]
+# CHECK: v6: int[0, 2147483646]
+# CHECK: v7: int[1, 2147483647]
+
+function f2 name="counterWithoutBound" parameters=[{type=boolean}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Add v3, v2
+    Jump -> next b1(v5)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: v3: int|whole
+# CHECK: v5: int|whole
+
+function f3 name="valueFromLoopBodyReplacesParameter" parameters=[{type=boolean}, {type=int[0, 7]}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Add v1, v1
+    Jump -> next b1(v5)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK: v3: int[0, 14]
+# CHECK: v5: int[0, 14]
+
+function f4 name="textUnderWrittenTypeWithRange" parameters=[{type=boolean}] results=[{type=undefined}] {
+    v1 = String string="a"
+    Jump -> next b1(v1)
+  b1(v2: int[5, 10]|string):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    v4 = Add v2, v1
+    Jump -> next b1(v4)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK: v2: string
+# CHECK: v4: string

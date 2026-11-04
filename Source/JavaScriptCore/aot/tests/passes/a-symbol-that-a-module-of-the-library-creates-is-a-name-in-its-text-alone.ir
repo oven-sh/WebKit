@@ -1,0 +1,137 @@
+# library.js: const kState = Symbol("state")  export { kState }  function read(holder) { return holder[kState] }   main.js: const { kState } = require("library")  holder[kState]
+# The text of the library names a property by a symbol that a module of the library creates. In the text of a program the symbol stays a key that is a value, however much is known about it,
+# and the text keeps its kind where it was copied into a function of the other kind. A symbol that a module of the program creates is a name everywhere
+# FORM: Prepared
+# RUN: pass FoldConstants
+# RUN(RESOLVED): pass ResolveAccesses
+# RUN(SPLIT): pass SplitUnions
+# RUN(OWN): pass SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+# RESOLVED: outcome: Changed
+# SPLIT: outcome: Changed
+# OWN: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+module m2 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+layout L0 name="Holder" fields=[{key="plain" declared={type=number} flags=[IsRequired]}, {key=symbol("state")@m1:100 declared={type=number} flags=[IsRequired]}, {key=symbol("own")@m0:100 declared={type=number} flags=[IsRequired]}]
+
+function f0 name="inProgram" parameters=[{type=L0}, {type=number}, {type=symbol("state")@m1:100}, {type=symbol("inner")@m2:100}] results=[{type=anything}] {
+    v4 = ElemGet v0, v2
+    ElemSet v0, v2, v1 mode=Sloppy
+    v6 = ElemHas v0, v2
+    v7 = ElemDelete v0, v2
+    ElemDefine v0, v2, v1
+    v9 = ElemGet v0, v3
+    Return v4
+# CHECK-NOT: key=symbol
+# CHECK: v4:{{*}}= ElemGet v0, v2
+# CHECK-NEXT: ElemSet v0, v2, v1 mode=Sloppy
+# CHECK-NEXT: v6:{{*}}= ElemHas v0, v2
+# CHECK-NEXT: v7:{{*}}= ElemDelete v0, v2
+# CHECK-NEXT: ElemDefine v0, v2, v1
+# CHECK-NEXT: v9:{{*}}= ElemGet v0, v3
+# RESOLVED-NOT: key=symbol
+# RESOLVED: v4:{{*}}= ElemGet v0, v2
+# RESOLVED: Return v4
+}
+
+function f1 name="inLibrary" module=m1 parameters=[{type=L0}, {type=number}, {type=symbol("state")@m1:100}, {type=symbol("inner")@m2:100}] results=[{type=anything}] {
+    v4 = ElemGet v0, v2
+    ElemSet v0, v2, v1 mode=Sloppy
+    v6 = ElemHas v0, v2
+    v7 = ElemDelete v0, v2
+    ElemDefine v0, v2, v1
+    v9 = ElemGet v0, v3
+    Return v4
+# CHECK-NOT: = Elem
+# CHECK: v4:{{*}}= PropGet v0 key=symbol("state")@m1:100
+# CHECK-NEXT: PropSet v0, v1 key=symbol("state")@m1:100 mode=Sloppy
+# CHECK-NEXT: v6:{{*}}= PropHas v0 key=symbol("state")@m1:100
+# CHECK-NEXT: v7:{{*}}= PropDelete v0 key=symbol("state")@m1:100
+# CHECK-NEXT: PropDefine v0, v1 key=symbol("state")@m1:100
+# CHECK-NEXT: v9:{{*}}= PropGet v0 key=symbol("inner")@m2:100
+# RESOLVED: v4:{{*}}= PropGet v0 key=symbol("state")@m1:100
+}
+
+function f2 name="programCopiedIntoLibrary" module=m2 parameters=[{type=L0}, {type=symbol("state")@m1:100}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}] {
+    v2 = ElemGet v0, v1 @3:1
+    v3 = ElemGet v0, v1 @4
+    Return v2
+# CHECK: v2:{{*}}= ElemGet v0, v1
+# CHECK-NEXT: v3:{{*}}= PropGet v0 key=symbol("state")@m1:100
+# RESOLVED: v2:{{*}}= ElemGet v0, v1
+# RESOLVED-NEXT: v3:{{*}}= PropGet v0 key=symbol("state")@m1:100
+}
+
+function f3 name="libraryCopiedIntoProgram" parameters=[{type=L0}, {type=symbol("state")@m1:100}] results=[{type=anything}] inlineFrames=[{}, {callee=f1 callPosition=5 module=m1}] {
+    v2 = ElemGet v0, v1 @3:1
+    v3 = ElemGet v0, v1 @4
+    Return v2
+# CHECK: v2:{{*}}= PropGet v0 key=symbol("state")@m1:100
+# CHECK-NEXT: v3:{{*}}= ElemGet v0, v1
+# RESOLVED: v2:{{*}}= PropGet v0 key=symbol("state")@m1:100
+# RESOLVED-NEXT: v3:{{*}}= ElemGet v0, v1
+}
+
+function f4 name="symbolOfProgram" parameters=[{type=L0}, {type=symbol("own")@m0:100}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK: v2:{{*}}= PropGet v0 key=symbol("own")@m0:100
+# RESOLVED: v2:{{*}}= PropGet v0 key=symbol("own")@m0:100
+}
+
+function f5 name="symbolOfProgramInLibrary" module=m1 parameters=[{type=L0}, {type=symbol("own")@m0:100}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK: v2:{{*}}= PropGet v0 key=symbol("own")@m0:100
+}
+
+function f6 name="aboveInProgram" parameters=[{type=object}, {type=object}, {type=anything}, {type=symbol("state")@m1:100}] results=[{type=anything}] {
+    v4 = SuperGet v0, v1, v3
+    SuperSet v0, v1, v2, v3
+    Return v4
+# CHECK: v4:{{*}}= SuperGet v0, v1, v3
+# CHECK-NEXT: SuperSet v0, v1, v2, v3
+}
+
+function f7 name="aboveInLibrary" module=m1 parameters=[{type=object}, {type=object}, {type=anything}, {type=symbol("state")@m1:100}] results=[{type=anything}] {
+    v4 = SuperGet v0, v1, v3
+    SuperSet v0, v1, v2, v3
+    Return v4
+# CHECK: v4:{{*}}= SuperGet v0, v1 key=symbol("state")@m1:100
+# CHECK-NEXT: SuperSet v0, v1, v2 key=symbol("state")@m1:100
+}
+
+function f8 name="mayBeUndefinedInProgram" parameters=[{type=anything}, {type=undefined|symbol("state")@m1:100}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# SPLIT-NOT: TypeTest
+# SPLIT: v2:{{*}}= ElemGet v0, v1
+}
+
+function f9 name="mayBeUndefinedInLibrary" module=m1 parameters=[{type=anything}, {type=undefined|symbol("state")@m1:100}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+# SPLIT: = TypeTest v1 testedType=symbol("state")@m1:100
+}
+
+function f10 name="ownInProgram" parameters=[{type=L0}, {type=symbol("state")@m1:100}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
+    v3 = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+# OWN-NOT: PropHasOwn
+# OWN: v2:{{*}}= CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
+# OWN-NEXT: v3:{{*}}= CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
+}
+
+function f11 name="ownInLibrary" module=m1 parameters=[{type=L0}, {type=symbol("state")@m1:100}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
+    v3 = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
+    v4 = NewArray v2, v3 contents=anything
+    Return v4
+# OWN-NOT: CallBuiltin
+# OWN: v2:{{*}}= PropHasOwn v0 key=symbol("state")@m1:100
+# OWN-NEXT: v3:{{*}}= PropHasOwn v0 key=symbol("state")@m1:100
+}

@@ -512,7 +512,7 @@ WI.TextEditor = class TextEditor extends WI.View
         // Otherwise the line highlight doesn't work properly.
         if (this._formatted && forceUnformatted) {
             this.updateFormattedState(false).then(() => {
-                setTimeout(this.revealPosition.bind(this), 0, position, textRangeToSelect);
+                setTimeout(this.revealPosition.bind(this), 0, position, options);
             });
             return;
         }

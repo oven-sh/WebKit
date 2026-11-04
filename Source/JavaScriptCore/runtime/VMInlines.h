@@ -34,6 +34,10 @@
 #include "VM.h"
 #include "Watchdog.h"
 
+#if ENABLE(AOT)
+#include "AOTCompiledCaller.h"
+#endif
+
 #if ENABLE(C_LOOP)
 #include "CLoopStackInlines.h"
 #endif
@@ -75,7 +79,7 @@ bool VM::isSafeToRecurseSoft() const
 }
 
 template<typename Func>
-void VM::logEvent(CodeBlock* codeBlock, const char* summary, const Func& func)
+void VM::logEvent(CodeBlock* codeBlock, const char* summary, NOESCAPE const Func& func)
 {
     if (!m_perBytecodeProfiler) [[likely]]
         return;
@@ -88,11 +92,15 @@ inline CallFrame* VM::topJSCallFrame() const
     CallFrame* frame = topCallFrame;
     if (!frame) [[unlikely]]
         return frame;
+#if ENABLE(AOT)
+    if (hasCompiledCode() && AOT::isTopFrameCompiled(const_cast<VM&>(*this))) [[unlikely]]
+        return nullptr;
+#endif
     if (!frame->isNativeCalleeFrame() && !frame->isZombieFrame()) [[likely]]
         return frame;
     EntryFrame* entryFrame = topEntryFrame;
     do {
-        frame = frame->callerFrame(entryFrame);
+        frame = frame->callerFrameUnlessCompiled(const_cast<VM&>(*this), entryFrame);
         ASSERT(!frame || !frame->isZombieFrame());
     } while (frame && frame->isNativeCalleeFrame());
     return frame;
@@ -105,7 +113,7 @@ inline void VM::setFuzzerAgent(std::unique_ptr<FuzzerAgent>&& fuzzerAgent)
 }
 
 template<typename Func>
-inline void VM::forEachDebugger(const Func& callback)
+inline void VM::forEachDebugger(NOESCAPE const Func& callback)
 {
     if (m_debuggers.isEmpty()) [[likely]]
         return;
@@ -115,7 +123,7 @@ inline void VM::forEachDebugger(const Func& callback)
 }
 
 template<typename Type, typename Functor>
-Type& VM::ensureSideData(void* key, const Functor& functor)
+Type& VM::ensureSideData(void* key, NOESCAPE const Functor& functor)
 {
     m_hasSideData = true;
     return sideDataRepository().ensure<Type>(this, key, functor);
@@ -153,6 +161,7 @@ JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseAllSettledSlowFulfillFunction)
 JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseAllSettledSlowRejectFunction)
 JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseAnyRejectFunction)
 JSC_DEFINE_VM_LAZY_EXECUTABLE(promiseAnySlowRejectFunction)
+JSC_DEFINE_VM_LAZY_EXECUTABLE(proxyRevoke)
 #undef JSC_DEFINE_VM_LAZY_EXECUTABLE
 
 } // namespace JSC

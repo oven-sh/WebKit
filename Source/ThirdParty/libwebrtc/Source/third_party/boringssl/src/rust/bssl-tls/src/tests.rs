@@ -53,22 +53,39 @@ use bssl_x509::{
 };
 use futures::future::join;
 
+mod alpn;
+mod credentials;
+mod datagram;
+mod handshake;
+mod transport;
+
 pub(crate) const CA: &[u8] = include_bytes!("../../test-data/BoringSSLCATest.crt");
 pub(crate) const RSA_SERVER_CERT: &[u8] =
     include_bytes!("../../test-data/BoringSSLServerTest-RSA.crt");
+pub(crate) const RSA_SERVER_CERT_DER: &[u8] =
+    include_bytes!("../../test-data/BoringSSLServerTest-RSA-Cert.der");
 pub(crate) const RSA_SERVER_KEY: &[u8] =
     include_bytes!("../../test-data/BoringSSLServerTest-RSA.key");
 pub(crate) const P256_SERVER_CERT: &[u8] =
     include_bytes!("../../test-data/BoringSSLServerTest-ECDSA-P256.crt");
+pub(crate) const P256_SERVER_CERT_DER: &[u8] =
+    include_bytes!("../../test-data/BoringSSLServerTest-ECDSA-P256-Cert.der");
 pub(crate) const P256_SERVER_KEY: &[u8] =
     include_bytes!("../../test-data/BoringSSLServerTest-ECDSA-P256.key");
 pub(crate) const P256_SERVER_KEY_DER: &[u8] =
     include_bytes!("../../test-data/BoringSSLServerTest-ECDSA-P256.der");
 
-mod credentials;
-mod datagram;
-mod handshake;
-mod transport;
+// DER-encoded DistinguishedName representing "CN=TestCA".
+// Can be verified using:
+// echo -n "3011310f300d06035504031306546573744341" | xxd -r -p | openssl asn1parse -inform DER
+//
+// Output:
+//   0:d=0  hl=2 l=  17 cons: SEQUENCE
+//   2:d=1  hl=2 l=  15 cons: SET
+//   4:d=2  hl=2 l=  13 cons: SEQUENCE
+//   6:d=3  hl=2 l=   3 prim: OBJECT            :commonName
+//  11:d=3  hl=2 l=   6 prim: PRINTABLESTRING   :TestCA
+pub(crate) const TEST_CA_DN: &[u8] = b"\x30\x11\x31\x0f\x30\x0d\x06\x03\x55\x04\x03\x13\x06TestCA";
 
 /// Dumb server-client pair that does no certificate verification.
 fn dumb_server_client() -> Result<(TlsConnection<Server>, TlsConnection<Client>), Error> {
@@ -89,7 +106,8 @@ fn dumb_server_client() -> Result<(TlsConnection<Server>, TlsConnection<Client>)
 fn sync_ping_pong<
     M: crate::connection::methods::HasTlsConnectionMethod
         + crate::context::SupportedMode
-        + crate::context::HasBasicIo
+        + crate::context::HasStreamIo
+        + crate::context::HasShutdown
         + 'static,
 >(
     mut server_conn: TlsConnection<Server, M>,
@@ -108,8 +126,12 @@ fn sync_ping_pong<
         assert_eq!(*message, *b"BoringSSL is awesome!");
         server_conn.sync_write(b"Oh yeah definitely!")?;
         server_conn.established().unwrap().sync_shutdown()?;
-        // Second shutdown poll.
-        server_conn.established().unwrap().sync_shutdown()?;
+        // Consume the peer's `close_notify` before this end of the transport is dropped.
+        // Otherwise, the connection may block or reset from unconsumed data.
+        let mut eof = [MaybeUninit::uninit(); 1];
+        let mut eof = ReceiveBuffer::new_uninit(&mut eof);
+        // We do not care if the connection was torn down or not.
+        let _ = server_conn.sync_read(&mut eof);
         Ok::<_, Error>(())
     });
 
@@ -390,6 +412,30 @@ pub(crate) fn load_trust_store(trust: Trust) -> X509Store {
     cert_store.build()
 }
 
+/// Runs an async TLS handshake between a client and server connection using mock
+/// pipe IO. Returns `Ok(())` on successful handshake.
+pub(crate) fn run_async_handshake(
+    mut client_conn: TlsConnection<Client>,
+    mut server_conn: TlsConnection<Server>,
+) -> Result<(), Error> {
+    let (client_socket, server_socket, mut executor) = create_mock_pipe();
+    client_conn.set_io(client_socket)?;
+    server_conn.set_io(server_socket)?;
+
+    executor.run(async {
+        let client_handshake = async {
+            assert!(client_conn.async_handshake().await?.is_none());
+            Ok::<(), Error>(())
+        };
+        let server_handshake = async {
+            assert!(server_conn.async_handshake().await?.is_none());
+            Ok::<(), Error>(())
+        };
+        futures::future::try_join(client_handshake, server_handshake).await?;
+        Ok::<(), Error>(())
+    })
+}
+
 #[test]
 fn test_async() -> Result<(), Error> {
     let (mut server_conn, mut client_conn) = dumb_server_client()?;
@@ -406,11 +452,12 @@ fn test_async() -> Result<(), Error> {
 
         let server_data = async move {
             let mut buf = [0u8; TEST_DATA.len()];
+            let mut message = ReceiveBuffer::new(&mut buf);
             let mut read_bytes = 0;
             while read_bytes < TEST_DATA.len() {
                 match server_conn
                     .as_pin_mut()
-                    .async_read(&mut buf[read_bytes..])
+                    .async_read(&mut message)
                     .await
                     .unwrap()
                 {

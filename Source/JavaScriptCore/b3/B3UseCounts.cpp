@@ -38,6 +38,20 @@ UseCounts::UseCounts(Procedure& procedure)
 {
     Vector<Value*, 64> children;
     for (Value* value : procedure.values()) {
+        if (unsigned numberOfChildren = value->numChildren(); numberOfChildren <= 2) {
+            if (!numberOfChildren)
+                continue;
+            Value* first = value->child(0);
+            m_counts[first].numUses++;
+            m_counts[first].numUsingInstructions++;
+            if (numberOfChildren == 1)
+                continue;
+            Value* second = value->child(1);
+            m_counts[second].numUses++;
+            if (second != first)
+                m_counts[second].numUsingInstructions++;
+            continue;
+        }
         children.shrink(0);
         for (Value* child : value->children()) {
             m_counts[child].numUses++;

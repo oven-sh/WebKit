@@ -1,0 +1,39 @@
+# A spread of a string or a number runs no code, so a guard may stand across it. Behind a test of that value for a string that failed, what takes the place of the spread runs none either
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration VerifyProgram
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="storesBehindTheSpread" parameters=[{type=Array}, {type=int[0, 10]}, {type=string|number}] results=[{type=undefined}] {
+  b0(v0: Array, v1: int[0, 10], v2: string|number):
+    v3 = TypeTest v2 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4: string):
+    Jump -> next b6()
+  b2(v5: number):
+    v6 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v6 -> taken b3(| 0), notTaken b6()
+  b3(v7: guard):
+    v8 = NewArray contents=anything
+    AppendSpread v8, v2
+    v10 = HasArrayStorage v0 arrayStorage=Contiguous [isWritable]
+    Branch v10 -> taken b4(| 0), notTaken b6()
+  b4(v11: guard):
+    v12 = IsInBounds v0, v1
+    Branch v12 -> taken b5(| 0), notTaken b6()
+  b5(v13: guard):
+    v14 = AllGuards v7, v11, v13
+    PutArrayElement v0, v1, v8, v14 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+    Jump -> next b6()
+  b6():
+    v16 = Undefined
+    Return v16
+# CHECK: never = ThrowNotIterable {{*}} [isSpread]
+# CHECK-NOT: CallDirect
+}
+
+function f1 name="namesTheKey" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key=@@iterator
+    Return v1
+}

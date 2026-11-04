@@ -29,6 +29,3 @@ if (ENABLE_WPE_PLATFORM)
     ADD_WK2_TEST(TestWebViewEditor ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/wpe/TestWebViewEditor.cpp)
 endif ()
 
-if (ENABLE_2022_GLIB_API)
-    ADD_WK2_TEST(TestWebKitFaviconDatabase ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestWebKitFaviconDatabase.cpp)
-endif ()

@@ -41,6 +41,8 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
+    static bool isExposedInGlobalObject(JSDOMGlobalObject&);
+    static constexpr bool isRestrictedToSameAgentCluster = false;
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
@@ -51,7 +53,8 @@ public:
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     ExposedStar& wrapped() const
     {
-        return static_cast<ExposedStar&>(Base::wrapped());
+        // JSExposedStar wrappers always wrap ExposedStar objects.
+        SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<ExposedStar&>(Base::wrapped());
     }
 
 protected:

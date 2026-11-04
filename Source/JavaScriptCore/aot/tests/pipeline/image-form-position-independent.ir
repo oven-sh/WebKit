@@ -1,0 +1,6 @@
+# Whatever form of image the compiler's own run time loads, it writes the position-independent form where the run time it compiles for loads that one.
+# RUN: compile
+# OPTIONS: image-form=position-independent heat=everything-is-hot check=validate-back-end
+# STATISTIC: StringHeaderBytesEmitted >= 1
+# CHECK: image not empty
+# PROGRAM-OF: image-form-absolute.ir

@@ -1,0 +1,53 @@
+# A value that closures copy becomes a variable when it is computed at most once. A value that is computed again and again stays a capture
+# FORM: AsRead
+# RUN: pipeline PromoteEnvironmentsToVariables
+# OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass
+# STATISTIC: EnvironmentsPromotedToVariables = 0
+# STATISTIC: CapturesPromotedToVariables = 1
+# CHECK: variable g0 module=m0 declared={type=anything} flags=[IsImmutable] flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-NOT: variable g1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Call v1
+    v3 = NewClosure v2 function=f1
+    v4 = PropGet v0 key="publish" [isFreeName]
+    v5 = Call v4, -, v3
+    v6 = NewClosure function=f2
+    v7 = Call v6
+    v8 = Call v6
+    v9 = Call v4, -, v7, v8
+    Return
+# CHECK: [[limit]]: anything = Call v1
+# CHECK-NEXT: PutModuleVariable [[limit]] variable=g0
+# CHECK-NEXT: = NewClosure function=f1
+}
+
+function f1 name="copiesValueComputedOnce" kind=Arrow captures=[{type=anything}] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Less v1, v0
+    Return v2
+# CHECK-NOT: captures=
+# CHECK: b0([[x]]: anything):
+# CHECK-NEXT: [[copy]]: anything = GetModuleVariable variable=g0
+# CHECK-NEXT: = Less [[x]], [[copy]]
+}
+
+function f2 name="calledTwice" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Call v1
+    v3 = NewClosure v2 function=f3
+    Return v3
+# CHECK: = NewClosure v2 function=f3
+}
+
+function f3 name="copiesValueComputedTwice" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: function f3 name="copiesValueComputedTwice"{{*}}captures=[{type=anything}]
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: Return v0

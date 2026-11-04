@@ -58,7 +58,7 @@ WorkerFileSystemStorageConnection::~WorkerFileSystemStorageConnection()
 void WorkerFileSystemStorageConnection::connectionClosed()
 {
     for (auto handle : m_syncAccessHandles.values())
-        handle->invalidate();
+        protect(handle)->invalidate();
 
     scopeClosed();
 }
@@ -116,7 +116,7 @@ void WorkerFileSystemStorageConnection::isSameEntry(FileSystemHandleIdentifier i
     callOnMainThread([callbackIdentifier, workerThread = Ref { scope->thread() }, mainThreadConnection = m_mainThreadConnection, identifier, otherIdentifier]() mutable {
         auto mainThreadCallback = [callbackIdentifier, workerThread = WTF::move(workerThread)](ExceptionOr<bool>&& result) mutable {
             workerThread->runLoop().postTaskForMode([callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
-                if (auto connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
+                if (RefPtr connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
                     connection->didIsSameEntry(callbackIdentifier, WTF::move(result));
             }, WorkerRunLoop::defaultMode());
         };
@@ -143,7 +143,7 @@ void WorkerFileSystemStorageConnection::getFileHandle(FileSystemHandleIdentifier
     callOnMainThread([callbackIdentifier, workerThread = Ref { scope->thread() }, mainThreadConnection = m_mainThreadConnection, identifier, name = name.isolatedCopy(), createIfNecessary]() mutable {
         auto mainThreadCallback = [callbackIdentifier, workerThread = WTF::move(workerThread)](auto&& result) mutable {
             workerThread->runLoop().postTaskForMode([callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
-                if (auto connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
+                if (RefPtr connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
                     connection->didGetHandle(callbackIdentifier, WTF::move(result));
             }, WorkerRunLoop::defaultMode());
         };
@@ -164,7 +164,7 @@ void WorkerFileSystemStorageConnection::getDirectoryHandle(FileSystemHandleIdent
     callOnMainThread([callbackIdentifier, workerThread = Ref { scope->thread() }, mainThreadConnection = m_mainThreadConnection, identifier, name = name.isolatedCopy(), createIfNecessary]() mutable {
         auto mainThreadCallback = [callbackIdentifier, workerThread = WTF::move(workerThread)](auto&& result) mutable {
             workerThread->runLoop().postTaskForMode([callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
-                if (auto connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
+                if (RefPtr connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
                     connection->didGetHandle(callbackIdentifier, WTF::move(result));
             }, WorkerRunLoop::defaultMode());
         };
@@ -191,7 +191,7 @@ void WorkerFileSystemStorageConnection::removeEntry(FileSystemHandleIdentifier i
     callOnMainThread([callbackIdentifier, workerThread = Ref { scope->thread() }, mainThreadConnection = m_mainThreadConnection, identifier, name = name.isolatedCopy(), deleteRecursively]() mutable {
         auto mainThreadCallback = [callbackIdentifier, workerThread = WTF::move(workerThread)](auto&& result) mutable {
             workerThread->runLoop().postTaskForMode([callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
-                if (auto connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
+                if (RefPtr connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
                     connection->completeVoidCallback(callbackIdentifier, WTF::move(result));
             }, WorkerRunLoop::defaultMode());
         };
@@ -212,7 +212,7 @@ void WorkerFileSystemStorageConnection::resolve(FileSystemHandleIdentifier ident
     callOnMainThread([callbackIdentifier, workerThread = Ref { scope->thread() }, mainThreadConnection = m_mainThreadConnection, identifier, otherIdentifier]() mutable {
         auto mainThreadCallback = [callbackIdentifier, workerThread = WTF::move(workerThread)](auto&& result) mutable {
             workerThread->runLoop().postTaskForMode([callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
-                if (auto connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
+                if (RefPtr connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
                     connection->didResolve(callbackIdentifier, WTF::move(result));
             }, WorkerRunLoop::defaultMode());
         };
@@ -239,7 +239,7 @@ void WorkerFileSystemStorageConnection::getFile(FileSystemHandleIdentifier ident
     callOnMainThread([callbackIdentifier, workerThread = Ref { scope->thread() }, mainThreadConnection = m_mainThreadConnection, identifier]() mutable {
         auto mainThreadCallback = [callbackIdentifier, workerThread = WTF::move(workerThread)](auto&& result) mutable {
             workerThread->runLoop().postTaskForMode([callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
-                if (auto connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
+                if (RefPtr connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
                     connection->completeStringCallback(callbackIdentifier, WTF::move(result));
             }, WorkerRunLoop::defaultMode());
         };
@@ -284,7 +284,7 @@ void WorkerFileSystemStorageConnection::createSyncAccessHandle(FileSystemHandleI
     callOnMainThread([callbackIdentifier, workerThread = Ref { scope->thread() }, mainThreadConnection = m_mainThreadConnection, identifier]() mutable {
         auto mainThreadCallback = [callbackIdentifier, workerThread = WTF::move(workerThread)](auto&& result) mutable {
             workerThread->runLoop().postTaskForMode([callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
-                if (auto connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
+                if (RefPtr connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
                     connection->didCreateSyncAccessHandle(callbackIdentifier, WTF::move(result));
             }, WorkerRunLoop::defaultMode());
         };
@@ -420,7 +420,7 @@ void WorkerFileSystemStorageConnection::getHandleNames(FileSystemHandleIdentifie
     callOnMainThread([callbackIdentifier, workerThread = Ref { scope->thread() }, mainThreadConnection = m_mainThreadConnection, identifier]() mutable {
         auto mainThreadCallback = [callbackIdentifier, workerThread = WTF::move(workerThread)](auto&& result) mutable {
             workerThread->runLoop().postTaskForMode([callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
-                if (auto connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
+                if (RefPtr connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
                     connection->didGetHandleNames(callbackIdentifier, WTF::move(result));
             }, WorkerRunLoop::defaultMode());
         };
@@ -447,7 +447,7 @@ void WorkerFileSystemStorageConnection::getHandle(FileSystemHandleIdentifier ide
     callOnMainThread([callbackIdentifier, workerThread = Ref { scope->thread() }, mainThreadConnection = m_mainThreadConnection, identifier, name = name.isolatedCopy()]() mutable {
         auto mainThreadCallback = [callbackIdentifier, workerThread = WTF::move(workerThread)](auto&& result) mutable {
             workerThread->runLoop().postTaskForMode([callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
-                if (auto connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
+                if (RefPtr connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
                     connection->didGetHandle(callbackIdentifier, WTF::move(result));
             }, WorkerRunLoop::defaultMode());
         };
@@ -468,7 +468,7 @@ void WorkerFileSystemStorageConnection::move(FileSystemHandleIdentifier identifi
     callOnMainThread([callbackIdentifier, workerThread = Ref { scope->thread() }, mainThreadConnection = m_mainThreadConnection, identifier, destinationIdentifier, name = crossThreadCopy(newName)]() mutable {
         auto mainThreadCallback = [callbackIdentifier, workerThread = WTF::move(workerThread)](auto&& result) mutable {
             workerThread->runLoop().postTaskForMode([callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
-                if (auto connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
+                if (RefPtr connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
                     connection->completeVoidCallback(callbackIdentifier, WTF::move(result));
             }, WorkerRunLoop::defaultMode());
         };
@@ -534,7 +534,7 @@ void WorkerFileSystemStorageConnection::resolveGlobalIdentifier(ClientOrigin&& o
     callOnMainThread([callbackIdentifier, workerThread = Ref { scope->thread() }, mainThreadConnection = m_mainThreadConnection, origin = crossThreadCopy(WTF::move(origin)), globalIdentifier] mutable {
         auto mainThreadCallback = [callbackIdentifier, workerThread = WTF::move(workerThread)](auto&& result) mutable {
             workerThread->runLoop().postTaskForMode([callbackIdentifier, result = crossThreadCopy(WTF::move(result))](auto& scope) mutable {
-                if (auto connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
+                if (RefPtr connection = downcast<WorkerGlobalScope>(scope).fileSystemStorageConnection())
                     connection->didResolveGlobalIdentifier(callbackIdentifier, WTF::move(result));
             }, WorkerRunLoop::defaultMode());
         };

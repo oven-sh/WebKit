@@ -27,6 +27,12 @@ namespace JSC {
 class FunctionPrototype final : public InternalFunction {
 public:
     typedef InternalFunction Base;
+#if ENABLE(AOT)
+    // It lies above every function: a store to one of them must not find an object that overrides put on its way up. Its own members have the lock of the table.
+    using JSObject::put;
+    using JSObject::defineOwnProperty;
+    using JSObject::setPrototype;
+#endif
 
     static FunctionPrototype* create(VM& vm, Structure* structure)
     {
@@ -46,5 +52,7 @@ private:
     void finishCreation(VM&, const String& name);
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(FunctionPrototype, InternalFunction);
+
+JSC_DECLARE_HOST_FUNCTION(functionProtoFuncToString);
 
 } // namespace JSC

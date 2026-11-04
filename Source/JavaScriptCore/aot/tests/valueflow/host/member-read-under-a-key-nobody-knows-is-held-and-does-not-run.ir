@@ -1,0 +1,20 @@
+# member = handedIn[someName]
+# Reading a member is not calling it. The object may be an array and the key "sort", so Array.prototype.sort is in the hands of whoever has the value: it has escaped, and it is held.
+# No call is reached whose callee it may be, so the code behind it does not run.
+# RUN: valueflow-solve used
+# CHECK-NOT: run ArrayPrototypeSort
+# CHECK: used ArrayPrototypeSort
+# RUN(WHY): valueflow-why escaped-builtin=ArrayPrototypeSort
+# WHY: escaped-builtin=ArrayPrototypeSort
+# WHY-NEXT: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = PropGet v0 key="someName" [isFreeName]
+    v3 = ElemGet v1, v2
+    v4 = Undefined
+    Return
+}

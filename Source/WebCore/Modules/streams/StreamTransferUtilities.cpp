@@ -48,7 +48,7 @@ namespace WebCore {
 static ExceptionOr<void> packAndPostMessage(JSDOMGlobalObject& globalObject, MessagePort& port, const String& type, JSC::JSValue value)
 {
     Ref vm = globalObject.vm();
-    Locker locker(vm->apiLock());
+    JSC::JSLockHolder lock(vm);
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto* data = JSC::constructEmptyObject(&globalObject);
@@ -98,7 +98,7 @@ public:
                 return;
 
             auto& vm = globalObject.vm();
-            Locker locker(vm.apiLock());
+            JSC::JSLockHolder lock(vm);
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
             bool didFail = false;
@@ -121,7 +121,7 @@ public:
         return source;
     }
 
-    void NODELETE ref() const final { RefCounted::ref(); }
+    void LEGACY_NODELETE ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
 private:
@@ -178,8 +178,8 @@ private:
     }
 
     // ReadableStreamSource
-    void NODELETE setActive() final { };
-    void NODELETE setInactive() final { };
+    void LEGACY_NODELETE setActive() final { };
+    void LEGACY_NODELETE setInactive() final { };
 
     void doStart() final { startFinished(); }
     void doPull() final
@@ -227,7 +227,7 @@ public:
                 return;
 
             auto& vm = globalObject.vm();
-            Locker locker(vm.apiLock());
+            JSC::JSLockHolder lock(vm);
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
             bool didFail = false;

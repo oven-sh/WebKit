@@ -31,6 +31,7 @@
 #include "StringFunctions.h"
 #include "TestController.h"
 #include "UIScriptContext.h"
+#include <JavaScriptCore/JSStringRefCPP.h>
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/OpaqueJSString.h>
 #include <WebKit/WKTextCheckerGLib.h>
@@ -90,7 +91,8 @@ void UIScriptControllerGtk::copyText(JSStringRef text)
 #if USE(GTK4)
     gdk_clipboard_set_text(gdk_display_get_clipboard(gdk_display_get_default()), string.legacyCStringPointer());
 #else
-    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), string.legacyCStringPointer(), string.length());
+    auto characters = byteCast<char>(string.span());
+    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), characters.data(), characters.size());
 #endif
 }
 
@@ -207,7 +209,7 @@ JSObjectRef UIScriptControllerGtk::contentsOfUserInterfaceItem(JSStringRef inter
     GRefPtr<GVariant> contentDictionary = WKViewContentsOfUserInterfaceItem(webView, toWTFString(interfaceItem).utf8().legacyCStringPointer());
     auto jsonObject = toJSONObject(contentDictionary.get());
 
-    return JSValueToObject(m_context->jsContext(), contentDictionary ? JSValueMakeFromJSONString(m_context->jsContext(), createJSString(jsonObject->toJSONString().utf8().legacyCStringPointer()).get()) : JSValueMakeUndefined(m_context->jsContext()), nullptr);
+    return JSValueToObject(m_context->jsContext(), contentDictionary ? JSValueMakeFromJSONString(m_context->jsContext(), ::createJSString(jsonObject->toJSONString()).get()) : JSValueMakeUndefined(m_context->jsContext()), nullptr);
 }
 
 void UIScriptControllerGtk::setWebViewEditable(bool editable)

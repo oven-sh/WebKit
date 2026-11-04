@@ -1,0 +1,16 @@
+# FORM: Prepared
+# OPTIONS: testing=CheckProofsAtRunTime check=ClaimsOfFlow
+# RUN: pass NumberLiteralStrings
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Arrow" fields=[{key="direction" declared={type="left"|"right"}}]
+variable g0 name="mode" module=m0 declared={type="top"}
+function f0 name="readsVariable" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+# CHECK: 0 ""
+# CHECK-NEXT: 1 "left"
+# CHECK-NEXT: 2 "right"
+# CHECK-NEXT: 3 "top"
+# CHECK-NOT: without text

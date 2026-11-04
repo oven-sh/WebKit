@@ -1,0 +1,106 @@
+# The limit on the caller of a generator is on what has been added to that caller. Sixty calls of its own keep no body out of it; the same sixty calls, taken in from a callee, do
+# FORM: Prepared
+# OPTIONS: report=Declines limit=MaxInlinedCallerBytes:1500
+# RUN: pass FuseGeneratorLoops
+# STATISTIC: GeneratorLoopsFused = 1
+# LOSS: MaxInlinedCallerBytes x1 f1 v62
+# CHECK: outcome: Changed
+# CHECK-NEXT: decline GeneratorLoopNotFused f1 v62 MaxInlinedCallerBytes [0] reason=CallerIsTooLarge
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="largeByItself" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..60
+    v%(i) = Call v0
+# END REPEAT
+    v61 = NewClosure function=f3
+    v62 = NewGenerator v61 function=f3 @112
+    v63 = CallDirect v61, v0, v62 function=f4 @112
+    v64 = Undefined
+    v65 = StepGenerator v62, v64 check=None @90
+    v66 = ResultAt v65 index=0
+    v67 = ResultAt v65 index=1
+    v68 = Integer integer=2
+    v69 = StrictEq v67, v68
+    Branch v69 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v70 = Builtin builtin=GeneratorPrototypeNext
+    v71 = Call v70, v62
+    Return v71
+  b2():
+    v72 = Integer integer=1
+    v73 = StrictEq v67, v72
+    Branch v73 -> taken b4(), notTaken b3()
+  b3():
+    Return v66
+  b4():
+    v74 = Undefined
+    Return v74
+}
+# CHECK-LABEL: function f0 name="largeByItself" {{*}}callee=f4
+# CHECK-NOT: StepGenerator
+
+function f1 name="tookInAsMuch" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f2 callPosition=1 module=m0}] {
+# REPEAT: i = 1..60
+    v%(i) = Call v0 @1:1
+# END REPEAT
+    v61 = NewClosure function=f3
+    v62 = NewGenerator v61 function=f3 @112
+    v63 = CallDirect v61, v0, v62 function=f4 @112
+    v64 = Undefined
+    v65 = StepGenerator v62, v64 check=None @90
+    v66 = ResultAt v65 index=0
+    v67 = ResultAt v65 index=1
+    v68 = Integer integer=2
+    v69 = StrictEq v67, v68
+    Branch v69 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v70 = Builtin builtin=GeneratorPrototypeNext
+    v71 = Call v70, v62
+    Return v71
+  b2():
+    v72 = Integer integer=1
+    v73 = StrictEq v67, v72
+    Branch v73 -> taken b4(), notTaken b3()
+  b3():
+    Return v66
+  b4():
+    v74 = Undefined
+    Return v74
+}
+# CHECK-LABEL: function f1 name="tookInAsMuch"
+# CHECK-NOT: callee=f4
+# CHECK: = NewGenerator
+# CHECK: = StepGenerator
+
+function f2 name="plain" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="yieldsOnce" position=10 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f3 body=f4 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f3 @10
+    v3 = CallDirect v0, v1, v2 function=f4 @10
+    Return v2 @10
+}
+function f4 name="yieldsOnce" position=10 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{ramp=f3 body=f4 promiseParameter=2} {
+    v3 = Undefined @10
+    v4 = YieldBySavingFrame v2, v3 @10
+    v5 = ResultAt v4 index=0 @10
+    v6 = ResultAt v4 index=1 @10
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @10
+  b1() frequency=Rare:
+    Throw v5 @10
+  b2() frequency=Rare:
+    Return v5 @10
+  b3():
+    v7 = YieldBySavingFrame v2, v1 @12
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    Switch v9 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+  b4() frequency=Rare:
+    Throw v8
+  b5() frequency=Rare:
+    Return v8
+  b6():
+    v10 = Undefined
+    Return v10
+}

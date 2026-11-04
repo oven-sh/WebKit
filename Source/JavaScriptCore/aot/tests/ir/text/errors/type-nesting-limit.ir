@@ -1,0 +1,6 @@
+# A type nested 33 deep, one level more than the parser follows
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" parameters=[{type=Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<number>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>}] results=[{type=undefined}]

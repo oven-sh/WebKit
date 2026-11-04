@@ -1,0 +1,7 @@
+# A program whose literals are nested deeper than the build builds patterns compiles, and the build says that these patterns get no code
+# FORM: AsRead
+# OPTIONS: limit=RegExpNestingDepthWithCode:1
+# RUN: compile
+# DIAGNOSTIC: RegExpWithoutCode 3
+# CHECK: image not empty
+# PROGRAM-OF: regexp-literals-nested-deep.ir

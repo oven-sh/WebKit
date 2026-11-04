@@ -1,0 +1,20 @@
+# The function that a getter answers when its body was left out passes the back-end checks
+# RUN: compile
+# OPTIONS: heat=everything-is-hot check=validate-back-end only-passes=EstimateHeat
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="member" kind=Getter flags=[TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = NewFunctionThatThrows v0 name="member"
+    Return v1
+}

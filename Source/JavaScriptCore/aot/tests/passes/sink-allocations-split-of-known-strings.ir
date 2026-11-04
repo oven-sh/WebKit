@@ -1,0 +1,125 @@
+# The pieces of a split that a destructuring pattern takes are delivered as results of the call, and no array is made,
+# also where `undefined|string` is the type of nothing else in the program: the strings that are split are known constants.
+#   const headers = ["host: example.com", "accept: */*"];
+#   function lengthsOf(i: number): number {
+#     const [name, value] = headers[i & 1]!.split(": ");
+#     return name!.length + value!.length;
+#   }
+#   (globalThis as any).answer = lengthsOf((globalThis as any).input | 0);
+# FORM: AsRead
+# RUN: pipeline SinkAllocations
+# CHECK: = CallBuiltin {{*}}overload=StringPrototypeSplit/0 builtinCallForm=Prefix prefixLength=2
+# CHECK-NOT: overload=StringPrototypeSplit/0 accessSite
+
+typesite w0 module=m0 position=6 kind=Variable
+typesite w1 module=m0 position=73 kind=Parameter function=f1
+typesite w2 module=m0 position=54 kind=Result
+typesite w3 module=m0 position=217 kind=CallResult
+typesite w4 module=m0 position=118 kind=Element
+typesite w5 module=m0 position=118 kind=CallResult
+typesite w6 module=m0 position=156 kind=PropertyRead
+typesite w7 module=m0 position=171 kind=PropertyRead
+layout L0 fields=[{key="answer" declared={type=anything}}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
+layout L1 fields=[{key="input" declared={type=anything} flags=[IsNeverWritten]}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
+variable g0 name="headers" module=m0 declared={type=undefined|null|absent|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+module m0 path="/$bunfs/root/small.ts" displayPath="small.ts" flags=[KeepsError] body=f0 positions={lineStarts=[0, 54, 94, 147, 186, 188, 259]} functionText="const headers = [\x22host: example.com\x22, \x22accept: */*\x22];\x0afunction lengthsOf(i) {\x0a  const [name, value] = headers[i & 1].split(\x22: \x22);\x0a  return name.length + value.length;\x0a}\x0a(globalThis).answer = lengthsOf((globalThis).input | 0);\x0a" namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] positions={lineStarts=[0, 25, 50, 68, 69, 102, 211, 212, 255, 382, 384]} functionText="$visibility = \x22Private\x22;\x0aexport function next() {\x0a    \x22use strict\x22;\x0a\x0a    if (!$isArrayIterator(this))\x0a        $throwTypeError(\x22%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance\x22);\x0a\x0a    const step = $stepArrayIterator(this);\x0a    return $makeIteratorResult($resultAt(step, $stepArrayIteratorResultValue), $resultAt(step, $stepArrayIteratorResultDone));\x0a}\x0a" namespaceLayout=L(m1)
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Data data=d0 @16
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined]} @16
+    PutModuleVariable v3 variable=g0 @6
+    v5 = Builtin builtin=GlobalThis @189
+    v6 = PropGet v5 key="globalThis" [isFreeName] @189
+    v7 = Convert v6 declared={type=builtin(GlobalThis) flags=[IsExpected]} @189
+    v8 = Convert v7 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @189
+    v9 = Builtin builtin=GlobalThis @228
+    v10 = PropGet v9 key="globalThis" [isFreeName] @228
+    v11 = Convert v10 declared={type=builtin(GlobalThis) flags=[IsExpected]} @228
+    v12 = Convert v11 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @228
+    v13 = PropGet v12 key="input" @228
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @227
+    v15 = Integer @255
+    v16 = BitOr v14, v15 @228
+    v17 = Call v1, -, v16 calleeName="lengthsOf" @217
+    v18 = Convert v17 declared={type=number site=w3} @217
+    PropSet v8, v18 key="answer" @189
+    v20 = Undefined @189
+    Return v20 @189
+}
+function f1 name="lengthsOf" module=m0 position=54 text={start=54 end=168} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @54
+  b1():
+    v1 = GetModuleVariable variable=g0 @118
+    v2 = CheckInitialized v1 name="headers" @118
+    v3 = Integer integer=1 @130
+    v4 = BitAnd v0, v3 @126
+    v5 = ElemGet v2, v4 @118
+    v6 = Convert v5 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @118
+    v7 = PropGet v6 key="split" @130
+    v8 = String string=": " @140
+    v9 = Call v7, v6, v8 calleeKey="split" calleeName="split" @134
+    v10 = Convert v9 declared={type=undefined|null|Array<undefined|null|string> site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @118
+    v11 = IteratorOpen v10 elementCount=2 [isDestructuring] @96
+    Jump -> next b2() @96
+  b2() handler=b7():
+    v12 = IteratorResume v11 stepIndex=0 @96
+    v13 = ResultAt v12 @96
+    v14 = ResultAt v12 index=1 @96
+    v15 = Convert v14 declared={type=undefined|null|string} illTypedCause=Assertion @103
+    Jump -> next b3() @103
+  b3() handler=b7():
+    v16 = IteratorResume v11 stepIndex=1 @96
+    v17 = ResultAt v16 @96
+    v18 = ResultAt v16 index=1 @96
+    v19 = Convert v18 declared={type=undefined|null|string} illTypedCause=Assertion @109
+    Jump -> next b4() @109
+  b4() handler=b7():
+    Jump -> next b5() @109
+  b5():
+    IteratorClose v11 @96
+    Jump -> next b6() @96
+  b6():
+    v21 = PropGet v15 key="length" @156
+    v22 = Convert v21 declared={type=number site=w6} illTypedCause=Assertion @156
+    v23 = PropGet v19 key="length" @171
+    v24 = Convert v23 declared={type=number site=w7} illTypedCause=Assertion @171
+    v25 = Add v22, v24 @156
+    v26 = Convert v25 declared={type=number site=w2} @156
+    Return v26 @156
+  b7() role=IterationCleanup subject=v11:
+    v27 = CatchException @96
+    IteratorClose v11 completion=Throw @96
+    Rethrow v27 @96
+}
+function f2 name="next" module=m1 position=25 text={start=32 end=383} kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+data d0 root=Array{contents=undefined|null|string elements=[String{value="host: example.com"}, String{value="accept: */*"}]} module=m0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]
+runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private

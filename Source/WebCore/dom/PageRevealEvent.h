@@ -38,7 +38,7 @@ public:
         RefPtr<ViewTransition> viewTransition;
     };
 
-    static Ref<PageRevealEvent> create(const AtomString& type, Init&&, IsTrusted = IsTrusted::No);
+    static Ref<PageRevealEvent> LEGACY_NODELETE create(const AtomString& type, Init&&, IsTrusted = IsTrusted::No);
     ~PageRevealEvent();
 
     const RefPtr<ViewTransition>& viewTransition() const { return m_viewTransition; }
@@ -46,7 +46,7 @@ public:
 private:
     PageRevealEvent(const AtomString& type, Init&&, IsTrusted);
 
-    RefPtr<ViewTransition> m_viewTransition;
+    const RefPtr<ViewTransition> m_viewTransition;
 };
 
 } // namespace WebCore

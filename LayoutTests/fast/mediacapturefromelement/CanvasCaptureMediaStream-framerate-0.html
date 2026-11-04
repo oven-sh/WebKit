@@ -23,7 +23,10 @@ function onError() {
 function onRecorderDataAvailable(e) {
   testPassed('Recorder has new data available');
   shouldBeEqualToString('recorder.state', 'recording');
-  testPassed('Recorded data size:' + e.data.size);
+  if (e.data.size > 0)
+    testPassed('Recorded data is not empty');
+  else
+    testFailed('Recorded data is empty');
   finishJSTest();
 };
 

@@ -1,0 +1,24 @@
+# A replacement reaches handler arguments, block subjects and terminator operands
+# FORM: Prepared
+# RUN: substitute function=f0 replace=v3:v1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="covered" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Negate v1
+    v3 = Upcast v1 castType=number
+    Jump -> next b1()
+  b1() handler=b3(v3, v2):
+    v4 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v3
+  b3(v5, v6) role=DisposalCleanup subject=v3:
+    v7 = CatchValue
+    Throw v3
+}
+# CHECK: v2: number = Negate v1
+# CHECK: b1() handler=b3(v1, v2):
+# CHECK: b2():
+# CHECK-NEXT: Return v1
+# CHECK: b3(v5: number, v6: number) role=DisposalCleanup subject=v1:
+# CHECK: Throw v1

@@ -39,6 +39,8 @@ struct SyntaxSummary {
     unsigned maxParenthesesDepth { 0 };
     bool hasNamedCaptureGroups { false };
     bool isOnlyPatternCharacters { true };
+    bool hasUnicodePropertyLookup { false };
+    bool hasCountedQuantifier { false };
 };
 
 ErrorCode checkSyntax(StringView pattern, StringView flags);

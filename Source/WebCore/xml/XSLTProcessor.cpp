@@ -92,6 +92,9 @@ Ref<Document> XSLTProcessor::createDocumentFromSource(const String& sourceString
             result->setTransformSourceDocument(oldDocument.get());
             result->takeDOMWindowFrom(*oldDocument);
             result->setSecurityOriginPolicy(oldDocument->securityOriginPolicy());
+            result->setIsOriginKeyed(oldDocument->isOriginKeyed());
+            result->setDocumentIsolationPolicy(oldDocument->documentIsolationPolicy());
+            result->setAgentClusterIdentifier(oldDocument->agentClusterIdentifier());
             result->setCookieURL(oldDocument->cookieURL());
             result->setFirstPartyForCookies(oldDocument->firstPartyForCookies());
             result->setSiteForCookies(oldDocument->siteForCookies());
@@ -104,8 +107,8 @@ Ref<Document> XSLTProcessor::createDocumentFromSource(const String& sourceString
         frame->setDocument(result.copyRef());
     }
 
-    auto decoder = TextResourceDecoder::create(sourceMIMEType);
-    decoder->setEncoding(sourceEncoding.isEmpty() ? PAL::UTF8Encoding() : PAL::TextEncoding(sourceEncoding), TextResourceDecoder::EncodingFromXMLHeader);
+    Ref decoder = TextResourceDecoder::create(TextResourceDecoder::contentTypeForMIMEType(sourceMIMEType));
+    decoder->setEncoding(sourceEncoding.isEmpty() ? PAL::UTF8Encoding() : PAL::TextEncoding(sourceEncoding), TextResourceDecoder::EncodingSource::XMLHeader);
     result->setDecoder(WTF::move(decoder));
 
     result->setMarkupUnsafe(documentSource, { ParserContentPolicy::AllowDeclarativeShadowRoots });

@@ -1,0 +1,55 @@
+# A call with several results cannot be separated from the Return that reads it
+# FORM: Prepared
+# RUN(OUTSIDE): duplicate function=f0 region=b3 redirect=b2.0
+# RUN(INSIDE): duplicate function=f0 region=b3,b4 redirect=b2.0
+# RUN(LIVEIN): extract function=f0 region=b4
+# RUN(WHOLE): extract function=f0 region=b3,b4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=boolean}, {type=anything}, {type=number}] results=[{type=anything}, {type=number}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v3 = CallDirect v1, v2 function=f1
+    Jump -> next b4()
+  b4():
+    Return v3
+}
+function f1 name="pair" parameters=[{type=anything}, {type=number}] results=[{type=anything}, {type=number}] {
+    v2 = Results v0, v1
+    Return v2
+}
+# OUTSIDE: check: OperandMustBeDefinition
+# OUTSIDE-NOT: function
+# INSIDE: check: CanClone
+# INSIDE: function f0
+# INSIDE: b1():
+# INSIDE: Jump -> next b3()
+# INSIDE: b2():
+# INSIDE: Jump -> next [[C3]]()
+# INSIDE: b3():
+# INSIDE: v3: undefined = CallDirect v1, v2 function=f1
+# INSIDE: Jump -> next b4()
+# INSIDE: b4():
+# INSIDE: Return v3
+# INSIDE: [[C3]]():
+# INSIDE: [[K]]: undefined = CallDirect v1, v2 function=f1
+# INSIDE: Jump -> next [[C4]]()
+# INSIDE: [[C4]]():
+# INSIDE: Return [[K]]
+# LIVEIN: check: OperandMustBeDefinition
+# LIVEIN-NOT: live-ins
+# LIVEIN-NOT: function
+# WHOLE: check: CanClone
+# WHOLE: live-ins: [v1 v2]
+# WHOLE: function f2 {{*}} parameters=[{type=anything}, {type=number}] results=[{type=anything}, {type=number}]
+# WHOLE: b0([[A]]: anything, [[N]]: number):
+# WHOLE: Jump -> next [[H]]()
+# WHOLE: [[H]]():
+# WHOLE: [[K]]: undefined = CallDirect [[A]], [[N]] function=f1
+# WHOLE: Jump -> next [[R]]()
+# WHOLE: [[R]]():
+# WHOLE: Return [[K]]

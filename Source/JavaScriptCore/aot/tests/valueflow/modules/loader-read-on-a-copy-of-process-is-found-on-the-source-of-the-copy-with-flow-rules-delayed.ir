@@ -1,0 +1,22 @@
+# ({ ...process }).getBuiltinModule(globalThis.name)
+# The copy is the receiver of a call whose callee may be anything, so what stands above it may be anything too, and process, its source, counts as handed out.
+# The name read on the copy still finds the loader on the source of the copy, whichever of these is known first, and the call is a load of a module by name.
+# OPTIONS: testing=DelayFlowRules
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsModuleByName ProcessGetBuiltinModule f0:v7
+# CHECK: modules-by-name yes
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+layout L0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = Builtin builtin=Process
+    v3 = NewObject layout=L0
+    CopyDataProperties v3, v2
+    v5 = FinishObject v3
+    v6 = PropGet v5 key="getBuiltinModule"
+    v7 = Call v6, v5, v1
+    Return
+}

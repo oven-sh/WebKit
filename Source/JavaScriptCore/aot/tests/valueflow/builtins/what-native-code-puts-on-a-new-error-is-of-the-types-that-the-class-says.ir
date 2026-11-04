@@ -1,0 +1,41 @@
+# const error = new Error("x"), kind = new TypeError("y"); [error.message, error.stack, error.line, error.sourceURL, error.absent, error.cause, kind.message, kind.stack]
+# The class says what native code puts under message, stack, line, column and sourceURL: strings and numbers. Each may be missing, so undefined stands beside them. It does not say what `cause` holds
+# LIBRARY: own
+# RUN: valueflow-why values=f0:v6 values=f0:v7 values=f0:v8 values=f0:v9 values=f0:v10 values=f0:v11 values=f0:v12 values=f0:v13
+# CHECK: values=f0:v6
+# CHECK: result n{{*}} 2 members: primitive0 primitive7
+# CHECK: values=f0:v7
+# CHECK: result n{{*}} 2 members: primitive0 primitive7
+# CHECK: values=f0:v8
+# CHECK: result n{{*}} 4 members: primitive0 primitive4 primitive5 primitive6
+# CHECK: values=f0:v9
+# CHECK: result n{{*}} 2 members: primitive0 primitive7
+# CHECK: values=f0:v10
+# CHECK: result n{{*}} 1 members: primitive0
+# CHECK: values=f0:v11
+# CHECK: result n{{*}} 11 members: {{*}} unknown
+# CHECK: values=f0:v12
+# CHECK: result n{{*}} 2 members: primitive0 primitive7
+# CHECK: values=f0:v13
+# CHECK: result n{{*}} 2 members: primitive0 primitive7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Error
+    v1 = String string="x"
+    v2 = Construct v0, v0, v1
+    v3 = Builtin builtin=TypeError
+    v4 = String string="y"
+    v5 = Construct v3, v3, v4
+    v6 = PropGet v2 key="message"
+    v7 = PropGet v2 key="stack"
+    v8 = PropGet v2 key="line"
+    v9 = PropGet v2 key="sourceURL"
+    v10 = PropGet v2 key="absent"
+    v11 = PropGet v2 key="cause"
+    v12 = PropGet v5 key="message"
+    v13 = PropGet v5 key="stack"
+    v14 = NewArray v6, v7, v8, v9, v10, v11, v12, v13 contents=anything
+    Return v14
+}

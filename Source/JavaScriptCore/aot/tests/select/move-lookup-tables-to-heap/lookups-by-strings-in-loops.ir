@@ -1,0 +1,153 @@
+# `for (..) sum += ages.get(names[i])`: a Map or a Set that a loop asks by strings and does not replace leaves the image once, on the way into the loop, and the lookups take what the move returns
+# FORM: Prepared
+# OPTIONS: references=narrow heat=OnlyLoopsAreHot
+# RUN: pass Select
+# STATISTIC: MoveLookupTablesToHeapGroups = 7
+
+module m0 path="main.js" displayPath="main.js"
+data d0 root=Array{contents=string elements=[String{value="a"}, String{value="e"}]} module=m0
+# CHECK-LABEL: function f0 name="map-get"
+# CHECK-NOT: LoopHint
+# CHECK: [[moved0]]: Map = MoveTableToHeap v0
+# CHECK: LoopHint
+# CHECK-NOT: MoveTableToHeap
+# CHECK: v10: {{*}} = CallInline [[moved0]], v1 inlineBuiltin=MapGet overload=MapPrototypeGet/0
+# CHECK-NOT: MoveTableToHeap
+function f0 name="map-get" parameters=[{type=Map}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Undefined
+    v4 = Integer integer=0
+    v5 = Integer integer=1
+    Jump -> next b1(v4, v3)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v6, v2
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = CallBuiltin v0, v1 overload=MapPrototypeGet/0
+    v11 = Add v6, v5
+    Jump -> next b1(v11, v10)
+  b3():
+    Return v7
+}
+
+# CHECK-LABEL: function f1 name="two-lookups-in-one-set"
+# CHECK-NOT: LoopHint
+# CHECK: [[moved1]]: Set = MoveTableToHeap v0
+# CHECK-NOT: MoveTableToHeap
+# CHECK: LoopHint
+# CHECK: v11: boolean = CallInline [[moved1]], v1 inlineBuiltin=SetHas overload=SetPrototypeHas/0
+# CHECK-NEXT: v12: boolean = CallInline [[moved1]], v2 inlineBuiltin=SetHas overload=SetPrototypeHas/0
+# CHECK-NOT: MoveTableToHeap
+function f1 name="two-lookups-in-one-set" parameters=[{type=Set}, {type=string}, {type=string}, {type=number}] results=[{type=anything}] {
+    v4 = Undefined
+    v5 = Integer integer=0
+    v6 = Integer integer=1
+    Jump -> next b1(v5, v4)
+  b1(v7, v8):
+    LoopHint
+    v10 = Less v7, v3
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = CallBuiltin v0, v1 overload=SetPrototypeHas/0
+    v12 = CallBuiltin v0, v2 overload=SetPrototypeHas/0
+    v13 = Add v7, v6
+    Jump -> next b1(v13, v12)
+  b3():
+    Return v8
+}
+
+# CHECK-LABEL: function f2 name="loop-inside-a-loop"
+# CHECK-NOT: LoopHint
+# CHECK: [[moved2]]: Map = MoveTableToHeap v0
+# CHECK: LoopHint
+# CHECK-NOT: MoveTableToHeap
+# CHECK: LoopHint
+# CHECK-NOT: MoveTableToHeap
+# CHECK: = CallInline [[moved2]], v1 inlineBuiltin=MapHas overload=MapPrototypeHas/0
+# CHECK-NOT: MoveTableToHeap
+function f2 name="loop-inside-a-loop" parameters=[{type=Map}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    Jump -> next b3(v3)
+  b3(v8):
+    LoopHint
+    v10 = Less v8, v2
+    Branch v10 -> taken b4(), notTaken b5()
+  b4():
+    v11 = CallBuiltin v0, v1 overload=MapPrototypeHas/0
+    v12 = Add v8, v4
+    Jump -> next b3(v12)
+  b5():
+    v13 = Add v5, v4
+    Jump -> next b1(v13)
+  b6():
+    Return v5
+}
+
+# CHECK-LABEL: function f3 name="a-set-made-in-each-turn-of-the-outer-loop"
+# CHECK: LoopHint
+# CHECK: v8: {{*}} = NewSetFromData data=d0
+# CHECK-NEXT: [[moved3]]: {{*}} = MoveTableToHeap v8
+# CHECK: LoopHint
+# CHECK-NOT: MoveTableToHeap
+# CHECK: = CallInline [[moved3]], v0 inlineBuiltin=SetHas overload=SetPrototypeHas/0
+# CHECK-NOT: MoveTableToHeap
+function f3 name="a-set-made-in-each-turn-of-the-outer-loop" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=1
+    v4 = Undefined
+    Jump -> next b1(v2)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = NewSetFromData data=d0
+    Jump -> next b3(v2)
+  b3(v9):
+    LoopHint
+    v11 = Less v9, v1
+    Branch v11 -> taken b4(), notTaken b5()
+  b4():
+    v12 = CallBuiltin v8, v0 overload=SetPrototypeHas/0
+    v13 = Add v9, v3
+    Jump -> next b3(v13)
+  b5():
+    v14 = Add v5, v3
+    Jump -> next b1(v14)
+  b6():
+    Return v5
+}
+
+# CHECK-LABEL: function f4 name="two-collections"
+# CHECK-NOT: LoopHint
+# CHECK: MoveTableToHeap
+# CHECK: MoveTableToHeap
+# CHECK-NOT: MoveTableToHeap
+# CHECK: LoopHint
+# CHECK-NOT: CallInline v0,
+# CHECK-NOT: CallInline v1,
+# CHECK-NOT: MoveTableToHeap
+function f4 name="two-collections" parameters=[{type=Map}, {type=Set}, {type=string}, {type=number}] results=[{type=anything}] {
+    v4 = Undefined
+    v5 = Integer integer=0
+    v6 = Integer integer=1
+    Jump -> next b1(v5, v4)
+  b1(v7, v8):
+    LoopHint
+    v10 = Less v7, v3
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = CallBuiltin v0, v2 overload=MapPrototypeGet/0
+    v12 = CallBuiltin v1, v2 overload=SetPrototypeHas/0
+    v13 = Add v7, v6
+    Jump -> next b1(v13, v11)
+  b3():
+    Return v8
+}

@@ -1,0 +1,38 @@
+# tools = Object.setPrototypeOf or first or second; tools(argument, null)
+# The variable holds more than the analysis follows in one set, so the call has the untracked object as its callee. Such a call has no complete set of callees, least of all the empty one:
+# its site names what took the proof away, and the program still builds
+# OPTIONS: limit=MaxValueFlowSetMembers:2
+# STATISTIC: MaxValueFlowSetMembersHits >= 1
+# RUN: valueflow-apply
+# CHECK: = Call
+# CHECK-NOT: callees=[]
+# CHECK-NOT: callees=[f1, f2, builtin(ObjectSetPrototypeOf)]
+# RUN(RESULTS): valueflow-results
+# RESULTS: access {{*}}function=f0 kind=Call{{*}}loss cause=
+# RUN(BUILD): compile
+# BUILD: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Argument" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="tools" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=ObjectSetPrototypeOf
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v1 variable=g0
+    v6 = Integer integer=1
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    v8 = Null
+    v9 = GetModuleVariable variable=g0
+    v10 = Call v9, -, v7, v8
+    Return
+}
+function f1 name="first" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return
+}
+function f2 name="second" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return
+}

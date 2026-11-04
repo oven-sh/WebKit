@@ -36,6 +36,14 @@
 
 @implementation TestWebExtensionsDelegate
 
+- (BOOL)respondsToSelector:(SEL)selector
+{
+    if (selector == @selector(webExtensionController:openOptionsPageForExtensionContext:completionHandler:))
+        return !!_openOptionsPage;
+
+    return [super respondsToSelector:selector];
+}
+
 - (NSArray<id<WKWebExtensionWindow>> *)webExtensionController:(WKWebExtensionController *)controller openWindowsForExtensionContext:(WKWebExtensionContext *)extensionContext
 {
     if (_openWindows)
@@ -199,6 +207,32 @@
         completionHandler(nil);
     } else
         completionHandler([NSError errorWithDomain:NSCocoaErrorDomain code:0 userInfo:@{ NSDebugDescriptionErrorKey: @"notifications.create() not implemented" }]);
+}
+
+- (void)_webExtensionController:(WKWebExtensionController *)controller updateNotification:(_WKWebExtensionNotification *)notification forExtensionContext:(WKWebExtensionContext *)context completionHandler:(void (^)(NSError *))completionHandler
+{
+    if (_updateNotification) {
+        _updateNotification(notification);
+        completionHandler(nil);
+    } else
+        completionHandler([NSError errorWithDomain:NSCocoaErrorDomain code:0 userInfo:@{ NSDebugDescriptionErrorKey: @"notifications.update() not implemented" }]);
+}
+
+- (void)_webExtensionController:(WKWebExtensionController *)controller clearNotification:(_WKWebExtensionNotification *)notification forExtensionContext:(WKWebExtensionContext *)context completionHandler:(void (^)(NSError *))completionHandler
+{
+    if (_clearNotification) {
+        _clearNotification(notification);
+        completionHandler(nil);
+    } else
+        completionHandler([NSError errorWithDomain:NSCocoaErrorDomain code:0 userInfo:@{ NSDebugDescriptionErrorKey: @"notifications.clear() not implemented" }]);
+}
+
+- (void)_webExtensionController:(WKWebExtensionController *)controller mayPresentNotificationsForExtensionContext:(WKWebExtensionContext *)context completionHandler:(void (^)(BOOL, NSError *))completionHandler
+{
+    if (_mayPresentNotifications)
+        completionHandler(_mayPresentNotifications(), nil);
+    else
+        completionHandler(NO, [NSError errorWithDomain:NSCocoaErrorDomain code:0 userInfo:@{ NSDebugDescriptionErrorKey: @"notifications.getPermissionLevel() not implemented" }]);
 }
 
 - (void)_webExtensionController:(WKWebExtensionController *)controller didUpdateSidebar:(_WKWebExtensionSidebar *)sidebar forExtensionContext:(WKWebExtensionContext *)context

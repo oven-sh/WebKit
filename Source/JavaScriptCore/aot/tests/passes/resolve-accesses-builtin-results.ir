@@ -1,0 +1,18 @@
+# A field of a record that a built-in's own code makes is read by name, without a test for a shape that the record never has. A field of the record that a library function allocates is a slot
+# TODO: flow-termination: flow says nothing about the fields of the iterator's step record, so its `value` and `done` are not read from slots
+# RUN: pipeline Select
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[stepOfMap]]: object = CallBuiltin {{*}}overload=MapIteratorPrototypeNext/0
+# CHECK: [[stepOfArray]]: L(IteratorResult) = AssumeType
+# CHECK: [[counts]]: object = CallBuiltin {{*}}overload=Uint8ArrayPrototypeSetFromBase64/0
+# CHECK: = PropGetPair [[stepOfMap]] key="value" secondKey="done"
+# CHECK: = GetSlot [[stepOfArray]] key="value" receivers=[L(IteratorResult)] level=Proven
+# CHECK-NEXT: = GetSlot [[stepOfArray]] key="done" receivers=[L(IteratorResult)] level=Proven
+# CHECK: [[counts]] key="read"
+# RUN(UNTESTED): pipeline Select
+# UNTESTED-LABEL: function f0 name="main"
+# UNTESTED-NOT: TypeTest
+# UNTESTED-NOT: ShapeTest
+# UNTESTED-NOT: level=Expected
+# UNTESTED-LABEL: function f1 name="next"
+# PROGRAM-OF: ../place/builtin-result-layouts.ir

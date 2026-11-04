@@ -305,7 +305,7 @@ private:
     {
     }
 
-    static Ref<AttachmentImageEventsListener> create(HTMLAttachmentElement& attachment) { return adoptRef(*new AttachmentImageEventsListener(attachment)); }
+    static Ref<AttachmentImageEventsListener> LEGACY_NODELETE create(HTMLAttachmentElement& attachment) { return adoptRef(*new AttachmentImageEventsListener(attachment)); }
 
     WeakPtr<HTMLAttachmentElement, WeakPtrImplWithEventTargetData> m_attachment;
 };
@@ -416,7 +416,7 @@ void HTMLAttachmentElement::addSelectionClasses(HighlightState state)
 
 class AttachmentSaveEventListener final : public EventListener {
 public:
-    static Ref<AttachmentSaveEventListener> create(HTMLAttachmentElement& attachment) { return adoptRef(*new AttachmentSaveEventListener(attachment)); }
+    static Ref<AttachmentSaveEventListener> LEGACY_NODELETE create(HTMLAttachmentElement& attachment) { return adoptRef(*new AttachmentSaveEventListener(attachment)); }
 
     void handleEvent(ScriptExecutionContext&, Event& event) final
     {
@@ -453,22 +453,22 @@ void HTMLAttachmentElement::updateProgress(const AtomString& progress)
     bool validProgress = false;
     float value = progress.toFloat(&validProgress);
     if (validProgress && std::isfinite(value)) {
-        m_imageElement->setInlineStyleProperty(CSSPropertyDisplay, CSSValueNone);
+        m_imageElement->setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::None);
         if (!value) {
-            m_placeholderElement->removeInlineStyleProperty(CSSPropertyDisplay);
-            m_progressElement->setInlineStyleProperty(CSSPropertyDisplay, CSSValueNone);
+            m_placeholderElement->removeInlineStyleProperty(CSSPropertyID::Display);
+            m_progressElement->setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::None);
             m_progressElement->removeInlineStyleCustomProperty(attachmentProgressCSSProperty());
             return;
         }
-        m_placeholderElement->setInlineStyleProperty(CSSPropertyDisplay, CSSValueNone);
-        m_progressElement->removeInlineStyleProperty(CSSPropertyDisplay);
+        m_placeholderElement->setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::None);
+        m_progressElement->removeInlineStyleProperty(CSSPropertyID::Display);
         m_progressElement->setInlineStyleCustomProperty(attachmentProgressCSSProperty(), (value < 0.0) ? "0"_s : (value > 1.0) ? "1"_s : progress);
         return;
     }
 
-    m_imageElement->removeInlineStyleProperty(CSSPropertyDisplay);
-    m_placeholderElement->setInlineStyleProperty(CSSPropertyDisplay, CSSValueNone);
-    m_progressElement->setInlineStyleProperty(CSSPropertyDisplay, CSSValueNone);
+    m_imageElement->removeInlineStyleProperty(CSSPropertyID::Display);
+    m_placeholderElement->setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::None);
+    m_progressElement->setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::None);
     m_progressElement->removeInlineStyleCustomProperty(attachmentProgressCSSProperty());
 }
 
@@ -589,11 +589,11 @@ void HTMLAttachmentElement::setFile(RefPtr<File>&& file, UpdateDisplayAttributes
 #if ATTACHMENT_LOG_DOCUMENT_TRAFFIC
 class AttachmentEvent {
 public:
-    uintptr_t NODELETE attachment() const { return m_attachment; }
-    uintptr_t NODELETE document() const { return m_document; }
-    String NODELETE uniqueIdentifier() const { return m_uniqueIdentifier; }
-    WTF::MonotonicTime NODELETE time() const { return m_time; }
-    StackTrace& NODELETE stackTrace() const { return *m_stackTrace; }
+    uintptr_t LEGACY_NODELETE attachment() const { return m_attachment; }
+    uintptr_t LEGACY_NODELETE document() const { return m_document; }
+    String LEGACY_NODELETE uniqueIdentifier() const { return m_uniqueIdentifier; }
+    WTF::MonotonicTime LEGACY_NODELETE time() const { return m_time; }
+    StackTrace& LEGACY_NODELETE stackTrace() const { return *m_stackTrace; }
 
     void capture(const HTMLAttachmentElement& a, WTF::MonotonicTime t)
     {
@@ -611,7 +611,7 @@ public:
         m_stackTrace = 0;
     }
 
-    explicit NODELETE operator bool() const
+    explicit operator bool LEGACY_NODELETE () const
     {
         ASSERT(!m_attachment == !m_stackTrace);
         return !!m_attachment;
@@ -652,10 +652,10 @@ Node::NeedsPostConnectionSteps HTMLAttachmentElement::insertionSteps(InsertionTy
 {
     auto result = HTMLElement::insertionSteps(type, ancestor);
     if (isWideLayout()) {
-        setInlineStyleProperty(CSSPropertyMarginLeft, 1, CSSUnitType::Px);
-        setInlineStyleProperty(CSSPropertyMarginRight, 1, CSSUnitType::Px);
-        setInlineStyleProperty(CSSPropertyMarginTop, 1, CSSUnitType::Px);
-        setInlineStyleProperty(CSSPropertyMarginBottom, 1, CSSUnitType::Px);
+        setInlineStyleProperty(CSSPropertyID::MarginLeft, 1, CSSUnitType::Px);
+        setInlineStyleProperty(CSSPropertyID::MarginRight, 1, CSSUnitType::Px);
+        setInlineStyleProperty(CSSPropertyID::MarginTop, 1, CSSUnitType::Px);
+        setInlineStyleProperty(CSSPropertyID::MarginBottom, 1, CSSUnitType::Px);
     }
 
     Ref document = this->document();

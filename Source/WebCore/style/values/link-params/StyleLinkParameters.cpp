@@ -70,25 +70,24 @@ static CSS::ParamSpec toCSSParamSpec(const ParamSpec& spec)
 const AtomString& ParamSpec::name() const
 {
     return WTF::switchOn(value,
-        [](CSS::Keyword::Color) -> const AtomString& { return nameStringForSerialization(CSSValueColor); },
-        [](CSS::Keyword::AccentColor) -> const AtomString& { return nameStringForSerialization(CSSValueAccentColor); },
+        [](CSS::Keyword::Color) -> const AtomString& { return nameStringForSerialization(CSSValueID::Color); },
+        [](CSS::Keyword::AccentColor) -> const AtomString& { return nameStringForSerialization(CSSValueID::AccentColor); },
         [](const Custom& custom) -> const AtomString& { return custom.name.value; }
     );
 }
 
-LinkParameters linkParametersForResource(const LinkParameters& fromProperty, const CSS::URLModifiers& fromURL)
+LinkParameters linkParametersForResource(const LinkParameters& fromProperty, const Vector<CSS::ParamFunction>& fromURL)
 {
-    auto& fromURLParameters = fromURL.linkParameters;
-    if (fromURLParameters.isEmpty())
+    if (fromURL.isEmpty())
         return fromProperty;
 
     auto countFromProperty = fromProperty.size();
 
-    return LinkParameterList::createWithSizeFromGenerator(countFromProperty + fromURLParameters.size(), [&](size_t i) -> ParamFunction {
+    return LinkParameterList::createWithSizeFromGenerator(countFromProperty + fromURL.size(), [&](size_t i) -> ParamFunction {
         if (i < countFromProperty)
             return fromProperty[i];
 
-        auto& parameter = fromURLParameters[i - countFromProperty];
+        auto& parameter = fromURL[i - countFromProperty];
         return ParamFunction { LinkParameter { toStyleParamSpec(parameter->spec), DeclarationValue { parameter->value.value.copyRef() } } };
     });
 }

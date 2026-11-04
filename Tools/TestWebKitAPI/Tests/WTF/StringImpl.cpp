@@ -783,7 +783,7 @@ TEST(WTF, ExternalStringImplCreate8bit)
     bool freeFunctionCalled = false;
 
     {
-        auto external = ExternalStringImpl::create({ byteCast<Latin1Character>(&buffer[0]), bufferStringLength }, [&freeFunctionCalled](ExternalStringImpl* externalStringImpl, void* buffer, unsigned bufferSize) mutable {
+        auto external = ExternalStringImpl::create({ byteCast<Latin1Character>(&buffer[0]), bufferStringLength }, nullptr, [&freeFunctionCalled](void*, void* buffer, unsigned bufferSize) mutable { // Bun: upstream has no context argument, and passes the string to the function.
             freeFunctionCalled = true;
         });
 
@@ -805,7 +805,7 @@ TEST(WTF, ExternalStringImplCreate16bit)
     bool freeFunctionCalled = false;
 
     {
-        auto external = ExternalStringImpl::create({ buffer, bufferStringLength }, [&freeFunctionCalled](ExternalStringImpl* externalStringImpl, void* buffer, unsigned bufferSize) mutable {
+        auto external = ExternalStringImpl::create({ buffer, bufferStringLength }, nullptr, [&freeFunctionCalled](void*, void* buffer, unsigned bufferSize) mutable { // Bun: upstream has no context argument, and passes the string to the function.
             freeFunctionCalled = true;
         });
 
@@ -834,7 +834,7 @@ TEST(WTF, ExternalStringAtom)
     bool freeFunctionCalled = false;
 
     {
-        auto external = ExternalStringImpl::create(byteCast<Latin1Character>(std::span { buffer, bufferStringLength }), [&freeFunctionCalled](ExternalStringImpl* externalStringImpl, void* buffer, unsigned bufferSize) mutable {
+        auto external = ExternalStringImpl::create(byteCast<Latin1Character>(std::span { buffer, bufferStringLength }), nullptr, [&freeFunctionCalled](void*, void* buffer, unsigned bufferSize) mutable { // Bun: upstream has no context argument, and passes the string to the function.
             freeFunctionCalled = true;
         });    
 
@@ -870,7 +870,7 @@ TEST(WTF, ExternalStringToSymbol)
     bool freeFunctionCalled = false;
 
     {
-        auto external = ExternalStringImpl::create(buffer.span8(), [&freeFunctionCalled](ExternalStringImpl* externalStringImpl, void* buffer, unsigned bufferSize) mutable {
+        auto external = ExternalStringImpl::create(buffer.span8(), nullptr, [&freeFunctionCalled](void*, void* buffer, unsigned bufferSize) mutable { // Bun: upstream has no context argument, and passes the string to the function.
             freeFunctionCalled = true;
         });
 
@@ -960,6 +960,34 @@ TEST(WTF, StringImplCodePointAtNUL)
     auto string = StringImpl::create(std::span<const char16_t> { data });
     ASSERT_EQ(string->codePointAt(0), 0u);
     ASSERT_EQ(string->codePointAt(1), 0xD800u);
+}
+
+TEST(WTF, StringImplCreateWithHash)
+{
+    auto characters = "typed key"_s.span8();
+    unsigned hash = StringHasher::computeHashAndMaskTop8Bits(characters);
+
+    auto hashedString = StringImpl::create(characters, hash);
+    ASSERT_TRUE(hashedString->hasHash());
+    ASSERT_EQ(hash, hashedString->existingHash());
+    ASSERT_NE(characters.data(), hashedString->span8().data());
+
+    auto plainString = StringImpl::create(characters);
+    ASSERT_FALSE(plainString->hasHash());
+    ASSERT_EQ(hash, plainString->hash());
+    ASSERT_TRUE(plainString->hasHash());
+    ASSERT_TRUE(equal(hashedString.get(), plainString.get()));
+
+    auto hashedAtom = AtomStringImpl::add(hashedString.ptr());
+    auto plainAtom = AtomStringImpl::add(plainString.ptr());
+    ASSERT_EQ(hashedAtom.get(), plainAtom.get());
+}
+
+TEST(WTF, StringImplCreateWithHashEmpty)
+{
+    std::span<const Latin1Character> characters;
+    auto string = StringImpl::create(characters, StringHasher::computeHashAndMaskTop8Bits(characters));
+    ASSERT_EQ(StringImpl::empty(), string.ptr());
 }
 
 } // namespace TestWebKitAPI

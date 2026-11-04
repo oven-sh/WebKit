@@ -55,10 +55,10 @@ template<typename IDLType> class DOMPromiseDeferred;
 class Permissions : public RefCountedAndCanMakeWeakPtr<Permissions> {
     WTF_MAKE_TZONE_ALLOCATED(Permissions);
 public:
-    static Ref<Permissions> create(NavigatorBase&);
+    static Ref<Permissions> LEGACY_NODELETE create(NavigatorBase&);
     ~Permissions();
 
-    NavigatorBase* NODELETE navigator();
+    NavigatorBase* LEGACY_NODELETE navigator();
     void query(JSC::Strong<JSC::JSObject>, Ref<DeferredPromise>&&);
     WEBCORE_EXPORT static std::optional<PermissionQuerySource> sourceFromContext(const ScriptExecutionContext&);
     WEBCORE_EXPORT static std::optional<PermissionName> toPermissionName(const String&);

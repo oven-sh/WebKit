@@ -35,6 +35,8 @@ namespace WebCore {
 
 class FontCreationContext;
 class FontDescription;
+class FontPaletteValues;
+struct FontPalette;
 
 class UnrealizedCoreTextFont {
 public:
@@ -49,7 +51,7 @@ public:
     }
 
     template <typename T>
-    void modify(T&& functor)
+    void modify(NOESCAPE const T& functor)
     {
         if (static_cast<bool>(*this))
             functor(m_attributes.get());
@@ -76,7 +78,9 @@ private:
         Everything,
     };
 
-    static void modifyFromContext(CFMutableDictionaryRef attributes, const FontDescription&, const FontCreationContext&, ApplyTraitsVariations, float weight, float width, float slope, CGFloat size, const OpticalSizingType&);
+    void modifyFromContext(CFMutableDictionaryRef attributes, const FontDescription&, const FontCreationContext&, ApplyTraitsVariations, float weight, float width, float slope, CGFloat size, const OpticalSizingType&) const;
+    void addAttributesForFontPalettes(CFMutableDictionaryRef attributes, const FontPalette&, const FontPaletteValues*) const;
+    RetainPtr<CFDataRef> copyColorPaletteTable() const;
 
     using VariationsMap = HashMap<FontTag, float, FourCharacterTagHash, FourCharacterTagHashTraits>;
     static void addAttributesForOpticalSizing(CFMutableDictionaryRef attributes, VariationsMap& variationsToBeApplied, const OpticalSizingType&, CGFloat size);

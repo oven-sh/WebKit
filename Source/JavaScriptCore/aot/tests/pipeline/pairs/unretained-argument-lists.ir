@@ -1,0 +1,9 @@
+# The program of ../../answers is one in which lists of arguments are removed or lie in frames, empty ones are shared, and capacities are planned for the lists that grow.
+# FORM: AsRead
+# RUN: compile
+# STATISTIC: AllocationsRemoved >= 1
+# STATISTIC: ArraysInFrames >= 1
+# STATISTIC: EmptyArgumentListsShared >= 1
+# STATISTIC: ArrayCapacitiesPlanned >= 1
+# CHECK: image not empty
+# PROGRAM-OF: ../../answers/unretained-argument-lists.ir

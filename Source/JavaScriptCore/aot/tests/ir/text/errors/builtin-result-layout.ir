@@ -1,0 +1,5 @@
+# A layout of kind BuiltinResult comes from the built-ins table and has no line
+# RUN: print
+# DIAGNOSTIC: EngineOnlyOnWire
+
+layout L0 kind=BuiltinResult

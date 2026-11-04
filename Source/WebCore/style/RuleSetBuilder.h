@@ -49,7 +49,7 @@ private:
     void addRulesFromSheetContents(const StyleSheetContents&);
     void addChildRules(const Vector<Ref<StyleRuleBase>>&);
     void addChildRule(Ref<StyleRuleBase>);
-    void NODELETE disallowDynamicMediaQueryEvaluationIfNeeded();
+    void LEGACY_NODELETE disallowDynamicMediaQueryEvaluationIfNeeded();
     void addStyleRuleWithSelectorList(const CSSSelectorList&, const StyleRule&);
 
     void registerLayers(const Vector<CascadeLayerName>&);
@@ -82,7 +82,7 @@ private:
         void addRuleIfNeeded(const RuleData&);
     };
 
-    RefPtr<RuleSet> m_ruleSet;
+    const RefPtr<RuleSet> m_ruleSet;
     MediaQueryCollector m_mediaQueryCollector;
     Resolver* m_resolver { nullptr };
     const ShrinkToFit m_shrinkToFit { ShrinkToFit::Enable };

@@ -1,0 +1,29 @@
+# Code is generated for a test of the sharing mode and for a test of the module of a namespace object
+# FORM: Selected
+# RUN: generate-code
+# OPTIONS: check=validate-back-end
+# CHECK: f0: size=
+# CHECK: f1: size=
+# CHECK: f2: size=
+# CHECK: f3: size=
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="library.js" displayPath="library.js" exports=[{name="a" variable=g0}]
+layout L0 name="Record" fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+variable g0 name="a" module=m1 declared={type=number}
+function f0 name="isUnshared" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = TypeTest v0 testedType=ArrayBuffer
+    Return v1
+}
+function f1 name="isShared" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = TypeTest v0 testedType=SharedArrayBuffer
+    Return v1
+}
+function f2 name="isNamespace" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = TypeTest v0 testedType=L(m1)
+    Return v1
+}
+function f3 name="isNamespaceAmongTwo" parameters=[{type=L0|L(m1)}] results=[{type=boolean}] {
+    v1 = TypeTest v0 testedType=L(m1)
+    Return v1
+}

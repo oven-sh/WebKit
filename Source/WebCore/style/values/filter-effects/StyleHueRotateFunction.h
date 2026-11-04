@@ -45,7 +45,7 @@ struct HueRotate {
 
     Parameter value;
 
-    static HueRotate NODELETE passthroughForInterpolation();
+    static HueRotate LEGACY_NODELETE passthroughForInterpolation();
 
     constexpr bool requiresRepaintForCurrentColorChange() const { return false; }
     constexpr bool affectsOpacity() const { return false; }
@@ -58,12 +58,12 @@ struct HueRotate {
 
     bool operator==(const HueRotate&) const = default;
 };
-using HueRotateFunction = FunctionNotation<CSSValueHueRotate, HueRotate>;
+using HueRotateFunction = FunctionNotation<CSSValueID::HueRotate, HueRotate>;
 DEFINE_TYPE_WRAPPER_GET(HueRotate, value);
 
 // MARK: - Conversion
 
-template<> struct ToCSS<HueRotate> { CSS::HueRotate NODELETE operator()(const HueRotate&, const Style::ComputedStyle&); };
+template<> struct ToCSS<HueRotate> { CSS::HueRotate LEGACY_NODELETE operator()(const HueRotate&, const Style::ComputedStyle&); };
 template<> struct ToStyle<CSS::HueRotate> { auto operator()(const CSS::HueRotate&, const BuilderState&) -> HueRotate; };
 
 // MARK: - Evaluation
@@ -72,7 +72,7 @@ template<> struct Evaluation<HueRotate, Ref<FilterEffect>> { auto operator()(con
 
 // MARK: - Platform
 
-template<> struct ToPlatform<HueRotate> { auto operator()(const HueRotate&) -> Ref<FilterOperation>; };
+template<> struct ToPlatform<HueRotate> { Ref<FilterOperation> LEGACY_NODELETE operator()(const HueRotate&); };
 
 } // namespace Style
 } // namespace WebCore

@@ -53,14 +53,14 @@ public:
 
     ExceptionOr<void> convertTo(unsigned short type);
 
-    WEBCORE_EXPORT unsigned short NODELETE resultType() const;
+    WEBCORE_EXPORT unsigned short LEGACY_NODELETE resultType() const;
 
     WEBCORE_EXPORT ExceptionOr<double> numberValue() const;
     WEBCORE_EXPORT ExceptionOr<String> stringValue() const;
     WEBCORE_EXPORT ExceptionOr<bool> booleanValue() const;
     WEBCORE_EXPORT ExceptionOr<Node*> singleNodeValue() const;
 
-    WEBCORE_EXPORT bool NODELETE invalidIteratorState() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE invalidIteratorState() const;
     WEBCORE_EXPORT ExceptionOr<unsigned> snapshotLength() const;
     WEBCORE_EXPORT ExceptionOr<Node*> iterateNext();
     WEBCORE_EXPORT ExceptionOr<Node*> snapshotItem(unsigned index);
@@ -78,7 +78,7 @@ private:
     Lock m_nodeSetLock;
     XPath::NodeSet m_nodeSet WTF_GUARDED_BY_LOCK(m_nodeSetLock);
     unsigned short m_resultType;
-    RefPtr<Document> m_document;
+    const RefPtr<Document> m_document;
     uint64_t m_domTreeVersion { 0 };
 };
 

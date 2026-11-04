@@ -1,0 +1,38 @@
+# A function whose function objects are made anew by a function that anybody may call, and go where nobody follows them, may get a name there. Its entrypoint for calls by value writes down which function object it was entered through, from the first call on: a stack that is taken before the name is given is read behind it
+# FORM: AsRead
+# RUN: pipeline CheckPlacement
+# OPTIONS: disable=pass:InlineCalls,pass:OutlineColdOperations
+# CHECK: function f{{*}} name="madeOnce" {{*}}role=GenericEntrypoint
+# CHECK-NEXT: b0(
+# CHECK-NEXT: CallDirect
+# CHECK-NEXT: ReturnCall
+# CHECK: function f{{*}} name="madeAnew" {{*}}role=GenericEntrypoint
+# CHECK-NEXT: b0(
+# CHECK-NEXT: RecordCallee v0
+# CHECK: GetCapture
+# CHECK: ReturnCall
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f3
+    v3 = PropGet v0 key="register" [isFreeName]
+    v4 = Call v3, -, v1, v2
+    Return v4
+}
+function f1 name="madeOnce" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f2 name="madeAnew" captures=[{type=anything}] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f3 name="makesClosure" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure v0 function=f2
+    Return v1
+}

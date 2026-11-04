@@ -38,7 +38,7 @@ namespace WTF {
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER_AND_EXPORT(BitVector, WTF_INTERNAL);
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(BitVector);
 
-void BitVector::setSlow(const BitVector& other)
+NEVER_INLINE void BitVector::setSlow(const BitVector& other)
 {
     uintptr_t newBitsOrPointer;
     if (other.isInline() || other.isEmptyOrDeletedValue())
@@ -97,7 +97,7 @@ void BitVector::shiftRightByMultipleOf64(size_t shiftInBits)
     resizeOutOfLine(numBits, shiftInWords);
 }
 
-void BitVector::resizeOutOfLine(size_t numBits, size_t shiftInWords)
+NEVER_INLINE void BitVector::resizeOutOfLine(size_t numBits, size_t shiftInWords)
 {
     ASSERT(numBits > maxInlineBits());
     OutOfLineBits* newOutOfLineBits = OutOfLineBits::create(numBits);
@@ -120,7 +120,7 @@ void BitVector::resizeOutOfLine(size_t numBits, size_t shiftInWords)
     m_bitsOrPointer = std::bit_cast<uintptr_t>(newOutOfLineBits) >> 1;
 }
 
-void BitVector::mergeSlow(const BitVector& other)
+NEVER_INLINE void BitVector::mergeSlow(const BitVector& other)
 {
     if (other.isInline()) {
         ASSERT(!isInline());
@@ -138,7 +138,7 @@ void BitVector::mergeSlow(const BitVector& other)
         a[i] |= b[i];
 }
 
-void BitVector::filterSlow(const BitVector& other)
+NEVER_INLINE void BitVector::filterSlow(const BitVector& other)
 {
     if (other.isInline()) {
         ASSERT(!isInline());
@@ -166,7 +166,7 @@ void BitVector::filterSlow(const BitVector& other)
         zeroSpan(a.subspan(b.size()));
 }
 
-void BitVector::excludeSlow(const BitVector& other)
+NEVER_INLINE void BitVector::excludeSlow(const BitVector& other)
 {
     if (other.isInline()) {
         ASSERT(!isInline());
@@ -189,7 +189,7 @@ void BitVector::excludeSlow(const BitVector& other)
         a[i] &= ~b[i];
 }
 
-size_t BitVector::bitCountSlow() const
+NEVER_INLINE size_t BitVector::bitCountSlow() const
 {
     ASSERT(!isInline());
     const OutOfLineBits* bits = outOfLineBits();
@@ -199,7 +199,7 @@ size_t BitVector::bitCountSlow() const
     return result;
 }
 
-bool BitVector::isEmptySlow() const
+NEVER_INLINE bool BitVector::isEmptySlow() const
 {
     ASSERT(!isInline());
     auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA -> std::optional<uint8_t> {
@@ -217,7 +217,7 @@ bool BitVector::isEmptySlow() const
     return SIMD::find(span, vectorMatch, scalarMatch) == std::to_address(span.end());
 }
 
-bool BitVector::equalsSlowCase(const BitVector& other) const
+NEVER_INLINE bool BitVector::equalsSlowCase(const BitVector& other) const
 {
     bool result = equalsSlowCaseFast(other);
     ASSERT(result == equalsSlowCaseSimple(other));
@@ -226,11 +226,10 @@ bool BitVector::equalsSlowCase(const BitVector& other) const
 
 bool BitVector::equalsSlowCaseFast(const BitVector& other) const
 {
-    if (isInline() != other.isInline())
-        return equalsSlowCaseSimple(other);
-    
-    auto myWords = outOfLineBits()->wordsSpan();
-    auto otherWords = other.outOfLineBits()->wordsSpan();
+    const uintptr_t myInlineBits = cleanseInlineBits(m_bitsOrPointer);
+    const uintptr_t otherInlineBits = cleanseInlineBits(other.m_bitsOrPointer);
+    auto myWords = isInline() ? singleElementSpan(myInlineBits) : outOfLineBits()->wordsSpan();
+    auto otherWords = other.isInline() ? singleElementSpan(otherInlineBits) : other.outOfLineBits()->wordsSpan();
     
     size_t myNumWords = myWords.size();
     size_t otherNumWords = otherWords.size();
@@ -260,7 +259,7 @@ bool BitVector::equalsSlowCaseSimple(const BitVector& other) const
     return true;
 }
 
-uintptr_t BitVector::hashSlowCase() const
+NEVER_INLINE uintptr_t BitVector::hashSlowCase() const
 {
     ASSERT(!isInline());
     uintptr_t result = 0;

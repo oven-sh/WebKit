@@ -1,0 +1,61 @@
+# The argument count, the callee and the hidden rest array go like any parameter that no operation names, and the caller no longer makes them. The target of a construction stays
+# FORM: Prepared
+# RUN: pass RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="ignoresArgumentCount" flags=[HasArgumentCount] parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: int[0, 4294967295], v1: number):
+    Return v1
+}
+function f1 name="ignoresCallee" flags=[TakesCallee] parameters=[{type=number}] results=[{type=number}] {
+    Return v1
+}
+function f2 name="ignoresNewTarget" kind=Method flags=[HasNewTarget] parameters=[{type=number}] results=[{type=number}] {
+    Return v1
+}
+# CHECK-LABEL: function f2 name="ignoresNewTarget"{{*}}flags=[HasNewTarget]
+# CHECK-NEXT: b0(v0: anything, v1: number):
+# CHECK-NEXT: Return v1
+
+function f3 name="ignoresHiddenRest" flags=[HasHiddenRest] parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number, v1: Array<anything>):
+    Return v0
+}
+function f4 name="readsArgumentCount" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: int[0, 4294967295], v1: number, v2: Array<anything>):
+    v3 = CallBuiltin v2 overload=ArrayPrototypeLength/0
+    v4 = Add v0, v3
+    v5 = Add v4, v1
+    Return v5
+# CHECK-NOT: CallDirect
+# CHECK: Return
+}
+
+function f5 name="callsEach" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Integer integer=1
+    v2 = CallDirect v1, v0 function=f0
+    v3 = NewClosure function=f1
+    v4 = CallDirect v3, v2 function=f1
+    v5 = Undefined
+    v6 = CallDirect v5, v4 function=f2
+    v7 = NewArray contents=anything
+    v8 = CallDirect v6, v7 function=f3
+    v9 = NewArray contents=anything
+    v10 = CallDirect v1, v8, v9 function=f4
+    Return v10
+# CHECK-NOT: NewClosure
+# CHECK: [[first]]: number = CallDirect v0 function=[[withoutCount]]
+# CHECK: [[second]]: number = CallDirect [[first]] function=[[withoutCallee]]
+# CHECK: [[third]]: number = CallDirect {{*}}, [[second]] function=f2
+# CHECK: [[fourth]]: number = CallDirect [[third]] function=[[withoutRest]]
+# CHECK: [[list]]: Array = NewArray
+# CHECK: = CallDirect v1, [[fourth]], [[list]] function=f4
+# CHECK: function [[withoutCount]] name="ignoresArgumentCount"
+# CHECK-NEXT: b0(v{{*}}: number):
+# CHECK: function [[withoutCallee]] name="ignoresCallee"
+# CHECK-NEXT: b0(v{{*}}: number):
+# CHECK: function [[withoutRest]] name="ignoresHiddenRest"
+# CHECK-NEXT: b0(v{{*}}: number):
+}

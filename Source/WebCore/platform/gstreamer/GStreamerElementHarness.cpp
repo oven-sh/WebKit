@@ -442,6 +442,13 @@ bool GStreamerElementHarness::srcQuery(GstPad* pad, GstObject* parent, GstQuery*
             gst_query_set_caps_result(query, caps.get());
         break;
     }
+    case GST_QUERY_LATENCY:
+        if (!m_isLive.loadRelaxed()) {
+            result = gst_pad_query_default(pad, parent, query);
+            break;
+        }
+        gst_query_set_latency(query, TRUE, 0, GST_CLOCK_TIME_NONE);
+        break;
     default:
         result = gst_pad_query_default(pad, parent, query);
     }
@@ -700,7 +707,7 @@ std::span<const uint8_t> MermaidBuilder::span() const
 void GStreamerElementHarness::dumpGraph(ASCIILiteral filenamePrefix)
 {
 #ifndef GST_DISABLE_GST_DEBUG
-    auto dumpPath = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_HARNESS_DUMP_DIR"));
+    auto dumpPath = UTF8CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_HARNESS_DUMP_DIR"));
     if (!dumpPath)
         return;
 

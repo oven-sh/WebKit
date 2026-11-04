@@ -1,0 +1,61 @@
+# function Make() { this.x = 1 }  Reflect.construct(Make.bind(null), [], Object.bind(null))
+# A bound function puts its target in the place of new.target only where new.target is that bound function itself. Another bound function that an operand names
+# is handed on as it is: it has no "prototype", so Make allocates an ordinary object and nothing is proven of `this` or of the result.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: provenType=L0
+# CHECK-NOT: provenType=L1
+# CHECK: provenType=L2
+# CHECK-LABEL: function f1 name="Make"
+# CHECK-NOT: provenType=L0
+# CHECK: PropSet {{*}} key="x"
+# CHECK-LABEL: function f2 name="MakeByOperand"
+# CHECK-NOT: provenType=L1
+# CHECK: PropSet {{*}} key="x"
+# CHECK-LABEL: function f3 name="MakeByItself"
+# CHECK: provenType=L2
+# CHECK: PropSet {{*}} key="x"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Make" constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="MakeByOperand" constructor=f2 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 kind=Instance name="MakeByItself" constructor=f3 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=FunctionPrototypeBind
+    v2 = Null
+    v3 = Call v1, v0, v2
+    v4 = Builtin builtin=Object
+    v5 = Call v1, v4, v2
+    v6 = Builtin builtin=ReflectConstruct
+    v7 = NewArray contents=anything
+    v8 = Call v6, -, v3, v7, v5
+    v9 = NewClosure function=f2
+    v10 = Call v1, v9, v2
+    v11 = Call v1, v4, v2
+    v12 = Construct v10, v11
+    v13 = NewClosure function=f3
+    v14 = Call v1, v13, v2
+    v15 = Construct v14
+    v16 = NewArray v8, v12, v15 contents=anything
+    Return v16
+}
+function f1 name="Make" module=m0 flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="MakeByOperand" module=m0 flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f3 name="MakeByItself" module=m0 flags=[HasThis] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] constructedClass=L2 {
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}

@@ -56,6 +56,7 @@ namespace webrtc {
 
 class DataChannelController;
 class LegacyStatsCollector;
+class PeerConnectionTracerInterface;
 
 // This interface defines the functions that are needed for
 // SdpOfferAnswerHandler to access PeerConnection internal state.
@@ -97,6 +98,8 @@ class PeerConnectionSdpMethods {
   virtual DataChannelController* data_channel_controller() = 0;
   virtual PortAllocator* port_allocator() = 0;
   virtual LegacyStatsCollector* legacy_stats() = 0;
+  virtual PeerConnectionTracerInterface* tracer() = 0;
+  virtual const PeerConnectionTracerInterface* tracer() const = 0;
   // Run lambda on the PeerConnectionObserver. Will crash on CHECK if the
   // observer is removed.
   virtual void RunWithObserver(
@@ -154,6 +157,9 @@ class PeerConnectionSdpMethods {
   // Keeps track of assigned payload types and comes up with reasonable
   // suggestions when new PTs need to be assigned.
   virtual PayloadTypePicker& payload_type_picker() = 0;
+
+  // Determine whether DTLS-in-STUN is configured.
+  virtual bool CanAttemptDtlsStunPiggybacking() const = 0;
 };
 
 // Functions defined in this class are called by other objects,

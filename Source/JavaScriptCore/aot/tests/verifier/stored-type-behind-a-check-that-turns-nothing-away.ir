@@ -1,0 +1,39 @@
+# A check whose operand lies inside its type lets everything through as it is. What is proven behind it alone holds also where each check lets everything through,
+# so a position that every store is held to may take what is read out of a list of such a value. Not so where the operand has its type from a check that may turn a value away.
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: StoredTypeOwedToCheck 2
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="goodListOfValueThatIsNeverTurnedAway" parameters=[{type=i32}] results=[{type=undefined|number|string}] {
+    v1 = Check v0 expectedType=i32
+    v2 = String string="t"
+    v3 = NewArray v1, v2 contents=i32|string allocationSite=0
+    v4 = AssumeType v3 provenType=Array<i32|string, proven> [isBehindChecks]
+    v5 = Integer
+    v6 = ElemGet v4, v5
+    v7 = Check v6 expectedType=number
+    Return v7
+}
+function f1 name="badListOfValueThatMayBeTurnedAway" parameters=[{type=anything}] results=[{type=undefined|number|string}] {
+    v1 = Check v0 expectedType=i32
+    v2 = String string="t"
+    v3 = NewArray v1, v2 contents=i32|string allocationSite=1
+    v4 = AssumeType v3 provenType=Array<i32|string, proven> [isBehindChecks]
+    v5 = Integer
+    v6 = ElemGet v4, v5
+    v7 = Check v6 expectedType=number
+    Return v7
+}
+function f2 name="badListOfValueThatIsCheckedTwice" parameters=[{type=anything}] results=[{type=undefined|number|string}] {
+    v1 = Check v0 expectedType=i32
+    v2 = Check v1 expectedType=i32
+    v3 = String string="t"
+    v4 = NewArray v2, v3 contents=i32|string allocationSite=2
+    v5 = AssumeType v4 provenType=Array<i32|string, proven> [isBehindChecks]
+    v6 = Integer
+    v7 = ElemGet v5, v6
+    v8 = Check v7 expectedType=number
+    Return v8
+}

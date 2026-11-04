@@ -1,0 +1,75 @@
+# The last of 100 functions that call each other in a chain has the activations, the class and the percentile of the first
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat
+# RUN: pipeline EstimateHeat
+# CHECK: f0 RunsOnce [[percentileOfMain]] 1
+# CHECK-NEXT: f1 [[class]] [[percentile]] 100
+# CHECK-COUNT-98: [[class]] [[percentile]] 100
+# CHECK-NEXT: f100 [[class]] [[percentile]] 100
+# CHECK-NEXT: f101 RunsOnce [[percentileOfHelper]] 1
+# CHECK-NOT: 0
+# CHECK: f102 RunsOnce [[percentileOfLoopingLink]] 1
+# CHECK-NOT: 0
+# CHECK: f103 [[classAfterLoop]] [[percentileAfterLoop]] 10
+# CHECK-NOT: 0
+# CHECK: f104 [[classAfterLoop]] [[percentileAfterLoop]] 10
+# CHECK-NEXT: hottest: f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 {{*}} f91 f92 f93 f94 f95 f96 f97 f98 f99 f100
+# CHECK-NEXT: thresholds: cold=1 hot=100
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    v2 = CallDirect v0 function=f101
+    v3 = CallDirect v0 function=f102
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v6 = CallDirect v0 function=f1
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b2()
+  b4():
+    Branch v1 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b1()
+  b6():
+    Return
+}
+# REPEAT: i = 1..99
+function f%(i) name="link%(i)" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f%(i+1)
+    Return v1
+}
+# END REPEAT
+function f100 name="link100" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f101 name="calledOnce" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f102 name="linkThatCallsInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v0 function=f103
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v0
+}
+function f103 name="calledInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f104
+    Return v1
+}
+function f104 name="calledByFunctionCalledInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

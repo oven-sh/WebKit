@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRemovableFeature.h"
 #include "AuxiliaryBarrierInlines.h"
 #include "DeferredWorkTimer.h"
 #include "Exception.h"
@@ -346,8 +347,9 @@ static void compileAndInstantiate(VM& vm, JSGlobalObject* globalObject, JSPromis
     }));
 }
 
-JSValue JSWebAssembly::instantiate(JSGlobalObject* globalObject, JSPromise* promise, JSModuleLoader* moduleLoader, RefPtr<SourceProvider>&& sourceProvider, const Identifier& moduleKey, JSValue argument)
+NEVER_INLINE JSValue JSWebAssembly::instantiate(JSGlobalObject* globalObject, JSPromise* promise, JSModuleLoader* moduleLoader, RefPtr<SourceProvider>&& sourceProvider, const Identifier& moduleKey, JSValue argument)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &JSWebAssembly::instantiate);
     VM& vm = globalObject->vm();
     std::optional<WebAssemblyCompileOptions> compileOptions;
     if (Options::useWasmJSStringBuiltins())
@@ -371,7 +373,7 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyInstantiateFunc, (JSGlobalObject* globalObje
         RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::rejectedPromise(globalObject, error)));
     }
 
-    auto [taintedness, url] = sourceTaintedOriginFromStack(vm, callFrame);
+    auto [taintedness, url] = sourceTaintednessFromStack(vm, callFrame);
     RefPtr<SourceProvider> provider = StringSourceProvider::create("[wasm code]"_s, SourceOrigin(url), String(), taintedness, TextPosition(), SourceProviderSourceType::Program);
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());

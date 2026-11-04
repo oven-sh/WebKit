@@ -1,0 +1,28 @@
+# The slot of the field was found empty, so what is found lies above the object. In fast code the read compares the slot at its site in line and looks for the pattern of an absent field: it has no frame until the site has no answer
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# RUN: generate-code
+# RUN(B3): lower-to-b3 f1
+# CHECK: f1: size={{*}} frame=0@
+# B3: = Load({{*}}Reads:AOTInstance_siteCaches
+# B3: = Load({{*}}Reads:JSCell_structureID
+# B3: = Load8Z({{*}}offset = 4, {{*}}Reads:AOTInstance_siteCaches
+# B3: = Load8Z({{*}}offset = 5, {{*}}Reads:AOTInstance_siteCaches
+# B3: = Load({{*}}Reads:ObjectFields
+# B3: = Load({{*}}offset = 12, {{*}}Reads:AOTInstance_siteCaches
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="retries" declared={type=undefined|number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = CallDirect v0 function=f1
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = CallDirect v3 function=f1
+    Return v4
+}
+function f1 name="read" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = SuperGet v0, v0 key="retries"
+    Return v1
+}

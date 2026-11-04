@@ -1,0 +1,99 @@
+# pack-optional-rows-that-the-makers-only-declare-out-of-line-above-heirs.ir, and one access in a hot loop reads `original` of Base, Below and Alone. Alone, which has nobody below it, has the field
+# in its cell. One load would do if Base and Below had it in theirs too, and they have spare bytes. They keep it out of line all the same: hardly an object has the field,
+# and every class that comes below Base would carry it
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow,ResolveAccesses,PlaceTypeTests references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Shape" fields=[{key="parent" declared={type=undefined|L1} flags=[IsRequired]}, {key="original" declared={type=undefined|L1}}]
+layout L1 name="Leaf" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="Base" constructor=f1 fields=[{key="parent" declared={type=undefined|L1} flags=[IsRequired] originLayout=L0 originField=0}, {key="original" declared={type=undefined|L1} flags=[IsRequired] originLayout=L0 originField=1}]
+layout L3 kind=Instance name="Below" base=L2 constructor=f2 fields=[{key="own" declared={type=undefined|L1}}] flags=[HasHeritage]
+layout L4 kind=Instance name="Alone" constructor=f3 fields=[{key="parent" declared={type=undefined|L1} flags=[IsRequired] originLayout=L0 originField=0}, {key="original" declared={type=undefined|L1} flags=[IsRequired] originLayout=L0 originField=1}]
+variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="any" module=m0 declared={type=undefined|L2|L3|L4 flags=[IsExpected]} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = NewObject -, v2 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewClosure function=f1
+    v7 = NewClass v6 layout=L2
+    v8 = FinishClass v7 layout=L2
+    PutModuleVariable v8 variable=g0
+    v10 = ResolveHeritage v8
+    v11 = NewClosure function=f2
+    v12 = NewClass v11, v8, v10 layout=L3
+    v13 = FinishClass v12 layout=L3
+    v14 = NewClosure function=f3
+    v15 = NewClass v14 layout=L4
+    v16 = FinishClass v15 layout=L4
+    v17 = Construct v8
+    v18 = Construct v13
+    v19 = Construct v16
+    ElemSet v17, v3, v5
+    ElemSet v18, v3, v5
+    ElemSet v19, v3, v5
+    v23 = ForInOpen v17
+    v24 = ForInOpen v18
+    v25 = ForInOpen v19
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="publish" [isFreeName]
+    v28 = Call v27, -, v17, v18, v19
+    PutModuleVariable v17 variable=g1
+    PutModuleVariable v18 variable=g1
+    PutModuleVariable v19 variable=g1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v35 = GetModuleVariable variable=g1
+    v36 = PropGet v35 key="original"
+# REPEAT: i = 4..6
+    v%(i*2+29) = Call v0
+    v%(i*2+30) = ToBoolean v%(i*2+29)
+    Branch v%(i*2+30) -> taken b%(i*-1+7)(), notTaken b%(i)()
+  b%(i)():
+# END REPEAT
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    v3 = Undefined
+    PropSet v2, v3 key="parent"
+    PropSet v2, v3 key="original"
+    v6 = FinishObject v2
+    Return v6
+}
+function f2 name="Below" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = SuperConstruct v1, v0 layout=L3
+    Return v2
+}
+function f3 name="Alone" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4
+    v3 = Undefined
+    PropSet v2, v3 key="parent"
+    PropSet v2, v3 key="original"
+    v6 = FinishObject v2
+    Return v6
+}
+# CHECK: L2 CompiledObject
+# CHECK-NEXT: .0 "parent" OptionalCell32 @
+# CHECK-NEXT: .1 "original" OptionalCell32 out@8
+# CHECK: L3 CompiledObject
+# CHECK: "original" OptionalCell32 out@8
+# CHECK: L4 CompiledObject
+# CHECK-NEXT: .0 "parent" OptionalCell32 @
+# CHECK-NEXT: .1 "original" JSValue @

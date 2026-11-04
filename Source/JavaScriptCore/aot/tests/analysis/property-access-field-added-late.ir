@@ -1,0 +1,36 @@
+# Flow gives a name room that some store creates, often long after the construction, or never: `response[kCloseCallback] = f` is the creating store in every response, `if (socket[kPending])` reads a name
+# that most sockets never get. So a store to such a field is planned as the creating store wherever it stands, and a read takes an empty slot for undefined, both behind the tests of a creating store:
+# the object has the property nowhere else and inherits nothing under the name. A field that the program declares is planned as before: its slot is expected to be filled.
+# A store passes a method of the class by and creates the property, a read finds the method: `class Bound { constructor() { this.run = () => 1 } run() {} }`, `delete bound.run`, `bound.run()`.
+# So the read of such a name takes no empty slot for undefined
+# FORM: Prepared
+# RUN: property-access
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Response" constructor=f0 fields=[{key="declared" declared={type=anything}}, {key="late" declared={type=anything} flags=[IsAddedLate]}]
+layout L1 kind=Instance name="Bound" constructor=f4 fields=[{key="run" declared={type=anything} flags=[IsAddedLate]}] classFlow={evaluations=AtMostOnce prototypeNamesAreComplete=true namedMembers=[{key="run" function=f5}]}
+
+function f0 name="Response" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+
+function f1 name="store-to-a-field-added-late" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="late"
+    Return
+}
+# CHECK: F1 v2 PropSet [[late]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L0] proofs=[NoFieldOutsideSlot, NotFrozen, PrototypeLinkUnchanged] conditions=[MemberUnchanged(L0, Prototype, [[late]]), PrototypeLinkUnchanged(L0, Prototype)] storedValueFits missPath member=(Field level=Proven holder=L0 field=1)
+function f2 name="read-of-a-field-added-late" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="late"
+    Return v1
+}
+# CHECK-NEXT: F2 v1 PropGet [[late]]: form=Slot level=Expected operation=GetSlotOrUndefined receivers=[L0] proofs=[NoFieldOutsideSlot, PrototypeLinkUnchanged] conditions=[MemberUnchanged(L0, Prototype, [[late]]), PrototypeLinkUnchanged(L0, Prototype)] missPath member=(Field level=Proven holder=L0 field=1)
+function f3 name="read-of-a-declared-field" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="declared"
+    Return v1
+}
+# CHECK-NEXT: F3 v1 PropGet [[declared]]: form=Slot level=Expected operation=GetSlot receivers=[L0] proofs=[SlotFilled] missPath member=(Field level=Proven holder=L0 field=0)
+function f4 name="Bound" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f5 name="run" kind=Method flags=[HasThis] results=[{type=anything}]
+function f6 name="read-of-a-field-added-late-over-a-method" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="run"
+    Return v1
+}
+# CHECK-NEXT: F6 v1 PropGet [[run]]: form=Slot level=Expected operation=GetSlot receivers=[L1] proofs=[SlotFilled] missPath member=(Field level=Proven holder=L1 field=0)

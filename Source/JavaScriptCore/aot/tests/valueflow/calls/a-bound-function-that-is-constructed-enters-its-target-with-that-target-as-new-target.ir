@@ -1,0 +1,37 @@
+# `new` on a bound function enters its target with the target as new.target. Where one place constructs either of two bound functions, the target that reads new.target sees itself there and not the other target: what it hands to new.target does not arrive at the other.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=FunctionPrototypeBind
+    v3 = Null
+    v4 = Call v2, v0, v3
+    v5 = Call v2, v1, v3
+    v6 = NewClosure function=f3
+    v7 = Call v6, -, v4
+    v8 = Call v6, -, v5
+    Return
+}
+function f1 name="readsNewTarget" flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = NewClosure function=f4
+    v2 = Call v0, -, v1
+    Return
+}
+function f2 name="other" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return
+}
+function f3 name="constructs" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Construct v0
+    Return
+}
+function f4 name="handedToNewTarget" kind=Arrow results=[{type=anything}] {
+    Return
+}

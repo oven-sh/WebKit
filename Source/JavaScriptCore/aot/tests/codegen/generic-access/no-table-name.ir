@@ -1,0 +1,9 @@
+# Every access by name has code where all names but one have no column in the lookup table, so no stub that takes a table name serves them
+# RUN: compile
+# OPTIONS: limit=LookupTableNames:1 heat=only-loops-are-hot check=validate-back-end
+# LOSS: LookupTableNames
+# STATISTIC: KeysWithoutColumn >= 1
+# STATISTIC: PropertyChainGroups = 0
+# STATISTIC: PropertyPairGroups = 0
+# CHECK: image not empty
+# PROGRAM-OF: fast.ir

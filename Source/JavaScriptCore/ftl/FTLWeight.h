@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 #include "B3FrequencyClass.h"
 #include <wtf/MathExtras.h>
@@ -68,4 +68,4 @@ private:
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)

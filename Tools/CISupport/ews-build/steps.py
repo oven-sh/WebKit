@@ -48,7 +48,7 @@ import socket
 import sys
 import time
 
-from Shared.steps import ShellMixin, SetBuildSummary, SetO3OptimizationLevel, WaitForDuration, InstallSwiftToolchain, SCAN_BUILD_PATH, SWIFT_TOOLCHAIN_NAME, SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER, SWIFT_DIR, USER_TOOLCHAINS_DIR, needs_swift_toolchain_setup
+from Shared.steps import ShellMixin, SetBuildSummary, SetO3OptimizationLevel, WaitForDuration, InstallSwiftToolchain, cmake_tools_path, FAILED_RESULTS_UPLOAD_MESSAGE, SCAN_BUILD_PATH, SWIFT_TOOLCHAIN_NAME, SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER, SWIFT_DIR, USER_TOOLCHAINS_DIR, needs_swift_toolchain_setup
 from Shared import generate_s3_url
 
 if sys.version_info < (3, 9):  # noqa: UP036
@@ -597,6 +597,12 @@ class ResultsDBReportMixin(abc.ABC):
             configuration['style'] = style
         if (flavor := self.getProperty('flavor', None)) in ('wk1', 'wk2', 'site-isolation'):
             configuration['flavor'] = flavor
+        # GTK and WPE post-commit bots run on more than one architecture, and pooling their history
+        # can excuse a failure on this architecture with failures seen only on another one.
+        if platform and platform.lower() in ('gtk', 'wpe'):
+            architecture = self.getProperty('machine_architecture', None) or self.getProperty('architecture', None)
+            if architecture and ' ' not in architecture:
+                configuration['architecture'] = architecture
         return configuration
 
     def results_db_configuration(self):
@@ -1541,7 +1547,6 @@ class CheckChangeRelevance(AnalyzeChange):
         re.compile(rb'Tools/Scripts/compare-static-analysis-results', re.IGNORECASE),
         re.compile(rb'Tools/Scripts/generate-dirty-files', re.IGNORECASE),
         re.compile(rb'Tools/CISupport/Shared/download-and-install-build-tools', re.IGNORECASE),
-        re.compile(rb'Tools/CISupport/safer-cpp-llvm-version', re.IGNORECASE),
         re.compile(rb'Tools/CISupport/safer-cpp-swift-version', re.IGNORECASE)
     ]
 
@@ -2529,7 +2534,7 @@ class CheckStatusOfPR(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
     flunkOnFailure = False
     haltOnFailure = False
     EMBEDDED_CHECKS = ['ios', 'ios-safer-cpp', 'ios-sim', 'ios-wk2', 'ios-wk2-wpt', 'api-ios', 'vision', 'vision-sim', 'vision-wk2', 'tv', 'tv-sim', 'watch', 'watch-sim']
-    MACOS_CHECKS = ['mac', 'mac-AS-debug', 'api-mac', 'api-mac-debug', 'mac-wk2', 'mac-AS-debug-wk2', 'mac-wk2-stress', 'mac-safer-cpp', 'jsc-x86-64', 'jsc-debug-arm64']
+    MACOS_CHECKS = ['mac', 'mac-cmake-debug', 'api-mac', 'api-mac-cmake-debug', 'mac-wk2', 'mac-cmake-debug-wk2', 'mac-wk2-stress', 'mac-safer-cpp', 'jsc-x86-64', 'jsc-debug-arm64']
     LINUX_CHECKS = ['gtk', 'gtk-wk2', 'api-gtk', 'wpe', 'gtk3-gcc', 'wpe-wk2', 'api-wpe', 'jsc-wpe']
     WINDOWS_CHECKS = ['win']
     EWS_WEBKIT_FAILED = 0
@@ -2819,6 +2824,15 @@ class RevertAppliedChanges(steps.ShellSequence):
             platform = platform.upper()
             config = self.getProperty('configuration').capitalize()
             target = os.path.join("WebKitBuild", platform, config, "build-webkit-options.txt")
+            self.commands.append(util.ShellArg(command=['rm', '-f', target], logname='stdio'))
+        elif '--cmake' in (self.getProperty('additionalArguments') or []):
+            config = self.getProperty('configuration').capitalize()
+            if platform == 'ios':
+                is_simulator = 'simulator' in self.getProperty('fullPlatform')
+                platform_dir = 'cmake-iphonesimulator' if is_simulator else 'cmake-iphoneos'
+            else:
+                platform_dir = f'cmake-{platform}'  # e.g. 'cmake-mac'
+            target = os.path.join('WebKitBuild', platform_dir, config, 'build-webkit-options.txt')
             self.commands.append(util.ShellArg(command=['rm', '-f', target], logname='stdio'))
         return super().run()
 
@@ -3212,7 +3226,7 @@ class CompileWebKit(shell.Compile, AddToLogMixin, ShellMixin):
     haltOnFailure = False
     build_command = ['perl', 'Tools/Scripts/build-webkit']
     filter_command = ['perl', 'Tools/Scripts/filter-build-webkit', '-logfile', 'build-log.txt']
-    VALID_ADDITIONAL_ARGUMENTS_LIST = []  # If additionalArguments is added to config.json for CompileWebKit step, it should be added here as well.
+    VALID_ADDITIONAL_ARGUMENTS_LIST = ['--cmake']  # If additionalArguments is added to config.json for CompileWebKit step, it should be added here as well.
     APPLE_PLATFORMS = ('mac', 'ios', 'visionos', 'tvos', 'watchos')
     MAX_ERROR_LINES = 1000
 
@@ -3240,27 +3254,42 @@ class CompileWebKit(shell.Compile, AddToLogMixin, ShellMixin):
         for additionalArgument in (additionalArguments or []):
             if additionalArgument in self.VALID_ADDITIONAL_ARGUMENTS_LIST:
                 build_command += [additionalArgument]
+        if '--cmake' in (additionalArguments or []):
+            self.env['PATH'] = cmake_tools_path(self.getProperty('builddir'))
         if platform in self.APPLE_PLATFORMS:
-            # FIXME: Once WK_VALIDATE_DEPENDENCIES is set via xcconfigs, it can
-            # be removed here. We can't have build-webkit pass this by default
-            # without invalidating local builds made by Xcode, and we set it
-            # via xcconfigs until all building of Xcode-based webkit is done in
-            # workspaces (rdar://88135402).
+            use_cmake = '--cmake' in (additionalArguments or [])
             if architecture:
                 build_command += ['--architecture', f'"{architecture}"']
-            if CompileJSC.name not in self.name:
-                build_command += ['-hideShellScriptEnvironment']
-            build_command += ['WK_VALIDATE_DEPENDENCIES=YES']
-            build_command += ['WK_ENABLE_SLOW_BUILD_VERIFICATION=YES']
-            if buildOnly:
-                # For build-only bots, the expectation is that tests will be run on separate machines,
-                # so we need to package debug info as dSYMs. Only generating line tables makes
-                # this much faster than full debug info, and crash logs still have line numbers.
-                # Some projects (namely lldbWebKitTester) require full debug info, and may override this.
-                build_command += ['DEBUG_INFORMATION_FORMAT=dwarf-with-dsym', 'CLANG_DEBUG_INFORMATION_LEVEL=$(WK_OVERRIDE_DEBUG_INFORMATION_LEVEL:default=line-tables-only)']
             deployment_target = self.getProperty('deployment_target')
-            if deployment_target and platform == 'mac':
-                build_command += [f'MACOSX_DEPLOYMENT_TARGET={deployment_target}']
+            if use_cmake:
+                cmake_args = []
+                if buildOnly:
+                    # Tests run on separate machines. Package debug info as
+                    # dSYMs and only include line tables to reduce size.
+                    build_command += ['--dsym']
+                    cmake_args += [f'-DCMAKE_{lang}_FLAGS=-gline-tables-only' for lang in ('C', 'CXX', 'OBJC', 'OBJCXX')]
+                if deployment_target and platform == 'mac':
+                    cmake_args += [f'-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment_target}']
+                if cmake_args:
+                    build_command += [f'--cmakeargs="{" ".join(cmake_args)}"']
+            else:
+                # FIXME: Once WK_VALIDATE_DEPENDENCIES is set via xcconfigs, it can
+                # be removed here. We can't have build-webkit pass this by default
+                # without invalidating local builds made by Xcode, and we set it
+                # via xcconfigs until all building of Xcode-based webkit is done in
+                # workspaces (rdar://88135402).
+                if CompileJSC.name not in self.name:
+                    build_command += ['-hideShellScriptEnvironment']
+                build_command += ['WK_VALIDATE_DEPENDENCIES=YES']
+                build_command += ['WK_ENABLE_SLOW_BUILD_VERIFICATION=YES']
+                if buildOnly:
+                    # For build-only bots, the expectation is that tests will be run on separate machines,
+                    # so we need to package debug info as dSYMs. Only generating line tables makes
+                    # this much faster than full debug info, and crash logs still have line numbers.
+                    # Some projects (namely lldbWebKitTester) require full debug info, and may override this.
+                    build_command += ['DEBUG_INFORMATION_FORMAT=dwarf-with-dsym', 'CLANG_DEBUG_INFORMATION_LEVEL=$(WK_OVERRIDE_DEBUG_INFORMATION_LEVEL:default=line-tables-only)']
+                if deployment_target and platform == 'mac':
+                    build_command += [f'MACOSX_DEPLOYMENT_TARGET={deployment_target}']
 
         build_command += customBuildFlag(platform, self.getProperty('fullPlatform'))
 
@@ -4081,6 +4110,7 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
         self.pre_existing_flakes_in_results_db = {}
         self.unsupported_flakes_in_results_db = []
         self.unknown_flakes_in_results_db = []
+        self.tests_modified_by_change = []
         self.layout_test_driver = None
 
     def doStepIf(self, step):
@@ -4161,10 +4191,14 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
             ('failures', re.compile(r'Regressions: Unexpected.+\((\d+)\)')),
         ]
         testFailures = {}
+        failed_results_upload = False
 
         for line in logText.splitlines():
             if line.find('Exiting early') >= 0 or line.find('leaks found') >= 0:
                 incorrectLayoutLines.append(self._strip_python_logging_prefix(line))
+                continue
+            if line.find(FAILED_RESULTS_UPLOAD_MESSAGE) >= 0:
+                failed_results_upload = True
                 continue
             for name, expression in expressions:
                 match = expression.search(line)
@@ -4177,6 +4211,8 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
 
         for name in testFailures:
             incorrectLayoutLines.append(str(testFailures[name]) + ' ' + name)
+        if failed_results_upload:
+            incorrectLayoutLines.append('results upload failed')
 
         self.incorrectLayoutLines = incorrectLayoutLines
 
@@ -4210,14 +4246,35 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
 
         self._parseRunWebKitTestsOutput(logText)
 
+    def modified_test_names(self):
+        """Tests this change modifies, named as run-webkit-tests reports failures."""
+        # modified_tests carries a 'LayoutTests/' prefix, failing tests are named relative to it.
+        prefix = 'LayoutTests/'
+        changed = set()
+        for test in self.getProperty('modified_tests', None) or []:
+            changed.add(test[len(prefix):] if test.startswith(prefix) else test)
+        return changed
+
     @defer.inlineCallbacks
     def filter_failures_using_results_db(self, failing_tests):
         self.failing_tests_filtered = failing_tests.copy()
         configuration = self.results_db_query_configuration()
 
-        identifier, has_commit = yield self.resolve_identifier_for_results_db(configuration, bool(failing_tests))
+        # The database only knows the test without this change, so it cannot vouch for one it modifies.
+        modified = self.modified_test_names()
+        self.tests_modified_by_change = [test for test in failing_tests if test in modified]
+        candidates = [test for test in failing_tests if test not in modified]
+        if self.tests_modified_by_change:
+            yield self._addToLog(
+                self.results_db_log_name,
+                'Not consulting the results database for {} failing test(s) modified by this change: {}\n'.format(
+                    len(self.tests_modified_by_change), ', '.join(self.tests_modified_by_change),
+                ),
+            )
 
-        tests = failing_tests[:self.MAX_FAILURES_TO_CHECK_RESULTS_DB]
+        identifier, has_commit = yield self.resolve_identifier_for_results_db(configuration, bool(candidates))
+
+        tests = candidates[:self.MAX_FAILURES_TO_CHECK_RESULTS_DB]
         unexplained = set()
         for test in tests:
             data = yield ResultsDatabase.is_test_pre_existing_failure(
@@ -5010,6 +5067,12 @@ class RunWebKit1Tests(RunWebKitTests):
         defer.returnValue(rc)
 
 
+def results_db_pre_existing_failures(step):
+    # A test the results database reports as failing on the base commit would most likely fail without
+    # the change too, so repeating it with and without the change would only reach that verdict after a rebuild.
+    return set(step.getProperty('results-db_first_run_pre_existing', None) or [])
+
+
 # This is a specialized class designed to cope with a tree that is not always green.
 # It tries hard to avoid reporting any false positive, so it will only report new
 # consistent failures (fail always with the patch and pass always without it).
@@ -5026,7 +5089,8 @@ class RunWebKitTestsRedTree(RunWebKitTests):
         return False
 
     def evaluateCommand(self, cmd):
-        first_results_failing_tests = set(self.getProperty('first_run_failures', []))
+        first_run_failures = set(self.getProperty('first_run_failures', []))
+        first_results_failing_tests = first_run_failures - results_db_pre_existing_failures(self)
         first_results_flaky_tests = set(self.getProperty('first_run_flakies', []))
         platform = self.getProperty('platform')
         rc = self.evaluateResult(cmd)
@@ -5050,6 +5114,15 @@ class RunWebKitTestsRedTree(RunWebKitTests):
             steps_to_add.extend([ValidateChange(verifyBugClosed=False, addURLs=False), KillOldProcesses(), RunWebKitTestsRepeatFailuresRedTree()])
         elif first_results_flaky_tests:
             steps_to_add.append(AnalyzeLayoutTestsResultsRedTree())
+        elif first_run_failures:
+            # Every failure is one the results database reports as failing on main.
+            rc = WARNINGS
+            message = self.results_db_ignore_message()
+            self.descriptionDone = message
+            self.build.results = SUCCESS
+            self.setProperty('force_build_success', True)
+            if RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE not in self.getProperty('build_summary', ''):
+                self.setProperty('build_summary', message)
         elif rc == SUCCESS or rc == WARNINGS:
             steps_to_add = None
             message = 'Passed layout tests'
@@ -5092,7 +5165,7 @@ class RunWebKitTestsRepeatFailuresRedTree(RunWebKitTestsRedTree):
         super().setLayoutTestCommand()
         # On the repeat steps we don't enable coredump generation (makes the run much slower if there are crashes)
         self.command = [arg for arg in self.command if arg != '--enable-core-dumps-nolimit']
-        first_results_failing_tests = set(self.getProperty('first_run_failures', []))
+        first_results_failing_tests = set(self.getProperty('first_run_failures', [])) - results_db_pre_existing_failures(self)
         self.command += ['--fully-parallel', '--repeat-each=%s' % self.NUM_REPEATS_PER_TEST] + sorted(first_results_failing_tests)
 
     def evaluateCommand(self, cmd):
@@ -5186,7 +5259,7 @@ class RunWebKitTestsRepeatFailuresWithoutChangeRedTree(RunWebKitTestsRedTree):
         # On the repeat steps we don't enable coredump generation (makes the run much slower if there are crashes)
         self.command = [arg for arg in self.command if arg != '--enable-core-dumps-nolimit']
         with_change_nonflaky_failures = set(self.getProperty('with_change_repeat_failures_results_nonflaky_failures', []))
-        first_run_failures = set(self.getProperty('first_run_failures', []))
+        first_run_failures = set(self.getProperty('first_run_failures', [])) - results_db_pre_existing_failures(self)
         with_change_repeat_failures_timedout = self.getProperty('with_change_repeat_failures_timedout', False)
         failures_to_repeat = first_run_failures if with_change_repeat_failures_timedout else with_change_nonflaky_failures
         # Pass '--skipped=always' to ensure that any test passed via command line arguments
@@ -5350,8 +5423,9 @@ class AnalyzeLayoutTestsResultsRedTree(AnalyzeLayoutTestsResults):
         first_results_exceed_failure_limit = self.getProperty('first_results_exceed_failure_limit', False)
         first_run_failures = set(self.getProperty('first_run_failures', []))
         first_run_flakies = set(self.getProperty('first_run_flakies', []))
+        first_run_failures_not_pre_existing_in_results_db = first_run_failures - results_db_pre_existing_failures(self)
 
-        # Run with change, running first_run_failures 10 times each test
+        # Run with change, running first_run_failures_not_pre_existing_in_results_db 10 times each test
         with_change_repeat_failures_results_exceed_failure_limit = self.getProperty('with_change_repeat_failures_results_exceed_failure_limit', False)
         with_change_repeat_failures_results_nonflaky_failures = set(self.getProperty('with_change_repeat_failures_results_nonflaky_failures', []))
         with_change_repeat_failures_results_flakies = set(self.getProperty('with_change_repeat_failures_results_flakies', []))
@@ -5391,7 +5465,7 @@ class AnalyzeLayoutTestsResultsRedTree(AnalyzeLayoutTestsResults):
             # The change is causing the step 'layout-tests-repeat-failures-with-change' to timeout, likely the change is adding many failures or long timeouts needing lot of time to test the repeats.
             # Report the tests that failed on the first run as we don't have the information of the ones that failed on 'layout-tests-repeat-failures-with-change' because it was interrupted due to the timeout.
             # There is no point in repeating this run, it would happen the same on next runs and consume lot of time.
-            likely_new_non_flaky_failures = first_run_failures - without_change_repeat_failures_results_nonflaky_failures.union(without_change_repeat_failures_results_flakies)
+            likely_new_non_flaky_failures = first_run_failures_not_pre_existing_in_results_db - without_change_repeat_failures_results_nonflaky_failures.union(without_change_repeat_failures_results_flakies)
             self.send_email_for_infrastructure_issue('The step "layout-tests-repeat-failures-with-change" reached the timeout but the step "layout-tests-repeat-failures-without-change" ended. Not trying to repeat this. Reporting {} failures from the first run.'.format(len(likely_new_non_flaky_failures)))
             rc = yield self.report_failure(likely_new_non_flaky_failures, first_results_exceed_failure_limit)
             return defer.returnValue(rc)
@@ -5399,7 +5473,7 @@ class AnalyzeLayoutTestsResultsRedTree(AnalyzeLayoutTestsResults):
         # The checks below need to be after the timeout ones (above) because when a timeout is trigerred no results will be generated for the step.
         # The step with_change_repeat_failures generated an error code. That means there should be either tests failing or tests flakies. Check that.
         with_change_repeat_failures_retcode = self.getProperty('with_change_repeat_failures_retcode', FAILURE)
-        if first_run_failures and with_change_repeat_failures_retcode not in [SUCCESS, WARNINGS]:
+        if first_run_failures_not_pre_existing_in_results_db and with_change_repeat_failures_retcode not in [SUCCESS, WARNINGS]:
             if not with_change_repeat_failures_results_nonflaky_failures and not with_change_repeat_failures_results_flakies:
                 return defer.returnValue(self.report_infrastructure_issue_and_maybe_retry_build('The step "layout-tests-repeat-failures" failed to generate any list of failures or flakies and returned an error code.'))
             elif with_change_repeat_failures_results_nonflaky_failures:
@@ -5412,7 +5486,7 @@ class AnalyzeLayoutTestsResultsRedTree(AnalyzeLayoutTestsResults):
         # Warn EWS bot watchers about flakies so they can garden those. Include the step where the flaky was found in the e-mail to know if it was found with change or without it.
         # Due to the way this class works most of the flakies are filtered on the step with change even when those were pre-existent issues (so this is also useful for bot watchers).
         all_flaky_failures = first_run_flakies.union(with_change_repeat_failures_results_flakies).union(without_change_repeat_failures_results_flakies)
-        all_flaky_failures.update(first_run_failures - with_change_repeat_failures_results_nonflaky_failures)
+        all_flaky_failures.update(first_run_failures_not_pre_existing_in_results_db - with_change_repeat_failures_results_nonflaky_failures)
         flaky_steps_dict = {}
         for flaky_failure in all_flaky_failures:
             step_names = []
@@ -5812,6 +5886,9 @@ class RunAPITests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin):
         self.pre_existing_flakes_in_results_db = {}
         self.steps_to_add = []
 
+    def _should_apply_failure_limits(self):
+        return GitHub.NO_FAILURE_LIMITS_LABEL not in self.getProperty('github_labels', [])
+
     @defer.inlineCallbacks
     def run(self):
         self.log_observer_json = logobserver.BufferLogObserver()
@@ -5827,8 +5904,10 @@ class RunAPITests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin):
                            '--json-output={0}'.format(self.jsonFileName)]
         else:
             self.command = self.command + customBuildFlag(platform, self.getProperty('fullPlatform'))
-            if self.EXIT_AFTER_FAILURES is not None:
-                self.command += ['--exit-after-n-failures', f'{self.EXIT_AFTER_FAILURES}']
+            if self._should_apply_failure_limits():
+                if self.EXIT_AFTER_FAILURES is not None:
+                    self.command += ['--exit-after-n-failures', f'{self.EXIT_AFTER_FAILURES}']
+                self.command += ['--skip-failing-tests']
 
         additionalArguments = self.getProperty('additionalArguments')
         if additionalArguments:
@@ -5849,6 +5928,7 @@ class RunAPITests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin):
             rc = FAILURE
 
         if (self.EXIT_AFTER_FAILURES is not None
+                and self._should_apply_failure_limits()
                 and self.failedTestCount >= int(self.EXIT_AFTER_FAILURES)):
             self.setProperty(f'{self.suffix}_exceeded_failure_limit', True)
 
@@ -5873,9 +5953,12 @@ class RunAPITests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin):
             message = 'Passed API tests'
             if self.name == ReRunAPITests.name:
                 first_results_failing_tests = self.getProperty('api_first_run_failures', [])
-                flaky_failures_string = ', '.join(first_results_failing_tests)
-                pluralSuffix = 's' if len(first_results_failing_tests) > 1 else ''
-                message = f'Found flaky test{pluralSuffix}: {flaky_failures_string}'
+                if first_results_failing_tests:
+                    flaky_failures_string = ', '.join(first_results_failing_tests)
+                    pluralSuffix = 's' if len(first_results_failing_tests) > 1 else ''
+                    message = f'Found flaky test{pluralSuffix}: {flaky_failures_string}'
+                else:
+                    message = 'Passed API tests on re-run, the first run produced no results'
 
             self.descriptionDone = message
             if self.name != RunAPITestsWithoutChange.name:
@@ -6025,21 +6108,47 @@ class ReRunAPITests(RunAPITests):
             yield self.report_to_results_db(results, flaky_type='BetweenStepsDirtyTree')
         defer.returnValue(failures)
 
+    def failures_with_change(self, run: str) -> set[str]:
+        failures = self.getProperty(f'api_{run}_run_failures_filtered', None)
+        if failures is None:
+            failures = self.getProperty(f'api_{run}_run_failures', [])
+        return set(failures)
+
     def failures_in_both_dirty_runs(self) -> set[str]:
         """
         The failures AnalyzeAPITestsResults would attribute to the change, before the clean-tree run
         subtracts its own from them.
         """
-        first_run_failures = self.getProperty('api_first_run_failures_filtered', None)
-        if first_run_failures is None:
-            first_run_failures = self.getProperty('api_first_run_failures', [])
-        second_run_failures = self.getProperty('api_second_run_failures_filtered', None)
-        if second_run_failures is None:
-            second_run_failures = self.getProperty('api_second_run_failures', [])
-        return set(first_run_failures) & set(second_run_failures)
+        return self.failures_with_change('first') & self.failures_with_change('second')
+
+    def no_failure_repeated_across_runs(self) -> bool:
+        if not self.getProperty('api_first_run_failures') or not self.getProperty('api_second_run_failures'):
+            return False
+        if self.getProperty('api_first_run_exceeded_failure_limit', False) or self.getProperty('api_second_run_exceeded_failure_limit', False):
+            return False
+        return not self.failures_in_both_dirty_runs()
 
     @defer.inlineCallbacks
     def doOnFailure(self) -> Generator[Any, Any, None]:
+        if not self.getProperty('api_first_run_failures') or not self.getProperty('api_second_run_failures'):
+            message = 'Unable to parse API test results'
+            yield self._addToLog('stderr', message)
+            self.descriptionDone = message
+            self.build.buildFinished([message], RETRY)
+            return
+
+        if self.no_failure_repeated_across_runs():
+            flaky_failures = sorted(self.failures_with_change('first') | self.failures_with_change('second'))
+            pluralSuffix = 's' if len(flaky_failures) > 1 else ''
+            message = f"Found flaky test{pluralSuffix}: {', '.join(flaky_failures[:self.NUM_FAILURES_TO_DISPLAY])}"
+            if len(flaky_failures) > self.NUM_FAILURES_TO_DISPLAY:
+                message += ' ...'
+            self.descriptionDone = message
+            self.build.results = SUCCESS
+            self.setProperty('force_build_success', True)
+            self.setProperty('build_summary', message)
+            return
+
         is_main = self.getProperty('github.base.ref', DEFAULT_BRANCH) == DEFAULT_BRANCH
         if is_main and (candidates := self.failures_in_both_dirty_runs()):
             # parse_and_set_failures has already reported this build's BetweenStepsDirtyTree
@@ -6533,6 +6642,8 @@ class RunAPITestsParallelSafety(RunAPITests):
             '--verbose',
             f'--json-output={self.jsonFileName}'
         ]
+        if self._should_apply_failure_limits():
+            self.command.append('--skip-failing-tests')
 
         self.command += customBuildFlag(platform, self.getProperty('fullPlatform'))
 
@@ -6777,10 +6888,12 @@ class PrintConfiguration(steps.ShellSequence, ShellMixin):
                 self.build.stopBuild(reason=details, results=FAILURE)
                 self.build.buildFinished([message], FAILURE)
         elif os_version_builder and xcode_version_builder:
-            ob_major, ob_minor = os_version_builder.split('.')[:2]
-            xb_major, xb_minor = xcode_version_builder.split('.')[:2]
-            xc_major, xc_minor = xcode_version.split('.')[:2]
-            if (os_major, os_minor) != (ob_major, ob_minor) or (xc_major, xc_minor) != (xb_major, xb_minor):
+            # Binaries built on one minor OS or Xcode release run fine on another minor release of the same major version.
+            # FIXME: Make the fleet uniform so builders and testers run the same minor OS and Xcode releases, then compare minor versions again.
+            ob_major = os_version_builder.split('.')[0]
+            xb_major = xcode_version_builder.split('.')[0]
+            xc_major = xcode_version.split('.')[0]
+            if os_major != ob_major or xc_major != xb_major:
                 message = f'Error: OS/SDK version mismatch, please inform an admin.'
                 detailed_message = message + f' Builder: OS={os_version_builder}, Xcode={xcode_version_builder}; Tester: OS={os_version}, Xcode={xcode_version}'
                 self.build.stopBuild(reason=detailed_message, results=FAILURE)
@@ -7628,6 +7741,8 @@ class Canonicalize(steps.ShellSequence, ShellMixin, AddToLogMixin):
         super().__init__(logEnviron=False, timeout=300, **kwargs)
         self.rebase_enabled = rebase_enabled
         self.contributors = {}
+        self.verify_commit_count_command = None
+        self.summary = ''
 
     def number_commits_to_canonicalize(self):
         commit_count = self.getProperty('commit_count', 1)
@@ -7649,6 +7764,8 @@ class Canonicalize(steps.ShellSequence, ShellMixin, AddToLogMixin):
         commands = [self.shell_command('rm .git/identifiers.json || {}'.format(self.shell_exit_0()))]
         if self.rebase_enabled:
             commands += [['git', 'pull', remote, base_ref, '--rebase']]
+            self.verify_commit_count_command = self.shell_command(f'test "$(git rev-list --count FETCH_HEAD..HEAD)" -eq {self.getProperty("commit_count", 1)}')
+            commands.append(self.verify_commit_count_command)
             if head_ref:
                 commands += [['git', 'branch', '-f', base_ref, head_ref]]
             commands += [['git', 'checkout', '--progress', base_ref]]
@@ -7678,9 +7795,19 @@ class Canonicalize(steps.ShellSequence, ShellMixin, AddToLogMixin):
         for command in commands:
             self.commands.append(util.ShellArg(command=command, logname='stdio', haltOnFailure=True))
         rc = yield super().run()
+
+        if rc == FAILURE and self.verify_commit_count_command and self.last_command == self.verify_commit_count_command:
+            pr_number = self.getProperty('github.number')
+            self.summary = f'Changes already landed on {base_ref}'
+            self.setProperty('build_finish_summary', self.summary)
+            self.setProperty('comment_text', f'Commits in PR #{pr_number} were dropped when rebasing onto {base_ref} because their changes have already landed, blocking PR #{pr_number}. Update the pull request to contain only unlanded changes, or close it.')
+            self.haltOnFailure = False
+            self.build.addStepsAfterCurrentStep([LeaveComment(), BlockPullRequest()])
         defer.returnValue(rc)
 
     def getResultSummary(self):
+        if self.summary:
+            return {'step': self.summary}
         commit_pluralized = "commit" if self.number_commits_to_canonicalize() == 1 else "commits"
         if self.results == SUCCESS:
             return {'step': f'Canonicalized {commit_pluralized}'}
@@ -7891,6 +8018,7 @@ class BuildSwift(steps.ShellSequence, ShellMixin):
 
         self.commands = [
             util.ShellArg(command=self.shell_command('rm -rf ../build'), logname='stdio', haltOnFailure=False),
+            util.ShellArg(command=self.shell_command(f'rm -rf {swift_install_dir} {swift_symroot_dir}'), logname='stdio', haltOnFailure=False),
             util.ShellArg(command=self.shell_command('rm -rf "$(getconf DARWIN_USER_CACHE_DIR)org.llvm.clang"'), logname='stdio', haltOnFailure=False),
             util.ShellArg(command=self.shell_command('rm -rf /Users/buildbot/Library/Developer/Xcode/DerivedData'), logname='stdio'),
             util.ShellArg(command=self.shell_command(filter_command), logname='stdio', haltOnFailure=True),
@@ -8136,7 +8264,7 @@ class ParseStaticAnalyzerResultsWithoutChange(ParseStaticAnalyzerResults):
 class FindModifiedSaferCPPExpectations(shell.ShellCommand, AddToLogMixin):
     name = 'find-modified-safer-cpp-expectations'
     RE_FILE = r'^(\+|-)(?P<file>[^/+/-].+(?:\.cpp|\.mm|\.h|\.m|\.c))$'
-    RE_EXPECTATIONS = r'^(\+\+\+).+(Source/(?P<project>.+)/SaferCPPExpectations/(?P<checker>.+)Expectations)$'
+    RE_EXPECTATIONS = r'^(\+\+\+|---).+(Source/(?P<project>.+)/SaferCPPExpectations/(?P<checker>.+)Expectations)$'
     command = ['git', 'diff', 'HEAD~1', '--', '*Expectations']
 
     def __init__(self, **kwargs):
@@ -8160,6 +8288,7 @@ class FindModifiedSaferCPPExpectations(shell.ShellCommand, AddToLogMixin):
         yield self._addToLog('stdio', '\nLooking for changes to Safer CPP expectations...\n')
         removed_tests = []
         added_tests = []
+        project = checker = None
         for line in logText.splitlines():
             expectation_match = re.search(self.RE_EXPECTATIONS, line, re.IGNORECASE)
             if expectation_match:
@@ -8167,7 +8296,7 @@ class FindModifiedSaferCPPExpectations(shell.ShellCommand, AddToLogMixin):
                 checker = expectation_match.group('checker')
                 yield self._addToLog('stdio', f'Changes for {project}/{checker}...\n')
             file_match = re.search(self.RE_FILE, line, re.IGNORECASE)
-            if file_match:
+            if file_match and project and checker:
                 test_name = f"{project}/{file_match.group('file')}/{checker}"
                 if file_match.group(1) == '+':
                     added_tests.append(test_name)

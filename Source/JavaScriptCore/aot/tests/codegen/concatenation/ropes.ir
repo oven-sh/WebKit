@@ -1,0 +1,86 @@
+# A concatenation is a rope that a stub allocates, up to three strings at a time. Only a likely key is copied into one flat string by an operation
+# FORM: Selected
+# RUN: generate-code calls
+# RUN(R): pass NumberAndEncode ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="threeStrings" parameters=[{type=string}, {type=string}] results=[{type=string}] {
+    v2 = String string="-"
+    v3 = Strcat v0, v2, v1
+    Return v3
+}
+# CHECK: f0: size=
+# CHECK-NEXT: stub Concatenate.n3 x1
+# CHECK-NEXT: f1: size=
+
+function f1 name="likelyKey" parameters=[{type=string}, {type=string}] results=[{type=string}] {
+    v2 = String string="-"
+    v3 = Strcat v0, v2, v1 [isLikelyKey]
+    Return v3
+}
+# CHECK-NEXT: operation operationAOTConcatenate x1
+# CHECK-NEXT: f2: size=
+
+function f2 name="twoStrings" parameters=[{type=string}, {type=string}] results=[{type=string}] {
+    v2 = Strcat v0, v1
+    Return v2
+}
+# CHECK-NEXT: stub Concatenate.n2 x1
+# CHECK-NEXT: f3: size=
+
+function f3 name="fourStrings" parameters=[{type=string}, {type=string}] results=[{type=string}] {
+    v2 = Strcat v0, v1, v0, v1
+    Return v2
+}
+# CHECK-NEXT: stub Concatenate.n2 x1
+# CHECK-NEXT: stub Concatenate.n3 x1
+# CHECK-NEXT: f4: size=
+
+function f4 name="sevenStrings" parameters=[{type=string}, {type=string}] results=[{type=string}] {
+    v2 = Strcat v0, v1, v0, v1, v0, v1, v0
+    Return v2
+}
+# CHECK-NEXT: stub Concatenate.n3 x3
+# CHECK-NEXT: f5: size=
+
+function f5 name="oneString" parameters=[{type=string}] results=[{type=string}] {
+    v1 = Strcat v0
+    Return v1
+}
+# CHECK-NEXT: f6: size=
+
+function f6 name="integerPart" parameters=[{type=string}, {type=i32}] results=[{type=string}] {
+    v2 = Strcat v0, v1
+    Return v2
+}
+# CHECK-NOT: operationAOTConcatenate
+# CHECK: stub Concatenate.n2 x1
+# CHECK-NEXT: stub IntegerToString x1
+# CHECK-NEXT: f7: size=
+
+function f7 name="otherPrimitives" parameters=[{type=string}, {type=undefined}, {type=boolean}] results=[{type=string}] {
+    v3 = Strcat v0, v1, v2
+    Return v3
+}
+# CHECK-NEXT: operation operationAOTToString x2
+# CHECK-NEXT: stub Concatenate.n3 x1
+# CHECK-NEXT: f8: size=
+
+function f8 name="addedInteger" parameters=[{type=string}, {type=i32}] results=[{type=string}] {
+    v2 = Add v0, v1 form=StringAndPrimitive
+    Return v2
+}
+# CHECK-NEXT: stub Concatenate.n2 x1
+# CHECK-NEXT: stub IntegerToString x1
+
+# R-LABEL: function f0 name="threeStrings"
+# R: [[dash]]: "-" @Cell =
+# R-NEXT: string @Cell = Strcat v0, [[dash]], v1
+# R-LABEL: function f1 name="likelyKey"
+# R: string @Cell = Strcat v0, {{*}}, v1 [isLikelyKey]
+# R-LABEL: function f6 name="integerPart"
+# R: b0(v0: string @Cell, v1: i32 @Int32):
+# R-NEXT: string @Cell = Strcat v0, v1
+# R-LABEL: function f8 name="addedInteger"
+# R: b0(v0: string @Cell, v1: i32 @Int32):
+# R-NEXT: string @Cell = Add v0, v1 form=StringAndPrimitive

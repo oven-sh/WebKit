@@ -21,6 +21,9 @@
 #ifndef __ICU_UCNV_SEL_H__
 #define __ICU_UCNV_SEL_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/utypes.h"
 
 #if !UCONFIG_NO_CONVERSION

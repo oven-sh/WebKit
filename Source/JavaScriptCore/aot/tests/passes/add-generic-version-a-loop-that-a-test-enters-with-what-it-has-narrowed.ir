@@ -1,0 +1,31 @@
+# function walk(steps: Step | string, first: Step, next) { if (typeof steps !== "object") return steps; let current = first; for (;;) { const x = current.x; current = next(x, steps.x); if (current === undefined) return x; steps = current; } }
+# The edge of the test leads straight to the head of the loop. There `steps` is what the edge itself gives to the block and no argument of it, while the edge that comes around hands it over as one:
+# what arrives at a variable of the loop is asked of each edge. `first` is the first value of a variable that the loop changes, so its check becomes an expectation.
+# FORM: Prepared optimizing
+# RUN: pass AddGenericVersion
+# STATISTIC: ChecksReplacedByGuards = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Step" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="walk" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Check v1 expectedType=L0
+    v4 = TypeTest v0 testedType=object
+    Branch v4 -> taken b1(v3 | 0), notTaken b4()
+  b1(v5, v6):
+    LoopHint
+    v8 = PropGet v5 key="x"
+    v9 = PropGet v6 key="x"
+    v10 = Call v2, -, v8, v9
+    v11 = TypeTest v10 testedType=undefined
+    Branch v11 -> taken b3(), notTaken b2()
+  b2():
+    Jump -> next b1(v10, v10)
+  b3():
+    Return v8
+  b4() frequency=Unlikely:
+    Return v0
+}
+# CHECK: outcome: Changed
+# CHECK-NOT: = Check

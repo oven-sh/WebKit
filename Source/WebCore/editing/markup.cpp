@@ -150,11 +150,11 @@ public:
 
     void apply()
     {
-        protect(m_element)->setAttribute(m_name, m_value);
+        m_element->setAttribute(m_name, m_value);
     }
 
 private:
-    RefPtr<Element> m_element;
+    const RefPtr<Element> m_element;
     QualifiedName m_name;
     AtomString m_value;
 };
@@ -365,7 +365,7 @@ UserSelectNoneStateCache::UserSelectNoneStateCache(TreeType treeType)
 ContainerNode* UserSelectNoneStateCache::parentNode(Node& node)
 {
     if (m_useComposedTree)
-        return node.parentInComposedTree();
+        return parentInComposedTreeIgnoringUserAgentShadow(node);
     return node.parentOrShadowHostNode();
 }
 
@@ -484,15 +484,15 @@ public:
     void wrapWithStyleNode(StyleProperties*, bool isBlock = false);
     String takeResults();
     
-    bool NODELETE needRelativeStyleWrapper() const { return m_needRelativeStyleWrapper; }
-    bool NODELETE needClearingDiv() const { return m_needClearingDiv; }
+    bool LEGACY_NODELETE needRelativeStyleWrapper() const { return m_needRelativeStyleWrapper; }
+    bool LEGACY_NODELETE needClearingDiv() const { return m_needClearingDiv; }
 
     using MarkupAccumulator::append;
 
-    ContainerNode* parentNode(Node& node)
+    ContainerNode* LEGACY_NODELETE parentNode(Node& node)
     {
         if (m_useComposedTree) [[unlikely]]
-            return node.parentInComposedTree();
+            return parentInComposedTreeIgnoringUserAgentShadow(node);
         return node.parentOrShadowHostNode();
     }
 
@@ -596,7 +596,7 @@ private:
         return node.hasChildNodes();
     }
 
-    bool NODELETE isDescendantOf(Node& node, Node& possibleAncestor)
+    bool LEGACY_NODELETE isDescendantOf(Node& node, Node& possibleAncestor)
     {
         if (m_useComposedTree) [[unlikely]]
             return node.isShadowIncludingDescendantOf(&possibleAncestor);
@@ -608,12 +608,12 @@ private:
 
     bool appendNodeToPreserveMSOList(Node&);
 
-    bool NODELETE shouldAnnotate()
+    bool LEGACY_NODELETE shouldAnnotate()
     {
         return m_annotate == AnnotateForInterchange::Yes;
     }
 
-    bool NODELETE shouldApplyWrappingStyle(const Node& node) const
+    bool LEGACY_NODELETE shouldApplyWrappingStyle(const Node& node) const
     {
         return m_highestNodeToBeSerialized && m_highestNodeToBeSerialized->parentNode() == node.parentNode() && m_wrappingStyle && m_wrappingStyle->style();
     }
@@ -623,7 +623,7 @@ private:
     Vector<String> m_reversedPrecedingMarkup;
     const AnnotateForInterchange m_annotate;
     RefPtr<Node> m_highestNodeToBeSerialized;
-    RefPtr<EditingStyle> m_wrappingStyle;
+    const RefPtr<EditingStyle> m_wrappingStyle;
     bool m_useComposedTree;
     bool m_ignoresUserSelectNone;
     bool m_needsPositionStyleConversion;
@@ -678,7 +678,7 @@ void StyledMarkupAccumulator::wrapWithStyleNode(StyleProperties* style, bool isB
 void StyledMarkupAccumulator::appendStyleNodeOpenTag(StringBuilder& out, StyleProperties* style, bool isBlock, std::optional<TextDirection> directionToAppend)
 {
     // With AnnotateForInterchange::Yes, wrappingStyleForSerialization should have removed -webkit-text-decorations-in-effect
-    ASSERT(!shouldAnnotate() || propertyMissingOrEqualToNone(style, CSSPropertyWebkitTextDecorationsInEffect));
+    ASSERT(!shouldAnnotate() || propertyMissingOrEqualToNone(style, CSSPropertyID::WebkitTextDecorationsInEffect));
     out.append('<', isBlock ? "div"_s : "span"_s, ' ');
     if (directionToAppend)
         out.append(directionAttributeAndValue(*directionToAppend), ' ');
@@ -695,7 +695,7 @@ const String& StyledMarkupAccumulator::styleNodeCloseTag(bool isBlock)
     return isBlock ? divClose : styleSpanClose;
 }
 
-bool NODELETE StyledMarkupAccumulator::containsOnlyASCII() const
+bool LEGACY_NODELETE StyledMarkupAccumulator::containsOnlyASCII() const
 {
     for (auto& preceding : m_reversedPrecedingMarkup) {
         if (!preceding.containsOnlyASCII())
@@ -723,12 +723,12 @@ void StyledMarkupAccumulator::appendText(StringBuilder& out, const Text& text)
     const bool parentIsTextarea = is<HTMLTextAreaElement>(text.parentElement());
     const bool wrappingSpan = shouldApplyWrappingStyle(text) && !parentIsTextarea;
     if (wrappingSpan) {
-        auto wrappingStyle = protect(m_wrappingStyle)->copy();
+        auto wrappingStyle = m_wrappingStyle->copy();
         // FIXME: <rdar://problem/5371536> Style rules that match pasted content can change it's appearance
         // Make sure spans are inline style in paste side e.g. span { display: block }.
         wrappingStyle->forceDisplayInline();
         // FIXME: Should this be included in forceDisplayInline?
-        protect(wrappingStyle->style())->setProperty(CSSPropertyFloat, CSSValueNone);
+        protect(wrappingStyle->style())->setProperty(CSSPropertyID::Float, CSSValueID::None);
 
         appendStyleNodeOpenTag(out, protect(wrappingStyle->style()), false, [&] -> std::optional<TextDirection> {
             if (m_hasAppendedAnyText)
@@ -883,7 +883,7 @@ void StyledMarkupAccumulator::appendStartTag(StringBuilder& out, const Element& 
         RefPtr<EditingStyle> newInlineStyle;
 
         if (shouldApplyWrappingStyle(element)) {
-            newInlineStyle = protect(m_wrappingStyle)->copy();
+            newInlineStyle = m_wrappingStyle->copy();
             newInlineStyle->removePropertiesInElementDefaultStyle(*const_cast<Element*>(&element));
             newInlineStyle->removeStyleConflictingWithStyleOfNode(*const_cast<Element*>(&element));
         } else
@@ -897,7 +897,7 @@ void StyledMarkupAccumulator::appendStartTag(StringBuilder& out, const Element& 
 
 #if ENABLE(DATA_DETECTION)
         if (replacementType == SpanReplacementType::DataDetector && newInlineStyle->style())
-            protect(newInlineStyle->style())->removeProperty(CSSPropertyTextDecorationColor);
+            protect(newInlineStyle->style())->removeProperty(CSSPropertyID::TextDecorationColor);
 #endif
 
         if (shouldAnnotateOrForceInline) {
@@ -915,7 +915,7 @@ void StyledMarkupAccumulator::appendStartTag(StringBuilder& out, const Element& 
             // If the node is not fully selected by the range, then we don't want to keep styles that affect its relationship to the nodes around it
             // only the ones that affect it and the nodes within it.
             if (rangeFullySelectsNode == DoesNotFullySelectNode && newInlineStyle->style())
-                protect(newInlineStyle->style())->removeProperty(CSSPropertyFloat);
+                protect(newInlineStyle->style())->removeProperty(CSSPropertyID::Float);
         }
 
         if (!newInlineStyle->isEmpty()) {
@@ -950,7 +950,7 @@ RefPtr<Node> StyledMarkupAccumulator::serializeNodes(const Position& start, cons
         m_highestNodeToBeSerialized = traverseNodesForSerialization(*startNode, pastEnd.get(), NodeTraversalMode::DoNotEmitString);
 
     if (m_highestNodeToBeSerialized && m_highestNodeToBeSerialized->parentNode())
-        m_wrappingStyle = EditingStyle::wrappingStyleForSerialization(*protect(m_highestNodeToBeSerialized->parentNode()), shouldAnnotate(), m_standardFontFamilySerializationMode);
+        lazyInitialize(m_wrappingStyle, EditingStyle::wrappingStyleForSerialization(*protect(m_highestNodeToBeSerialized->parentNode()), shouldAnnotate(), m_standardFontFamilySerializationMode));
 
     return traverseNodesForSerialization(*startNode, pastEnd.get(), NodeTraversalMode::EmitString);
 }
@@ -1115,7 +1115,7 @@ bool StyledMarkupAccumulator::appendNodeToPreserveMSOList(Node& node)
     return false;
 }
 
-static Node* NODELETE ancestorToRetainStructureAndAppearanceForBlock(Node* commonAncestorBlock)
+static Node* LEGACY_NODELETE ancestorToRetainStructureAndAppearanceForBlock(Node* commonAncestorBlock)
 {
     if (!commonAncestorBlock)
         return nullptr;
@@ -1143,7 +1143,7 @@ static bool propertyMissingOrEqualToNone(const StyleProperties* style, CSSProper
 {
     if (!style)
         return false;
-    return style->propertyAsValueID(propertyID).value_or(CSSValueNone) == CSSValueNone;
+    return style->propertyAsValueID(propertyID).value_or(CSSValueID::None) == CSSValueID::None;
 }
 
 static bool needInterchangeNewlineAfter(const VisiblePosition& v)
@@ -1166,7 +1166,7 @@ static RefPtr<EditingStyle> styleFromMatchedRulesAndInlineDecl(Node& node)
     return style;
 }
 
-static bool NODELETE isElementPresentational(const Node& node)
+static bool LEGACY_NODELETE isElementPresentational(const Node& node)
 {
     return node.hasTagName(uTag) || node.hasTagName(sTag) || node.hasTagName(strikeTag)
         || node.hasTagName(iTag) || node.hasTagName(emTag) || node.hasTagName(bTag) || node.hasTagName(strongTag);
@@ -1273,23 +1273,23 @@ static String serializePreservingVisualAppearanceInternal(const Position& start,
 
                 // Bring the background attribute over, but not as an attribute because a background attribute on a div
                 // appears to have no effect.
-                if ((!fullySelectedRootStyle || !fullySelectedRootStyle->style() || !protect(fullySelectedRootStyle->style())->getPropertyCSSValue(CSSPropertyBackgroundImage))
+                if ((!fullySelectedRootStyle || !fullySelectedRootStyle->style() || !protect(fullySelectedRootStyle->style())->getPropertyCSSValue(CSSPropertyID::BackgroundImage))
                     && fullySelectedRoot->hasAttributeWithoutSynchronization(backgroundAttr))
-                    protect(fullySelectedRootStyle->style())->setProperty(CSSPropertyBackgroundImage, makeString("url('"_s, fullySelectedRoot->getAttribute(backgroundAttr), "')"_s));
+                    protect(fullySelectedRootStyle->style())->setProperty(CSSPropertyID::BackgroundImage, makeString("url('"_s, fullySelectedRoot->getAttribute(backgroundAttr), "')"_s));
 
                 if (fullySelectedRootStyle->style()) {
                     RefPtr style = fullySelectedRootStyle->style();
                     // Reset the CSS properties to avoid an assertion error in addStyleMarkup().
                     // This assertion is caused at least when we select all text of a <body> element whose
                     // 'text-decoration' property is "inherit", and copy it.
-                    if (!propertyMissingOrEqualToNone(style.get(), CSSPropertyTextDecorationLine)) {
-                        style->setProperty(CSSPropertyTextDecorationLine, CSSValueNone);
-                        style->setProperty(CSSPropertyTextDecorationThickness, CSSValueAuto);
-                        style->setProperty(CSSPropertyTextDecorationStyle, CSSValueSolid);
-                        style->setProperty(CSSPropertyTextDecorationColor, CSSValueCurrentcolor);
+                    if (!propertyMissingOrEqualToNone(style.get(), CSSPropertyID::TextDecorationLine)) {
+                        style->setProperty(CSSPropertyID::TextDecorationLine, CSSValueID::None);
+                        style->setProperty(CSSPropertyID::TextDecorationThickness, CSSValueID::Auto);
+                        style->setProperty(CSSPropertyID::TextDecorationStyle, CSSValueID::Solid);
+                        style->setProperty(CSSPropertyID::TextDecorationColor, CSSValueID::Currentcolor);
                     }
-                    if (!propertyMissingOrEqualToNone(style.get(), CSSPropertyWebkitTextDecorationsInEffect))
-                        style->setProperty(CSSPropertyWebkitTextDecorationsInEffect, CSSValueNone);
+                    if (!propertyMissingOrEqualToNone(style.get(), CSSPropertyID::WebkitTextDecorationsInEffect))
+                        style->setProperty(CSSPropertyID::WebkitTextDecorationsInEffect, CSSValueID::None);
                     accumulator.wrapWithStyleNode(style.get(), true);
                 }
             } else {
@@ -1310,7 +1310,7 @@ static String serializePreservingVisualAppearanceInternal(const Position& start,
             accumulator.append("<div style=\"clear: both;\"></div>"_s);
         RefPtr<EditingStyle> positionRelativeStyle = styleFromMatchedRulesAndInlineDecl(*body);
         RefPtr positionStyle = positionRelativeStyle->style();
-        positionStyle->setProperty(CSSPropertyPosition, CSSValueRelative);
+        positionStyle->setProperty(CSSPropertyID::Position, CSSValueID::Relative);
         accumulator.wrapWithStyleNode(positionStyle.get(), true);
     }
 
@@ -1739,7 +1739,7 @@ ExceptionOr<Ref<DocumentFragment>> createContextualFragment(Element& element, co
     return fragment;
 }
 
-static inline RefPtr<Text> NODELETE singleTextChild(ContainerNode& node)
+static inline RefPtr<Text> LEGACY_NODELETE singleTextChild(ContainerNode& node)
 {
     return node.hasOneChild() ? dynamicDowncast<Text>(node.firstChild()) : nullptr;
 }

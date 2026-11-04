@@ -80,11 +80,10 @@ void WorkerStorageConnection::getPersisted(ClientOrigin&& origin, StorageConnect
     workerLoaderProxy->postTaskToLoader([callbackIdentifier, contextIdentifier = scope->identifier(), origin = WTF::move(origin).isolatedCopy()](auto& context) mutable {
         ASSERT(isMainThread());
 
-        auto& document = downcast<Document>(context);
-        auto mainThreadConnection = document.storageConnection();
+        RefPtr mainThreadConnection = downcast<Document>(context).storageConnection();
         auto mainThreadCallback = [callbackIdentifier, contextIdentifier](bool result) mutable {
             ScriptExecutionContext::postTaskTo(contextIdentifier, [callbackIdentifier, result] (auto& scope) mutable {
-                downcast<WorkerGlobalScope>(scope).storageConnection().didGetPersisted(callbackIdentifier, result);
+                protect(downcast<WorkerGlobalScope>(scope).storageConnection())->didGetPersisted(callbackIdentifier, result);
             });
         };
         if (!mainThreadConnection)
@@ -115,11 +114,10 @@ void WorkerStorageConnection::getEstimate(ClientOrigin&& origin, StorageConnecti
     workerLoaderProxy->postTaskToLoader([callbackIdentifier, contextIdentifier = scope->identifier(), origin = WTF::move(origin).isolatedCopy()](auto& context) mutable {
         ASSERT(isMainThread());
 
-        auto& document = downcast<Document>(context);
-        auto mainThreadConnection = document.storageConnection();
+        RefPtr mainThreadConnection = downcast<Document>(context).storageConnection();
         auto mainThreadCallback = [callbackIdentifier, contextIdentifier](ExceptionOr<StorageEstimate>&& result) mutable {
             ScriptExecutionContext::postTaskTo(contextIdentifier, [callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
-                downcast<WorkerGlobalScope>(scope).storageConnection().didGetEstimate(callbackIdentifier, WTF::move(result));
+                protect(downcast<WorkerGlobalScope>(scope).storageConnection())->didGetEstimate(callbackIdentifier, WTF::move(result));
             });
         };
         if (!mainThreadConnection)
@@ -150,11 +148,10 @@ void WorkerStorageConnection::fileSystemGetDirectory(ClientOrigin&& origin, Stor
     workerLoaderProxy->postTaskToLoader([callbackIdentifier, contextIdentifier = m_scope->identifier(), origin = WTF::move(origin).isolatedCopy()](auto& context) mutable {
         ASSERT(isMainThread());
 
-        auto& document = downcast<Document>(context);
-        auto mainThreadConnection = document.storageConnection();
+        RefPtr mainThreadConnection = downcast<Document>(context).storageConnection();
         auto mainThreadCallback = [callbackIdentifier, contextIdentifier](auto&& result) mutable {
             ScriptExecutionContext::postTaskTo(contextIdentifier, [callbackIdentifier, result = crossThreadCopy(WTF::move(result))] (auto& scope) mutable {
-                downcast<WorkerGlobalScope>(scope).storageConnection().didGetDirectory(callbackIdentifier, WTF::move(result));
+                protect(downcast<WorkerGlobalScope>(scope).storageConnection())->didGetDirectory(callbackIdentifier, WTF::move(result));
             });
         };
         if (!mainThreadConnection)

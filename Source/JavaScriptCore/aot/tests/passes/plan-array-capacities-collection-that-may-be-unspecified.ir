@@ -1,0 +1,87 @@
+# for (const entry of entries) list.push(entry), one literal in front of a switch on the kind of iteration: the Map is there only where the kind says so. Its size is not read at the literal, which stands in front of the switch
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# STATISTIC: ArrayCapacitiesPlanned = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="mapOnlyForOneKind" parameters=[{type=Map}, {type=boolean}] results=[{type=Array<anything>}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer
+    Jump -> next b3(v2, v0)
+  b2():
+    v3 = Integer integer=1
+    v4 = Unspecified valueType=Map
+    Jump -> next b3(v3, v4)
+  b3(v5: int[0, 1], v6: unspecified|Map):
+    v7 = NewArray contents=anything
+    Switch v5 cases=[0] -> case b4(), otherwise b8()
+  b4():
+    v8 = Specified
+    v9 = AssumeType v6, v8 provenType=Map
+    v10 = CollectionTable v9
+    v11 = Integer integer=0
+    Jump -> next b5(v10, v11)
+  b5(v12, v13):
+    LoopHint
+    v15 = Specified
+    v16 = AssumeType v6, v15 provenType=Map
+    v17 = MapNext v16, v12, v13
+    v18 = ResultAt v17 index=0
+    v19 = ResultAt v17 index=1
+    v20 = ResultAt v17 index=3
+    Branch v18 -> taken b6(), notTaken b7()
+  b6():
+    v21 = CallBuiltin v7, v20 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v22 = Specified
+    v23 = AssumeType v6, v22 provenType=Map
+    v24 = CollectionTable v23
+    v25 = Integer integer=1
+    v26 = Add v19, v25
+    Jump -> next b5(v24, v26)
+  b7():
+    Return v7
+  b8():
+    Return v7
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: overload=MapPrototypeSize/0
+# CHECK: v7: {{*}} = NewArray contents=anything
+# CHECK-NEXT: Switch v5
+
+function f1 name="mapForEveryKind" parameters=[{type=Map}, {type=boolean}] results=[{type=Array<anything>}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer
+    Jump -> next b3(v2, v0)
+  b2():
+    v3 = Integer integer=1
+    v4 = Upcast v0 castType=Map
+    Jump -> next b3(v3, v4)
+  b3(v5: int[0, 1], v6: Map):
+    v7 = NewArray contents=anything
+    Switch v5 cases=[0] -> case b4(), otherwise b8()
+  b4():
+    v8 = CollectionTable v6
+    v9 = Integer integer=0
+    Jump -> next b5(v8, v9)
+  b5(v10, v11):
+    LoopHint
+    v13 = MapNext v6, v10, v11
+    v14 = ResultAt v13 index=0
+    v15 = ResultAt v13 index=1
+    v16 = ResultAt v13 index=3
+    Branch v14 -> taken b6(), notTaken b7()
+  b6():
+    v17 = CallBuiltin v7, v16 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v18 = CollectionTable v6
+    v19 = Integer integer=1
+    v20 = Add v15, v19
+    Jump -> next b5(v18, v20)
+  b7():
+    Return v7
+  b8():
+    Return v7
+}
+# CHECK-LABEL: function f1
+# CHECK: = CallBuiltin v6 overload=MapPrototypeSize/0

@@ -1,0 +1,51 @@
+# Object.values and Object.entries are inline code alone, one call of a run-time operation, wherever they stand. In compact code so is a list of own keys: none of them calls the host function
+# FORM: Prepared
+# RUN: pass Select
+# RUN(FORMS): inline-forms
+# RUN(SHAPES): code-shapes
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="valuesAndEntries" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+# FORMS: function f0
+# FORMS-NEXT: v1 {{*}} ObjectValues {{*}} Whole
+# FORMS-NEXT: v2 {{*}} ObjectEntries {{*}} Whole
+# CHECK-LABEL: function f0 name="valuesAndEntries"
+# CHECK-NOT: CallBuiltin
+# CHECK: v1: {{*}} = CallInline -, v0 inlineBuiltin=ObjectValues overload=ObjectValues/0
+# CHECK-NEXT: v2: {{*}} = CallInline -, v0 inlineBuiltin=ObjectEntries overload=ObjectEntries/0
+
+function f1 name="inCompactBlock" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = CallBuiltin -, v0 overload=ObjectValues/0
+    v3 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v4 = CallBuiltin -, v0 overload=ObjectKeys/0
+    v5 = NewArray v2, v3, v4 contents=anything
+    Return v5
+  b2():
+    Return v1
+}
+# SHAPES: f1 b1 Compact
+# FORMS: function f1
+# FORMS-NEXT: v2 {{*}} ObjectValues {{*}} Whole
+# FORMS-NEXT: v3 {{*}} ObjectEntries {{*}} Whole
+# FORMS-NEXT: v4 {{*}} OwnPropertyKeys {{*}} Whole
+# CHECK-LABEL: function f1 name="inCompactBlock"
+# CHECK-NOT: CallBuiltin
+# CHECK: v2: {{*}} = CallInline -, v0 inlineBuiltin=ObjectValues overload=ObjectValues/0
+# CHECK-NEXT: v3: {{*}} = CallInline -, v0 inlineBuiltin=ObjectEntries overload=ObjectEntries/0
+# CHECK-NEXT: v4: {{*}} = CallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0
+
+function f2 name="valuesOfText" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=ObjectValues/1
+    Return v1
+# CHECK-NOT: CallInline
+# CHECK: = CallBuiltin -, v0 overload=ObjectValues/1
+}

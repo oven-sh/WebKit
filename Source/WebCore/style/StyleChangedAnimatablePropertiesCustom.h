@@ -41,13 +41,13 @@ public:
 inline void ChangedAnimatablePropertiesCustom::conservativelyCollectChangedAnimatablePropertiesForCursor(const ComputedStyle::InheritedFlags& a, const ComputedStyle::InheritedFlags& b, CSSPropertiesBitSet& changingProperties)
 {
     if (a.cursorType != b.cursorType)
-        changingProperties.m_properties.set(CSSPropertyCursor);
+        changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::Cursor));
 }
 
 inline void ChangedAnimatablePropertiesCustom::conservativelyCollectChangedAnimatablePropertiesForZIndex(const BoxData& a, const BoxData& b, CSSPropertiesBitSet& changingProperties)
 {
     if (a.specifiedZIndex() != b.specifiedZIndex())
-        changingProperties.m_properties.set(CSSPropertyZIndex);
+        changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::ZIndex));
 }
 
 } // namespace Style

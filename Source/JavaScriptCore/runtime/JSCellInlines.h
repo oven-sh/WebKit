@@ -54,6 +54,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+#if ENABLE(AOT) && ASSERT_ENABLED
+namespace AOT::PropertyWalk {
+JS_EXPORT_PRIVATE bool convertsToOrdinaryObject(const ClassInfo* from, const ClassInfo* to);
+}
+#endif
+
 inline JSCell::JSCell(CreatingEarlyCellTag)
     : m_cellState(CellState::DefinitelyWhite)
 {
@@ -205,7 +211,8 @@ ALWAYS_INLINE TriState JSCell::isCallableWithConcurrency()
         return TriState::False;
     // JSFunction and InternalFunction assert during construction that derived classes don't override getCallData,
     // which guarantees that CallData::Type::None is never returned.
-    if (type() == JSFunctionType || type() == InternalFunctionType)
+    static_assert(CompiledClosureType == JSFunctionType + 1 && InternalFunctionType == JSFunctionType + 2);
+    if (JSTypeRange { JSFunctionType, InternalFunctionType }.contains(type()))
         return TriState::True;
     if (inlineTypeFlags() & OverridesGetCallData) {
         if constexpr (concurrency == Concurrency::MainThread)
@@ -243,9 +250,20 @@ ALWAYS_INLINE bool JSCell::isConstructor()
     return result == TriState::True;
 }
 
+ALWAYS_INLINE bool JSCell::isPristine() const
+{
+    ASSERT(!TypeInfo::isPristine(inlineTypeFlags()) || structure()->isPristine());
+    return TypeInfo::isPristine(inlineTypeFlags());
+}
+
 ALWAYS_INLINE void JSCell::setStructure(VM& vm, Structure* structure)
 {
+    ASSERT(m_type != CompiledEnvironmentType);
+#if ENABLE(AOT)
+    ASSERT(structure->classInfoForCells() == this->structure()->classInfoForCells() || AOT::PropertyWalk::convertsToOrdinaryObject(this->structure()->classInfoForCells(), structure->classInfoForCells()));
+#else
     ASSERT(structure->classInfoForCells() == this->structure()->classInfoForCells());
+#endif
     ASSERT(!this->structure()
         || this->structure()->transitionWatchpointSetHasBeenInvalidated()
         || structure->id().decode() == structure);

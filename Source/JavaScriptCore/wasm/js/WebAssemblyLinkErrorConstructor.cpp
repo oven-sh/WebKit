@@ -81,7 +81,7 @@ void WebAssemblyLinkErrorConstructor::finishCreation(VM& vm, WebAssemblyLinkErro
 }
 
 WebAssemblyLinkErrorConstructor::WebAssemblyLinkErrorConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callJSWebAssemblyLinkError, constructJSWebAssemblyLinkError)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callJSWebAssemblyLinkError), JSC_REGISTERED_HOST_FUNCTION(constructJSWebAssemblyLinkError))
 {
 }
 

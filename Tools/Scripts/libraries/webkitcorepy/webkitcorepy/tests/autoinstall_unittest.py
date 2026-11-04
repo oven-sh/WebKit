@@ -25,6 +25,7 @@ import os
 import shutil
 import tempfile
 import unittest
+import unittest.mock
 from unittest.mock import patch
 from urllib.error import URLError
 
@@ -174,3 +175,20 @@ class MergeMoveTest(unittest.TestCase):
         self._unpack('provides-file', ['sample/thing'])
         self._unpack('provides-package', ['sample/thing/__init__.py'])
         self.assertEqual(self._contents(), ['sample/thing/__init__.py'])
+
+
+class VerifyIndexTest(unittest.TestCase):
+    def test_error_response_names_index(self):
+        response = unittest.mock.MagicMock()
+        response.code = 404
+        with patch.object(AutoInstall, 'index', 'new.example.com'), \
+                patch.object(AutoInstall, '_previous_index', 'old.example.com'), \
+                patch.object(AutoInstall, '_previous_ca_cert_path', None), \
+                patch.object(AutoInstall, '_fatal_check', True), \
+                patch.object(AutoInstall, '_request', return_value=response):
+            with self.assertRaises(ValueError) as context:
+                AutoInstall._verify_index()
+        self.assertEqual(
+            str(context.exception),
+            'Failed to set AutoInstall index to new.example.com, received 404 response when searching for simple/pip',
+        )

@@ -76,8 +76,9 @@ public:
         end();
     }
     
+    // Bun: compiled once for a list of types and called. Printing is never hot, and inlined it is some 260 bytes at each of 1,900 places.
     template<typename... Types>
-    void print(const Types&... values)
+    NEVER_INLINE void print(const Types&... values)
     {
         atomically(
             [&] (PrintStream& out) {
@@ -115,9 +116,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, StringView);
 // A PrintStream's contents are read back as UTF-8 (see StringPrintStream::toString()), so Latin-1
-// is transcoded on the way in. A CString does not know its encoding and therefore cannot be
-// printed: use one of the CStringWithEncoding aliases below.
-void printInternal(PrintStream&, const CString&) = delete;
+// is transcoded on the way in. A CStringBase does not know its encoding and therefore cannot be
+// printed: use one of the CString aliases below.
+void printInternal(PrintStream&, const CStringBase&) = delete;
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const UTF8CString&);
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const Latin1CString&);
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const ASCIICString&);
@@ -127,7 +128,7 @@ WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const StringImpl*);
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, std::span<const char8_t>);
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const char8_t*);
 inline void printInternal(PrintStream& out, char* value) { printInternal(out, static_cast<const char*>(value)); }
-inline void printInternal(PrintStream& out, String& value) { printInternal(out, static_cast<const String&>(value)); }
+WTF_EXPORT_PRIVATE void printInternal(PrintStream&, String&);
 inline void printInternal(PrintStream& out, StringImpl* value) { printInternal(out, static_cast<const StringImpl*>(value)); }
 
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, bool);

@@ -249,15 +249,21 @@ promise_test(async (test) => {
 }, "Sender stats");
 
 promise_test(async (test) => {
-    const report = await secondConnection.getReceivers()[0].getStats();
-    checkStatsReportIterator(report);
     var instats, outstats;
-    report.forEach((statItem) => {
-        if (statItem.type === "outbound-rtp")
-            outstats = statItem;
-        else if (statItem.type === "inbound-rtp")
-            instats = statItem;
-    });
+    let counter = 0;
+    while (counter++ < 50) {
+        const report = await secondConnection.getReceivers()[0].getStats();
+        checkStatsReportIterator(report);
+        report.forEach((statItem) => {
+            if (statItem.type === "outbound-rtp")
+                outstats = statItem;
+            else if (statItem.type === "inbound-rtp")
+                instats = statItem;
+        });
+        if (instats)
+            break;
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
     assert_false(!!outstats);
     assert_true(!!instats);
 

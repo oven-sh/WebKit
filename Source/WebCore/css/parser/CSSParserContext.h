@@ -94,7 +94,6 @@ struct CSSParserContext {
     bool webkitMediaTextTrackDisplayQuirkEnabled : 1 { false };
     bool cssMathDepthEnabled : 1 { false };
     bool openPseudoClassEnabled : 1 { false };
-    bool cssAttrSubstitutionFunctionEnabled : 1 { false };
     bool cssScrollStateContainerQueriesEnabled : 1 { false };
     bool cssCalcMixEnabled : 1 { false };
     bool cssIdentFunctionEnabled : 1 { false };
@@ -102,6 +101,7 @@ struct CSSParserContext {
     bool cssInheritFunctionEnabled : 1 { false };
     bool cssFontPaletteMixFunctionEnabled : 1 { false };
     bool cssSymbolsFunctionEnabled : 1 { false };
+    bool viewportSegmentsAPIEnabled : 1 { false };
 
     // Enabled only for the legacy <font face> attribute: allows a numeric token within a family
     // name (e.g. "Bodoni 72"). Regular CSS font-family parsing stays strict.
@@ -115,7 +115,7 @@ struct CSSParserContext {
     CSSParserContext(const Document&, const URL& baseURL, ASCIILiteral charset = ""_s);
     CSSParserContext(const Settings&);
 
-    void NODELETE setUASheetMode();
+    void LEGACY_NODELETE setUASheetMode();
 
     bool operator==(const CSSParserContext&) const = default;
 };

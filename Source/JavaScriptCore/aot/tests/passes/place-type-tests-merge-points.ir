@@ -1,0 +1,164 @@
+# The generic copy comes back, without a test, where the tested code knows nothing more than the copy: f3 and f4 follow that rule.
+# Proofs of one condition that reach a use over two paths merge in a block parameter, and so do values defined in a copied stretch where the copy comes back
+# FORM: Prepared
+# RUN(PLAN): test-placement
+# RUN(IR): pass PlaceTypeTests
+# STATISTIC: StretchesNotClonable = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="testsOnBothArms" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = PropGet v0 key="a"
+    Jump -> next b3()
+  b2():
+    v3 = PropGet v0 key="b"
+    Jump -> next b3()
+  b3():
+    v4 = PropGet v0 key="a"
+    Return v4
+}
+# PLAN-LABEL: function f0
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 before v2; test BelongsToInstance v0 before v2; test TypeTest v0 testedType=L0 before v3; test BelongsToInstance v0 before v3; uses v2 v3 v4; cloned 12
+# PLAN-NOT: stretch
+# IR-LABEL: function f0 name="testsOnBothArms"
+# IR: b1():
+# IR-NEXT: [[testA0]]:{{*}}= TypeTest v0 testedType=L0
+# IR-NEXT: Branch [[testA0]] -> taken [[passedA0]](| 0), notTaken
+# IR-NEXT: b2():
+# IR-NEXT: [[testB0]]:{{*}}= TypeTest v0 testedType=L0
+# IR-NEXT: Branch [[testB0]] -> taken [[passedB0]](| 0), notTaken
+# IR-NEXT: b3([[mergedObject0]]: L0, [[merged0]]: guard):
+# IR-NEXT: v4: number = GetSlot [[mergedObject0]], [[merged0]] key="a" receivers=[L0] level=Expected
+# IR-NEXT: Return v4
+# IR: ([[guardA0]]: guard):
+# IR-NOT: = TypeTest
+# IR: v2: number = GetSlot [[objectA0]], [[guardA0]] key="a" receivers=[L0] level=Expected
+# IR-NEXT: Jump -> next b3([[objectA0]], [[guardA0]])
+# IR: ([[guardB0]]: guard):
+# IR: v3: number = GetSlot [[objectB0]], [[guardB0]] key="b" receivers=[L0] level=Expected
+# IR-NEXT: Jump -> next b3([[objectB0]], [[guardB0]])
+# IR-NOT: = TypeTest
+# IR: [[passedA0]]([[objectA0]]: L0):
+# IR-NEXT: = BelongsToInstance [[objectA0]]
+# IR: [[passedB0]]([[objectB0]]: L0):
+# IR-NEXT: = BelongsToInstance [[objectB0]]
+
+function f1 name="narrowedOnBothArms" parameters=[{type=number flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ number, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Mul v0, v0
+    Jump -> next b3()
+  b2():
+    v3 = Sub v0, v0
+    Jump -> next b3()
+  b3():
+    v4 = Mul v0, v0
+    Return v4
+}
+# PLAN-LABEL: function f1
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=number before v2; test TypeTest v0 testedType=number before v3; uses v2 v3 v4; cloned 12
+# PLAN-NOT: stretch
+# IR-LABEL: function f1 name="narrowedOnBothArms"
+# IR: b3([[merged1]]: number):
+# IR-NEXT: v4: number = Mul [[merged1]], [[merged1]]
+# IR-NEXT: Return v4
+# IR: v2: number = Mul [[numberA1]], [[numberA1]]
+# IR-NEXT: Jump -> next b3([[numberA1]])
+# IR: v3: number = Sub [[numberB1]], [[numberB1]]
+# IR-NEXT: Jump -> next b3([[numberB1]])
+
+function f2 name="testOnOneArm" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = PropGet v0 key="a"
+    Jump -> next b2()
+  b2():
+    v3 = PropGet v0 key="a"
+    Return v3
+}
+# PLAN-LABEL: function f2
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 before v2; test BelongsToInstance v0 before v2; uses v2; cloned 4
+# PLAN-NEXT: stretch 1: test TypeTest v0 testedType=L0 before v3; test BelongsToInstance v0 before v3; uses v3; cloned 4
+# PLAN-NOT: stretch
+# IR-LABEL: function f2 name="testOnOneArm"
+# IR: b1():
+# IR-NEXT: = TypeTest v0 testedType=L0
+# IR: b2():
+# IR-NEXT: [[test2]]:{{*}}= TypeTest v0 testedType=L0
+# IR-NEXT: Branch [[test2]] -> taken [[passed2]](| 0), notTaken
+# IR: Jump -> next b2()
+# IR-NEXT: ([[guard2]]: guard):
+# IR-NEXT: v3: number = GetSlot [[object2]], [[guard2]] key="a" receivers=[L0] level=Expected
+# IR: [[passed2]]([[object2]]: L0):
+# IR-NEXT: = BelongsToInstance [[object2]]
+
+function f3 name="typeofInsideStretch" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="a"
+    v3 = TypeTest v1 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = GetStringLength v4
+    Return v5
+  b2():
+    v6 = PropGet v0 key="b"
+    Return v6
+}
+# The arm that uses no proof is not copied: the copy comes back at its head.
+# PLAN-LABEL: function f3
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 before v2; test BelongsToInstance v0 before v2; uses v2 v6; cloned 28
+# PLAN-NOT: stretch
+# IR-LABEL: function f3 name="typeofInsideStretch"
+# IR: [[test3]]:{{*}}= TypeTest v0 testedType=L0
+# IR-NEXT: Branch [[test3]] -> taken [[passed3]](| 0), notTaken
+# IR-NEXT: b1(v4: string):
+# IR-NEXT: = GetStringLength v4
+# IR: b2():
+# IR-NEXT: v6: number = GetSlot [[object3]], [[guard3]] key="b" receivers=[L0] level=Expected
+# IR-NOT: testedType=L0
+# IR: v2: number = GetSlot [[object3]], [[guard3]] key="a" receivers=[L0] level=Expected
+# IR-NEXT: v3: boolean = TypeTest v1 testedType=string
+# IR-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
+# IR-NEXT: [[copy3]]() frequency=Unlikely:
+# IR-NEXT: = PropGet v0 key="a"
+# IR-NEXT: [[copiedTest3]]: boolean = TypeTest v1 testedType=string
+# IR-NEXT: Branch [[copiedTest3]] -> taken b1(| 0), notTaken [[copyOfArm3]]()
+# IR-NEXT: [[copyOfArm3]]() frequency=Unlikely:
+# IR-NEXT: = PropGet v0 key="b"
+# IR-NOT: = GetStringLength
+# IR-NOT: testedType=L0
+# IR: [[passed3]]([[object3]]: L0):
+
+function f4 name="valueDefinedInStretchUsedWhereCopyComesBack" parameters=[{type=L0 flags=[IsExpected]}, {type=number}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: number, v2: function):
+    v3 = PropGet v0 key="a"
+    v4 = Add v1, v1
+    v5 = PropGet v0 key="b"
+    v6 = Call v2
+    v7 = Mul v4, v4
+    Return v7
+}
+# PLAN-LABEL: function f4
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=L0 before v3; test BelongsToInstance v0 before v3; uses v3 v5; cloned 8
+# PLAN-NEXT: copy comes back at b0:4
+# PLAN-NOT: stretch
+# IR-LABEL: function f4 name="valueDefinedInStretchUsedWhereCopyComesBack"
+# IR: v3: number = GetSlot [[object4]], [[guard4]] key="a" receivers=[L0] level=Expected
+# IR-NEXT: v4: number = Add v1, v1
+# IR-NEXT: v5: number = GetSlot [[object4]], [[guard4]] key="b" receivers=[L0] level=Expected
+# IR-NEXT: Jump -> next [[behind4]](v4)
+# IR-NEXT: [[behind4]]([[sum4]]: number):
+# IR-NEXT: v6: anything = Call v2
+# IR: v7: number = Mul [[sum4]], [[sum4]]
+# IR-NEXT: Return v7
+# IR-NEXT: {{*}} frequency=Unlikely:
+# IR-NEXT: = PropGet v0 key="a"
+# IR-NEXT: [[copiedSum4]]: number = Add v1, v1
+# IR-NEXT: = PropGet v0 key="b"
+# IR-NEXT: Jump -> next [[behind4]]([[copiedSum4]])

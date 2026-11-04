@@ -1,0 +1,38 @@
+# A built-in function that the program converts into a function type is listed by the type like a function of the program, and by every function type above it.
+# A function type with built-in members alone lists them too. No function is tested on its way into a function type, listed or not
+# FORM: AsRead
+# RUN: pass TypeValues VerifyProgram
+# STATISTIC: FunctionTypesWithOneMember = 1
+# STATISTIC: FunctionTypesWithFewMembers = 2
+# STATISTIC: RequestsResolvedToNothing = 3
+# STATISTIC: RequestsResolvedToCheck = 0
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+function f0 name="narrow" role=Signature results=[{type=anything}] functionTypes=[f1] builtinMembers=[MathAbs]
+function f1 name="wide" role=Signature results=[{type=anything}] builtinMembers=[MathFloor]
+function f2 name="onlyBuiltin" role=Signature results=[{type=anything}] builtinMembers=[MathCeil]
+function f3 name="double" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f0] {
+    Return v0
+}
+function f4 name="takesNarrow" parameters=[{type=f0 site=w0}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: function f4 name="takesNarrow" {{*}}parameters=[{type=function|f3|builtin(MathAbs) site=w0}]
+function f5 name="takesWide" parameters=[{type=undefined|f1 site=w0}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: function f5 name="takesWide" {{*}}parameters=[{type=undefined|function|f3|builtin(MathAbs)|builtin(MathFloor) site=w0}]
+function f6 name="takesOnlyBuiltin" parameters=[{type=f2 site=w0}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: function f6 name="takesOnlyBuiltin" {{*}}parameters=[{type=function|builtin(MathCeil) site=w0}]
+function f7 name="converts" parameters=[{type=builtin(MathAbs)}, {type=builtin(MathFloor)}] results=[{type=anything}] {
+    v2 = Convert v0 declared={type=f0}
+    v3 = Convert v0 declared={type=f1}
+    v4 = Convert v1 declared={type=f0}
+    Return v4
+# CHECK-NOT: Check
+# CHECK: Return v1
+}

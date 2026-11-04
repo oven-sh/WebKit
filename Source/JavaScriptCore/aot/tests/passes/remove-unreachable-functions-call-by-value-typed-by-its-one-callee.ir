@@ -1,0 +1,32 @@
+# A call by value of one known function has the type of what that function returns. The entrypoint of the function holds the only copy of its body that anything enters,
+# so the function loses its own body. What it declares still bounds what the call returns, so the call keeps its type and the program is still valid
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveUnreachableFunctions
+# STATISTIC: UnreachableFunctionsRemoved = 1
+# CHECK: outcome: Changed
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK: v1: undefined = Call v0
+
+function f1 name="resolves" kind=Arrow results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: b0(
+
+function f2 name="resolves" kind=Arrow role=GenericEntrypoint captures=[{type=f1}] results=[{type=anything}] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
+    v1 = Undefined
+    Return v1
+}
+# CHECK-LABEL: function f2
+# CHECK: b0(

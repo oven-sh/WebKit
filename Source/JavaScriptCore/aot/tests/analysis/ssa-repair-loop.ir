@@ -1,0 +1,84 @@
+# A definition that reaches a loop header around the back edge gives it a parameter unless the variable is dead there
+# FORM: Prepared
+# RUN: repair function=f0 variable=v3,v6
+# RUN(DEAD): repair function=f1 variable=v3,v5
+# RUN(ENTERED): repair function=f2 redirect=b4.0:b2 variable=v4,v8
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="liveAtHeader" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    v3 = Add v1, v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = Mul v3, v3
+    v6 = Sub v5, v2
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    v7 = Negate v3
+    Return v7
+}
+function f1 name="deadAtHeader" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    v3 = Add v1, v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = Sub v1, v2
+    v6 = Mul v3, v3
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    v7 = Negate v3
+    Return v7
+}
+function f2 name="secondEntry" parameters=[{type=boolean}, {type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b4()
+  b1():
+    v4 = Add v2, v3
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v6 = Mul v4, v4
+    Branch v1 -> taken b2(), notTaken b3()
+  b3():
+    v7 = Negate v4
+    Return v7
+  b4():
+    v8 = Sub v2, v3
+    Branch v1 -> taken b5(), notTaken b5()
+  b5():
+    Return v8
+}
+# CHECK: function f0
+# CHECK: v3: number = Add v1, v2
+# CHECK: Jump -> next b1(v3)
+# CHECK: b1([[P]]: number):
+# CHECK: v5: number = Mul [[P]], [[P]]
+# CHECK: v6: number = Sub v5, v2
+# CHECK: Branch v0 -> taken b1(v6), notTaken b2()
+# CHECK: b2():
+# CHECK: v7: number = Negate v6
+# CHECK: Return v7
+# DEAD: function f1
+# DEAD: v3: number = Add v1, v2
+# DEAD: Jump -> next b1()
+# DEAD: b1():
+# DEAD: v5: number = Sub v1, v2
+# DEAD: v6: number = Mul v5, v5
+# DEAD: Branch v0 -> taken b1(), notTaken b2()
+# DEAD: b2():
+# DEAD: v7: number = Negate v5
+# DEAD: Return v7
+# ENTERED: function f2
+# ENTERED: Branch v0 -> taken b1(), notTaken b4()
+# ENTERED: b1():
+# ENTERED: v4: number = Add v2, v3
+# ENTERED: Jump -> next b2(v4)
+# ENTERED: b2([[P]]: number):
+# ENTERED: v6: number = Mul [[P]], [[P]]
+# ENTERED: Branch v1 -> taken b2([[P]]), notTaken b3()
+# ENTERED: b3():
+# ENTERED: v7: number = Negate [[P]]
+# ENTERED: b4():
+# ENTERED: v8: number = Sub v2, v3
+# ENTERED: Branch v1 -> taken b2(v8), notTaken b5()
+# ENTERED: b5():
+# ENTERED: Return v8

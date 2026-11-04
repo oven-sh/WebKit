@@ -18,6 +18,8 @@ const newlines = /\r\n?|\n/;
 const leadingSpaces = /^\s+/;
 const trailingSpaces = /\s+$/;
 const all = [oneCharacter, word, newlines, leadingSpaces, trailingSpaces];
+// A pattern that is plain text is searched for: it never has code.
+const compiled = [newlines, leadingSpaces, trailingSpaces];
 
 function throughTheFastPaths() {
     shouldBe("needle in a haystack, needle".match(word).length, 2);
@@ -29,11 +31,11 @@ function throughTheFastPaths() {
 }
 noInline(throughTheFastPaths);
 
-// Compile all of them.
+// Compile those that are compiled.
 for (let regExp of all)
     regExp.exec("a needle\n ");
 const withCodeBefore = $vm.codeBlockCensus().regExpsWithCode;
-shouldBe(withCodeBefore >= all.length, true, "the RegExps have code: " + withCodeBefore);
+shouldBe(withCodeBefore >= compiled.length, true, "the RegExps have code: " + withCodeBefore);
 
 function shrink(keepCodeInUse, then) {
     // The code was last used before this collection; the fast paths are used after it.
@@ -43,7 +45,7 @@ function shrink(keepCodeInUse, then) {
     $vm.shrinkFootprintWhenIdle(keepCodeThatNeedsParsing, keepCodeInUse);
     setTimeout(() => {
         if (!keepCodeInUse || jscOptions().releaseIdleRegExpCodeWhenShrinkingFootprint)
-            shouldBe($vm.codeBlockCensus().regExpsWithCode <= withCodeBefore - all.length, true, "the code is gone");
+            shouldBe($vm.codeBlockCensus().regExpsWithCode <= withCodeBefore - compiled.length, true, "the code is gone");
         // "xaya".match(/a/g) recorded that one character matched and left the position for later: the last "a", after "xay".
         shouldBe(RegExp.leftContext, "xay");
         shouldBe(RegExp.lastMatch, "a");

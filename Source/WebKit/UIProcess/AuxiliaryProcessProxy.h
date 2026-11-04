@@ -164,7 +164,7 @@ public:
     {
         return m_connection == &connection;
     }
-    static AuxiliaryProcessProxy* NODELETE WTF_NULLABLE fromConnection(const IPC::Connection&);
+    static AuxiliaryProcessProxy* LEGACY_NODELETE WTF_NULLABLE fromConnection(const IPC::Connection&);
 
     void addMessageReceiver(IPC::ReceiverName, IPC::MessageReceiver&);
     void addMessageReceiver(IPC::ReceiverName, uint64_t destinationID, IPC::MessageReceiver&);
@@ -387,12 +387,13 @@ private:
     const ASCIILiteral m_clientName;
     HashMap<Vector<uint8_t>, std::pair<unsigned, std::unique_ptr<IPC::Encoder>>> m_messagesToSendOnResume;
     unsigned m_messagesToSendOnResumeIndex { 0 };
-} SWIFT_SHARED_REFERENCE(refAuxiliaryProcessProxy, derefAuxiliaryProcessProxy) SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refAuxiliaryProcessProxy, derefAuxiliaryProcessProxy);
 
 template<typename T>
 bool AuxiliaryProcessProxy::send(T&& message, uint64_t destinationID, OptionSet<IPC::SendOption> sendOptions)
 {
     static_assert(!T::isSync, "Async message expected");
+    static_assert(!IPC::messageIsAsyncWithReply(T::name()), "Message with reply must be sent with sendWithAsyncReply");
 
     if constexpr (T::deferSendingIfSuspended) {
         if (m_isSuspended) [[unlikely]] {
@@ -433,11 +434,13 @@ template<typename T, typename C>
 std::optional<AuxiliaryProcessProxy::AsyncReplyID> AuxiliaryProcessProxy::sendWithAsyncReply(T&& message, C&& completionHandler, uint64_t destinationID, OptionSet<IPC::SendOption> sendOptions, ShouldStartProcessThrottlerActivity shouldStartProcessThrottlerActivity)
 {
     static_assert(!T::isSync, "Async message expected");
+    static_assert(IPC::messageIsAsyncWithReply(T::name()), "Message with reply expected");
 
     auto encoder = makeUniqueRef<IPC::Encoder>(T::name(), destinationID);
-    message.encode(encoder.get());
     auto handler = IPC::Connection::makeAsyncReplyHandler<T>(std::forward<C>(completionHandler));
     auto replyID = handler.replyID;
+    encoder.get() << *replyID;
+    message.encode(encoder.get());
     if (sendMessage(WTF::move(encoder), sendOptions, WTF::move(handler), shouldStartProcessThrottlerActivity))
         return replyID;
     return std::nullopt;
@@ -447,11 +450,13 @@ template<typename T, typename C>
 std::optional<AuxiliaryProcessProxy::AsyncReplyID> AuxiliaryProcessProxy::sendWithAsyncReplyOnDispatcher(T&& message, GuaranteedSerialFunctionDispatcher& dispatcher, C&& completionHandler, uint64_t destinationID, OptionSet<IPC::SendOption> sendOptions, ShouldStartProcessThrottlerActivity shouldStartProcessThrottlerActivity)
 {
     static_assert(!T::isSync, "Async message expected");
+    static_assert(IPC::messageIsAsyncWithReply(T::name()), "Message with reply expected");
 
     auto encoder = makeUniqueRef<IPC::Encoder>(T::name(), destinationID);
-    message.encode(encoder.get());
     auto handler = IPC::Connection::makeAsyncReplyHandlerWithDispatcher<T>(std::forward<C>(completionHandler), dispatcher);
     auto replyID = handler.replyID;
+    encoder.get() << *replyID;
+    message.encode(encoder.get());
     if (sendMessageWithDispatcher(WTF::move(encoder), sendOptions, WTF::move(handler), shouldStartProcessThrottlerActivity))
         return replyID;
     return std::nullopt;
@@ -470,6 +475,7 @@ inline AuxiliaryProcessProxy::State AuxiliaryProcessProxy::state() const
 
 } // namespace WebKit
 
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
 inline void refAuxiliaryProcessProxy(WebKit::AuxiliaryProcessProxy* WTF_NONNULL obj)
 {
     obj->ref();
@@ -479,3 +485,4 @@ inline void derefAuxiliaryProcessProxy(WebKit::AuxiliaryProcessProxy* WTF_NONNUL
 {
     obj->deref();
 }
+#endif

@@ -51,7 +51,7 @@ struct SymbolsParameters {
 
     bool operator==(const SymbolsParameters&) const = default;
 };
-using SymbolsFunction = FunctionNotation<CSSValueSymbols, SymbolsParameters>;
+using SymbolsFunction = FunctionNotation<CSSValueID::Symbols, SymbolsParameters>;
 
 template<size_t I> const auto& get(const SymbolsParameters& value)
 {
@@ -90,7 +90,7 @@ struct CounterStyle {
         return std::nullopt;
     }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -104,7 +104,7 @@ private:
     Variant<CustomIdent, SymbolsFunction> m_value;
 };
 
-WEBCORE_EXPORT std::optional<CSS::SymbolsType> keywordFromSymbolsSystemForSerialization(CSSCounterStyleDescriptors::System);
+WEBCORE_EXPORT std::optional<CSS::SymbolsType> LEGACY_NODELETE keywordFromSymbolsSystemForSerialization(CSSCounterStyleDescriptors::System);
 WEBCORE_EXPORT CSSCounterStyleDescriptors::System symbolsSystemFromKeyword(std::optional<CSS::SymbolsType>);
 
 // MARK: - Conversion

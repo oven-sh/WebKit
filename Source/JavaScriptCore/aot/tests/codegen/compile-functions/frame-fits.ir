@@ -1,0 +1,25 @@
+# A function with forty values that are live across calls spills them to its frame and compiles
+# FORM: AsRead
+# RUN: compile
+# LOSS: MaxFrameSizeInBytes x0
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="fortyLiveValues" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 1..41
+    v%(i) = Call v0
+# END REPEAT
+# REPEAT: i = 2..40; a = 1 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79
+    v%(i+40) = Add v%(a), v%(i)
+# END REPEAT
+    Return v80
+}

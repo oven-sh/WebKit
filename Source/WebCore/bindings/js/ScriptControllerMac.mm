@@ -42,6 +42,7 @@
 #import <JavaScriptCore/APICast.h>
 #import <JavaScriptCore/JSContextInternal.h>
 #import <JavaScriptCore/JSLock.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 @interface NSObject (WebPlugin)
 - (id)objectForWebScript;
@@ -52,11 +53,11 @@ namespace WebCore {
 
 RefPtr<JSC::Bindings::Instance> ScriptController::createScriptInstanceForWidget(Widget* widget)
 {
-    NSView* widgetView = widget->platformWidget();
+    RetainPtr widgetView = widget->platformWidget();
     if (!widgetView)
         return nullptr;
 
-    auto rootObject = createRootObject((__bridge void*)widgetView);
+    auto rootObject = createRootObject((__bridge void*)widgetView.get());
 
     if ([widgetView respondsToSelector:@selector(createPluginBindingsInstance:)])
         return [widgetView createPluginBindingsInstance:WTF::move(rootObject)];
@@ -78,7 +79,7 @@ WebScriptObject *ScriptController::windowScriptObject()
     if (!m_windowScriptObject) {
         JSC::JSLockHolder lock(commonVM());
         RefPtr root = bindingRootObject();
-        m_windowScriptObject = [WebScriptObject scriptObjectForJSObject:toRef(&jsWindowProxy(pluginWorldSingleton())) originRootObject:root.get() rootObject:root.get()];
+        lazyInitialize(m_windowScriptObject, RetainPtr<WebScriptObject> { checked_objc_cast<WebScriptObject>([WebScriptObject scriptObjectForJSObject:toRef(&jsWindowProxy(pluginWorldSingleton())) originRootObject:root.get() rootObject:root.get()]) });
     }
 
     return m_windowScriptObject.get();

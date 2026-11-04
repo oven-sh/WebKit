@@ -69,7 +69,7 @@ Structure* IntlCollatorConstructor::createStructure(VM& vm, JSGlobalObject* glob
 }
 
 IntlCollatorConstructor::IntlCollatorConstructor(VM& vm, Structure* structure)
-    : InternalFunction(vm, structure, callIntlCollator, constructIntlCollator)
+    : InternalFunction(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callIntlCollator), JSC_REGISTERED_HOST_FUNCTION(constructIntlCollator))
 {
 }
 

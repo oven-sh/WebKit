@@ -23,6 +23,9 @@
 #ifndef UNISTR_H
 #define UNISTR_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file
  * \brief C++ API: Unicode String

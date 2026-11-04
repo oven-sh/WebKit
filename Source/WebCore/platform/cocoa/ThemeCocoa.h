@@ -34,6 +34,7 @@ protected:
     ThemeCocoa() = default;
 private:
     void drawNamedImage(const String&, GraphicsContext&, const FloatSize&) const final;
+    String invertedNamedImage(const String&) const final;
 };
 
 } // namespace WebCore

@@ -1,0 +1,20 @@
+# What stands behind a placed test names the tested value by the value that the test proves. A validating build compares the two where the use is
+# FORM: Prepared
+# OPTIONS: check=Validate
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" constructor=f0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+
+function f1 name="readsBoth" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = NewArray v1, v2, v0 contents=anything
+    Return v3
+}
+# CHECK-LABEL: name="readsBoth"
+# CHECK: ValidateSameValue {{*}}, v0
+# CHECK: GetSlot

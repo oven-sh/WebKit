@@ -1,0 +1,45 @@
+# Each yield of a generator is one call of the stub that suspends a generator; the same operation in the body of an async function has no code
+# FORM: Selected
+# RUN: generate-code calls
+# OPTIONS: check=validate-back-end
+# DIAGNOSTIC: OpcodeWithoutCode 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="yieldsTwice" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f2 promiseParameter=2}
+function f1 name="yieldsInAsyncFunction" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1}
+function f2 name="yieldsTwice" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{ramp=f0 body=f2 promiseParameter=2} {
+    v3 = Undefined
+    v4 = YieldBySavingFrame v2, v3 @10
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1() frequency=Rare:
+    Throw v5
+  b2() frequency=Rare:
+    Return v5
+  b3():
+    v7 = YieldBySavingFrame v2, v1 @11
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    Switch v9 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+  b4() frequency=Rare:
+    Throw v8
+  b5() frequency=Rare:
+    Return v8
+  b6():
+    v10 = Call v8
+    Return v10
+}
+# CHECK: f2: size=
+# CHECK: operation operationAOTThrow x2
+# CHECK-NOT: stub AwaitBySavingFrame
+# CHECK-NOT: stub SuspendGenerator.Async
+# CHECK: stub SuspendGenerator.Yield x2
+function f3 name="yieldsInAsyncFunction" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{kind=AsyncFunction ramp=f1 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
+    v2 = Undefined
+    v3 = YieldBySavingFrame v0, v2 @20
+    v4 = ResultAt v3 index=0
+    v5 = ReturnAsyncResult v1, v4
+    Return v5
+}
+# CHECK: f3: no code

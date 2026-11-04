@@ -1,0 +1,41 @@
+# interface Shape { n?: number; s?: string }
+# function makeEmpty(): Shape { return {} }  function makeNumber(): Shape { return { n: 1 } }  function makeBoth(): Shape { return { s: "s", n: 2 } }
+# Object.assign stores into own properties whose attributes Object.defineProperty has changed, and they keep those attributes
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (makeEmpty, makeNumber, makeBoth) => { const show = o => print(Reflect.ownKeys(o).map(k => { const d = Object.getOwnPropertyDescriptor(o, k); return k + "=" + d.value + ":" + (d.writable ? "w" : "-") + (d.enumerable ? "e" : "-") + (d.configurable ? "c" : "-"); }).join(" "), "keys:" + Object.keys(o)); let t = makeEmpty(); Object.defineProperty(t, "n", { value: 0, writable: true, enumerable: false, configurable: true }); Object.assign(t, makeNumber()); show(t); t = makeNumber(); Object.defineProperty(t, "n", { configurable: false }); Object.assign(t, makeBoth()); show(t); t = makeBoth(); Object.defineProperty(t, "s", { enumerable: false }); Object.defineProperty(t, "n", { enumerable: false, configurable: false }); Object.assign(t, makeBoth(), makeNumber()); show(t); t = makeNumber(); Object.defineProperty(t, "extra", { value: 0, writable: true, enumerable: false, configurable: false }); const from = makeNumber(); from.extra = 5; Object.assign(t, from); show(t); };
+# CHECK: n=1:w-c keys:
+# CHECK-NEXT: n=2:we- s=s:wec keys:n,s
+# CHECK-NEXT: s=s:w-c n=1:w-- keys:
+# CHECK-NEXT: n=1:wec extra=5:w-- keys:n
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Shape" fields=[{key="n" declared={type=number}}, {key="s" declared={type=string}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return
+}
+function f1 name="makeEmpty" flags=[IsChecked] results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = FinishObject v0
+    Return v1
+}
+function f2 name="makeNumber" flags=[IsChecked] results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f3 name="makeBoth" flags=[IsChecked] results=[{type=anything}] {
+    v0 = String string="s"
+    v1 = Integer integer=2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[1, 0]
+    v3 = FinishObject v2
+    Return v3
+}

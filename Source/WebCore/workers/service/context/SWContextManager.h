@@ -53,7 +53,7 @@ template<typename> class ExceptionOr;
 
 class SWContextManager {
 public:
-    WEBCORE_EXPORT static SWContextManager& NODELETE singleton();
+    WEBCORE_EXPORT static SWContextManager& LEGACY_NODELETE singleton();
 
     class Connection : public AbstractRefCounted {
     public:
@@ -109,7 +109,7 @@ public:
     };
 
     WEBCORE_EXPORT void setConnection(Ref<Connection>&&);
-    WEBCORE_EXPORT Connection* NODELETE connection() const;
+    WEBCORE_EXPORT Connection* LEGACY_NODELETE connection() const;
 
     WEBCORE_EXPORT void registerServiceWorkerThreadForInstall(Ref<ServiceWorkerThreadProxy>&&, Function<void()>&& debuggerTasksStartedCallback = { });
     WEBCORE_EXPORT ServiceWorkerThreadProxy* serviceWorkerThreadProxy(ServiceWorkerIdentifier) const;
@@ -145,6 +145,7 @@ public:
     WEBCORE_EXPORT void fireUpdateFoundEvent(ServiceWorkerRegistrationIdentifier);
     WEBCORE_EXPORT void setRegistrationLastUpdateTime(ServiceWorkerRegistrationIdentifier, WallTime);
     WEBCORE_EXPORT void setRegistrationUpdateViaCache(ServiceWorkerRegistrationIdentifier, ServiceWorkerUpdateViaCache);
+    // Can be called from any thread.
     WEBCORE_EXPORT void removeFetch(ServiceWorkerIdentifier, SWServerConnectionIdentifier, FetchIdentifier, bool isNavigationFetch);
 
 private:

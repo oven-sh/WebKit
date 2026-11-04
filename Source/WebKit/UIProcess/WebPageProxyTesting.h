@@ -57,6 +57,10 @@ public:
     bool isEditingCommandEnabled(const String& commandName);
     void resetStateBetweenTests();
 
+#if PLATFORM(IOS_FAMILY)
+    void screenIsBeingCaptured(WebCore::FrameIdentifier, CompletionHandler<void(bool)>&&);
+#endif
+
     void dumpPrivateClickMeasurement(CompletionHandler<void(const String&)>&&);
     void clearPrivateClickMeasurement(CompletionHandler<void()>&&);
     void setPrivateClickMeasurementOverrideTimer(bool value, CompletionHandler<void()>&&);
@@ -79,8 +83,8 @@ public:
     void waitForWheelEventsToCompleteForTesting(bool expectMomentumEnd, CompletionHandler<void()>&&);
 
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
-    void NODELETE setIndexOfGetDisplayMediaDeviceSelectedForTesting(std::optional<unsigned>);
-    void NODELETE setSystemCanPromptForGetDisplayMediaForTesting(bool);
+    void LEGACY_NODELETE setIndexOfGetDisplayMediaDeviceSelectedForTesting(std::optional<unsigned>);
+    void LEGACY_NODELETE setSystemCanPromptForGetDisplayMediaForTesting(bool);
 #endif
 
     void setObscuredContentInsets(float top, float right, float bottom, float left, CompletionHandler<void()>&&);

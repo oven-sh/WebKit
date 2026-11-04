@@ -1,0 +1,80 @@
+# In a program of more than four times MaxWarmCodeValues the classes are read off the structure: a function that four functions call runs often, a loop in any function is warm,
+# and the rest is cold, however often the estimate expects it to run: also what a loop calls and few others. A caller that runs once and an async caller do not count.
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat limit=MaxWarmCodeValues:1
+# RUN: pipeline EstimateHeat
+# CHECK: f1 Cold 10 1
+# CHECK-NEXT: f2 Hot 90 100
+# CHECK-NEXT: f3 Cold 10 1
+# CHECK-NEXT: f4 Cold 10 1
+# CHECK: thresholds: cold=4 hot=50
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect v0 function=f4
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = CallDirect v0 function=f1
+    v6 = CallDirect v0 function=f5
+    v7 = CallDirect v0 function=f6
+    v8 = CallDirect v0 function=f7
+    v9 = CallDirect v0 function=f8
+    v10 = CallDirect v0 function=f9
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+
+function f1 name="calledInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f2 name="calledByFourFunctions" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f3 name="calledByThreeFunctionsAndByOneThatRunsOnce" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f4 name="calledByThreeFunctionsAndByAnAsyncOne" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f5 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f2
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect v0 function=f4
+    Return v0
+}
+
+function f6 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f2
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect v0 function=f4
+    Return v0
+}
+
+function f7 name="thirdCaller" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f2
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect v0 function=f4
+    Return v0
+}
+
+function f8 name="fourthCaller" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f2
+    Return v0
+}
+
+function f9 name="asyncCaller" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f4
+    Return v0
+}

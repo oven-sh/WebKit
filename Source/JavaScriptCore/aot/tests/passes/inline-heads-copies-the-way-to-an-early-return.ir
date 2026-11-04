@@ -1,0 +1,23 @@
+# The callee tests what it was handed and returns at once, or goes on to a call. The test and the early Return are copied in front of the hot call. The other way out makes the call, and the function starts over
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineHeads
+# STATISTIC: SelectedHeadsFound = 1
+# STATISTIC: SelectedHeadsInlined = 1
+
+# CHECK-LABEL: function f0 name="caller"
+# CHECK: b0(v0: anything, v1: function):
+# CHECK-NEXT: Jump -> next [[head]]()
+# CHECK: [[join]]([[result]]: anything):
+# CHECK-NEXT: = Call v1, -, [[result]]
+# CHECK: [[calls]]() frequency=Unlikely:
+# CHECK-NEXT: [[called]]: anything = CallDirect v0, v1 function=f1 [isAfterInlinedHead]
+# CHECK-NEXT: Jump -> next [[join]]([[called]])
+# CHECK: [[head]]():
+# CHECK-NEXT: [[test]]: boolean = TypeTest v0 testedType=i32
+# CHECK-NEXT: Branch [[test]] -> taken [[returns]](), notTaken [[calls]]()
+# CHECK: [[returns]]():
+# CHECK-NEXT: Jump -> next [[join]](v0)
+# CHECK-LABEL: function f1 name="early"
+# CHECK: Return v0
+# PROGRAM-OF: inline-heads-leaves-a-call-that-is-not-hot.ir

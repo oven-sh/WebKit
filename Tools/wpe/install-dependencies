@@ -47,15 +47,15 @@ function installDependencies {
 }
 
 function installDependenciesWithApt {
-    apt-get install -y --no-install-recommends "$@" ${PACKAGES[@]}
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" ${PACKAGES[@]}
 }
 
 function installDependenciesWithDnf {
-    dnf install "$@" ${PACKAGES[@]}
+    dnf install -y "$@" ${PACKAGES[@]}
 }
 
 function installDependenciesWithPacman {
-    pacman -S --needed "$@" ${PACKAGES[@]}
+    pacman -S --needed --noconfirm "$@" ${PACKAGES[@]}
 
     cat <<-EOF
 

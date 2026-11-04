@@ -157,6 +157,15 @@ struct ArgumentValueProfile : public ValueProfileBase<1, 1> {
 };
 
 struct ValueProfileAndVirtualRegister : public ValueProfile {
+    // An empty bucket means no sample, so the empty value goes to the prediction: a sampled operand never predicts SpecNone.
+    void sample(JSValue value)
+    {
+        if (value)
+            m_buckets[0] = JSValue::encode(value);
+        else
+            mergeSpeculation(m_prediction, SpecEmpty);
+    }
+
     VirtualRegister m_operand;
 };
 

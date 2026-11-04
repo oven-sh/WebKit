@@ -367,7 +367,7 @@ void InspectorPageAgent::overridePrefersColorScheme(std::optional<Inspector::Pro
 #endif
 }
 
-static Inspector::Protocol::Page::CookieSameSitePolicy NODELETE cookieSameSitePolicyJSON(Cookie::SameSitePolicy policy)
+static Inspector::Protocol::Page::CookieSameSitePolicy LEGACY_NODELETE cookieSameSitePolicyJSON(Cookie::SameSitePolicy policy)
 {
     switch (policy) {
     case Cookie::SameSitePolicy::None:
@@ -436,7 +436,7 @@ Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::Page::
 
         for (auto& url : allResourcesURLsForFrame(localFrame)) {
             Vector<Cookie> rawCookiesForURLInDocument;
-            if (!document->page()->cookieJar().getRawCookies(*document, url, rawCookiesForURLInDocument))
+            if (!protect(document->page()->cookieJar())->getRawCookies(*document, url, rawCookiesForURLInDocument))
                 continue;
 
             for (auto& rawCookieForURLInDocument : rawCookiesForURLInDocument)
@@ -842,7 +842,12 @@ void InspectorPageAgent::didClearWindowObjectInWorld(LocalFrame& frame, DOMWrapp
             return;
     }
 
-    frame.script().evaluateIgnoringException(ScriptSourceCode(m_bootstrapScript, JSC::SourceTaintedOrigin::Untainted, URL { "web-inspector://bootstrap.js"_str }));
+    evaluateBootstrapScript(frame, m_bootstrapScript);
+}
+
+void InspectorPageAgent::evaluateBootstrapScript(LocalFrame& frame, const String& source)
+{
+    protect(frame.script())->evaluateIgnoringException(ScriptSourceCode(source, JSC::SourceTaintedOrigin::Untainted, URL { "web-inspector://bootstrap.js"_str }));
 }
 
 void InspectorPageAgent::didPaint(RenderObject& renderer, const LayoutRect& rect)
@@ -850,7 +855,8 @@ void InspectorPageAgent::didPaint(RenderObject& renderer, const LayoutRect& rect
     if (!m_showPaintRects)
         return;
 
-    LayoutRect absoluteRect = LayoutRect(renderer.localToAbsoluteQuad(FloatRect(rect)).boundingBox());
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST LayoutRect absoluteRect = LayoutRect(renderer.localToAbsoluteQuad(FloatRect(rect)).boundingBox());
     RefPtr view = protect(renderer.document())->view();
 
     LayoutRect rootRect = absoluteRect;
@@ -1044,18 +1050,22 @@ Inspector::Protocol::ErrorStringOr<String> InspectorPageAgent::snapshotRect(int 
 }
 
 #if ENABLE(WEB_ARCHIVE) && USE(CF)
-Inspector::Protocol::ErrorStringOr<String> InspectorPageAgent::archive()
+void InspectorPageAgent::archive(Ref<ArchiveCallback>&& callback)
 {
     RefPtr localMainFrame = m_inspectedPage->localMainFrame();
-    if (!localMainFrame)
-        return makeUnexpected("Main frame isn't local"_s);
+    if (!localMainFrame) {
+        callback->sendFailure("Main frame isn't local"_s);
+        return;
+    }
 
     auto archive = LegacyWebArchive::create(*localMainFrame);
-    if (!archive)
-        return makeUnexpected("Could not create web archive for main frame"_s);
+    if (!archive) {
+        callback->sendFailure("Could not create web archive for main frame"_s);
+        return;
+    }
 
     RetainPtr<CFDataRef> buffer = archive->rawDataRepresentation();
-    return base64EncodeToString(span(buffer.get()));
+    callback->sendSuccess(base64EncodeToString(span(buffer.get())));
 }
 #endif
 

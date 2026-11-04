@@ -109,7 +109,7 @@ private:
     class TrackObserver;
     class TrackObserverWrapper : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<TrackObserverWrapper> {
     public:
-        static Ref<TrackObserverWrapper> create(ScriptExecutionContext&, MediaStreamTrackProcessor&, MediaStreamTrackHandle&);
+        static Ref<TrackObserverWrapper> LEGACY_NODELETE create(ScriptExecutionContext&, MediaStreamTrackProcessor&, MediaStreamTrackHandle&);
         ~TrackObserverWrapper()
         {
             ASSERT(m_isStopped);
@@ -178,7 +178,7 @@ private:
         void videoFrameAvailable(VideoFrame&, VideoFrameTimeMetadata) final;
 
         bool m_isStarted WTF_GUARDED_BY_CAPABILITY(mainThread) { false };
-        RefPtr<RealtimeMediaSource> m_realtimeVideoSource WTF_GUARDED_BY_CAPABILITY(mainThread);
+        const RefPtr<RealtimeMediaSource> m_realtimeVideoSource WTF_GUARDED_BY_CAPABILITY(mainThread);
 
         // Accessed on either thread
         const ScriptExecutionContextIdentifier m_contextIdentifier;
@@ -203,7 +203,7 @@ private:
 
     bool m_isTrackEnded { false };
     RefPtr<const MediaStreamTrack::Keeper> m_trackKeeper;
-    RefPtr<ReadableStream> m_readable;
+    const RefPtr<ReadableStream> m_readable;
     const std::unique_ptr<Source> m_readableStreamSource;
     RefPtr<VideoFrameObserverWrapper> m_videoFrameObserverWrapper;
     const Ref<TrackObserverWrapper> m_trackObserver;

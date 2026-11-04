@@ -1,0 +1,36 @@
+# However many texts flow names for one call, each is a candidate: 65 at one call, 64 at another
+# FORM: AsRead
+# RUN: pipeline CollectRegExpLiterals
+# OPTIONS: only-passes=AnalyzeFlow
+# STATISTIC: CollectRegExpLiteralsChanges = 129
+# CHECK: regexp requests: 129
+# CHECK-COUNT-65: candidate "many{{*}}+" flags=- sites=f1:v2
+# CHECK-COUNT-64: candidate "few{{*}}+" flags=- sites=f2:v2
+# CHECK-NEXT: module m0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+# REPEAT: i = 0..64
+    v%(i*2) = String string="many%(i)+"
+    v%(i*2+1) = CallDirect v%(i*2) function=f1
+# END REPEAT
+# REPEAT: i = 0..63
+    v%(i*2+130) = String string="few%(i)+"
+    v%(i*2+131) = CallDirect v%(i*2+130) function=f2
+# END REPEAT
+    Return
+}
+
+function f1 name="manyTexts" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0 @10
+    Return v2
+}
+
+function f2 name="oneTextFewer" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0 @20
+    Return v2
+}

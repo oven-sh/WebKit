@@ -1,0 +1,58 @@
+# A slot read whose guard comes from a test in front of the cold code stays in its function: a guard cannot be passed to a shared body
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 2
+# STATISTIC: ColdSitesOutlined = 12
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Holder" fields=[{key="target" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+function f0 name="guardFromOutside" parameters=[{type=number}, {type=object}, {type=anything}] results=[{type=anything}] {
+    v3 = ShapeTest v1 layouts=[L0]
+    Branch v3 -> taken b1(| 0), notTaken b8()
+  b1(v4):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), otherwise b8()
+# REPEAT: i = 2..7
+  b%(i)() frequency=Rare:
+    v%(i*3-1) = String string="fatal"
+    v%(i*3) = GetSlot v1, v4 key="target" receivers=[L0] level=Expected
+    v%(i*3+1) = CallMethod v%(i*3), v%(i*3-1), v%(i*3-1), v%(i*3-1), v%(i*3-1), v2 key="fail"
+    Return v%(i*3+1)
+# END REPEAT
+  b8():
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK: b1([[guard]]: guard):
+# CHECK-NOT: CallMethod
+# CHECK: [[target]]: anything = GetSlot v1, [[guard]] key="target"
+# CHECK-NEXT: = CallDirect [[target]], v2 function=f2
+# CHECK-COUNT-5: = GetSlot v1, [[guard]] key="target"
+# CHECK-NOT: CallMethod
+
+function f1 name="provenReceiver" parameters=[{type=number}, {type=L0}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*3) = String string="fatal"
+    v%(i*3+1) = GetSlot v1 key="target" receivers=[L0] level=Proven
+    v%(i*3+2) = CallMethod v%(i*3+1), v%(i*3), v%(i*3), v%(i*3), v%(i*3), v2 key="fail"
+    Return v%(i*3+2)
+# END REPEAT
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: GetSlot
+# CHECK-COUNT-6: anything = CallDirect v1, v2 function=f3
+# CHECK-NOT: GetSlot
+
+# CHECK-LABEL: function f2 {{*}}role=OutlinedBody
+# CHECK-NOT: guard
+# CHECK-NOT: GetSlot
+# CHECK: = CallMethod v0, {{*}}, v1 key="fail"
+# CHECK-LABEL: function f3 {{*}}role=OutlinedBody
+# CHECK: [[slot]]: anything = GetSlot v0 key="target" receivers=[L0] level=Proven
+# CHECK-NEXT: = CallMethod [[slot]], {{*}}, v1 key="fail"

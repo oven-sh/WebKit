@@ -73,9 +73,9 @@ protected:
     explicit CaretBase(CaretVisibility = CaretVisibility::Hidden);
 
     void invalidateCaretRect(Node*, bool caretRectChanged = false, CaretAnimator* = nullptr);
-    void NODELETE clearCaretRect();
+    void LEGACY_NODELETE clearCaretRect();
     bool updateCaretRect(Document&, const VisiblePosition& caretPosition);
-    bool NODELETE shouldRepaintCaret(const RenderView*, bool isContentEditable) const;
+    bool LEGACY_NODELETE shouldRepaintCaret(const RenderView*, bool isContentEditable) const;
     void paintCaret(const Node&, GraphicsContext&, const LayoutPoint&, CaretAnimator*) const;
 
     const LayoutRect& localCaretRectWithoutUpdate() const LIFETIME_BOUND { return m_caretLocalRect; }
@@ -110,7 +110,8 @@ public:
     void setCaretPosition(const VisiblePosition&);
     void clear() { setCaretPosition(VisiblePosition()); }
     WEBCORE_EXPORT IntRect caretRectInRootViewCoordinates() const;
-    WEBCORE_EXPORT IntRect editableElementRectInRootViewCoordinates() const;
+    WEBCORE_EXPORT IntRect caretRectInMainFrameViewCoordinates() const;
+    WEBCORE_EXPORT IntRect editableElementRectInMainFrameViewCoordinates() const;
 
     void nodeWillBeRemoved(Node&);
 
@@ -228,7 +229,7 @@ public:
 
     // Used to suspend caret blinking while the mouse is down.
     WEBCORE_EXPORT void setCaretBlinkingSuspended(bool);
-    WEBCORE_EXPORT bool NODELETE isCaretBlinkingSuspended() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE isCaretBlinkingSuspended() const;
 
 #if ENABLE(ACCESSIBILITY_NON_BLINKING_CURSOR)
     WEBCORE_EXPORT void setPrefersNonBlinkingCursor(bool);
@@ -236,7 +237,7 @@ public:
 
     WEBCORE_EXPORT void setFocused(bool);
     bool isFocused() const { return m_focused; }
-    WEBCORE_EXPORT bool NODELETE isFocusedAndActive() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE isFocusedAndActive() const;
     void pageActivationChanged();
 
     WEBCORE_EXPORT void updateAppearance();
@@ -314,7 +315,7 @@ private:
     void updateDataDetectorsForSelection();
 
     bool setSelectionWithoutUpdatingAppearance(const VisibleSelection&, OptionSet<SetSelectionOption>, CursorAlignOnScroll, TextGranularity);
-    void NODELETE setNodeFlags(VisibleSelection&, bool value);
+    void LEGACY_NODELETE setNodeFlags(VisibleSelection&, bool value);
 
     void respondToNodeModification(Node&, bool anchorRemoved, bool focusRemoved, bool baseRemoved, bool extentRemoved, bool startRemoved, bool endRemoved);
     TextDirection directionOfEnclosingBlock();
@@ -356,7 +357,7 @@ private:
 
     void caretAnimationDidUpdate(CaretAnimator&) final;
 
-    Document* NODELETE document() final;
+    Document* LEGACY_NODELETE document() final;
 
     Node* caretNode() final;
 

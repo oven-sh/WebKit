@@ -1,0 +1,43 @@
+# The copy of a site does not join the tested code in front of a later site that takes its result: the later site takes the result of the fast operation with its type, and the copy goes on with the result of the call by name
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# STATISTIC: StretchesGuarded = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="resultOfTestedCall" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Object" [isFreeName]
+    v2: anything ~ builtin(Object) = Upcast v1 castType=anything
+    v3 = PropGet v2 key="getOwnPropertyNames"
+    v4: anything ~ builtin(ObjectGetOwnPropertyNames) = Upcast v3 castType=anything
+    v5 = Builtin builtin=ObjectPrototype
+    v6 = Call v4, v2, v5 calleeKey="getOwnPropertyNames" calleeName="getOwnPropertyNames"
+    v7 = PropGet v2 key="getOwnPropertyNames"
+    v8: anything ~ builtin(ObjectGetOwnPropertyNames) = Upcast v7 castType=anything
+    v9 = Call v8, v2, v6 calleeKey="getOwnPropertyNames" calleeName="getOwnPropertyNames"
+    Return v9
+# CHECK: [[names]]: Array<string> = CallBuiltin -, {{*}} overload=ObjectGetOwnPropertyNames/0
+# CHECK: [[converted]]: Array<string> = ToObject [[names]]
+# CHECK-NEXT: : Array<string> = CallBuiltin -, [[converted]] overload=ObjectGetOwnPropertyNames/0
+# CHECK-NEXT: Return
+# CHECK: [[namesInCopy]]: anything = Call {{*}} calleeKey="getOwnPropertyNames"
+# CHECK: Jump -> next [[behindCall]]([[namesInCopy]], {{*}})
+# CHECK: [[behindCall]]({{*}}: anything{{*}}) frequency=Unlikely:
+# CHECK: : anything = Call {{*}} calleeKey="getOwnPropertyNames"
+# CHECK-NEXT: Return
+}
+
+function f1 name="resultOfProvenCall" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Object" [isFreeName]
+    v2: anything ~ builtin(Object) = Upcast v1 castType=anything
+    v3 = Null
+    v4 = CallBuiltin -, v3 overload=ObjectCreate/0
+    v5 = PropGet v2 key="getOwnPropertyNames"
+    v6: anything ~ builtin(ObjectGetOwnPropertyNames) = Upcast v5 castType=anything
+    v7 = Call v6, v2, v4 calleeKey="getOwnPropertyNames" calleeName="getOwnPropertyNames"
+    Return v7
+# CHECK-NOT: ToObject
+# CHECK: : Array<string> = CallBuiltin -, v4 overload=ObjectGetOwnPropertyNames/0
+# CHECK-NOT: ToObject
+}

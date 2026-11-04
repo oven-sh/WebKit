@@ -29,8 +29,9 @@
 #include "GPUIntegralTypes.h"
 #include "GPUMapMode.h"
 #include "JSDOMPromiseDeferredForward.h"
-#include "WebGPUBuffer.h"
 #include <JavaScriptCore/ArrayBuffer.h>
+#include <WebCore/WebGPUCppAPI.h>
+#include <atomic>
 #include <cstdint>
 #include <optional>
 #include <wtf/HashSet.h>
@@ -50,12 +51,12 @@ template<typename> class ExceptionOr;
 
 class GPUBuffer : public RefCountedAndCanMakeWeakPtr<GPUBuffer> {
 public:
-    static Ref<GPUBuffer> create(Ref<WebGPU::Buffer>&& backing, size_t bufferSize, GPUBufferUsageFlags usage, bool mappedAtCreation, GPUDevice& device)
+    static Ref<GPUBuffer> create(Ref<::WebGPU::Buffer>&& backing, size_t bufferSize, GPUBufferUsageFlags usage, bool mappedAtCreation, String&& label, GPUDevice& device)
     {
-        return adoptRef(*new GPUBuffer(WTF::move(backing), bufferSize, usage, mappedAtCreation, device));
+        return adoptRef(*new GPUBuffer(WTF::move(backing), bufferSize, usage, mappedAtCreation, WTF::move(label), device));
     }
 
-    String NODELETE label() const;
+    String LEGACY_NODELETE label() const;
     void setLabel(String&&);
 
     using MapAsyncPromise = DOMPromiseDeferred<void>;
@@ -65,25 +66,30 @@ public:
 
     void destroy(ScriptExecutionContext&);
 
-    WebGPU::Buffer& backing() { return m_backing; }
-    const WebGPU::Buffer& backing() const { return m_backing; }
+    ::WebGPU::Buffer& backing() { return m_backing; }
+    const ::WebGPU::Buffer& backing() const { return m_backing; }
 
-    GPUDevice* device() const;
+    GPUDevice* LEGACY_NODELETE device() const;
 
     GPUSize64 size() const { return static_cast<GPUSize64>(m_bufferSize); }
     GPUBufferUsageFlags usage() const { return m_usage; }
 
     GPUBufferMapState mapState() const { return m_mapState; };
 
+    // The GPU memory to tell the GC about, since it can't otherwise see it. May be called from GC threads.
+    size_t memoryCost() const { return m_memoryCost.load(std::memory_order_relaxed); }
+    void setMemoryCost(size_t memoryCost) { m_memoryCost.store(memoryCost, std::memory_order_relaxed); }
+
     ~GPUBuffer();
 
     bool hasActiveInspectorCanvasCallTracer() const;
 
 private:
-    GPUBuffer(Ref<WebGPU::Buffer>&&, size_t, GPUBufferUsageFlags, bool, GPUDevice&);
+    GPUBuffer(Ref<::WebGPU::Buffer>&&, size_t, GPUBufferUsageFlags, bool, String&& label, GPUDevice&);
     void internalUnmap(ScriptExecutionContext&);
 
-    const Ref<WebGPU::Buffer> m_backing;
+    const Ref<::WebGPU::Buffer> m_backing;
+    String m_label;
     struct ArrayBufferWithOffset {
         RefPtr<JSC::ArrayBuffer> buffer;
         size_t offset { 0 };
@@ -101,6 +107,7 @@ private:
     HashSet<size_t, DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>> m_mappedPoints;
     bool m_destroyed { false };
     bool m_mappedAtCreation { false };
+    std::atomic<size_t> m_memoryCost { 0 }; // Atomic, accessed from arbitrary thread by GC.
 };
 
 }

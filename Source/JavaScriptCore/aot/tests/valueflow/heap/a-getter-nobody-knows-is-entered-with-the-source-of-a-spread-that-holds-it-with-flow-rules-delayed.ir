@@ -1,0 +1,34 @@
+# const odd = { x: 1 }; Object.defineProperty(odd, "x", described); const plain = { y: 1 }; let picked = odd; picked = plain; const copy = { ...picked }
+# The spread reads every property of its source. The getter that the descriptor may hold is code that nobody describes, and it is entered with the object that holds it.
+# The other source holds no getter: it reaches no such code.
+# a-getter-nobody-knows-is-entered-with-the-source-of-a-spread-that-holds-it.ir with another order of the rules: the answer is the same.
+# OPTIONS: testing=DelayFlowRules
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Odd"{{*}}impossibleMutations=[ReachUnknownJavaScript,
+# CHECK: layout L1 name="Plain"{{*}}impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript,
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Odd" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Plain" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Copy"
+variable g0 name="picked" module=m0 declared={type=anything}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="described" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectDefineProperty
+    v6 = String string="x"
+    v7 = Call v5, v4, v3, v6, v1
+    v8 = NewObject -, v2 layout=L1 fields=[0]
+    PutModuleVariable v3 variable=g0
+    PutModuleVariable v8 variable=g0
+    v11 = GetModuleVariable variable=g0
+    v12 = NewObject layout=L2
+    CopyDataProperties v12, v11
+    v14 = FinishObject v12
+    v15 = PropGet v14 key="y"
+    Return v15
+}

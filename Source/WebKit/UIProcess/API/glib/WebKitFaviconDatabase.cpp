@@ -29,10 +29,11 @@
 #include <glib/gi18n-lib.h>
 #include <wtf/FileSystem.h>
 #include <wtf/RunLoop.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
-#include <wtf/text/CStringView.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if PLATFORM(GTK)
 #include "GtkUtilities.h"
@@ -144,7 +145,7 @@ void webkitFaviconDatabaseGetLoadDecisionForIcon(WebKitFaviconDatabase* database
 
 #if PLATFORM(GTK)
             if (found && changed)
-                g_signal_emit(database.get(), signals[FAVICON_CHANGED], 0, pageURL.utf8().legacyCStringPointer(), url.utf8().legacyCStringPointer());
+                gSignalEmit(database.get(), signals[FAVICON_CHANGED], 0, pageURL.utf8(), url.utf8());
 #else
             UNUSED_PARAM(changed);
 #endif
@@ -165,7 +166,7 @@ void webkitFaviconDatabaseSetIconForPageURL(WebKitFaviconDatabase* database, con
                 return;
 
 #if PLATFORM(GTK)
-            g_signal_emit(database.get(), signals[FAVICON_CHANGED], 0, pageURL.utf8().legacyCStringPointer(), url.utf8().legacyCStringPointer());
+            gSignalEmit(database.get(), signals[FAVICON_CHANGED], 0, pageURL.utf8(), url.utf8());
 #endif
         });
 }
@@ -184,7 +185,7 @@ GQuark webkit_favicon_database_error_quark(void)
 }
 
 #if PLATFORM(GTK)
-void webkitFaviconDatabaseGetFaviconInternal(WebKitFaviconDatabase* database, const gchar* pageURI, bool isEphemeral, GCancellable* cancellable, GAsyncReadyCallback callback, gpointer userData)
+void webkitFaviconDatabaseGetFaviconInternal(WebKitFaviconDatabase* database, UTF8CStringView pageURI, bool isEphemeral, GCancellable* cancellable, GAsyncReadyCallback callback, gpointer userData)
 {
     if (!webkitFaviconDatabaseIsOpen(database)) {
         g_task_report_new_error(database, callback, userData, 0,
@@ -192,19 +193,19 @@ void webkitFaviconDatabaseGetFaviconInternal(WebKitFaviconDatabase* database, co
         return;
     }
 
-    if (startsWith(CStringView::unsafeFromUTF8(pageURI).span(), "about:"_s)) {
+    if (startsWith(pageURI.span(), "about:"_s)) {
         g_task_report_new_error(database, callback, userData, 0,
-            WEBKIT_FAVICON_DATABASE_ERROR, WEBKIT_FAVICON_DATABASE_ERROR_FAVICON_NOT_FOUND, _("Page %s does not have a favicon"), pageURI);
+            WEBKIT_FAVICON_DATABASE_ERROR, WEBKIT_FAVICON_DATABASE_ERROR_FAVICON_NOT_FOUND, _("Page %s does not have a favicon"), pageURI.utf8());
         return;
     }
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(database, cancellable, callback, userData));
     WebKitFaviconDatabasePrivate* priv = database->priv;
-    priv->iconDatabase->loadIconsForPageURL(String::fromUTF8(pageURI), isEphemeral ? IconDatabase::AllowDatabaseWrite::No : IconDatabase::AllowDatabaseWrite::Yes,
-        [task = WTF::move(task), pageURI = CString(pageURI)](Vector<PlatformImagePtr>&& icons) {
+    priv->iconDatabase->loadIconsForPageURL(String::fromUTF8(pageURI.span()), isEphemeral ? IconDatabase::AllowDatabaseWrite::No : IconDatabase::AllowDatabaseWrite::Yes,
+        [task = WTF::move(task), pageURI = UTF8CString { pageURI.span() }](Vector<PlatformImagePtr>&& icons) {
             if (icons.isEmpty()) {
-                g_task_return_new_error(task.get(), WEBKIT_FAVICON_DATABASE_ERROR, WEBKIT_FAVICON_DATABASE_ERROR_FAVICON_UNKNOWN,
-                    _("Unknown favicon for page %s"), pageURI.data());
+                SAFE_G_TASK_RETURN_NEW_ERROR(task.get(), WEBKIT_FAVICON_DATABASE_ERROR, WEBKIT_FAVICON_DATABASE_ERROR_FAVICON_UNKNOWN,
+                    _("Unknown favicon for page %s"), pageURI);
                 return;
             }
             auto& icon = icons.last();
@@ -219,7 +220,7 @@ void webkit_favicon_database_get_favicon(WebKitFaviconDatabase* database, const 
     g_return_if_fail(WEBKIT_IS_FAVICON_DATABASE(database));
     g_return_if_fail(pageURI);
 
-    webkitFaviconDatabaseGetFaviconInternal(database, pageURI, false, cancellable, callback, userData);
+    webkitFaviconDatabaseGetFaviconInternal(database, UTF8CStringView::unsafeFromUTF8(pageURI), false, cancellable, callback, userData);
 }
 
 #if USE(GTK4)
@@ -260,7 +261,7 @@ gchar* webkit_favicon_database_get_favicon_uri(WebKitFaviconDatabase* database, 
     if (iconURLsForPageURL.isEmpty())
         return nullptr;
 
-    return g_strdup(iconURLsForPageURL.last().utf8().legacyCStringPointer());
+    return gStrdup(iconURLsForPageURL.last().utf8());
 }
 #endif // PLATFORM(GTK)
 

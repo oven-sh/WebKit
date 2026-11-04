@@ -139,6 +139,11 @@ size_t normalizePrototypeChain(JSGlobalObject* globalObject, JSCell* base, bool&
                 return InvalidPrototypeChain;
             structure->flattenDictionaryStructure(vm, asObject(current));
         }
+#if ENABLE(AOT)
+        // A compiled object keeps its Structure when it is frozen and when one of many extra properties becomes an accessor.
+        if (structure->isCompiledStructure()) [[unlikely]]
+            return InvalidPrototypeChain;
+#endif
 
         ++count;
     }

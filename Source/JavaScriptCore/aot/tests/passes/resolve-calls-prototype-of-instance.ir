@@ -1,0 +1,90 @@
+# A lookup that starts at the prototype of an object of known layouts finds what a lookup that misses on the object goes on to find
+# FORM: Prepared
+# RUN: pass ResolveCalls
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Widget" constructor=f0 fields=[{key="size" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="area" kind=Getter function=f1 mutability=Fixed}, {key="render" kind=Method function=f2 mutability=Fixed}, {key="changes" kind=Getter function=f1}]}
+layout L1 kind=Instance name="Moved" constructor=f3 fields=[{key="size" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="area" kind=Getter function=f1 mutability=Fixed}]}
+
+function f0 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="area" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=number}] {
+    v1 = Integer integer=1
+    Return v1
+}
+function f2 name="render" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=number}] {
+    v1 = Integer integer=2
+    Return v1
+}
+function f3 name="Moved" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f4 name="getter" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSuperBase v0 homeKind=Object
+    v2 = SuperGet v1, v0 key="area"
+    Return v2
+# CHECK-NOT: SuperGet
+# CHECK: = CallDirect v0 function=f1
+}
+
+function f5 name="getterBehindTheTestForAPrototype" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSuperBase v0 homeKind=Object
+    v2 = TypeTest v1 testedType=object
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = SuperGet v3, v0 key="area"
+    Return v4
+  b2(v5):
+    v6 = Undefined
+    Return v6
+# CHECK-NOT: SuperGet
+# CHECK: = CallDirect v0 function=f1
+}
+
+function f6 name="nothingUnderTheName" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSuperBase v0 homeKind=Object
+    v2 = SuperGet v1, v0 key="missing"
+    Return v2
+# CHECK-NOT: SuperGet
+# CHECK: = Undefined
+}
+
+function f7 name="methodIsReadAsAValue" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSuperBase v0 homeKind=Object
+    v2 = SuperGet v1, v0 key="render"
+    Return v2
+# CHECK: v2:{{*}}= SuperGet v1, v0 key="render"
+}
+
+function f8 name="getterMayChange" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSuperBase v0 homeKind=Object
+    v2 = SuperGet v1, v0 key="changes"
+    Return v2
+# CHECK: v2:{{*}}= SuperGet v1, v0 key="changes"
+}
+
+function f9 name="prototypeOfTheObjectMayChange" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = GetSuperBase v0 homeKind=Object
+    v2 = SuperGet v1, v0 key="area"
+    Return v2
+# CHECK: [[keepsPrototype]]: boolean = AreMembersUnchanged conditions=[{{*}}layout=L1{{*}}key="area"}]
+# CHECK-NEXT: Branch [[keepsPrototype]] -> taken [[kept]](), notTaken [[moved]]()
+# CHECK: [[kept]]():
+# CHECK-NEXT: = CallDirect v0 function=f1
+# CHECK: [[moved]]() frequency=Unlikely:
+# CHECK-NEXT: = SuperGet v1, v0 key="area"
+}
+
+function f10 name="layoutOfTheObjectIsOnlyExpected" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = GetSuperBase v0 homeKind=Object
+    v2 = SuperGet v1, v0 key="area"
+    Return v2
+# CHECK: v2:{{*}}= SuperGet v1, v0 key="area"
+}
+
+function f11 name="anotherObjectIsTheReceiver" parameters=[{type=L0}, {type=object}] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperGet v2, v1 key="area"
+    Return v3
+# CHECK-NOT: SuperGet
+# CHECK: = CallDirect v1 function=f1
+}

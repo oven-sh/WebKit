@@ -51,6 +51,11 @@ WI.CanvasObserver = class CanvasObserver extends InspectorBackend.Dispatcher
         WI.canvasManager.canvasMemoryChanged(this._target, canvasId, memoryCost);
     }
 
+    canvasNameChanged(canvasId, name)
+    {
+        WI.canvasManager.canvasNameChanged(this._target, canvasId, name);
+    }
+
     nodesChanged(canvasId)
     {
         WI.canvasManager.nodesChanged(this._target, canvasId);
@@ -101,6 +106,11 @@ WI.CanvasObserver = class CanvasObserver extends InspectorBackend.Dispatcher
     programDeleted(programId)
     {
         WI.canvasManager.programDeleted(this._target, programId);
+    }
+
+    programNameChanged(programId, name)
+    {
+        WI.canvasManager.programNameChanged(this._target, programId, name);
     }
 
     // COMPATIBILITY (macOS X.Y, iOS X.Y): `Canvas.clientNodesChanged` was renamed to `Canvas.cssCanvasClientNodesChanged`.

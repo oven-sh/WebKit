@@ -28,6 +28,7 @@
 #include "Structure.h"
 #include <wtf/PrintStream.h>
 #include <wtf/StringHashDumpContext.h>
+#include <wtf/text/UTF8CStringView.h>
 
 namespace JSC {
 
@@ -37,9 +38,9 @@ struct DumpContext {
     DumpContext();
     ~DumpContext();
     
-    bool NODELETE isEmpty() const;
+    bool LEGACY_NODELETE isEmpty() const;
     
-    void dump(PrintStream&, const char* prefix = "") const;
+    void dump(PrintStream&, UTF8CStringView prefix = ""_s) const;
     
     StringHashDumpContext<Structure> structures;
     DFG::Graph* graph;

@@ -1,0 +1,16 @@
+# Balanced code calls the stub that finds or creates the cell of a key: the load, the test and the arm that creates the cell stand in fast code alone
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: generate-code calls
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="inNormalCode" results=[{type=anything}] {
+    v0 = KeyConstant key=@@iterator
+    Return v0
+}
+# CHECK: f0: size={{*}}
+# CHECK-NEXT: stub CreateConstant.Key x1
+# X64: f0: size=11 frame

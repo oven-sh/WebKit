@@ -54,7 +54,7 @@ public:
     void updateDocument();
 
     DOMWindow& wrapped() const { return m_wrapped; }
-    Document* NODELETE scriptExecutionContext() const;
+    Document* LEGACY_NODELETE scriptExecutionContext() const;
 
     // Called just before removing this window from the JSWindowProxy.
     void willRemoveFromWindowProxy();
@@ -64,28 +64,28 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSValue prototype);
 
     static bool supportsRichSourceInfo(const JSC::JSGlobalObject*);
-    static bool NODELETE shouldInterruptScript(const JSC::JSGlobalObject*);
+    static bool LEGACY_NODELETE shouldInterruptScript(const JSC::JSGlobalObject*);
     static bool shouldInterruptScriptBeforeTimeout(const JSC::JSGlobalObject*);
-    static JSC::RuntimeFlags NODELETE javaScriptRuntimeFlags(const JSC::JSGlobalObject*);
+    static JSC::RuntimeFlags LEGACY_NODELETE javaScriptRuntimeFlags(const JSC::JSGlobalObject*);
     static JSC::JSObject* currentScriptExecutionOwner(JSC::JSGlobalObject*);
-    static JSC::ScriptExecutionStatus NODELETE scriptExecutionStatus(JSC::JSGlobalObject*, JSC::JSObject*);
+    static JSC::ScriptExecutionStatus LEGACY_NODELETE scriptExecutionStatus(JSC::JSGlobalObject*, JSC::JSObject*);
     static void reportViolationForUnsafeEval(JSC::JSGlobalObject*, const String&);
 
     void printErrorMessage(const String&) const;
 
-    JSWindowProxy& NODELETE proxy() const;
+    JSWindowProxy& LEGACY_NODELETE proxy() const;
 
     static void fireFrameClearedWatchpointsForWindow(LocalDOMWindow*);
 
     void setCurrentEvent(Event*);
-    Event* NODELETE currentEvent() const;
+    Event* LEGACY_NODELETE currentEvent() const;
 
 protected:
     JSDOMWindowBase(JSC::VM&, JSC::Structure*, Ref<DOMWindow>&&, JSWindowProxy*);
     void finishCreation(JSC::VM&, JSWindowProxy*);
     void initStaticGlobals(JSC::VM&);
 
-    RefPtr<JSC::WatchpointSet> m_windowCloseWatchpoints;
+    const RefPtr<JSC::WatchpointSet> m_windowCloseWatchpoints;
 
     static const JSC::GlobalObjectMethodTable* globalObjectMethodTable();
 
@@ -113,8 +113,8 @@ inline JSDOMWindow* toJSDOMWindow(LocalFrame* frame, DOMWrapperWorld& world) { r
 LocalDOMWindow& incumbentDOMWindow(JSC::JSGlobalObject&, JSC::CallFrame&);
 LocalDOMWindow& incumbentDOMWindow(JSC::JSGlobalObject&);
 
-LocalDOMWindow& NODELETE activeDOMWindow(JSC::JSGlobalObject&);
-LocalDOMWindow& firstDOMWindow(JSC::JSGlobalObject&);
+LocalDOMWindow& LEGACY_NODELETE activeDOMWindow(JSC::JSGlobalObject&);
+LocalDOMWindow& LEGACY_NODELETE firstDOMWindow(JSC::JSGlobalObject&);
 
 LocalDOMWindow& legacyActiveDOMWindowForAccessor(JSC::JSGlobalObject&, JSC::CallFrame&);
 LocalDOMWindow& legacyActiveDOMWindowForAccessor(JSC::JSGlobalObject&);

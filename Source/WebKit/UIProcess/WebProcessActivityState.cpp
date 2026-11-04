@@ -127,7 +127,7 @@ void WebProcessActivityState::takeMutedCaptureAssertion()
 
     isMutedCaptureAssertion->setInvalidationHandler([weakPage = page] {
         auto invalidateCaptureAssertion = [](auto&& weakPage) {
-            if (auto* page = weakPage.get()) {
+            if (RefPtr page = weakPage.get()) {
                 RELEASE_LOG(ProcessSuspension, "Muted capture assertion is invalidated");
                 page->processActivityState().m_isMutedCaptureAssertion = nullptr;
             }

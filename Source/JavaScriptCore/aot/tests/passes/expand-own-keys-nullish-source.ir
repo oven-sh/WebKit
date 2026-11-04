@@ -1,0 +1,52 @@
+# Object.assign and a spread copy nothing from undefined and null: a source that may be nullish has an arm of its own, in front of the arms by layout. A source that is an object has none
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Empty"
+layout L1 name="Options" fields=[{key="a" declared={type=number}}, {key="b" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1]}]}
+
+function f0 name="assignFromOptionalSource" parameters=[{type=undefined|object}] results=[{type=anything}] {
+  b0(v0: undefined|object ~ undefined|L1):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = CallBuiltin -, v1, v0 overload=ObjectAssign/0
+    Return v2
+# CHECK: v1:{{*}}= NewObject layout=L0
+# CHECK-NEXT: [[isNullish0]]: boolean = TypeTest v0 testedType=undefined|null
+# CHECK-NEXT: Branch [[isNullish0]] -> taken [[nothing0]](| 0), notTaken
+# CHECK: [[done0]](v2:{{*}}):
+# CHECK-NEXT: Return v2
+# CHECK: [[nothing0]]({{*}}):
+# CHECK-NEXT: Jump -> next [[done0]](v1)
+# CHECK: = ShapeTest {{*}} layouts=[L1]
+# CHECK: PropSet v1, {{*}} key="a"
+# CHECK-NEXT: PropSet v1, {{*}} key="b"
+# CHECK-NEXT: Jump -> next [[done0]](v1)
+}
+
+function f1 name="spreadOfOptionalSource" parameters=[{type=null|object}] results=[{type=anything}] {
+  b0(v0: null|object ~ null|L1):
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+# CHECK: v1:{{*}}= NewObject layout=L0
+# CHECK-NEXT: [[isNullish1]]: boolean = TypeTest v0 testedType=undefined|null
+# CHECK-NEXT: Branch [[isNullish1]] -> taken [[nothing1]](| 0), notTaken
+# CHECK: [[done1]]():
+# CHECK-NEXT: = FinishObject v1
+# CHECK: [[nothing1]]({{*}}):
+# CHECK-NEXT: Jump -> next [[done1]]()
+# CHECK: PropDefine v1, {{*}} key="a"
+}
+
+function f2 name="assignFromObject" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L1):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = CallBuiltin -, v1, v0 overload=ObjectAssign/0
+    Return v2
+# CHECK-NOT: testedType=undefined|null
+# CHECK: PropSet v1, {{*}} key="a"
+}

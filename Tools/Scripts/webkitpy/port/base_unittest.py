@@ -290,6 +290,34 @@ class PortTest(unittest.TestCase):
         )
         self.assertEqual(port._build_path(), '/my-build-directory/Debug-embedded-port')
 
+    def test_arguments_for_configuration(self):
+        port = self.make_port(options=optparse.Values({'configuration': 'Release'}))
+        self.assertEqual(port._arguments_for_configuration(), ['--release'])
+
+        port = self.make_port(options=optparse.Values({'configuration': 'Debug', 'use_cmake': True, 'asan': True}))
+        self.assertEqual(port._arguments_for_configuration(), ['--debug', '--cmake', '--asan'])
+
+        port = self.make_port(options=optparse.Values({'configuration': 'Release', 'use_xcode': True}))
+        self.assertEqual(port._arguments_for_configuration(), ['--release', '--xcode'])
+
+    def test_run_browser_forwards_build_selection(self):
+        for run_browser in (Port.run_minibrowser, Port.run_swiftbrowser):
+            commands = []
+
+            def run_command(args, **kwargs):
+                commands.append(args)
+                return 0
+
+            port = self.make_port(options=optparse.Values({'configuration': 'Debug', 'platform': 'mac', 'use_xcode': True}))
+            port._executive.run_command = run_command
+            run_browser(port, ['https://webkit.org'])
+            self.assertEqual(commands[-1][1:], ['https://webkit.org', '--debug', '--xcode', '--mac'])
+
+            port = self.make_port(options=optparse.Values({'configuration': 'Release', 'platform': 'mac', 'use_cmake': True, 'asan': True}))
+            port._executive.run_command = run_command
+            run_browser(port, [])
+            self.assertEqual(commands[-1][1:], ['--release', '--cmake', '--asan', '--mac'])
+
     def test_jhbuild_wrapper(self):
         port = self.make_port(port_name='foo')
         port.port_name = 'foo'

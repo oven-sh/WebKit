@@ -9,6 +9,7 @@ PACKAGES=(
     cairo-devel
     clang
     cmake
+    enchant2-devel
     flite-devel
     gcc-c++
     gi-docgen
@@ -17,6 +18,8 @@ PACKAGES=(
     gstreamer1-devel
     gstreamer1-plugins-bad-free-devel
     gstreamer1-plugins-base-devel
+    harfbuzz-devel
+    hyphen-devel
     intltool
     libatomic
     libavif-devel
@@ -24,9 +27,11 @@ PACKAGES=(
     libepoxy-devel
     libevent-devel
     libgcrypt-devel
+    libinput-devel
     libjpeg-turbo-devel
     libjxl-devel
     libkate-devel
+    libmanette-devel
     libmount-devel
     libpng-devel
     libseccomp-devel
@@ -36,9 +41,9 @@ PACKAGES=(
     libtasn1-devel
     libvorbis-devel
     libv4l-devel
+    libva-devel
     libvpx-devel
     libwebp-devel
-    libwpe-devel
     libxkbcommon-x11-devel
     libxslt-devel
     mesa-libgbm-devel
@@ -50,6 +55,7 @@ PACKAGES=(
     opus-devel
     patch
     perl-autouse
+    perl-bignum
     perl-English
     perl-File-Copy-Recursive
     perl-FindBin
@@ -63,10 +69,10 @@ PACKAGES=(
     systemd-devel
     unifdef
     vulkan-volk-devel
+    xdg-dbus-proxy
     wayland-devel
     wayland-protocols-devel
     woff2-devel
-    wpebackend-fdo-devel
 
     # These are dependencies necessary for running tests.
     binutils
@@ -79,9 +85,8 @@ PACKAGES=(
     psmisc
     python3-legacy-cgi
     pulseaudio-utils
+    python3-gobject
     python3-psutil
-    rubygem-highline
-    rubygem-json
     time
 
     # These are dependencies necessary for building the jhbuild.

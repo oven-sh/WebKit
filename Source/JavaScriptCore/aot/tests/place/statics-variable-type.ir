@@ -1,0 +1,39 @@
+# A variable has an absent state only if it has a dead zone and a read may come before every store
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: plan-slots variables
+# RUN(PLACED): place statics
+
+module m0 path="a.ts" displayPath="a.ts" body=f0
+entry module=m0
+variable g0 name="readInDeadZone" module=m0 declared={type=number|absent}
+variable g1 name="storedBeforeEveryRead" module=m0 declared={type=number|absent}
+variable g2 name="startsUndefined" module=m0 declared={type=undefined|number} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    PutModuleVariable v2 variable=g1
+    v4 = CallDirect function=f1
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v2 variable=g2
+    Return
+}
+function f1 name="reads" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="readInDeadZone"
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="storedBeforeEveryRead"
+    v4 = GetModuleVariable variable=g2
+    v5 = Add v1, v3
+    v6 = Add v5, v4
+    Return v6
+}
+# CHECK: g0 Statics Plain OptionalDouble
+# CHECK-NEXT: g1 Statics Plain Double
+# CHECK-NEXT: g2 Statics Plain OptionalDouble
+
+# PLACED: g0 {{*}}representation=OptionalDouble {{*}}type=number|absent
+# PLACED-NEXT: g1 {{*}}representation=Double {{*}}initial=0x0000000000000000 type=number
+# PLACED-NEXT: g2 {{*}}representation=OptionalDouble {{*}}type=undefined|number

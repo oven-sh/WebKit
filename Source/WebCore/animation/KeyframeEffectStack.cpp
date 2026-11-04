@@ -90,7 +90,7 @@ void KeyframeEffectStack::removeEffect(KeyframeEffect& effect)
 
 bool KeyframeEffectStack::hasMatchingEffect(NOESCAPE const Function<bool(const KeyframeEffect&)>& function) const
 {
-    for (auto& effect : m_effects) {
+    for (RefPtr effect : m_effects) {
         if (function(*effect))
             return true;
     }
@@ -154,7 +154,7 @@ OptionSet<AnimationImpact> KeyframeEffectStack::applyKeyframeEffects(Style::Comp
     auto unanimatedStyle = Style::ComputedStyle::clone(targetStyle);
 
     // We iterate over a snapshot of the effect list as it may mutate during application.
-    for (const auto& effect : copyToVector(sortedEffects())) {
+    for (RefPtr effect : copyToVector(sortedEffects())) {
         auto keyframeRecomputationReason = effect->recomputeKeyframesIfNecessary(previousLastStyleChangeEventStyle, unanimatedStyle, resolutionContext);
 
         auto wasOrWasAboutToRunAccelerated = effect->isRunningAccelerated() || effect->isAboutToRunAccelerated();
@@ -231,25 +231,25 @@ bool KeyframeEffectStack::allowsAcceleration() const
 
     auto toAcceleratedProperties = [](const HashSet<AnimatableCSSProperty>& properties) {
         OptionSet<AcceleratedEffectProperty> acceleratedProperties;
-        if (properties.contains(CSSPropertyFilter) || properties.contains(CSSPropertyBackdropFilter))
+        if (properties.contains(CSSPropertyID::Filter) || properties.contains(CSSPropertyID::BackdropFilter))
             acceleratedProperties.add(AcceleratedEffectProperty::Filter);
-        if (properties.contains(CSSPropertyOpacity))
+        if (properties.contains(CSSPropertyID::Opacity))
             acceleratedProperties.add(AcceleratedEffectProperty::Opacity);
-        if (properties.contains(CSSPropertyRotate)
-            || properties.contains(CSSPropertyScale)
-            || properties.contains(CSSPropertyTransform)
-            || properties.contains(CSSPropertyTranslate)
-            || properties.contains(CSSPropertyOffsetAnchor)
-            || properties.contains(CSSPropertyOffsetDistance)
-            || properties.contains(CSSPropertyOffsetPath)
-            || properties.contains(CSSPropertyOffsetPosition)
-            || properties.contains(CSSPropertyOffsetRotate))
+        if (properties.contains(CSSPropertyID::Rotate)
+            || properties.contains(CSSPropertyID::Scale)
+            || properties.contains(CSSPropertyID::Transform)
+            || properties.contains(CSSPropertyID::Translate)
+            || properties.contains(CSSPropertyID::OffsetAnchor)
+            || properties.contains(CSSPropertyID::OffsetDistance)
+            || properties.contains(CSSPropertyID::OffsetPath)
+            || properties.contains(CSSPropertyID::OffsetPosition)
+            || properties.contains(CSSPropertyID::OffsetRotate))
             acceleratedProperties.add(AcceleratedEffectProperty::Transform);
         return acceleratedProperties;
     };
 #endif
 
-    for (auto& effect : m_effects) {
+    for (RefPtr effect : m_effects) {
         if (effect->preventsAcceleration())
             return false;
         auto& acceleratedProperties = effect->acceleratedProperties();
@@ -287,19 +287,19 @@ void KeyframeEffectStack::startAcceleratedAnimationsIfPossible()
     if (!allowsAcceleration())
         return;
 
-    for (auto& effect : m_effects)
+    for (RefPtr effect : m_effects)
         effect->effectStackNoLongerPreventsAcceleration();
 }
 
 void KeyframeEffectStack::stopAcceleratedAnimations()
 {
-    for (auto& effect : m_effects)
+    for (RefPtr effect : m_effects)
         effect->effectStackNoLongerAllowsAcceleration();
 }
 
 void KeyframeEffectStack::lastStyleChangeEventStyleDidChange(const Style::ComputedStyle* previousStyle, const Style::ComputedStyle* currentStyle)
 {
-    for (auto& effect : m_effects)
+    for (RefPtr effect : m_effects)
         effect->lastStyleChangeEventStyleDidChange(previousStyle, currentStyle);
 }
 
@@ -316,19 +316,19 @@ void KeyframeEffectStack::cascadeDidOverrideProperties(const HashSet<AnimatableC
 
     m_acceleratedPropertiesOverriddenByCascade = WTF::move(acceleratedPropertiesOverriddenByCascade);
 
-    for (auto& effect : m_effects)
+    for (RefPtr effect : m_effects)
         effect->acceleratedPropertiesOverriddenByCascadeDidChange();
 }
 
 void KeyframeEffectStack::applyPendingAcceleratedActions() const
 {
-    bool hasActiveAcceleratedEffect = m_effects.containsIf([](const auto& effect) {
-        return effect->canBeAccelerated() && effect->animation()->playState() == WebAnimation::PlayState::Running;
+    bool hasActiveAcceleratedEffect = m_effects.containsIf([](const RefPtr<KeyframeEffect>& effect) {
+        return effect->canBeAccelerated() && protect(effect->animation())->playState() == WebAnimation::PlayState::Running;
     });
 
     auto accelerationWasPrevented = false;
 
-    for (auto& effect : m_effects) {
+    for (RefPtr effect : m_effects) {
         if (hasActiveAcceleratedEffect)
             effect->applyPendingAcceleratedActionsOrUpdateTimingProperties();
         else
@@ -337,7 +337,7 @@ void KeyframeEffectStack::applyPendingAcceleratedActions() const
     }
 
     if (accelerationWasPrevented) {
-        for (auto& effect : m_effects)
+        for (RefPtr effect : m_effects)
             effect->effectStackNoLongerAllowsAccelerationDuringAcceleratedActionApplication();
     }
 }

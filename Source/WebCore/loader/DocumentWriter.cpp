@@ -169,18 +169,26 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
 
     // FIXME: Do we need to consult the content security policy here about blocked plug-ins?
 
-    bool shouldReuseDefaultView = frameLoader->stateMachine().isDisplayingInitialEmptyDocument()
+    bool mayReuseDefaultView = frameLoader->stateMachine().isDisplayingInitialEmptyDocument()
         && frame->document()->isSecureTransitionTo(url)
         && (frame->window() && !frame->window()->wasWrappedWithoutInitializedSecurityOrigin() && frame->window()->mayReuseForNavigation());
 
-    RefPtr<LocalDOMWindow> previousWindow;
-    if (shouldReuseDefaultView) {
+    bool shouldReuseDefaultView = [&] {
+        if (!mayReuseDefaultView)
+            return false;
+
         ASSERT(frameLoader->documentLoader());
-        if (auto* contentSecurityPolicy = frameLoader->documentLoader()->contentSecurityPolicy())
-            shouldReuseDefaultView = !contentSecurityPolicy->sandboxFlags().contains(SandboxFlag::Origin);
-    } else {
-        previousWindow = frame->window();
-    }
+        Ref documentLoader = *frameLoader->documentLoader();
+        if (auto* contentSecurityPolicy = documentLoader->contentSecurityPolicy(); contentSecurityPolicy && contentSecurityPolicy->sandboxFlags().contains(SandboxFlag::Origin))
+            return false;
+
+        if (!canAccessAgentCluster(protect(protect(frame->document())->securityOrigin()), frame->document()->agentClusterIdentifier(), documentLoader->agentClusterAssignment().identifier))
+            return false;
+
+        return true;
+    }();
+
+    RefPtr previousWindow = mayReuseDefaultView ? nullptr : frame->window();
 
     // Temporarily extend the lifetime of the existing document so that FrameLoader::clear() doesn't destroy it as
     // we need to retain its ongoing set of upgraded requests in new navigation contexts per <http://www.w3.org/TR/upgrade-insecure-requests/>
@@ -215,6 +223,8 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
         document->setCookieURL(ownerDocument->cookieURL());
         document->setSecurityOriginPolicy(ownerDocument->securityOriginPolicy());
         document->setCrossOriginEmbedderPolicy(ownerDocument->crossOriginEmbedderPolicy());
+        document->setDocumentIsolationPolicy(ownerDocument->documentIsolationPolicy());
+        document->setAgentClusterIdentifier(ownerDocument->agentClusterIdentifier());
         document->setIPAddressSpace(ownerDocument->ipAddressSpace());
 
         document->setContentSecurityPolicy(makeUnique<ContentSecurityPolicy>(URL { url }, document));
@@ -251,7 +261,7 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
     }
 
     if (existingDocument && existingDocument->contentSecurityPolicy() && document->contentSecurityPolicy())
-        document->contentSecurityPolicy()->setInsecureNavigationRequestsToUpgrade(existingDocument->contentSecurityPolicy()->takeNavigationRequestsToUpgrade());
+        protect(document->contentSecurityPolicy())->setInsecureNavigationRequestsToUpgrade(existingDocument->contentSecurityPolicy()->takeNavigationRequestsToUpgrade());
 
     frameLoader->didBeginDocument(dispatch, previousWindow);
 
@@ -273,7 +283,7 @@ TextResourceDecoder& DocumentWriter::decoder()
 {
     if (!m_decoder) {
         Ref frame = *m_frame;
-        Ref decoder = TextResourceDecoder::create(m_mimeType, frame->settings().defaultTextEncodingName(), frame->settings().usesEncodingDetector());
+        Ref decoder = MIMETypeRegistry::isSupportedJSONMIMEType(m_mimeType) ? TextResourceDecoder::createUTF8() : TextResourceDecoder::create(TextResourceDecoder::contentTypeForMIMEType(m_mimeType), frame->settings().defaultTextEncodingName(), frame->settings().usesEncodingDetector());
         m_decoder = decoder.copyRef();
         RefPtr parentFrame = dynamicDowncast<LocalFrame>(frame->tree().parent());
         // Set the hint encoding to the parent frame encoding only if
@@ -288,12 +298,11 @@ TextResourceDecoder& DocumentWriter::decoder()
         if (canReferToParentFrameEncoding(frame.ptr(), parentFrame))
             decoder->setHintEncoding(parentFrame->document()->decoder());
         if (m_encoding.isEmpty()) {
-            // Don't let a non-UTF-8 parent frame override JSON's UTF-8 default (RFC 8259).
-            if (canReferToParentFrameEncoding(frame.ptr(), parentFrame) && decoder->contentType() != TextResourceDecoder::JSON)
-                decoder->setEncoding(protect(parentFrame->document())->textEncoding(), TextResourceDecoder::EncodingFromParentFrame);
+            if (canReferToParentFrameEncoding(frame.ptr(), parentFrame))
+                decoder->setEncoding(protect(parentFrame->document())->textEncoding(), TextResourceDecoder::EncodingSource::ParentFrame);
         } else {
             decoder->setEncoding(m_encoding,
-                m_encodingWasChosenByUser ? TextResourceDecoder::UserChosenEncoding : TextResourceDecoder::EncodingFromHTTPHeader);
+                m_encodingWasChosenByUser ? TextResourceDecoder::EncodingSource::UserChosen : TextResourceDecoder::EncodingSource::HTTPHeader);
         }
         protect(frame->document())->setDecoder(WTF::move(decoder));
     }

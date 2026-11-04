@@ -62,7 +62,8 @@ template<typename T> bool isOSObject(CFTypeRef);
 template<> inline bool isOSObject<OSObjectTypeCastTraits<TypeName>::BaseType>(CFTypeRef object) \
 { \
     RetainPtr cls = object_getClass(bridge_id_cast(object)); \
-    return class_conformsToProtocol(cls.get(), objc_getProtocol(ProtocolString)); \
+    RetainPtr protocol = objc_getProtocol(ProtocolString); \
+    return class_conformsToProtocol(cls.get(), protocol); \
 } \
 
 #ifdef __OBJC__

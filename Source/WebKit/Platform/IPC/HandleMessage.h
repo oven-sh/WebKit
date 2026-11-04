@@ -174,8 +174,8 @@ void callMemberFunction(T* object, MF U::* function, Connection& connection, Arg
         }, std::forward<ArgsTuple>(tuple));
 }
 
-template<typename T, typename U, typename MF, typename ArgsTuple, typename CH>
-void callMemberFunction(T* object, MF U::* function, Connection* connection, ArgsTuple&& tuple, WTF::RefCountable<WTF::CompletionHandler<CH>>* completionHandler)
+template<typename T, typename U, typename MF, typename ArgsTuple, typename CT, typename CH>
+void callMemberFunction(T* object, MF U::* function, CT connection, ArgsTuple&& tuple, WTF::RefCountable<WTF::CompletionHandler<CH>>* completionHandler)
 {
     std::apply(
         [&](auto&&... args) {
@@ -365,6 +365,16 @@ struct MethodSignatureValidationImpl<std::tuple<Connection*, MessageArgumentType
 };
 
 template<typename... MessageArgumentTypes>
+struct MethodSignatureValidationImpl<std::tuple<StreamServerConnection*, MessageArgumentTypes...>, std::tuple<>>
+: MethodSignatureValidationImpl<std::tuple<MessageArgumentTypes...>, std::tuple<>> {
+    static constexpr bool expectsConnectionArgument = true;
+    static StreamServerConnection* makeConnectionArgument(StreamServerConnection& connection)
+    {
+        return &connection;
+    }
+};
+
+template<typename... MessageArgumentTypes>
 struct MethodSignatureValidationImpl<std::tuple<MessageArgumentTypes...>, std::tuple<>> {
     static constexpr bool expectsConnectionArgument = false;
     using MessageArguments = std::tuple<std::remove_cvref_t<MessageArgumentTypes>...>;
@@ -420,6 +430,15 @@ struct MethodSignatureValidation<R(MethodArgumentTypes...) const>
     static constexpr bool returnsVoid = std::is_same_v<R, void>;
     static constexpr bool returnsAwaitableVoid = std::is_same_v<R, Awaitable<void>>;
 };
+
+// Swift-generated C++ thunks are declared noexcept.
+template<typename R, typename... MethodArgumentTypes>
+struct MethodSignatureValidation<R(MethodArgumentTypes...) noexcept>
+    : MethodSignatureValidation<R(MethodArgumentTypes...)> { };
+
+template<typename R, typename... MethodArgumentTypes>
+struct MethodSignatureValidation<R(MethodArgumentTypes...) const noexcept>
+    : MethodSignatureValidation<R(MethodArgumentTypes...)> { };
 
 template<typename> struct AwaitableReturnTuple;
 template<> struct AwaitableReturnTuple<Awaitable<void>> {
@@ -520,8 +539,13 @@ void handleMessageSynchronous(StreamServerConnection& connection, Decoder& decod
         connection->sendSyncReply<MessageType>(syncRequestID, std::forward<decltype(args)>(args)...);
     }));
 
-    callMemberFunction(object, function, WTF::move(*arguments),
-        ValidationType::unwrapCompletionHandler(std::forward<decltype(completionHandler)>(completionHandler)));
+    if constexpr (ValidationType::expectsConnectionArgument) {
+        SUPPRESS_UNCOUNTED_ARG callMemberFunction(object, function, ValidationType::makeConnectionArgument(connection), WTF::move(*arguments),
+            ValidationType::unwrapCompletionHandler(std::forward<decltype(completionHandler)>(completionHandler)));
+    } else {
+        callMemberFunction(object, function, WTF::move(*arguments),
+            ValidationType::unwrapCompletionHandler(std::forward<decltype(completionHandler)>(completionHandler)));
+    }
 }
 
 template<typename MessageType, typename C, typename T, typename U, typename MF>
@@ -533,9 +557,6 @@ void handleMessageAsync(C& connection, Decoder& decoder, T* object, MF U::* func
     auto arguments = decoder.decode<typename MessageType::Arguments>();
     if (!arguments) [[unlikely]]
         return;
-    auto replyID = decoder.decode<IPC::AsyncReplyID>();
-    if (!replyID) [[unlikely]]
-        return;
 
     if constexpr (ValidationType::returnsVoid)
         static_assert(std::is_same_v<typename ValidationType::CompletionHandlerArguments, typename MessageType::ReplyArguments>);
@@ -545,8 +566,10 @@ void handleMessageAsync(C& connection, Decoder& decoder, T* object, MF U::* func
     using CompletionHandlerType = std::conditional_t<ValidationType::returnsVoid, typename ValidationType::CompletionHandlerType, typename MessageType::Reply>;
 
     logMessage(connection, MessageType::name(), object, *arguments);
+    auto replyID = decoder.asyncReplyID();
+    decoder.markHandled();
     auto completionHandler = ValidationType::wrapCompletionHandler(CompletionHandlerType(
-        [replyID = *replyID, connection = protect(connection)] (auto&&... args) mutable {
+        [replyID, connection = protect(connection)](auto&&... args) mutable {
             connection->template sendAsyncReply<MessageType>(replyID, std::forward<decltype(args)>(args)...);
         }, MessageType::callbackThread));
     if constexpr (ValidationType::returnsVoid) {
@@ -604,13 +627,11 @@ void handleMessageAsyncWithReplyID(Connection& connection, Decoder& decoder, T* 
     using ValidationType = MethodSignatureValidation<MF>;
     static_assert(std::is_same_v<typename ValidationType::MessageArguments, std::tuple<IPC::AsyncReplyID>>);
 
-    auto replyID = decoder.decode<Connection::AsyncReplyID>();
-    if (!replyID) [[unlikely]]
-        return;
-
     logMessage(connection, MessageType::name(), object, std::tuple<>());
     static_assert(!ValidationType::expectsConnectionArgument);
-    callMemberFunction(object, function, std::tuple<IPC::AsyncReplyID>(*replyID));
+    auto replyID = decoder.asyncReplyID();
+    decoder.markHandled();
+    callMemberFunction(object, function, std::tuple<IPC::AsyncReplyID>(replyID));
 }
 
 } // namespace IPC

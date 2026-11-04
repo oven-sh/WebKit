@@ -505,73 +505,113 @@ static inline uint64_t readXCR0()
 }
 #endif
 
-void MacroAssemblerX86_64::collectCPUFeatures()
+CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
 {
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [] {
-        {
-            CPUID cpuid = getCPUID(0x1);
-            s_sse3CheckState = (cpuid[2] & (1 << 0)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-            s_supplementalSSE3CheckState = (cpuid[2] & (1 << 9)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-            s_sse4_1CheckState = (cpuid[2] & (1 << 19)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-            s_sse4_2CheckState = (cpuid[2] & (1 << 20)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-            s_popcntCheckState = (cpuid[2] & (1 << 23)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-#if OS(DARWIN)
-            s_avxCheckState = CPUIDCheckState::Set;
-#else
-            // Per the Intel SDM, AVX is usable only when:
-            //   1. CPUID.1:ECX.AVX[bit 28] = 1      (CPU supports AVX)
-            //   2. CPUID.1:ECX.OSXSAVE[bit 27] = 1  (OS has enabled XGETBV)
-            //   3. XCR0[2:1] = 11b                  (OS saves XMM + YMM state)
-            // Checking only bit 28 is insufficient: under many hypervisors
-            // (Xen, KVM, Hyper-V, etc.) the AVX feature bit can be passed
-            // through from the host CPU while XSAVE/YMM state is not enabled
-            // in the guest, causing every VEX-encoded instruction to #UD.
-            s_avxCheckState = CPUIDCheckState::Clear;
-            if ((cpuid[2] & (1 << 28)) && (cpuid[2] & (1 << 27))) {
-                constexpr uint64_t ymmStateMask = 0x6; // XCR0.SSE | XCR0.AVX
-                if ((readXCR0() & ymmStateMask) == ymmStateMask)
-                    s_avxCheckState = CPUIDCheckState::Set;
-            }
-#endif
-        }
-#if OS(DARWIN)
-        {
-            uint32_t val = 0;
-            size_t valSize = sizeof(val);
-            int rc = sysctlbyname("hw.optional.bmi1", &val, &valSize, nullptr, 0);
-            s_bmi1CheckState = (rc >= 0 && val) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+    CPUFeatureSet features;
+    auto add = [&](CPUFeature feature, bool isPresent) {
+        if (isPresent)
+            features = features.with(feature);
+    };
 
-            rc = sysctlbyname("hw.optional.avx2_0", &val, &valSize, nullptr, 0);
-            s_avx2CheckState = (rc >= 0 && val) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        }
-#else
-        {
-            // CPUID leaf 7 sub-leaf 0: BMI1 = EBX[3], AVX2 = EBX[5].
-            CPUID cpuid = getCPUID(0x7);
-            s_bmi1CheckState = (cpuid[1] & (1 << 3)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-            // AVX2 is VEX-encoded and therefore also requires the OS to have
-            // enabled YMM state; gate it on the AVX result computed above.
-            bool hasAVX2Feature = cpuid[1] & (1 << 5);
-            s_avx2CheckState = (hasAVX2Feature && s_avxCheckState == CPUIDCheckState::Set) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        }
+#if !OS(DARWIN)
+    bool hasAVX = false;
 #endif
-        {
-            CPUID cpuid = getCPUID(0x80000001);
-            s_lzcntCheckState = (cpuid[2] & (1 << 5)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+    {
+        CPUID cpuid = getCPUID(0x1);
+        add(CPUFeature::SSE3, cpuid[2] & (1 << 0));
+        add(CPUFeature::SupplementalSSE3, cpuid[2] & (1 << 9));
+        add(CPUFeature::SSE4_1, cpuid[2] & (1 << 19));
+        add(CPUFeature::SSE4_2, cpuid[2] & (1 << 20));
+        add(CPUFeature::Popcnt, cpuid[2] & (1 << 23));
+#if OS(DARWIN)
+        add(CPUFeature::AVX, true);
+#else
+        // Per the Intel SDM, AVX is usable only when:
+        //   1. CPUID.1:ECX.AVX[bit 28] = 1      (CPU supports AVX)
+        //   2. CPUID.1:ECX.OSXSAVE[bit 27] = 1  (OS has enabled XGETBV)
+        //   3. XCR0[2:1] = 11b                  (OS saves XMM + YMM state)
+        // Checking only bit 28 is insufficient: under many hypervisors
+        // (Xen, KVM, Hyper-V, etc.) the AVX feature bit can be passed
+        // through from the host CPU while XSAVE/YMM state is not enabled
+        // in the guest, causing every VEX-encoded instruction to #UD.
+        if ((cpuid[2] & (1 << 28)) && (cpuid[2] & (1 << 27))) {
+            constexpr uint64_t ymmStateMask = 0x6; // XCR0.SSE | XCR0.AVX
+            hasAVX = (readXCR0() & ymmStateMask) == ymmStateMask;
         }
-    });
+        add(CPUFeature::AVX, hasAVX);
+#endif
+    }
+#if OS(DARWIN)
+    {
+        uint32_t val = 0;
+        size_t valSize = sizeof(val);
+        int rc = sysctlbyname("hw.optional.bmi1", &val, &valSize, nullptr, 0);
+        add(CPUFeature::BMI1, rc >= 0 && val);
+
+        rc = sysctlbyname("hw.optional.avx2_0", &val, &valSize, nullptr, 0);
+        add(CPUFeature::AVX2, rc >= 0 && val);
+    }
+#else
+    {
+        // CPUID leaf 7 sub-leaf 0: BMI1 = EBX[3], AVX2 = EBX[5].
+        CPUID cpuid = getCPUID(0x7);
+        add(CPUFeature::BMI1, cpuid[1] & (1 << 3));
+        // AVX2 is VEX-encoded and therefore also requires the OS to have
+        // enabled YMM state; gate it on the AVX result computed above.
+        bool hasAVX2Feature = cpuid[1] & (1 << 5);
+        add(CPUFeature::AVX2, hasAVX2Feature && hasAVX);
+    }
+#endif
+    {
+        CPUID cpuid = getCPUID(0x80000001);
+        add(CPUFeature::LZCNT, cpuid[2] & (1 << 5));
+    }
+    return features;
 }
 
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_sse3CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_supplementalSSE3CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_sse4_1CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_sse4_2CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_avxCheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_avx2CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_lzcntCheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_bmi1CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_popcntCheckState = CPUIDCheckState::NotChecked;
+void MacroAssemblerX86_64::emitVectorOperationWithoutAVX(VectorOperationWithoutAVX operation, SIMDLane lane, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
+{
+    // Of two numbers that are both NaN the left one comes out, so only operations on integers and on bits may change sides.
+    bool mayChangeSides = operation != VectorOperationWithoutAVX::Sub && operation != VectorOperationWithoutAVX::Div && operation != VectorOperationWithoutAVX::NarrowSigned
+        && operation != VectorOperationWithoutAVX::NarrowUnsigned && operation != VectorOperationWithoutAVX::Swizzle && !scalarTypeIsFloatingPoint(lane);
+    if (dest == right && mayChangeSides)
+        std::swap(left, right);
+    if (dest == right && dest != left) {
+        moveVector(right, fpTempRegister);
+        right = fpTempRegister;
+    }
+    if (dest != left)
+        moveVector(left, dest);
+
+    // The last byte of the instruction, and above it: 1 = behind the prefix 66, 2 = behind the escape 38. Zero: there is no such instruction.
+    constexpr uint16_t with66 = 0x100;
+    constexpr uint16_t with6638 = 0x300;
+    // In the order of SIMDLane: i8x16, i16x8, i32x4, i64x2, f32x4, f64x2.
+    static constexpr uint16_t arithmetic[10][6] = {
+        { with66 | 0xfc, with66 | 0xfd, with66 | 0xfe, with66 | 0xd4, 0x58, with66 | 0x58 }, // paddb paddw paddd paddq addps addpd
+        { with66 | 0xf8, with66 | 0xf9, with66 | 0xfa, with66 | 0xfb, 0x5c, with66 | 0x5c }, // psubb psubw psubd psubq subps subpd
+        { 0, with66 | 0xd5, with6638 | 0x40, 0, 0x59, with66 | 0x59 }, // pmullw pmulld mulps mulpd
+        { 0, 0, 0, 0, 0x5e, with66 | 0x5e }, // divps divpd
+        { with6638 | 0x3c, with66 | 0xee, with6638 | 0x3d, 0, 0, 0 }, // pmaxsb pmaxsw pmaxsd
+        { with6638 | 0x38, with66 | 0xea, with6638 | 0x39, 0, 0, 0 }, // pminsb pminsw pminsd
+        { with66 | 0xde, with6638 | 0x3e, with6638 | 0x3f, 0, 0, 0 }, // pmaxub pmaxuw pmaxud
+        { with66 | 0xda, with6638 | 0x3a, with6638 | 0x3b, 0, 0, 0 }, // pminub pminuw pminud
+        { 0, with66 | 0x63, with66 | 0x6b, 0, 0, 0 }, // packsswb packssdw
+        { 0, with66 | 0x67, with6638 | 0x2b, 0, 0, 0 }, // packuswb packusdw
+    };
+    static constexpr uint16_t whateverLane[5] = { 0x54, 0x56, 0x57, with6638 | 0x00, with66 | 0xf5 }; // andps orps xorps pshufb pmaddwd
+    static_assert(static_cast<unsigned>(SIMDLane::i8x16) + 5 == static_cast<unsigned>(SIMDLane::f64x2));
+    static_assert(static_cast<unsigned>(VectorOperationWithoutAVX::And) == 10 && static_cast<unsigned>(VectorOperationWithoutAVX::DotProduct) == 14);
+    uint16_t instruction = 0;
+    if (operation >= VectorOperationWithoutAVX::And)
+        instruction = whateverLane[static_cast<unsigned>(operation) - 10];
+    else {
+        RELEASE_ASSERT(lane >= SIMDLane::i8x16 && lane <= SIMDLane::f64x2);
+        instruction = arithmetic[static_cast<unsigned>(operation)][static_cast<unsigned>(lane) - static_cast<unsigned>(SIMDLane::i8x16)];
+    }
+    RELEASE_ASSERT(instruction);
+    m_assembler.vectorOp_rr(instruction & 0x100, instruction & 0x200, static_cast<uint8_t>(instruction), right, dest);
+}
 
 } // namespace JSC
 

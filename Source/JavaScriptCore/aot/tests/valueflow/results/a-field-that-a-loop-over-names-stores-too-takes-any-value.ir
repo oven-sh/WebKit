@@ -1,0 +1,37 @@
+# const defaults = { version: "latest", ranges: false }; const options = {}; for (const name in defaults) options[name] = defaults[name]; options.version = 11; hand(options)
+# The stores that name `version` bring numbers, and the loop brings a text under the same name. A value that does not fit its field leaves the slot for good, so the field takes any value.
+# RUN: valueflow-apply
+# CHECK: layout L1 fields=[{key="version" declared={type=anything
+
+layout L0 fields=[{key="version" declared={type=anything} flags=[IsRequired]}, {key="ranges" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 fields=[{key="version" declared={type=number flags=[IsExpected]}}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Boolean
+    v1 = String string="latest"
+    v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewObject layout=L1
+    v5 = FinishObject v4
+    v6 = ForInOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v8 = ForInStep v6, v3
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b3(), notTaken b2()
+  b2():
+    v11 = ElemGet v3, v10
+    ElemSet v5, v10, v11
+    Jump -> next b1()
+  b3():
+    v13 = Integer integer=11
+    PropSet v5, v13 key="version"
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="hand" [isFreeName]
+    v17 = Call v16, -, v5
+    v18 = PropGet v5 key="version"
+    Return v18
+}

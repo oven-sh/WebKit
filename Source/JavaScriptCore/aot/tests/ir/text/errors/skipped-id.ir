@@ -1,0 +1,6 @@
+# The ids of a list leave out no number
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+layout L0
+layout L2

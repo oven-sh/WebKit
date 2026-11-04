@@ -154,9 +154,9 @@ static inline void filterProperties(IsImportant important, const ParsedPropertyV
         const CSSProperty& property = input[i];
         if ((property.isImportant() && important == IsImportant::No) || (!property.isImportant() && important == IsImportant::Yes))
             continue;
-        const unsigned propertyIDIndex = property.id() - firstCSSProperty;
+        const unsigned propertyIDIndex = std::to_underlying(property.id()) - firstCSSProperty;
 
-        if (property.id() == CSSPropertyCustom) {
+        if (property.id() == CSSPropertyID::Custom) {
             auto& name = downcast<CSSCustomPropertyValue>(*property.value()).name();
             if (!seenCustomProperties.add(name).isNewEntry)
                 continue;
@@ -190,7 +190,7 @@ static Ref<ImmutableStyleProperties> createStyleProperties(ParsedPropertyVector&
 
 Ref<ImmutableStyleProperties> CSSParser::parseInlineStyleDeclaration(StringView string, const Element& element)
 {
-    CSSParserContext context(element.document());
+    CSSParserContext context(protect(element.document()));
     context.mode = strictToCSSParserMode(element.isHTMLElement() && !element.document().inQuirksMode());
 
     CSSParser parser(context, string);
@@ -286,9 +286,11 @@ CSSSelectorList CSSParser::parsePageSelector(CSSParserTokenRange range, StyleShe
     if (!range.atEnd())
         return { }; // Parse error; extra tokens in @page selector
 
+    auto& defaultNamespace = styleSheet ? styleSheet->defaultNamespace() : starAtom();
+
     std::unique_ptr<MutableCSSSelector> selector;
     if (!typeSelector.isNull() && pseudo.isNull())
-        selector = makeUnique<MutableCSSSelector>(QualifiedName(nullAtom(), typeSelector, styleSheet->defaultNamespace()));
+        selector = makeUnique<MutableCSSSelector>(QualifiedName(nullAtom(), typeSelector, defaultNamespace));
     else {
         selector = makeUnique<MutableCSSSelector>();
         if (!pseudo.isNull()) {
@@ -297,7 +299,7 @@ CSSSelectorList CSSParser::parsePageSelector(CSSParserTokenRange range, StyleShe
                 return { };
         }
         if (!typeSelector.isNull())
-            selector->appendTagInComplexSelector(QualifiedName(nullAtom(), typeSelector, styleSheet->defaultNamespace()));
+            selector->appendTagInComplexSelector(QualifiedName(nullAtom(), typeSelector, defaultNamespace));
     }
 
     selector->setForPage();
@@ -344,7 +346,7 @@ void CSSParser::parseStyleSheetForInspector(StringView string, const CSSParserCo
     styleSheet.setHasSyntacticallyValidCSSHeader(firstRuleValid);
 }
 
-static CSSParser::AllowedRules NODELETE computeNewAllowedRules(CSSParser::AllowedRules allowedRules, StyleRuleBase* rule)
+static CSSParser::AllowedRules LEGACY_NODELETE computeNewAllowedRules(CSSParser::AllowedRules allowedRules, StyleRuleBase* rule)
 {
     if (!rule || allowedRules == CSSParser::AllowedRules::FontFeatureValuesRules || allowedRules == CSSParser::AllowedRules::KeyframeRules || allowedRules == CSSParser::AllowedRules::NoRules)
         return allowedRules;
@@ -694,9 +696,9 @@ RefPtr<StyleRuleNamespace> CSSParser::consumeNamespaceRule(CSSParserTokenRange p
     return StyleRuleNamespace::create(namespacePrefix, uri);
 }
 
-void CSSParser::runInNewNestingContext(auto&& run)
+void CSSParser::runInNewNestingContext(NOESCAPE const auto& run)
 {
-    m_nestingContextStack.append(NestingContext { });
+    m_nestingContextStack.constructAndAppend();
     run();
     m_nestingContextStack.removeLast();
 }
@@ -799,7 +801,7 @@ RefPtr<StyleRuleFontFace> CSSParser::consumeFontFaceRule(CSSParserTokenRange pre
 
 // The associated number represents the maximum number of allowed values for this font-feature-values type.
 // No value means unlimited (for styleset).
-static std::pair<FontFeatureValuesType, std::optional<unsigned>> NODELETE fontFeatureValuesTypeMappings(CSSAtRuleID id)
+static std::pair<FontFeatureValuesType, std::optional<unsigned>> LEGACY_NODELETE fontFeatureValuesTypeMappings(CSSAtRuleID id)
 {
     switch (id) {
     case CSSAtRuleStyleset:
@@ -953,7 +955,7 @@ RefPtr<StyleRuleFontPaletteValues> CSSParser::consumeFontPaletteValuesRule(CSSPa
             if (RefPtr fontFamilyNameValue = dynamicDowncast<CSSFontFamilyNameValue>(value))
                 fontFamilies.append(fontFamilyNameValue->fontFamilyName().value);
         };
-        RefPtr cssFontFamily = properties->getPropertyCSSValue(CSSPropertyFontFamily);
+        RefPtr cssFontFamily = properties->getPropertyCSSValue(CSSPropertyID::FontFamily);
         if (!cssFontFamily)
             return fontFamilies;
         if (RefPtr families = dynamicDowncast<CSSValueList>(*cssFontFamily)) {
@@ -966,7 +968,7 @@ RefPtr<StyleRuleFontPaletteValues> CSSParser::consumeFontPaletteValuesRule(CSSPa
     }();
 
     std::optional<FontPaletteIndex> basePalette;
-    if (auto basePaletteValue = properties->getPropertyCSSValue(CSSPropertyBasePalette)) {
+    if (auto basePaletteValue = properties->getPropertyCSSValue(CSSPropertyID::BasePalette)) {
         if (auto* primitiveValue = dynamicDowncast<CSSPrimitiveValue>(*basePaletteValue)) {
             // FIXME: This should not be using `deprecatedToStyleFromCSSValue`. CSS Fonts 4 specifies how @font-palette-value descriptors with numeric types should be resolved, stating:
             //   "Math functions, such as calc(), and also var(), and env(), are valid within
@@ -978,10 +980,10 @@ RefPtr<StyleRuleFontPaletteValues> CSSParser::consumeFontPaletteValuesRule(CSSPa
                 basePalette = FontPaletteIndex(resolvedInteger->value);
         } else if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(*basePaletteValue)) {
             switch (keywordValue->valueID()) {
-            case CSSValueLight:
+            case CSSValueID::Light:
                 basePalette = FontPaletteIndex(FontPaletteIndex::Type::Light);
                 break;
-            case CSSValueDark:
+            case CSSValueID::Dark:
                 basePalette = FontPaletteIndex(FontPaletteIndex::Type::Dark);
                 break;
             default:
@@ -991,7 +993,7 @@ RefPtr<StyleRuleFontPaletteValues> CSSParser::consumeFontPaletteValuesRule(CSSPa
     }
 
     Vector<FontPaletteValues::OverriddenColor> overrideColors;
-    if (auto overrideColorsValue = properties->getPropertyCSSValue(CSSPropertyOverrideColors)) {
+    if (auto overrideColorsValue = properties->getPropertyCSSValue(CSSPropertyID::OverrideColors)) {
         overrideColors = WTF::compactMap(downcast<CSSValueList>(*overrideColorsValue), [](const auto& item) -> std::optional<FontPaletteValues::OverriddenColor> {
             Ref pair = downcast<CSSValuePair>(item);
             Ref first = pair->first();
@@ -1026,7 +1028,7 @@ RefPtr<StyleRuleKeyframes> CSSParser::consumeKeyframesRule(CSSParserTokenRange p
         // According to the CSS Values specification, identifier-based keyframe names
         // are not allowed to be CSS wide keywords or "default". And CSS Animations
         // additionally excludes the "none" keyword.
-        if (!isValidCustomIdentifier(nameToken.id()) || nameToken.id() == CSSValueNone)
+        if (!isValidCustomIdentifier(nameToken.id()) || nameToken.id() == CSSValueID::None)
             return nullptr;
     } else if (nameToken.type() != StringToken)
         return nullptr; // Parse error; expected ident token or string in @keyframes header
@@ -1040,13 +1042,15 @@ RefPtr<StyleRuleKeyframes> CSSParser::consumeKeyframesRule(CSSParserTokenRange p
         observerWrapper->observer().startRuleHeader(StyleRuleType::Keyframes, observerWrapper->startOffset(rangeCopy));
         observerWrapper->observer().endRuleHeader(observerWrapper->endOffset(prelude));
         observerWrapper->observer().startRuleBody(observerWrapper->previousTokenStartOffset(block));
-        observerWrapper->observer().endRuleBody(observerWrapper->endOffset(block));
     }
 
     auto keyframeRule = StyleRuleKeyframes::create(name);
     consumeRuleList(block, RuleList::Keyframes, [keyframeRule](Ref<StyleRuleBase> keyframe) {
         keyframeRule->parserAppendKeyframe(downcast<const StyleRuleKeyframe>(keyframe.ptr()));
     });
+
+    if (RefPtr observerWrapper = m_observerWrapper.get())
+        observerWrapper->observer().endRuleBody(observerWrapper->endOffset(block));
 
     keyframeRule->shrinkToFit();
     return keyframeRule;
@@ -1087,7 +1091,7 @@ RefPtr<StyleRuleCounterStyle> CSSParser::consumeCounterStyleRule(CSSParserTokenR
     auto descriptors = CSSCounterStyleDescriptors::create(name, createStyleProperties(declarations, m_context.mode));
     if (!descriptors.isValid())
         return nullptr;
-    return StyleRuleCounterStyle::create(name, WTF::move(descriptors));
+    return StyleRuleCounterStyle::create(WTF::move(descriptors));
 }
 
 RefPtr<StyleRuleViewTransition> CSSParser::consumeViewTransitionRule(CSSParserTokenRange prelude, CSSParserTokenRange block)
@@ -1449,13 +1453,13 @@ RefPtr<StyleRuleProperty> CSSParser::consumePropertyRule(CSSParserTokenRange pre
 
     for (auto& property : declarations) {
         switch (property.id()) {
-        case CSSPropertySyntax:
+        case CSSPropertyID::Syntax:
             descriptor.syntax = protect(downcast<CSSStringValue>(*property.value()))->string().value;
             continue;
-        case CSSPropertyInherits:
-            descriptor.inherits = isValueID(property.value(), CSSValueTrue);
+        case CSSPropertyID::Inherits:
+            descriptor.inherits = isValueID(property.value(), CSSValueID::True);
             break;
-        case CSSPropertyInitialValue:
+        case CSSPropertyID::InitialValue:
             descriptor.initialValue = protect(downcast<CSSCustomPropertyValue>(*property.value()))->asVariableData();
             break;
         default:
@@ -1501,13 +1505,14 @@ RefPtr<StyleRuleProperty> CSSParser::consumePropertyRule(CSSParserTokenRange pre
 
 RefPtr<StyleRuleKeyframe> CSSParser::consumeKeyframeStyleRule(CSSParserTokenRange prelude, CSSParserTokenRange block)
 {
+    auto originalPrelude = prelude;
     auto state = CSS::PropertyParserState { .context = m_context };
     auto keyList = CSSPropertyParserHelpers::consumeKeyframeKeyList(prelude, state);
     if (keyList.isEmpty())
         return nullptr;
 
     if (RefPtr observerWrapper = m_observerWrapper.get()) {
-        observerWrapper->observer().startRuleHeader(StyleRuleType::Keyframe, observerWrapper->startOffset(prelude));
+        observerWrapper->observer().startRuleHeader(StyleRuleType::Keyframe, observerWrapper->startOffset(originalPrelude));
         observerWrapper->observer().endRuleHeader(observerWrapper->endOffset(prelude));
     }
 
@@ -1812,7 +1817,7 @@ IsImportant CSSParser::consumeTrailingImportantAndWhitespace(CSSParserTokenRange
 }
 
 // Check if a CSS rule type does not allow declarations with !important.
-static bool NODELETE ruleDoesNotAllowImportant(StyleRuleType type)
+static bool LEGACY_NODELETE ruleDoesNotAllowImportant(StyleRuleType type)
 {
     return type == StyleRuleType::CounterStyle
         || type == StyleRuleType::FontFace
@@ -1848,20 +1853,20 @@ bool CSSParser::consumeDeclaration(CSSParserTokenRange range, StyleRuleType rule
 
     // In @page, `size` aliases the always-exposed `page-size` descriptor; remap
     // before the isExposed() check so gating the shorthand can't disable it.
-    if (ruleType == StyleRuleType::Page && propertyID == CSSPropertySize)
-        propertyID = CSSPropertyPageSize;
+    if (ruleType == StyleRuleType::Page && propertyID == CSSPropertyID::Size)
+        propertyID = CSSPropertyID::PageSize;
 
     if (!isExposed(propertyID, &m_context.propertySettings))
-        propertyID = CSSPropertyInvalid;
+        propertyID = CSSPropertyID::Invalid;
 
     // @position-try doesn't allow custom properties.
     // FIXME: maybe make this logic more elegant?
-    if (propertyID == CSSPropertyInvalid && CSSSubstitutionParser::isValidCustomPropertyName(token) && ruleType != StyleRuleType::PositionTry) {
+    if (propertyID == CSSPropertyID::Invalid && CSSSubstitutionParser::isValidCustomPropertyName(token) && ruleType != StyleRuleType::PositionTry) {
         AtomString variableName = token.value().toAtomString();
         consumeCustomPropertyValue(range, variableName, important);
     }
 
-    if (propertyID != CSSPropertyInvalid)
+    if (propertyID != CSSPropertyID::Invalid)
         consumeDeclarationValue(range, propertyID, important, ruleType);
 
     RefPtr observerWrapper = m_observerWrapper.get();
@@ -1877,11 +1882,11 @@ bool CSSParser::consumeDeclaration(CSSParserTokenRange range, StyleRuleType rule
 void CSSParser::consumeCustomPropertyValue(CSSParserTokenRange range, const AtomString& variableName, IsImportant important)
 {
     if (range.atEnd())
-        topContext().m_parsedProperties.append(CSSProperty(CSSPropertyCustom, CSSCustomPropertyValue::createEmpty(variableName), important));
+        topContext().m_parsedProperties.append(CSSProperty(CSSPropertyID::Custom, CSSCustomPropertyValue::createEmpty(variableName), important));
     else {
         auto namespaceMap = m_styleSheet ? m_styleSheet->namespacePrefixMap() : CSSNamespacePrefixMap { };
         if (auto value = CSSSubstitutionParser::parseDeclarationValue(variableName, range, m_context, namespaceMap))
-            topContext().m_parsedProperties.append(CSSProperty(CSSPropertyCustom, value.releaseNonNull(), important));
+            topContext().m_parsedProperties.append(CSSProperty(CSSPropertyID::Custom, value.releaseNonNull(), important));
     }
 }
 

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ModuleProgramExecutable.h"
 
+#include "AOTRemovableFeature.h"
 #include "CodeCache.h"
 #include "Debugger.h"
 #include "Error.h"
@@ -39,10 +40,11 @@ namespace JSC {
 
 const ClassInfo ModuleProgramExecutable::s_info = { "ModuleProgramExecutable"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleProgramExecutable) };
 
-ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables)
+ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables, const String& liveImports)
     : Base(globalObject->vm().moduleProgramExecutableStructure.get(), globalObject->vm(), source, StrictModeLexicallyScopedFeature, DerivedContextType::None, false, false, EvalContextType::None, NoIntrinsic)
     , m_linker(linker)
     , m_moduleScopeSymbolTables(moduleScopeSymbolTables.size())
+    , m_liveImports(liveImports)
 {
     for (unsigned i = 0; i < moduleScopeSymbolTables.size(); ++i)
         m_moduleScopeSymbolTables[i].setWithoutWriteBarrier(moduleScopeSymbolTables[i]);
@@ -60,12 +62,13 @@ ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, c
     );
     VM& vm = globalObject->vm();
     if (vm.typeProfiler() || vm.controlFlowProfiler())
-        vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), typeProfilingStartOffset(), typeProfilingEndOffset());
+        vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), typeProfilingStartOffset(), typeProfilingEndOffset(), SourceParseMode::ModuleEvaluateMode);
 }
 
 
-UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JSGlobalObject* globalObject)
+NEVER_INLINE UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JSGlobalObject* globalObject)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, &ModuleProgramExecutable::getUnlinkedCodeBlock);
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -147,7 +150,7 @@ bool ModuleProgramExecutable::hasModuleScopeSymbolTables(const Vector<SymbolTabl
 
 bool ModuleProgramExecutable::ImportedBinding::operator==(const ImportedBinding& other) const
 {
-    if (localName != other.localName || exporterLocalName != other.exporterLocalName || offset != other.offset || importSlot != other.importSlot || !exporterSource != !other.exporterSource)
+    if (localName != other.localName || exporterLocalName != other.exporterLocalName || offset != other.offset || importSlot != other.importSlot || exporterHasLiveExports != other.exporterHasLiveExports || !exporterSource != !other.exporterSource)
         return false;
     if (!exporterSource || exporterSource == other.exporterSource)
         return true;
@@ -172,12 +175,12 @@ FunctionExecutable* ModuleProgramExecutable::linkFunctionDeclaration(VM& vm, uns
     return executable;
 }
 
-ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables)
+ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables, const String& liveImports)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, linker, moduleScopeSymbolTables);
+    ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, linker, moduleScopeSymbolTables, liveImports);
     executable->finishCreation(vm);
     executable->getUnlinkedCodeBlock(globalObject); // This generates and binds unlinked code block. Null: it has thrown.
     RETURN_IF_EXCEPTION(scope, nullptr);

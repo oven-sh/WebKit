@@ -35,7 +35,6 @@
 #include "FrameConsoleClient.h"
 #include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
-#include "FrameTree.h"
 #include "HTMLPlugInElement.h"
 #include "HistoryController.h"
 #include "InspectorInstrumentation.h"
@@ -43,9 +42,10 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMWindow.h"
 #include "JSDocument.h"
+#include "JSElement.h"
 #include "JSExecState.h"
+#include "JSShadowRoot.h"
 #include "LoadableModuleScript.h"
-#include "LocalDOMWindow.h"
 #include "LocalFrameInlines.h"
 #include "LocalFrameLoaderClient.h"
 #include "Logging.h"
@@ -351,11 +351,11 @@ void ScriptController::initScriptForWindowProxy(JSWindowProxy& windowProxy)
     }
 
     if (RefPtr page = m_frame->page()) {
-        windowProxy.attachDebugger(page->debugger());
+        windowProxy.attachDebugger(protect(m_frame)->debugger());
         windowProxy.window()->setProfileGroup(page->group().identifier());
     }
 
-    m_frame->loader().dispatchDidClearWindowObjectInWorld(world);
+    protect(m_frame->loader())->dispatchDidClearWindowObjectInWorld(world);
 }
 
 
@@ -509,7 +509,7 @@ bool ScriptController::canAccessFromCurrentOrigin(Frame* frame, Document& access
 
     // If the current lexicalGlobalObject is null we should use the accessing document for the security check.
     if (!lexicalGlobalObject) {
-        return frame && frame->frameDocumentSecurityOrigin() && protect(accessingDocument.securityOrigin())->isSameOriginDomain(*protect(frame->frameDocumentSecurityOrigin()));
+        return frame && frame->frameDocumentSecurityOrigin() && isPlatformObjectSameOrigin(protect(accessingDocument.securityOrigin()), accessingDocument.agentClusterIdentifier(), *protect(frame->frameDocumentSecurityOrigin()), frame->frameAgentClusterIdentifier());
     }
 
     return BindingSecurity::shouldAllowAccessToFrame(lexicalGlobalObject, frame);
@@ -523,6 +523,24 @@ void ScriptController::updateDocument()
         downcast<JSDOMWindow>(jsWindowProxy->window())->updateDocument();
         if (document)
             document->addMicrotaskGlobalObject(jsWindowProxy->window());
+    }
+}
+
+void ScriptController::reevaluateQuirkDependentProperties()
+{
+    // FIXME: This list has to be kept in sync by hand with the interfaces marked
+    // [QuirksCanChangeAtRuntime], because the bindings generator has no cross-IDL aggregation point to
+    // emit it from. Adding the attribute to an interface that is not listed here silently does nothing.
+    // Isolated worlds get their own prototypes, so every window proxy has to be visited, not just the
+    // normal world's.
+    for (auto& jsWindowProxy : protect(windowProxy())->jsWindowProxiesAsVector()) {
+        auto* window = jsWindowProxy->window();
+        if (!window)
+            continue;
+        JSLockHolder lock(jsWindowProxy->world().vm());
+        JSElement::reevaluateQuirkDependentPrototypeProperties(*window);
+        JSDocument::reevaluateQuirkDependentPrototypeProperties(*window);
+        JSShadowRoot::reevaluateQuirkDependentPrototypeProperties(*window);
     }
 }
 
@@ -566,7 +584,7 @@ void ScriptController::collectIsolatedContexts(Vector<std::pair<JSC::JSGlobalObj
 {
     for (auto& jsWindowProxy : protect(windowProxy())->jsWindowProxiesAsVector()) {
         auto* lexicalGlobalObject = jsWindowProxy->window();
-        RefPtr origin = protect(downcast<LocalDOMWindow>(jsWindowProxy->wrapped()))->document()->securityOrigin();
+        RefPtr origin = protect(protect(downcast<LocalDOMWindow>(jsWindowProxy->wrapped()))->document())->securityOrigin();
         result.append(std::make_pair(lexicalGlobalObject, WTF::move(origin)));
     }
 }
@@ -633,82 +651,16 @@ void ScriptController::clearScriptObjects()
     }
 }
 
-JSC::JSValue ScriptController::executeScriptIgnoringException(const String& script, JSC::SourceTaintedOrigin taintedness, bool forceUserGesture)
+JSC::JSValue ScriptController::executeScriptIgnoringException(const String& script, JSC::SourceTaintedness taintedness, bool forceUserGesture)
 {
     return executeScriptInWorldIgnoringException(mainThreadNormalWorldSingleton(), script, taintedness, forceUserGesture);
 }
 
-JSC::JSValue ScriptController::executeScriptInWorldIgnoringException(DOMWrapperWorld& world, const String& script, JSC::SourceTaintedOrigin taintedness, bool forceUserGesture)
+JSC::JSValue ScriptController::executeScriptInWorldIgnoringException(DOMWrapperWorld& world, const String& script, JSC::SourceTaintedness taintedness, bool forceUserGesture)
 {
     auto result = executeScriptInWorld(world, { script, taintedness, URL { }, false, std::nullopt, forceUserGesture, RemoveTransientActivation::Yes });
     return result ? result.value() : JSC::JSValue { };
 }
-
-// Script evaluated on behalf of the client (e.g. WKWebView's evaluateJavaScript:) runs as if it were
-// triggered by a user gesture. The transient activation that grants must not outlive the gesture, but
-// taking it back with consumeTransientActivation() would also discard transient activation the user had
-// genuinely given the page, silently breaking activation-gated APIs the page calls afterwards. This
-// scope remembers the activation each window had beforehand, so that only the activation granted by the
-// forced gesture is taken back once the gesture ends.
-class ForcedUserGestureScope {
-    WTF_MAKE_NONCOPYABLE(ForcedUserGestureScope);
-public:
-    ForcedUserGestureScope(LocalFrame& frame, ForceUserGesture forceUserGesture, RemoveTransientActivation removeTransientActivation)
-        : m_previousActivations(previousActivations(frame, forceUserGesture, removeTransientActivation))
-        , m_gestureIndicator(forceUserGesture == ForceUserGesture::Yes ? std::optional<IsProcessingUserGesture>(IsProcessingUserGesture::Yes) : std::nullopt, frame.document(), UserGestureType::ActivationTriggering, UserGestureIndicator::ProcessInteractionStyle::Never)
-    {
-        RefPtr token = UserGestureIndicator::currentUserGesture();
-        if (!token || m_previousActivations.isEmpty())
-            return;
-
-        token->addDestructionObserver([previousActivations = WTF::move(m_previousActivations), weakFrame = WeakPtr { frame }](UserGestureToken& token) {
-            bool revokedAnyActivation = false;
-            for (auto& [weakWindow, previousActivationTime] : previousActivations) {
-                if (RefPtr window = weakWindow)
-                    revokedAnyActivation |= window->revokeForcedActivation(token.startTime(), previousActivationTime);
-            }
-
-            if (!revokedAnyActivation)
-                return;
-
-            // Activation is also granted to ancestor frames in other processes, which only know how to
-            // consume it. FIXME: This takes activation away from every frame in those processes rather
-            // than restoring what they had, which needs an equivalent of revokeForcedActivation() in the
-            // UI process.
-            RefPtr frame = weakFrame;
-            if (!frame)
-                return;
-            if (RefPtr page = frame->page(); page && page->mainFrame().tree().containsRemoteFrame())
-                frame->loader().client().didConsumeUserActivation();
-        });
-    }
-
-private:
-    struct PreviousActivation {
-        WeakPtr<LocalDOMWindow, WeakPtrImplWithEventTargetData> weakWindow;
-        MonotonicTime activationTime;
-    };
-
-    static Vector<PreviousActivation> previousActivations(LocalFrame& frame, ForceUserGesture forceUserGesture, RemoveTransientActivation removeTransientActivation)
-    {
-        if (forceUserGesture != ForceUserGesture::Yes || removeTransientActivation != RemoveTransientActivation::Yes)
-            return { };
-
-        Vector<PreviousActivation> activations;
-        for (RefPtr frameInTree = &frame.tree().top(); frameInTree; frameInTree = frameInTree->tree().traverseNext()) {
-            RefPtr localFrame = dynamicDowncast<LocalFrame>(frameInTree);
-            if (!localFrame)
-                continue;
-            if (RefPtr window = localFrame->window())
-                activations.append({ *window, window->lastActivationTimestamp() });
-        }
-        return activations;
-    }
-
-    // Declared before m_gestureIndicator so that the activations are captured before the forced gesture grants its own.
-    Vector<PreviousActivation> m_previousActivations;
-    UserGestureIndicator m_gestureIndicator;
-};
 
 ValueOrException ScriptController::executeScriptInWorld(DOMWrapperWorld& world, RunJavaScriptParameters&& parameters)
 {
@@ -722,7 +674,7 @@ ValueOrException ScriptController::executeScriptInWorld(DOMWrapperWorld& world, 
     m_frame->loader().client().notifyPageOfAppBoundBehavior();
 #endif
 
-    ForcedUserGestureScope userGestureScope(m_frame, parameters.forceUserGesture, parameters.removeTransientActivation);
+    UserGestureIndicator gestureIndicator(parameters.forceUserGesture == ForceUserGesture::Yes ? std::optional<IsProcessingUserGesture>(IsProcessingUserGesture::Yes) : std::nullopt, protect(m_frame->document()), UserGestureType::ActivationTriggering, UserGestureIndicator::ProcessInteractionStyle::Never, parameters.removeTransientActivation);
 
     if (!canExecuteScripts(ReasonForCallingCanExecuteScripts::AboutToExecuteScript, &world) || isPaused())
         return makeUnexpected(ExceptionDetails { "Cannot execute JavaScript in this document"_s });
@@ -921,7 +873,7 @@ bool ScriptController::canExecuteScripts(ReasonForCallingCanExecuteScripts reaso
     if (!m_frame->page())
         return false;
 
-    return m_frame->loader().client().allowScript(m_frame->settings().isScriptEnabled());
+    return protect(m_frame->loader().client())->allowScript(m_frame->settings().isScriptEnabled());
 }
 
 void ScriptController::executeJavaScriptURL(const URL& url, const NavigationAction& action, bool& didReplaceDocument)
@@ -934,7 +886,7 @@ void ScriptController::executeJavaScriptURL(const URL& url, const NavigationActi
     RefPtr ownerDocument = m_frame->document();
 
     RefPtr requesterSecurityOrigin = action.requester() ? action.requester()->securityOrigin.ptr() : nullptr;
-    if (requesterSecurityOrigin && !requesterSecurityOrigin->isSameOriginDomain(protect(ownerDocument->securityOrigin())))
+    if (requesterSecurityOrigin && !isPlatformObjectSameOrigin(*requesterSecurityOrigin, action.requester()->agentClusterIdentifier, protect(ownerDocument->securityOrigin()), ownerDocument->agentClusterIdentifier()))
         return;
 
     if (!frame->page())
@@ -995,7 +947,7 @@ void ScriptController::executeJavaScriptURL(const URL& url, const NavigationActi
         // If there is no current history item, create one since we're about to commit a document
         // from the JS URL.
         if (!m_frame->loader().history().currentItem())
-            m_frame->loader().history().updateForRedirectWithLockedBackForwardList();
+            protect(m_frame->loader().history())->updateForRedirectWithLockedBackForwardList();
 
         // Since we're replacing the document, this JavaScript URL load acts as a "Replace" navigation.
         // Make sure the triggering action get set on the DocumentLoader since some logic in

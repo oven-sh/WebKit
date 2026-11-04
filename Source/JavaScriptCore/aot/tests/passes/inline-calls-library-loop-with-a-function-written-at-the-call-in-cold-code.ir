@@ -1,0 +1,123 @@
+# A loop of the library (forEach, some, find ..) runs once for each element, however seldom the call of it is reached. Where the function that it calls is written at the call,
+# the call is weighed as one of ordinary heat though the code around it is cold: the loop comes in, and with it goes the closure.
+# A function that comes from elsewhere, a call that is not expected to be reached, and a loop of the program itself leave the call a call
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass InlineCalls
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="visitsEachInTheLibrary" role=Library parameters=[{type=anything}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = Call v0, -, v4
+    v8 = ToBoolean v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Boolean boolean=true
+    Return v9
+  b4():
+# REPEAT: i = 10..25; a = 2 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    v%(i) = Mul v%(a), v2
+# END REPEAT
+    v26 = Increment v4
+    Jump -> next b1(v26)
+  b5():
+    v27 = Boolean boolean=false
+    Return v27
+}
+
+function f1 name="visitsEachInTheProgram" parameters=[{type=anything}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    v7 = Call v0, -, v4
+    v8 = ToBoolean v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Boolean boolean=true
+    Return v9
+  b4():
+# REPEAT: i = 10..25; a = 2 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    v%(i) = Mul v%(a), v2
+# END REPEAT
+    v26 = Increment v4
+    Jump -> next b1(v26)
+  b5():
+    v27 = Boolean boolean=false
+    Return v27
+}
+
+function f2 name="handed" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=boolean}] {
+    v2 = Less v1, v0
+    Return v2
+}
+
+function f3 name="writesTheFunctionAtTheCall" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+    v2 = NewClosure v1 function=f2
+    v3 = CallDirect v2, v0, v1 function=f0
+    Return v3
+}
+# CHECK-LABEL: function f3 name="writesTheFunctionAtTheCall"
+# CHECK-NOT: function=f0
+# CHECK: LoopHint
+
+function f4 name="handsOnWhatItWasGiven" parameters=[{type=f2}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+    v3 = CallDirect v0, v1, v2 function=f0
+    Return v3
+}
+# CHECK-LABEL: function f4 name="handsOnWhatItWasGiven"
+# CHECK-NOT: LoopHint
+# CHECK: = CallDirect v0, v1, v2
+
+function f5 name="whereTheCallIsNotExpected" parameters=[{type=int[0, 100]}, {type=number}, {type=boolean}] results=[{type=boolean}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = NewClosure v1 function=f2
+    v4 = CallDirect v3, v0, v1 function=f0
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f5 name="whereTheCallIsNotExpected"
+# CHECK-NOT: LoopHint
+# CHECK: = CallDirect v3, v0, v1
+
+function f6 name="theSameLoopOfTheProgram" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+    v2 = NewClosure v1 function=f2
+    v3 = CallDirect v2, v0, v1 function=f1
+    Return v3
+}
+# CHECK-LABEL: function f6 name="theSameLoopOfTheProgram"
+# CHECK-NOT: LoopHint
+# CHECK: = CallDirect v2, v0, v1
+
+function f7 name="theSameLoopOfTheProgramAgain" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
+    v2 = NewClosure v1 function=f2
+    v3 = CallDirect v2, v0, v1 function=f1
+    Return v3
+}
+
+function f8 name="handsTheOneClosureOnInTwoArms" parameters=[{type=int[0, 100]}, {type=number}, {type=boolean}] results=[{type=boolean}] {
+    v3 = NewClosure v1 function=f2
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallDirect v3, v0, v1 function=f0
+    Return v4
+  b2() frequency=Unlikely:
+    v5 = CallDirect v3, v0, v1 function=f0
+    Return v5
+}
+# CHECK-LABEL: function f8 name="handsTheOneClosureOnInTwoArms"
+# CHECK: frequency=Unlikely
+# CHECK: = CallDirect v3, v0, v1
+# CHECK: LoopHint

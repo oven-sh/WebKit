@@ -1,0 +1,65 @@
+# A recursive cycle runs ten times what enters it, whatever the multipliers of the calls inside it
+# FORM: Prepared
+# RUN: heat-graph
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = Boolean boolean=true
+    v1 = CallDirect function=f1
+    v2 = CallDirect v0 function=f3
+    v3 = CallDirect function=f4
+    v4 = CallDirect function=f6
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = CallDirect function=f2
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="recursive" role=OutlinedBody results=[{type=undefined}] {
+    v0 = CallDirect function=f1
+    Return v0
+}
+function f2 name="inLoop" role=OutlinedBody results=[{type=undefined}] {
+    Return
+}
+function f3 name="callsItselfInLoop" role=OutlinedBody parameters=[{type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = CallDirect v0 function=f3
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f4 name="even" role=OutlinedBody results=[{type=undefined}] {
+    v0 = CallDirect function=f5
+    Return v0
+}
+function f5 name="odd" role=OutlinedBody results=[{type=undefined}] {
+    v0 = CallDirect function=f4
+    Return v0
+}
+function f6 name="once" role=OutlinedBody results=[{type=undefined}] {
+    Return
+}
+# CHECK: f0 size 10 mass 37.000000: f1*1.000000 f2*10.000000 f3*1.000000 f4*1.000000 f6*1.000000
+# CHECK-NEXT: f1 size 2 mass 2.000000: f1*1.000000
+# CHECK-NEXT: f2 size 1 mass 1.000000:
+# CHECK-NEXT: f3 size 5 mass 32.000000: f3*10.000000
+# CHECK-NEXT: f4 size 2 mass 2.000000: f5*1.000000
+# CHECK-NEXT: f5 size 2 mass 2.000000: f4*1.000000
+# CHECK-NEXT: f6 size 1 mass 1.000000:
+# CHECK-NEXT: host: f0*1.000000
+# CHECK-NEXT: unknown:
+# CHECK-NEXT: activations:
+# CHECK-NEXT: f0 1.000000
+# CHECK-NEXT: f1 10.000000
+# CHECK-NEXT: f2 10.000000
+# CHECK-NEXT: f3 10.000000
+# CHECK-NEXT: f4 10.000000
+# CHECK-NEXT: f5 10.000000
+# CHECK-NEXT: f6 1.000000

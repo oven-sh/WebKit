@@ -35,6 +35,8 @@
 
 namespace WebCore {
 
+class ImageBufferIOSurfaceDisplayDelegate;
+
 class WEBCORE_EXPORT ImageBufferIOSurfaceBackend : public ImageBufferCGBackend {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(ImageBufferIOSurfaceBackend, WEBCORE_EXPORT);
     WTF_MAKE_NONCOPYABLE(ImageBufferIOSurfaceBackend);
@@ -55,8 +57,12 @@ public:
     void flushContext() override;
     void submitDrawingCommands() override;
 
+    RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() override;
+    void releaseLayerContentsDisplayDelegate() override;
+    void prepareForDisplay() override;
+
 protected:
-    ImageBufferIOSurfaceBackend(const ImageBufferParameters&, std::unique_ptr<IOSurface>, RetainPtr<CGContextRef> platformContext, PlatformDisplayID, IOSurfacePool*);
+    ImageBufferIOSurfaceBackend(const ImageBufferParameters&, std::unique_ptr<IOSurface>, RetainPtr<CGContextRef> platformContext, PlatformDisplayID, IOSurfacePool*, bool useIOSurfaceWebKitBehavior = false);
     CGContextRef ensurePlatformContext();
     // Returns true if flush happened.
     bool flushContextDraws();
@@ -93,10 +99,12 @@ protected:
     std::unique_ptr<IOSurface> m_surface;
     RetainPtr<CGContextRef> m_platformContext;
     const PlatformDisplayID m_displayID;
+    const bool m_useIOSurfaceWebKitBehavior;
     bool m_mayHaveOutstandingBackingStoreReferences { false };
     VolatilityState m_volatilityState { VolatilityState::NonVolatile };
     RefPtr<IOSurfacePool> m_ioSurfacePool;
     bool m_needsFirstFlush { true };
+    RefPtr<ImageBufferIOSurfaceDisplayDelegate> m_layerContentsDisplayDelegate;
 };
 
 } // namespace WebCore

@@ -25,6 +25,9 @@ include(GLESv2.cmake)
 include(D3D.cmake)
 include(GL.cmake)
 include(Metal.cmake)
+include(Wgpu.cmake)
+
+option(ENABLE_WEBGL_WEBGPU "Build ANGLE's WebGPU backend" OFF)
 
 set(no_gl_prototypes
     GL_GLES_PROTOTYPES=0
@@ -122,6 +125,25 @@ if (WIN32)
     )
 endif ()
 
+if (ENABLE_WEBGL_WEBGPU)
+    list(APPEND ANGLE_SOURCES
+        ${wgpu_backend_sources}
+
+        ${angle_translator_lib_wgsl_sources}
+
+        WebKit/dawn/native/DawnNativeWebGPUFramework.cpp
+        WebKit/dawn/dawn_proc.h
+        WebKit/dawn/dawn_proc_table.h
+        WebKit/dawn/native/DawnNative.h
+        WebKit/dawn/webgpu.h
+        WebKit/webgpu/webgpu.h
+    )
+
+    list(APPEND ANGLE_DEFINITIONS
+        ANGLE_ENABLE_WGPU
+    )
+endif ()
+
 set(ANGLEGLESv2_LIBRARIES
     ANGLE
 )
@@ -155,6 +177,10 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
     )
     target_compile_definitions(ANGLE PUBLIC ${ANGLE_DEFINITIONS})
     target_link_libraries(ANGLE PRIVATE ZLIB::ZLIB ${CMAKE_DL_LIBS})
+    if (ENABLE_WEBGL_WEBGPU)
+        # The default proc table of the wgpu backend (DawnNativeWebGPUFramework.cpp) is the one of WebGPU.framework.
+        target_link_libraries(ANGLE PRIVATE WebGPU)
+    endif ()
 
     target_compile_definitions(ANGLEFramework INTERFACE ${gl_prototypes})
 
@@ -228,7 +254,7 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
         endif ()
 
         add_library(ANGLE-shared SHARED ${_angle_shared_objects})
-        target_link_libraries(ANGLE-shared PRIVATE
+        set(_angle_shared_libraries
             ZLIB::ZLIB
             ${CMAKE_DL_LIBS}
             "-framework CoreGraphics"
@@ -238,8 +264,12 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
             "-framework QuartzCore"
         )
         if (WEBKIT_SDK_IS_MACOS)
-            target_link_libraries(ANGLE-shared PRIVATE "-framework IOKit")
+            list(APPEND _angle_shared_libraries "-framework IOKit")
         endif ()
+        if (ENABLE_WEBGL_WEBGPU)
+            list(APPEND _angle_shared_libraries WebGPU)
+        endif ()
+        target_link_libraries(ANGLE-shared PRIVATE ${_angle_shared_libraries})
 
         # FIXME: Only correct for iOS-family platforms. On macOS the Xcode build
         # resolves NORMAL_UMBRELLA_FRAMEWORKS_DIR to
@@ -257,6 +287,19 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
         endif ()
 
         _WEBKIT_ADD_CODE_SIGN(ANGLE-shared)
+
+        # The ANGLE test executables use internal symbols that libANGLE-shared does
+        # not export, so they link this archive of the same objects instead. Like
+        # libANGLE.a in the Xcode build, but it also contains the public gl*/egl*
+        # entry points.
+        add_library(ANGLE-static STATIC EXCLUDE_FROM_ALL ${_angle_shared_objects})
+        set_target_properties(ANGLE-static PROPERTIES
+            OUTPUT_NAME ANGLE
+            LINKER_LANGUAGE CXX
+        )
+        target_include_directories(ANGLE-static INTERFACE ${ANGLE_PRIVATE_INCLUDE_DIRECTORIES})
+        target_compile_definitions(ANGLE-static INTERFACE ${ANGLE_DEFINITIONS} ${_angle_prototypes})
+        target_link_libraries(ANGLE-static INTERFACE ${_angle_shared_libraries})
     endif ()
 else ()
     add_library(ANGLE ${ANGLE_LIBRARY_TYPE} ${ANGLE_SOURCES})
@@ -328,3 +371,8 @@ endif ()
 target_include_directories(ANGLEFramework INTERFACE ${ANGLE_FRAMEWORK_HEADERS_DIR} ${ANGLE_HEADERS_DIR})
 
 add_library(ANGLE::ANGLE ALIAS ANGLEFramework)
+
+# gtest is added after ANGLE (Source/CMakeLists.txt), so check the option, not the target.
+if (is_mac AND ENABLE_API_TESTS AND TARGET ANGLE-static)
+    include(Tests.cmake)
+endif ()

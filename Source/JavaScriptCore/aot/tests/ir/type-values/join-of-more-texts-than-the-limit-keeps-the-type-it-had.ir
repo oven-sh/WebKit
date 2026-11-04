@@ -1,0 +1,45 @@
+# A block parameter whose type lists more texts than the limit keeps the list when it is typed again from arguments that are all in it, so what it is returned as still holds. A parameter that had no such list becomes any string.
+# FORM: Prepared
+# OPTIONS: limit=MaxLiteralsInType:3
+# RUN: pass RetypeValues
+# LOSS: MaxLiteralsInType f1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="listedBefore" parameters=[{type=int}] results=[{type="a"|"b"|"c"|"d"}] {
+    Switch v0 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
+  b1():
+    v1 = String string="a"
+    Jump -> next b5(v1)
+  b2():
+    v2 = String string="b"
+    Jump -> next b5(v2)
+  b3():
+    v3 = String string="c"
+    Jump -> next b5(v3)
+  b4():
+    v4 = String string="d"
+    Jump -> next b5(v4)
+  b5(v5: "a"|"b"|"c"|"d"):
+    Return v5
+# CHECK: b5(v5: "a"|"b"|"c"|"d"):
+}
+
+function f1 name="notListedBefore" parameters=[{type=int}] results=[{type=string}] {
+    Switch v0 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
+  b1():
+    v1 = String string="a"
+    Jump -> next b5(v1)
+  b2():
+    v2 = String string="b"
+    Jump -> next b5(v2)
+  b3():
+    v3 = String string="c"
+    Jump -> next b5(v3)
+  b4():
+    v4 = String string="d"
+    Jump -> next b5(v4)
+  b5(v5):
+    Return v5
+# CHECK: b5(v5: string):
+}

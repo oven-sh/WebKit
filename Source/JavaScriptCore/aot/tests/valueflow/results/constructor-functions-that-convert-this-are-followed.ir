@@ -1,0 +1,54 @@
+# function Converts(a, b) { this.q = a; this.p = b }   function Returns(a) { this.s = a; return this }   function Filled(a) { fill(this, a) }   function fill(object, a) { object.t = a }
+# In code that is not strict `this` goes through ToThis, which answers with the object under construction. So each field is set at creation, always filled and created in the order of the stores.
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Converts" {{*}}key="p" {{*}}initialization=SetAtCreation} occupancy=AlwaysFilled {{*}}key="q" {{*}}initialization=SetAtCreation} occupancy=AlwaysFilled {{*}}constructorOrders=[{fields=[1, 0]}] fieldCreation=OnlyAtConstruction
+# CHECK: layout L1 kind=Instance name="Returns" {{*}}key="s" {{*}}initialization=SetAtCreation} occupancy=AlwaysFilled {{*}}constructorOrders=[{fields=[0]}]
+# CHECK: layout L2 kind=Instance name="Filled" {{*}}key="t" {{*}}initialization=SetAtCreation} occupancy=AlwaysFilled {{*}}constructorOrders=[{fields=[0]}] fieldCreation=OnlyAtConstruction
+# CHECK: function f1 name="Converts" {{*}}thisType={type=L0}
+# CHECK: receivers=[L0]
+# CHECK: receivers=[L0]
+# CHECK: function f2 name="Returns" {{*}}thisType={type=L1}
+# CHECK: function f4 name="fill" {{*}}parameters=[{type=L2}, {{*}}
+# CHECK: receivers=[L2]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Converts" constructor=f1 fields=[{key="p" declared={type=anything} flags=[IsRequired]}, {key="q" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Returns" constructor=f2 fields=[{key="s" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Filled" constructor=f3 fields=[{key="t" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewClosure function=f1
+    v2 = Construct v1, -, v0, v0
+    v3 = PropGet v2 key="p"
+    v4 = PropGet v2 key="q"
+    v5 = NewClosure function=f2
+    v6 = Construct v5, -, v0
+    v7 = PropGet v6 key="s"
+    v8 = NewClosure function=f3
+    v9 = Construct v8, -, v0
+    v10 = PropGet v9 key="t"
+    Return v10
+}
+function f1 name="Converts" flags=[IsSloppy, HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] constructedClass=L0 {
+    v3 = ToThis v0
+    PropSet v3, v1 key="q" mode=Sloppy
+    PropSet v3, v2 key="p" mode=Sloppy
+    Return
+}
+function f2 name="Returns" flags=[IsSloppy, HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
+    v2 = ToThis v0
+    PropSet v2, v1 key="s" mode=Sloppy
+    Return v2
+}
+function f3 name="Filled" flags=[IsSloppy, HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L2 {
+    v2 = ToThis v0
+    v3 = NewClosure function=f4
+    v4 = Call v3, -, v2, v1
+    Return
+}
+function f4 name="fill" flags=[IsSloppy] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="t" mode=Sloppy
+    Return
+}

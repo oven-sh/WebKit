@@ -41,7 +41,7 @@
 
 namespace WebCore {
 
-static StrokeStyle NODELETE textDecorationStyleToStrokeStyle(TextDecorationStyle decorationStyle)
+static StrokeStyle LEGACY_NODELETE textDecorationStyleToStrokeStyle(TextDecorationStyle decorationStyle)
 {
     StrokeStyle strokeStyle = StrokeStyle::SolidStroke;
     switch (decorationStyle) {
@@ -65,7 +65,7 @@ static StrokeStyle NODELETE textDecorationStyleToStrokeStyle(TextDecorationStyle
     return strokeStyle;
 }
 
-static void NODELETE adjustLineToPixelBoundaries(FloatPoint& p1, FloatPoint& p2, float strokeWidth, StrokeStyle penStyle)
+static void LEGACY_NODELETE adjustLineToPixelBoundaries(FloatPoint& p1, FloatPoint& p2, float strokeWidth, StrokeStyle penStyle)
 {
     // For odd widths, we add in 0.5 to the appropriate x/y so that the float arithmetic
     // works out. For example, with a border width of 3, WebKit will pass us (y1+y2)/2, e.g.,
@@ -358,13 +358,21 @@ static void collectStylesForRenderer(TextDecorationPainter::Styles& result, cons
         }
     };
 
+    // Decorations and the other properties read here aren't inherited. Text reads them from its parent.
+    auto styleRenderer = [](const RenderObject& renderer) -> const RenderElement& {
+        if (is<RenderText>(renderer))
+            return *renderer.parent();
+        return downcast<RenderElement>(renderer);
+    };
+
     auto styleForRenderer = [&] (const RenderObject& renderer) -> CheckedRef<const Style::ComputedStyle> {
-        if (pseudoElementType && renderer.style().hasPseudoStyle(*pseudoElementType)) {
+        auto& elementRenderer = styleRenderer(renderer);
+        if (pseudoElementType && elementRenderer.style().hasPseudoStyle(*pseudoElementType)) {
             if (auto textRenderer = dynamicDowncast<RenderText>(renderer))
                 return *textRenderer->lazyPseudoElementStyle({ *pseudoElementType });
-            return *downcast<RenderElement>(renderer).lazyPseudoElementStyle({ *pseudoElementType });
+            return *elementRenderer.lazyPseudoElementStyle({ *pseudoElementType });
         }
-        return firstLineStyle ? renderer.firstLineStyle() : CheckedRef { renderer.style() };
+        return firstLineStyle ? elementRenderer.firstLineStyle() : elementRenderer.style();
     };
 
     auto* current = &renderer;
@@ -372,7 +380,7 @@ static void collectStylesForRenderer(TextDecorationPainter::Styles& result, cons
         CheckedRef style = styleForRenderer(*current);
         extractDecorations(style, style->textDecorationLine());
 
-        if (current->style().display() == Style::DisplayType::RubyText)
+        if (styleRenderer(*current).style().display() == Style::DisplayType::RubyText)
             return;
 
         current = current->parent();

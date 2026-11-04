@@ -1,0 +1,69 @@
+# Equal conversions share a body whichever built-in function they run for, and the call of the body names that function. Where the operations of a site run for different functions, each keeps its name
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="convertsForOneFunctionEach" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v2 = ToPropertyKey v1 calledBuiltin=ObjectHasOwn @9
+    v3 = ToString v2 form=Generic calledBuiltin=ObjectHasOwn @9
+    Return v3
+  b2() frequency=Rare:
+    v4 = ToPropertyKey v1 calledBuiltin=MathMax @9
+    v5 = ToString v4 form=Generic calledBuiltin=MathMax @9
+    Return v5
+  b3() frequency=Rare:
+    v6 = ToPropertyKey v1 calledBuiltin=MathMin @9
+    v7 = ToString v6 form=Generic calledBuiltin=MathMin @9
+    Return v7
+  b4() frequency=Rare:
+    v8 = ToPropertyKey v1 calledBuiltin=MathMin @9 tail
+    v9 = ToString v8 form=Generic calledBuiltin=MathMin @9 tail
+    Return v9
+  b5() frequency=Rare:
+    v10 = ToPropertyKey v1 @9
+    v11 = ToString v10 form=Generic @9
+    Return v11
+  b6() frequency=Rare:
+    v12 = ToPropertyKey v1 calledBuiltin=ObjectHasOwn @9
+    v13 = ToString v12 form=Generic calledBuiltin=ObjectHasOwn @9
+    Return v13
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: = ToString
+# CHECK: = CallDirect v1 function=f2 calledBuiltin=ObjectHasOwn @9
+# CHECK: = CallDirect v1 function=f2 calledBuiltin=MathMax @9
+# CHECK: = CallDirect v1 function=f2 calledBuiltin=MathMin @9
+# CHECK: = CallDirect v1 function=f2 calledBuiltin=MathMin @9 tail
+# CHECK: = CallDirect v1 function=f2 @9
+# CHECK: = CallDirect v1 function=f2 calledBuiltin=ObjectHasOwn @9
+# CHECK-NOT: = ToString
+
+function f1 name="convertsForTwoFunctions" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*2) = ToPropertyKey v1 calledBuiltin=MathMax @9
+    v%(i*2+1) = ToString v%(i*2) form=Generic calledBuiltin=MathMin @9
+    Return v%(i*2+1)
+# END REPEAT
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: = ToString
+# CHECK-COUNT-6: = CallDirect v1 function=f3 @9
+# CHECK-NOT: = ToString
+
+# CHECK-LABEL: function f2 {{*}}role=OutlinedBody
+# CHECK-NOT: calledBuiltin
+# CHECK: = ToPropertyKey v0
+# CHECK-NOT: calledBuiltin
+# CHECK-LABEL: function f3 {{*}}role=OutlinedBody
+# CHECK: = ToPropertyKey v0 calledBuiltin=MathMax
+# CHECK: = ToString {{*}}calledBuiltin=MathMin

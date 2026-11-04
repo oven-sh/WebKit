@@ -1,0 +1,97 @@
+# A module that imports a class reads its static fields as variables, also in a cycle of modules: the binding it gets the class object from is stored after the definitions. A class object that the initializer hands to the partner before a definition has no proof for that field
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: pipeline ResolveAccesses
+# RUN(ORDER): valueflow-apply
+# ORDER: variable g1 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: variable g2 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER-NEXT: variable g3 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER: variable g6 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: module m0 path=
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="ordered.js" displayPath="ordered.js" body=f1 exports=[{name="Ordered" variable=g0}]
+module m2 path="cyclic.js" displayPath="cyclic.js" body=f4 requests=[{target=m3 completes=true}] exports=[{name="Cyclic" variable=g1}]
+module m3 path="partner.js" displayPath="partner.js" body=f7 requests=[{target=m2 completes=true}] exports=[{name="readCyclic" variable=g4}, {name="readGiven" variable=g5}]
+entry module=m0
+layout L0 kind=Instance name="Ordered" constructor=f2 staticFields=[{key="count" variable=g2}]
+layout L1 kind=Instance name="Cyclic" constructor=f5 staticFields=[{key="count" variable=g3}, {key="late" variable=g6}]
+variable g0 name="Ordered" module=m1 declared={type=function|absent} flags=[IsImmutable]
+variable g1 name="Cyclic" module=m2 declared={type=function|absent} flags=[IsImmutable]
+variable g2 module=m1 declared={type=anything} owner=L0
+variable g3 module=m2 declared={type=anything} owner=L1
+variable g4 name="readCyclic" module=m3 declared={type=function} initialization=Function function=f8 flags=[IsImmutable]
+variable g5 name="readGiven" module=m3 declared={type=function} initialization=Function function=f9 flags=[IsImmutable]
+variable g6 module=m2 declared={type=anything} owner=L1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="Ordered"
+    v2 = PropGet v1 key="count"
+    v3 = GetModuleVariable variable=g4
+    v4 = Call v3
+    Return
+}
+function f1 name="ordered" module=m1 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = CallDirect v2 function=f3
+    PutModuleVariable v2 variable=g0
+    Return
+}
+function f2 name="Ordered" module=m1 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f3 name="initializeOrdered" module=m1 kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="count"
+    Return
+}
+function f4 name="cyclic" module=m2 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = NewClass v0 layout=L1
+    v2 = FinishClass v1 layout=L1
+    v3 = CallDirect v2 function=f6
+    PutModuleVariable v2 variable=g1
+    Return
+}
+function f5 name="Cyclic" module=m2 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f6 name="initializeCyclic" module=m2 kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="count"
+    v3 = GetModuleVariable variable=g5
+    v4 = Call v3, -, v0
+    PropDefine v0, v1 key="late"
+    Return
+}
+function f7 name="partner" module=m3 kind=Module results=[{type=anything}] {
+    Return
+}
+function f8 name="readCyclic" module=m3 results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="Cyclic"
+    v2 = PropGet v1 key="count"
+    Return v2
+# CHECK: = CheckInitialized
+# CHECK: = GetModuleVariable variable=g3
+}
+function f9 name="readGiven" module=m3 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    v2 = PropGet v0 key="late"
+    Return v2
+}
+# CHECK-LABEL: function f9 name="readGiven"
+# CHECK: = GetModuleVariable variable=g3
+# CHECK: = PropGet [[classObject]] key="late"
+# The code of main.js: f0 evaluates what the module imports and calls it.
+# CHECK-LABEL: function f11 name="main"
+# CHECK: = GetModuleVariable variable=g2
+# CHECK-NOT: key="count"

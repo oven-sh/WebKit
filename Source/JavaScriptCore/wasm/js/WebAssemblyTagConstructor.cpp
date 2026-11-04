@@ -119,7 +119,7 @@ void WebAssemblyTagConstructor::finishCreation(VM& vm, WebAssemblyTagPrototype* 
 }
 
 WebAssemblyTagConstructor::WebAssemblyTagConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callJSWebAssemblyTag, constructJSWebAssemblyTag)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callJSWebAssemblyTag), JSC_REGISTERED_HOST_FUNCTION(constructJSWebAssemblyTag))
 {
 }
 

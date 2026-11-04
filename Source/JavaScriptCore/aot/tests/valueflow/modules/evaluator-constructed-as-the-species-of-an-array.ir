@@ -1,0 +1,23 @@
+# list.constructor = { [Symbol.species]: Function }; list.map(each)
+# ArraySpeciesCreate constructs what it finds under @@species.
+# RUN: valueflow-solve unseen
+# CHECK: unseen-code yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key=@@species declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=Function
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    PropSet v1, v4 key="constructor"
+    v6 = NewClosure function=f1
+    v7 = Builtin builtin=ArrayPrototypeMap
+    v8 = Call v7, v1, v6
+    Return
+}
+function f1 name="each" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

@@ -1,0 +1,47 @@
+# view.subarray(start, end) of a typed array of a known class is taken apart: the bounds are clamped, and TypedArrayRange makes the view. A view whose length can change, one without memory, and a bound that is no number take the call as it was.
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="fromAStart" parameters=[{type=Uint8Array<int[0, 255], pristine[Names]>}, {type=number}] results=[{type=Uint8Array}] {
+  b0(v0: Uint8Array<int[0, 255], pristine[Names]>, v1: number):
+    v2 = CallBuiltin v0, v1 overload=TypedArrayPrototypeSubarray/0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="fromAStart"
+# CHECK: [[fixed]]: boolean = HasFixedBytes v0
+# CHECK-NEXT: Branch [[fixed]] -> taken [[fast]](), notTaken [[slow]]()
+# CHECK: [[length]]: {{*}} = GetTypedArrayLength v0
+# CHECK-NEXT: [[bounds]]: {{*}} = StringRange [[length]], v1
+# CHECK-NEXT: [[start]]: {{*}} = ResultAt [[bounds]]
+# CHECK-NEXT: [[end]]: {{*}} = ResultAt [[bounds]] index=1
+# CHECK-NEXT: {{*}} = TypedArrayRange v0, [[start]], [[end]] valueType=
+# CHECK: frequency=Unlikely
+# CHECK-NEXT: {{*}} = CallBuiltin v0, v1 overload=TypedArrayPrototypeSubarray/0
+
+function f1 name="floatsBetweenTwoBounds" parameters=[{type=Float64Array<number, pristine[Names]>}, {type=i32}, {type=i32}] results=[{type=Float64Array}] {
+  b0(v0: Float64Array<number, pristine[Names]>, v1: i32, v2: i32):
+    v3 = CallBuiltin v0, v1, v2 overload=TypedArrayPrototypeSubarray/0
+    Return v3
+}
+# CHECK-LABEL: function f1 name="floatsBetweenTwoBounds"
+# CHECK: StringRange {{*}}, v1, v2
+# CHECK: TypedArrayRange v0,
+
+function f2 name="aStartThatMayBeUndefined" parameters=[{type=Uint8Array<int[0, 255], pristine[Names]>}, {type=undefined|number}] results=[{type=Uint8Array}] {
+  b0(v0: Uint8Array<int[0, 255], pristine[Names]>, v1: undefined|number):
+    v2 = CallBuiltin v0, v1 overload=TypedArrayPrototypeSubarray/0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="aStartThatMayBeUndefined"
+# CHECK: TypeTest v1 testedType=number
+# CHECK: TypedArrayRange v0,
+# CHECK: overload=TypedArrayPrototypeSubarray/0
+
+function f3 name="aStartThatIsNoNumber" parameters=[{type=Uint8Array<int[0, 255], pristine[Names]>}, {type=undefined}] results=[{type=Uint8Array}] {
+  b0(v0: Uint8Array<int[0, 255], pristine[Names]>, v1: undefined):
+    v2 = CallBuiltin v0, v1 overload=TypedArrayPrototypeSubarray/0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="aStartThatIsNoNumber"
+# CHECK-NOT: TypedArrayRange

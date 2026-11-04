@@ -31,7 +31,7 @@ class Color;
 class ImmutableStyleProperties;
 class MutableStyleProperties;
 
-enum CSSValueID : uint16_t;
+enum class CSSValueID : uint16_t;
 enum CSSParserMode : uint8_t;
 
 namespace CSS {
@@ -71,7 +71,8 @@ public:
 
     private:
         const StylePropertyMetadata& m_metadata;
-        const CSSValue* m_value;
+        // PropertyReference is a short-lived view and the StyleProperties outlives it.
+        SUPPRESS_UNCOUNTED_MEMBER const CSSValue* m_value;
     };
 
     template<typename T>
@@ -92,7 +93,8 @@ public:
         bool operator==(std::nullptr_t) const { return index >= properties.propertyCount(); }
 
     private:
-        const T& properties;
+        // The iterator is a short-lived view and the StyleProperties outlives it.
+        SUPPRESS_UNCOUNTED_MEMBER const T& properties;
         unsigned index { 0 };
     };
 
@@ -112,7 +114,7 @@ public:
 
     bool propertyIsImportant(CSSPropertyID) const;
     String getPropertyShorthand(CSSPropertyID) const;
-    bool isPropertyImplicit(CSSPropertyID) const;
+    bool LEGACY_NODELETE isPropertyImplicit(CSSPropertyID) const;
 
     RefPtr<CSSValue> getCustomPropertyCSSValue(const String& propertyName) const;
     String getCustomPropertyValue(const String& propertyName) const;
@@ -130,13 +132,13 @@ public:
     String asText(const CSS::SerializationContext&) const;
     AtomString asTextAtom(const CSS::SerializationContext&) const;
 
-    bool NODELETE hasCSSOMWrapper() const;
+    bool LEGACY_NODELETE hasCSSOMWrapper() const;
     bool isMutable() const { return m_isMutable; }
 
     bool traverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>& handler) const;
     bool mayDependOnBaseURL() const;
 
-    static unsigned NODELETE averageSizeInBytes();
+    static unsigned LEGACY_NODELETE averageSizeInBytes();
 
 #ifndef NDEBUG
     void showStyle();

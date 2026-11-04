@@ -48,12 +48,15 @@
 #include "media/base/codec.h"
 #include "media/base/media_constants.h"
 #include "media/base/stream_params.h"
+#include "p2p/base/p2p_constants.h"
 #include "pc/peer_connection_wrapper.h"
 #include "pc/rtp_transceiver.h"
+#include "pc/sdp_utils.h"
 #include "pc/session_description.h"
 #include "pc/test/fake_audio_capture_module.h"
 #include "pc/test/integration_test_helpers.h"
 #include "pc/test/mock_peer_connection_observers.h"
+#include "rtc_base/ssl_stream_adapter.h"
 #include "rtc_base/thread.h"
 #include "system_wrappers/include/metrics.h"
 #include "test/create_test_field_trials.h"
@@ -71,6 +74,7 @@ namespace webrtc {
 
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::IsEmpty;
 using ::testing::IsTrue;
 using ::testing::NotNull;
 using ::testing::Optional;
@@ -750,22 +754,38 @@ TEST_F(SdpOfferAnswerTest, AlwaysNegotiateDataChannelsNegotiationNeeded) {
       caller->observer()->latest_negotiation_needed_event()));
 }
 
-TEST_F(SdpOfferAnswerTest, AlwaysNegotiateDataChannelsSetConfiguration) {
+TEST_F(SdpOfferAnswerTest, AlwaysNegotiateDataChannelsCanNotBeEnabledLater) {
   RTCConfiguration config;
   config.always_negotiate_data_channels = false;
   auto caller = CreatePeerConnection(config, /*field_trials=*/"");
 
   RTCConfiguration pc_config = caller->pc()->GetConfiguration();
   pc_config.always_negotiate_data_channels = true;
-  EXPECT_TRUE(caller->pc()->SetConfiguration(pc_config).ok());
+  EXPECT_EQ(caller->pc()->SetConfiguration(pc_config).type(),
+            RTCErrorType::INVALID_MODIFICATION);
 
-  // No data channels are created.
+  // No data channels are created and none are negotiated.
+  auto offer = caller->CreateOffer();
+  ASSERT_THAT(offer, NotNull());
+  EXPECT_THAT(offer->description()->contents(), IsEmpty());
+}
+
+TEST_F(SdpOfferAnswerTest, AlwaysNegotiateDataChannelsCanNotBeDisabledLater) {
+  RTCConfiguration config;
+  config.always_negotiate_data_channels = true;
+  auto caller = CreatePeerConnection(config, /*field_trials=*/"");
+
+  RTCConfiguration pc_config = caller->pc()->GetConfiguration();
+  pc_config.always_negotiate_data_channels = false;
+  EXPECT_EQ(caller->pc()->SetConfiguration(pc_config).type(),
+            RTCErrorType::INVALID_MODIFICATION);
+
+  // No data channels are created but one is negotiated.
   auto offer = caller->CreateOffer();
   ASSERT_THAT(offer, NotNull());
 
   auto& contents = offer->description()->contents();
   ASSERT_THAT(contents, SizeIs(1));
-  // SCTP is negotiated.
   EXPECT_EQ(MediaProtocolType::kSctp, contents[0].type);
 }
 #endif  // WEBRTC_HAVE_SCTP
@@ -2114,6 +2134,22 @@ TEST_F(SdpOfferAnswerTest,
   EXPECT_TRUE(callee_transceiver->receptive());
 }
 
+TEST_F(SdpOfferAnswerTest, IceOptionsDtlsInStun) {
+  if (!SSLStreamAdapter::IsBoringSsl()) {
+    GTEST_SKIP() << "DTLS-in-STUN requires BoringSSL.";
+  }
+  auto pc1 = CreatePeerConnection("WebRTC-IceHandshakeDtls/Enabled/");
+  pc1->AddAudioTrack("audio_track", {});
+
+  auto offer = pc1->CreateOfferAndSetAsLocal();
+  ASSERT_NE(offer, nullptr);
+
+  const auto& transport_infos = offer->description()->transport_infos();
+  ASSERT_THAT(transport_infos, SizeIs(1));
+  const auto& transport_description = transport_infos[0].description;
+  EXPECT_TRUE(transport_description.HasOption("sped"));
+}
+
 #ifdef WEBRTC_HAVE_SCTP
 TEST_F(SdpOfferAnswerTest, SctpInitDisabled) {
   auto pc1 = CreatePeerConnection("WebRTC-Sctp-Snap/Disabled/");
@@ -2305,6 +2341,107 @@ TEST_F(SdpOfferAnswerTest,
   auto answer3 = pc3->CreateAnswerAndSetAsLocal();
   ASSERT_THAT(answer3, NotNull());
   EXPECT_FALSE(pc1->SetRemoteDescription(std::move(answer3)));
+}
+
+// Verifies that a stopped transceiver does not get a channel.
+TEST_F(SdpOfferAnswerTest, StoppedTransceiverHasNoChannel) {
+  auto caller = CreatePeerConnection();
+  auto callee = CreatePeerConnection();
+
+  caller->AddTransceiver(MediaType::AUDIO);
+  scoped_refptr<RtpTransceiverInterface> stopped_transceiver =
+      caller->AddTransceiver(MediaType::AUDIO);
+  ASSERT_TRUE(stopped_transceiver);
+
+  auto offer = caller->CreateOfferAndSetAsLocal();
+  ASSERT_THAT(offer, NotNull());
+  ASSERT_TRUE(callee->SetRemoteDescription(std::move(offer)));
+  auto answer = callee->CreateAnswerAndSetAsLocal();
+  ASSERT_THAT(answer, NotNull());
+
+  auto pranswer =
+      CloneSessionDescriptionAsType(answer.get(), SdpType::kPrAnswer);
+  ASSERT_THAT(pranswer, NotNull());
+  SessionDescription* pranswer_desc = pranswer->description();
+  ASSERT_THAT(pranswer_desc->contents(), SizeIs(2));
+  ContentInfo& rejected_content = pranswer_desc->contents()[1];
+  rejected_content.rejected = true;
+  const ContentGroup* bundle = pranswer_desc->GetGroupByName(GROUP_TYPE_BUNDLE);
+  ASSERT_THAT(bundle, NotNull());
+  ContentGroup new_bundle = *bundle;
+  new_bundle.RemoveContentName(rejected_content.mid());
+  pranswer_desc->RemoveGroupByName(GROUP_TYPE_BUNDLE);
+  pranswer_desc->AddGroup(new_bundle);
+
+  ASSERT_TRUE(caller->SetRemoteDescription(std::move(pranswer)));
+  EXPECT_TRUE(stopped_transceiver->stopped());
+
+  ASSERT_TRUE(caller->SetRemoteDescription(std::move(answer)));
+  EXPECT_TRUE(stopped_transceiver->stopped());
+
+  bool has_channel = signaling_thread_->BlockingCall([&] {
+    return static_cast<RtpTransceiverProxyWithInternal<RtpTransceiver>*>(
+               stopped_transceiver.get())
+        ->internal()
+        ->HasChannel();
+  });
+  EXPECT_FALSE(has_channel);
+}
+
+// Verifies that a munged local re-offer can not change the MID of a
+// transceiver that is already associated with an m= section.
+TEST_F(SdpOfferAnswerTest, RejectsMidChangeOfAssociatedTransceiver) {
+  auto caller = CreatePeerConnection();
+  auto callee = CreatePeerConnection();
+
+  // Negotiate without BUNDLE so that each m= section gets its own transport.
+  auto negotiate = [&] {
+    auto offer = caller->CreateOffer();
+    ASSERT_THAT(offer, NotNull());
+    offer->description()->RemoveGroupByName(GROUP_TYPE_BUNDLE);
+    ASSERT_TRUE(caller->SetLocalDescription(offer->Clone()));
+    ASSERT_TRUE(callee->SetRemoteDescription(std::move(offer)));
+    auto answer = callee->CreateAnswerAndSetAsLocal();
+    ASSERT_THAT(answer, NotNull());
+    ASSERT_TRUE(caller->SetRemoteDescription(std::move(answer)));
+  };
+
+  auto set_mid = [](SessionDescriptionInterface* sdesc, size_t index,
+                    absl::string_view mid) {
+    SessionDescription* desc = sdesc->description();
+    desc->contents()[index].set_mid(mid);
+    desc->transport_infos()[index].content_name = std::string(mid);
+  };
+
+  caller->AddTransceiver(MediaType::AUDIO);
+  scoped_refptr<RtpTransceiverInterface> stopped_transceiver =
+      caller->AddTransceiver(MediaType::AUDIO);
+  ASSERT_NO_FATAL_FAILURE(negotiate());
+
+  // Reject the second m= section in both the local and remote descriptions.
+  ASSERT_TRUE(stopped_transceiver->StopStandard().ok());
+  ASSERT_NO_FATAL_FAILURE(negotiate());
+  ASSERT_THAT(caller->pc()->GetTransceivers(), SizeIs(1));
+
+  // A new transceiver recycles the rejected m= section and gets associated
+  // with it (and gets a channel) by a local offer.
+  scoped_refptr<RtpTransceiverInterface> recycled_transceiver =
+      caller->AddTransceiver(MediaType::AUDIO);
+  auto offer = caller->CreateOffer();
+  ASSERT_THAT(offer, NotNull());
+  ASSERT_THAT(offer->description()->contents(), SizeIs(2));
+  offer->description()->RemoveGroupByName(GROUP_TYPE_BUNDLE);
+  ASSERT_TRUE(caller->SetLocalDescription(std::move(offer)));
+  const std::optional<std::string> recycled_mid = recycled_transceiver->mid();
+  ASSERT_TRUE(recycled_mid.has_value());
+
+  // Munged re-offer that changes the MID of the recycled m= section.
+  auto renamed_offer = caller->CreateOffer();
+  ASSERT_THAT(renamed_offer, NotNull());
+  renamed_offer->description()->RemoveGroupByName(GROUP_TYPE_BUNDLE);
+  set_mid(renamed_offer.get(), 1, "renamed");
+  EXPECT_FALSE(caller->SetLocalDescription(std::move(renamed_offer)));
+  EXPECT_EQ(recycled_transceiver->mid(), recycled_mid);
 }
 
 TEST_F(SdpOfferAnswerTest, SubsequentOfferDoesNotAddSctpInit) {

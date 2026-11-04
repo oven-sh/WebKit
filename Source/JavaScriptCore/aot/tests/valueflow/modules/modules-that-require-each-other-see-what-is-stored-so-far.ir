@@ -1,0 +1,29 @@
+# a.cjs: exports.early = 1; const b = require("./b.cjs"); exports.late = 2        b.cjs: const a = require("./a.cjs"); exports.seen = [a.early, a.late]
+# b.cjs requires a.cjs while the body of a.cjs runs: the operation finds that a.cjs has started and goes on. The requests are a cycle, so neither module has run to its end before the other reads its variables:
+# `late` may still be undefined where b.cjs reads it
+# RUN: valueflow-apply
+# CHECK: variable g1 name="late" {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation
+# CHECK-NOT: variable g1 name="late" {{*}}initialization=StoredBeforeEveryRead
+
+variable g0 name="early" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="late" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="seen" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/a.cjs" displayPath="a.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/b.cjs" displayPath="b.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 requests=[{target=m0 kind=Require completes=true}]
+entry module=m0
+function f0 name="a" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    v3 = Integer integer=2
+    PutModuleVariable v3 variable=g1
+    Return
+}
+function f1 name="b" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    EvaluateModule module=m0 referrer=m1 [isBare]
+    v1 = GetModuleVariable variable=g0
+    v2 = GetModuleVariable variable=g1
+    v3 = Add v1, v2
+    PutModuleVariable v3 variable=g2
+    Return
+}

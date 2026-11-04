@@ -1,0 +1,24 @@
+# Literal strings and symbols are compared by list, and string and symbol hold all of them
+# RUN: subset
+# CHECK: t0 <= t1: yes overlaps: yes
+# CHECK: t0 <= t2: yes overlaps: yes
+# CHECK: t0 <= t3: yes overlaps: yes
+# CHECK: t0 <= t4: no overlaps: no
+# CHECK: t0 <= t5: no overlaps: no
+# CHECK: t0 <= t8: yes overlaps: yes
+# CHECK: t1 <= t0: no overlaps: yes
+# CHECK: t1 <= t2: yes overlaps: yes
+# CHECK: t2 <= t0: no overlaps: yes
+# CHECK: t2 <= t1: no overlaps: yes
+# CHECK: t3 <= t0: no overlaps: yes
+# CHECK: t5 <= t6: yes overlaps: yes
+# CHECK: t5 <= t7: yes overlaps: yes
+# CHECK: t5 <= t8: yes overlaps: yes
+# CHECK: t5 <= t9: no overlaps: no
+# CHECK: t6 <= t5: no overlaps: yes
+# CHECK: t7 <= t6: no overlaps: yes
+# CHECK: t9 <= t7: yes overlaps: yes
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type="a"}, {type="a"|"b"}, {type=string}, {type=undefined|"a"}, {type="c"}, {type=symbol("p")@m0:10}, {type=symbol("p")@m0:10|symbol("q")@m0:20}, {type=symbol}, {type=anything}, {type=@@iterator}] results=[{type=undefined}]

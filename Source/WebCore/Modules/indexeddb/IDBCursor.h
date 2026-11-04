@@ -45,8 +45,8 @@ template<typename> class ExceptionOr;
 class IDBCursor : public ScriptWrappable, public RefCounted<IDBCursor> {
     WTF_MAKE_TZONE_ALLOCATED(IDBCursor);
 public:
-    static Ref<IDBCursor> create(IDBObjectStore&, const IDBCursorInfo&);
-    static Ref<IDBCursor> create(IDBIndex&, const IDBCursorInfo&);
+    static Ref<IDBCursor> LEGACY_NODELETE create(IDBObjectStore&, const IDBCursorInfo&);
+    static Ref<IDBCursor> LEGACY_NODELETE create(IDBIndex&, const IDBCursorInfo&);
     
     virtual ~IDBCursor();
 
@@ -75,7 +75,7 @@ public:
 
     void setRequest(IDBRequest& request) { m_request = request; }
     void clearRequest() { m_request.clear(); }
-    void NODELETE clearWrappers();
+    void LEGACY_NODELETE clearWrappers();
     IDBRequest* request() { return m_request.get(); }
 
     bool setGetResult(IDBRequest&, const IDBGetResult&, uint64_t operationID);

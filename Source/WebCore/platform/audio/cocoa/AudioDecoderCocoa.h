@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(WEB_CODECS) && USE(AVFOUNDATION)
+#if USE(AVFOUNDATION)
 
 #include "AudioDecoder.h"
 #include <WebCore/AudioStreamDescription.h>
@@ -38,6 +38,7 @@ class WorkQueue;
 
 namespace WebCore {
 
+class AudioInfo;
 class InternalAudioDecoderCocoa;
 
 class AudioDecoderCocoa final : public AudioDecoder {
@@ -45,16 +46,18 @@ class AudioDecoderCocoa final : public AudioDecoder {
 
 public:
     static Ref<CreatePromise> create(const String& codecName, const Config&, OutputCallback&&);
+    static Ref<CreatePromise> create(const AudioInfo&, OutputCallback&&);
 
     ~AudioDecoderCocoa();
 
     static std::expected<std::pair<FourCharCode, std::optional<AudioStreamDescription::PCMFormat>>, String> isCodecSupported(const StringView&);
+    static bool canDecode(const AudioInfo&);
 
     static WTF::WorkQueue& queueSingleton();
 
 private:
     explicit AudioDecoderCocoa(OutputCallback&&);
-    Ref<DecodePromise> decode(EncodedData&&) final;
+    Ref<DecodePromise> decode(AudioEncodedData&&) final;
     Ref<GenericPromise> flush() final;
     void reset() final;
     void close() final;
@@ -64,4 +67,4 @@ private:
 
 }
 
-#endif // ENABLE(WEB_CODECS) && USE(AVFOUNDATION)
+#endif // USE(AVFOUNDATION)

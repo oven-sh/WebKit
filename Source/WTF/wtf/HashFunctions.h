@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <array>
 #include <stdint.h>
 #include <tuple>
 #include <wtf/GetPtr.h>
@@ -32,11 +33,11 @@ namespace WTF {
 
     // rapidhash "mum" mixer.
     // Keep in sync with AssemblyHelpers::rapidHashMix64 and FTL rapidHashMix64 code as we need to use the same hash function.
+    inline constexpr std::array<uint64_t, 2> intHashSecrets { 0x2d358dccaa6c78a5ULL, 0x8bb84b93962eacc9ULL };
+
     inline unsigned intHash(uint64_t key)
     {
-        constexpr uint64_t secret1 = 0x2d358dccaa6c78a5ULL;
-        constexpr uint64_t secret2 = 0x8bb84b93962eacc9ULL;
-        UInt128 product = static_cast<UInt128>(key ^ secret1) * static_cast<UInt128>(key ^ secret2);
+        UInt128 product = static_cast<UInt128>(key ^ intHashSecrets[0]) * static_cast<UInt128>(key ^ intHashSecrets[1]);
         uint64_t folded = static_cast<uint64_t>(product) ^ static_cast<uint64_t>(product >> 64);
         return static_cast<unsigned>(folded);
     }

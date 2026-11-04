@@ -1,0 +1,161 @@
+# The initial yield becomes a suspension like any other, followed by a switch on the mode, and the arms of every mode but Next are rare; where code may have run in front of it, the generator takes its prototype again
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+# STATISTIC: CoroutinesSplit = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="suspendsAtOnce" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
+    InitialYield @10
+    v3 = Call v1 @11
+    Return v3
+}
+function f1 name="callsFirst" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
+    v2 = Call v1 @20
+    InitialYield @21
+    v4 = Call v2 @22
+    Return v4
+}
+function f2 name="asyncGenerator" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+    InitialYield @30
+    v3 = Call v1 @31
+    Return v3
+}
+function f3 name="yieldsWithModeArms" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
+    InitialYield @40
+    v3 = Yield v1 @41
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Switch v5 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v4
+  b2():
+    Return v4
+  b3():
+    v6 = Yield v4 @42
+    v7 = ResultAt v6 index=0
+    v8 = ResultAt v6 index=1
+    Switch v8 cases=[1, 2] -> case b4(), case b5(), otherwise b5()
+  b4():
+    Throw v7
+  b5():
+    Switch v7 cases=[1, 2] -> case b6(), case b7(), otherwise b8()
+  b6():
+    Return v1
+  b7():
+    Return v7
+  b8():
+    Return v4
+}
+function f4 name="throwsBeforeItsInitialYield" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
+    Throw v1
+}
+function f5 name="suspendsInLaterBlock" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
+    v2 = TypeTest v1 testedType=undefined
+    Branch v2 -> taken b1(), notTaken b2(v1)
+  b1():
+    v3 = Call v0 @50
+    Jump -> next b2(v3)
+  b2(v4):
+    InitialYield @51
+    Return v4
+}
+
+# CHECK-LABEL: function f6 name="suspendsAtOnce"
+# CHECK: b0(v0: function, v1: anything, [[driver0]]: Generator):
+# CHECK-NEXT: [[running0]]: boolean = IsGeneratorRunning [[driver0]] @10
+# CHECK-NEXT: Branch [[running0]] -> taken [[started0]](), notTaken [[suspends0]]()
+# CHECK-NEXT: [[rest0]]():
+# CHECK-NEXT: v3: anything = Call v1 @11
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: [[started0]]():
+# CHECK-NEXT: Jump -> next [[rest0]]()
+# CHECK-NEXT: [[suspends0]]():
+# CHECK-NEXT: [[undefined0]]: undefined = Undefined
+# CHECK-NEXT: [[yield0]]{{*}}= YieldBySavingFrame [[driver0]], [[undefined0]], v0, v1 @10
+# CHECK-NEXT: [[sent0]]: anything = ResultAt [[yield0]]
+# CHECK-NEXT: [[mode0]]: int[0, 2] = ResultAt [[yield0]] index=1
+# CHECK-NEXT: Switch [[mode0]] cases=[1, 2] -> case [[throw0]](), case [[return0]](), otherwise [[rest0]]()
+# CHECK-NEXT: [[throw0]]() frequency=Rare:
+# CHECK-NEXT: Throw [[sent0]]
+# CHECK-NEXT: [[return0]]() frequency=Rare:
+# CHECK-NEXT: Return [[sent0]]
+
+# CHECK-LABEL: function f7 name="callsFirst"
+# CHECK-NOT: IsGeneratorRunning
+# CHECK: b0(v0: function, v1: anything, [[driver1]]: Generator):
+# CHECK-NEXT: v2: anything = Call v1 @20
+# CHECK-NEXT: TakeGeneratorPrototype [[driver1]], v0 @21
+# CHECK-NEXT: [[undefined1]]: undefined = Undefined
+# CHECK-NEXT: [[yield1]]{{*}}= YieldBySavingFrame [[driver1]], [[undefined1]], v0, v2 @21
+# CHECK-NEXT: [[sent1]]: anything = ResultAt [[yield1]]
+# CHECK-NEXT: [[mode1]]: int[0, 2] = ResultAt [[yield1]] index=1
+# CHECK-NEXT: Switch [[mode1]] cases=[1, 2] -> case [[throw1]](), case [[return1]](), otherwise [[rest1]]()
+# CHECK-NEXT: [[rest1]]():
+# CHECK-NEXT: v4: anything = Call v2 @22
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: [[throw1]]() frequency=Rare:
+# CHECK-NEXT: Throw [[sent1]]
+# CHECK-NEXT: [[return1]]() frequency=Rare:
+# CHECK-NEXT: Return [[sent1]]
+
+# CHECK-LABEL: function f8 name="asyncGenerator"
+# CHECK-NOT: AwaitBySavingFrame
+# CHECK: b0(v0: function, v1: anything, [[driver2]]: AsyncGenerator):
+# CHECK-NEXT: [[undefined2]]: undefined = Undefined
+# CHECK-NEXT: [[yield2]]{{*}}= YieldBySavingFrame [[driver2]], [[undefined2]], v0, v1 @30
+# CHECK-NEXT: [[sent2]]: anything = ResultAt [[yield2]]
+# CHECK-NEXT: [[mode2]]: int[0, 2] = ResultAt [[yield2]] index=1
+# CHECK-NEXT: Switch [[mode2]] cases=[1, 2] -> case [[throw2]](), case [[return2]](), otherwise [[rest2]]()
+# CHECK-NEXT: [[rest2]]():
+# CHECK-NEXT: v3: anything = Call v1 @31
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: [[throw2]]() frequency=Rare:
+# CHECK-NEXT: Throw [[sent2]]
+# CHECK-NEXT: [[return2]]() frequency=Rare:
+# CHECK-NEXT: Return [[sent2]]
+# CHECK-NOT: AwaitBySavingFrame
+
+# CHECK-LABEL: function f9 name="yieldsWithModeArms"
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: Throw v4
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b3():
+# CHECK-NEXT: = YieldBySavingFrame {{*}}, v4 @42
+# CHECK: b4() frequency=Rare:
+# CHECK-NEXT: Throw v7
+# CHECK-NEXT: b5():
+# CHECK: b6():
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: b7():
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b8():
+# CHECK-NEXT: Return v4
+# CHECK: Switch v5 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+
+# CHECK-LABEL: function f10 name="throwsBeforeItsInitialYield"
+# CHECK: b0(v0: function, v1: anything, {{*}}: Generator):
+# CHECK-NEXT: Throw v1
+# CHECK-NOT: YieldBySavingFrame
+# CHECK-NOT: Switch
+
+# CHECK-LABEL: function f11 name="suspendsInLaterBlock"
+# CHECK: b0(v0: function, v1: anything, [[driver5]]: Generator):
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: b1():
+# CHECK-NEXT: v3: anything = Call v0 @50
+# CHECK-NEXT: Jump -> next b2(v3)
+# CHECK-NEXT: b2(v4: anything):
+# CHECK-NEXT: TakeGeneratorPrototype [[driver5]], v0 @51
+# CHECK-NEXT: [[undefined5]]: undefined = Undefined
+# CHECK-NEXT: [[yield5]]{{*}}= YieldBySavingFrame [[driver5]], [[undefined5]], v0, v4 @51
+# CHECK-NEXT: [[sent5]]: anything = ResultAt [[yield5]]
+# CHECK-NEXT: [[mode5]]: int[0, 2] = ResultAt [[yield5]] index=1
+# CHECK-NEXT: Switch [[mode5]] cases=[1, 2] -> case [[throw5]](), case [[return5]](), otherwise [[rest5]]()
+# CHECK-NEXT: [[rest5]]():
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: [[throw5]]() frequency=Rare:
+# CHECK-NEXT: Throw [[sent5]]
+# CHECK-NEXT: [[return5]]() frequency=Rare:
+# CHECK-NEXT: Return [[sent5]]

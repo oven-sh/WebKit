@@ -1,0 +1,34 @@
+# A variable of `var` starts as undefined. Where a store comes before every read and no store puts undefined there, no read sees undefined, and the type loses it.
+# A variable that a function reads before its store keeps it, and so does one that the program itself stores undefined to
+# RUN: valueflow-apply
+# CHECK: variable g0 name="early" {{*}}declared={type=1} initialization=Undefined flow={writers=AllKnown {{*}}initialization=StoredBeforeEveryRead
+# CHECK: variable g1 name="late" {{*}}declared={type=undefined|1} initialization=Undefined flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}
+# CHECK: variable g2 name="cleared" {{*}}declared={type=undefined|1} initialization=Undefined flow={writers=AllKnown {{*}}initialization=StoredBeforeEveryRead
+# CHECK-LABEL: function f1 name="reader"
+# CHECK: : 1 = GetModuleVariable variable=g0
+# CHECK: : undefined|1 = GetModuleVariable variable=g1
+# CHECK: : undefined|1 = GetModuleVariable variable=g2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="early" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="late" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="cleared" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Undefined
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g2
+    PutModuleVariable v1 variable=g2
+    v5 = NewClosure function=f1
+    v6 = Call v5
+    PutModuleVariable v0 variable=g1
+    Return v6
+}
+function f1 name="reader" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = NewArray v0, v1, v2 contents=anything holes=[]
+    Return v3
+}

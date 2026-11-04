@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "CallFrame.h"
 #include "CodeOrigin.h"
@@ -120,9 +120,9 @@ public:
     PCToCodeOriginMap(PCToCodeOriginMapBuilder&&, LinkBuffer&);
     ~PCToCodeOriginMap();
 
-    std::optional<CodeOrigin> NODELETE findPC(void* pc) const;
+    std::optional<CodeOrigin> findPC(void* pc) const;
 
-    double NODELETE memorySize();
+    double LEGACY_NODELETE memorySize();
 
 private:
     size_t m_compressedPCBufferSize;
@@ -135,4 +135,4 @@ private:
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

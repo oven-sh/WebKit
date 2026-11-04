@@ -30,6 +30,7 @@
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"
 #import "Helpers/TestNotificationProvider.h"
+#import "Helpers/cocoa/TestNSBundleExtras.h"
 #import "TestURLSchemeHandler.h"
 #import "Helpers/cocoa/TestWKWebView.h"
 #import <WebKit/WKNotificationProvider.h>
@@ -488,8 +489,10 @@ static void runOriginTest(NSString *mainURL, NSString *expectedMessage)
     RetainPtr testMessageHandler = adoptNS([[TestMessageHandler alloc] init]);
     [[configuration userContentController] addScriptMessageHandler:testMessageHandler.get() name:@"testHandler"];
 
-    static bool gotMessage = false;
+    static bool gotMessage;
     static RetainPtr<NSString> storedMessage;
+    gotMessage = false;
+    storedMessage = nil;
     testMessageHandler.get().didReceiveScriptMessage = ^(NSString *message) {
         storedMessage = message;
         gotMessage = true;
@@ -531,6 +534,7 @@ TEST(Badging, ServiceWorkerOverride)
     });
 
     RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    configuration.get().websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore;
 
     static bool workerRunning = false;
     static bool badgingDone = false;
@@ -581,6 +585,30 @@ TEST(Badging, ServiceWorkerOverride)
 
     EXPECT_EQ(badgeDelegate.get().appBadgeIndex, 2);
 }
+
+#if ENABLE(WEB_ARCHIVE)
+TEST(Badging, WebArchive)
+{
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    configuration.get().preferences._appBadgeEnabled = YES;
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get()]);
+    RetainPtr badgeDelegate = adoptNS([BadgeDelegate new]);
+    webView.get().UIDelegate = badgeDelegate.get();
+
+    RetainPtr<NSURL> archiveURL = [NSBundle.test_resourcesBundle URLForResource:@"example" withExtension:@"webarchive"];
+    [webView synchronouslyLoadRequest:[NSURLRequest requestWithURL:archiveURL.get()]];
+
+    static bool done = false;
+    [webView callAsyncJavaScript:@"await navigator.setAppBadge(42);" arguments:nil inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id, NSError *error) {
+        EXPECT_NULL(error);
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+
+    // The reply follows the badge message on the same connection, so any badge update has been delivered by now.
+    EXPECT_EQ([badgeDelegate appBadgeIndex], 0);
+}
+#endif // ENABLE(WEB_ARCHIVE)
 
 #if ENABLE(IPC_TESTING_API)
 

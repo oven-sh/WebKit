@@ -55,8 +55,10 @@ static bool shouldCallOnNetworkThread()
 
 static void callOnDelegateThread(Function<void()>&& function)
 {
-    if (shouldCallOnNetworkThread())
+    if (shouldCallOnNetworkThread()) {
         function();
+        return;
+    }
     callOnMainThread(WTF::move(function));
 }
 
@@ -118,7 +120,7 @@ static void callOnDelegateThreadAndWait(Callable&& work)
 - (NSURLRequest *)download:(NSURLDownload *)download willSendRequest:(NSURLRequest *)request redirectResponse:(NSURLResponse *)redirectResponse
 {
     RetainPtr<NSURLRequest> returnValue;
-    auto work = [&] {
+    auto work = [&returnValue, realDelegate = realDelegate, download = protect(download), request = protect(request), redirectResponse = protect(redirectResponse)] {
         ASSERT(isMainThread());
         returnValue = [realDelegate download:download willSendRequest:request redirectResponse:redirectResponse];
     };
@@ -171,7 +173,7 @@ static void callOnDelegateThreadAndWait(Callable&& work)
 - (BOOL)download:(NSURLDownload *)download shouldDecodeSourceDataOfMIMEType:(NSString *)encodingType
 {
     BOOL returnValue = NO;
-    auto work = [&] {
+    auto work = [&returnValue, realDelegate = realDelegate, download = protect(download), encodingType = protect(encodingType)] {
         returnValue = [realDelegate download:download shouldDecodeSourceDataOfMIMEType:encodingType];
     };
     callOnDelegateThreadAndWait(WTF::move(work));
@@ -208,13 +210,15 @@ static void callOnDelegateThreadAndWait(Callable&& work)
 
 @end
 
-@implementation WebDownload
+@implementation WebDownload {
+    RetainPtr<WebDownloadInternal> _webInternal;
+}
 
 - (void)_setRealDelegate:(id)delegate
 {
-    if (_webInternal == nil) {
-        _webInternal = [[WebDownloadInternal alloc] init];
-        [_webInternal setRealDelegate:delegate];
+    if (!_webInternal) {
+        _webInternal = adoptNS([[WebDownloadInternal alloc] init]);
+        [protect(_webInternal) setRealDelegate:delegate];
     } else {
         ASSERT(_webInternal == delegate);
     }
@@ -227,16 +231,10 @@ static void callOnDelegateThreadAndWait(Callable&& work)
         return nil;
 
     // _webInternal can be set up before init by _setRealDelegate
-    if (_webInternal == nil)
-        _webInternal = [[WebDownloadInternal alloc] init];
+    if (!_webInternal)
+        _webInternal = adoptNS([[WebDownloadInternal alloc] init]);
 
     return self;
-}
-
-- (void)dealloc
-{
-    [_webInternal release];
-    [super dealloc];
 }
 
 ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
@@ -244,7 +242,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 {
     [self _setRealDelegate:delegate];
-    return [super initWithRequest:request delegate:_webInternal];
+    return [super initWithRequest:request delegate:protect(_webInternal)];
 }
 
 ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
@@ -256,7 +254,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 IGNORE_WARNINGS_END
 {
     [self _setRealDelegate:delegate];
-    return [super _initWithLoadingConnection:connection request:request response:response delegate:_webInternal proxy:proxy];
+    return [super _initWithLoadingConnection:connection request:request response:response delegate:protect(_webInternal) proxy:proxy];
 }
 
 ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
@@ -266,7 +264,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 IGNORE_WARNINGS_END
 {
     [self _setRealDelegate:delegate];
-    return [super _initWithRequest:request delegate:_webInternal directory:directory];
+    return [super _initWithRequest:request delegate:protect(_webInternal) directory:directory];
 }
 
 @end

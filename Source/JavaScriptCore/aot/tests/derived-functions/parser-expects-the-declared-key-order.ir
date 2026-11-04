@@ -1,0 +1,21 @@
+# The fields of a record are sorted by name. Where the program makes no such object, its parser tries the keys in the order in which the type declares them.
+# FORM: Prepared
+# RUN: derived-functions Parser:g0 Parser:g1
+# STATISTIC: ParsersCreated = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Address" fields=[{key="city" declared={type=number}}, {key="country" declared={type=number}}, {key="street" declared={type=number}}, {key="zip" declared={type=number}}] declaredOrder=[2, 0, 3, 1]
+layout L1 name="Made" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}, {key="c" declared={type=number}}] declaredOrder=[2, 1, 0] flow={constructorOrders=[{fields=[1, 0, 2]}]}
+variable g0 name="t0" declared={type=L0} initialization=Undefined
+variable g1 name="t1" declared={type=L1} initialization=Undefined
+
+# CHECK: function {{*}}role=Parser
+# CHECK: = JSONStartsWith {{*}} string="\"street\":" [isLikely]
+# CHECK: = JSONStartsWith {{*}} string="\"city\":" [isLikely]
+# CHECK: = JSONStartsWith {{*}} string="\"zip\":" [isLikely]
+# CHECK: = JSONStartsWith {{*}} string="\"country\":" [isLikely]
+# The order in which the program's own literals create the fields goes first.
+# CHECK: function {{*}}role=Parser
+# CHECK: = JSONStartsWith {{*}} string="\"b\":" [isLikely]
+# CHECK: = JSONStartsWith {{*}} string="\"a\":" [isLikely]
+# CHECK: = JSONStartsWith {{*}} string="\"c\":" [isLikely]

@@ -1,0 +1,117 @@
+# A branch on x instanceof C passes x on along both edges with the narrower type, and the uses below name what the edge passed
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Shape" constructor=f0 flow={baseState=None members=[L0, L1] impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="Circle" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1] impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="Other" constructor=f2 flow={baseState=None members=[L2] impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L3 kind=Instance name="Reparented" constructor=f3 flow={baseState=None members=[L3]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Shape" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Circle" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="Reparented" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f4 name="both-edges" parameters=[{type=L0|L1|L2}, {type=f0}] results=[{type=anything}] {
+    v2 = InstanceOf v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="pos"
+    Return v3
+  b2():
+    v4 = PropGet v0 key="name"
+    Return v4
+# CHECK-NEXT: b0(v0: L0|L1|L2, v1: f0):
+# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L0|L1
+# CHECK-NEXT: Branch v2 -> taken [[isShape]](| 0), notTaken [[isNoShape]](| 0)
+# CHECK-NOT: PropGet v0
+# CHECK: = PropGet [[shape]] key="pos"
+# CHECK-NOT: PropGet v0
+# CHECK: = PropGet [[other]] key="name"
+# CHECK: [[isShape]]([[shape]]: L0|L1):
+# CHECK: [[isNoShape]]([[other]]: L2):
+}
+function f5 name="union-with-primitives" parameters=[{type=undefined|L1|L2}, {type=f0}] results=[{type=anything}] {
+    v2 = InstanceOf v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="pos"
+    Return v3
+  b2():
+    Return v0
+# CHECK: v2: boolean = TypeTest v0 testedType=L1
+# CHECK-NEXT: Branch v2 -> taken [[isCircle]](| 0), notTaken [[isNoCircle]](| 0)
+# CHECK: = PropGet [[circle]] key="pos"
+# CHECK-NEXT: Return v3
+# CHECK: Return [[noCircle]]
+# CHECK: [[isCircle]]([[circle]]: L1):
+# CHECK: [[isNoCircle]]([[noCircle]]: undefined|L2):
+}
+function f6 name="use-in-a-block-below" parameters=[{type=L0|L2}, {type=f0}, {type=boolean}] results=[{type=anything}] {
+    v3 = InstanceOf v0, v1
+    Branch v3 -> taken b1(), notTaken b3()
+  b1():
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v4 = PropGet v0 key="pos"
+    Return v4
+  b3():
+    v5 = PropGet v0 key="name"
+    Return v5
+# CHECK: v3: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch v3 -> taken [[below]](| 0), notTaken {{*}}(| 0)
+# CHECK: = PropGet [[narrowedBelow]] key="pos"
+# CHECK-NOT: = PropGet [[narrowedBelow]] key="name"
+# CHECK: [[below]]([[narrowedBelow]]: L0):
+}
+function f7 name="answer-is-stored-in-a-variable" parameters=[{type=L0|L1|L2}, {type=f0}] results=[{type=anything}] {
+    v2 = InstanceOf v0, v1
+    Jump -> next b1(v2)
+  b1(v3):
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = PropGet v0 key="pos"
+    Return v4
+  b3():
+    Return
+# CHECK-NEXT: b0(v0: L0|L1|L2, v1: f0):
+# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L0|L1
+# CHECK-NEXT: Jump -> next b1(v2)
+# CHECK-NEXT: b1(v3: boolean):
+# CHECK-NEXT: Branch v3 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: = PropGet v0 key="pos"
+# The layouts answer only while no object of L3 has got another prototype. The answer then comes from two places, and the branch on it passes nothing on
+}
+function f8 name="member-may-change-its-prototype" parameters=[{type=L0|L3}, {type=f0}] results=[{type=anything}] {
+    v2 = InstanceOf v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="pos"
+    Return v3
+  b2():
+    Return
+# CHECK-NEXT: b0(v0: L0|L3, v1: f0):
+# CHECK-NEXT: [[keepsPrototype]]: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L3}]
+# CHECK-NEXT: Branch [[keepsPrototype]] -> taken [[byLayout]](), notTaken [[byOperation]]()
+# CHECK: = PropGet v0 key="pos"
+# CHECK: Branch v2 -> taken b1(), notTaken b2()
+# CHECK: [[byLayout]]():
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: [[byOperation]]() frequency=Unlikely:
+# CHECK-NEXT: = InstanceOf v0, v1
+}
+function f9 name="unknown-subject" parameters=[{type=anything}, {type=f0}] results=[{type=anything}] {
+    v2 = InstanceOf v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="pos"
+    Return v3
+  b2():
+    Return
+# CHECK: = TypeTest v0 testedType=L0|L1
+# CHECK: = PropGet v0 key="pos"
+# CHECK: Branch v2 -> taken b1(), notTaken b2()
+}

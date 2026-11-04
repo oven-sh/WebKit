@@ -179,7 +179,7 @@ void WebAssemblyTableConstructor::finishCreation(VM& vm, WebAssemblyTablePrototy
 }
 
 WebAssemblyTableConstructor::WebAssemblyTableConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callJSWebAssemblyTable, constructJSWebAssemblyTable)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callJSWebAssemblyTable), JSC_REGISTERED_HOST_FUNCTION(constructJSWebAssemblyTable))
 {
 }
 

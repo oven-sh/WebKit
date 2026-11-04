@@ -137,7 +137,7 @@ private:
     void contextMenuItemSelected(ContextMenuAction action, const String&) override
     {
         if (m_frontendHost) {
-            UserGestureIndicator gestureIndicator(IsProcessingUserGesture::Yes, dynamicDowncast<Document>(executionContext(m_globalObject)));
+            UserGestureIndicator gestureIndicator(IsProcessingUserGesture::Yes, protect(dynamicDowncast<Document>(executionContext(m_globalObject))));
             int itemNumber = action - ContextMenuItemBaseCustomTag;
 
             ScriptFunctionCall function(m_globalObject, m_frontendApiObject.get(), "contextMenuItemSelected"_s, WebCore::functionCallHandlerFromAnyThread);
@@ -195,7 +195,7 @@ void InspectorFrontendHost::addSelfToGlobalObjectInWorld(DOMWrapperWorld& world)
     RefPtr localMainFrame = m_frontendPage->localMainFrame();
     if (!localMainFrame)
         return;
-    auto& globalObject = *localMainFrame->script().globalObject(world);
+    auto& globalObject = *protect(localMainFrame->script())->globalObject(world);
     auto& vm = globalObject.vm();
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -587,7 +587,7 @@ void InspectorFrontendHost::showContextMenu(Event& event, Vector<ContextMenuItem
     RefPtr localMainFrame = m_frontendPage->localMainFrame();
     if (!localMainFrame)
         return;
-    auto& globalObject = *localMainFrame->script().globalObject(debuggerWorldSingleton());
+    auto& globalObject = *protect(localMainFrame->script())->globalObject(debuggerWorldSingleton());
     auto& vm = globalObject.vm();
     auto value = globalObject.get(&globalObject, JSC::Identifier::fromString(vm, "InspectorFrontendAPI"_s));
     ASSERT(value);
@@ -647,7 +647,7 @@ void InspectorFrontendHost::inspectInspector()
     setAllowsInspectingInspector(true);
 
     if (m_frontendPage)
-        m_frontendPage->inspectorController().show();
+        protect(m_frontendPage->inspectorController())->show();
 }
 
 bool InspectorFrontendHost::isBeingInspected()
@@ -827,14 +827,13 @@ ExceptionOr<JSC::JSValue> InspectorFrontendHost::evaluateScriptInExtensionTab(HT
     if (!frame)
         return Exception { ExceptionCode::InvalidStateError, "Unable to find global object for <iframe>"_s };
 
-    Ref protectedFrame(*frame);
-
-    JSDOMGlobalObject* frameGlobalObject = frame->script().globalObject(mainThreadNormalWorldSingleton());
+    CheckedRef script = frame->script();
+    JSDOMGlobalObject* frameGlobalObject = script->globalObject(mainThreadNormalWorldSingleton());
     if (!frameGlobalObject)
         return Exception { ExceptionCode::InvalidStateError, "Unable to find global object for <iframe>"_s };
 
     JSC::SuspendExceptionScope scope(frameGlobalObject->vm());
-    ValueOrException result = frame->script().evaluateInWorld(ScriptSourceCode(scriptSource, JSC::SourceTaintedOrigin::Untainted), mainThreadNormalWorldSingleton());
+    ValueOrException result = script->evaluateInWorld(ScriptSourceCode(scriptSource, JSC::SourceTaintedOrigin::Untainted), mainThreadNormalWorldSingleton());
     
     if (!result)
         return Exception { ExceptionCode::InvalidStateError, result.error().message };

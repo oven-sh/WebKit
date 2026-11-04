@@ -64,6 +64,11 @@ RegisterSet StackmapSpecial::extraClobberedRegs(Inst& inst)
     return value->lateClobbered();
 }
 
+bool StackmapSpecial::needsFrame(Inst& inst)
+{
+    return !inst.origin->as<StackmapValue>()->runsWithoutFrame();
+}
+
 RegisterSet StackmapSpecial::extraEarlyClobberedRegs(Inst& inst)
 {
     StackmapValue* value = inst.origin->as<StackmapValue>();
@@ -75,7 +80,7 @@ RegisterSet StackmapSpecial::extraEarlyClobberedRegs(Inst& inst)
 void StackmapSpecial::forEachArgImpl(
     unsigned numIgnoredB3Args, unsigned numIgnoredAirArgs,
     Inst& inst, RoleMode roleMode, std::optional<unsigned> firstRecoverableIndex,
-    const ScopedLambda<Inst::EachArgCallback>& callback, std::optional<Width> optionalDefArgWidth)
+    NOESCAPE const ScopedLambda<Inst::EachArgCallback>& callback, std::optional<Width> optionalDefArgWidth)
 {
     StackmapValue* value = inst.origin->as<StackmapValue>();
     ASSERT(value);

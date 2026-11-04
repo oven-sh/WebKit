@@ -1,0 +1,49 @@
+# async function* numbers() { yield load() }  for await (const f of numbers()) f(); (await numbers().next()).value()
+# An async generator awaits what it yields. An asynchronous loop finds that, and so does whoever awaits what a step by hand answers.
+# RUN: valueflow-solve calls
+# CHECK: f1 v7 ->{{*}} f4
+# CHECK: f1 v14 ->{{*}} f4
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    v2 = IteratorOpen v1 iteratorKind=Async
+    v3 = IteratorResume v2 iteratorKind=Async
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    v6 = Undefined
+    v7 = Call v5
+    v8 = Call v0
+    v9 = PropGet v8 key="next"
+    v10 = Call v9, v8 calleeKey="next"
+    v11 = Await v10
+    v12 = PropGet v11 key="value"
+    v13 = Undefined
+    v14 = Call v12
+    Return
+}
+function f2 name="numbers" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
+    InitialYield
+    v2 = NewClosure function=f3
+    v3 = Call v2
+    v4 = Yield v3
+    Return
+}
+function f3 name="load" flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    Return v0
+}
+function f4 name="one" results=[{type=anything}] {
+    Return
+}

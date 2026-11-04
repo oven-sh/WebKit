@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFIICStub.h"
 
-#if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT)
+#if ENABLE(FFI) && ENABLE(JIT)
 
 #include "CCallHelpers.h"
 #include "CallFrame.h"
@@ -431,4 +431,4 @@ RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signatu
 
 } } // namespace JSC::FFI
 
-#endif // USE(BUN_JSC_ADDITIONS) && ENABLE(JIT)
+#endif // ENABLE(FFI) && ENABLE(JIT)

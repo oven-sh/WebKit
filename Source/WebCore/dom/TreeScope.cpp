@@ -96,7 +96,7 @@ struct NodesInCommonTreeScope {
     SUPPRESS_UNCOUNTED_MEMBER Node* nodeA { nullptr };
     SUPPRESS_UNCOUNTED_MEMBER Node* nodeB { nullptr };
 };
-static NodesInCommonTreeScope NODELETE findNodesInCommonTreeScope(Node*, Node*);
+static NodesInCommonTreeScope LEGACY_NODELETE findNodesInCommonTreeScope(Node*, Node*);
 
 TreeScope::TreeScope(ShadowRoot& shadowRoot, Document& document, RefPtr<CustomElementRegistry>&& registry)
     : m_rootNode(shadowRoot)
@@ -136,7 +136,7 @@ void TreeScope::deref() const
 IdTargetObserverRegistry& TreeScope::ensureIdTargetObserverRegistry()
 {
     if (!m_idTargetObserverRegistry)
-        m_idTargetObserverRegistry = makeUnique<IdTargetObserverRegistry>();
+        lazyInitialize(m_idTargetObserverRegistry, makeUnique<IdTargetObserverRegistry>());
     return *m_idTargetObserverRegistry;
 }
 
@@ -155,7 +155,7 @@ void TreeScope::setParentTreeScope(TreeScope& newParentScope)
     ASSERT(!m_rootNode->isDocumentNode());
 
     m_parentTreeScope = &newParentScope;
-    setDocumentScope(protect(newParentScope.documentScope()));
+    setDocumentScope(newParentScope.documentScope());
 }
 
 void TreeScope::setCustomElementRegistry(RefPtr<CustomElementRegistry>&& registry)
@@ -525,7 +525,7 @@ bool TreeScope::isMatchingAnchor(HTMLAnchorElement& anchor, StringView name)
     return false;
 }
 
-static Element* NODELETE focusedFrameOwnerElement(Frame* focusedFrame, LocalFrame* currentFrame)
+static Element* LEGACY_NODELETE focusedFrameOwnerElement(Frame* focusedFrame, LocalFrame* currentFrame)
 {
     for (; focusedFrame; focusedFrame = focusedFrame->tree().parent()) {
         if (focusedFrame->tree().parent() == currentFrame)
@@ -561,7 +561,7 @@ Element* TreeScope::pointerLockElement() const
 
 #endif
 
-static ALWAYS_INLINE Node* NODELETE host(TreeScope& treeScope)
+static ALWAYS_INLINE Node* LEGACY_NODELETE host(TreeScope& treeScope)
 {
     if (auto* shadowRoot = dynamicDowncast<ShadowRoot>(treeScope.rootNode()))
         return shadowRoot->host();
@@ -633,14 +633,14 @@ TreeScope* commonTreeScope(Node* nodeA, Node* nodeB)
 RadioButtonGroups& TreeScope::radioButtonGroups()
 {
     if (!m_radioButtonGroups)
-        m_radioButtonGroups = makeUnique<RadioButtonGroups>();
+        lazyInitialize(m_radioButtonGroups, makeUnique<RadioButtonGroups>());
     return *m_radioButtonGroups;
 }
 
 CSSStyleSheetObservableArray& TreeScope::ensureAdoptedStyleSheets()
 {
     if (!m_adoptedStyleSheets) [[unlikely]]
-        m_adoptedStyleSheets = CSSStyleSheetObservableArray::create(m_rootNode.get());
+        lazyInitialize(m_adoptedStyleSheets, CSSStyleSheetObservableArray::create(m_rootNode.get()));
     return *m_adoptedStyleSheets;
 }
 
@@ -664,7 +664,7 @@ ExceptionOr<void> TreeScope::setAdoptedStyleSheets(Vector<Ref<CSSStyleSheet>>&& 
 SVGResourcesMap& TreeScope::svgResourcesMap() const
 {
     if (!m_svgResourcesMap)
-        const_cast<TreeScope&>(*this).m_svgResourcesMap = makeUnique<SVGResourcesMap>();
+        lazyInitialize(m_svgResourcesMap, makeUnique<SVGResourcesMap>());
     return *m_svgResourcesMap;
 }
 

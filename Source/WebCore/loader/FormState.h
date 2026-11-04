@@ -61,13 +61,13 @@ public:
 
 private:
     FormState(HTMLFormElement&, StringPairVector&& textFieldValues, Document&, FormSubmissionTrigger, HTMLFormControlElement* submitter);
-    void NODELETE willDetachPage() override;
+    void LEGACY_NODELETE willDetachPage() override;
 
     const Ref<HTMLFormElement> m_form;
     StringPairVector m_textFieldValues;
     const Ref<Document> m_sourceDocument;
     FormSubmissionTrigger m_formSubmissionTrigger;
-    RefPtr<HTMLFormControlElement> m_submitter;
+    const RefPtr<HTMLFormControlElement> m_submitter;
 };
 
 } // namespace WebCore

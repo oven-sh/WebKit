@@ -34,6 +34,7 @@
 #include "StreamServerConnectionBuffer.h"
 #include <wtf/Deque.h>
 #include <wtf/Lock.h>
+#include <wtf/SwiftBridging.h>
 
 namespace IPC {
 
@@ -67,6 +68,7 @@ class StreamServerConnectionClient : public StreamMessageReceiver, public CanMak
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(StreamServerConnectionClient);
 public:
     virtual void didReceiveInvalidMessage(StreamServerConnection&, MessageName, const Vector<uint32_t>& indicesOfObjectsFailingDecoding) = 0;
+    virtual void didRunOutOfMessages() { }
 
 protected:
     virtual ~StreamServerConnectionClient() = default;
@@ -108,7 +110,8 @@ public:
         HasMoreMessages
     };
     DispatchResult dispatchStreamMessages(size_t messageLimit);
-    void NODELETE markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral error);
+    void LEGACY_NODELETE markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral error);
+    void LEGACY_NODELETE markCurrentlyDispatchedMessageAsInvalid(const String&);
 
     void open(Client&, StreamConnectionWorkQueue&);
     void invalidate();
@@ -142,6 +145,10 @@ private:
     bool processOutOfStreamMessage(Decoder&);
     bool dispatchStreamMessage(Decoder&, StreamMessageReceiver&);
     void dispatchDidReceiveInvalidMessage(Decoder&);
+    // If an async-reply message was not handled (no receiver, or the receiver did not take ownership
+    // of the reply handler), tell the sender to cancel its pending reply handler over the underlying
+    // connection so it is not orphaned.
+    void sendAsyncReplyCancelIfNeeded(const Decoder&);
 
     using WakeUpClient = StreamServerConnectionBuffer::WakeUpClient;
     const Ref<IPC::Connection> m_connection;
@@ -165,7 +172,7 @@ private:
     bool m_isDispatchingMessage { false };
 #endif
     friend class StreamConnectionWorkQueue;
-};
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refStreamServerConnection, derefStreamServerConnection);
 
 template<typename T>
 Error StreamServerConnection::send(T&& message, const ObjectIdentifierGenericBase& destinationID)
@@ -218,3 +225,15 @@ inline void markCurrentlyDispatchedMessageAsInvalid(const RefPtr<StreamServerCon
 }
 
 }
+
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+inline void refStreamServerConnection(IPC::StreamServerConnection* obj)
+{
+    obj->ref();
+}
+
+inline void derefStreamServerConnection(IPC::StreamServerConnection* obj)
+{
+    obj->deref();
+}
+#endif

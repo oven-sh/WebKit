@@ -81,6 +81,8 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
         return jsValueForDecodedMessage<MessageName::TestWithImageData_SendImageData>(globalObject, decoder);
     case MessageName::TestWithImageData_ReceiveImageData:
         return jsValueForDecodedMessage<MessageName::TestWithImageData_ReceiveImageData>(globalObject, decoder);
+    case MessageName::TestWithImageData_SendBitmapOrText:
+        return jsValueForDecodedMessage<MessageName::TestWithImageData_SendBitmapOrText>(globalObject, decoder);
     case MessageName::TestWithImageData_ReceiveImageDataReply:
         return jsValueForDecodedMessage<MessageName::TestWithImageData_ReceiveImageDataReply>(globalObject, decoder);
 #if (ENABLE(WEBKIT2) && (NESTED_MASTER_CONDITION || MASTER_OR && MASTER_AND))
@@ -347,8 +349,12 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
         return jsValueForDecodedMessage<MessageName::TestWithSwift_TestThrowingMessageWithReply>(globalObject, decoder);
     case MessageName::TestWithSwift_TestThrowingMessageWithoutReply:
         return jsValueForDecodedMessage<MessageName::TestWithSwift_TestThrowingMessageWithoutReply>(globalObject, decoder);
+    case MessageName::TestWithSwift_TestMessageWithEmptyReply:
+        return jsValueForDecodedMessage<MessageName::TestWithSwift_TestMessageWithEmptyReply>(globalObject, decoder);
     case MessageName::TestWithSwift_TestAsyncMessageReply:
         return jsValueForDecodedMessage<MessageName::TestWithSwift_TestAsyncMessageReply>(globalObject, decoder);
+    case MessageName::TestWithSwift_TestMessageWithEmptyReplyReply:
+        return jsValueForDecodedMessage<MessageName::TestWithSwift_TestMessageWithEmptyReplyReply>(globalObject, decoder);
     case MessageName::TestWithSwiftConditionally_TestAsyncMessage:
         return jsValueForDecodedMessage<MessageName::TestWithSwiftConditionally_TestAsyncMessage>(globalObject, decoder);
     case MessageName::TestWithSwiftConditionally_TestSyncMessage:
@@ -482,6 +488,8 @@ std::optional<JSC::JSValue> jsValueForReplyArguments(JSC::JSGlobalObject* global
         return jsValueForDecodedMessageReply<MessageName::TestWithSwift_TestSyncMessage>(globalObject, decoder);
     case MessageName::TestWithSwift_TestThrowingMessageWithReply:
         return jsValueForDecodedMessageReply<MessageName::TestWithSwift_TestThrowingMessageWithReply>(globalObject, decoder);
+    case MessageName::TestWithSwift_TestMessageWithEmptyReply:
+        return jsValueForDecodedMessageReply<MessageName::TestWithSwift_TestMessageWithEmptyReply>(globalObject, decoder);
     case MessageName::TestWithSwiftConditionally_TestAsyncMessage:
         return jsValueForDecodedMessageReply<MessageName::TestWithSwiftConditionally_TestAsyncMessage>(globalObject, decoder);
     case MessageName::TestWithSwiftConditionally_TestSyncMessage:
@@ -506,6 +514,7 @@ Vector<ASCIILiteral> serializedIdentifiers()
 {
     return {
         "IPC::AsyncReplyID"_s,
+        "WebCore::AgentClusterIdentifier"_s,
         "WebCore::AttributedStringTextListID"_s,
         "WebCore::AttributedStringTextTableBlockID"_s,
         "WebCore::AttributedStringTextTableID"_s,
@@ -514,6 +523,7 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebCore::BackgroundFetchRecordIdentifier"_s,
         "WebCore::BrowsingContextGroupIdentifier"_s,
         "WebCore::DOMCacheIdentifierID"_s,
+        "WebCore::DebuggerPauseSessionIdentifier"_s,
         "WebCore::DictationContext"_s,
         "WebCore::NodeIdentifier"_s,
         "WebCore::FetchIdentifier"_s,
@@ -534,11 +544,11 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebCore::MediaSessionIdentifier"_s,
         "WebCore::ModelPlayerIdentifier"_s,
         "WebCore::MediaUniqueIdentifier"_s,
-        "WebCore::NavigationIdentifier"_s,
+        "WebCore::NavigationIdentifierID"_s,
         "WebCore::OpaqueOriginIdentifier"_s,
         "WebCore::PendingNavigateEventIdentifier"_s,
         "WebCore::PageIdentifier"_s,
-        "WebCore::ImageBufferTransferIdentifierID"_s,
+        "WebCore::PlaceholderFrameIdentifier"_s,
         "WebCore::PlatformLayerIdentifierID"_s,
         "WebCore::PlaybackTargetClientContextID"_s,
         "WebCore::NonSerializedDataIdentifier"_s,
@@ -619,7 +629,6 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebKit::RemotePathImplIdentifier"_s,
         "WebKit::RemoteRemoteCommandListenerIdentifier"_s,
         "WebKit::RemoteSerializedImageBufferIdentifier"_s,
-        "WebKit::RemoteSnapshotIdentifier"_s,
         "WebKit::RemoteSnapshotRecorderIdentifier"_s,
         "WebKit::RemoteVideoFrameIdentifier"_s,
         "WebKit::RemoteRenderingBackendIdentifier"_s,
@@ -738,6 +747,10 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
         };
     case MessageName::TestWithImageData_ReceiveImageData:
         return Vector<ArgumentDescription> { };
+    case MessageName::TestWithImageData_SendBitmapOrText:
+        return Vector<ArgumentDescription> {
+            { "content"_s, "Variant<String, WebCore::ShareableBitmapHandle>"_s },
+        };
     case MessageName::TestWithImageData_ReceiveImageDataReply:
         return Vector<ArgumentDescription> {
             { "r0"_s, "RefPtr<WebCore::ImageData>"_s },
@@ -1212,10 +1225,16 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
             { "frameState"_s, "Ref<WebKit::FrameState>"_s },
             { "frameID"_s, "WebCore::FrameIdentifier"_s },
         };
+    case MessageName::TestWithSwift_TestMessageWithEmptyReply:
+        return Vector<ArgumentDescription> {
+            { "param"_s, "uint32_t"_s },
+        };
     case MessageName::TestWithSwift_TestAsyncMessageReply:
         return Vector<ArgumentDescription> {
             { "reply"_s, "uint8_t"_s },
         };
+    case MessageName::TestWithSwift_TestMessageWithEmptyReplyReply:
+        return Vector<ArgumentDescription> { };
     case MessageName::TestWithSwiftConditionally_TestAsyncMessage:
         return Vector<ArgumentDescription> {
             { "param"_s, "uint32_t"_s },
@@ -1445,6 +1464,8 @@ std::optional<Vector<ArgumentDescription>> messageReplyArgumentDescriptions(Mess
         return Vector<ArgumentDescription> {
             { "reply"_s, "uint8_t"_s },
         };
+    case MessageName::TestWithSwift_TestMessageWithEmptyReply:
+        return Vector<ArgumentDescription> { };
     case MessageName::TestWithSwiftConditionally_TestAsyncMessage:
         return Vector<ArgumentDescription> {
             { "reply"_s, "uint8_t"_s },

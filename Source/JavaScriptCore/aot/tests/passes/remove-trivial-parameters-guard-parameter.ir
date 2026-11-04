@@ -1,0 +1,84 @@
+# A guard that an edge makes is nobody else's value, so its parameter stays; a parameter that is only handed one guard goes
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveTrivialParameters
+# STATISTIC: RemoveTrivialParametersChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="Size" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+function f0 name="guardOfShapeTest" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v0, v2 key="x" receivers=[L0] level=Expected
+    Return v3
+  b2():
+    Return v0
+# CHECK: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v2: guard):
+# CHECK-NEXT: = GetSlot v0, v2 key="x"
+}
+
+function f1 name="unusedGuard" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v0
+  b2():
+    Return v0
+# CHECK: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v2: guard):
+}
+
+function f2 name="guardsOfSwitchCases" parameters=[{type=object}] results=[{type=anything}] {
+    SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v1):
+    v2 = GetSlot v0, v1 key="x" receivers=[L0] level=Expected
+    Return v2
+  b2(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L1] level=Expected
+    Return v4
+  b3():
+    Return v0
+# CHECK: SwitchOnShape v0 layoutSets={{*}} -> case b1(| 0), case b2(| 0), otherwise b3()
+# CHECK-NEXT: b1(v1: guard):
+# CHECK: b2(v3: guard):
+}
+
+function f3 name="guardsOfTwoTestsMeet" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b3(| 0), notTaken b4()
+  b2():
+    v3 = ShapeTest v0 layouts=[L0]
+    Branch v3 -> taken b3(| 0), notTaken b4()
+  b3(v4):
+    v5 = GetSlot v0, v4 key="x" receivers=[L0] level=Expected
+    Return v5
+  b4():
+    Return v0
+# CHECK: Branch v2 -> taken b3(| 0), notTaken b4()
+# CHECK: Branch v3 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v4: guard):
+# CHECK-NEXT: = GetSlot v0, v4 key="x"
+}
+
+function f4 name="guardHandedOnAsArgument" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b3()
+  b1(v2):
+    Jump -> next b2(v2)
+  b2(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Expected
+    Return v4
+  b3():
+    Return v0
+# CHECK: Branch v1 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v2: guard):
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: = GetSlot v0, v2 key="x"
+}

@@ -1,0 +1,189 @@
+# A sum of fractions that a loop computes waits past calls behind the loop. On x86-64 no register that holds a double outlives a call: the sum waits on the stack in the blocks with the calls,
+# which never name it, and has a register in the loop. Spilled, it would be loaded and stored in every turn, and each turn would wait for the store of the turn before
+# declare const input: any;
+# declare const note: any;
+# function sumThenTell(turns: number, step: number): number {
+#   let sum = 0.5;
+#   for (let i = 0; i < turns; i++) {
+#     if (i & 4) sum += step;
+#     else sum *= 0.75;
+#   }
+#   if (note(1)) note(2);
+#   if (note(3)) note(4);
+#   if (note(5)) note(6);
+#   if (note(7)) note(8);
+#   return sum;
+# }
+# (globalThis as any).answer = sumThenTell(input | 0, +input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows faulting-loop-polls
+
+typesite w0 module=m0 position=72 kind=Parameter function=f1
+typesite w1 module=m0 position=87 kind=Parameter function=f1
+typesite w2 module=m0 position=51 kind=Result
+typesite w3 module=m0 position=359 kind=CallResult
+typesite w4 module=m0 position=117 kind=Variable
+typesite w5 module=m0 position=139 kind=Variable
+layout L0 fields=[{key="answer" declared={type=anything}}] flags=[IsNeverAllocated] ownFieldCount=1 flow={allocation=NeverAllocated}
+module m0 path="/$bunfs/root/waits.ts" displayPath="waits.ts" flags=[KeepsError] body=f0 positions={lineStarts=[0, 26, 51, 111, 128, 164, 192, 214, 218, 242, 266, 290, 314, 328, 330, 391] textOfBody="\x81\x025" whereThisIsMade=[51, 146]} functionText="\x0a\x0afunction sumThenTell(turns, step) {\x0a  let sum = 0.5;\x0a  for (let i = 0; i < turns; i++) {\x0a    if (i & 4) sum += step;\x0a    else sum *= 0.75;\x0a  }\x0a  if (note(1)) note(2);\x0a  if (note(3)) note(4);\x0a  if (note(5)) note(6);\x0a  if (note(7)) note(8);\x0a  return sum;\x0a}\x0a(globalThis).answer = sumThenTell(input | 0, +input);\x0a" typesCutFromFunctionText="\x00\x19\x01\x18\x1b\x08\x06\x08\x01\x08\xe9\x01\x07" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Builtin builtin=GlobalThis @331
+    v3 = PropGet v2 key="globalThis" [isFreeName] @331
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @331
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @331
+    v6 = Builtin builtin=GlobalThis @371
+    v7 = PropGet v6 key="input" [isFreeName] @371
+    v8 = Convert v7 declared={type=i32 flags=[IsExpected]} @371
+    v9 = Integer @379
+    v10 = BitOr v8, v9 @371
+    v11 = Builtin builtin=GlobalThis @388
+    v12 = PropGet v11 key="input" [isFreeName] @388
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @388
+    v14 = ToNumber v13 @382
+    v15 = Call v1, -, v10, v14 calleeName="sumThenTell" @359
+    v16 = Convert v15 declared={type=number site=w3} @359
+    PropSet v5, v16 key="answer" @331
+    v18 = Undefined @331
+    Return v18 @331
+}
+function f1 name="sumThenTell" module=m0 position=51 text={start=2 end=256} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1() @51
+  b1():
+    v2 = Double number=0.5 @123
+    v3 = Convert v2 declared={type=number site=w4} @123
+    v4 = Integer @143
+    v5 = Convert v4 declared={type=number site=w5} @143
+    Jump -> next b2(v3, v5) @139
+  b2(v6: number, v7: number):
+    LoopHint @139
+    v9 = Convert v7 declared={type=i32 flags=[IsExpected]} @146
+    v10 = Less v9, v0 @146
+    Branch v10 -> taken b3(| 0, 1), notTaken b11(| 0, 1) @146
+  b3(v11, v12):
+    Jump -> next b4() @146
+  b4():
+    v13 = Convert v11 declared={type=i32 flags=[IsExpected]} @172
+    v14 = Integer integer=4 @176
+    v15 = BitAnd v13, v14 @172
+    v16 = ToBoolean v15 @172
+    Branch v16 -> taken b5(| 0), notTaken b7(| 0) @172
+  b5(v17):
+    Jump -> next b6() @172
+  b6():
+    v18 = Add v6, v1 @186
+    v19 = Convert v18 declared={type=number site=w4} @179
+    Jump -> next b9(v19) @179
+  b7(v20):
+    Jump -> next b8() @172
+  b8():
+    v21 = Double number=0.75 @208
+    v22 = Mul v6, v21 @186
+    v23 = Convert v22 declared={type=number site=w4} @201
+    Jump -> next b9(v23) @201
+  b9(v24: number):
+    Jump -> next b10() @201
+  b10():
+    v25 = Increment v13 @186
+    v26 = Convert v25 declared={type=number site=w5} @157
+    Jump -> next b2(v24, v26) @157
+  b11(v27, v28):
+    Jump -> next b12() @146
+  b12():
+    v29 = Builtin builtin=GlobalThis @224
+    v30 = PropGet v29 key="note" [isFreeName] @224
+    v31 = Convert v30 declared={type=undefined|null|function flags=[IsExpected]} @224
+    v32 = Integer integer=1 @229
+    v33 = Call v31, -, v32 calleeName="note" @224
+    v34 = ToBoolean v33 @224
+    Branch v34 -> taken b13(| 0), notTaken b15(| 0) @224
+  b13(v35):
+    Jump -> next b14() @224
+  b14():
+    v36 = Builtin builtin=GlobalThis @233
+    v37 = PropGet v36 key="note" [isFreeName] @233
+    v38 = Convert v37 declared={type=undefined|null|function flags=[IsExpected]} @233
+    v39 = Integer integer=2 @238
+    v40 = Call v38, -, v39 calleeName="note" @233
+    Jump -> next b16() @233
+  b15(v41):
+    Jump -> next b16() @224
+  b16():
+    v42 = Builtin builtin=GlobalThis @248
+    v43 = PropGet v42 key="note" [isFreeName] @248
+    v44 = Convert v43 declared={type=undefined|null|function flags=[IsExpected]} @248
+    v45 = Integer integer=3 @253
+    v46 = Call v44, -, v45 calleeName="note" @248
+    v47 = ToBoolean v46 @248
+    Branch v47 -> taken b17(| 0), notTaken b19(| 0) @248
+  b17(v48):
+    Jump -> next b18() @248
+  b18():
+    v49 = Builtin builtin=GlobalThis @257
+    v50 = PropGet v49 key="note" [isFreeName] @257
+    v51 = Convert v50 declared={type=undefined|null|function flags=[IsExpected]} @257
+    v52 = Integer integer=4 @262
+    v53 = Call v51, -, v52 calleeName="note" @257
+    Jump -> next b20() @257
+  b19(v54):
+    Jump -> next b20() @248
+  b20():
+    v55 = Builtin builtin=GlobalThis @272
+    v56 = PropGet v55 key="note" [isFreeName] @272
+    v57 = Convert v56 declared={type=undefined|null|function flags=[IsExpected]} @272
+    v58 = Integer integer=5 @277
+    v59 = Call v57, -, v58 calleeName="note" @272
+    v60 = ToBoolean v59 @272
+    Branch v60 -> taken b21(| 0), notTaken b23(| 0) @272
+  b21(v61):
+    Jump -> next b22() @272
+  b22():
+    v62 = Builtin builtin=GlobalThis @281
+    v63 = PropGet v62 key="note" [isFreeName] @281
+    v64 = Convert v63 declared={type=undefined|null|function flags=[IsExpected]} @281
+    v65 = Integer integer=6 @286
+    v66 = Call v64, -, v65 calleeName="note" @281
+    Jump -> next b24() @281
+  b23(v67):
+    Jump -> next b24() @272
+  b24():
+    v68 = Builtin builtin=GlobalThis @296
+    v69 = PropGet v68 key="note" [isFreeName] @296
+    v70 = Convert v69 declared={type=undefined|null|function flags=[IsExpected]} @296
+    v71 = Integer integer=7 @301
+    v72 = Call v70, -, v71 calleeName="note" @296
+    v73 = ToBoolean v72 @296
+    Branch v73 -> taken b25(| 0), notTaken b27(| 0) @296
+  b25(v74):
+    Jump -> next b26() @296
+  b26():
+    v75 = Builtin builtin=GlobalThis @305
+    v76 = PropGet v75 key="note" [isFreeName] @305
+    v77 = Convert v76 declared={type=undefined|null|function flags=[IsExpected]} @305
+    v78 = Integer integer=8 @310
+    v79 = Call v77, -, v78 calleeName="note" @305
+    Jump -> next b28() @305
+  b27(v80):
+    Jump -> next b28() @296
+  b28():
+    v81 = Convert v6 declared={type=number site=w2} @323
+    Return v81 @323
+# X64: loop #[[header]], instructions: 7, patchpoints: 0
+# X64-NOT: (%rsp)
+# X64-NOT: (%rbp)
+# X64: MulDouble %xmm
+# X64-NOT: (%rsp)
+# X64-NOT: (%rbp)
+# X64: AddDouble %xmm
+# X64-NOT: (%rsp)
+# X64-NOT: (%rbp)
+# X64: end of loop #[[header]]
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]

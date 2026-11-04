@@ -1,0 +1,44 @@
+# The program shows the names of Reflect, so the first read of Reflect.has stays an operation. Only the first one does anything: the member has been added to its holder when the call behind
+# the copy runs the head once more. So it may stand in a head that is copied, and the call in the loop gets the head of its callee.
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls
+# RUN: pipeline InlineHeads
+# STATISTIC: SelectedHeadsInlined = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="next" [isFreeName]
+    v2 = Builtin builtin=Reflect
+    v3 = Builtin builtin=Object
+    v4 = PropGet v3 key="getOwnPropertyNames"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Call v1
+    v7 = CallDirect v6 function=f1
+    v8 = Call v1, -, v7
+    v9 = ToBoolean v8
+    Branch v9 -> taken b1(), notTaken b2()
+  b2():
+    v10 = Call v4, v3, v2
+    Return v10
+}
+function f1 name="early" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Reflect
+    v2 = PropGet v1 key="has"
+    v3 = TypeTest v0 testedType=i32
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2() frequency=Unlikely:
+    v4 = Call v0, -, v0
+    Return v4
+}
+# CHECK-LABEL: name="main"
+# CHECK: LoopHint
+# CHECK: = CallDirect {{*}} function=f1 {{*}}[isAfterInlinedHead]
+# CHECK: InitializeBuiltin builtin=ReflectHas
+# CHECK-LABEL: name="early"
+# CHECK: InitializeBuiltin builtin=ReflectHas

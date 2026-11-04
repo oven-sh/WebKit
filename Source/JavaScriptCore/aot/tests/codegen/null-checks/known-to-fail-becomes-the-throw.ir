@@ -1,0 +1,56 @@
+# A null check is a load through the value that faults, and the handler of the fault reads the value out of the base register of that load.
+# Where the back end finds out that the value is null or undefined (here the second test of one condition falls away, and with it the path of the object), nothing is left to test:
+# the check becomes the throw, and no fault is listed. A value that only the run knows keeps its load
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# RUN: generate-code
+# CHECK: f1: size={{*}} faults=0
+# CHECK: f2: size={{*}} faults=0
+# CHECK: f3: size={{*}} faults=1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="next" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="value" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=i32} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="allocate" parameters=[{type=number}, {type=i32}] results=[{type=L0}] {
+    v2 = Null
+    v3 = NewObject -, v2, v0, v1 layout=L0 fields=[0, 1, 2]
+    Return v3
+}
+function f1 name="undefinedIsKnown" parameters=[{type=boolean}, {type=L0}] results=[{type=null|L0}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = GetSlot v1 key="next" receivers=[L0] level=Proven
+    Return v2
+  b2():
+    Branch v0 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5(v1)
+  b4():
+    v3 = Undefined
+    Jump -> next b5(v3)
+  b5(v4: undefined|L0):
+    v5 = RequireObjectCoercible v4 name="next"
+    v6 = GetSlot v5 key="next" receivers=[L0] level=Proven
+    Return v6
+}
+function f2 name="nullIsKnown" parameters=[{type=boolean}, {type=L0}] results=[{type=null|L0}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = GetSlot v1 key="next" receivers=[L0] level=Proven
+    Return v2
+  b2():
+    Branch v0 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5(v1)
+  b4():
+    v3 = Null
+    Jump -> next b5(v3)
+  b5(v4: null|L0):
+    v5 = RequireObjectCoercible v4 name="next"
+    v6 = GetSlot v5 key="next" receivers=[L0] level=Proven
+    Return v6
+}
+function f3 name="onlyTheRunKnows" parameters=[{type=null|L0}] results=[{type=null|L0}] {
+    v1 = RequireObjectCoercible v0 name="next"
+    v2 = GetSlot v1 key="next" receivers=[L0] level=Proven
+    Return v2
+}

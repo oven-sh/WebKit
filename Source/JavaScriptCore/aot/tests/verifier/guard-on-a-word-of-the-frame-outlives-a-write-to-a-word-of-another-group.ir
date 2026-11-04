@@ -1,0 +1,106 @@
+# A write to an array read from one word of a generator's frame ends no proof about an array read from a word of another group
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: GuardNotAvailable 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lists" role=CoroutineRamp flags=[IsGenerator, TakesCallee] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f1}
+function f1 name="goodWordsOfTwoGroups" role=CoroutineBody flags=[IsGenerator] parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f0 body=f1} {
+    v3 = GetHeapFrameWord v0 index=1 valueType=anything allocationGroup=1
+    v4 = AssumeType v3 provenType=Array<number, proven, pristine[Storage, Names]>
+    v5 = GetHeapFrameWord v0 index=2 valueType=anything allocationGroup=2
+    v6 = AssumeType v5 provenType=Array<number, proven, pristine[Storage, Names]>
+    v7 = HasArrayStorage v4 arrayStorage=Double [isWritable]
+    Branch v7 -> taken b1(| 0), notTaken b2()
+  b1(v8):
+    ConvertToDoubleStorage v6
+    v10 = Integer
+    PutArrayElement v4, v10, v10, v8 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v10
+  b2():
+    Return v2
+}
+function f2 name="goodEachJoinsAnArrayMadeHere" role=CoroutineBody flags=[IsGenerator] parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f0 body=f2} {
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = GetHeapFrameWord v0 index=1 valueType=anything allocationGroup=1
+    v5 = AssumeType v4 provenType=Array<number, proven, pristine[Storage, Names]>
+    v6 = GetHeapFrameWord v0 index=2 valueType=anything allocationGroup=2
+    v7 = AssumeType v6 provenType=Array<number, proven, pristine[Storage, Names]>
+    Jump -> next b3(v5, v7)
+  b2():
+    v8 = NewArray contents=number
+    v9 = AssumeType v8 provenType=Array<number, proven, pristine[Storage, Names]>
+    v10 = NewArray contents=number
+    v11 = AssumeType v10 provenType=Array<number, proven, pristine[Storage, Names]>
+    Jump -> next b3(v9, v11)
+  b3(v12, v13):
+    v14 = HasArrayStorage v12 arrayStorage=Double [isWritable]
+    Branch v14 -> taken b4(| 0), notTaken b5()
+  b4(v15):
+    ConvertToDoubleStorage v13
+    v17 = Integer
+    PutArrayElement v12, v17, v17, v15 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v17
+  b5():
+    Return v2
+}
+function f3 name="badWordsOfOneGroup" role=CoroutineBody flags=[IsGenerator] parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f0 body=f3} {
+    v3 = GetHeapFrameWord v0 index=1 valueType=anything allocationGroup=1
+    v4 = AssumeType v3 provenType=Array<number, proven, pristine[Storage, Names]>
+    v5 = GetHeapFrameWord v0 index=2 valueType=anything allocationGroup=1
+    v6 = AssumeType v5 provenType=Array<number, proven, pristine[Storage, Names]>
+    v7 = HasArrayStorage v4 arrayStorage=Double [isWritable]
+    Branch v7 -> taken b1(| 0), notTaken b2()
+  b1(v8):
+    ConvertToDoubleStorage v6
+    v10 = Integer
+    PutArrayElement v4, v10, v10, v8 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v10
+  b2():
+    Return v2
+}
+function f4 name="badOneWordHasNoGroup" role=CoroutineBody flags=[IsGenerator] parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f0 body=f4} {
+    v3 = GetHeapFrameWord v0 index=1 valueType=anything allocationGroup=1
+    v4 = AssumeType v3 provenType=Array<number, proven, pristine[Storage, Names]>
+    v5 = GetHeapFrameWord v0 index=2 valueType=anything
+    v6 = AssumeType v5 provenType=Array<number, proven, pristine[Storage, Names]>
+    v7 = HasArrayStorage v4 arrayStorage=Double [isWritable]
+    Branch v7 -> taken b1(| 0), notTaken b2()
+  b1(v8):
+    ConvertToDoubleStorage v6
+    v10 = Integer
+    PutArrayElement v4, v10, v10, v8 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v10
+  b2():
+    Return v2
+}
+function f5 name="badTheCallerSendsAnArray" role=CoroutineBody flags=[IsGenerator] parameters=[{type=anything}, {type=int[0, 2]}, {type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] derivation={source=f0 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f0 body=f5} {
+    v3 = GetHeapFrameWord v0 index=1 valueType=anything allocationGroup=1
+    v4 = AssumeType v3 provenType=Array<number, proven, pristine[Storage, Names]>
+    v5 = HasArrayStorage v4 arrayStorage=Double [isWritable]
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    ConvertToDoubleStorage v2
+    v8 = Integer
+    PutArrayElement v4, v8, v8, v6 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v8
+  b2():
+    Return v2
+}
+function f6 name="badNoFunctionThatResumes" parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] {
+    v3 = GetHeapFrameWord v0 index=1 valueType=anything allocationGroup=1
+    v4 = AssumeType v3 provenType=Array<number, proven, pristine[Storage, Names]>
+    v5 = GetHeapFrameWord v0 index=2 valueType=anything allocationGroup=2
+    v6 = AssumeType v5 provenType=Array<number, proven, pristine[Storage, Names]>
+    v7 = HasArrayStorage v4 arrayStorage=Double [isWritable]
+    Branch v7 -> taken b1(| 0), notTaken b2()
+  b1(v8):
+    ConvertToDoubleStorage v6
+    v10 = Integer
+    PutArrayElement v4, v10, v10, v8 arrayStorage=Double level=Expected [keyIsIntegral]
+    Return v10
+  b2():
+    Return v2
+}

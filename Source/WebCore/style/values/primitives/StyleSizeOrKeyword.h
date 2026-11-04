@@ -41,13 +41,14 @@ struct SizeOrKeyword : PrimitiveNumericOrKeywordOrOptionalCalcSize<LengthPercent
     using NumericOrKeyword::NumericOrKeyword;
 
     ALWAYS_INLINE bool isCalcSize() const { return this->template holdsAlternative<typename NumericOrKeyword::CalcSize>(); }
+    ALWAYS_INLINE UnevaluatedCalcSize calcSize() const { return this->template get<typename NumericOrKeyword::CalcSize>(); }
 
     // Specified because a calc-size() resolves to a length, unless its basis is a keyword, in which
     // case it behaves as that keyword.
     ALWAYS_INLINE bool isSpecified() const
     {
         if (isCalcSize())
-            SUPPRESS_FORWARD_DECL_ARG return calcSizeBasisKeyword(this->calcSizeValue()) == CSSValueInvalid;
+            SUPPRESS_FORWARD_DECL_ARG return calcSizeBasisKeyword(this->calcSizeValue()) == CSSValueID::Invalid;
         return NumericOrKeyword::isSpecified();
     }
 
@@ -56,7 +57,7 @@ struct SizeOrKeyword : PrimitiveNumericOrKeywordOrOptionalCalcSize<LengthPercent
     ALWAYS_INLINE bool isPercentOrCalculated() const
     {
         if (isCalcSize())
-            SUPPRESS_FORWARD_DECL_ARG return calcSizeBasisKeyword(this->calcSizeValue()) == CSSValueInvalid && calcSizeHasPercentage(this->calcSizeValue());
+            SUPPRESS_FORWARD_DECL_ARG return calcSizeBasisKeyword(this->calcSizeValue()) == CSSValueID::Invalid && calcSizeHasPercentage(this->calcSizeValue());
         return NumericOrKeyword::isPercentOrCalculated();
     }
 };

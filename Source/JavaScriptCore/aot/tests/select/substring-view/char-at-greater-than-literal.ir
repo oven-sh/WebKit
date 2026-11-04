@@ -1,0 +1,42 @@
+# charAt is ordered against a one-character literal by its code unit where the comparison is false for the empty string
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 6
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="char-at-greater-than-literal" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharAt/0
+    v3 = String string="a"
+    v4 = Greater v2, v3
+    Return v4
+# CHECK-NOT: StringPrototypeCharAt
+# CHECK-NOT: = GetStringLength
+# CHECK: [[unit0]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, -, -, v1
+# CHECK-NEXT: [[codeUnit0]]: 97 = Integer integer=97
+# CHECK-NEXT: [[result0]]: boolean = Greater [[unit0]], [[codeUnit0]]
+# CHECK-NEXT: Return [[result0]]
+}
+
+function f1 name="char-at-greater-or-equal" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharAt/0
+    v3 = String string="a"
+    v4 = GreaterEq v2, v3
+    Return v4
+# CHECK-NOT: StringPrototypeCharAt
+# CHECK: [[unit1]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
+# CHECK-NEXT: [[codeUnit1]]: 97 = Integer integer=97
+# CHECK-NEXT: [[result1]]: boolean = GreaterEq [[unit1]], [[codeUnit1]]
+# CHECK-NEXT: Return [[result1]]
+}
+
+function f2 name="literal-less-than-char-at" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharAt/0
+    v3 = String string="a"
+    v4 = Less v3, v2
+    Return v4
+# CHECK-NOT: StringPrototypeCharAt
+# CHECK: [[unit2]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
+# CHECK-NEXT: [[codeUnit2]]: 97 = Integer integer=97
+# CHECK-NEXT: [[result2]]: boolean = Less [[codeUnit2]], [[unit2]]
+# CHECK-NEXT: Return [[result2]]
+}

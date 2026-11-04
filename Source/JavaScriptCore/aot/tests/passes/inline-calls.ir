@@ -1,0 +1,438 @@
+# Each decision and each benefit of the inlining model
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 12
+# STATISTIC: InlineDecisionInlineHead = 1
+# STATISTIC: InlineDecisionCostExceedsBenefit = 11
+# STATISTIC: InlineDecisionBarrier = 6
+# STATISTIC: InlineDecisionClosesCycle = 2
+# STATISTIC: InlineDecisionDepthLimit = 1
+# STATISTIC: InlineDecisionSignatureMismatch = 0
+# STATISTIC: InlineDecisionCallerSizeLimit = 0
+# STATISTIC: InlineBenefitWrapper = 2
+# STATISTIC: InlineBenefitFoldedCode = 1
+# STATISTIC: InlineBenefitKnownCalleeArgument = 1
+# STATISTIC: InlineBenefitSunkAllocation = 2
+# LOSS: MaxInlineDepth x1 f22 v1
+# LOSS: MaxInlineHeadBytes x7 f1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+evalscope e0 mode=Strict
+
+function f0 name="oneOperation" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Mul v0, v0
+    Return v1
+}
+
+function f1 name="thirteenOperations" parameters=[{type=number}] results=[{type=number}] {
+# REPEAT: i = 0..12
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
+    Return v13
+}
+
+function f2 name="twentyFourOperations" parameters=[{type=number}] results=[{type=number}] {
+# REPEAT: i = 0..23
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
+    Return v24
+}
+
+function f3 name="branchesOnParameterType" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+# REPEAT: i = 3..42; a = 1 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41
+    v%(i) = Mul v%(a), v1
+# END REPEAT
+    Return v42
+}
+
+function f4 name="callsParameterInLoop" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Call v0, -, v3
+    v7 = Integer integer=1
+    v8 = Add v3, v7
+    Jump -> next b1(v8)
+  b3():
+# REPEAT: i = 9..28; a = 1 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
+    v%(i) = Mul v%(a), v1
+# END REPEAT
+    Return v28
+}
+
+function f5 name="readsPair" parameters=[{type=L0}] results=[{type=number}] {
+    v1 = GetSlot v0 key="a" receivers=[L0] level=Proven
+    v2 = GetSlot v0 key="b" receivers=[L0] level=Proven
+    v3 = Add v1, v2
+# REPEAT: i = 3..25
+    v%(i+1) = Mul v%(i), v3
+# END REPEAT
+    Return v26
+}
+
+function f6 name="bigFunction" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 0..45
+    v%(i+1) = Add v%(i), v0
+# END REPEAT
+    Return v46
+}
+
+function f7 name="hugeFunction" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 0..53
+    v%(i+1) = Add v%(i), v0
+# END REPEAT
+    Return v54
+}
+
+function f8 name="bigFunctionWithClosure" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 0..45
+    v%(i+1) = Add v%(i), v0
+# END REPEAT
+    Return v46
+}
+
+function f9 name="bigFunctionCalledFromCopy" parameters=[{type=anything}] results=[{type=anything}] {
+# REPEAT: i = 0..45
+    v%(i+1) = Add v%(i), v0
+# END REPEAT
+    Return v46
+}
+
+function f10 name="hasNoBody" parameters=[{type=number}] results=[{type=number}]
+
+function f11 name="awaits" flags=[IsAsync] parameters=[{type=number}] results=[{type=anything}] {
+    v1 = Await v0
+    Return v1
+}
+
+function f12 name="evaluatesText" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    Return v0
+}
+
+function f13 name="recursive" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f13
+    v2 = CallDirect v1 function=f0
+    Return v2
+}
+# CHECK-LABEL: name="recursive"
+# CHECK: = CallDirect v0 function=f13 [isNeverInlined]
+
+function f14 name="returnsCachedOrComputes" parameters=[{type=undefined|object}, {type=number}] results=[{type=number}] {
+    v2 = TypeTest v0 testedType=undefined|null
+    Branch v2 -> taken b2(), notTaken b1()
+  b1():
+    Return v1
+  b2() frequency=Unlikely:
+# REPEAT: i = 3..52; a = 1 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51
+    v%(i) = Mul v%(a), v1
+# END REPEAT
+    Return v52
+}
+
+function f15 name="alwaysThrows" parameters=[{type=anything}] results=[{type=never}] {
+    Throw v0
+}
+
+function f16 name="warmCallOfThirteen" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f1
+    Return v1
+}
+# CHECK-LABEL: name="warmCallOfThirteen"
+# CHECK-NOT: CallDirect
+
+function f17 name="warmCallOfTwentyFour" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+# CHECK-LABEL: name="warmCallOfTwentyFour"
+# CHECK: = CallDirect {{*}} function=f2
+# CHECK-NEXT: Return
+
+function f18 name="hotCallOfTwentyFour" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v0 function=f2
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+# CHECK-LABEL: name="hotCallOfTwentyFour"
+# CHECK-NOT: CallDirect
+
+function f19 name="rareCalls" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = CallDirect v0 function=f1
+    v3 = CallDirect v2 function=f0
+    Return v3
+  b2():
+    Return v0
+}
+# CHECK-LABEL: name="rareCalls"
+# CHECK: = CallDirect v0 function=f1
+# CHECK-NEXT: = CallDirect v2 function=f0
+# CHECK-NEXT: Return v3
+
+function f20 name="callAtDepthOne" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f2 module=m0}] {
+    v1 = CallDirect v0 function=f1 @0:1
+    Return v1
+}
+# CHECK-LABEL: name="callAtDepthOne"
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK-NEXT: Return
+
+function f21 name="callAtDepthThree" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f2 module=m0}, {callee=f2 parent=1 module=m0}, {callee=f2 parent=2 module=m0}] {
+    v1 = CallDirect v0 function=f0 @0:3
+    Return v1
+}
+# CHECK-LABEL: name="callAtDepthThree"
+# CHECK-NOT: CallDirect
+
+function f22 name="callAtDepthFour" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f2 module=m0}, {callee=f2 parent=1 module=m0}, {callee=f2 parent=2 module=m0}, {callee=f2 parent=3 module=m0}] {
+    v1 = CallDirect v0 function=f1 @0:4
+    Return v1
+}
+# CHECK-LABEL: name="callAtDepthFour"
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK-NEXT: Return
+
+function f23 name="wrapperInUnlikelyBlockAtDepthFive" parameters=[{type=number}, {type=boolean}] results=[{type=number}] inlineFrames=[{}, {callee=f2 module=m0}, {callee=f2 parent=1 module=m0}, {callee=f2 parent=2 module=m0}, {callee=f2 parent=3 module=m0}, {callee=f2 parent=4 module=m0}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 = CallDirect v0 function=f45 @0:5
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: name="wrapperInUnlikelyBlockAtDepthFive"
+# CHECK-NOT: CallDirect
+
+function f24 name="callsAsyncRamp" parameters=[{type=anything}] results=[{type=Promise}] {
+    v1 = CallDirect v0 function=f46
+    Return v1
+}
+# CHECK-LABEL: name="callsAsyncRamp"
+# CHECK-NOT: function=f46
+# CHECK: = NewPromise
+# CHECK-NEXT: = CallDirect {{*}} function=f47
+
+function f25 name="passesString" parameters=[{type=string}, {type=number}] results=[{type=number}] {
+    v2 = CallDirect v0, v1 function=f3
+    Return v2
+}
+# CHECK-LABEL: name="passesString"
+# CHECK-NOT: CallDirect
+
+function f26 name="passesAnything" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    v2 = CallDirect v0, v1 function=f3
+    Return v2
+}
+# CHECK-LABEL: name="passesAnything"
+# CHECK: = CallDirect {{*}} function=f3
+
+function f27 name="passesClosure" parameters=[{type=number}] results=[{type=number}] {
+    v1 = NewClosure function=f0
+    v2 = CallDirect v1, v0 function=f4
+    Return v2
+}
+# CHECK-LABEL: name="passesClosure"
+# CHECK-NOT: CallDirect
+
+function f28 name="passesUnknownFunction" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    v2 = CallDirect v0, v1 function=f4
+    Return v2
+}
+# CHECK-LABEL: name="passesUnknownFunction"
+# CHECK: = CallDirect {{*}} function=f4
+
+function f29 name="passesLocalObject" parameters=[{type=number}] results=[{type=number}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = CallDirect v1 function=f5
+    Return v2
+}
+# CHECK-LABEL: name="passesLocalObject"
+# CHECK-NOT: CallDirect
+
+function f30 name="passesEscapingObject" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = Call v1, -, v2
+    v4 = CallDirect v2 function=f5
+    Return v4
+}
+# CHECK-LABEL: name="passesEscapingObject"
+# CHECK: = CallDirect {{*}} function=f5
+
+function f31 name="onlyCallerOfBigFunction" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f6
+    Return v1
+}
+# CHECK-LABEL: name="onlyCallerOfBigFunction"
+# CHECK: = CallDirect v0 function=f6
+
+function f32 name="onlyCallerOfHugeFunction" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f7
+    Return v1
+}
+# CHECK-LABEL: name="onlyCallerOfHugeFunction"
+# CHECK: = CallDirect v0 function=f7
+
+function f33 name="onlyCallerOfFunctionWithClosure" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f8
+    v2 = NewClosure function=f8
+    Return v2
+}
+# CHECK-LABEL: name="onlyCallerOfFunctionWithClosure"
+# CHECK: = CallDirect v0 function=f8
+
+function f34 name="onlyCallInsideCopy" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f8 module=m0}] {
+    v1 = CallDirect v0 function=f9 @0:1
+    Return v1
+}
+# CHECK-LABEL: name="onlyCallInsideCopy"
+# CHECK: = CallDirect v0 function=f9
+
+function f35 name="callsFunctionsWithBarriers" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f10
+    v2 = CallDirect v0 function=f48
+    v3 = CallDirect v0 function=f11
+    v4 = CallDirect v0 function=f12
+    v5 = CallDirect v0 function=f0
+    Return v5
+}
+# CHECK-LABEL: name="callsFunctionsWithBarriers"
+# CHECK: = CallDirect v0 function=f10
+# CHECK-NEXT: = CallDirect v0 function=f48
+# CHECK-NEXT: = CallDirect v0 function=f11
+# CHECK-NEXT: = CallDirect v0 function=f12
+# CHECK-NOT: CallDirect
+
+function f36 name="keepsFlaggedCall" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0 [isNeverInlined]
+    Return v1
+}
+# CHECK-LABEL: name="keepsFlaggedCall"
+# CHECK: = CallDirect {{*}} function=f0
+
+function f37 name="closesCycleThroughFrame" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f0 module=m0}] {
+    v1 = CallDirect v0 function=f0 @0:1
+    v2 = CallDirect v1 function=f1
+    Return v2
+}
+# CHECK-LABEL: name="closesCycleThroughFrame"
+# CHECK: function=f0 [isNeverInlined]
+# CHECK-NOT: CallDirect
+
+function f38 name="callsNoReturnFunction" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f15
+    Unreachable
+  b2():
+    Return v0
+}
+# CHECK-LABEL: name="callsNoReturnFunction"
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: = CallDirect v0 function=f15
+
+function f39 name="hotCallWithHead" parameters=[{type=undefined|object}, {type=number}, {type=boolean}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v0, v1 function=f14
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: name="hotCallWithHead"
+# CHECK-NOT: = Mul
+# CHECK-NOT: CallDirect
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = CallDirect v0, v1 function=f14 [isAfterInlinedHead]
+# CHECK-NOT: = Mul
+# CHECK-NOT: CallDirect
+# CHECK: = TypeTest v0 testedType=undefined|null
+# CHECK-NOT: = Mul
+# CHECK-NOT: CallDirect
+
+function f40 name="warmCallWithHead" parameters=[{type=undefined|object}, {type=number}] results=[{type=number}] {
+    v2 = CallDirect v0, v1 function=f14
+    Return v2
+}
+# CHECK-LABEL: name="warmCallWithHead"
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v0, v1 function=f14
+# CHECK-NOT: isAfterInlinedHead
+
+function f41 name="keepsCallAfterInlinedHead" parameters=[{type=undefined|object}, {type=number}, {type=boolean}] results=[{type=number}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v0, v1 function=f14 [isAfterInlinedHead]
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: name="keepsCallAfterInlinedHead"
+# CHECK-NOT: TypeTest
+
+function f42 name="createsPair" parameters=[{type=number}] results=[{type=L0}] {
+# REPEAT: i = 0..23
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
+    v25 = NewObject -, v24, v0 layout=L0 fields=[0, 1]
+    Return v25
+}
+
+function f43 name="readsFreshResult" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f42
+    v2 = GetSlot v1 key="a" receivers=[L0] level=Proven
+    Return v2
+}
+# CHECK-LABEL: name="readsFreshResult"
+# CHECK-NOT: CallDirect
+
+function f44 name="returnsFreshResult" parameters=[{type=number}] results=[{type=L0}] {
+    v1 = CallDirect v0 function=f42
+    Return v1
+}
+# CHECK-LABEL: name="returnsFreshResult"
+# CHECK: = CallDirect {{*}} function=f42
+# CHECK-NEXT: Return
+
+function f45 name="parameterWrapper" role=ParameterWrapper parameters=[{type=number}] results=[{type=number}] creator=ParameterWrapper{body=f2 parameter=0} {
+# REPEAT: i = 0..23
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
+    Return v24
+}
+
+function f46 name="asyncRamp" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f46 body=f47 entryWithoutPromise=f47 promiseType=Promise<anything> promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f47
+    Return v1
+}
+
+function f47 name="asyncRamp" role=CoroutineBody parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f46} creator=Coroutine{kind=AsyncFunction ramp=f46 body=f47 entryWithoutPromise=f47 promiseType=Promise<anything> promiseParameter=1} {
+    v2 = AwaitBySavingFrame v0, v1
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+
+function f48 name="outlined" role=OutlinedBody parameters=[{type=number}] results=[{type=number}] {
+    Return v0
+}

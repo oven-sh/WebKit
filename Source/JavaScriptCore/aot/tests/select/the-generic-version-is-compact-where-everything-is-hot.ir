@@ -1,0 +1,8 @@
+# The generic version of a function runs only behind a failed test at its entrance, which is expected of no call. It is cold and has the compact shape whatever class the option gives to everything,
+# so that a build in which everything is hot says what hot code costs and not what a second hot copy of every typed function costs
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: code-shapes
+# CHECK: f3 b0 Fast
+# CHECK: f4 b0 Compact heat=0.00
+# PROGRAM-OF: ../passes/inline-calls-entry-checks-stay-out-of-a-hot-entrypoint.ir

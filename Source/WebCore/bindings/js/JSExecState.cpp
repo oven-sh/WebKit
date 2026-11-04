@@ -45,7 +45,7 @@ void JSExecState::didLeaveScriptContext(JSC::JSGlobalObject* lexicalGlobalObject
     RefPtr context = executionContext(lexicalGlobalObject);
     if (!context)
         return;
-    context->eventLoop().performMicrotaskCheckpoint(lexicalGlobalObject->vm());
+    protect(context->eventLoop())->performMicrotaskCheckpoint(lexicalGlobalObject->vm());
 }
 
 JSC::JSValue functionCallHandlerFromAnyThread(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue functionObject, const JSC::CallData& callData, JSC::JSValue thisValue, const JSC::ArgList& args, NakedPtr<JSC::Exception>& returnedException)

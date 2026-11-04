@@ -39,8 +39,7 @@ void JSPromiseReaction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSPromiseReaction>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_promise);
-    visitor.appendUnbarriered(thisObject->m_next.pointer());
+    visitFields(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSPromiseReaction);
@@ -104,7 +103,7 @@ void JSSlimPromiseReaction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSSlimPromiseReaction>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_handlerOrContext);
+    visitFields(thisObject, visitor);
 }
 
 Structure* JSSlimPromiseReaction::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -142,9 +141,7 @@ void JSFullPromiseReaction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSFullPromiseReaction>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_onFulfilled);
-    visitor.append(thisObject->m_onRejected);
-    visitor.append(thisObject->m_context);
+    visitFields(thisObject, visitor);
 }
 
 Structure* JSFullPromiseReaction::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

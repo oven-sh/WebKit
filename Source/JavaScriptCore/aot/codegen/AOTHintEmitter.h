@@ -1,0 +1,31 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTChooseCallingConventions.h"
+#include "AOTOperationEmitter.h"
+
+namespace JSC { namespace AOT { namespace Typed {
+
+class HintEmitter final : public OperationEmitter {
+public:
+    explicit HintEmitter(CodeGenerator&);
+
+    void generateLoopHint(const ValueContext&);
+    void generateReleaseHint(const ValueContext&);
+    void pollWhereNoFrameIsSetUp(const OperationContext&);
+
+private:
+    void emitPoll(const ValueContext&);
+
+    EntryParameterFinder m_entryParameters;
+};
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

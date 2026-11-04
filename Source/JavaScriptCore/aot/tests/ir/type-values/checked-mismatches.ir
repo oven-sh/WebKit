@@ -1,0 +1,108 @@
+# Wherever a value may lie outside the type of the position it enters, the request ends in a Check that narrows. Nothing throws and nothing is reported.
+# A position keeps the type it declares, a read of it has that type, and a value that is proven to lie inside is not tested
+# FORM: AsRead
+# RUN: pass TypeValues
+# RUN(NONE): pass TypeValues
+# NONE-NOT: ReportMismatch
+# NONE-NOT: Throw
+# STATISTIC: RequestsResolvedToCheck = 4
+# STATISTIC: RequestsResolvedToNothing = 2
+# STATISTIC: RequestsResolvedToUpcast = 0
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Variable
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=PropertyRead
+typesite w3 module=m0 position=40 kind=Element
+typesite w4 module=m0 position=50 kind=Result
+typesite w5 module=m0 position=60 kind=Parameter
+typesite w6 module=m0 position=70 kind=Variable
+typesite w7 module=m0 position=80 kind=Parameter
+layout L0 name="Point" fields=[{key="x" declared={type=undefined|null|number}}]
+layout L1 kind=Environment fields=[{declared={type=undefined|null|number|absent site=w0}}, {declared={type=function flags=[IsFromCompiler]}}]
+variable g0 name="count" module=m0 declared={type=undefined|null|number site=w0} initialization=Undefined
+# CHECK: layout L0 name="Point" fields=[{key="x" declared={type=undefined|null|number}}]
+# CHECK: layout L1 kind=Environment fields=[{declared={type=undefined|null|number|absent site=w0}}, {declared={type=function flags=[IsFromCompiler]}}]
+# CHECK: variable g0 name="count" module=m0 declared={type=undefined|null|number site=w0}
+function f0 name="intoVariable" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=undefined|null|number site=w0} illTypedCause=FromLooseType
+    v2 = Integer integer=2
+    v3 = Add v1, v2
+    Return v3
+# CHECK: [[stored]]: undefined|null|number = Check v0 expectedType=undefined|null|number site=w0
+# CHECK: : number = Add [[stored]],
+}
+function f1 name="parameter" parameters=[{type=undefined|null|number site=w1}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK-LABEL: function f1 name="parameter" {{*}}parameters=[{type=undefined|null|number site=w1}]
+# CHECK: b0(v0: undefined|null|number):
+# CHECK-NEXT: Return v0
+function f2 name="fromCompiler" parameters=[{type=anything}, {type=Array<number> site=w7 flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v2 = Convert v0 declared={type=number flags=[IsFromCompiler]}
+    Return v2
+}
+# CHECK-LABEL: function f2 name="fromCompiler" {{*}}parameters=[{type=anything}, {type=Array<number> site=w7 flags=[IsFromCompiler]}]
+# CHECK: : number = Check v0 expectedType=number
+function f3 name="valueInside" results=[{type=anything}] {
+    v0 = Integer integer=2
+    v1 = Convert v0 declared={type=undefined|null|number site=w0}
+    Return v1
+# CHECK-NOT: Check
+# CHECK: Return v0
+}
+function f4 name="fieldRead" parameters=[{type=undefined|null|L0 site=w5}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    v2 = Convert v1 declared={type=undefined|null|number site=w2}
+    Return v2
+}
+# CHECK-LABEL: function f4 name="fieldRead" {{*}}parameters=[{type=undefined|null|L0 site=w5}]
+# CHECK: b0(v0: undefined|null|L0):
+# CHECK-NEXT: [[read]]: anything {{*}}= PropGet v0 key="x"
+# CHECK-NEXT: : undefined|null|number = Check [[read]] expectedType=undefined|null|number site=w2
+function f5 name="contentsRead" results=[{type=anything}] {
+    v0 = NewArray contents=number holes=[]
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    v3 = Convert v2 declared={type=undefined|null|number site=w3} illTypedCause=ContainerWriterUnseen
+    Return v3
+# CHECK: [[element]]: anything {{*}}= ElemGet v0, v1
+# CHECK-NEXT: : undefined|null|number {{*}}= Check [[element]] expectedType=undefined|null|number site=w3
+}
+function f6 name="tailCall" parameters=[{type=anything}] results=[{type=undefined|null|number site=w4}] {
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=undefined|null|number site=w4}}]
+# CHECK: ReturnCall v1 casts=[{declared={type=undefined|null|number site=w4} resolution=Check}]
+}
+function f7 name="untypedTailCall" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    ReturnCall v1
+# CHECK: ReturnCall v1
+# Every flow into an int32 promise is judged while the requests are in place, so this pass leaves the request to CheckInt32Promises
+}
+function f8 name="int32Promise" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=undefined|null|i32 site=w6 flags=[IsInt32Promise]} illTypedCause=FromLooseType
+    Return v1
+# CHECK: = Convert v0 declared={type=undefined|null|i32 site=w6 flags=[IsInt32Promise]}
+}
+function f9 name="readVariable" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    Return v0
+# CHECK: v0: undefined|null|number = GetModuleVariable variable=g0
+}
+function f10 name="fromPositionOfTheSameType" parameters=[{type=undefined|null|number site=w1}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=undefined|null|number site=w6}
+    Return v1
+# CHECK-NOT: Check
+# CHECK: Return v0
+}
+function f11 name="typedTailCall" results=[{type=undefined|null|number site=w4}] {
+    v0 = CallDirect function=f12
+    ReturnCall v0 casts=[{declared={type=undefined|null|number site=w4}}]
+# CHECK: v0: undefined|null|number = CallDirect function=f12
+# CHECK-NEXT: ReturnCall v0 casts=[{declared={type=undefined|null|number site=w4} resolution=Nothing}]
+}
+function f12 name="typedCallee" results=[{type=undefined|null|number site=w4}] {
+    v0 = Integer integer=1
+    Return v0
+}

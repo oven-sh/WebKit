@@ -45,7 +45,6 @@
 #include "RenderDescendantIterator.h"
 #include "RenderElementInlines.h"
 #include "RenderFlexibleBox.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderListItem.h"
 #include "RenderMultiColumnFlow.h"
@@ -53,6 +52,7 @@
 #include "RenderObjectInlines.h"
 #include "RenderSVGInline.h"
 #include "RenderStyleConstants.h"
+#include "RenderText.h"
 #include "RenderTreeUpdaterGeneratedContent.h"
 #include "RenderTreeUpdaterViewTransition.h"
 #include "RenderView.h"
@@ -100,7 +100,7 @@ RenderTreeUpdater::RenderTreeUpdater(Document& document, Style::PostResolutionCa
 
 RenderTreeUpdater::~RenderTreeUpdater() = default;
 
-static RefPtr<Element> NODELETE findRenderingAncestor(Node& node)
+static RefPtr<Element> LEGACY_NODELETE findRenderingAncestor(Node& node)
 {
     for (SUPPRESS_UNCOUNTED_LOCAL auto& ancestor : composedTreeAncestors(node)) {
         if (ancestor.renderer())
@@ -111,7 +111,7 @@ static RefPtr<Element> NODELETE findRenderingAncestor(Node& node)
     return nullptr;
 }
 
-static RefPtr<ContainerNode> findRenderingRoot(ContainerNode& node)
+static RefPtr<ContainerNode> LEGACY_NODELETE findRenderingRoot(ContainerNode& node)
 {
     if (node.renderer())
         return &node;
@@ -191,7 +191,7 @@ void RenderTreeUpdater::updateRebuildRoots()
         if (!existingStyle)
             return false;
 
-        auto* parent = composedTreeAncestors(element).first();
+        RefPtr parent = composedTreeAncestors(element).first();
         m_styleUpdate->addElement(element, parent, Style::ElementUpdate {
             makeUnique<Style::ComputedStyle>(Style::ComputedStyle::cloneIncludingPseudoElements(*existingStyle)),
             Style::Change::Renderer
@@ -206,7 +206,7 @@ void RenderTreeUpdater::updateRebuildRoots()
         auto it = descendants.begin();
         auto end = descendants.end();
         while (it != end) {
-            auto* descendant = dynamicDowncast<Element>(*it);
+            RefPtr descendant = dynamicDowncast<Element>(*it);
             if (!descendant) {
                 it.traverseNext();
                 continue;
@@ -649,11 +649,11 @@ void RenderTreeUpdater::createTextRenderer(Text& textNode, const Style::TextUpda
         // This is to support "<div style='display:contents;color:green'>text</div>" type cases
         auto wrapperStyle = Style::ComputedStyle::clone(**textUpdate->inheritedDisplayContentsStyle);
         auto& parent = renderTreePosition.parent();
-        RenderPtr<RenderInline> newDisplayContentsAnonymousWrapper;
+        RenderPtr<RenderBoxModelObject> newDisplayContentsAnonymousWrapper;
         if (parent.isRenderSVGText() || parent.isRenderSVGInline())
             newDisplayContentsAnonymousWrapper = WebCore::createRenderer<RenderSVGInline>(RenderObject::Type::SVGInline, protect(textNode.document()), WTF::move(wrapperStyle));
         else
-            newDisplayContentsAnonymousWrapper = WebCore::createRenderer<RenderInline>(RenderObject::Type::Inline, protect(textNode.document()), WTF::move(wrapperStyle));
+            newDisplayContentsAnonymousWrapper = WebCore::createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, protect(textNode.document()), WTF::move(wrapperStyle));
         newDisplayContentsAnonymousWrapper->initializeStyle();
         auto& displayContentsAnonymousWrapper = *newDisplayContentsAnonymousWrapper;
         m_builder.attach(parent, WTF::move(newDisplayContentsAnonymousWrapper), renderTreePosition.nextSibling());

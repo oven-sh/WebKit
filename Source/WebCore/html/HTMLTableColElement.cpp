@@ -67,9 +67,9 @@ bool HTMLTableColElement::hasPresentationalHintsForAttribute(const QualifiedName
 void HTMLTableColElement::collectPresentationalHintsForAttribute(const QualifiedName& name, const AtomString& value, MutableStyleProperties& style)
 {
     if (name == widthAttr)
-        addHTMLMultiLengthToStyle(style, CSSPropertyWidth, value);
+        addHTMLMultiLengthToStyle(style, CSSPropertyID::Width, value);
     else if (name == heightAttr)
-        addHTMLMultiLengthToStyle(style, CSSPropertyHeight, value);
+        addHTMLMultiLengthToStyle(style, CSSPropertyID::Height, value);
     else
         HTMLTablePartElement::collectPresentationalHintsForAttribute(name, value, style);
 }

@@ -1,0 +1,30 @@
+# bare = Object.create(null); bare.toString(); base = { run: one }; derived = Object.create(base); derived.run(); derived.toString()
+# What Object.create makes lies under the operand and under nothing else: `bare` finds no member of Object.prototype, `derived` finds them through `base`.
+# While the analysis runs, each of the two calls stands in the program as a literal that names what lies above it: giveLayoutsToCreatedObjects().
+# RUN: valueflow-solve calls
+# CHECK-NOT: ObjectCreate
+# CHECK-NOT: f0 v4 -> {{*}}
+# CHECK: f0 v9 -> f1
+# CHECK-NEXT: f0 v11 -> ObjectPrototypeToString
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Base" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ObjectCreate
+    v1 = Null
+    v2 = Call v0, -, v1
+    v3 = PropGet v2 key="toString"
+    v4 = Call v3, v2
+    v5 = NewClosure function=f1
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = Call v0, -, v6
+    v8 = PropGet v7 key="run"
+    v9 = Call v8, v7
+    v10 = PropGet v7 key="toString"
+    v11 = Call v10, v7
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}

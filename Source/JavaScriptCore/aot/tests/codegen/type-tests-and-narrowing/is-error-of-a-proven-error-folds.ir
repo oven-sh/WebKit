@@ -1,0 +1,88 @@
+# function next(error: Error, count: number): number {
+#   if (Error.isError(error)) return count + count;
+#   return String(error).length;
+# }
+# declare const input: any;
+# (globalThis as any).answer = next(new Error("failed"), +input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=28 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=191 kind=CallResult
+typesite w3 module=m0 position=59 kind=CallResult
+typesite w4 module=m0 position=112 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="Error" [isFreeName]
+    v8 = Convert v7 declared={type=builtin(Error) flags=[IsExpected]}
+    v9 = String string="failed"
+    v10 = Construct v8, -, v9 calleeName="Error"
+    v11 = Convert v10 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="input" [isFreeName]
+    v14 = Convert v13 declared={type=number flags=[IsExpected]}
+    v15 = ToNumber v14
+    v16 = Call v1, -, v11, v15 calleeName="next"
+    v17 = Convert v16 declared={type=number site=w2}
+    PropSet v5, v17 key="answer"
+    v19 = Undefined
+    Return v19
+}
+function f1 name="next" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number site=w0}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Error, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Error" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Error) flags=[IsExpected]}
+    v5 = PropGet v4 key="isError"
+    v6 = Convert v5 declared={type=builtin(ErrorIsError) flags=[IsExpected]}
+    v7 = Call v6, v4, v0 calleeKey="isError" calleeName="Error.isError"
+    v8 = Convert v7 declared={type=boolean site=w3} illTypedCause=DeclarationWithoutBody
+    v9 = ToBoolean v8
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v10):
+    Jump -> next b3()
+  b3():
+    v11 = Add v1, v1
+    v12 = Convert v11 declared={type=number site=w1}
+    Return v12
+  b4(v13):
+    Jump -> next b5()
+  b5():
+    v14 = Builtin builtin=String
+    v15 = Call v14, -, v0 calleeName="String"
+    v16 = Convert v15 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v17 = PropGet v16 key="length"
+    v18 = Convert v17 declared={type=number site=w1}
+    Return v18
+}
+
+# The value is proven to be an Error, so Error.isError is decided at build time. Nothing reads the error any more, so it is not even passed: the function is one addition.
+# CHECK-LABEL: name="next" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Double b@[[count]] = ArgumentReg(
+# CHECK-NEXT: Double b@[[sum]] = Add(b@[[count]], b@[[count]], {{*}}:Add)
+# CHECK-NEXT: Return(b@[[sum]], Terminal)
+# CHECK-NOT: BB#
+# CHECK-LABEL: end of function
+# X64: instructions: 2, patchpoints: 0
+# ARM64: instructions: 2, patchpoints: 0

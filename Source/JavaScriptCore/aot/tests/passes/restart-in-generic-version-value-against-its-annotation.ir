@@ -1,0 +1,71 @@
+# A field that is annotated as a string is read as anything and tested. What fails the test is not what the annotation says: in front of every effect the call begins again in the generic version,
+# as it does where a test of the state of the object fails, and the typed body holds no generic code for the value.
+# The text that the body joins in front of the next test is thrown away by a call that begins again. So it is joined behind the last test that can send the call back, and a second run has nothing to do.
+# FORM: Prepared
+# RUN: pass RestartInGenericVersion RestartInGenericVersion VerifyProgram
+# STATISTIC: RestartsInGenericVersion = 2
+# CHECK: outcome: Changed
+# CHECK: outcome: Unchanged
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Record name="Named" fields=[{key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="x" declared={type=number}}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+
+function f1 name="describe" module=m0 role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f2 fallback=f3} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: L0):
+    v3 = CallDirect v2 function=f2
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f3
+    ReturnCall v4 requirement=Allowed
+}
+
+function f2 name="describe" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="label" receivers=[L0] level=Proven
+    v2 = String string=":"
+    v3 = TypeTest v1 testedType=string
+    Branch v3 -> taken b1(| 0), notTaken b3(| 0)
+  b1(v4: string):
+    v5 = Add v4, v2
+    v6 = IsSlotFilled v0 key="x" receivers=[L0] level=Expected
+    Branch v6 -> taken b2(| 0), notTaken b4(v5)
+  b2(v7: guard):
+    v8 = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
+    v9 = Add v5, v8
+    Return v9
+  b3(v10: undefined|null|boolean|number|symbol|bigint|object) frequency=Rare:
+    v11 = Add v10, v2
+    Jump -> next b4(v11)
+  b4(v12: string) frequency=Rare:
+    v13 = PropGet v0 key="x"
+    v14 = Add v12, v13
+    Return v14
+# CHECK: Branch v3 -> taken b1(| 0), notTaken [[restart]]()
+# CHECK: b1(v4: string):
+# CHECK-NEXT: = IsSlotFilled v0 key="x"
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken [[restart]]()
+# CHECK: b2(v7: guard):
+# CHECK-NEXT: v5: string = Add v4, v2
+# CHECK-NOT: PropGet
+# CHECK: [[restart]]() frequency=Rare:
+# CHECK-COUNT-1: = CallDirect {{*}} function=f3 [isNeverInlined]
+}
+
+function f3 name="describe" module=m0 role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} creator=Version{provenVersion=f2} {
+  b0(v0: anything) frequency=Unlikely:
+    v1 = PropGet v0 key="label"
+    v2 = String string=":"
+    v3 = Add v1, v2
+    v4 = PropGet v0 key="x"
+    v5 = Add v3, v4
+    Return v5
+}

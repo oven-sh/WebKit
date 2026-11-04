@@ -31,6 +31,8 @@
 #include "GlobalObjectMethodTable.h"
 #include "JSObjectInlines.h"
 
+#if ENABLE(SHADOW_REALM)
+
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(ShadowRealmObject);
@@ -74,3 +76,5 @@ void ShadowRealmObject::finishCreation(VM& vm)
 }
 
 } // namespace JSC
+
+#endif // ENABLE(SHADOW_REALM)

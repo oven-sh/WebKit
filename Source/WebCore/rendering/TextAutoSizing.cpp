@@ -115,7 +115,7 @@ unsigned TextAutoSizingHashTranslator::hash(const Style::ComputedStyle& style)
 {
     // FIXME: Not a very smart hash. Could be improved upon. See <https://bugs.webkit.org/show_bug.cgi?id=121131>.
     unsigned hash = std::to_underlying(style.usedAppearance());
-    hash ^= style.lineClamp().valueForHash();
+    hash ^= style.maxLines().valueForHash();
     hash ^= std::to_underlying(style.overflowWrap());
     hash ^= std::to_underlying(style.nbspMode());
     hash ^= std::to_underlying(style.lineBreak());
@@ -144,7 +144,7 @@ bool TextAutoSizingHashTranslator::equal(const TextAutoSizingKey& key, const Sty
 bool TextAutoSizingHashTranslator::equal(const Style::ComputedStyle& styleA, const Style::ComputedStyle& styleB)
 {
     return styleA.usedAppearance() == styleB.usedAppearance()
-        && styleA.lineClamp() == styleB.lineClamp()
+        && styleA.maxLines() == styleB.maxLines()
         && styleA.textSizeAdjust() == styleB.textSizeAdjust()
         && styleA.overflowWrap() == styleB.overflowWrap()
         && styleA.nbspMode() == styleB.nbspMode()
@@ -234,7 +234,7 @@ auto TextAutoSizingValue::adjustTextNodeSizes() -> StillHasNodes
 
         auto* parentRenderer = renderer.parent();
 
-        auto style = cloneRenderStyleWithState(renderer.style());
+        auto style = cloneRenderStyleWithState(parentRenderer->style());
         auto fontDescription = style.fontDescription();
         fontDescription.setUsedSize(averageSize);
         style.setFontDescription(FontCascadeDescription { fontDescription });
@@ -358,7 +358,7 @@ TextAutoSizing::~TextAutoSizing() = default;
 void TextAutoSizing::addTextNode(Text& node, float candidateSize)
 {
     LOG(TextAutosizing, " addAutoSizedNode %p candidateSize=%f", &node, candidateSize);
-    auto addResult = m_textNodes.add<TextAutoSizingHashTranslator>(node.renderer()->style(), nullptr);
+    auto addResult = m_textNodes.add<TextAutoSizingHashTranslator>(node.renderer()->parent()->style(), nullptr);
     if (addResult.isNewEntry)
         addResult.iterator->value = makeUnique<TextAutoSizingValue>();
     addResult.iterator->value->addTextNode(node, candidateSize);

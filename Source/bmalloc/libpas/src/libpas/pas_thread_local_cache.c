@@ -125,7 +125,7 @@ static void deallocate(pas_thread_local_cache* thread_local_cache)
         thread_local_cache->allocator_index_capacity);
 
     /* If we're doing symmetric decommit, then we need to commit the memory for the TLC now. */
-    pas_page_malloc_commit_without_mprotect(begin, size, /* is_symmetric */ !!PAS_USE_SYMMETRIC_PAGE_ALLOCATION, pas_page_flags_none);
+    pas_page_malloc_commit_without_mprotect(begin, size, /* is_symmetric */ !!PAS_USE_SYMMETRIC_PAGE_ALLOCATION, pas_memory_flavor_plain);
     
     pas_large_utility_free_heap_deallocate(begin, size);
 }
@@ -565,7 +565,7 @@ void pas_thread_local_cache_ensure_committed(pas_thread_local_cache* thread_loca
             (char*)thread_local_cache + (page_index << pas_page_malloc_alignment_shift()),
             pas_page_malloc_alignment(),
             /* is_symmetric */ false,
-            pas_page_flags_none);
+            pas_memory_flavor_plain);
 
         pas_bitvector_set(thread_local_cache->pages_committed, page_index, true);
     }
@@ -1050,7 +1050,7 @@ static void decommit_allocator_range(pas_thread_local_cache* cache,
        would make that first write fault on Windows. */
     pas_page_malloc_decommit_without_mprotect(
         (char*)cache + decommit_range.begin, pas_range_size(decommit_range),
-        /* is_symmetric */ false, pas_page_flags_none);
+        /* is_symmetric */ false, pas_memory_flavor_plain);
 
     if (verbose) {
         pas_log("Num committed pages in the range we just decommitted: %zu\n",

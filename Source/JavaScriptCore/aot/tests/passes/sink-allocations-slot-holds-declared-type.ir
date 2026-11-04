@@ -1,0 +1,52 @@
+# IsSlotFilled [holdsDeclaredType] folds on a virtual object only when the field's type excludes undefined and null
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=undefined|number}}]
+
+function f0 name="requiredNumberField" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = IsSlotFilled v2, v2 key="x" receivers=[L0] level=Proven [holdsDeclaredType]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = AllGuards v2, v4
+    v6 = GetSlot v2, v5 key="x" receivers=[L0] level=Proven
+    Return v6
+  b2():
+    v7 = Call v1, -, v2
+    Return v7
+# CHECK-NOT: NewObject
+# CHECK-NOT: IsSlotFilled
+# CHECK: Jump -> next b1()
+}
+
+function f1 name="optionalNumberField" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = IsSlotFilled v2, v2 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = AllGuards v2, v4
+    v6 = GetSlot v2, v5 key="y" receivers=[L0] level=Proven
+    Return v6
+  b2():
+    v7 = Call v1, -, v2
+    Return v7
+# CHECK: = NewObject
+# CHECK: = IsSlotFilled
+}
+
+function f2 name="emptySlot" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = IsSlotFilled v2, v2 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = AllGuards v2, v4
+    v6 = GetSlot v2, v5 key="y" receivers=[L0] level=Proven
+    Return v6
+  b2():
+    Return v1
+# CHECK-NOT: NewObject
+# CHECK-NOT: IsSlotFilled
+# CHECK: Jump -> next b2()
+}

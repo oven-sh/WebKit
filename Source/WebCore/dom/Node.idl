@@ -61,7 +61,7 @@
     [CEReactions=Needed] attribute DOMString? textContent;
     [CEReactions=Needed] undefined normalize();
 
-    [CEReactions=Needed, ImplementedAs=cloneNodeForBindings, NewObject] Node cloneNode(optional boolean deep = false);
+    [CEReactions=Needed, ImplementedAs=cloneNodeForBindings, NewObject] Node cloneNode(optional boolean subtree = false);
     boolean isEqualNode(Node? other);
     boolean isSameNode(Node? other); // Historical alias of ===.
 

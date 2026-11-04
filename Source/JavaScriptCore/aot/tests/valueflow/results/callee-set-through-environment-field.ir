@@ -1,0 +1,48 @@
+# An environment field that closures of two functions reach has the type of the two functions, and the call through it lists both in a complete set
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}fields=[{key="handler" declared={type=f2|f3}
+# CHECK-LABEL: function f4 name="run"
+# CHECK: [[field]]: f2|f3 = GetEnvironmentField v0 layout=L0
+# CHECK: = Call [[field]] accessSite={{*}} callees=[f2, f3]
+# RUN(RESULTS): valueflow-results
+# RESULTS-NOT: mayCallBoundFunction
+# RESULTS-NOT: loss
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="setup" fields=[{key="handler" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Boolean boolean=true
+    v1 = CallDirect v0 function=f1
+    Return
+}
+function f1 name="setup" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L0 fields=[]
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewClosure function=f2
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewClosure function=f3
+    Jump -> next b3(v4)
+  b3(v5):
+    PutEnvironmentField v1, v5 layout=L0 field=0
+    v7 = NewClosure v1 function=f4
+    v8 = Call v7
+    Return v8
+}
+function f2 name="one" results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="two" results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}
+function f4 name="run" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = Call v1
+    Return v2
+}

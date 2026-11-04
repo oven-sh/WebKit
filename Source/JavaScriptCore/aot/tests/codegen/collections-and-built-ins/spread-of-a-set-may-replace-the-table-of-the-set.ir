@@ -1,0 +1,34 @@
+# const words = new Set(["a", "b"]); [...list, ...words]; [...words]
+# The table of such a set lies in the image. The spread moves it to the heap, so whoever has read the table in front of the spread reads it again behind it.
+# FORM: Selected
+# RUN: operands
+# RUN(B3): lower-to-b3 optimized f0
+# RUN(LIST): lower-to-b3 optimized f1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="tableReadOnBothSidesOfTheSpread" parameters=[{type=Array<anything>}, {type=Set<string, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v2 = CollectionTable v1
+    AppendMembers v0, v1
+    v4 = CollectionTable v1
+    v5 = NewArray v2, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f0
+# CHECK: v3 AppendMembers 1: [Inspects, ReadsContents, WritesContents, RetainsContents] reads({{*}}) writes({{*}}CollectionStorage)
+# B3: Load({{*}}Reads:CollectionStorage, v2:CollectionTable)
+# B3: Patchpoint({{*}}Writes:{{*}}CollectionStorage{{*}}Reads:Top, v3:AppendMembers)
+# B3: Load({{*}}Reads:CollectionStorage, v4:CollectionTable)
+
+# One stub makes the list with the members in it. The call stands where the literal stood, and reads and writes what the append does.
+function f1 name="tableReadOnBothSidesOfTheList" parameters=[{type=Set<string, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = CollectionTable v0
+    v2 = NewArray contents=anything
+    AppendMembers v2, v0
+    v4 = CollectionTable v0
+    v5 = NewArray v1, v4, v2 contents=anything
+    Return v5
+}
+# LIST: Load({{*}}Reads:CollectionStorage, v1:CollectionTable)
+# LIST: Patchpoint({{*}}Writes:{{*}}CollectionStorage{{*}}Reads:{{*}}CollectionStorage, CollectionEntries{{*}}v2:NewArray)
+# LIST: Load({{*}}Reads:CollectionStorage, v4:CollectionTable)

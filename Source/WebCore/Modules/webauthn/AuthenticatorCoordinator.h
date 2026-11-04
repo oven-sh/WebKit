@@ -71,12 +71,12 @@ public:
     WEBCORE_EXPORT void setClient(std::unique_ptr<AuthenticatorCoordinatorClient>&&);
     ~AuthenticatorCoordinator();
 
-    void NODELETE ref() const;
+    void LEGACY_NODELETE ref() const;
     void deref() const;
 
     // The following methods implement static methods of PublicKeyCredential.
     void create(const Document&, CredentialCreationOptions&&, RefPtr<AbortSignal>&&, CredentialPromise&&);
-    void discoverFromExternalSource(const Document&, CredentialRequestOptions&&, CredentialPromise&&);
+    void discoverFromExternalSource(Document&, CredentialRequestOptions&&, CredentialPromise&&);
     void isUserVerifyingPlatformAuthenticatorAvailable(const Document&, DOMPromiseDeferred<IDLBoolean>&&) const;
     void isConditionalMediationAvailable(const Document&, DOMPromiseDeferred<IDLBoolean>&&) const;
 

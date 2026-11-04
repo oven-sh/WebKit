@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2014 Igalia, S.L. All rights reserved.
- * Copyright (C) 2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2024-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,6 +35,12 @@
 #include <WebCore/CSSValueList.h>
 #include <WebCore/Color.h>
 #include <WebCore/MutableStyleProperties.h>
+#include <WebCore/ProcessWarming.h>
+#include <WebCore/StyleRule.h>
+#include <WebCore/StyleSheetContents.h>
+#include <wtf/StackPointer.h>
+#include <wtf/Threading.h>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
 namespace TestWebKitAPI {
@@ -46,7 +52,7 @@ TEST(CSSParser, ParseColorInput)
     auto properties = MutableStyleProperties::create();
 
     ASSERT_TRUE(CSSParser::parseDeclarationList(properties, "color: #ff0000;"_s, strictCSSParserContext()));
-    auto value = properties->getPropertyCSSValue(CSSPropertyColor).unsafeGet();
+    auto value = properties->getPropertyCSSValue(CSSPropertyID::Color).unsafeGet();
 
     ASSERT_TRUE(is<CSSValue>(value));
     Color valueColor(Color::red);
@@ -60,7 +66,7 @@ TEST(CSSParser, ParseColorWithNewlineAndWhitespacesInput)
     auto properties = MutableStyleProperties::create();
 
     ASSERT_TRUE(CSSParser::parseDeclarationList(properties, "color:  \n    #ff0000;"_s, strictCSSParserContext()));
-    auto value = properties->getPropertyCSSValue(CSSPropertyColor).unsafeGet();
+    auto value = properties->getPropertyCSSValue(CSSPropertyID::Color).unsafeGet();
 
     ASSERT_TRUE(is<CSSValue>(value));
     Color valueColor(Color::red);
@@ -136,8 +142,8 @@ TEST(CSSParser, ParseTextTransformPropertyWithNewlineBetweenTwoIdentInput)
         auto& valueList = *downcast<CSSValueList>(value);
 
         ASSERT_EQ((size_t)2, valueList.size());
-        EXPECT_EQ(CSSValueCapitalize, valueID(valueList[0]));
-        EXPECT_EQ(CSSValueFullWidth, valueID(valueList[1]));
+        EXPECT_EQ(CSSValueID::Capitalize, valueID(valueList[0]));
+        EXPECT_EQ(CSSValueID::FullWidth, valueID(valueList[1]));
     };
 
     auto properties = MutableStyleProperties::create();
@@ -157,6 +163,73 @@ TEST(CSSParser, ParseTextTransformPropertyWithNewlineBetweenTwoIdentInput)
     ASSERT_TRUE(CSSParser::parseDeclarationList(properties2, decl, strictCSSParserContext()));
     check(properties2);
 }
+
+#if !ASAN_ENABLED
+
+static constexpr uint8_t stackPaintByte = 0xA5;
+
+// Paints from 1 KB below this frame down to paintSize below stackTop, clamped inside the stack; returns the lowest painted address.
+NEVER_INLINE static uintptr_t paintStackBelow(uintptr_t stackTop, size_t paintSize)
+{
+    auto paintTop = reinterpret_cast<uintptr_t>(currentStackPointer()) - 1 * KB;
+    auto stackLimit = reinterpret_cast<uintptr_t>(Thread::currentSingleton().stack().end()) + 64 * KB;
+    auto paintBottom = std::max(stackTop - paintSize, stackLimit);
+    memsetSpan(unsafeMakeSpan(reinterpret_cast<uint8_t*>(paintBottom), paintTop - paintBottom), stackPaintByte);
+    WTF::compilerFence();
+    return paintBottom;
+}
+
+NEVER_INLINE static void parseStyleSheet(StyleSheetContents& styleSheet, const String& text)
+{
+    styleSheet.parseString(text);
+}
+
+// Returns the distance from stackTop down to the lowest byte above paintBottom that no longer holds stackPaintByte.
+NEVER_INLINE static size_t deepestStackUseBelow(uintptr_t stackTop, uintptr_t paintBottom)
+{
+    auto stack = unsafeMakeSpan(reinterpret_cast<const volatile uint8_t*>(paintBottom), stackTop - paintBottom);
+    for (size_t i = 0; i < stack.size(); ++i) {
+        if (stack[i] != stackPaintByte)
+            return stackTop - (paintBottom + i);
+    }
+    return 0;
+}
+
+TEST(CSSParser, ParseMediaAndStyleRulesNestedToRuleListLimitStackUse)
+{
+    // 64 pairs nest 128 rule lists, the parser's maximumRuleListNestingLevel.
+    constexpr unsigned nestingPairs = 64;
+    // The default size of a secondary thread's stack on macOS.
+    constexpr size_t stackUseLimit = 512 * KB;
+
+    ProcessWarming::initializeNames();
+
+    StringBuilder builder;
+    for (unsigned i = 0; i < nestingPairs; ++i)
+        builder.append("@media all { a { "_s);
+    builder.append("color: green; "_s);
+    for (unsigned i = 0; i < nestingPairs; ++i)
+        builder.append("} } "_s);
+    builder.append("b { color: red; }"_s);
+    auto styleSheetText = builder.toString();
+
+    Ref styleSheet = StyleSheetContents::create(strictCSSParserContext());
+
+    auto stackTop = reinterpret_cast<uintptr_t>(currentStackPointer());
+    auto paintBottom = paintStackBelow(stackTop, 1 * MB);
+    parseStyleSheet(styleSheet, styleSheetText);
+    auto stackUse = deepestStackUseBelow(stackTop, paintBottom);
+
+    ASSERT_GT(stackTop - paintBottom, stackUseLimit);
+    EXPECT_LT(stackUse, stackUseLimit);
+
+    auto& rules = styleSheet->childRules();
+    ASSERT_EQ(2u, rules.size());
+    EXPECT_TRUE(rules.first()->isMediaRule());
+    EXPECT_TRUE(rules.last()->isStyleRule());
+}
+
+#endif // !ASAN_ENABLED
 
 static unsigned computeNumberOfTracks(const SpaceSeparatedVector<Variant<CSS::GridLineNames, CSS::GridTrackSize>>& repeatedTracks)
 {
@@ -220,22 +293,22 @@ TEST(CSSPropertyParser, GridTrackLimits)
     }
 
     testCases[] = {
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(999999, 20px);"_s, 999999 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(999999, 20px);"_s, 999999 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(1000000, 10%);"_s, 1000000 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(1000000, 10%);"_s, 1000000 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(1000000, [first] -webkit-min-content [last]);"_s, 1000000 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(1000000, [first] -webkit-min-content [last]);"_s, 1000000 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(1000001, auto);"_s, 1000000 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(1000001, auto);"_s, 1000000 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(400000, 2em minmax(10px, -webkit-max-content) 0.5fr);"_s, 999999 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(400000, 2em minmax(10px, -webkit-max-content) 0.5fr);"_s, 999999 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(600000, [first] 3vh 10% 2fr [nav] 10px auto 1fr 6em [last]);"_s, 999999 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(600000, [first] 3vh 10% 2fr [nav] 10px auto 1fr 6em [last]);"_s, 999999 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(100000000000000000000, 10% 1fr);"_s, 1000000 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(100000000000000000000, 10% 1fr);"_s, 1000000 },
-        { CSSPropertyGridTemplateColumns, "grid-template-columns: repeat(100000000000000000000, 10% 5em 1fr auto auto 15px -webkit-min-content);"_s, 999999 },
-        { CSSPropertyGridTemplateRows, "grid-template-rows: repeat(100000000000000000000, 10% 5em 1fr auto auto 15px -webkit-min-content);"_s, 999999 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(999999, 20px);"_s, 999999 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(999999, 20px);"_s, 999999 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(1000000, 10%);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(1000000, 10%);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(1000000, [first] -webkit-min-content [last]);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(1000000, [first] -webkit-min-content [last]);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(1000001, auto);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(1000001, auto);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(400000, 2em minmax(10px, -webkit-max-content) 0.5fr);"_s, 999999 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(400000, 2em minmax(10px, -webkit-max-content) 0.5fr);"_s, 999999 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(600000, [first] 3vh 10% 2fr [nav] 10px auto 1fr 6em [last]);"_s, 999999 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(600000, [first] 3vh 10% 2fr [nav] 10px auto 1fr 6em [last]);"_s, 999999 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(100000000000000000000, 10% 1fr);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(100000000000000000000, 10% 1fr);"_s, 1000000 },
+        { CSSPropertyID::GridTemplateColumns, "grid-template-columns: repeat(100000000000000000000, 10% 5em 1fr auto auto 15px -webkit-min-content);"_s, 999999 },
+        { CSSPropertyID::GridTemplateRows, "grid-template-rows: repeat(100000000000000000000, 10% 5em 1fr auto auto 15px -webkit-min-content);"_s, 999999 },
     };
 
     auto properties = MutableStyleProperties::create();

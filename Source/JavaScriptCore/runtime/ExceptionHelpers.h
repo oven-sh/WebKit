@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include "ConstructorKind.h"
 #include "DeferTermination.h"
 #include "Error.h"
 #include "ErrorInstance.h"
@@ -40,34 +41,98 @@ namespace JSC {
 
 typedef JSObject* (*ErrorFactory)(JSGlobalObject*, const String&, ErrorInstance::SourceAppender);
 
+inline constexpr ASCIILiteral SuperNotCalledError { "'super()' must be called in derived constructor before accessing |this| or returning non-object."_s };
+inline constexpr ASCIILiteral SuperCalledTwiceError { "'super()' can't be called more than once in a constructor."_s };
+inline constexpr ASCIILiteral DeleteSuperPropertyError { "Cannot delete a super property"_s };
+inline constexpr ASCIILiteral DestructureNullishError { "Cannot destructure null or undefined value"_s };
+inline constexpr ASCIILiteral DerivedConstructorResultError { "Cannot return a non-object type in the constructor of a derived class."_s };
+inline constexpr ASCIILiteral StaticFieldNamedPrototypeError { "Cannot declare a static field named 'prototype'"_s };
+inline constexpr ASCIILiteral IteratorResultNotObjectError { "Iterator result interface is not an object."_s };
+inline constexpr ASCIILiteral YieldStarIteratorWithoutThrowError { "The iterator, to which yield* delegated iteration, does not have a 'throw' method."_s };
+inline constexpr ASCIILiteral StaticPrivateBrandError { "Cannot access static private method or accessor"_s };
+inline constexpr ASCIILiteral StaticPrivateBrandOfNonObjectError { "Cannot access static private method or accessor of a non-Object"_s };
+inline constexpr ASCIILiteral UndefinedPrivateGetterError { "Trying to access an undefined private getter"_s };
+inline constexpr ASCIILiteral UndefinedPrivateSetterError { "Trying to access an undefined private setter"_s };
+inline constexpr ASCIILiteral InstanceofRightHandSideNotObjectError { "Right hand side of instanceof is not an object"_s };
+inline constexpr ASCIILiteral SuperclassNotConstructorError { "The superclass is not a constructor."_s };
+inline constexpr ASCIILiteral ConstructorCalledWithoutNewError { "Cannot call a constructor without |new|"_s };
+inline constexpr ASCIILiteral ClassConstructorCalledWithoutNewError { "Cannot call a class constructor without |new|"_s };
+inline constexpr ASCIILiteral GetterNotFunctionError { "Getter must be a function."_s };
+inline constexpr ASCIILiteral SetterNotFunctionError { "Setter must be a function."_s };
+inline constexpr ASCIILiteral DefinePropertyOnNonObjectError { "Properties can only be defined on Objects."_s };
+inline constexpr ASCIILiteral ReplaceAllNonGlobalRegExpError { "String.prototype.replaceAll argument must not be a non-global regular expression"_s };
+inline constexpr ASCIILiteral ModuleGraphTooDeepError { "Maximum call stack size exceeded"_s };
+inline constexpr ASCIILiteral DeferredModuleNotReadyError { "Unable to synchronously evaluate deferred module"_s };
+inline constexpr ASCIILiteral NamespaceBindingToAccessorError { "Cannot change module namespace object's binding to accessor"_s };
+inline constexpr ASCIILiteral NamespaceBindingToNonWritableError { "Cannot change module namespace object's binding to non-writable attribute"_s };
+inline constexpr ASCIILiteral NamespaceBindingToNonEnumerableError { "Cannot replace module namespace object's binding with non-enumerable attribute"_s };
+inline constexpr ASCIILiteral NamespaceBindingToConfigurableError { "Cannot replace module namespace object's binding with configurable attribute"_s };
+inline constexpr ASCIILiteral NamespaceBindingValueError { "Cannot replace module namespace object's binding's value"_s };
+
 String defaultSourceAppender(const String&, StringView, RuntimeType, ErrorInstance::SourceTextWhereErrorOccurred);
 String notAFunctionSourceAppender(const String&, StringView, RuntimeType, ErrorInstance::SourceTextWhereErrorOccurred);
 
 String constructErrorMessage(JSGlobalObject*, JSValue, const String&);
 JS_EXPORT_PRIVATE JSObject* createError(JSGlobalObject*, JSValue, const String&, ErrorInstance::SourceAppender);
 JS_EXPORT_PRIVATE JSObject* createStackOverflowError(JSGlobalObject*);
-JSObject* createUndefinedVariableError(JSGlobalObject*, const Identifier&);
-JSObject* createTDZError(JSGlobalObject*, StringView);
-JSObject* createTDZError(JSGlobalObject*);
-JSObject* createTDZError(JSGlobalObject*, const Identifier&);
+JS_EXPORT_PRIVATE JSObject* createUndefinedVariableError(JSGlobalObject*, const Identifier&);
+JS_EXPORT_PRIVATE JSObject* createTDZError(JSGlobalObject*, StringView);
+JS_EXPORT_PRIVATE JSObject* createTDZError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createTDZError(JSGlobalObject*, const Identifier&);
 JS_EXPORT_PRIVATE JSObject* createNotAnObjectError(JSGlobalObject*, JSValue);
-JSObject* createInvalidFunctionApplyParameterError(JSGlobalObject*, JSValue);
-JSObject* createInvalidInParameterError(JSGlobalObject*, JSValue);
-JSObject* createInvalidInstanceofParameterErrorNotFunction(JSGlobalObject*, JSValue);
-JSObject* createInvalidInstanceofParameterErrorHasInstanceValueNotFunction(JSGlobalObject*, JSValue);
+JS_EXPORT_PRIVATE JSObject* createInvalidFunctionApplyParameterError(JSGlobalObject*, JSValue);
+JS_EXPORT_PRIVATE JSObject* createInvalidInParameterError(JSGlobalObject*, JSValue);
+JS_EXPORT_PRIVATE JSObject* createInvalidInstanceofParameterErrorNotFunction(JSGlobalObject*, JSValue);
+JS_EXPORT_PRIVATE JSObject* createInvalidInstanceofParameterErrorHasInstanceValueNotFunction(JSGlobalObject*, JSValue);
 JS_EXPORT_PRIVATE JSObject* createNotAConstructorError(JSGlobalObject*, JSValue);
 JS_EXPORT_PRIVATE JSObject* createNotAFunctionError(JSGlobalObject*, JSValue);
-JSObject* createInvalidPrototypeError(JSGlobalObject*, JSValue);
+JS_EXPORT_PRIVATE JSObject* createInvalidPrototypeError(JSGlobalObject*, JSValue);
 JSObject* createErrorForDuplicateGlobalVariableDeclaration(JSGlobalObject*, UniquedStringImpl*);
 JSObject* createErrorForInvalidGlobalFunctionDeclaration(JSGlobalObject*, const Identifier&);
 JSObject* createErrorForInvalidGlobalVarDeclaration(JSGlobalObject*, const Identifier&);
-JSObject* createInvalidPrivateNameError(JSGlobalObject*);
-JSObject* createRedefinedPrivateNameError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createInvalidPrivateNameError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createRedefinedPrivateNameError(JSGlobalObject*);
+String destructureNullishErrorMessage(const Identifier& propertyName);
+String derivedConstructorResultErrorMessage(const String& className);
+String constructorCalledWithoutNewErrorMessage(ConstructorKind, const String& constructorName);
+JS_EXPORT_PRIVATE JSObject* createSuperNotCalledError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createSuperCalledTwiceError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createDeleteSuperPropertyError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createDestructureNullishError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createDestructureNullishError(JSGlobalObject*, const Identifier& propertyName);
+JS_EXPORT_PRIVATE JSObject* createDerivedConstructorResultError(JSGlobalObject*, const String& className);
+JS_EXPORT_PRIVATE JSObject* createStaticFieldNamedPrototypeError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createIteratorResultNotObjectError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createYieldStarIteratorWithoutThrowError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createStaticPrivateBrandError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createStaticPrivateBrandOfNonObjectError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createUndefinedPrivateGetterError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createUndefinedPrivateSetterError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createInstanceofRightHandSideNotObjectError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createSuperclassNotConstructorError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createConstructorCalledWithoutNewError(JSGlobalObject*, ConstructorKind, const String& constructorName);
+JS_EXPORT_PRIVATE JSObject* createGetterNotFunctionError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createSetterNotFunctionError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createDefinePropertyOnNonObjectError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createReplaceAllNonGlobalRegExpError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createGeneratorIsExecutingError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createNotAGeneratorError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createSpreadOfNullishError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createSpreadIteratorNotFunctionError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createSpreadResultNotObjectError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createModuleGraphTooDeepError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createDeferredModuleNotReadyError(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createExportNotFoundError(JSGlobalObject*, const String& exportName, const String& moduleKey);
+JS_EXPORT_PRIVATE JSObject* createAmbiguousExportError(JSGlobalObject*, const String& exportName, const String& moduleKey);
+JS_EXPORT_PRIVATE JSObject* createMissingDefaultExportError(JSGlobalObject*, const String& moduleKey);
 String errorDescriptionForValue(JSGlobalObject*, JSValue);
 
 JS_EXPORT_PRIVATE Exception* throwOutOfMemoryError(JSGlobalObject*, ThrowScope&);
 JS_EXPORT_PRIVATE Exception* throwOutOfMemoryError(JSGlobalObject*, ThrowScope&, const String&);
 JS_EXPORT_PRIVATE Exception* throwStackOverflowError(JSGlobalObject*, ThrowScope&);
+#if USE(BUN_JSC_ADDITIONS)
+Exception* throwNonStaticCodeError(JSGlobalObject*, ThrowScope&);
+#endif
 
 #if ASSERT_ENABLED
 

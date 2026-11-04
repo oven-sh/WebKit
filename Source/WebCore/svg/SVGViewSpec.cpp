@@ -76,7 +76,7 @@ bool SVGViewSpec::parseViewSpec(StringView string)
                 if (skipCharactersExactly(buffer, std::span { viewBoxSpec<CharacterType> })) {
                     if (!skipExactly(buffer, '('))
                         return false;
-                    auto viewBox = SVGFitToViewBox::parseViewBox(buffer, false);
+                    auto viewBox = parseViewBox(buffer, ParsingContext::FragmentIdentifier);
                     if (!viewBox)
                         return false;
                     setViewBox(WTF::move(*viewBox));

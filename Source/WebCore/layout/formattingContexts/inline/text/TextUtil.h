@@ -27,7 +27,6 @@
 
 #include <WebCore/Font.h>
 #include <WebCore/InlineItem.h>
-#include <WebCore/InlineLine.h>
 #include <WebCore/LayoutUnits.h>
 #include <WebCore/TextSpacing.h>
 #include <wtf/EnumSet.h>
@@ -96,13 +95,13 @@ public:
     // FIXME: Remove when computeInlineIntrinsicLogicalWidths is all IFC.
     static bool mayBreakInBetween(String previousContent, const Style::ComputedStyle& previousContentStyle, String nextContent, const Style::ComputedStyle& nextContentStyle);
     static unsigned findNextBreakablePosition(CachedLineBreakIteratorFactory&, unsigned startPosition, const Style::ComputedStyle&);
-    static TextBreakIterator::LineMode::Behavior NODELETE lineBreakIteratorMode(LineBreak);
-    static TextBreakIterator::ContentAnalysis NODELETE contentAnalysis(WordBreak);
+    static TextBreakIterator::LineMode::Behavior LEGACY_NODELETE lineBreakIteratorMode(LineBreak);
+    static TextBreakIterator::ContentAnalysis LEGACY_NODELETE contentAnalysis(WordBreak);
 
-    static bool NODELETE shouldPreserveSpacesAndTabs(const Box&);
-    static bool NODELETE shouldPreserveNewline(const Box&);
-    static bool NODELETE isWrappingAllowed(const Style::ComputedStyle&);
-    static bool NODELETE shouldTrailingWhitespaceHang(const Style::ComputedStyle&);
+    static bool LEGACY_NODELETE shouldPreserveSpacesAndTabs(const Box&);
+    static bool LEGACY_NODELETE shouldPreserveNewline(const Box&);
+    static bool LEGACY_NODELETE isWrappingAllowed(const Style::ComputedStyle&);
+    static bool LEGACY_NODELETE shouldTrailingWhitespaceHang(const Style::ComputedStyle&);
 
     static bool isStrongDirectionalityCharacter(char32_t);
     static bool containsStrongDirectionalityText(StringView);
@@ -120,6 +119,7 @@ public:
 
     static bool hasHangablePunctuationEnd(const InlineTextItem&, const Style::ComputedStyle&);
     static float hangablePunctuationEndWidth(const InlineTextItem&, const Style::ComputedStyle&);
+    static float hangablePunctuationEndWidth(const String&, const Style::ComputedStyle&);
 
     static bool hasHangableStopOrCommaEnd(const InlineTextItem&, const Style::ComputedStyle&);
     static float hangableStopOrCommaEndWidth(const InlineTextItem&, const Style::ComputedStyle&);
@@ -127,7 +127,7 @@ public:
     static bool canUseSimplifiedTextMeasuring(StringView, const FontCascade&, bool whitespaceIsCollapsed, const Style::ComputedStyle* firstLineStyle);
     static bool hasPositionDependentContentWidth(StringView);
 
-    static char32_t NODELETE lastBaseCharacterFromText(StringView);
+    static char32_t LEGACY_NODELETE lastBaseCharacterFromText(StringView);
 };
 
 } // namespace Layout

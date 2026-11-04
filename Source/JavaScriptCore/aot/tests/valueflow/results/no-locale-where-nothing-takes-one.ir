@@ -1,0 +1,13 @@
+# Promise.reject(1): native code without a row takes part, and none of it gets at the data of a language
+# RUN: valueflow-results
+# CHECK-NOT: locale
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=PromiseReject
+    v1 = Builtin builtin=Promise
+    v2 = Integer integer=1
+    v3 = Call v0, v1, v2
+    Return v3
+}

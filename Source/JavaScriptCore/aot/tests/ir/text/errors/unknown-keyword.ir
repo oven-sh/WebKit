@@ -1,0 +1,6 @@
+# A line that starts with no keyword of a list
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+symbol y0

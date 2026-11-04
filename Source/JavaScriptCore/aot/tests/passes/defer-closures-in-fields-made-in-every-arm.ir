@@ -1,0 +1,82 @@
+# Every arm of a branch makes a closure of one function over the same values, and the allocation behind the join lists the parameter that takes it. One closure behind the join is the same function object,
+# the allocation is given the NewClosure itself, and the field leaves it unmade. Arms that make closures of two functions, or over two values, or of which one gives something else, stay as they are
+# FORM: Prepared
+# OPTIONS: references=narrow check=VerifyEachPass
+# RUN: pass DeferClosuresInFields
+# STATISTIC: FieldsDeferringClosures = 2
+# STATISTIC: ClosuresDeferredInFields = 2
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="MadeInBothArms" fields=[{key="id" declared={type=anything}}, {key="run" declared={type=anything}}, {key="stop" declared={type=anything}}]
+layout L1 name="TwoFunctions" fields=[{key="run" declared={type=anything}}]
+layout L2 name="OneArmGivesAnotherValue" fields=[{key="run" declared={type=anything}}]
+# CHECK: layout L0 {{*}}{key="run" {{*}}deferral=CapturesNothing deferredFunction=f4}{{*}}{key="stop" {{*}}deferral=CapturesNothing deferredFunction=f5}
+# CHECK-NEXT: layout L1 name="TwoFunctions" fields=[{key="run" declared={type=anything}}]
+# CHECK-NEXT: layout L2 name="OneArmGivesAnotherValue" fields=[{key="run" declared={type=anything}}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+
+function f1 name="madeInBothArms" module=m0 parameters=[{type=boolean}] results=[{type=L0}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Integer integer=1
+    v2 = NewClosure function=f4
+    v3 = NewClosure function=f5
+    Jump -> next b3(v1, v2, v3)
+  b2():
+    v4 = Integer integer=2
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    Jump -> next b3(v4, v5, v6)
+  b3(v7: number, v8: f4, v9: f5):
+    v10 = NewObject -, v7, v8, v9 layout=L0 fields=[0, 1, 2]
+    Return v10
+# CHECK-NOT: NewClosure
+# CHECK: b3([[id]]: number):
+# CHECK: [[run]]: f4 = NewClosure function=f4 [isMadeOnDemand]
+# CHECK: [[stop]]: f5 = NewClosure function=f5 [isMadeOnDemand]
+# CHECK: = NewObject -, [[id]], [[run]], [[stop]] layout=L0 fields=[0, 1, 2]
+}
+
+function f2 name="twoFunctions" module=m0 parameters=[{type=boolean}] results=[{type=L1}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = NewClosure function=f4
+    v2 = Upcast v1 castType=function
+    Jump -> next b3(v2)
+  b2():
+    v3 = NewClosure function=f5
+    v4 = Upcast v3 castType=function
+    Jump -> next b3(v4)
+  b3(v5: function):
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    Return v6
+# CHECK: = NewClosure function=f4
+# CHECK: = NewClosure function=f5
+# CHECK: b3(v5: function):
+}
+
+function f3 name="oneArmGivesAnotherValue" module=m0 parameters=[{type=boolean}, {type=f4}] results=[{type=L2}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewClosure function=f4
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3: f4):
+    v4 = NewObject -, v3 layout=L2 fields=[0]
+    Return v4
+# CHECK: v2: f4 = NewClosure function=f4
+# CHECK: b3(v3: f4):
+}
+
+function f4 name="run" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f5 name="stop" kind=Arrow results=[{type=anything}] {
+    Return
+}

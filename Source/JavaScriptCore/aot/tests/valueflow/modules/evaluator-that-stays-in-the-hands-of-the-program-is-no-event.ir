@@ -1,0 +1,23 @@
+# kept = Function; holder = { make: eval }
+# An event is an application. An evaluator that the program reads, keeps in a variable and stores into an object of its own is a value like any other as long as the analysis follows it:
+# nobody applies it, so no code runs that the build has not seen, and nothing is loaded by name
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen EvaluatesText
+# CHECK: unseen-code no
+# CHECK-NEXT: modules-by-name no
+# RUN(WHY): valueflow-why evaluators
+# WHY-NOT: escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="make" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Function" [isFreeName]
+    PutModuleVariable v1 variable=g0
+    v3 = PropGet v0 key="eval" [isFreeName]
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    Return
+}

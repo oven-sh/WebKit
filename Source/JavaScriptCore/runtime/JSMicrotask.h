@@ -26,17 +26,24 @@
 #pragma once
 
 #include "JSCast.h"
+#include "JSPromise.h"
 #include "Microtask.h"
 #include "Structure.h"
 
 namespace JSC {
 
 class MicrotaskCallCache;
+class JSAsyncFromSyncIterator;
 class JSAsyncGenerator;
 class JSModuleRecord;
 class ThrowScope;
 
-void runInternalMicrotask(JSGlobalObject*, VM&, InternalMicrotask, uint8_t, std::span<const JSValue, maxMicrotaskArguments>, MicrotaskCallCache* = nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+// maxMicrotaskArguments is 4 here: the last one is the async context, or an argument of Bun's own jobs.
+void runInternalMicrotask(JSGlobalObject*, VM&, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, MicrotaskCallCache* = nullptr);
+#else
+void runInternalMicrotask(JSGlobalObject*, VM&, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, MicrotaskCallCache* = nullptr);
+#endif
 
 void asyncModuleResolveEvaluation(JSGlobalObject*, VM&, ThrowScope&, JSModuleRecord*, JSValue result);
 
@@ -44,6 +51,12 @@ void asyncModuleResolveEvaluation(JSGlobalObject*, VM&, ThrowScope&, JSModuleRec
 // %AsyncGeneratorPrototype%.return / .throw host functions to drive a non-busy generator.
 void asyncGeneratorResume(JSGlobalObject*, JSAsyncGenerator*, MicrotaskCallCache*);
 void asyncGeneratorAwaitReturn(JSGlobalObject*, JSAsyncGenerator*);
+
+void finishAsyncGeneratorBodyCall(JSGlobalObject*, JSAsyncGenerator*, JSValue value, JSValue error, MicrotaskCallCache*);
+// What a function that queueMicrotask has queued throws.
+void reportErrorOfMicrotask(JSGlobalObject*, JSValue exceptionOrValue);
+
+void asyncFromSyncIteratorContinueOrDone(JSGlobalObject*, VM&, JSAsyncFromSyncIterator*, JSValue result, JSPromise::Status, bool done, MicrotaskCallCache*);
 
 void enqueueAsyncGeneratorDriver(JSGlobalObject*, JSAsyncGenerator* iterator, JSObject* driver, JSValue resumeValue, MicrotaskCallCache*);
 

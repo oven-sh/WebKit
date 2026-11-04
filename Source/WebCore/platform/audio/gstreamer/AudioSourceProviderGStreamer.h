@@ -25,6 +25,7 @@
 #include "GRefPtrGStreamer.h"
 #include "MainThreadNotifier.h"
 #include "WebAudioSourceProvider.h"
+#include <atomic>
 #include <gst/gst.h>
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>
@@ -64,7 +65,7 @@ public:
     void handleNewDeinterleavePad(GstPad*);
     void handleRemovedDeinterleavePad(GstPad*);
 
-    GstFlowReturn handleSample(GstAppSink*, bool isPreroll);
+    GstFlowReturn handleSample(GstAppSink*);
     void clearAdapters();
 
 private:
@@ -73,18 +74,19 @@ private:
 
     void initialize();
     void copyGStreamerBuffersToAudioChannel(GstAdapter*, AudioBus&, int, size_t);
+    void provideLiveCaptureInput(AudioBus&, size_t framesToProcess) WTF_REQUIRES_LOCK(m_adapterLock);
 
     void determineSampleRate(const GstCaps*);
 
 #if ENABLE(MEDIA_STREAM)
     WeakPtr<MediaStreamTrackPrivate> m_captureSource;
-    RefPtr<MediaStreamPrivate> m_streamPrivate;
+    const RefPtr<MediaStreamPrivate> m_streamPrivate;
     GRefPtr<GstElement> m_pipeline;
 #endif
     enum MainThreadNotification {
         DeinterleavePadsConfigured = 1 << 0,
     };
-    Ref<MainThreadNotifier<MainThreadNotification>> m_notifier;
+    const Ref<MainThreadNotifier<MainThreadNotification>> m_notifier;
     GRefPtr<GstElement> m_audioSinkBin;
     WeakPtr<AudioSourceProviderClient> m_client;
     int m_deinterleaveSourcePads { 0 };
@@ -93,7 +95,11 @@ private:
     unsigned long m_deinterleavePadAddedHandlerId { 0 };
     unsigned long m_deinterleavePadRemovedHandlerId { 0 };
     Lock m_adapterLock;
-    CString m_providerId;
+    ASCIICString m_providerId;
+
+    bool m_isLiveCapture { false };
+    std::atomic<int> m_sampleRate { 0 };
+    bool m_isBuffering WTF_GUARDED_BY_LOCK(m_adapterLock) { true };
 };
 
 }

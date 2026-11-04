@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "JSCPtrTag.h"
 
@@ -42,4 +42,4 @@ using ThunkGenerator = MacroAssemblerCodeRef<JITThunkPtrTag> (*)(VM&);
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

@@ -51,12 +51,12 @@ StyleRuleType CSSFunctionDescriptors::ruleType() const
 // @position-try 'margin'
 String CSSFunctionDescriptors::result() const
 {
-    return getPropertyValueInternal(CSSPropertyResult);
+    return getPropertyValueInternal(CSSPropertyID::Result);
 }
 
 ExceptionOr<void> CSSFunctionDescriptors::setResult(const String& value)
 {
-    return setPropertyInternal(CSSPropertyResult, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::Result, value, IsImportant::No);
 }
 
 }

@@ -168,6 +168,10 @@ struct Box {
     // (e.g. always true for atomic boxes, but inline boxes spanning over multiple lines can produce individual first/last boxes).
     bool isFirstForLayoutBox() const { return m_isFirstForLayoutBox; }
     bool isLastForLayoutBox() const { return m_isLastForLayoutBox; }
+    // Whether this box fragment of an inline box has the start/end of the inline box (e.g. an inline box split by a line break has no end on the first line).
+    bool isFirstFragment() const { return m_isFirstFragment; }
+    bool isLastFragment() const { return m_isLastFragment; }
+    void setIsFirstLastFragment(bool isFirstFragment, bool isLastFragment) { m_isFirstFragment = isFirstFragment; m_isLastFragment = isLastFragment; }
 
     void setIsFirstForLayoutBox() { m_isFirstForLayoutBox = true; }
     void setIsLastForLayoutBox() { m_isLastForLayoutBox = true; }
@@ -178,6 +182,8 @@ struct Box {
     void detachLayoutBox() { m_layoutBox = nullptr; }
 
 private:
+    friend bool operator==(const Box&, const Box&);
+
     CheckedPtr<const Layout::Box> m_layoutBox;
     FloatRect m_unflippedVisualRect;
     FloatRect m_inkOverflow;
@@ -196,6 +202,8 @@ private:
     bool m_isFullyTruncated : 1 { false };
     bool m_isInGlyphDisplayListCache : 1 { false };
     bool m_isFirstFormattedLine : 1 { false };
+    bool m_isFirstFragment : 1 { false };
+    bool m_isLastFragment : 1 { false };
     // FIXME: Move this to Box::Text when there's enough bit in there.
     uint8_t m_glyphOverflowTop : 5 { 0 };
     uint8_t m_glyphOverflowBottom : 3 { 0 };
@@ -217,6 +225,8 @@ inline Box::Box(size_t lineIndex, Type type, const Layout::Box& layoutBox, UBiDi
     , m_isLastForLayoutBox(positionWithinInlineLevelBox.contains(PositionWithinInlineLevelBox::Last))
     , m_isFullyTruncated(isFullyTruncated)
     , m_isFirstFormattedLine(isFirstFormattedLine)
+    , m_isFirstFragment(positionWithinInlineLevelBox.contains(PositionWithinInlineLevelBox::First))
+    , m_isLastFragment(positionWithinInlineLevelBox.contains(PositionWithinInlineLevelBox::Last))
     , m_text(text ? WTF::move(*text) : Text { })
 {
 }
@@ -343,8 +353,9 @@ inline bool operator==(const Box::Text& a, const Box::Text& b)
 
 inline bool operator==(const Box& a, const Box& b)
 {
-    return &a.layoutBox() == &b.layoutBox()
-        && a.style() == b.style()
+    // Display boxes of the same layout box only differ in style through the first-line style.
+    return a.m_layoutBox == b.m_layoutBox
+        && a.isFirstFormattedLine() == b.isFirstFormattedLine()
         && a.lineIndex() == b.lineIndex()
         && a.bidiLevel() == b.bidiLevel()
         && a.visualRectIgnoringBlockDirection() == b.visualRectIgnoringBlockDirection()

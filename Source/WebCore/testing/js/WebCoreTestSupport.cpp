@@ -39,6 +39,7 @@
 #include "JSInternals.h"
 #include "JSServiceWorkerInternals.h"
 #include "JSWorkerGlobalScope.h"
+#include "JSWorkerInternals.h"
 #include "LocalFrame.h"
 #include "LogInitialization.h"
 #include "Logging.h"
@@ -48,6 +49,9 @@
 #include "ServiceWorkerGlobalScope.h"
 #include "SincResampler.h"
 #include "WheelEventTestMonitor.h"
+#include "WorkerGlobalScope.h"
+#include "WorkerInternals.h"
+#include "WorkerThread.h"
 #include "XMLDocument.h"
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/CallFrame.h>
@@ -61,6 +65,10 @@
 #if PLATFORM(COCOA)
 #include "UTIRegistry.h"
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#endif
+
+#if HAVE(TEXT_SCALE_FACTOR)
+#include "FontCacheCoreText.h"
 #endif
 
 namespace WebCoreTestSupport {
@@ -184,7 +192,7 @@ bool isAccessibilityIsolatedTreeModeEnabled()
     return AXObjectCache::isIsolatedTreeEnabled();
 }
 
-static Function<void()>& accessibilityTestTeardownCallback()
+static Function<void()>& LEGACY_NODELETE accessibilityTestTeardownCallback()
 {
     static NeverDestroyed<Function<void()>> callback;
     return callback.get();
@@ -280,6 +288,25 @@ void setupNewlyCreatedServiceWorker(uint64_t serviceWorkerIdentifier)
     });
 }
 
+void setupWorkerInternals()
+{
+    WorkerThread::setGlobalScopeCreatedCallbackForTesting([](WorkerGlobalScope& globalScope) {
+        // Service workers get ServiceWorkerInternals from setupNewlyCreatedServiceWorker().
+        if (is<ServiceWorkerGlobalScope>(globalScope))
+            return;
+
+        CheckedPtr script = globalScope.script();
+        if (!script)
+            return;
+
+        auto& globalObject = *globalScope.globalObject();
+        auto& vm = globalObject.vm();
+        JSLockHolder locker(vm);
+        auto* contextWrapper = script->globalScopeWrapper();
+        contextWrapper->putDirect(vm, Identifier::fromString(vm, Internals::internalsId), toJS(&globalObject, contextWrapper, WorkerInternals::create()));
+    });
+}
+
 #if PLATFORM(COCOA)
 void setAdditionalSupportedImageTypesForTesting(const String& imageTypes)
 {
@@ -318,6 +345,13 @@ void populateDisassemblyLabels()
 #endif // ENABLE(JIT_OPERATION_DISASSEMBLY)
 
 #endif // ENABLE(JIT_OPERATION_VALIDATION) || ENABLE(JIT_OPERATION_DISASSEMBLY)
+
+#if HAVE(TEXT_SCALE_FACTOR)
+double textScaleFactorForContentSizeCategory(const String& contentSizeCategory)
+{
+    return WebCore::textScaleFactorForContentSizeCategory(contentSizeCategory.createCFString());
+}
+#endif
 
 #if ENABLE(WEB_AUDIO)
 void testSincResamplerProcessBuffer(std::span<const float> source, std::span<float> destination, double scaleFactor)

@@ -34,6 +34,7 @@
 #include <gio/gio.h>
 #include <wtf/Markable.h>
 #include <wtf/UUID.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/MakeString.h>
@@ -134,7 +135,7 @@ void NetworkMDNSRegister::registerMDNSName(WebCore::ScriptExecutionContextIdenti
             auto* cancellable = request->cancellable.get();
             auto requestName = request->name.ascii();
             auto requestAddress = request->address.ascii();
-            g_dbus_proxy_call(dbusProxy.get(), "AddAddress", g_variant_new("(iiuss)", interface, protocol, flags, requestName.data(), requestAddress.data()), G_DBUS_CALL_FLAGS_NONE, -1, cancellable, [](GObject* object, GAsyncResult* result, gpointer userData) {
+            g_dbus_proxy_call(dbusProxy.get(), "AddAddress", gVariantNew("(iiuss)", interface, protocol, flags, requestName, requestAddress), G_DBUS_CALL_FLAGS_NONE, -1, cancellable, [](GObject* object, GAsyncResult* result, gpointer userData) {
                 std::unique_ptr<PendingRegistrationRequest> request;
                 request.reset(reinterpret_cast<PendingRegistrationRequest*>(userData));
 
@@ -143,7 +144,7 @@ void NetworkMDNSRegister::registerMDNSName(WebCore::ScriptExecutionContextIdenti
                 auto finalResult = adoptGRef(g_dbus_proxy_call_finish(proxy, result, &error.outPtr()));
                 if (!finalResult) {
                     if (!g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CANCELLED))
-                        LOG_ERROR("Unable to register MDNS address %s to Avahi: %s", request->name.ascii().data(), error->message);
+                        LOG_ERROR("Unable to register MDNS address %s to Avahi: %s", request->name.utf8(), error->message);
                     request->completionHandler(request->name, WebCore::MDNSRegisterError::Internal);
                     return;
                 }
@@ -157,7 +158,7 @@ void NetworkMDNSRegister::registerMDNSName(WebCore::ScriptExecutionContextIdenti
                     auto finalResult = adoptGRef(g_dbus_proxy_call_finish(G_DBUS_PROXY(object), result, &error.outPtr()));
                     if (!finalResult) {
                         if (!g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CANCELLED))
-                            LOG_ERROR("Unable to commit MDNS address %s to Avahi: %s", request->name.ascii().data(), error->message);
+                            LOG_ERROR("Unable to commit MDNS address %s to Avahi: %s", request->name.utf8(), error->message);
                         request->completionHandler(request->name, WebCore::MDNSRegisterError::Internal);
                         return;
                     }

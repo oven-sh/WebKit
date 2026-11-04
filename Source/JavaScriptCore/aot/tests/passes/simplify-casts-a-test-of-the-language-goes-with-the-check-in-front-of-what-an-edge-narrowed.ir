@@ -1,0 +1,25 @@
+# function g(k: number) { switch (k) { case 1: let w = k; return w; } return 0; }
+# The type of the parameter answers its check, which goes. What the edge of the switch narrowed from the checked value stood behind that check until then, so the test of the
+# language behind it was kept. With the check gone nothing keeps it, and it goes in the same run: one more turn finds nothing to do.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SimplifyCasts VerifyProgram
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+function f0 name="narrowedBehindCheckThatGoes" parameters=[{type=int}] results=[{type=int}] {
+    v1 = Check v0 expectedType=int site=w0
+    Switch v1 cases=[1] -> case b1(| 0), otherwise b2()
+  b1(v2):
+    v3 = CheckInitialized v2 name="w"
+    Return v3
+  b2():
+    v4 = Integer integer=0
+    Return v4
+# CHECK: b0(v0: int):
+# CHECK-NEXT: Switch v0 cases=[1] -> case b1(| 0), otherwise b2()
+# CHECK-NEXT: b1(v2: 1):
+# CHECK-NEXT: Return v2
+}

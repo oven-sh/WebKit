@@ -1,0 +1,54 @@
+# A variable that is read where the fact which says that it has been stored is not defined gives a word that may be anything. A cast and an edge hand the word on. Nothing looks at it, keeps it or returns it, and only
+# a cast that names a fact takes `unspecified` away
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: UnspecifiedValueInspected 5
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="text" declared={type=string} flow={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+
+function f0 name="goodCastNamesFact" parameters=[{type=boolean}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Entered function=f0
+    v3 = AssumeType v1, v2 provenType=string
+    v4 = GetStringLength v3
+    Return v4
+  b2():
+    Return
+}
+function f1 name="goodWordGoesAroundLoop" parameters=[{type=boolean}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+    Jump -> next b1(v1)
+  b1(v2: string|unspecified):
+    LoopHint
+    Branch v0 -> taken b1(v2), notTaken b2()
+  b2():
+    Return
+}
+function f2 name="badLook" parameters=[{type=boolean}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+    v2 = ToBoolean v1
+    Return v2
+}
+function f3 name="badTest" parameters=[{type=boolean}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+    v2 = TypeTest v1 testedType=string
+    Return v2
+}
+function f4 name="badArgument" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f5 name="badReturn" parameters=[{type=boolean}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+    Return v1
+}
+# What a cast gives that names no fact may be anything too.
+function f6 name="badCastNamesNoFact" parameters=[{type=boolean}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+    v2 = AssumeType v1 provenType=string
+    Return v2
+}

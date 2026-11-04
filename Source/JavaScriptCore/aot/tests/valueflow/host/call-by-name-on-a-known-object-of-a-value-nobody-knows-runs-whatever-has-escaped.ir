@@ -1,0 +1,18 @@
+# member = handedIn[someName]; table = { run: member }; table.run()
+# The receiver is known, so the read of `run` answers what the program has stored there, under a name of the program's own. That is a value nobody knows: whatever has escaped may be the callee.
+# RUN: valueflow-solve used
+# CHECK: run MapPrototypeGet
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Table" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = PropGet v0 key="someName" [isFreeName]
+    v3 = ElemGet v1, v2
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = PropGet v4 key="run"
+    v6 = Call v5, v4 calleeKey="run"
+    Return
+}

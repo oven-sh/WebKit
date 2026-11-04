@@ -1,0 +1,17 @@
+# as read, no block is unreachable
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: BlockOrderInvalid 1
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="good" results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    Return
+}
+function f1 name="badUnreachable" results=[{type=undefined}] {
+    Return
+  b1():
+    Return
+}

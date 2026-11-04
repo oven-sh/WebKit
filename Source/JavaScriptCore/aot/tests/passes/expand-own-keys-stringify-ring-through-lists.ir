@@ -1,0 +1,23 @@
+# A record that holds a list of its own kind brings no code of the program, so a call that throws while it writes one starts over as written: only that way finds a ring before the depth at which JSON.stringify gives up.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+# STATISTIC: SerializersCreated = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Ring" fields=[{key="size" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="below" declared={type=Array<undefined|L0, proven, Contiguous, pristine[Storage, Names, Dense]>} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0, 1]}] impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+
+function f0 name="text" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
+    Return v2
+# CHECK: [[asWritten]]() frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard
+# CHECK-NEXT: = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
+# CHECK: role=CatchHandler
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: Jump -> next [[asWritten]]()
+# CHECK: = CallDirect v0, {{*}} function=
+}

@@ -74,7 +74,8 @@ static RetainPtr<TestWKWebView> createWebViewInItsOwnWebContentProcess()
     // A pool of its own is what guarantees a separate WebContent process, which is the whole point of the test:
     // each process elects its own best session, so only the GPU process can pick between them.
     [configuration setProcessPool:adoptNS([[WKProcessPool alloc] init]).get()];
-    return adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 480, 320) configuration:configuration.get()]);
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 480, 320) configuration:configuration.get()]);
+    return webView;
 }
 
 TEST(NowPlayingSession, NoSession)

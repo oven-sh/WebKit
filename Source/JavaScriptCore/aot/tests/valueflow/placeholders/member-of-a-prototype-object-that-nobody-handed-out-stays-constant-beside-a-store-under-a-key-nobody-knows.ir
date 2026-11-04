@@ -1,0 +1,28 @@
+# handedIn(Date.prototype); above = Object.getPrototypeOf(handedIn); handedIn[globalThis.name] = mine; delete handedIn[globalThis.name]; Error.prototype.toString; Date.prototype.toString
+# `above` may be any prototype object of the language, so all of them count as escaped. `handedIn` itself is one of them only where the program has handed
+# that one out as a value: Date.prototype. Each member of it that can be replaced counts as written by the program. Error.prototype.toString stays constant: start-up locks it.
+# RUN: valueflow-results
+# CHECK: builtin-location DatePrototype."toString" Unknown
+# CHECK: builtin-location ErrorPrototype."toString" Constant
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedIn" [isFreeName]
+    v2 = PropGet v0 key="name" [isFreeName]
+    v3 = Builtin builtin=DatePrototype
+    v4 = Call v1, -, v3
+    v5 = Builtin builtin=ObjectGetPrototypeOf
+    v6 = Call v5, -, v1
+    v7 = NewClosure function=f1
+    ElemSet v1, v2, v7
+    v9 = ElemDelete v1, v2
+    v10 = Builtin builtin=ErrorPrototype
+    v11 = PropGet v10 key="toString"
+    v12 = PropGet v3 key="toString"
+    Return v6
+}
+function f1 name="mine" module=m0 results=[{type=anything}] {
+    Return
+}

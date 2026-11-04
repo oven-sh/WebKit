@@ -66,7 +66,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 #include <wtf/Function.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/text/CStringView.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if PLATFORM(COCOA)
 #include "VP9UtilitiesCocoa.h"
@@ -102,7 +102,7 @@ public:
     {
     }
 
-    void NODELETE setDisableNonLocalhostConnections(bool disableNonLocalhostConnections) { m_disableNonLocalhostConnections = disableNonLocalhostConnections; }
+    void LEGACY_NODELETE setDisableNonLocalhostConnections(bool disableNonLocalhostConnections) { m_disableNonLocalhostConnections = disableNonLocalhostConnections; }
 
     std::unique_ptr<webrtc::AsyncPacketSocket> CreateUdpSocket(const webrtc::Environment& env, const webrtc::SocketAddress& address, uint16_t minPort, uint16_t maxPort) final
     {
@@ -142,13 +142,13 @@ static void doReleaseLogging(webrtc::LoggingSeverity severity, const char* messa
     UNUSED_PARAM(message);
 #else
     if (severity == webrtc::LS_ERROR)
-        RELEASE_LOG_ERROR_FORWARDABLE(WebRTC, LibWebRtcLogError, CStringView::unsafeFromUTF8(message));
+        RELEASE_LOG_ERROR_FORWARDABLE(WebRTC, LibWebRtcLogError, UTF8CStringView::unsafeFromUTF8(message));
     else
-        RELEASE_LOG_FORWARDABLE(WebRTC, LibWebRtcLogMessage, CStringView::unsafeFromUTF8(message));
+        RELEASE_LOG_FORWARDABLE(WebRTC, LibWebRtcLogMessage, UTF8CStringView::unsafeFromUTF8(message));
 #endif
 }
 
-static webrtc::LoggingSeverity NODELETE computeLogLevel(WTFLogLevel level)
+static webrtc::LoggingSeverity LEGACY_NODELETE computeLogLevel(WTFLogLevel level)
 {
 #if !RELEASE_LOG_DISABLED
     switch (level) {
@@ -203,7 +203,7 @@ static void initializePeerConnectionFactoryAndThreads(PeerConnectionFactoryAndTh
     ASSERT(result);
 }
 
-static inline PeerConnectionFactoryAndThreads& staticFactoryAndThreads()
+static inline PeerConnectionFactoryAndThreads& LEGACY_NODELETE staticFactoryAndThreads()
 {
     static NeverDestroyed<PeerConnectionFactoryAndThreads> factoryAndThreads;
     return factoryAndThreads.get();

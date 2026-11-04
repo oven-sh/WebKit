@@ -30,9 +30,17 @@
 
 #include "AirBlockInsertionSet.h"
 #include "AirCode.h"
+#include "AirInstInlines.h"
 #include "AirNaturalLoops.h"
 
 namespace JSC { namespace B3 { namespace Air {
+
+static void copyBlockEntryClobbers(BasicBlock* from, BasicBlock* to)
+{
+    Inst& first = from->at(0);
+    if (first.clobbersAtBlockEntry())
+        to->appendInst(first);
+}
 
 void ensureDedicatedLoopEntryExitBlocks(Code& code)
 {
@@ -81,6 +89,7 @@ void ensureDedicatedLoopEntryExitBlocks(Code& code)
                     continue;
 
                 BasicBlock* pad = insertionSet.insertBefore(exitBlock, exitBlock->frequency());
+                copyBlockEntryClobbers(exitBlock, pad);
                 pad->append(Jump, exitBlock->at(0).origin);
                 pad->setSuccessors(FrequentedBlock(exitBlock));
                 for (BasicBlock* loopPred : loopPreds) {
@@ -126,6 +135,7 @@ void ensureDedicatedLoopEntryExitBlocks(Code& code)
             continue;
 
         BasicBlock* preHeader = insertionSet.insertBefore(header, header->frequency());
+        copyBlockEntryClobbers(header, preHeader);
         preHeader->append(Jump, header->at(0).origin);
         preHeader->setSuccessors(FrequentedBlock(header));
         for (BasicBlock* pred : entryPreds) {

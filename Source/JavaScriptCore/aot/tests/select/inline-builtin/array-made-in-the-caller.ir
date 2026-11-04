@@ -1,0 +1,16 @@
+# What is written Array(length) is made in the caller. Its inline code keeps the mark, by which it lists no frame of Array
+# FORM: Prepared
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="written" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=Array/0 [isDoneInPlace]
+    Return v1
+# CHECK: v1:{{*}}= CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/0 [isDoneInPlace]
+}
+function f1 name="spelledOtherwise" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=Array/0
+    Return v1
+# CHECK: v1:{{*}}= CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/0
+# CHECK-NOT: isDoneInPlace
+}

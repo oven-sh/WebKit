@@ -27,11 +27,51 @@
 
 #if ENABLE(B3_JIT)
 
+#include <memory>
+#include <optional>
+#include <wtf/FastMalloc.h>
+#include <wtf/Vector.h>
+#include <wtf/text/UTF8CStringView.h>
+
 namespace JSC { namespace B3 {
 
+class BasicBlock;
+class Dominators;
 class Procedure;
 
-JS_EXPORT_PRIVATE void validate(Procedure&, const char* dumpBefore = nullptr);
+enum class ValidationRule : uint8_t {
+    Upstream,
+    LoopPoll,
+    PureFunction,
+    Relocatable,
+    KnownRange,
+    KnownDereferenceableBytes,
+    KnownInduction,
+    TerminalResult,
+    SuccessorClobbers,
+    OpcodeEverAdded,
+};
+
+// What the last validation of a procedure looked at, for a client that validates after each phase.
+struct ValidatedForm {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ValidatedForm);
+
+    ValidatedForm();
+    ~ValidatedForm();
+
+    uint64_t hashOfControlFlow { 0 };
+    uint64_t hashOfValues { 0 };
+    // These follow from the control flow alone.
+    std::unique_ptr<Dominators> dominators;
+    Vector<BasicBlock*> blocksInPostOrder;
+};
+
+JS_EXPORT_PRIVATE void validate(Procedure&, UTF8CStringView dumpBefore = { });
+
+// The same, but for a phase that left the procedure as the last validation found it.
+void validateAfterPhase(Procedure&, UTF8CStringView dumpBefore = { });
+
+JS_EXPORT_PRIVATE std::optional<ValidationRule> findViolatedRule(Procedure&);
 
 } } // namespace JSC::B3
 

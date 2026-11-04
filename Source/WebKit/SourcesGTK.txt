@@ -82,6 +82,7 @@ Shared/API/glib/WebKitURIRequest.cpp @no-unify
 Shared/API/glib/WebKitURIResponse.cpp @no-unify
 Shared/API/glib/WebKitUserMessage.cpp @no-unify
 
+Shared/Extensions/glib/WebExtensionUtilitiesGLib.cpp
 Shared/Extensions/gtk/WebExtensionUtilitiesGtk.cpp
 
 Shared/glib/ArgumentCodersGLib.cpp
@@ -133,6 +134,7 @@ UIProcess/API/glib/IconDatabase.cpp @no-unify
 UIProcess/API/glib/InputMethodFilter.cpp @no-unify
 UIProcess/API/glib/KeyAutoRepeatHandler.cpp @no-unify
 UIProcess/API/glib/WebKitApplicationInfo.cpp @no-unify
+UIProcess/API/glib/WebKitApplicationManifest.cpp @no-unify
 UIProcess/API/glib/WebKitAuthenticationRequest.cpp @no-unify
 UIProcess/API/glib/WebKitAutomationSession.cpp @no-unify
 UIProcess/API/glib/WebKitBackForwardList.cpp @no-unify
@@ -153,6 +155,7 @@ UIProcess/API/glib/WebKitFileChooserRequest.cpp @no-unify
 UIProcess/API/glib/WebKitFindController.cpp @no-unify
 UIProcess/API/glib/WebKitFormClient.cpp @no-unify
 UIProcess/API/glib/WebKitFormSubmissionRequest.cpp @no-unify
+UIProcess/API/glib/WebKitFrameInfo.cpp @no-unify
 UIProcess/API/glib/WebKitGeolocationManager.cpp @no-unify
 UIProcess/API/glib/WebKitGeolocationPermissionRequest.cpp @no-unify
 UIProcess/API/glib/WebKitIconLoadingClient.cpp @no-unify
@@ -241,6 +244,10 @@ UIProcess/CoordinatedGraphics/DrawingAreaProxyCoordinatedGraphics.cpp
 
 UIProcess/Extensions/glib/WebExtensionGLib.cpp
 UIProcess/Extensions/glib/WebExtensionContextGLib.cpp
+UIProcess/Extensions/glib/WebExtensionControllerConfigurationGLib.cpp
+UIProcess/Extensions/glib/WebExtensionControllerGLib.cpp
+UIProcess/Extensions/glib/WebExtensionDeclarativeNetRequestSQLiteStoreGLib.cpp
+UIProcess/Extensions/glib/WebExtensionURLSchemeHandlerGLib.cpp
 
 UIProcess/Extensions/gtk/WebExtensionGTK.cpp
 
@@ -327,6 +334,14 @@ UIProcess/XR/openxr/OpenXRLayer.cpp
 UIProcess/XR/openxr/OpenXRSwapchain.cpp
 UIProcess/XR/openxr/PlatformXROpenXR.cpp
 UIProcess/XR/openxr/PlatformXRSystemOpenXR.cpp
+
+WebProcess/Extensions/API/glib/WebExtensionAPIEventGLib.cpp
+WebProcess/Extensions/API/glib/WebExtensionAPIPortGLib.cpp
+WebProcess/Extensions/API/glib/WebExtensionAPITestGLib.cpp
+
+WebProcess/Extensions/Bindings/glib/JSWebExtensionWrapperGLib.cpp
+
+WebProcess/Extensions/glib/WebExtensionContextProxyGLib.cpp
 
 WebProcess/GPU/graphics/gbm/RemoteGraphicsContextGLProxyGBM.cpp
 

@@ -152,9 +152,7 @@ void VideoTrackGenerator::Source::writeVideoFrame(VideoFrame& frame, VideoFrameT
 {
     ASSERT(!isMainThread());
 
-    auto frameSize = IntSize(frame.presentationSize());
-    if (frame.rotation() == VideoFrame::Rotation::Left || frame.rotation() == VideoFrame::Rotation::Right)
-        frameSize = frameSize.transposedSize();
+    auto frameSize = frame.rotatedSize();
 
     if (m_videoFrameSize != frameSize) {
         m_videoFrameSize = frameSize;

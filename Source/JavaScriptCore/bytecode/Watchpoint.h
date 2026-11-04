@@ -133,10 +133,10 @@ public:
         : m_type(type)
     { }
 
-    void operator delete(Watchpoint*, std::destroying_delete_t);
+    JS_EXPORT_PRIVATE void operator delete(Watchpoint*, std::destroying_delete_t);
 
 protected:
-    ~Watchpoint();
+    JS_EXPORT_PRIVATE ~Watchpoint();
 
 private:
     friend class WatchpointSet;
@@ -144,7 +144,7 @@ private:
     friend struct DFG::ArrayBufferViewWatchpointAdaptor;
     void fire(VM&, const FireDetail&);
     template<typename Func>
-    void runWithDowncast(const Func&);
+    void runWithDowncast(NOESCAPE const Func&);
 
     Type m_type;
 };
@@ -206,7 +206,7 @@ public:
     // As a convenience, this will ignore 0. That's because code paths in the DFG
     // that create speculation watchpoints may choose to bail out if speculation
     // had already been terminated.
-    void NODELETE add(Watchpoint*);
+    void LEGACY_NODELETE add(Watchpoint*);
     
     // Force the watchpoint set to behave as if it was being watched even if no
     // watchpoints have been installed. This will result in invalidation if the
@@ -272,7 +272,7 @@ protected:
 
 private:
     void fireAllWatchpoints(VM&, const FireDetail&);
-    void NODELETE take(WatchpointSet* other);
+    void LEGACY_NODELETE take(WatchpointSet* other);
     
     friend class InlineWatchpointSet;
 
@@ -340,7 +340,7 @@ public:
         return !hasBeenInvalidated();
     }
     
-    void add(Watchpoint*);
+    JS_EXPORT_PRIVATE void add(Watchpoint*);
     
     void startWatching()
     {
@@ -501,7 +501,7 @@ private:
     }
 
     JS_EXPORT_PRIVATE WatchpointSet* inflateSlow();
-    JS_EXPORT_PRIVATE void NODELETE freeFat();
+    JS_EXPORT_PRIVATE void freeFat();
     
     uintptr_t m_data;
 };
@@ -514,7 +514,7 @@ public:
     {
     }
 
-    JS_EXPORT_PRIVATE void NODELETE takeWatchpointsToFire(WatchpointSet*);
+    JS_EXPORT_PRIVATE void LEGACY_NODELETE takeWatchpointsToFire(WatchpointSet*);
 
 protected:
     WatchpointSet& watchpointsToFire() { return m_watchpointsToFire; }

@@ -1,0 +1,115 @@
+# What is done with an element says whether its read gets the test of its presence: a use that asks whether the element is there keeps the arm for an absent one. Each case stands beside one that differs in the one thing that decides
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="comparedWithNumber" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}, {type=number}] results=[{type=anything}] {
+    v3 = ElemGet v0, v1
+    v4 = StrictEq v3, v2
+    Return v4
+# A comparison with what is never undefined looks for a value.
+# CHECK: = IsElementPresent v0, v1
+}
+
+function f1 name="comparedWithUndefined" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    v3 = Undefined
+    v4 = StrictEq v2, v3
+    Return v4
+# CHECK-NOT: IsElementPresent
+}
+
+function f2 name="comparedWithAnything" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}, {type=anything}] results=[{type=anything}] {
+    v3 = ElemGet v0, v1
+    v4 = StrictEq v3, v2
+    Return v4
+# CHECK-NOT: IsElementPresent
+}
+
+function f3 name="switchedOn" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Switch v2 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v3 = Integer integer=10
+    Return v3
+  b2():
+    v4 = Integer integer=20
+    Return v4
+  b3():
+    v5 = Integer integer=30
+    Return v5
+# No case of a switch is undefined: what is absent goes where every other value goes.
+# CHECK: = IsElementPresent v0, v1
+}
+
+function f4 name="passesTestThatAdmitsUndefined" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    v3 = TypeTest v2 testedType=undefined|number
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = Undefined
+    v6 = StrictEq v4, v5
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+# The check of an element declared `number | undefined` hands an absent one on, and typed code asks for it.
+# CHECK-NOT: IsElementPresent
+}
+
+function f5 name="passesTestForNumber" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    v3 = TypeTest v2 testedType=number
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = ToBoolean v4
+    Return v5
+  b2():
+    v6 = Undefined
+    Return v6
+# What passed is no longer undefined, so its truth is a question about the number.
+# CHECK: = IsElementPresent v0, v1
+}
+
+function f6 name="sumOfNumbers" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]> ~ Array<number, proven, Double, pristine[Storage, Names]>):
+    v1 = Integer integer=0
+    v2 = Double number=0.5
+    Jump -> next b1(v1, v2)
+  b1(v3: int[0, 4294967295], v4: number):
+    LoopHint
+    v6 = GetArrayLength v0
+    v7 = Less v3, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = ElemGet v0, v8
+    v10 = Add v4, v9
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12, v10)
+  b3():
+    Return v4
+# CHECK: readsHoleAsNaN
+}
+
+function f7 name="sumOfIntegersInDoubleStorage" parameters=[{type=Array<i32, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, pristine[Storage, Names]> ~ Array<i32, proven, Double, pristine[Storage, Names]>):
+    v1 = Integer integer=0
+    v2 = Double number=0.5
+    Jump -> next b1(v1, v2)
+  b1(v3: int[0, 4294967295], v4: number):
+    LoopHint
+    v6 = GetArrayLength v0
+    v7 = Less v3, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = ElemGet v0, v8
+    v10 = Add v4, v9
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12, v10)
+  b3():
+    Return v4
+# The type of the read admits no NaN, so a hole can't be read as one.
+# CHECK-NOT: readsHoleAsNaN
+}

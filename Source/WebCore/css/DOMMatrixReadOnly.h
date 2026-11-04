@@ -97,17 +97,17 @@ public:
     double m44() const { return m_matrix.m44(); }
 
     bool is2D() const { return m_is2D; }
-    bool NODELETE isIdentity() const;
+    bool LEGACY_NODELETE isIdentity() const;
 
     ExceptionOr<void> setMatrixValue(Document&, const String&);
 
-    Ref<DOMMatrix> NODELETE translate(double tx = 0, double ty = 0, double tz = 0);
+    Ref<DOMMatrix> translate(double tx = 0, double ty = 0, double tz = 0);
     ExceptionOr<Ref<DOMMatrix>> multiply(DOMMatrixInit&& other) const;
-    Ref<DOMMatrix> NODELETE flipX();
-    Ref<DOMMatrix> NODELETE flipY();
-    Ref<DOMMatrix> NODELETE scale(double scaleX = 1, std::optional<double> scaleY = std::nullopt, double scaleZ = 1, double originX = 0, double originY = 0, double originZ = 0);
-    Ref<DOMMatrix> NODELETE scale3d(double scale = 1, double originX = 0, double originY = 0, double originZ = 0);
-    Ref<DOMMatrix> NODELETE scaleNonUniform(double scaleX = 1, double scaleY = 1);
+    Ref<DOMMatrix> flipX();
+    Ref<DOMMatrix> flipY();
+    Ref<DOMMatrix> scale(double scaleX = 1, std::optional<double> scaleY = std::nullopt, double scaleZ = 1, double originX = 0, double originY = 0, double originZ = 0);
+    Ref<DOMMatrix> scale3d(double scale = 1, double originX = 0, double originY = 0, double originZ = 0);
+    Ref<DOMMatrix> scaleNonUniform(double scaleX = 1, double scaleY = 1);
     Ref<DOMMatrix> rotate(double rotX = 0, std::optional<double> rotY = std::nullopt, std::optional<double> rotZ = std::nullopt); // Angles are in degrees.
     Ref<DOMMatrix> rotateFromVector(double x = 0, double y = 0);
     Ref<DOMMatrix> rotateAxisAngle(double x = 0, double y = 0, double z = 0, double angle = 0); // Angle is in degrees.
@@ -115,7 +115,7 @@ public:
     Ref<DOMMatrix> skewY(double sy = 0); // Angle is in degrees.
     Ref<DOMMatrix> inverse() const;
 
-    Ref<DOMPoint> transformPoint(DOMPointInit&&);
+    Ref<DOMPoint> LEGACY_NODELETE transformPoint(DOMPointInit&&);
 
     ExceptionOr<Ref<Float32Array>> toFloat32Array() const;
     ExceptionOr<Ref<Float64Array>> toFloat64Array() const;
@@ -124,7 +124,7 @@ public:
 
     const TransformationMatrix& transformationMatrix() const LIFETIME_BOUND { return m_matrix; }
     
-    Ref<DOMMatrix> cloneAsDOMMatrix() const;
+    Ref<DOMMatrix> LEGACY_NODELETE cloneAsDOMMatrix() const;
 
 protected:
     DOMMatrixReadOnly() = default;

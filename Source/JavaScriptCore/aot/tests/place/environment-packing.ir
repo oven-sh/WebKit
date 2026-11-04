@@ -1,0 +1,62 @@
+# The fields of an environment follow the cell header, widest first, so no byte between them is lost, and on x86-64 a cell of more than 128 bytes has its most used field first
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow references=narrow
+# RUN: plan-slots layouts
+# RUN(X64): plan-slots layouts
+# REQUIRES(X64): x86_64
+# RUN(ARM64): plan-slots layouts
+# REQUIRES(ARM64): arm64
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="mixedWidths" fields=[{key="flag" declared={type=boolean}}, {key="total" declared={type=number}}, {key="index" declared={type=i32}}, {key="byte" declared={type=int[0, 255]}}, {key="short" declared={type=int[0, 65535]}}, {key="text" declared={type=string}}]
+layout L1 kind=Environment name="beyondOneByteOffsets" fields=[{key="n0" declared={type=number}}, {key="n1" declared={type=number}}, {key="n2" declared={type=number}}, {key="n3" declared={type=number}}, {key="n4" declared={type=number}}, {key="n5" declared={type=number}}, {key="n6" declared={type=number}}, {key="n7" declared={type=number}}, {key="n8" declared={type=number}}, {key="n9" declared={type=number}}, {key="n10" declared={type=number}}, {key="n11" declared={type=number}}, {key="n12" declared={type=number}}, {key="n13" declared={type=number}}, {key="n14" declared={type=number}}, {key="n15" declared={type=number}}, {key="hot" declared={type=boolean}}, {key="short0" declared={type=int[0, 65535]}}, {key="short1" declared={type=int[0, 65535]}}, {key="byte0" declared={type=int[0, 255]}}, {key="byte1" declared={type=int[0, 255]}}, {key="byte2" declared={type=int[0, 255]}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = ToBoolean v1
+    v4 = Integer integer=0
+    v5 = BitOr v2, v4
+    v6 = Integer integer=255
+    v7 = Integer integer=65535
+    v8 = ToString v1
+    Branch v3 -> taken b1(v4, v4), notTaken b1(v6, v7)
+  b1(v9, v10):
+    v11 = NewObject -, v3, v2, v5, v9, v10, v8 layout=L0 fields=[0, 1, 2, 3, 4, 5]
+    v12 = NewObject -, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v2, v3, v10, v10, v9, v9, v9 layout=L1 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+    v13 = GetEnvironmentField v12 layout=L1 field=16
+    v14 = GetEnvironmentField v12 layout=L1 field=16
+    v15 = GetEnvironmentField v11 layout=L0 field=0
+    v16 = GetEnvironmentField v11 layout=L0 field=0
+    Return
+}
+
+# "flag" is the only field of L0 that is read. A one-byte offset reaches all 32 bytes, so it stays among the narrowest fields on x86-64 too.
+# CHECK: L0 Environment size=32
+# CHECK-NEXT: .0 "flag" Boolean @26
+# CHECK-NEXT: .1 "total" Double @8
+# CHECK-NEXT: .2 "index" Int32 @16
+# CHECK-NEXT: .3 "byte" Uint8 @27
+# CHECK-NEXT: .4 "short" Uint16 @24
+# CHECK-NEXT: .5 "text" Cell32 @20
+# CHECK-NEXT: L1 Environment size=144
+
+# "hot" at 8 leaves holes of 1, 2 and 4 bytes before "n0". Each later field takes the lowest hole that holds it: "short1" and "byte1" split one.
+# X64: .0 "n0" Double @16
+# X64: .15 "n15" Double @136
+# X64-NEXT: .16 "hot" Boolean @8
+# X64-NEXT: .17 "short0" Uint16 @10
+# X64-NEXT: .18 "short1" Uint16 @12
+# X64-NEXT: .19 "byte0" Uint8 @9
+# X64-NEXT: .20 "byte1" Uint8 @14
+# X64-NEXT: .21 "byte2" Uint8 @15
+
+# ARM64: .0 "n0" Double @8
+# ARM64: .15 "n15" Double @128
+# ARM64-NEXT: .16 "hot" Boolean @140
+# ARM64-NEXT: .17 "short0" Uint16 @136
+# ARM64-NEXT: .18 "short1" Uint16 @138
+# ARM64-NEXT: .19 "byte0" Uint8 @141
+# ARM64-NEXT: .20 "byte1" Uint8 @142
+# ARM64-NEXT: .21 "byte2" Uint8 @143

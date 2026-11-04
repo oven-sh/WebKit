@@ -1,0 +1,140 @@
+# A loop that relies on proofs from its header on costs a failed test one turn. At the end of the turn the generic copy leaves on the edge that goes around the loop and joins the edge that enters the loop, in front of the tests that stand there. What the header wants from further up is tested again on the way
+# The functions are checked functions of the program, where the copy goes on behind the stretch. Behind layouts that nobody has checked it holds the stretch alone: place-type-tests-copies-in-checked-functions-are-rare.ir
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass PlaceTypeTests
+# RUN(GUARD): pass PlaceTypeTests
+# RUN(STORAGE): pass PlaceTypeTests
+# RUN(PLAN): test-placement
+# STATISTIC: StretchesNotClonable = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Holder" fields=[{key="pair" declared={type=L0 flags=[IsExpected]} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+# The tests of the receiver stand on the entering edge once, and both what enters the loop and what comes back pass them
+function f0 name="joinsTheEdgeThatEntersTheLoop" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+# PLAN-LABEL: function f0
+# PLAN: test TypeTest v0 testedType=L0 on b0.0
+# PLAN: way back into b1 joins b0.0
+# PLAN-NOT: , test
+# CHECK-LABEL: function f0 name="joinsTheEdgeThatEntersTheLoop"
+# CHECK: Jump -> next [[tests0]]()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK: v3: number = GetSlot
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK: [[tests0]]():
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK-NOT: = TypeTest
+# CHECK: [[wayBack0]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[tests0]]()
+# CHECK-NOT: = TypeTest
+# CHECK: LoopHint
+# CHECK-NEXT: = PropGet v0 key="a"
+# CHECK-NEXT: Branch v1 -> taken [[wayBack0]](), notTaken
+# CHECK-NOT: = TypeTest
+# GUARD-LABEL: function f0 name="joinsTheEdgeThatEntersTheLoop"
+# GUARD: = BelongsToInstance
+# GUARD-NOT: = BelongsToInstance
+
+function f1 name="joinsTheTestsOfAnArray" flags=[IsChecked] parameters=[{type=Array<i32, Int32> flags=[IsExpected]}, {type=int[0, 1000]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<i32, Int32>, v1: int[0, 1000], v2: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = ElemGet v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# PLAN-LABEL: function f1
+# PLAN: test IsElementPresent v0, v1 arrayStorage=Int32 on b0.0
+# PLAN: way back into b1 joins b0.0
+# PLAN-NOT: , test
+# CHECK-LABEL: function f1 name="joinsTheTestsOfAnArray"
+# CHECK: Jump -> next [[tests1]]()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK: = GetArrayElement
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK: [[tests1]]():
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK: [[wayBack1]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[tests1]]()
+# CHECK: LoopHint
+# CHECK-NEXT: = ElemGet v0, v1
+# CHECK-NEXT: Branch v2 -> taken [[wayBack1]](), notTaken
+# GUARD-LABEL: function f1 name="joinsTheTestsOfAnArray"
+# GUARD: = IsElementPresent
+# GUARD-NOT: = IsElementPresent
+# STORAGE-LABEL: function f1 name="joinsTheTestsOfAnArray"
+# STORAGE: = HasArrayStorage
+# STORAGE-NOT: = HasArrayStorage
+
+# The receiver is tested in front of its first read, further up than the entering edge. The way back makes those tests again, and the block on the entering edge joins their proofs with the first ones
+function f2 name="testsInFrontOfTheLoopAreMadeAgain" flags=[IsChecked] parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean):
+    v2 = PropGet v0 key="a"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = PropGet v0 key="b"
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# PLAN-LABEL: function f2
+# PLAN: test TypeTest v0 testedType=L0 before v2
+# PLAN: way back into b1 joins b0.0, test TypeTest v0 testedType=L0, test BelongsToInstance v0
+# CHECK-LABEL: function f2 name="testsInFrontOfTheLoopAreMadeAgain"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: b1():
+# CHECK-NEXT: LoopHint
+# CHECK: v4: number = GetSlot
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK: [[front2]]({{*}}: L0, {{*}}: guard):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: [[wayBack2]]() frequency=Rare:
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK-NOT: = TypeTest
+# CHECK: LoopHint
+# CHECK-NEXT: = PropGet v0 key="b"
+# CHECK-NEXT: Branch v1 -> taken [[wayBack2]](), notTaken
+# CHECK-NOT: = TypeTest
+# CHECK: Jump -> next [[front2]](
+# CHECK-NOT: = TypeTest
+# GUARD-LABEL: function f2 name="testsInFrontOfTheLoopAreMadeAgain"
+# GUARD-COUNT-2: = BelongsToInstance
+# GUARD-NOT: = BelongsToInstance
+
+# The receiver of the loop is read and tested in front of the loop, behind a test of its holder. The copy reads it by name: it is another value there, about which a test of the value of the tested code says nothing, so the copy of the loop goes around by itself
+function f3 name="testedValueIsMadeInTheCopy" flags=[IsChecked] parameters=[{type=L1 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L1, v1: boolean):
+    v2 = PropGet v0 key="pair"
+    v3 = PropGet v2 key="a"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = PropGet v2 key="b"
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v5
+}
+# PLAN-LABEL: function f3
+# PLAN: way back into b1 joins b0.0, test TypeTest v2 testedType=L0
+# GUARD-LABEL: function f3 name="testedValueIsMadeInTheCopy"
+# CHECK-LABEL: function f3 name="testedValueIsMadeInTheCopy"
+# CHECK: = TypeTest v0 testedType=L1
+# CHECK-NOT: testedType=L0
+# CHECK: = TypeTest v2 testedType=L0
+# CHECK-NOT: testedType=L0

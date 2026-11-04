@@ -31,11 +31,11 @@
 #include "PlatformDisplay.h"
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
-#include <wtf/text/CStringView.h>
-#include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if USE(GLIB)
 #include "ApplicationGLib.h"
@@ -218,7 +218,7 @@ void initializeIfNeeded()
         if (layerNames.size()) {
             formattedLayerList.append(":"_s);
             for (const auto* name : layerNames)
-                formattedLayerList.append(" "_s, CStringView::unsafeFromUTF8(name));
+                formattedLayerList.append(" "_s, UTF8CStringView::unsafeFromUTF8(name));
         }
         RELEASE_LOG_DEBUG(Vulkan, "Requesting %zu layers%s", layerNames.size(), formattedLayerList.toString().utf8());
 
@@ -226,15 +226,15 @@ void initializeIfNeeded()
         if (extensionNames.size()) {
             formattedExtensionList.append(":"_s);
             for (const auto* name : extensionNames)
-                formattedExtensionList.append(" "_s, CStringView::unsafeFromUTF8(name));
+                formattedExtensionList.append(" "_s, UTF8CStringView::unsafeFromUTF8(name));
         }
         RELEASE_LOG_DEBUG(Vulkan, "Requesting %zu extensions%s", extensionNames.size(), formattedExtensionList.toString().utf8());
     }
 
 #if USE(GLIB)
-    const String applicationName = makeString(getApplicationID(), '.', processTypeDescription(processType()));
+    auto applicationName = toUTF8CString(getApplicationID(), '.', processTypeDescription(processType()));
 #else
-    const String applicationName = makeString("WebKit."_s, processTypeDescription(processType()));
+    auto applicationName = toUTF8CString("WebKit."_s, processTypeDescription(processType()));
 #endif
 
     auto instance = Instance::create({ { applicationName }, layerNames.span(), extensionNames.span() });

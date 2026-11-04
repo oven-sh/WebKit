@@ -26,6 +26,7 @@
 #include "config.h"
 #include "Options.h"
 
+#include "AOTRemovableFeature.h"
 #include "CPU.h"
 #include "JITOperationValidation.h"
 #include "LLIntCommon.h"
@@ -114,10 +115,10 @@ public:
     bool operator==(const Option&) const;
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    ASCIILiteral NODELETE name() const { return g_constMetaData[m_id].name; }
-    ASCIILiteral NODELETE description() const { return g_constMetaData[m_id].description; }
-    Options::Type NODELETE type() const { return g_constMetaData[m_id].type; }
-    Options::Availability NODELETE availability() const { return g_constMetaData[m_id].availability; }
+    ASCIILiteral LEGACY_NODELETE name() const { return g_constMetaData[m_id].name; }
+    ASCIILiteral LEGACY_NODELETE description() const { return g_constMetaData[m_id].description; }
+    Options::Type LEGACY_NODELETE type() const { return g_constMetaData[m_id].type; }
+    Options::Availability LEGACY_NODELETE availability() const { return g_constMetaData[m_id].availability; }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     Option(Options::ID id, void* addressOfValue)
@@ -169,7 +170,7 @@ static const Option defaultFor(Options::ID id)
     return Option(id, addressOfDefault);
 }
 
-inline static void* NODELETE addressOfOption(Options::ID id)
+inline static void* LEGACY_NODELETE addressOfOption(Options::ID id)
 {
     auto offset = g_constMetaData[id].offsetOfOption;
     return reinterpret_cast<uint8_t*>(&g_jscConfig.options) + offset;
@@ -182,18 +183,18 @@ static const Option optionFor(Options::ID id)
     return Option(id, addressOfOption(id));
 }
 
-inline static bool NODELETE hasMetadata()
+inline static bool LEGACY_NODELETE hasMetadata()
 {
     return !!g_metadata.get();
 }
 
-inline static bool NODELETE wasOverridden(Options::ID id)
+inline static bool LEGACY_NODELETE wasOverridden(Options::ID id)
 {
     ASSERT(id < NumberOfOptions);
     return g_optionWasOverridden->get(id);
 }
 
-inline static void NODELETE setWasOverridden(Options::ID id)
+inline static void LEGACY_NODELETE setWasOverridden(Options::ID id)
 {
     ASSERT(id < NumberOfOptions);
     g_optionWasOverridden->set(id);
@@ -318,7 +319,7 @@ std::optional<OptionsStorage::OSLogType> parse(const char* string)
 }
 
 #if PLATFORM(COCOA)
-static os_log_type_t NODELETE asDarwinOSLogType(OSLogType type)
+static os_log_type_t LEGACY_NODELETE asDarwinOSLogType(OSLogType type)
 {
     switch (type) {
     case OSLogType::None:
@@ -694,7 +695,7 @@ void Options::setAllJITCodeValidations(bool value)
     Options::useJITAsserts() = value;
 }
 
-static inline void NODELETE disableAllWasmJITOptions()
+static inline void LEGACY_NODELETE disableAllWasmJITOptions()
 {
 #if ENABLE(WEBASSEMBLY)
     // This really only makes sense if could use wasm, otherwise we should not override this.
@@ -710,7 +711,7 @@ static inline void NODELETE disableAllWasmJITOptions()
     Options::dumpOMGDisassembly() = false;
 }
 
-static inline void NODELETE disableAllWasmOptions()
+static inline void LEGACY_NODELETE disableAllWasmOptions()
 {
     disableAllWasmJITOptions();
 
@@ -728,7 +729,7 @@ static inline void NODELETE disableAllWasmOptions()
     Options::useWasmTailCalls() = false;
 }
 
-static inline void NODELETE disableAllJITOptions()
+static inline void LEGACY_NODELETE disableAllJITOptions()
 {
 #if ENABLE(WEBASSEMBLY)
     // This really only makes sense if could use wasm, otherwise we should not override this.
@@ -757,10 +758,11 @@ static inline void NODELETE disableAllJITOptions()
 }
 
 #if OS(DARWIN)
-static void NODELETE disableAllSignalHandlerBasedOptions()
+static void LEGACY_NODELETE disableAllSignalHandlerBasedOptions()
 {
     Options::usePollingTraps() = true;
     Options::useSharedArrayBuffer() = false;
+    Options::allowSharedArrayBuffer() = false;
     Options::useWasmFastMemory() = false;
     Options::useWasmFaultSignalHandler() = false;
 }
@@ -795,6 +797,27 @@ void Options::executeDumpOptions()
     dataLog(builder.toString());
 }
 
+double Options::sizeClassProgressionWithAOT()
+{
+    return OptionsHelper::wasOverridden(sizeClassProgressionID) ? Options::sizeClassProgression() : sizeClassProgressionForCompiledCode;
+}
+
+static void applyCompiledCodeDefaults()
+{
+#if ENABLE(AOT)
+    if (Options::aotImagePath())
+        Options::useAOT() = true;
+#else
+    Options::useAOT() = false;
+#endif
+    if (!Options::runsCompiledImage())
+        return;
+    Options::useJIT() = false;
+    Options::sizeClassProgression() = Options::sizeClassProgressionWithAOT();
+    // A heap that stays small gains nothing from blocks that a helper thread keeps resident, and pays for them.
+    if (!OptionsHelper::wasOverridden(Options::warmUpMarkedBlockStartAfterBlocksID))
+        Options::warmUpMarkedBlockStartAfterBlocks() = 4096;
+}
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -805,6 +828,8 @@ void Options::notifyOptionsChanged()
     unsigned thresholdForGlobalLexicalBindingEpoch = Options::thresholdForGlobalLexicalBindingEpoch();
     if (thresholdForGlobalLexicalBindingEpoch == 0 || thresholdForGlobalLexicalBindingEpoch == 1)
         Options::thresholdForGlobalLexicalBindingEpoch() = UINT_MAX;
+
+    applyCompiledCodeDefaults();
 
 #if !ENABLE(OFFLINE_ASM_ALT_ENTRY)
     if (Options::useGdbJITInfo())
@@ -854,6 +879,9 @@ void Options::notifyOptionsChanged()
     if (!Options::allowDoubleShape())
         Options::useJIT() = false; // We don't support JIT with !allowDoubleShape. So disable it.
 
+#if !ENABLE(WEBASSEMBLY)
+    Options::useWasm() = false;
+#endif
     if (!Options::useWasm())
         disableAllWasmOptions();
 
@@ -877,6 +905,10 @@ void Options::notifyOptionsChanged()
     // At initialization time, we may decide that useJIT should be false for any
     // number of reasons (including failing to allocate JIT memory), and therefore,
     // will / should not be able to enable any JIT related services.
+#if USE(BUN_JSC_ADDITIONS)
+    if (isFeatureRemoved(RemovableFeature::JIT))
+        Options::useJIT() = false;
+#endif
     if (!Options::useJIT()) {
         disableAllJITOptions();
 #if OS(DARWIN)
@@ -1038,7 +1070,7 @@ void Options::notifyOptionsChanged()
         // FIXME: Should support for OSR exit as well.
     }
 
-#if CPU(ADDRESS32) || PLATFORM(PLAYSTATION) || OS(WINDOWS)
+#if CPU(ADDRESS32) || PLATFORM(PLAYSTATION)
     Options::useWasmFastMemory() = false;
 #endif
 
@@ -1060,7 +1092,7 @@ inline bool strncasecmp(const char* str1, const char* str2, size_t n)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-void Options::initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCustomizationCallback)
+void Options::initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<void()>& optionsCustomizationCallback)
 {
     static std::once_flag initializeOptionsOnceFlag;
     
@@ -1174,7 +1206,7 @@ void Options::finalize()
     OptionsHelper::releaseMetadata();
 }
 
-static bool NODELETE isSeparator(char c)
+static bool LEGACY_NODELETE isSeparator(char c)
 {
     return isUnicodeCompatibleASCIIWhitespace(c) || (c == ',');
 }
@@ -1548,15 +1580,13 @@ bool Option::operator==(const Option& other) const
 #if ENABLE(JIT_CAGE)
 SUPPRESS_ASAN bool canUseJITCage()
 {
-    if (JSC_FORCE_USE_JIT_CAGE)
-        return true;
     return JSC_JIT_CAGE_VERSION() && !ASAN_ENABLED && WTF::processHasEntitlement("com.apple.private.verified-jit"_s);
 }
 #else
-bool NODELETE canUseJITCage() { return false; }
+bool LEGACY_NODELETE canUseJITCage() { return false; }
 #endif
 
-bool NODELETE canUseWasm()
+bool LEGACY_NODELETE canUseWasm()
 {
 #if ENABLE(WEBASSEMBLY) && !PLATFORM(WATCHOS)
     return true;
@@ -1565,7 +1595,7 @@ bool NODELETE canUseWasm()
 #endif
 }
 
-bool NODELETE hasCapacityToUseLargeGigacage()
+bool LEGACY_NODELETE hasCapacityToUseLargeGigacage()
 {
     // Gigacage::hasCapacityToUseLargeGigacage is determined based on EFFECTIVE_ADDRESS_WIDTH.
     // If we have enough address range to potentially use a large gigacage,

@@ -1,0 +1,14 @@
+# The fields of a record are sorted by name. Its parser tries the keys in the order in which the program's own literals create them, which is the order a text written from such an object has
+# FORM: Prepared
+# RUN: derived-functions Parser:g0
+# STATISTIC: ParsersCreated = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Address" fields=[{key="city" declared={type=number}}, {key="country" declared={type=number}}, {key="street" declared={type=number}}, {key="zip" declared={type=number}}] flow={constructorOrders=[{fields=[2, 0, 3, 1]}]}
+variable g0 name="t0" declared={type=L0} initialization=Undefined
+
+# CHECK: function {{*}}role=Parser
+# CHECK: = JSONStartsWith {{*}} string="\"street\":" [isLikely]
+# CHECK: = JSONStartsWith {{*}} string="\"city\":" [isLikely]
+# CHECK: = JSONStartsWith {{*}} string="\"zip\":" [isLikely]
+# CHECK: = JSONStartsWith {{*}} string="\"country\":" [isLikely]

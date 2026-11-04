@@ -1,0 +1,12 @@
+# The program of folded-into-accesses.ir without the fold: every null check keeps a load of its own
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot check=validate-back-end disable=b3:FoldTrapsIntoAccesses
+# RUN: generate-code NullChecksFoldedIntoAccesses
+# CHECK: f1: size={{*}} faults=1
+# CHECK: f2: size={{*}} faults=2
+# CHECK: f3: size={{*}} faults=1
+# CHECK: f4: size={{*}} faults=1
+# CHECK: f5: size={{*}} faults=1
+# CHECK: f6: size={{*}} faults=1
+# CHECK: statistic NullChecksFoldedIntoAccesses 0
+# PROGRAM-OF: folded-into-accesses.ir

@@ -138,7 +138,7 @@ void JSTestEnabledForContext::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    if ((downcast<Document>(realm()->scriptExecutionContext())->settingsValues().testSettingEnabled && TestSubObjEnabledForContext::enabledForContext(*realm()->scriptExecutionContext())))
+    if ((downcast<Document>(realm()->scriptExecutionContext())->settingsValues().testSettingEnabled && TestSubObjEnabledForContext::enabledForContext(*protect(realm()->scriptExecutionContext()))))
         putDirectCustomAccessor(vm, builtinNames(vm).TestSubObjEnabledForContextPublicName(), CustomGetterSetter::create(vm, jsTestEnabledForContext_TestSubObjEnabledForContextConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
 }
 

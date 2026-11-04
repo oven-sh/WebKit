@@ -104,6 +104,11 @@ static ExceptionOr<bool> verifyEd25519(const Vector<uint8_t>& key, size_t keyLen
     if (signature.size() != keyLengthInBytes * 2)
         return false;
 
+    // Bail if the public key or the signature's R value is a small-order point,
+    // which the spec requires to fail verification.
+    if (CryptoAlgorithmEd25519::isSmallOrderPoint(key.span()) || CryptoAlgorithmEd25519::isSmallOrderPoint(signature.span().first(keyLengthInBytes)))
+        return false;
+
     // Construct the sig-val s-expression, extracting the r and s components from the signature vector.
     PAL::GCrypt::Handle<gcry_sexp_t> signatureSexp;
     gcry_error_t error = gcry_sexp_build(&signatureSexp, nullptr, "(sig-val(eddsa(r %b)(s %b)))",

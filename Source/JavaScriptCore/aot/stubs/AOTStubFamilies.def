@@ -1,0 +1,35 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+// v(Name, Linkage, forms, axes, minCount, maxCount, isas, framelessISAs, operandRegisters, binding, calls, clobbers, ownEffects, Body)
+// AOT_STUB_FRONT_END(Operation, Family)
+// An includer defines the macros it wants. AOTStubDescriptor.h documents the columns by their types.
+
+#if !defined(v)
+#define v(...)
+#define AOT_STUB_FAMILIES_DEFINED_ROW_MACRO
+#endif
+
+#if !defined(AOT_STUB_FRONT_END)
+#define AOT_STUB_FRONT_END(Operation, Family)
+#define AOT_STUB_FAMILIES_DEFINED_FRONT_END_MACRO
+#endif
+
+#include "AOTStubCoreFamilies.def"
+#include "AOTStubsCallFamilies.def"
+#include "AOTStubsPropertyFamilies.def"
+#include "AOTStubsArrayFamilies.def"
+#include "AOTStubsStringFamilies.def"
+#include "AOTStubsCoroutineFamilies.def"
+
+#if defined(AOT_STUB_FAMILIES_DEFINED_ROW_MACRO)
+#undef v
+#undef AOT_STUB_FAMILIES_DEFINED_ROW_MACRO
+#endif
+
+#if defined(AOT_STUB_FAMILIES_DEFINED_FRONT_END_MACRO)
+#undef AOT_STUB_FRONT_END
+#undef AOT_STUB_FAMILIES_DEFINED_FRONT_END_MACRO
+#endif

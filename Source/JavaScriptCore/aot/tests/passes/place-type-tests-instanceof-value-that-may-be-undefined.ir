@@ -1,0 +1,21 @@
+# value instanceof C with a value that is proven to be an instance of the class or undefined. undefined is an instance of nothing, so the value is tested for the layout first. That every instance still has the prototype of its layout is a condition on the class, which takes no object
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Class" constructor=f0 flow={baseState=None} classFlow={prototypeProperty=Fixed}
+function f0 name="Class" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="instanceOrUndefined" parameters=[{type=undefined|L0}, {type=f0}] results=[{type=anything}] {
+    v2 = InstanceOf v0, v1
+    Return v2
+# CHECK-NOT: HasLayoutPrototype
+# CHECK: [[isInstance1]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[isInstance1]] -> taken [[instance1]](| 0), notTaken [[undefined1]]()
+# CHECK: : true = Boolean boolean=true
+# CHECK: [[undefined1]]() frequency=Unlikely:
+# CHECK-NEXT: = InstanceOf v0, v1
+# CHECK: [[instance1]]({{*}}: L0):
+# CHECK-NEXT: = AreMembersUnchanged conditions=[{{*}}{kind=InstancePrototypeUnchanged layout=L0}]
+# CHECK-NOT: HasLayoutPrototype
+}

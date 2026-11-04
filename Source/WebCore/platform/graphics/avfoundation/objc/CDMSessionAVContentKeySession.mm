@@ -53,6 +53,7 @@
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
+#import <pal/cf/CoreMediaSoftLink.h>
 #import <pal/cocoa/AVFoundationSoftLink.h>
 
 typedef NSString *AVContentKeySystem;
@@ -213,8 +214,9 @@ void CDMSessionAVContentKeySession::releaseKeys()
             return;
 
         RetainPtr certificateData = WTF::toNSData(protect(m_certificate)->span());
-        NSArray* expiredSessions = [PAL::getAVContentKeySessionClassSingleton() pendingExpiredSessionReportsWithAppIdentifier:certificateData.get() storageDirectoryAtURL:[NSURL fileURLWithPath:storagePath.createNSString().get()]];
-        for (NSData* expiredSessionData in expiredSessions) {
+        RetainPtr expiredSessions = [PAL::getAVContentKeySessionClassSingleton() pendingExpiredSessionReportsWithAppIdentifier:certificateData.get() storageDirectoryAtURL:[NSURL fileURLWithPath:storagePath.createNSString().get()]];
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSData* expiredSessionData in expiredSessions.get()) {
             static const NSString *PlaybackSessionIdKey = @"PlaybackSessionID";
             NSDictionary *expiredSession = [NSPropertyListSerialization propertyListWithData:expiredSessionData options:kCFPropertyListImmutable format:nullptr error:nullptr];
             RetainPtr playbackSessionIdValue = dynamic_objc_cast<NSString>([expiredSession objectForKey:PlaybackSessionIdKey]);
@@ -231,7 +233,7 @@ void CDMSessionAVContentKeySession::releaseKeys()
     }
 }
 
-static bool isEqual(Uint8Array* data, ASCIILiteral literal)
+static bool LEGACY_NODELETE isEqual(Uint8Array* data, ASCIILiteral literal)
 {
     ASSERT(data);
     ASSERT(!literal.isNull());
@@ -333,7 +335,9 @@ bool CDMSessionAVContentKeySession::update(Uint8Array* key, RefPtr<Uint8Array>& 
         RetainPtr<NSError> error;
         RetainPtr<NSData> requestData;
         Semaphore keyRequestCompleted { 0 };
-        [contentKeyRequest makeStreamingContentKeyRequestDataForApp:certificateData.get() contentIdentifier:nsIdentifier.get() options:options.get() completionHandler:[&] (NSData *outRequestData, NSError *outError) {
+        // When AVFoundation initiates the request, its identifier may not be NSData (e.g. an skd:// NSString).
+        // We intentionally pass it back to AVFoundation unchanged, as we always have.
+        SUPPRESS_MEMORY_UNSAFE_CAST [contentKeyRequest makeStreamingContentKeyRequestDataForApp:certificateData.get() contentIdentifier:nsIdentifier.get() options:options.get() completionHandler:[&](NSData *outRequestData, NSError *outError) {
             error = outError;
             requestData = outRequestData;
             keyRequestCompleted.signal();
@@ -358,7 +362,7 @@ bool CDMSessionAVContentKeySession::update(Uint8Array* key, RefPtr<Uint8Array>& 
     RetainPtr keyData = WTF::toNSData(key->span());
     
     if ([contentKeyRequest respondsToSelector:@selector(processContentKeyResponse:)] && [PAL::getAVContentKeyResponseClassSingleton() respondsToSelector:@selector(contentKeyResponseWithFairPlayStreamingKeyResponseData:)])
-        [contentKeyRequest processContentKeyResponse:[PAL::getAVContentKeyResponseClassSingleton() contentKeyResponseWithFairPlayStreamingKeyResponseData:keyData.get()]];
+        [contentKeyRequest processContentKeyResponse:checked_objc_cast<AVContentKeyResponse>([PAL::getAVContentKeyResponseClassSingleton() contentKeyResponseWithFairPlayStreamingKeyResponseData:keyData.get()])];
     else
         [contentKeyRequest processContentKeyResponseData:keyData.get()];
 
@@ -386,13 +390,13 @@ bool CDMSessionAVContentKeySession::isAnyKeyUsable(const Keys& keys) const
 
 void CDMSessionAVContentKeySession::attachContentKeyToSample(const MediaSampleAVFObjC& sample)
 {
-    AVContentKey *contentKey = [contentKeyRequest() contentKey];
+    RetainPtr contentKey = [contentKeyRequest() contentKey];
     ASSERT(contentKey);
     if (!contentKey)
         return;
 
     NSError *error = nil;
-    if (!AVSampleBufferAttachContentKey(sample.platformSample().cmSampleBuffer(), contentKey, &error))
+    if (!AVSampleBufferAttachContentKey(protect(sample.platformSample().cmSampleBuffer()), contentKey, &error))
         ERROR_LOG(LOGIDENTIFIER, "Failed to attach content key with error: %{public}@", error);
 }
 
@@ -418,7 +422,7 @@ RefPtr<Uint8Array> CDMSessionAVContentKeySession::generateKeyReleaseMessage(unsi
         return nullptr;
     }
 
-    NSArray* expiredSessions = [PAL::getAVContentKeySessionClassSingleton() pendingExpiredSessionReportsWithAppIdentifier:certificateData.get() storageDirectoryAtURL:[NSURL fileURLWithPath:storagePath.createNSString().get()]];
+    RetainPtr expiredSessions = [PAL::getAVContentKeySessionClassSingleton() pendingExpiredSessionReportsWithAppIdentifier:certificateData.get() storageDirectoryAtURL:[NSURL fileURLWithPath:storagePath.createNSString().get()]];
     if (![expiredSessions count]) {
         ALWAYS_LOG(LOGIDENTIFIER, "no expired sessions found");
 
@@ -457,7 +461,7 @@ void CDMSessionAVContentKeySession::didProvideContentKeyRequest(AVContentKeyRequ
 RetainPtr<AVContentKeySession> CDMSessionAVContentKeySession::createContentKeySession(NSURL *storageURL)
 {
     if ([PAL::getAVContentKeySessionClassSingleton() respondsToSelector:@selector(contentKeySessionWithKeySystem:storageDirectoryAtURL:)])
-        return [PAL::getAVContentKeySessionClassSingleton() contentKeySessionWithKeySystem:AVContentKeySystemFairPlayStreaming storageDirectoryAtURL:storageURL];
+        return checked_objc_cast<AVContentKeySession>([PAL::getAVContentKeySessionClassSingleton() contentKeySessionWithKeySystem:AVContentKeySystemFairPlayStreaming storageDirectoryAtURL:storageURL]);
     return adoptNS([PAL::allocAVContentKeySessionInstance() initWithStorageDirectoryAtURL:storageURL]);
 }
 
@@ -484,7 +488,7 @@ RetainPtr<AVContentKeySession> CDMSessionAVContentKeySession::contentKeySession(
 
     lazyInitialize(m_contentKeySession, createContentKeySession(storageURL));
 
-    [m_contentKeySession setDelegate:m_contentKeySessionDelegate.get() queue:m_delegateQueue->dispatchQueue()];
+    [m_contentKeySession setDelegate:m_contentKeySessionDelegate.get() queue:protect(m_delegateQueue->dispatchQueue())];
     return m_contentKeySession;
 }
 
@@ -492,7 +496,7 @@ void CDMSessionAVContentKeySession::setInitData(SharedBuffer& initData)
 {
     if (m_sourceBufferInitData)
         return;
-    m_sourceBufferInitData = &initData;
+    lazyInitialize(m_sourceBufferInitData, Ref { initData });
 }
 
 String CDMSessionAVContentKeySession::storagePath() const

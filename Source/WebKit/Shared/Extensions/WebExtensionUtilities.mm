@@ -37,10 +37,8 @@
 #import "Logging.h"
 #import "WebExtensionAPITabs.h"
 #import "WebExtensionMessageSenderParameters.h"
-#import "WebFrame.h"
-#import <WebCore/Document.h>
-#import <WebCore/LocalFrameInlines.h>
 #import <objc/runtime.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import <UIKit/UIKit.h>
@@ -220,7 +218,7 @@ static bool validateSet(NSString *key, NSObject *value, NSOrderedSet *validClass
         arrayIsValid = true;
 
         addExpectedValueString(NSArray.class, [classOrArray firstObject]);
-        if (validateArray(key, value, classOrArray, nullptr))
+        if (validateArray(key, value, checked_objc_cast<NSArray>(classOrArray), nullptr))
             return true;
     }
 
@@ -338,55 +336,6 @@ NSString *toWebAPI(NSLocale *locale)
     if (locale.countryCode.length)
         [result appendFormat:@"-%@", locale.countryCode];
     return [result copy];
-}
-
-size_t storageSizeOf(NSString *keyOrValue)
-{
-    // The size of a key is the length of the key string.
-    // The size of a value is the length of the JSON representation of the value.
-    // If keyOrValue represents a value we assume that the string is the JSON representation.
-    return [keyOrValue lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
-}
-
-size_t storageSizeOf(NSDictionary<NSString *, NSString *> *keysAndValues)
-{
-    __block double storageSize = 0;
-    [keysAndValues enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSString *value, BOOL *stop) {
-        storageSize += storageSizeOf(key) + storageSizeOf(value);
-    }];
-
-    return storageSize;
-}
-
-bool anyItemsExceedQuota(NSDictionary *items, size_t quota, NSString **outKeyWithError)
-{
-    __block bool itemExceededQuota = false;
-    __block NSString *keyWithError;
-
-    [items enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSString *value, BOOL *stop) {
-        size_t sizeOfCurrentItem = storageSizeOf(key) + storageSizeOf(value);
-        if (sizeOfCurrentItem > quota) {
-            itemExceededQuota = true;
-            keyWithError = key;
-            *stop = YES;
-        }
-    }];
-
-    ASSERT(!itemExceededQuota || (itemExceededQuota && keyWithError));
-
-    if (outKeyWithError)
-        *outKeyWithError = keyWithError;
-
-    return itemExceededQuota;
-}
-
-Markable<WTF::UUID> toDocumentIdentifier(WebFrame& frame)
-{
-    auto* coreFrame = frame.coreLocalFrame();
-    auto* document = coreFrame ? coreFrame->document() : nullptr;
-    if (!document)
-        return { };
-    return document->identifier().object();
 }
 
 Vector<double> availableScreenScales()

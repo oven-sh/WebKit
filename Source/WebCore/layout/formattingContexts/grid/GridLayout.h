@@ -34,33 +34,22 @@ namespace WebCore {
 
 namespace Style {
 class ComputedStyle;
-struct GridTrackSize;
-struct ZoomFactor;
 }
 
 namespace Layout {
 
 struct GridAreaSizes;
-struct GridItemPlacementResult;
 struct GridLayoutState;
 struct UsedMargins;
-
-enum class GridLayoutScope : bool {
-    Full, // Run the whole grid sizing algorithm, lay out the grid items, and align them.
-    ColumnSizingOnly // Run only the first step of the grid sizing algorithm (size the columns); skip row sizing, grid-item layout, and alignment.
-};
 
 class GridLayout {
 public:
     GridLayout(const GridFormattingContext&);
 
-    GridLayoutResult layout(const GridItemPlacementResult&, LeadingImplicitTracks, const GridLayoutState&, GridLayoutScope = GridLayoutScope::Full);
+    GridItemRects layout(const PlacedGridItems&, const TrackSizingFunctionsList& columnTrackSizingFunctions, const TrackSizingFunctionsList& rowTrackSizingFunctions,
+        const UsedTrackSizes&, const GridLayoutState&);
 
 private:
-
-    static TrackSizingFunctions convertGridTrackSizeToTrackSizingFunctions(const Style::GridTrackSize&, const Style::ZoomFactor&);
-    static TrackSizingFunctionsList generateImplicitTrackSizingFunctions(size_t implicitTracksCount, const Style::GridTrackSizes& gridAutoTrackSizes, const Style::ZoomFactor&);
-    static TrackSizingFunctionsList trackSizingFunctions(size_t totalTracksCount, size_t leadingImplicitTracksCount, const Vector<Style::GridTrackSize>& gridTemplateTrackSizes, const Style::GridTrackSizes& gridAutoTrackSizes, const Style::ZoomFactor&);
 
     std::pair<UsedInlineSizes, UsedBlockSizes> layoutGridItems(const PlacedGridItems&, const GridAreaSizes&,
         const TrackSizingFunctionsList& columnTrackSizingFunctions, const TrackSizingFunctionsList& rowTrackSizingFunctions) const;
@@ -68,8 +57,8 @@ private:
     static Vector<UsedMargins> computeInlineMargins(const PlacedGridItems&);
     static Vector<UsedMargins> computeBlockMargins(const PlacedGridItems&);
 
-    BorderBoxPositions performInlineAxisSelfAlignment(const PlacedGridItems&, const Vector<UsedMargins>&, const UsedInlineSizes&, const Vector<LayoutUnit>& gridAreasInlineSizeList);
-    BorderBoxPositions performBlockAxisSelfAlignment(const PlacedGridItems&, const Vector<UsedMargins>&, const UsedBlockSizes&, const Vector<LayoutUnit>& gridAreasBlockSizeList);
+    BorderBoxPositions performInlineAxisSelfAlignment(const PlacedGridItems&, const Vector<UsedMargins>&, const UsedInlineSizes&, const Vector<LayoutUnit>& gridAreasInlineSizeList, const Vector<std::optional<LayoutUnit>>& baselineAlignedMarginBoxPositions);
+    BorderBoxPositions performBlockAxisSelfAlignment(const PlacedGridItems&, const Vector<UsedMargins>&, const UsedBlockSizes&, const Vector<LayoutUnit>& gridAreasBlockSizeList, const Vector<std::optional<LayoutUnit>>& baselineAlignedMarginBoxPositions);
 
     const GridFormattingContext& formattingContext() const LIFETIME_BOUND { return m_gridFormattingContext; }
 

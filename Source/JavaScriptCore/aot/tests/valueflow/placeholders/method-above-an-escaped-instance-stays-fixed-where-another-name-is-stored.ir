@@ -1,0 +1,35 @@
+# class Meter { measure() {} }; Object.getPrototypeOf(input(new Meter)).other = function replacement() {}
+# The store goes to the prototype object above the instance that has escaped, under another name than that of the method.
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}members=[{key="measure" function=f2 mutability=Fixed isWritableData=true}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Meter" constructor=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="measure"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Call v7, -, v5
+    v9 = Builtin builtin=ObjectGetPrototypeOf
+    v10 = Call v9, -, v8
+    v11 = NewClosure function=f3
+    PropSet v10, v11 key="other"
+    Return
+}
+function f1 name="Meter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="measure" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f3 name="replacement" results=[{type=anything}] {
+    Return
+}

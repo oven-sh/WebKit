@@ -49,6 +49,7 @@
 #include "GetterSetter.h"
 #include "HeapProfiler.h"
 #include "HeapSnapshotBuilder.h"
+#include "ImmutablePropertyNames.h"
 #include "InitializeThreading.h"
 #include "InterpreterInlines.h"
 #include "JITSizeStatistics.h"
@@ -74,6 +75,7 @@
 #include "Parser.h"
 #include "ProbeContext.h"
 #include "PropertyInlineCacheClearingWatchpoint.h"
+#include "PropertyRun.h"
 #include "Scribble.h"
 #include "ShadowChicken.h"
 #include "Snippet.h"
@@ -96,6 +98,7 @@
 #include "ObjectConstructor.h"
 #include <wtf/UnalignedAccess.h>
 #endif
+#include "AOTBuiltinTable.h"
 #include <bmalloc/BPlatform.h>
 #include <unicode/uversion.h>
 #include <wtf/ApproximateTime.h>
@@ -118,6 +121,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+#include <sys/auxv.h>
+#endif
+
 #if ENABLE(WEBASSEMBLY)
 #include "JSWebAssemblyHelpers.h"
 #include "JSWebAssemblyStruct.h"
@@ -136,6 +143,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include "FFIContext.h"
 #include "FFIConversions.h"
 #include "FFISignature.h"
+#include "FFIStubs.h"
 #include "FFITestFixtures.h"
 #include "FFIType.h"
 #include "JSFFICallback.h"
@@ -202,7 +210,7 @@ class JSDollarVMCallFrame : public JSNonFinalObject {
     using Base = JSNonFinalObject;
 public:
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -292,12 +300,12 @@ public:
 
     typedef JSNonFinalObject Base;
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
 
-    Root* NODELETE root() const { return m_root.get(); }
+    Root* LEGACY_NODELETE root() const { return m_root.get(); }
     void setRoot(VM& vm, Root* root) { m_root.set(vm, this, root); }
 
     static Element* create(VM& vm, JSGlobalObject* globalObject, Root* root)
@@ -358,7 +366,7 @@ class Root final : public JSDestructibleObject {
 public:
     using Base = JSDestructibleObject;
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.destructibleObjectSpace();
     }
@@ -369,7 +377,7 @@ public:
         DollarVMAssertScope assertScope;
     }
 
-    Element* NODELETE element()
+    Element* LEGACY_NODELETE element()
     {
         return m_element.get();
     }
@@ -431,7 +439,7 @@ public:
 
     typedef JSNonFinalObject Base;
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -453,7 +461,7 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    JSValue NODELETE hiddenValue()
+    JSValue LEGACY_NODELETE hiddenValue()
     {
         return m_hiddenValue.get();
     }
@@ -464,7 +472,7 @@ public:
         m_hiddenValue.set(vm, this, value);
     }
 
-    static CallData NODELETE getConstructData(JSCell*)
+    static CallData LEGACY_NODELETE getConstructData(JSCell*)
     {
         CallData constructData;
         constructData.type = CallData::Type::Native;
@@ -505,7 +513,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::GetOwnPropertySlotIsImpure | JSC::OverridesGetOwnPropertySlot;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -587,7 +595,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -669,7 +677,7 @@ IGNORE_WARNINGS_BEGIN("unused-const-variable")
 IGNORE_WARNINGS_END
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -687,7 +695,7 @@ IGNORE_WARNINGS_END
 
     ~RuntimeArray() { }
 
-    static void NODELETE destroy(JSCell* cell)
+    static void LEGACY_NODELETE destroy(JSCell* cell)
     {
         DollarVMAssertScope assertScope;
         static_cast<RuntimeArray*>(cell)->RuntimeArray::~RuntimeArray();
@@ -724,21 +732,21 @@ IGNORE_WARNINGS_END
         return JSObject::getOwnPropertySlotByIndex(thisObject, globalObject, index, slot);
     }
 
-    static NO_RETURN_DUE_TO_CRASH bool NODELETE put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&)
+    static NO_RETURN_DUE_TO_CRASH bool LEGACY_NODELETE put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&)
     {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    static NO_RETURN_DUE_TO_CRASH bool NODELETE deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&)
+    static NO_RETURN_DUE_TO_CRASH bool LEGACY_NODELETE deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&)
     {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    unsigned NODELETE getLength() const { return m_vector.size(); }
+    unsigned LEGACY_NODELETE getLength() const { return m_vector.size(); }
 
     DECLARE_INFO;
 
-    static ArrayPrototype* NODELETE createPrototype(VM&, JSGlobalObject* globalObject)
+    static ArrayPrototype* LEGACY_NODELETE createPrototype(VM&, JSGlobalObject* globalObject)
     {
         DollarVMAssertScope assertScope;
         return globalObject->arrayPrototype();
@@ -846,7 +854,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable | OverridesGetOwnPropertySlot;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -943,7 +951,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -979,7 +987,7 @@ public:
     DECLARE_INFO;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -1027,7 +1035,7 @@ class ObjectDoingSideEffectPutWithoutCorrectSlotStatus : public JSNonFinalObject
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesPut | HasStaticPropertyTable;
 public:
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -1078,7 +1086,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -1112,12 +1120,12 @@ public:
         return getter;
     }
 
-    int32_t NODELETE value() const
+    int32_t LEGACY_NODELETE value() const
     {
         return m_value;
     }
 
-    static constexpr ptrdiff_t NODELETE offsetOfValue() { return OBJECT_OFFSETOF(DOMJITNode, m_value); }
+    static constexpr ptrdiff_t LEGACY_NODELETE offsetOfValue() { return OBJECT_OFFSETOF(DOMJITNode, m_value); }
 
 private:
     int32_t m_value { 42 };
@@ -1705,8 +1713,8 @@ public:
     Message(ArrayBufferContents&&, int32_t);
     ~Message();
 
-    ArrayBufferContents&& NODELETE releaseContents() { return WTF::move(m_contents); }
-    int32_t NODELETE index() const { return m_index; }
+    ArrayBufferContents&& LEGACY_NODELETE releaseContents() { return WTF::move(m_contents); }
+    int32_t LEGACY_NODELETE index() const { return m_index; }
 
 private:
     ArrayBufferContents m_contents;
@@ -1719,7 +1727,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.cellSpace();
     }
@@ -1797,6 +1805,10 @@ JSC_DEFINE_CUSTOM_GETTER(customGetValueGlobalObject, (JSGlobalObject* globalObje
     return JSValue::encode(globalObject->globalThis());
 }
 
+// Signs the return address that it saves, whatever this file is compiled with: a test needs an inline cache stub whose native callee does.
+#if CPU(ARM64) && OS(LINUX)
+__attribute__((target("branch-protection=pac-ret")))
+#endif
 JSC_DEFINE_CUSTOM_SETTER(customSetAccessor, (JSGlobalObject* globalObject, EncodedJSValue thisObject, EncodedJSValue encodedValue, PropertyName))
 {
     DollarVMAssertScope assertScope;
@@ -1945,7 +1957,7 @@ const ClassInfo StaticCustomValue::s_info = { "StaticCustomValue"_s, &Base::s_in
 const ClassInfo StaticDontDeleteDontEnum::s_info = { "StaticDontDeleteDontEnum"_s, &Base::s_info, &staticDontDeleteDontEnumTable, nullptr, CREATE_METHOD_TABLE(StaticDontDeleteDontEnum) };
 const ClassInfo ObjectDoingSideEffectPutWithoutCorrectSlotStatus::s_info = { "ObjectDoingSideEffectPutWithoutCorrectSlotStatus"_s, &Base::s_info, &staticCustomAccessorTable, nullptr, CREATE_METHOD_TABLE(ObjectDoingSideEffectPutWithoutCorrectSlotStatus) };
 
-ElementHandleOwner* NODELETE Element::handleOwner()
+ElementHandleOwner* LEGACY_NODELETE Element::handleOwner()
 {
     DollarVMAssertScope assertScope;
     static ElementHandleOwner* owner = nullptr;
@@ -1971,7 +1983,7 @@ class WasmStreamingParser : public JSDestructibleObject {
 public:
     using Base = JSDestructibleObject;
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.destructibleObjectSpace();
     }
@@ -2014,7 +2026,7 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    Wasm::StreamingParser& NODELETE streamingParser() { return m_streamingParser; }
+    Wasm::StreamingParser& LEGACY_NODELETE streamingParser() { return m_streamingParser; }
 
     void finishCreation(VM& vm)
     {
@@ -2071,7 +2083,7 @@ class WasmStreamingCompiler : public JSDestructibleObject {
 public:
     using Base = JSDestructibleObject;
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
     {
         return &vm.destructibleObjectSpace();
     }
@@ -2100,9 +2112,9 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    Wasm::StreamingCompiler& NODELETE streamingCompiler() { return m_streamingCompiler.get(); }
+    Wasm::StreamingCompiler& LEGACY_NODELETE streamingCompiler() { return m_streamingCompiler.get(); }
 
-    JSPromise* NODELETE promise() const { return m_promise.get(); }
+    JSPromise* LEGACY_NODELETE promise() const { return m_promise.get(); }
 
     void finishCreation(VM& vm)
     {
@@ -2204,6 +2216,12 @@ static JSC_DECLARE_HOST_FUNCTION(functionDumpCell);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpHeapSnapshot);
 static JSC_DECLARE_HOST_FUNCTION(functionIndexingMode);
 static JSC_DECLARE_HOST_FUNCTION(functionInlineCapacity);
+static JSC_DECLARE_HOST_FUNCTION(functionUnusedInlineStorageIsEmpty);
+static JSC_DECLARE_HOST_FUNCTION(functionTryMarkPristine);
+static JSC_DECLARE_HOST_FUNCTION(functionIsPristine);
+static JSC_DECLARE_HOST_FUNCTION(functionHasPristineNames);
+static JSC_DECLARE_HOST_FUNCTION(functionHasPristineElements);
+static JSC_DECLARE_HOST_FUNCTION(functionPutDirectPropertyRun);
 static JSC_DECLARE_HOST_FUNCTION(functionClearLinkBufferStats);
 static JSC_DECLARE_HOST_FUNCTION(functionLinkBufferStats);
 static JSC_DECLARE_HOST_FUNCTION(functionValue);
@@ -2296,6 +2314,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionHasOwnLengthProperty);
 static JSC_DECLARE_HOST_FUNCTION(functionLineStartTableIsBuilt);
 static JSC_DECLARE_HOST_FUNCTION(functionRejectPromiseAsHandled);
 static JSC_DECLARE_HOST_FUNCTION(functionMarkPromiseAsHandled);
+static JSC_DECLARE_HOST_FUNCTION(functionLastExceptionHasCapturedStack);
 static JSC_DECLARE_HOST_FUNCTION(functionSetUserPreferredLanguages);
 static JSC_DECLARE_HOST_FUNCTION(functionICUVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUMinorVersion);
@@ -2310,6 +2329,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionUninstantiatedFunctionDeclarations);
 static JSC_DECLARE_HOST_FUNCTION(functionUseJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseDFGJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseFTLJIT);
+static JSC_DECLARE_HOST_FUNCTION(functionFunctionsSignReturnAddress);
+static JSC_DECLARE_HOST_FUNCTION(functionReturnAddressOfCallerIsSigned);
+static JSC_DECLARE_HOST_FUNCTION(functionCorruptSignatureOfReturnAddressOfCaller);
 static JSC_DECLARE_HOST_FUNCTION(functionIsGigacageEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionToCacheableDictionary);
 static JSC_DECLARE_HOST_FUNCTION(functionToUncacheableDictionary);
@@ -2317,6 +2339,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionIsPrivateSymbol);
 static JSC_DECLARE_HOST_FUNCTION(functionIsDefinitelyAtomString);
 static JSC_DECLARE_HOST_FUNCTION(functionIsAtomString);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpAndResetPasDebugSpectrum);
+#if ENABLE(AOT)
+static JSC_DECLARE_HOST_FUNCTION(functionAOTBuiltinMismatches);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionMonotonicTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionWallTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionApproximateTimeNow);
@@ -2347,6 +2372,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionWeakBlockCount);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
+#endif
+#if ENABLE(FFI)
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
@@ -2630,7 +2657,7 @@ public:
         DollarVMAssertScope assertScope;
     }
 
-    IterationStatus NODELETE operator()(StackVisitor& visitor) const
+    IterationStatus LEGACY_NODELETE operator()(StackVisitor& visitor) const
     {
         unsigned index = m_currentFrame++;
         // First frame (index 0) is `llintTrue` etc. function itself.
@@ -2642,14 +2669,14 @@ public:
         return IterationStatus::Continue;
     }
     
-    JITType NODELETE jitType() { return m_jitType; }
+    JITType LEGACY_NODELETE jitType() { return m_jitType; }
 
 private:
     mutable unsigned m_currentFrame { 0 };
     mutable JITType m_jitType { JITType::None };
 };
 
-static FunctionExecutable* NODELETE getExecutableForFunction(JSValue theFunctionValue)
+static FunctionExecutable* LEGACY_NODELETE getExecutableForFunction(JSValue theFunctionValue)
 {
     DollarVMAssertScope assertScope;
     if (!theFunctionValue.isCell())
@@ -3155,6 +3182,22 @@ JSC_DEFINE_HOST_FUNCTION(functionInlineCapacity, (JSGlobalObject*, CallFrame* ca
     return encodedJSUndefined();
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionUnusedInlineStorageIsEmpty, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* object = dynamicDowncast<JSFinalObject>(callFrame->argument(0));
+    if (!object)
+        return encodedJSUndefined();
+
+    Structure* structure = object->structure();
+    auto* slots = std::bit_cast<const EncodedJSValue*>(object->inlineStorage());
+    for (unsigned i = structure->inlineSize(); i < structure->inlineCapacity(); ++i) {
+        if (slots[i])
+            return JSValue::encode(jsBoolean(false));
+    }
+    return JSValue::encode(jsBoolean(true));
+}
+
 // Clears the LinkBuffer profile statistics.
 // Usage: $vm.clearLinkBufferStats()
 JSC_DEFINE_HOST_FUNCTION(functionClearLinkBufferStats, (JSGlobalObject*, CallFrame*))
@@ -3255,8 +3298,23 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHavingABadTime, (JSGlobalObject* globalObject
     return JSValue::encode(jsBoolean(target->isHavingABadTime()));
 }
 
+static Vector<Identifier> identifiersInArrayLike(JSGlobalObject* globalObject, JSObject* arrayLike)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<Identifier> result;
+    forEachInArrayLike(globalObject, arrayLike, [&] (JSValue name) -> bool {
+        result.append(name.toPropertyKey(globalObject));
+        RETURN_IF_EXCEPTION(scope, false);
+        return true;
+    });
+    RETURN_IF_EXCEPTION(scope, { });
+    return result;
+}
+
 // Calls JSObject::makePropertiesImmutable() and returns the object. Throws a TypeError for an object of a class that does not support it.
-// Usage: $vm.makePropertiesImmutable(object)
+// Usage: $vm.makePropertiesImmutable(object) or $vm.makePropertiesImmutable(object, names, includesNumericKeys, includesPrototype, openStrings). With an array of
+// names only those properties become immutable, with every numeric key and the prototype if asked for. With an array of open strings every other string does too.
 JSC_DEFINE_HOST_FUNCTION(functionMakePropertiesImmutable, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -3265,9 +3323,95 @@ JSC_DEFINE_HOST_FUNCTION(functionMakePropertiesImmutable, (JSGlobalObject* globa
     JSObject* object = callFrame->argument(0).getObject();
     if (!object)
         return throwVMTypeError(globalObject, scope, "makePropertiesImmutable expects an object"_s);
+    if (JSObject* listedNames = callFrame->argument(1).getObject()) {
+        Vector<Identifier> names = identifiersInArrayLike(globalObject, listedNames);
+        RETURN_IF_EXCEPTION(scope, { });
+        IdentifierSet set;
+        for (auto& name : names)
+            set.add(name.impl());
+        OptionSet<ImmutablePropertyNames::Part> parts;
+        if (callFrame->argument(2).toBoolean(globalObject))
+            parts.add(ImmutablePropertyNames::Part::NumericKeys);
+        if (callFrame->argument(3).toBoolean(globalObject))
+            parts.add(ImmutablePropertyNames::Part::Prototype);
+        IdentifierSet openStrings;
+        if (JSObject* listedOpenStrings = callFrame->argument(4).getObject()) {
+            parts.add(ImmutablePropertyNames::Part::OtherStrings);
+            Vector<Identifier> strings = identifiersInArrayLike(globalObject, listedOpenStrings);
+            RETURN_IF_EXCEPTION(scope, { });
+            for (auto& string : strings)
+                openStrings.add(string.impl());
+        }
+        if (!object->makePropertiesImmutable(vm, ImmutablePropertyNames::create(WTF::move(set), parts, WTF::move(openStrings)).get()))
+            return throwVMTypeError(globalObject, scope, "makePropertiesImmutable: objects of this class do not support it"_s);
+        return JSValue::encode(object);
+    }
     if (!object->makePropertiesImmutable(vm))
         return throwVMTypeError(globalObject, scope, "makePropertiesImmutable: objects of this class do not support it"_s);
     return JSValue::encode(object);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionTryMarkPristine, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSObject* object = callFrame->argument(0).getObject();
+    if (!object || !object->structure()->tryMarkPristine(vm))
+        return JSValue::encode(jsBoolean(false));
+    object->setStructure(vm, object->structure());
+    return JSValue::encode(jsBoolean(true));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionIsPristine, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSObject* object = callFrame->argument(0).getObject();
+    return JSValue::encode(jsBoolean(object && object->isPristine()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionHasPristineNames, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSObject* object = callFrame->argument(0).getObject();
+    return JSValue::encode(jsBoolean(object && object->structure()->isPristine()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionHasPristineElements, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSObject* object = callFrame->argument(0).getObject();
+    return JSValue::encode(jsBoolean(object && object->structure()->hasPristineElements()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionPutDirectPropertyRun, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = callFrame->argument(0).getObject();
+    JSObject* listedNames = callFrame->argument(1).getObject();
+    JSObject* listedValues = callFrame->argument(2).getObject();
+    if (!object || !listedNames || !listedValues)
+        return throwVMTypeError(globalObject, scope, "putDirectPropertyRun expects an object and two arrays"_s);
+
+    Vector<Identifier> names = identifiersInArrayLike(globalObject, listedNames);
+    RETURN_IF_EXCEPTION(scope, { });
+    MarkedArgumentBuffer values;
+    for (unsigned i = 0; i < names.size(); ++i) {
+        values.append(listedValues->get(globalObject, i));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (values.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return { };
+    }
+    Vector<UniquedStringImpl*, 16> uids(names.size(), [&](size_t index) {
+        return names[index].impl();
+    });
+    const PropertyRun* run = vm.propertyRuns.intern(uids.span());
+    if (!run)
+        return JSValue::encode(jsBoolean(false));
+    return JSValue::encode(jsBoolean(object->tryPutDirectPropertyRun(vm, *run, std::span<const EncodedJSValue> { values.data(), values.size() })));
 }
 
 // Usage: $vm.hasImmutableProperties(value)
@@ -4638,6 +4782,16 @@ JSC_DEFINE_HOST_FUNCTION(functionMarkPromiseAsHandled, (JSGlobalObject*, CallFra
     return JSValue::encode(jsUndefined());
 }
 
+// Returns undefined unless the most recent throw threw the argument.
+JSC_DEFINE_HOST_FUNCTION(functionLastExceptionHasCapturedStack, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    Exception* exception = globalObject->vm().lastException();
+    if (!exception || exception->value() != callFrame->argument(0))
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(!exception->stack().isEmpty()));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionSetUserPreferredLanguages, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -4792,6 +4946,48 @@ JSC_DEFINE_HOST_FUNCTION(functionUseFTLJIT, (JSGlobalObject*, CallFrame*))
     return JSValue::encode(jsBoolean(Options::useFTLJIT()));
 }
 
+// Returns true with ENABLE(RETURN_ADDRESS_SIGNING) on a processor that has pointer authentication.
+// Usage: $vm.functionsSignReturnAddress()
+JSC_DEFINE_HOST_FUNCTION(functionFunctionsSignReturnAddress, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    // Not by signing something: a signature has few bits, and all of them may be zero.
+    constexpr unsigned long hwcapPACA = 1UL << 30;
+    return JSValue::encode(jsBoolean(getauxval(AT_HWCAP) & hwcapPACA));
+#else
+    return JSValue::encode(jsBoolean(false));
+#endif
+}
+
+// Returns true if the return address that the calling function saved in its frame has the signature that belongs there.
+// Only where $vm.functionsSignReturnAddress().
+// Usage: $vm.returnAddressOfCallerIsSigned()
+JSC_DEFINE_HOST_FUNCTION(functionReturnAddressOfCallerIsSigned, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    CallFrame* caller = callFrame->callerFrame();
+    const void* stackPointerAtEntry = reinterpret_cast<const CallerFrameAndPC*>(caller) + 1;
+    return JSValue::encode(jsBoolean(caller->rawReturnPC() == signReturnAddress(caller->returnPCForInspection(), stackPointerAtEntry)));
+#else
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsBoolean(false));
+#endif
+}
+
+// The calling function must not get to return. Only where $vm.functionsSignReturnAddress().
+// Usage: $vm.corruptSignatureOfReturnAddressOfCaller()
+JSC_DEFINE_HOST_FUNCTION(functionCorruptSignatureOfReturnAddressOfCaller, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CallFrame* caller = callFrame->callerFrame();
+    // Bit 54 is part of the signature however many bits of an address the kernel uses. Taking the signature off would do nothing
+    // where all of its bits are zero.
+    caller->setReturnPC(std::bit_cast<void*>(std::bit_cast<uintptr_t>(caller->rawReturnPC()) ^ (1ULL << 54)));
+    return JSValue::encode(jsUndefined());
+}
+
 // Returns true if Gigacage is enabled.
 // Usage: $vm.isGigacageEnabled()
 JSC_DEFINE_HOST_FUNCTION(functionIsGigacageEnabled, (JSGlobalObject*, CallFrame*))
@@ -4862,6 +5058,22 @@ JSC_DEFINE_HOST_FUNCTION(functionIsAtomString, (JSGlobalObject*, CallFrame* call
     const StringImpl* impl = asString(value)->tryGetValueImpl();
     return JSValue::encode(jsBoolean(impl && impl->isAtom()));
 }
+
+#if ENABLE(AOT)
+JSC_DEFINE_HOST_FUNCTION(functionAOTBuiltinMismatches, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& mismatch : AOT::BuiltinTable::singleton().mismatches(globalObject)) {
+        result->push(globalObject, jsString(vm, mismatch));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(functionDumpAndResetPasDebugSpectrum, (JSGlobalObject*, CallFrame*))
 {
@@ -5081,27 +5293,27 @@ JSC_DEFINE_HOST_FUNCTION(functionCachedCallFromCPP, (JSGlobalObject* globalObjec
 
     JSValue callback = callFrame->argument(0);
     auto callData = JSC::getCallData(callback);
-    if (callData.type != CallData::Type::JS)
+    if (!CachedCall::supports(callData))
         return JSValue::encode(jsUndefined());
-    auto* callbackObject = uncheckedDowncast<JSFunction>(callback);
+    auto* callbackObject = asObject(callback);
 
     int32_t count = callFrame->argument(1).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     if (count < 0)
         return JSValue::encode(jsUndefined());
 
-    CachedCall cachedCall(globalObject, callbackObject, callFrame->argumentCount() - 2);
+    auto cachedCall = CachedCall::tryCreate(globalObject, callbackObject, callData, callFrame->argumentCount() - 2);
     RETURN_IF_EXCEPTION(scope, { });
-    cachedCall.clearArguments();
+    cachedCall->clearArguments();
     for (unsigned i = 2; i < callFrame->argumentCount(); ++i)
-        cachedCall.appendArgument(callFrame->argument(i));
-    cachedCall.setThis(jsNull());
+        cachedCall->appendArgument(callFrame->argument(i));
+    cachedCall->setThis(jsNull());
 
-    if (cachedCall.hasOverflowedArguments()) [[unlikely]]
+    if (cachedCall->hasOverflowedArguments()) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
     for (int32_t i = 0; i < count; ++i) {
-        cachedCall.call();
+        cachedCall->call();
         RETURN_IF_EXCEPTION(scope, { });
     }
 
@@ -5128,11 +5340,11 @@ JSC_DEFINE_HOST_FUNCTION(functionWeakBlockCount, (JSGlobalObject* globalObject, 
     return JSValue::encode(jsNumber(globalObject->vm().heap.weakBlockCount()));
 }
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 static bool dollarVMFFIJITIsUnavailable()
 {
-    return !Options::useJIT() || !VM::canUseAssembler();
+    return FFI::codeSource() == FFI::CodeSource::None;
 }
 
 static std::optional<FFI::Type> dollarVMParseFFIType(JSGlobalObject* globalObject, JSValue value)
@@ -5539,7 +5751,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICompileCounts, (JSGlobalObject* globalObject
     return JSValue::encode(counts);
 }
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)
 
 #if USE(BUN_JSC_ADDITIONS)
 namespace BufferAccessorTest {
@@ -5650,10 +5862,10 @@ static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES accessor(JSGlobalObject* globalOb
             return JSValue::encode(jsNumber(purifyNaN(std::bit_cast<double>(swapIfBigEndian(WTF::unalignedLoad<uint64_t>(address))))));
         else if constexpr (kind == Kind::BigInt64) {
             int64_t loaded = static_cast<int64_t>(swapIfBigEndian(WTF::unalignedLoad<uint64_t>(address)));
-            RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, loaded)));
+            RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, loaded)));
         } else {
             uint64_t loaded = swapIfBigEndian(WTF::unalignedLoad<uint64_t>(address));
-            RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, loaded)));
+            RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, loaded)));
         }
     } else {
         if constexpr (isFloat) {
@@ -5944,6 +6156,12 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, allowIfNotFuzz, "indexingMode"_s, functionIndexingMode, 1);
     addFunction(vm, allowIfNotFuzz, "inlineCapacity"_s, functionInlineCapacity, 1);
+    addFunction(vm, allowIfNotFuzz, "unusedInlineStorageIsEmpty"_s, functionUnusedInlineStorageIsEmpty, 1);
+    addFunction(vm, allowIfNotFuzz, "tryMarkPristine"_s, functionTryMarkPristine, 1);
+    addFunction(vm, allowIfNotFuzz, "isPristine"_s, functionIsPristine, 1);
+    addFunction(vm, allowIfNotFuzz, "hasPristineNames"_s, functionHasPristineNames, 1);
+    addFunction(vm, allowIfNotFuzz, "hasPristineElements"_s, functionHasPristineElements, 1);
+    addFunction(vm, allowIfNotFuzz, "putDirectPropertyRun"_s, functionPutDirectPropertyRun, 3);
     addFunction(vm, allowIfNotFuzz, "clearLinkBufferStats"_s, functionClearLinkBufferStats, 0);
     addFunction(vm, allowIfNotFuzz, "linkBufferStats"_s, functionLinkBufferStats, 0);
     addFunction(vm, allowIfNotFuzz, "value"_s, functionValue, 1);
@@ -6058,6 +6276,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "hasOwnLengthProperty"_s, functionHasOwnLengthProperty, 1);
     addFunction(vm, allowIfNotFuzz, "rejectPromiseAsHandled"_s, functionRejectPromiseAsHandled, 1);
     addFunction(vm, allowIfNotFuzz, "markPromiseAsHandled"_s, functionMarkPromiseAsHandled, 1);
+    addFunction(vm, allowIfNotFuzz, "lastExceptionHasCapturedStack"_s, functionLastExceptionHasCapturedStack, 1);
 
     addFunction(vm, allowIfNotFuzz, "setUserPreferredLanguages"_s, functionSetUserPreferredLanguages, 1);
     addFunction(vm, allowIfNotFuzz, "icuVersion"_s, functionICUVersion, 0);
@@ -6075,6 +6294,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "useJIT"_s, functionUseJIT, 0);
     addFunction(vm, alwaysAllow, "useDFGJIT"_s, functionUseDFGJIT, 0);
     addFunction(vm, alwaysAllow, "useFTLJIT"_s, functionUseFTLJIT, 0);
+    addFunction(vm, alwaysAllow, "functionsSignReturnAddress"_s, functionFunctionsSignReturnAddress, 0);
+    addFunction(vm, alwaysAllow, "returnAddressOfCallerIsSigned"_s, functionReturnAddressOfCallerIsSigned, 0);
+    addFunction(vm, allowIfNotFuzz, "corruptSignatureOfReturnAddressOfCaller"_s, functionCorruptSignatureOfReturnAddressOfCaller, 0);
     addFunction(vm, alwaysAllow, "isGigacageEnabled"_s, functionIsGigacageEnabled, 0);
 
     addFunction(vm, allowIfNotFuzz, "toCacheableDictionary"_s, functionToCacheableDictionary, 1);
@@ -6084,6 +6306,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "isDefinitelyAtomString"_s, functionIsDefinitelyAtomString, 1);
     addFunction(vm, allowIfNotFuzz, "isAtomString"_s, functionIsAtomString, 1);
     addFunction(vm, allowIfNotFuzz, "dumpAndResetPasDebugSpectrum"_s, functionDumpAndResetPasDebugSpectrum, 0);
+#if ENABLE(AOT)
+    addFunction(vm, allowIfNotFuzz, "aotBuiltinMismatches"_s, functionAOTBuiltinMismatches, 0);
+#endif
 
     addFunction(vm, alwaysAllow, "monotonicTimeNow"_s, functionMonotonicTimeNow, 0);
     addFunction(vm, alwaysAllow, "wallTimeNow"_s, functionWallTimeNow, 0);
@@ -6125,6 +6350,8 @@ void JSDollarVM::finishCreation(VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "asyncContext"_s, functionAsyncContext, 0);
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
+#endif
+#if ENABLE(FFI)
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);

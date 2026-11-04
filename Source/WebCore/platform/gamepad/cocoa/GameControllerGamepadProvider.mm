@@ -39,20 +39,24 @@
 
 #import "GameControllerSoftLink.h"
 
-#if USE(APPLE_INTERNAL_SDK)
-#import <WebKitAdditions/GameControllerAdditions.mm>
-#else
+SPECIALIZE_OBJC_TYPE_TRAITS(GCController, WebCore::getGCControllerClassSingleton())
+
 namespace WebCore {
 
-static bool shouldExcludeGameController(GCController *)
+static bool LEGACY_NODELETE shouldExcludeGameController(GCController *controller)
 {
-    return false;
-}
-
-}
+#if PLATFORM(VISION) && HAVE(SPATIAL_CONTROLLERS)
+    if ((canLoad_GameController_GCProductCategoryLeftSpatialController() && [controller.productCategory isEqualToString:GCProductCategoryLeftSpatialController])
+        || (canLoad_GameController_GCProductCategoryRightSpatialController() && [controller.productCategory isEqualToString:GCProductCategoryRightSpatialController])) {
+        LOG(Gamepad, "Excluding controller %p", controller);
+        return true;
+    }
+#else
+    UNUSED_PARAM(controller);
 #endif
 
-namespace WebCore {
+    return false;
+}
 
 #if !HAVE(GCCONTROLLER_HID_DEVICE_CHECK)
 
@@ -217,18 +221,18 @@ void GameControllerGamepadProvider::startMonitoringGamepads(GamepadProviderClien
     prewarmGameControllerDevicesIfNecessary();
 
     if (canLoad_GameController_GCControllerDidConnectNotification()) {
-        m_connectObserver = [[NSNotificationCenter defaultCenter] addObserverForName:get_GameController_GCControllerDidConnectNotificationSingleton() object:nil queue:nil usingBlock:^(NSNotification *notification) {
+        lazyInitialize(m_connectObserver, RetainPtr<NSObject> { [[NSNotificationCenter defaultCenter] addObserverForName:get_GameController_GCControllerDidConnectNotificationSingleton() object:nil queue:nil usingBlock:^(NSNotification *notification) {
             RetainPtr<id> object = notification.object;
             LOG(Gamepad, "GameControllerGamepadProvider notified of new GCController %p", object.get());
-            GameControllerGamepadProvider::singleton().controllerDidConnect(object.get(), ConnectionVisibility::Visible);
-        }];
+            GameControllerGamepadProvider::singleton().controllerDidConnect(checked_objc_cast<GCController>(object.get()), ConnectionVisibility::Visible);
+        }] });
     }
 
     if (canLoad_GameController_GCControllerDidDisconnectNotification()) {
         m_disconnectObserver = [[NSNotificationCenter defaultCenter] addObserverForName:get_GameController_GCControllerDidDisconnectNotificationSingleton() object:nil queue:nil usingBlock:^(NSNotification *notification) {
             RetainPtr<id> object = notification.object;
             LOG(Gamepad, "GameControllerGamepadProvider notified of disconnected GCController %p", object.get());
-            GameControllerGamepadProvider::singleton().controllerDidDisconnect(object.get());
+            GameControllerGamepadProvider::singleton().controllerDidDisconnect(checked_objc_cast<GCController>(object.get()));
         }];
     }
 
@@ -236,7 +240,8 @@ void GameControllerGamepadProvider::startMonitoringGamepads(GamepadProviderClien
     if (!controllers || !controllers.count)
         LOG(Gamepad, "GameControllerGamepadProvider has no initial GCControllers attached");
 
-    for (GCController *controller in controllers) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL GCController *controller in controllers) {
         LOG(Gamepad, "GameControllerGamepadProvider has initial GCController %p", controller);
         controllerDidConnect(controller, ConnectionVisibility::Invisible);
     }
@@ -301,7 +306,7 @@ void GameControllerGamepadProvider::playEffect(unsigned gamepadIndex, const Stri
 {
     if (gamepadIndex >= m_gamepadVector.size())
         return completionHandler(false);
-    auto gamepad = m_gamepadVector[gamepadIndex];
+    CheckedPtr gamepad = m_gamepadVector[gamepadIndex];
     if (!gamepad || gamepad->id() != gamepadID)
         return completionHandler(false);
 
@@ -312,7 +317,7 @@ void GameControllerGamepadProvider::stopEffects(unsigned gamepadIndex, const Str
 {
     if (gamepadIndex >= m_gamepadVector.size())
         return completionHandler();
-    auto gamepad = m_gamepadVector[gamepadIndex];
+    CheckedPtr gamepad = m_gamepadVector[gamepadIndex];
     if (!gamepad || gamepad->id() != gamepadID)
         return completionHandler();
 

@@ -92,9 +92,9 @@ Ref<Element> PDFPluginTextAnnotation::createAnnotationElement()
         return element;
 
     // FIXME: Match font weight and style as well?
-    element->setInlineStyleProperty(CSSPropertyColor, serializationForHTML(colorFromCocoaColor([textAnnotation fontColor])));
-    element->setInlineStyleProperty(CSSPropertyFontFamily, [[textAnnotation font] familyName]);
-    element->setInlineStyleProperty(CSSPropertyTextAlign, cssAlignmentValueForNSTextAlignment([textAnnotation alignment]));
+    element->setInlineStyleProperty(CSSPropertyID::Color, serializationForHTML(colorFromCocoaColor([textAnnotation fontColor])));
+    element->setInlineStyleProperty(CSSPropertyID::FontFamily, [[textAnnotation font] familyName]);
+    element->setInlineStyleProperty(CSSPropertyID::TextAlign, cssAlignmentValueForNSTextAlignment([textAnnotation alignment]));
 
     element->setValue([textAnnotation widgetStringValue]);
 
@@ -106,7 +106,7 @@ void PDFPluginTextAnnotation::updateGeometry()
     PDFPluginAnnotation::updateGeometry();
 
     Ref styledElement = downcast<StyledElement>(*element());
-    styledElement->setInlineStyleProperty(CSSPropertyFontSize, protect(annotation()).get().font.pointSize * plugin()->contentScaleFactor(), CSSUnitType::Px);
+    styledElement->setInlineStyleProperty(CSSPropertyID::FontSize, protect(annotation()).get().font.pointSize * plugin()->contentScaleFactor(), CSSUnitType::Px);
 }
 
 void PDFPluginTextAnnotation::commit()

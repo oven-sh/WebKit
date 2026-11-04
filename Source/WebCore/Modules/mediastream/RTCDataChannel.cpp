@@ -72,18 +72,23 @@ Ref<RTCDataChannel> RTCDataChannel::create(ScriptExecutionContext& context, std:
 
 Ref<NetworkSendQueue> RTCDataChannel::createMessageQueue(ScriptExecutionContext& context, RTCDataChannel& channel)
 {
-    return NetworkSendQueue::create(context, [&channel](auto& utf8) {
-        if (!channel.m_handler)
+    return NetworkSendQueue::create(context, [weakChannel = WeakPtr { channel }](auto& utf8) {
+        RefPtr channel = weakChannel;
+        if (!channel || !channel->m_handler)
             return;
-        if (!channel.m_handler->sendStringData(utf8))
-            protect(channel.scriptExecutionContext())->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "Error sending string through RTCDataChannel."_s);
-    }, [&channel](auto span) {
-        if (!channel.m_handler)
+        if (!channel->m_handler->sendStringData(utf8))
+            protect(channel->scriptExecutionContext())->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "Error sending string through RTCDataChannel."_s);
+    }, [weakChannel = WeakPtr { channel }](auto span) {
+        RefPtr channel = weakChannel;
+        if (!channel || !channel->m_handler)
             return;
-        if (!channel.m_handler->sendRawData(span))
-            protect(channel.scriptExecutionContext())->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "Error sending binary data through RTCDataChannel."_s);
-    }, [&channel](ExceptionCode errorCode) {
-        if (RefPtr context = channel.scriptExecutionContext()) {
+        if (!channel->m_handler->sendRawData(span))
+            protect(channel->scriptExecutionContext())->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "Error sending binary data through RTCDataChannel."_s);
+    }, [weakChannel = WeakPtr { channel }](ExceptionCode errorCode) {
+        RefPtr channel = weakChannel;
+        if (!channel)
+            return NetworkSendQueue::Continue::Yes;
+        if (RefPtr context = channel->scriptExecutionContext()) {
             auto code = static_cast<int>(errorCode);
             context->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("Error "_s, code, " in retrieving a blob data to be sent through RTCDataChannel."_s));
         }
@@ -118,13 +123,13 @@ void RTCDataChannel::setBinaryType(BinaryType binaryType)
     m_binaryType = binaryType;
 }
 
-static size_t NODELETE maxSctpSendQueueSize()
+static size_t LEGACY_NODELETE maxSctpSendQueueSize()
 {
     // This mirrors webrtc::DataChannelInterface::MaxSendQueueSize()
     return 16 * 1024 * 1024;
 }
 
-static std::optional<size_t> NODELETE computeNewBufferedAmount(size_t bufferedAmount, size_t dataSize)
+static std::optional<size_t> LEGACY_NODELETE computeNewBufferedAmount(size_t bufferedAmount, size_t dataSize)
 {
     if (!WTF::safeAdd(bufferedAmount, dataSize, bufferedAmount))
         return { };
@@ -302,7 +307,7 @@ void RTCDataChannel::scheduleDispatchEvent(Ref<Event>&& event)
 }
 
 static Lock s_rtcDataChannelLocalMapLock;
-static HashMap<RTCDataChannelLocalIdentifier, std::unique_ptr<RTCDataChannelHandler>>& NODELETE rtcDataChannelLocalMap() WTF_REQUIRES_LOCK(s_rtcDataChannelLocalMapLock)
+static HashMap<RTCDataChannelLocalIdentifier, std::unique_ptr<RTCDataChannelHandler>>& LEGACY_NODELETE rtcDataChannelLocalMap() WTF_REQUIRES_LOCK(s_rtcDataChannelLocalMapLock)
 {
     ASSERT(s_rtcDataChannelLocalMapLock.isHeld());
     static NeverDestroyed<HashMap<RTCDataChannelLocalIdentifier, std::unique_ptr<RTCDataChannelHandler>>> map;

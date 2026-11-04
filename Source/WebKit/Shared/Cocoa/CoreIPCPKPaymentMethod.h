@@ -49,6 +49,7 @@ struct CoreIPCPKPaymentMethodData {
     std::optional<PKPaymentMethodType> type;
     RetainPtr<NSString> displayName;
     RetainPtr<NSString> network;
+    RetainPtr<NSString> issuingRegionCode;
     RetainPtr<PKSecureElementPass> paymentPass;
     RetainPtr<NSString> peerPaymentQuoteIdentifier;
     RetainPtr<CNContact> billingAddress;

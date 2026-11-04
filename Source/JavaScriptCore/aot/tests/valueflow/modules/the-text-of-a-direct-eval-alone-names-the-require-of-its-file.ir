@@ -1,0 +1,194 @@
+# main.cjs: function wrap(fn) { .. return eval("(function (" + names.join(", ") + ") { return fn.apply(this, arguments); })") }   const picked = lose(table[key]); picked(1)
+# A CommonJS file has `require` in the scope of every direct eval in it. Only the text can name it there: nobody has handed it on.
+# So a call of a value that nobody follows, elsewhere in the program, is no call of that `require`
+# RUN: valueflow-solve unseen
+# CHECK: unseen EvaluatesText
+# CHECK-NOT: ModuleRequire
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=anything}}, {key=@"binding.1" declared={type=undefined|null|absent|L3 flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=anything|absent} flags=[IsImmutable]}, {key=@"commonJs.3" declared={type=builtin(ModuleObject) flags=[IsExpected]} flags=[IsRequired]}, {key=@"commonJs.4" declared={type=builtin(ModuleObjectExports) flags=[IsExpected]} flags=[IsRequired]}, {key=@"commonJs.5" declared={type=builtin(ModuleRequire) flags=[IsExpected]} flags=[IsRequired]}, {key=@"commonJs.6" declared={type=builtin(ImportMetaPath) flags=[IsExpected]} flags=[IsRequired]}, {key=@"commonJs.7" declared={type=builtin(ImportMetaDir) flags=[IsExpected]} flags=[IsRequired]}]
+layout L2 kind=Environment module=m0 fields=[{key=@"argumentsBinding.0" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="first" declared={type=undefined|null|f7 flags=[IsExpected]} flags=[IsRequired]}, {key="second" declared={type=undefined|null|f8 flags=[IsExpected]} flags=[IsRequired]}]
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+data d0 root=Array{contents=anything} module=m0
+evalscope e0 mode=Sloppy flags=[IsInFunction, AllowsNewTarget] bindings=[{name="names" kind=Constant operand=1}, {name="fn" kind=MappedArgument depth=1 field=0 operand=0}, {kind=EvalVariables depth=1 operand=3}, {name="arguments" kind=Arguments depth=1 layout=L2 field=0 operand=4}, {name="table" kind=Constant depth=2 layout=L1 field=1 operand=2}, {name="picked" kind=Constant depth=2 layout=L1 field=2 operand=2}, {name="wrap" depth=3 layout=L1 field=0 operand=2}, {name="exports" depth=3 layout=L1 field=4 operand=2}, {name="require" depth=3 layout=L1 field=5 operand=2}, {name="module" depth=3 layout=L1 field=3 operand=2}, {name="__filename" depth=3 layout=L1 field=6 operand=2}, {name="__dirname" depth=3 layout=L1 field=7 operand=2}]
+
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy, IsHiddenInStackTraces] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v4 = ModuleBuiltin builtin=ModuleObject module=m0
+    v5 = String string="/$bunfs/root/main.cjs"
+    v6 = String string="/$bunfs/root"
+    v7 = CallDirect v1, v1, v3, v4, v5, v6 function=f1
+    v8 = Undefined
+    Return v8
+}
+
+function f1 module=m0 flags=[IsSloppy, HasThis] length=5 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Jump -> next b1()
+  b1():
+    v6 = Convert v2 declared={type=builtin(ModuleRequire) flags=[IsExpected]}
+    v7 = Convert v3 declared={type=builtin(ModuleObject) flags=[IsExpected]}
+    v8 = Convert v4 declared={type=builtin(ImportMetaPath) flags=[IsExpected]}
+    v9 = Convert v5 declared={type=builtin(ImportMetaDir) flags=[IsExpected]}
+    v10 = NewObject -, v7, v1, v6, v8, v9 layout=L1 fields=[3, 4, 5, 6, 7]
+    v11 = NewClosure v10 function=f2
+    PutEnvironmentField v10, v11 layout=L1
+    v13 = NewClosure function=f3
+    v14 = Convert v13 declared={type=undefined|null|f7 flags=[IsExpected]}
+    v15 = NewObject layout=L3
+    PropDefine v15, v14 key="first"
+    v17 = NewClosure function=f4
+    v18 = Convert v17 declared={type=undefined|null|f8 flags=[IsExpected]}
+    PropDefine v15, v18 key="second"
+    v20 = FinishObject v15
+    v21 = Convert v20 declared={type=undefined|null|L3 flags=[IsExpected]}
+    PutEnvironmentField v10, v21 layout=L1 field=1
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="lose" [isFreeName]
+    v25 = Builtin builtin=GlobalThis
+    v26 = PropGet v25 key="key" [isFreeName]
+    v27 = ElemGet v21, v26
+    v28 = Call v24, -, v27 calleeName="lose"
+    PutEnvironmentField v10, v28 layout=L1 field=2
+    v30 = Builtin builtin=GlobalThis
+    v31 = PropGet v30 key="print" [isFreeName]
+    v32 = GetEnvironmentField v10 layout=L1
+    v33 = Convert v32 declared={type=undefined|null|f6 flags=[IsExpected]}
+    v34 = NewClosure function=f5
+    v35 = Call v33, -, v34 calleeName="wrap"
+    v36 = Convert v35 declared={type=undefined|null|function flags=[IsExpected]}
+    v37 = Integer integer=1
+    v38 = Integer integer=2
+    v39 = Call v36, -, v37, v38
+    v40 = Integer integer=1
+    v41 = Call v28, -, v40 calleeName="picked"
+    v42 = Call v31, -, v39, v41 calleeName="print"
+    v43 = Undefined
+    Return v43
+}
+
+function f2 name="wrap" module=m0 flags=[IsSloppy, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|f9 flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f6] {
+  b0(v0: env L1, v1: anything, v2: function, v3: anything, v4: int[0, 4294967295], v5: undefined|null|f9, v6: Array):
+    Jump -> next b1()
+  b1():
+    v7 = CreateMappedArguments v2, v4, v6, v5
+    v8 = ToThis v1
+    v9 = NewObject layout=L0
+    v10 = Null
+    SetLiteralPrototype v9, v10
+    v12 = FinishObject v9
+    v13 = NewObject -, v7 layout=L2 fields=[0]
+    v14 = Data data=d0
+    v15 = Convert v14 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v16 = Convert v15 declared={type=undefined|null|Array flags=[IsExpected]}
+    v17 = Integer
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v18)
+  b2(v19):
+    LoopHint
+    v21 = GetMappedArgument v7
+    v22 = PropGet v21 key="length"
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    v24 = Less v19, v23
+    Branch v24 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v25):
+    Jump -> next b4()
+  b4():
+    v26 = PropGet v16 key="push"
+    v27 = Convert v26 declared={type=undefined|null|f10 flags=[IsExpected]}
+    v28 = String string="argument"
+    v29 = Add v28, v25
+    v30 = Call v27, v16, v29 calleeKey="push" calleeName="names.push"
+    Jump -> next b5()
+  b5():
+    v31 = Increment v25
+    v32 = Convert v31 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v32)
+  b6(v33):
+    Jump -> next b7()
+  b7():
+    v34 = ScopeHasBinding v12 key="eval"
+    Branch v34 -> taken b8(), notTaken b9()
+  b8():
+    v35 = Undefined
+    Jump -> next b10(v12, v35)
+  b9():
+    v36 = Undefined
+    Jump -> next b10(v36, v36)
+  b10(v37, v38):
+    v39 = TypeTest v37 testedType=object
+    Branch v39 -> taken b11(| 0), notTaken b12(| 0)
+  b11(v40):
+    v41 = PropGet v40 key="eval"
+    Jump -> next b13(v41)
+  b12(v42):
+    v43 = Builtin builtin=GlobalThis
+    v44 = PropGet v43 key="eval" [isFreeName]
+    v45 = Convert v44 declared={type=builtin(Eval) flags=[IsExpected]}
+    Jump -> next b13(v45)
+  b13(v46):
+    v47 = String string="(function ("
+    v48 = Convert v16 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v49 = PropGet v48 key="join"
+    v50 = Convert v49 declared={type=undefined|null|f11 flags=[IsExpected]}
+    v51 = String string=", "
+    v52 = Call v50, v48, v51 calleeKey="join" calleeName="names.join"
+    v53 = Convert v52 declared={type=undefined|null|string flags=[IsExpected]}
+    v54 = Add v47, v53
+    v55 = String string=") { return fn.apply(this, arguments); })"
+    v56 = Add v54, v55
+    v57 = Builtin builtin=Eval [isNotReadFromHolder]
+    v58 = StrictEq v46, v57
+    Branch v58 -> taken b14(), notTaken b15(| 0)
+  b14():
+    v59 = DirectEval v56, v8, v3, v7, v48, v0, v12, v13 evalScope=e0
+    Jump -> next b16(v59)
+  b15(v60):
+    v61 = Call v60, v38, v56 calleeName="eval"
+    Jump -> next b16(v61)
+  b16(v62):
+    Return v62
+}
+
+function f3 name="first" module=m0 kind=Arrow flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f7] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    Return v3
+}
+
+function f4 name="second" module=m0 kind=Arrow flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f8] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    v2 = Integer integer=2
+    v3 = Add v1, v2
+    Return v3
+}
+
+function f5 module=m0 kind=Arrow flags=[IsSloppy] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f9] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = Add v0, v1
+    Return v2
+}
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

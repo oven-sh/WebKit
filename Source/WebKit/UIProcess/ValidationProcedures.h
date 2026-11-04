@@ -108,7 +108,7 @@ private:
     // Takes the domain as a function rather than a value because deriving one from an origin
     // consults the public suffix list under a global lock, and the guard below usually discards it.
     template<typename DomainFunction>
-    std::optional<IPC::ValidationFailure> checkUntrustedDomain(NOESCAPE DomainFunction&& domain) const
+    std::optional<IPC::ValidationFailure> checkUntrustedDomain(NOESCAPE const DomainFunction& domain) const
     {
         RefPtr process = m_process.get();
         if (!process)
@@ -186,6 +186,28 @@ private:
     WeakPtr<const WebProcessProxy> m_process;
 };
 
+class ProcessCommittedStorageClientOrigin : public IPC::CanValidateUntrusted<ProcessCommittedStorageClientOrigin> {
+public:
+    explicit ProcessCommittedStorageClientOrigin(const WebProcessProxy& process)
+        : m_process(process)
+    {
+    }
+
+    std::optional<IPC::ValidationFailure> checkUntrusted(const WebCore::ClientOrigin& origin) const
+    {
+        RefPtr process = m_process.get();
+        if (!process)
+            return IPC::ValidationFailure::Ignore;
+
+        if (!process->hasCommittedStorageClientOrigin(origin))
+            return IPC::ValidationFailure::Terminate;
+        return std::nullopt;
+    }
+
+private:
+    WeakPtr<const WebProcessProxy> m_process;
+};
+
 } // namespace WebKit
 
 namespace IPC {
@@ -197,5 +219,6 @@ template<> struct IsValidationProcedureFor<WebKit::ProcessSpeaksForDomain, WebCo
 template<> struct IsValidationProcedureFor<WebKit::ProcessParticipatesInPageWithSite, WebCore::Site> : std::true_type { };
 
 template<> struct IsValidationProcedureFor<WebKit::ProcessCommittedClientOrigin, WebCore::ClientOrigin> : std::true_type { };
+template<> struct IsValidationProcedureFor<WebKit::ProcessCommittedStorageClientOrigin, WebCore::ClientOrigin> : std::true_type { };
 
 } // namespace IPC

@@ -73,6 +73,10 @@ final class WKPanGestureRecognizer: NSPanGestureRecognizer {
 
     // swift-format-ignore: AlwaysUseLowerCamelCase
     func wk_velocity(in view: NSView?) -> NSPoint {
+        if let lastMovementTime, timestamp - lastMovementTime >= Self.stalenessWindow {
+            return .zero
+        }
+
         let appKitVelocity = velocity(in: view)
 
         // Prefer AppKit's velocity if available.
@@ -84,10 +88,6 @@ final class WKPanGestureRecognizer: NSPanGestureRecognizer {
         // If we have seen less than two events, we can't work out a velocity at all.
         guard let gestureStartTime, let lastMovementTime, lastMovementTime > gestureStartTime
         else {
-            return .zero
-        }
-
-        guard timestamp - lastMovementTime < Self.stalenessWindow else {
             return .zero
         }
 
@@ -168,6 +168,12 @@ extension WKAppKitGestureController {
         // Guaranteed to be non-nil because `domDoubleClickGestureRecognizer` is always created as an `WKDOMDoubleClickGestureRecognizer`.
         // swift-format-ignore: NeverForceUnwrap
         (domDoubleClickGestureRecognizer as! WKDOMDoubleClickGestureRecognizer).resetClick()
+    }
+
+    func takeCompletedDOMDoubleClick() -> Bool {
+        // Guaranteed to be non-nil because `domDoubleClickGestureRecognizer` is always created as a `WKDOMDoubleClickGestureRecognizer`.
+        // swift-format-ignore: NeverForceUnwrap
+        (domDoubleClickGestureRecognizer as! WKDOMDoubleClickGestureRecognizer).takeCompletedDoubleClick()
     }
 
     @objc(makeImageAnalysisDeferringGestureRecognizerWithName:)

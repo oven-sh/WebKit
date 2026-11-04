@@ -34,14 +34,14 @@ public:
         waitUntilLoadFinished();
     }
 
-    CString evaluateString(const char* javascript)
+    UTF8CString evaluateString(const char* javascript)
     {
         GUniqueOutPtr<GError> error;
         auto* result = runJavaScriptAndWaitUntilFinished(javascript, &error.outPtr());
         g_assert_no_error(error.get());
         g_assert_nonnull(result);
         GUniquePtr<char> string(javascriptResultToCString(result));
-        return string.get();
+        return UTF8CString::unsafeFromUTF8(string.get());
     }
 
     WPEClipboard* clipboard() const
@@ -53,7 +53,7 @@ public:
 
     // The web process writes to the clipboard without waiting for the UI
     // process, so the copy is only visible here once the change lands.
-    CString copyWithKeyStroke(unsigned keyVal, OptionSet<Modifiers> modifiers)
+    UTF8CString copyWithKeyStroke(unsigned keyVal, OptionSet<Modifiers> modifiers)
     {
         auto changeCount = wpe_clipboard_get_change_count(clipboard());
         keyStroke(keyVal, modifiers);
@@ -64,7 +64,7 @@ public:
 
         gsize length;
         GUniquePtr<char> text(wpe_clipboard_read_text(clipboard(), "text/plain;charset=utf-8", &length));
-        return text ? CString(std::span<const char>(text.get(), length)) : CString();
+        return text ? UTF8CString::fromUTF8(std::span { text.get(), length }) : UTF8CString();
     }
 };
 
@@ -79,7 +79,7 @@ static void testEditorCopyKeyBindingNonEditable(EditorKeyBindingTest* test, gcon
     test->loadContentsAndWait(selectedSpanHTML);
 
     auto copied = test->copyWithKeyStroke(KEY(c), { WebViewTest::Modifiers::Control });
-    g_assert_cmpstr(copied.data(), ==, "make Jack a dull");
+    ASSERT_CMP_CSTRING(copied, ==, "make Jack a dull");
 }
 
 static void testEditorCopyKeyBindingEditable(EditorKeyBindingTest* test, gconstpointer)
@@ -92,7 +92,7 @@ static void testEditorCopyKeyBindingEditable(EditorKeyBindingTest* test, gconstp
         "</body></html>");
 
     auto copied = test->copyWithKeyStroke(KEY(c), { WebViewTest::Modifiers::Control });
-    g_assert_cmpstr(copied.data(), ==, "and no play");
+    ASSERT_CMP_CSTRING(copied, ==, "and no play");
 }
 
 static void testEditorSelectAllKeyBindingNonEditable(EditorKeyBindingTest* test, gconstpointer)
@@ -100,11 +100,11 @@ static void testEditorSelectAllKeyBindingNonEditable(EditorKeyBindingTest* test,
     test->loadContentsAndWait(selectedSpanHTML);
 
     auto selection = test->evaluateString("getSelection().toString();");
-    g_assert_cmpstr(selection.data(), ==, "make Jack a dull");
+    ASSERT_CMP_CSTRING(selection, ==, "make Jack a dull");
 
     test->keyStroke(KEY(a), { WebViewTest::Modifiers::Control });
     selection = test->evaluateString("getSelection().toString().trim();");
-    g_assert_cmpstr(selection.data(), ==, "All work and no play make Jack a dull boy.");
+    ASSERT_CMP_CSTRING(selection, ==, "All work and no play make Jack a dull boy.");
 }
 
 // A command the selection does not allow has to fall through to the page, or

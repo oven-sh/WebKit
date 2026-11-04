@@ -1,0 +1,32 @@
+# Where the stub of a call with a list cannot copy the list to the stack, native code makes the call. So a closure that is called or constructed with a list is on the heap, and one that is called with arguments is in the frame
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: only-passes=ComputeEffectSummaries,AllocateInFrames
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[calledWithList]]:{{*}}= NewClosure function=f1
+# CHECK-NOT: storage=Frame
+# CHECK: = CallList [[calledWithList]], -,
+# CHECK: = NewClosure function=f2 {{*}}storage=Frame
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = PropGet v0 key="input" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = NewArray contents=anything
+    AppendSpread v4, v2
+    v6 = CallList v3, -, v4
+    v7 = Call v1, -, v6
+    v8 = NewClosure function=f2
+    v9 = Call v8, -, v2
+    v10 = Call v1, -, v9
+    Return
+}
+function f1 name="calledWithList" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f2 name="calledWithArguments" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

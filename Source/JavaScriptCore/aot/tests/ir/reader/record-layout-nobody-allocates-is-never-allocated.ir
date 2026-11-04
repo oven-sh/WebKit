@@ -1,0 +1,71 @@
+# A record layout stands for an object type of the program. Objects have it only where something creates them: an operation, a constant or a typed parse that names it,
+# or a built-in that creates what its result is converted to. An interface that is only written in types has none, and the reader says so. The families keep its id.
+# A class is made by its constructor, which any code may call, so nothing is said about a class, and nothing about an environment
+# FORM: AsRead
+# RUN: print
+# RUN(TYPED): pass TypeValues VerifyProgram
+# TYPED: outcome: Changed
+# TYPED-NEXT: outcome: Unchanged
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Assertion
+typesite w1 module=m0 position=20 kind=CallResult
+expectedresult x0 type=object layouts=[L3]
+layout L0 name="Shape" fields=[{key="area" declared={type=number}}]
+layout L1 name="circle" fields=[{key="area" declared={type=number}}] supertypes=[L0]
+layout L2 name="settings" fields=[{key="depth" declared={type=number}}]
+layout L3 name="Message" fields=[{key="id" declared={type=number}}]
+layout L4 name="OnlyInTypes" fields=[{key="id" declared={type=number}}]
+layout L5 kind=Instance name="Unused" constructor=f2
+layout L6 kind=Instance name="WithoutConstructor"
+layout L7 kind=Environment fields=[{declared={type=number}}]
+layout L8 name="Reply" fields=[{key="items" declared={type=Array<L9>}}]
+layout L9 name="Item" fields=[{key="id" declared={type=number}}]
+layout L10 name="Answer" fields=[{key="id" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = Data data=d0
+    v3 = Builtin builtin=JSONParse
+    v4 = String string="{}"
+    v5 = Call v3, -, v4 expectedResult=x0
+    Return
+}
+function f1 name="test" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    v2 = TypeTest v1 testedType=L4
+    v3 = Convert v1 declared={type=L4 site=w0} illTypedCause=FromLooseType
+    Return v2
+}
+function f2 name="Unused" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L5 flags=[IsFromCompiler]}]
+# `load() as Reply`: load may be a built-in that answers `any` and creates what the caller asks for. `answer()`, whose own type says Answer, is none
+function f3 name="convertsResults" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0
+    v3 = Convert v2 declared={type=L8 site=w0} illTypedCause=FromLooseType
+    v4 = Call v1
+    v5 = Convert v4 declared={type=L10 site=w1} illTypedCause=UnprovenCallee
+    Return v3
+}
+data d0 root=Object{layout=L2 members=[{key="depth" value=Number{value=1}}]}
+
+# CHECK: layout L0 name="Shape" {{*}}flow={allocation=NeverAllocated
+# CHECK-NEXT: layout L1 name="circle"
+# CHECK-NOT: NeverAllocated
+# CHECK: layout L2 name="settings"
+# CHECK-NOT: NeverAllocated
+# CHECK: layout L3 name="Message"
+# CHECK-NOT: NeverAllocated
+# CHECK: layout L4 name="OnlyInTypes" {{*}}flow={allocation=NeverAllocated
+# CHECK-NEXT: layout L5 kind=Instance name="Unused"
+# CHECK-NOT: NeverAllocated
+# CHECK: layout L6 kind=Instance name="WithoutConstructor"
+# CHECK-NOT: NeverAllocated
+# CHECK: layout L7 kind=Environment
+# CHECK-NOT: NeverAllocated
+# CHECK: layout L8 name="Reply"
+# CHECK-NOT: NeverAllocated
+# CHECK: layout L9 name="Item"
+# CHECK-NOT: NeverAllocated
+# CHECK: layout L10 name="Answer" {{*}}flow={allocation=NeverAllocated
+# CHECK: function f1 name="test" {{*}}parameters=[{type=L0|L1}, {type=anything}]
+# CHECK-NEXT: b0(v0: L0|L1, v1: anything):

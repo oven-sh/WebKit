@@ -1,0 +1,39 @@
+# class WithSetter { set x(v) { .. } }  class Hides extends WithSetter { x() { .. } }  new Hides().x = 1
+# A store stops at the first holder that has the name. A method that is surely there is a writable data property: the store creates a property of the object and the setter above does not run.
+# A default that a store puts on the holder comes at some time: until then the setter above runs, so nothing is known.
+# FORM: Prepared
+# RUN: property-access
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="WithSetter" constructor=f0 flow={baseState=None impossibleMutations=[ChangeIntegrity, ChangePrototype] keys=NeverEnumerated} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="x" kind=Setter function=f1 mutability=Fixed}]}
+layout L1 kind=Instance name="Hides" constructor=f2 flow={baseState=None impossibleMutations=[ChangeIntegrity, ChangePrototype] keys=NeverEnumerated} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="x" function=f3 mutability=Fixed isWritableData=true}] prototypeBase=L0}
+layout L2 kind=Instance name="BelowHides" constructor=f4 flow={baseState=None impossibleMutations=[ChangeIntegrity, ChangePrototype] keys=NeverEnumerated} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true prototypeBase=L1}
+layout L3 kind=Instance name="GetsADefault" constructor=f5 flow={baseState=None impossibleMutations=[ChangeIntegrity, ChangePrototype] keys=NeverEnumerated} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="x" isWritableData=true}] prototypeBase=L0}
+
+function f0 name="WithSetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="x" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+function f2 name="Hides" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f3 name="x" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f4 name="BelowHides" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f5 name="GetsADefault" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+
+function f6 name="the-setter-runs" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK: F6 v2 PropSet {{*}}: form=Call level=Expected receivers=[L0] {{*}}member=(Accessor level=Expected holder=L0 getter=none setter=F1
+function f7 name="the-method-hides-the-setter" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK-NEXT: F7 v2 PropSet {{*}}: form=ByName level=Unknown receivers=[L1] member=(Absent level=Expected proofs=[NoExtraProperties])
+function f8 name="also-from-a-class-below" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK-NEXT: F8 v2 PropSet {{*}}: form=ByName level=Unknown receivers=[L2] member=(Absent level=Expected proofs=[NoExtraProperties])
+function f9 name="a-default-may-not-be-there-yet" parameters=[{type=L3}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK-NEXT: F9 v2 PropSet {{*}}: form=ByName level=Unknown receivers=[L3] cause=PropertyAdded

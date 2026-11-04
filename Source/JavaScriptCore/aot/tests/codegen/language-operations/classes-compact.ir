@@ -1,0 +1,5 @@
+# The definition of a base class and of a derived class, their methods, and both constructors pass the back-end checks in compact code
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end only-passes=EstimateHeat
+# CHECK: image not empty
+# PROGRAM-OF: classes-fast.ir

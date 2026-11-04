@@ -75,7 +75,6 @@
 #include "SearchFieldCancelButtonPart.h"
 #include "SearchFieldPart.h"
 #include "SearchFieldResultsPart.h"
-#include "SelectPopoverElement.h"
 #include "SliderThumbElement.h"
 #include "SliderThumbPart.h"
 #include "SliderTrackPart.h"
@@ -144,7 +143,7 @@ StyleAppearance RenderTheme::adjustAppearanceForElement(Style::ComputedStyle& st
 
     auto appearance = style.usedAppearance();
     if (appearance == StyleAppearance::BaseSelect) {
-        if (isAnyOf<HTMLSelectElement, SelectPopoverElement>(element)) [[likely]] {
+        if (element && element->supportsBaseAppearance(StyleAppearance::BaseSelect)) [[likely]] {
             style.setUsedAppearance(StyleAppearance::Base);
             return StyleAppearance::Base;
         }
@@ -224,7 +223,7 @@ StyleAppearance RenderTheme::adjustAppearanceForElement(Style::ComputedStyle& st
     return appearance;
 }
 
-static bool NODELETE isAppearanceAllowedForAllElements(StyleAppearance appearance)
+static bool LEGACY_NODELETE isAppearanceAllowedForAllElements(StyleAppearance appearance)
 {
 #if ENABLE(APPLE_PAY)
     if (appearance == StyleAppearance::ApplePayButton)
@@ -244,7 +243,7 @@ static bool devolvableWidgetsSupported()
 #endif
 }
 
-static bool NODELETE shouldCheckLegacyStylesForNativeAppearance(const Element* element)
+static bool LEGACY_NODELETE shouldCheckLegacyStylesForNativeAppearance(const Element* element)
 {
 #if PLATFORM(MAC)
 #if ENABLE(FORM_CONTROL_REFRESH)
@@ -313,7 +312,7 @@ void RenderTheme::adjustStyle(Style::ComputedStyle& style, const Style::Computed
         style.setUsedAppearance(appearance);
     }
 
-    if (appearance == StyleAppearance::SearchField && searchFieldShouldAppearAsTextField(style, element->document().settings())) {
+    if (appearance == StyleAppearance::SearchField && searchFieldShouldAppearAsTextField(style, protect(element->document().settings()))) {
         appearance = StyleAppearance::TextField;
         style.setUsedAppearance(appearance);
     }
@@ -402,7 +401,7 @@ StyleAppearance RenderTheme::autoAppearanceForElement(Style::ComputedStyle& styl
 
     Ref element = *elementPtr;
 
-    if (RefPtr input = dynamicDowncast<HTMLInputElement>(element)) {
+    if (auto* input = dynamicDowncast<HTMLInputElement>(element)) {
         if (input->isTextButton())
             return StyleAppearance::Button;
 
@@ -473,7 +472,7 @@ StyleAppearance RenderTheme::autoAppearanceForElement(Style::ComputedStyle& styl
     if (element->isInUserAgentShadowTree()) {
         auto& part = element->userAgentPart();
 
-        if (RefPtr button = dynamicDowncast<DataListButtonElement>(element)) {
+        if (auto* button = dynamicDowncast<DataListButtonElement>(element)) {
             ASSERT(part == UserAgentParts::webkitListButton());
             if (!button->canAdjustStyleForAppearance())
                 return StyleAppearance::None;
@@ -557,7 +556,7 @@ static void updateMeterPartForRenderer(MeterPart& meterPart, const RenderMeter& 
     meterPart.setMaximum(element->max());
 }
 
-static void NODELETE updateProgressBarPartForRenderer(ProgressBarPart& progressBarPart, const RenderProgress& renderProgress)
+static void LEGACY_NODELETE updateProgressBarPartForRenderer(ProgressBarPart& progressBarPart, const RenderProgress& renderProgress)
 {
     progressBarPart.setPosition(renderProgress.position());
     progressBarPart.setAnimationStartTime(renderProgress.animationStartTime().secondsSinceEpoch());
@@ -756,6 +755,16 @@ void RenderTheme::updateControlPartForRenderer(ControlPart& part, const RenderEl
 
 OptionSet<ControlStyle::State> RenderTheme::extractControlStyleStatesForRendererInternal(const RenderElement& renderer) const
 {
+    auto useDarkAppearance = [](const RenderElement& renderer) {
+        if (renderer.useDarkAppearance())
+            return true;
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        auto options = renderer.styleColorOptions(StyleColorOptionsPurpose::Rendering);
+        if (options.contains(StyleColorOptions::UseDarkAppearance))
+            return true;
+#endif
+        return false;
+    };
     OptionSet<ControlStyle::State> states;
     if (isHovered(renderer)) {
         states.add(ControlStyle::State::Hovered);
@@ -783,7 +792,7 @@ OptionSet<ControlStyle::State> RenderTheme::extractControlStyleStatesForRenderer
         states.add(ControlStyle::State::Presenting);
     if (useFormSemanticContext())
         states.add(ControlStyle::State::FormSemanticContext);
-    if (renderer.useDarkAppearance())
+    if (useDarkAppearance(renderer))
         states.add(ControlStyle::State::DarkAppearance);
     if (renderer.writingMode().isInlineFlipped())
         states.add(ControlStyle::State::InlineFlippedWritingMode);
@@ -801,7 +810,7 @@ OptionSet<ControlStyle::State> RenderTheme::extractControlStyleStatesForRenderer
     return states;
 }
 
-static const RenderElement* NODELETE effectiveRendererForAppearance(const RenderObject& renderObject)
+static const RenderElement* LEGACY_NODELETE effectiveRendererForAppearance(const RenderObject& renderObject)
 {
     auto* renderer = dynamicDowncast<RenderElement>(renderObject);
     if (!renderer) {
@@ -839,9 +848,9 @@ ControlStyle RenderTheme::extractControlStyleForRenderer(const RenderElement& re
         extractControlStyleStatesForRendererInternal(*renderer),
         style->usedFontSize(),
         style->usedZoom(),
-        style->usedAccentColor(renderObject.styleColorOptions()),
+        style->usedAccentColor(renderObject.styleColorOptions(StyleColorOptionsPurpose::Rendering)),
         style->visitedDependentColorApplyingColorFilter(),
-        Style::evaluate<FloatBoxExtent>(style->usedBorderWidths().to<Style::LineWidthBox>(), style->usedZoomForLength(), style->deviceScaleFactor())
+        Style::evaluate<FloatBoxExtent>(Style::effectiveBorderWidths(style.get()).to<Style::LineWidthBox>(), style->usedZoomForLength(), style->deviceScaleFactor())
     };
 }
 
@@ -861,9 +870,9 @@ bool RenderTheme::paint(const RenderBox& box, ControlPart& part, const PaintInfo
 
     updateControlPartForRenderer(part, box);
 
-    float deviceScaleFactor = protect(box.document())->deviceScaleFactor();
+    float deviceScaleFactor = box.document().deviceScaleFactor();
     auto zoomedRect = snapRectToDevicePixels(rect, deviceScaleFactor);
-    auto borderShape = BorderShape::shapeForBorderRect(protect(box.style()).get(), LayoutRect(zoomedRect));
+    auto borderShape = BorderShape::shapeForBorderRect(box.usedStyle(), LayoutRect(zoomedRect));
     auto controlStyle = extractControlStyleForRenderer(box);
     auto& context = paintInfo.context();
 
@@ -889,7 +898,7 @@ bool RenderTheme::paint(const RenderBox& box, const PaintInfo& paintInfo, const 
     if (!canPaint(paintInfo, protect(box.settings()), appearance)) [[unlikely]]
         return false;
 
-    float deviceScaleFactor = protect(box.document())->deviceScaleFactor();
+    float deviceScaleFactor = box.document().deviceScaleFactor();
     FloatRect devicePixelSnappedRect = snapRectToDevicePixels(rect, deviceScaleFactor);
 
     switch (appearance) {
@@ -1008,7 +1017,7 @@ void RenderTheme::paintDecorations(const RenderBox& box, const PaintInfo& paintI
     if (paintInfo.context().paintingDisabled())
         return;
 
-    FloatRect devicePixelSnappedRect = snapRectToDevicePixels(rect, protect(box.document())->deviceScaleFactor());
+    FloatRect devicePixelSnappedRect = snapRectToDevicePixels(rect, box.document().deviceScaleFactor());
 
     // Call the appropriate paint method based off the appearance value.
     switch (box.style().usedAppearance()) {
@@ -1244,7 +1253,7 @@ bool RenderTheme::isFocused(const RenderElement& renderer) const
 
     Ref document = delegate->document();
     RefPtr frame = document->frame();
-    return delegate == document->focusedElement() && frame && protect(frame->selection())->isFocusedAndActive();
+    return delegate == document->focusedElement() && frame && frame->selection().isFocusedAndActive();
 }
 
 bool RenderTheme::isPressed(const RenderElement& renderer) const
@@ -1255,7 +1264,7 @@ bool RenderTheme::isPressed(const RenderElement& renderer) const
 
 bool RenderTheme::isSpinUpButtonPartPressed(const RenderElement& renderer) const
 {
-    if (RefPtr spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
+    if (auto* spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
         return spinButton->active() && spinButton->upDownState() == SpinButtonElement::Up;
     return false;
 }
@@ -1269,9 +1278,9 @@ bool RenderTheme::isReadOnlyControl(const RenderElement& renderer) const
 
 bool RenderTheme::isHovered(const RenderElement& renderer) const
 {
-    if (RefPtr spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
+    if (auto* spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
         return spinButton->hovered() && spinButton->upDownState() != SpinButtonElement::Indeterminate;
-    if (RefPtr element = renderer.element())
+    if (auto* element = renderer.element())
         return element->hovered();
     return false;
 }
@@ -1381,7 +1390,7 @@ void RenderTheme::adjustButtonOrCheckboxOrColorWellOrInnerSpinButtonOrRadioStyle
     auto appearance = style.usedAppearance();
     CheckedRef fontCascade = style.fontCascade();
 
-    auto borderBox = controlBorder(appearance, fontCascade.get(), style.usedBorderWidths().to<Style::LineWidthBox>(), style.usedZoom(), element);
+    auto borderBox = controlBorder(appearance, fontCascade.get(), Style::effectiveBorderWidths(style).to<Style::LineWidthBox>(), style.usedZoom(), element);
 
     auto supportsVerticalWritingMode = [](StyleAppearance appearance) {
         return appearance == StyleAppearance::Button
@@ -1397,25 +1406,25 @@ void RenderTheme::adjustButtonOrCheckboxOrColorWellOrInnerSpinButtonOrRadioStyle
     auto zoom = style.usedZoomForLength();
     auto deviceScaleFactor = style.deviceScaleFactor();
 
-    if (Style::evaluate<float>(borderBox.top(), zoom, deviceScaleFactor) != Style::evaluate<int>(style.usedBorderTopWidth(), zoom, deviceScaleFactor)) {
+    if (Style::evaluate<float>(borderBox.top(), zoom, deviceScaleFactor) != Style::evaluate<int>(Style::effectiveBorderWidths(style).top(), zoom, deviceScaleFactor)) {
         if (!borderBox.top().isZero())
             style.setBorderTopWidth(Style::LineWidth { borderBox.top() });
         else
             style.resetBorderTop();
     }
-    if (Style::evaluate<float>(borderBox.right(), zoom, deviceScaleFactor) != Style::evaluate<int>(style.usedBorderRightWidth(), zoom, deviceScaleFactor)) {
+    if (Style::evaluate<float>(borderBox.right(), zoom, deviceScaleFactor) != Style::evaluate<int>(Style::effectiveBorderWidths(style).right(), zoom, deviceScaleFactor)) {
         if (!borderBox.right().isZero())
             style.setBorderRightWidth(Style::LineWidth { borderBox.right() });
         else
             style.resetBorderRight();
     }
-    if (Style::evaluate<float>(borderBox.bottom(), zoom, deviceScaleFactor) != Style::evaluate<int>(style.usedBorderBottomWidth(), zoom, deviceScaleFactor)) {
+    if (Style::evaluate<float>(borderBox.bottom(), zoom, deviceScaleFactor) != Style::evaluate<int>(Style::effectiveBorderWidths(style).bottom(), zoom, deviceScaleFactor)) {
         if (!borderBox.bottom().isZero())
             style.setBorderBottomWidth(Style::LineWidth { borderBox.bottom() });
         else
             style.resetBorderBottom();
     }
-    if (Style::evaluate<float>(borderBox.left(), zoom, deviceScaleFactor) != Style::evaluate<int>(style.usedBorderLeftWidth(), zoom, deviceScaleFactor)) {
+    if (Style::evaluate<float>(borderBox.left(), zoom, deviceScaleFactor) != Style::evaluate<int>(Style::effectiveBorderWidths(style).left(), zoom, deviceScaleFactor)) {
         if (!borderBox.left().isZero())
             style.setBorderLeftWidth(Style::LineWidth { borderBox.left() });
         else
@@ -1663,14 +1672,14 @@ void RenderTheme::paintPlatformResizer(const RenderLayerModelObject& renderer, G
         context.translate(resizerCornerRect.x() + cornerResizerSize.width(), resizerCornerRect.y() + resizerCornerRect.height() - cornerResizerSize.height());
         context.scale(FloatSize(-1.0, 1.0));
         if (resizeCornerImage)
-            context.drawBitmapImage(*resizeCornerImage, FloatRect { FloatPoint { }, cornerResizerSize });
+            resizeCornerImage->draw(context, FloatRect { { }, cornerResizerSize });
         return;
     }
 
     if (!resizeCornerImage)
         return;
     FloatRect imageRect = snapRectToDevicePixels(LayoutRect(resizerCornerRect.maxXMaxYCorner() - cornerResizerSize, cornerResizerSize), document->deviceScaleFactor());
-    context.drawBitmapImage(*resizeCornerImage, imageRect);
+    resizeCornerImage->draw(context, imageRect);
 }
 
 void RenderTheme::paintPlatformResizerFrame(const RenderLayerModelObject&, GraphicsContext& context, const LayoutRect& resizerAbsRect)
@@ -1695,7 +1704,7 @@ void RenderTheme::setColorWellSwatchBackground(HTMLElement& swatch, Color color)
 {
     if (!color.isOpaque())
         color = blendSourceOver(Color::white, color);
-    swatch.setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForHTML(color));
+    swatch.setInlineStyleProperty(CSSPropertyID::BackgroundColor, serializationForHTML(color));
 }
 
 void RenderTheme::adjustSliderThumbStyle(Style::ComputedStyle& style, const Element* element) const
@@ -1760,12 +1769,12 @@ auto RenderTheme::colorCache(OptionSet<StyleColorOptions> options) const -> Colo
 
 static Color defaultLinkColor(bool useDarkAppearance)
 {
-    return useDarkAppearance ? SRGBA<uint8_t> { 158, 158, 255 } : SRGBA<uint8_t> { 0, 0, 238 };
+    return { useDarkAppearance ? SRGBA<uint8_t> { 158, 158, 255 } : SRGBA<uint8_t> { 0, 0, 238 }, Color::Flags::Semantic };
 }
 
 static Color defaultVisitedLinkColor(bool useDarkAppearance)
 {
-    return useDarkAppearance ? SRGBA<uint8_t> { 208, 173, 240 } : SRGBA<uint8_t> { 85, 26, 139 };
+    return { useDarkAppearance ? SRGBA<uint8_t> { 208, 173, 240 } : SRGBA<uint8_t> { 85, 26, 139 }, Color::Flags::Semantic };
 }
 
 Color RenderTheme::systemColor(CSSValueID cssValueId, OptionSet<StyleColorOptions> options) const
@@ -1776,106 +1785,106 @@ Color RenderTheme::systemColor(CSSValueID cssValueId, OptionSet<StyleColorOption
     switch (cssValueId) {
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-canvas
     // Background of application content or documents.
-    case CSSValueCanvas:
+    case CSSValueID::Canvas:
         return Color::white;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-canvastext
     // Text in application content or documents.
-    case CSSValueCanvastext:
+    case CSSValueID::Canvastext:
         return Color::black;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-linktext
     // Text in non-active, non-visited links. For light backgrounds, traditionally blue.
-    case CSSValueLinktext:
+    case CSSValueID::Linktext:
         return defaultLinkColor(useDarkAppearance);
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-visitedtext
     // Text in visited links. For light backgrounds, traditionally purple.
-    case CSSValueVisitedtext:
+    case CSSValueID::Visitedtext:
         return defaultVisitedLinkColor(useDarkAppearance);
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-activetext
     // Text in active links. For light backgrounds, traditionally red.
-    case CSSValueActivetext:
-    case CSSValueWebkitActivelink: // Non-standard addition.
-        return useDarkAppearance ? SRGBA<uint8_t> { 255, 158, 158 } : Color::red;
+    case CSSValueID::Activetext:
+    case CSSValueID::WebkitActivelink: // Non-standard addition.
+        return { useDarkAppearance ? SRGBA<uint8_t> { 255, 158, 158 } : Color::red, Color::Flags::Semantic };
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-buttonface
     // The face background color for push buttons.
-    case CSSValueButtonface:
+    case CSSValueID::Buttonface:
         return Color::lightGray;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-buttontext
     // Text on push buttons.
-    case CSSValueButtontext:
+    case CSSValueID::Buttontext:
         return Color::black;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-buttonborder
     // The base border color for push buttons.
-    case CSSValueButtonborder:
+    case CSSValueID::Buttonborder:
         return Color::white;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-field
     // Background of input fields.
-    case CSSValueField:
+    case CSSValueID::Field:
         return Color::white;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-fieldtext
     // Text in input fields.
-    case CSSValueFieldtext:
+    case CSSValueID::Fieldtext:
         return Color::black;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-highlight
     // Background of selected text, for example from ::selection.
-    case CSSValueHighlight:
+    case CSSValueID::Highlight:
         return SRGBA<uint8_t> { 181, 213, 255 };
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-highlighttext
     // Text of selected text.
-    case CSSValueHighlighttext:
+    case CSSValueID::Highlighttext:
         return Color::black;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-selecteditem
     // Background of selected items, for example a selected checkbox.
-    case CSSValueSelecteditem:
+    case CSSValueID::Selecteditem:
         return Color::lightGray;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-selecteditemtext
     // Text of selected items.
-    case CSSValueSelecteditemtext:
+    case CSSValueID::Selecteditemtext:
         return Color::black;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-mark
     // Background of text that has been specially marked (such as by the HTML mark element).
-    case CSSValueMark:
+    case CSSValueID::Mark:
         return Color::yellow;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-marktext
     // Text that has been specially marked (such as by the HTML mark element).
-    case CSSValueMarktext:
+    case CSSValueID::Marktext:
         return Color::black;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-graytext
     // Disabled text. (Often, but not necessarily, gray.)
-    case CSSValueGraytext:
+    case CSSValueID::Graytext:
         return Color::darkGray;
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-accentcolor
     // Background of accented user interface controls.
-    case CSSValueAccentcolor:
+    case CSSValueID::Accentcolor:
         return SRGBA<uint8_t> { 0, 122, 255 };
 
     // https://drafts.csswg.org/css-color-4/#valdef-system-color-accentcolortext
     // Text of accented user interface controls.
-    case CSSValueAccentcolortext:
+    case CSSValueID::Accentcolortext:
         return Color::black;
 
     // Non-standard addition.
-    case CSSValueActivebuttontext:
+    case CSSValueID::Activebuttontext:
         return Color::black;
 
     // Non-standard addition.
-    case CSSValueWebkitLink: {
+    case CSSValueID::WebkitLink: {
         if (forVisitedLink)
             return defaultVisitedLinkColor(useDarkAppearance);
         return defaultLinkColor(useDarkAppearance);
@@ -1886,129 +1895,133 @@ Color RenderTheme::systemColor(CSSValueID cssValueId, OptionSet<StyleColorOption
 
     // https://drafts.csswg.org/css-color-4/#activeborder
     // DEPRECATED: Active window border.
-    case CSSValueActiveborder:
-        return systemColor(CSSValueButtonborder, options);
+    case CSSValueID::Activeborder:
+        return systemColor(CSSValueID::Buttonborder, options);
 
     // https://drafts.csswg.org/css-color-4/#activecaption
     // DEPRECATED: Active window caption.
-    case CSSValueActivecaption:
-        return systemColor(CSSValueCanvastext, options);
+    case CSSValueID::Activecaption:
+#if PLATFORM(COCOA)
+        if (!linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::DeprecatedSystemColorsUseCSSColor4Mappings))
+            return systemColor(CSSValueID::Canvastext, options);
+#endif
+        return systemColor(CSSValueID::Canvas, options);
 
     // https://drafts.csswg.org/css-color-4/#appworkspace
     // DEPRECATED: Background color of multiple document interface.
-    case CSSValueAppworkspace:
-        return systemColor(CSSValueCanvas, options);
+    case CSSValueID::Appworkspace:
+        return systemColor(CSSValueID::Canvas, options);
 
     // https://drafts.csswg.org/css-color-4/#background
     // DEPRECATED: Desktop background.
-    case CSSValueBackground:
-        return systemColor(CSSValueCanvas, options);
+    case CSSValueID::Background:
+        return systemColor(CSSValueID::Canvas, options);
 
     // https://drafts.csswg.org/css-color-4/#buttonhighlight
     // DEPRECATED: The color of the border facing the light source for 3-D elements that
     // appear 3-D due to one layer of surrounding border.
-    case CSSValueButtonhighlight:
-        return systemColor(CSSValueButtonface, options);
+    case CSSValueID::Buttonhighlight:
+        return systemColor(CSSValueID::Buttonface, options);
 
     // https://drafts.csswg.org/css-color-4/#buttonshadow
     // DEPRECATED: The color of the border away from the light source for 3-D elements that
     // appear 3-D due to one layer of surrounding border.
-    case CSSValueButtonshadow:
-        return systemColor(CSSValueButtonface, options);
+    case CSSValueID::Buttonshadow:
+        return systemColor(CSSValueID::Buttonface, options);
 
     // https://drafts.csswg.org/css-color-4/#captiontext
     // DEPRECATED: Text in caption, size box, and scrollbar arrow box.
-    case CSSValueCaptiontext:
-        return systemColor(CSSValueCanvastext, options);
+    case CSSValueID::Captiontext:
+        return systemColor(CSSValueID::Canvastext, options);
 
     // https://drafts.csswg.org/css-color-4/#inactiveborder
     // DEPRECATED: Inactive window border.
-    case CSSValueInactiveborder:
-        return systemColor(CSSValueButtonborder, options);
+    case CSSValueID::Inactiveborder:
+        return systemColor(CSSValueID::Buttonborder, options);
 
     // https://drafts.csswg.org/css-color-4/#inactivecaption
     // DEPRECATED: Inactive window caption.
-    case CSSValueInactivecaption:
-        return systemColor(CSSValueCanvas, options);
+    case CSSValueID::Inactivecaption:
+        return systemColor(CSSValueID::Canvas, options);
 
     // https://drafts.csswg.org/css-color-4/#inactivecaptiontext
     // DEPRECATED: Color of text in an inactive caption.
-    case CSSValueInactivecaptiontext:
-        return systemColor(CSSValueGraytext, options);
+    case CSSValueID::Inactivecaptiontext:
+        return systemColor(CSSValueID::Graytext, options);
 
     // https://drafts.csswg.org/css-color-4/#infobackground
     // DEPRECATED: Background color for tooltip controls.
-    case CSSValueInfobackground:
-        return systemColor(CSSValueCanvas, options);
+    case CSSValueID::Infobackground:
+        return systemColor(CSSValueID::Canvas, options);
 
     // https://drafts.csswg.org/css-color-4/#infotext
     // DEPRECATED: Text color for tooltip controls.
-    case CSSValueInfotext:
-        return systemColor(CSSValueCanvastext, options);
+    case CSSValueID::Infotext:
+        return systemColor(CSSValueID::Canvastext, options);
 
     // https://drafts.csswg.org/css-color-4/#menu
     // DEPRECATED: Menu background.
-    case CSSValueMenu:
-        return systemColor(CSSValueCanvas, options);
+    case CSSValueID::Menu:
+        return systemColor(CSSValueID::Canvas, options);
 
     // https://drafts.csswg.org/css-color-4/#menutext
     // DEPRECATED: Text in menus.
-    case CSSValueMenutext:
-        return systemColor(CSSValueCanvastext, options);
+    case CSSValueID::Menutext:
+        return systemColor(CSSValueID::Canvastext, options);
 
     // https://drafts.csswg.org/css-color-4/#scrollbar
     // DEPRECATED: Scroll bar gray area.
-    case CSSValueScrollbar:
-        return systemColor(CSSValueCanvas, options);
+    case CSSValueID::Scrollbar:
+        return systemColor(CSSValueID::Canvas, options);
 
     // https://drafts.csswg.org/css-color-4/#threeddarkshadow
     // DEPRECATED: The color of the darker (generally outer) of the two borders away from
     // thelight source for 3-D elements that appear 3-D due to two concentric layers of
     // surrounding border.
-    case CSSValueThreeddarkshadow:
-        return systemColor(CSSValueButtonborder, options);
+    case CSSValueID::Threeddarkshadow:
+        return systemColor(CSSValueID::Buttonborder, options);
 
     // https://drafts.csswg.org/css-color-4/#threedface
     // DEPRECATED: The face background color for 3-D elements that appear 3-D due to two
     // concentric layers of surrounding border
-    case CSSValueThreedface:
-        return systemColor(CSSValueButtonface, options);
+    case CSSValueID::Threedface:
+        return systemColor(CSSValueID::Buttonface, options);
 
     // https://drafts.csswg.org/css-color-4/#threedhighlight
     // DEPRECATED: The color of the lighter (generally outer) of the two borders facing
     // the light source for 3-D elements that appear 3-D due to two concentric layers of
     // surrounding border.
-    case CSSValueThreedhighlight:
-        return systemColor(CSSValueButtonborder, options);
+    case CSSValueID::Threedhighlight:
+        return systemColor(CSSValueID::Buttonborder, options);
 
     // https://drafts.csswg.org/css-color-4/#threedlightshadow
     // DEPRECATED: The color of the darker (generally inner) of the two borders facing
     // the light source for 3-D elements that appear 3-D due to two concentric layers of
     // surrounding border
-    case CSSValueThreedlightshadow:
-        return systemColor(CSSValueButtonborder, options);
+    case CSSValueID::Threedlightshadow:
+        return systemColor(CSSValueID::Buttonborder, options);
 
     // https://drafts.csswg.org/css-color-4/#threedshadow
     // DEPRECATED: The color of the lighter (generally inner) of the two borders away
     // from the light source for 3-D elements that appear 3-D due to two concentric layers
     // of surrounding border.
-    case CSSValueThreedshadow:
-        return systemColor(CSSValueButtonborder, options);
+    case CSSValueID::Threedshadow:
+        return systemColor(CSSValueID::Buttonborder, options);
 
     // https://drafts.csswg.org/css-color-4/#window
     // DEPRECATED: Window background.
-    case CSSValueWindow:
-        return systemColor(CSSValueCanvas, options);
+    case CSSValueID::Window:
+        return systemColor(CSSValueID::Canvas, options);
 
     // https://drafts.csswg.org/css-color-4/#windowframe
     // DEPRECATED: Window frame.
-    case CSSValueWindowframe:
-        return systemColor(CSSValueButtonborder, options);
+    case CSSValueID::Windowframe:
+        return systemColor(CSSValueID::Buttonborder, options);
 
     // https://drafts.csswg.org/css-color-4/#windowtext
     // DEPRECATED: Text in windows.
-    case CSSValueWindowtext:
-        return systemColor(CSSValueCanvastext, options);
+    case CSSValueID::Windowtext:
+        return systemColor(CSSValueID::Canvastext, options);
 
     default:
         return { };
@@ -2059,7 +2072,7 @@ Color RenderTheme::defaultButtonTextColor(OptionSet<StyleColorOptions> options) 
 
 Color RenderTheme::platformDefaultButtonTextColor(OptionSet<StyleColorOptions> options) const
 {
-    return systemColor(CSSValueActivebuttontext, options);
+    return systemColor(CSSValueID::Activebuttontext, options);
 }
 
 #if ENABLE(CSS_TAP_HIGHLIGHT_COLOR)
@@ -2115,7 +2128,7 @@ Color RenderTheme::platformDictationAlternativesMarkerColor(OptionSet<StyleColor
 
 Color RenderTheme::autocorrectionReplacementMarkerColor(const RenderText& renderer) const
 {
-    auto options = renderer.styleColorOptions();
+    auto options = renderer.styleColorOptions(StyleColorOptionsPurpose::Rendering);
     auto& cache = colorCache(options);
     if (!cache.autocorrectionReplacementMarkerColor.isValid())
         cache.autocorrectionReplacementMarkerColor = platformAutocorrectionReplacementMarkerColor(options);
@@ -2142,7 +2155,7 @@ Color RenderTheme::platformGrammarMarkerColor(OptionSet<StyleColorOptions>) cons
 
 Color RenderTheme::documentMarkerLineColor(const RenderText& renderer, DocumentMarkerLineStyleMode mode) const
 {
-    auto options = renderer.styleColorOptions();
+    auto options = renderer.styleColorOptions(StyleColorOptionsPurpose::Rendering);
 
     switch (mode) {
     case DocumentMarkerLineStyleMode::Spelling:
@@ -2192,7 +2205,7 @@ String RenderTheme::fileListNameForWidth(const FileList* fileList, const FontCas
 }
 
 #if USE(SYSTEM_PREVIEW)
-void RenderTheme::paintSystemPreviewBadge(Image&, const PaintInfo& paintInfo, const FloatRect& rect)
+void RenderTheme::paintSystemPreviewBadge(RefPtr<NativeImage>&&, const PaintInfo& paintInfo, const FloatRect& rect)
 {
     paintSystemPreviewBadge(paintInfo, rect);
 }

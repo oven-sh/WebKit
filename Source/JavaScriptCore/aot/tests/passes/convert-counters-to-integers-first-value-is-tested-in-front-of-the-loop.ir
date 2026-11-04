@@ -1,0 +1,71 @@
+# `for (let i = values.length; i-- > 0;)`: the head of the loop asks the counter for an int32 in every turn, and what a turn hands on passes by its type. Only the first value can fail: it is asked once, in front of the loop, polls as the head did, and goes where the head would have sent it.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ConvertCountersToIntegers
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="everyTurnHandsOnAnInt32" parameters=[{type=int[0, 4294967295]}] results=[{type=number}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v0)
+  b1(v2, v3):
+    LoopHint
+    v5 = TypeTest v3 testedType=i32
+    Branch v5 -> taken b2(| 0), notTaken b5(v2, v3)
+  b2(v6):
+    v7 = Greater v6, v1
+    Branch v7 -> taken b3(| 0), notTaken b4()
+  b3(v8):
+    v9 = Decrement v8
+    v10 = BitXor v2, v9
+    Jump -> next b1(v10, v9)
+  b4():
+    Return v2
+  b5(v11, v12) frequency=Unlikely:
+    v13 = Greater v12, v1
+    Branch v13 -> taken b6(| 0), notTaken b7()
+  b6(v14) frequency=Unlikely:
+    v15 = Decrement v14
+    v16 = BitXor v11, v15
+    LoopHint
+    Jump -> next b5(v16, v15)
+  b7() frequency=Unlikely:
+    Return v11
+# The counter is an int32 by what is handed to it, so the head's own test is proven.
+# CHECK: b1(v2: int[0, 2147483647], v3: int[0, 2147483647]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v5: true = TypeTest v3 testedType=i32
+# The first value is asked in front of the loop. What fails polls and goes on where the head sent it.
+# CHECK: [[test]]: boolean = TypeTest v0 testedType=i32
+# CHECK-NEXT: Branch [[test]] -> taken [[passed]](| 0), notTaken [[failed]](| 0)
+# CHECK-NEXT: [[passed]]([[first]]: int[0, 2147483647]):
+# CHECK-NEXT: Jump -> next b1(v1, [[first]])
+# CHECK-NEXT: [[failed]]({{*}}) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b5(v1, v0)
+}
+
+function f1 name="aTurnMayHandOnWhatFails" parameters=[{type=int[0, 4294967295]}] results=[{type=number}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v0)
+  b1(v2, v3):
+    LoopHint
+    v5 = TypeTest v3 testedType=i32
+    Branch v5 -> taken b2(| 0), notTaken b5(v2, v3)
+  b2(v6):
+    v7 = Integer integer=100
+    v8 = Less v6, v7
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    v10 = Add v9, v0
+    v11 = BitXor v2, v9
+    Jump -> next b1(v11, v10)
+  b4():
+    Return v2
+  b5(v12, v13) frequency=Unlikely:
+    v14 = Add v12, v13
+    Return v14
+# CHECK: b1(v2: {{*}}, v3: {{*}}):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: TypeTest v3 testedType=i32
+}

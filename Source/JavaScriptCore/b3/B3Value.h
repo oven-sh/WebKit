@@ -35,6 +35,7 @@
 #include "B3SparseCollection.h"
 #include "B3Type.h"
 #include "B3ValueKey.h"
+#include "B3Arena.h"
 #include "B3Width.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/IteratorRange.h>
@@ -171,7 +172,7 @@ public:
     //
     // You're guaranteed that bottom is zero.
     template<typename BottomProvider>
-    void replaceWithBottom(const BottomProvider&);
+    void replaceWithBottom(NOESCAPE const BottomProvider&);
     
     void replaceWithBottom(InsertionSet&, size_t index);
 
@@ -314,13 +315,13 @@ public:
 
     // Booleans in B3 are Const32(0) or Const32(1). So this is true if the type is Int32 and the only
     // possible return values are 0 or 1. It's OK for this method to conservatively return false.
-    bool NODELETE returnsBool() const;
+    bool LEGACY_NODELETE returnsBool() const;
 
     bool isNegativeZero() const;
 
     bool isRounded() const;
 
-    TriState NODELETE asTriState() const;
+    TriState LEGACY_NODELETE asTriState() const;
     bool isLikeZero() const { return asTriState() == TriState::False; }
     bool isLikeNonZero() const { return asTriState() == TriState::True; }
 
@@ -336,17 +337,17 @@ public:
     // have a non-empty ValueKey. This happens for example with Check operations.
     ValueKey key() const;
     
-    Value* NODELETE foldIdentity() const;
+    Value* LEGACY_NODELETE foldIdentity() const;
 
     // Makes sure that none of the children are Identity's. If a child points to Identity, this will
     // repoint it at the Identity's child. For simplicity, this will follow arbitrarily long chains
     // of Identity's.
-    bool NODELETE performSubstitution();
+    bool LEGACY_NODELETE performSubstitution();
     
     // Free values are those whose presence is guaranteed not to hurt code. We consider constants,
     // Identities, and Nops to be free. Constants are free because we hoist them to an optimal place.
     // Identities and Nops are free because we remove them.
-    bool NODELETE isFree() const;
+    bool LEGACY_NODELETE isFree() const;
 
     // Walk the ancestors of this value (i.e. the graph of things it transitively uses). This
     // either walks phis or not, depending on whether PhiChildren is null. Your callback gets
@@ -359,12 +360,12 @@ public:
         Stop
     };
     template<typename Functor>
-    void walk(const Functor& functor, PhiChildren* = nullptr);
+    void walk(NOESCAPE const Functor&, PhiChildren* = nullptr);
 
 protected:
     Effects effectsSlow() const;
 
-    Value* cloneImpl() const;
+    Value* cloneImpl(Arena*) const;
 
     void replaceWith(Kind, Type, BasicBlock*);
     void replaceWith(Kind, Type, BasicBlock*, Value*);
@@ -419,6 +420,7 @@ protected:
         case Fence:
         case SlotBase:
         case Get:
+        case Relocatable:
             return 0;
         case Return:
         case Identity:
@@ -426,6 +428,7 @@ protected:
         case Neg:
         case PurifyNaN:
         case Clz:
+        case PopCount:
         case Abs:
         case Ceil:
         case Floor:
@@ -584,7 +587,7 @@ protected:
         case VectorRelaxedNMAdd:
         case VectorRelaxedLaneSelect:
         case MemoryFill:
-        case MemoryCopy:
+        case MemoryMove:
         case VectorRelaxedDotI8x16I7x16Add:
             return 3 * sizeof(Value*);
         case WasmArrayNew:
@@ -607,28 +610,33 @@ protected:
     }
 
 private:
-    static char* allocateSpace(Opcode opcode, size_t size)
+    static char* allocateSpace(Arena* arena, Opcode opcode, size_t size, size_t alignment)
     {
         size_t adjacencyListSpace = Value::adjacencyListSpace(opcode);
         // We must allocate enough space that replaceWithIdentity can work without buffer overflow.
         size_t allocIdentitySize = sizeof(Value) + sizeof(Value*);
         size_t allocSize = std::max(size + adjacencyListSpace, allocIdentitySize);
-        return static_cast<char*>(SequesteredArenaMalloc::malloc(allocSize));
+        if (!arena) [[unlikely]]
+            return static_cast<char*>(SequesteredArenaMalloc::malloc(allocSize));
+        return static_cast<char*>(arena->allocate(allocSize, alignment));
     }
 
 protected:
     template<typename ValueType, typename... Arguments>
-    static ValueType* allocate(Arguments... arguments)
+    static ValueType* allocateIn(Arena* arena, Arguments... arguments)
     {
-        char* alloc = allocateSpace(ValueType::opcodeFromConstructor(arguments...), sizeof(ValueType));
-        return new (alloc) ValueType(arguments...);
+        char* alloc = allocateSpace(arena, ValueType::opcodeFromConstructor(arguments...), sizeof(ValueType), alignof(ValueType));
+        ValueType* result = new (alloc) ValueType(arguments...);
+        result->m_isInArena = !!arena;
+        return result;
     }
     template<typename ValueType>
-    static ValueType* allocate(const ValueType& valueToClone)
+    static ValueType* allocateCloneIn(Arena* arena, const ValueType& valueToClone)
     {
-        char* alloc = allocateSpace(valueToClone.opcode(), sizeof(ValueType));
+        char* alloc = allocateSpace(arena, valueToClone.opcode(), sizeof(ValueType), alignof(ValueType));
         ValueType* result = new (alloc) ValueType(valueToClone);
         result->buildAdjacencyList(sizeof(ValueType), valueToClone);
+        result->m_isInArena = !!arena;
         return result;
     }
 
@@ -643,6 +651,7 @@ protected:
 
     friend class Procedure;
     friend class SparseCollection<Value>;
+    friend struct ValueDestroyer;
 
 private:
     template<typename... Arguments>
@@ -707,6 +716,7 @@ private:
         case Neg:
         case PurifyNaN:
         case Clz:
+        case PopCount:
         case Abs:
         case Ceil:
         case Floor:
@@ -840,7 +850,7 @@ private:
         case VectorRelaxedNMAdd:
         case VectorRelaxedLaneSelect:
         case VectorRelaxedDotI8x16I7x16Add:
-        case MemoryCopy:
+        case MemoryMove:
         case MemoryFill:
             if (numArgs != 3) [[unlikely]]
                 badKind(kind, numArgs);
@@ -927,7 +937,7 @@ protected:
 private:
     friend class CheckValue; // CheckValue::convertToAdd() modifies m_kind.
 
-    static Type NODELETE typeFor(Kind, Value* firstChild, Value* secondChild = nullptr);
+    static Type LEGACY_NODELETE typeFor(Kind, Value* firstChild, Value* secondChild = nullptr);
 
 protected:
     unsigned m_index { UINT_MAX };
@@ -937,6 +947,7 @@ private:
     Type m_type;
 protected:
     NumChildren m_numChildren;
+    bool m_isInArena { false };
 private:
     Origin m_origin;
 
@@ -960,6 +971,14 @@ public:
 
     BasicBlock* owner { nullptr }; // computed by Procedure::resetValueOwners().
 };
+
+inline void ValueDestroyer::operator()(Value* value) const
+{
+    bool isInArena = value->m_isInArena;
+    value->~Value();
+    if (!isInArena)
+        SequesteredArenaMalloc::free(value);
+}
 
 class DeepValueDump {
 public:

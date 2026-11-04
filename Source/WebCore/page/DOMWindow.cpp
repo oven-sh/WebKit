@@ -33,6 +33,7 @@
 #include "CookieStore.h"
 #include "Crypto.h"
 #include "CustomElementRegistry.h"
+#include "DOMRect.h"
 #include "DocumentSecurityOrigin.h"
 #include "DocumentView.h"
 #include "ExceptionOr.h"
@@ -59,6 +60,7 @@
 #include "SecurityOrigin.h"
 #include "Site.h"
 #include "StyleMedia.h"
+#include "Viewport.h"
 #include "VisualViewport.h"
 #include "WebCoreOpaqueRoot.h"
 #include "WebKitPoint.h"
@@ -100,7 +102,7 @@ ExceptionOr<RefPtr<SecurityOrigin>> DOMWindow::createTargetOriginForPostMessage(
 Location& DOMWindow::location()
 {
     if (!m_location)
-        m_location = Location::create(*this);
+        lazyInitialize(m_location, Location::create(*this));
     return *m_location;
 }
 
@@ -473,6 +475,14 @@ ExceptionOr<StyleMedia&> DOMWindow::styleMedia()
     return localThis->styleMedia();
 }
 
+ExceptionOr<Viewport&> DOMWindow::viewport()
+{
+    RefPtr localThis = dynamicDowncast<LocalDOMWindow>(*this);
+    if (!localThis)
+        return Exception { ExceptionCode::SecurityError };
+    return localThis->viewport();
+}
+
 ExceptionOr<VisualViewport&> DOMWindow::visualViewport()
 {
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
@@ -678,7 +688,7 @@ ExceptionOr<bool> DOMWindow::find(const String& string, bool caseSensitive, bool
     return localThis->find(string, caseSensitive, backwards, wrap, wholeWord, searchInFrames, showDialog);
 }
 
-ExceptionOr<int> DOMWindow::requestAnimationFrame(Ref<RequestAnimationFrameCallback>&& callback)
+ExceptionOr<unsigned> DOMWindow::requestAnimationFrame(Ref<RequestAnimationFrameCallback>&& callback)
 {
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
@@ -686,7 +696,7 @@ ExceptionOr<int> DOMWindow::requestAnimationFrame(Ref<RequestAnimationFrameCallb
     return localThis->requestAnimationFrame(WTF::move(callback));
 }
 
-ExceptionOr<int> DOMWindow::webkitRequestAnimationFrame(Ref<RequestAnimationFrameCallback>&& callback)
+ExceptionOr<unsigned> DOMWindow::webkitRequestAnimationFrame(Ref<RequestAnimationFrameCallback>&& callback)
 {
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
@@ -694,7 +704,7 @@ ExceptionOr<int> DOMWindow::webkitRequestAnimationFrame(Ref<RequestAnimationFram
     return localThis->webkitRequestAnimationFrame(WTF::move(callback));
 }
 
-ExceptionOr<void> DOMWindow::cancelAnimationFrame(int id)
+ExceptionOr<void> DOMWindow::cancelAnimationFrame(unsigned id)
 {
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
@@ -703,7 +713,7 @@ ExceptionOr<void> DOMWindow::cancelAnimationFrame(int id)
     return { };
 }
 
-ExceptionOr<int> DOMWindow::requestIdleCallback(Ref<IdleRequestCallback>&& callback, const IdleRequestOptions& options)
+ExceptionOr<unsigned> DOMWindow::requestIdleCallback(Ref<IdleRequestCallback>&& callback, const IdleRequestOptions& options)
 {
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
@@ -711,7 +721,7 @@ ExceptionOr<int> DOMWindow::requestIdleCallback(Ref<IdleRequestCallback>&& callb
     return localThis->requestIdleCallback(WTF::move(callback), options);
 }
 
-ExceptionOr<void> DOMWindow::cancelIdleCallback(int id)
+ExceptionOr<void> DOMWindow::cancelIdleCallback(unsigned id)
 {
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
@@ -776,6 +786,14 @@ ExceptionOr<RefPtr<Element>> DOMWindow::matchingElementInFlatTree(Node& node, co
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
     return localThis->matchingElementInFlatTree(node, selectors);
+}
+
+ExceptionOr<Ref<DOMRect>> DOMWindow::convertRectToMainFrameCoordinates(const DOMRectInit& rect)
+{
+    auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
+    if (!localThis)
+        return Exception { ExceptionCode::SecurityError };
+    return localThis->convertRectToMainFrameCoordinates(rect);
 }
 
 ExceptionOr<void> DOMWindow::scrollBy(const ScrollToOptions& options) const
@@ -973,6 +991,12 @@ String DOMWindow::crossDomainAccessErrorMessage(const LocalDOMWindow& activeWind
         return String();
     Ref activeOrigin = protect(activeWindow.document())->securityOrigin();
     const Ref targetOrigin = localDocument ? localDocument->securityOrigin() : remoteThis->frameDocumentSecurityOriginOrOpaque();
+
+    RefPtr targetFrame = frame();
+    auto targetAgentClusterIdentifier = localDocument ? localDocument->agentClusterIdentifier() : targetFrame ? targetFrame->frameAgentClusterIdentifier() : std::nullopt;
+    if (activeOrigin->isSameOriginDomain(targetOrigin) && !isPlatformObjectSameOrigin(activeOrigin, protect(activeWindow.document())->agentClusterIdentifier(), targetOrigin, targetAgentClusterIdentifier))
+        return makeString("Blocked a frame with origin \""_s, activeOrigin->toString(), "\" from accessing a same-origin frame in a different agent cluster, likely due to Document-Isolation-Policy."_s);
+
     // A remote frame with an empty site may legitimately appear as same-origin.
     ASSERT(!activeOrigin->isSameOriginDomain(targetOrigin) || (remoteThis && Site { activeOrigin->data() }.isEmpty()));
 
@@ -1035,7 +1059,8 @@ bool DOMWindow::isInsecureScriptAccess(const LocalDOMWindow& activeWindow, const
 
         if (RefPtr frame = this->frame()) {
             if (RefPtr securityOrigin = frame->frameDocumentSecurityOrigin()) {
-                if (protect(protect(activeWindow.document())->securityOrigin())->isSameOriginDomain(*securityOrigin))
+                Ref activeDocument = *activeWindow.document();
+                if (isPlatformObjectSameOrigin(protect(activeDocument->securityOrigin()), activeDocument->agentClusterIdentifier(), *securityOrigin, frame->frameAgentClusterIdentifier()))
                     return false;
             }
         }

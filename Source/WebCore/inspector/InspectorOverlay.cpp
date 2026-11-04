@@ -70,7 +70,6 @@
 #include "RenderElementStyleInlines.h"
 #include "RenderFlexibleBox.h"
 #include "RenderGrid.h"
-#include "RenderInline.h"
 #include "RenderObjectInlines.h"
 #include "Settings.h"
 #include "StyleExtractor.h"
@@ -115,19 +114,16 @@ static void truncateWithEllipsis(String& string, size_t length)
         string = makeString(StringView(string).left(length), horizontalEllipsis);
 }
 
-static FloatPoint localPointToRootPoint(const FrameView* view, const FloatPoint& point)
+static void contentsQuadToCoordinateSystem(const FrameView* mainView, const LocalFrameView& view, FloatQuad& quad, InspectorOverlay::CoordinateSystem coordinateSystem)
 {
-    return view->contentsToRootView(point);
-}
+    // contentsToRootView() stops at this process's local root, which is the space a frame overlay
+    // draws in; convertToRootViewAcrossIsolatedFrames() would map to page space instead.
+    quad.setP1(view.contentsToRootView(quad.p1()));
+    quad.setP2(view.contentsToRootView(quad.p2()));
+    quad.setP3(view.contentsToRootView(quad.p3()));
+    quad.setP4(view.contentsToRootView(quad.p4()));
 
-static void contentsQuadToCoordinateSystem(const FrameView* mainView, const LocalFrameView* view, FloatQuad& quad, InspectorOverlay::CoordinateSystem coordinateSystem)
-{
-    quad.setP1(localPointToRootPoint(view, quad.p1()));
-    quad.setP2(localPointToRootPoint(view, quad.p2()));
-    quad.setP3(localPointToRootPoint(view, quad.p3()));
-    quad.setP4(localPointToRootPoint(view, quad.p4()));
-
-    if (coordinateSystem == InspectorOverlay::CoordinateSystem::View)
+    if (coordinateSystem == InspectorOverlay::CoordinateSystem::View && mainView)
         quad += toIntSize(mainView->scrollPosition());
 }
 
@@ -154,7 +150,12 @@ static void buildRendererHighlight(RenderObject* renderer, const InspectorOverla
 
     highlight.setDataFromConfig(highlightConfig);
     RefPtr containingView = containingFrame->view();
-    RefPtr mainView = protect(protect(containingFrame->page())->mainFrame())->virtualView();
+    if (!containingView)
+        return;
+
+    // Only read for CoordinateSystem::View, which only the two page-level getHighlight() callers use.
+    RefPtr containingPage = containingFrame->page();
+    RefPtr mainView = containingPage ? protect(containingPage->mainFrame())->virtualView() : nullptr;
 
     // (Legacy)RenderSVGRoot should be highlighted through the isBox() code path, all other SVG elements should just dump their absoluteQuads().
     bool isSVGRenderer = renderer->node() && renderer->node()->isSVGElement() && !renderer->isRenderOrLegacyRenderSVGRoot();
@@ -163,8 +164,8 @@ static void buildRendererHighlight(RenderObject* renderer, const InspectorOverla
         highlight.type = InspectorOverlay::Highlight::Type::Rects;
         renderer->absoluteQuads(highlight.quads);
         for (auto& quad : highlight.quads)
-            contentsQuadToCoordinateSystem(mainView, containingView, quad, coordinateSystem);
-    } else if (isAnyOf<RenderBox, RenderInline>(*renderer)) {
+            contentsQuadToCoordinateSystem(mainView, *containingView, quad, coordinateSystem);
+    } else if (is<RenderBox>(*renderer) || renderer->isInlineBox()) {
         LayoutRect contentBox;
         LayoutRect paddingBox;
         LayoutRect borderBox;
@@ -182,28 +183,29 @@ static void buildRendererHighlight(RenderObject* renderer, const InspectorOverla
             marginBox = LayoutRect(borderBox.x() - margins.left(), borderBox.y() - margins.top(),
                 borderBox.width() + margins.left() + margins.right(), borderBox.height() + margins.top() + margins.bottom());
         } else {
-            auto& renderInline = downcast<RenderInline>(*renderer);
+            auto& inlineBox = downcast<RenderBoxModelObject>(*renderer);
 
-            // RenderInline's bounding box includes padding and borders, excludes margins.
-            borderBox = renderInline.borderBoxRectInContainer();
-            paddingBox = LayoutRect(borderBox.x() + renderInline.borderLeft(), borderBox.y() + renderInline.borderTop(),
-                borderBox.width() - renderInline.borderLeft() - renderInline.borderRight(), borderBox.height() - renderInline.borderTop() - renderInline.borderBottom());
-            contentBox = LayoutRect(paddingBox.x() + renderInline.paddingLeft(), paddingBox.y() + renderInline.paddingTop(),
-                paddingBox.width() - renderInline.paddingLeft() - renderInline.paddingRight(), paddingBox.height() - renderInline.paddingTop() - renderInline.paddingBottom());
+            // An inline box's bounding box includes padding and borders, excludes margins.
+            borderBox = inlineBox.borderBoxRectInContainer();
+            paddingBox = LayoutRect(borderBox.x() + inlineBox.borderLeft(), borderBox.y() + inlineBox.borderTop(),
+                borderBox.width() - inlineBox.borderLeft() - inlineBox.borderRight(), borderBox.height() - inlineBox.borderTop() - inlineBox.borderBottom());
+            contentBox = LayoutRect(paddingBox.x() + inlineBox.paddingLeft(), paddingBox.y() + inlineBox.paddingTop(),
+                paddingBox.width() - inlineBox.paddingLeft() - inlineBox.paddingRight(), paddingBox.height() - inlineBox.paddingTop() - inlineBox.paddingBottom());
             // Ignore marginTop and marginBottom for inlines.
-            marginBox = LayoutRect(borderBox.x() - renderInline.marginLeft(), borderBox.y(),
-                borderBox.width() + renderInline.horizontalMarginExtent(), borderBox.height());
+            marginBox = LayoutRect(borderBox.x() - inlineBox.marginLeft(), borderBox.y(),
+                borderBox.width() + inlineBox.horizontalMarginExtent(), borderBox.height());
         }
 
-        FloatQuad absContentQuad = renderer->localToAbsoluteQuad(FloatRect(contentBox));
-        FloatQuad absPaddingQuad = renderer->localToAbsoluteQuad(FloatRect(paddingBox));
-        FloatQuad absBorderQuad = renderer->localToAbsoluteQuad(FloatRect(borderBox));
-        FloatQuad absMarginQuad = renderer->localToAbsoluteQuad(FloatRect(marginBox));
+        // FIXME: Remove suppression once rdar://189998444 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad absContentQuad = renderer->localToAbsoluteQuad(FloatRect(contentBox));
+        SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad absPaddingQuad = renderer->localToAbsoluteQuad(FloatRect(paddingBox));
+        SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad absBorderQuad = renderer->localToAbsoluteQuad(FloatRect(borderBox));
+        SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad absMarginQuad = renderer->localToAbsoluteQuad(FloatRect(marginBox));
 
-        contentsQuadToCoordinateSystem(mainView, containingView, absContentQuad, coordinateSystem);
-        contentsQuadToCoordinateSystem(mainView, containingView, absPaddingQuad, coordinateSystem);
-        contentsQuadToCoordinateSystem(mainView, containingView, absBorderQuad, coordinateSystem);
-        contentsQuadToCoordinateSystem(mainView, containingView, absMarginQuad, coordinateSystem);
+        contentsQuadToCoordinateSystem(mainView, *containingView, absContentQuad, coordinateSystem);
+        contentsQuadToCoordinateSystem(mainView, *containingView, absPaddingQuad, coordinateSystem);
+        contentsQuadToCoordinateSystem(mainView, *containingView, absBorderQuad, coordinateSystem);
+        contentsQuadToCoordinateSystem(mainView, *containingView, absMarginQuad, coordinateSystem);
 
         highlight.type = InspectorOverlay::Highlight::Type::Node;
         highlight.quads.append(absMarginQuad);
@@ -327,7 +329,12 @@ static void drawShapeHighlight(GraphicsContext& context, Node& node, InspectorOv
         return;
 
     RefPtr containingView = containingFrame->view();
-    RefPtr mainView = protect(protect(containingFrame->page())->mainFrame())->virtualView();
+    if (!containingView)
+        return;
+
+    // See buildRendererHighlight(): only read under CoordinateSystem::View, which frames never reach.
+    RefPtr containingPage = containingFrame->page();
+    RefPtr mainView = containingPage ? protect(containingPage->mainFrame())->virtualView() : nullptr;
 
     static constexpr auto shapeHighlightColor = SRGBA<uint8_t> { 96, 82, 127, 204 };
 
@@ -336,8 +343,9 @@ static void drawShapeHighlight(GraphicsContext& context, Node& node, InspectorOv
 
     if (paths.shape.isEmpty()) {
         LayoutRect shapeBounds = shapeOutsideInfo->computedShapePhysicalBoundingBox();
-        FloatQuad shapeQuad = renderer->localToAbsoluteQuad(FloatRect(shapeBounds));
-        contentsQuadToCoordinateSystem(mainView, containingView, shapeQuad, InspectorOverlay::CoordinateSystem::Document);
+        // FIXME: Remove suppression once rdar://189998444 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad shapeQuad = renderer->localToAbsoluteQuad(FloatRect(shapeBounds));
+        contentsQuadToCoordinateSystem(mainView, *containingView, shapeQuad, InspectorOverlay::CoordinateSystem::Document);
         drawOutlinedQuad(context, shapeQuad, shapeHighlightColor, Color::transparentBlack, bounds);
         return;
     }
@@ -347,7 +355,7 @@ static void drawShapeHighlight(GraphicsContext& context, Node& node, InspectorOv
         path.applyElements([&] (const PathElement& pathElement) {
             const auto localToRoot = [&] (size_t index) {
                 const FloatPoint& point = pathElement.points[index];
-                return localPointToRootPoint(containingView, renderer->localToAbsolute(shapeOutsideInfo->shapeToRendererPoint(point)));
+                return containingView->contentsToRootView(renderer->localToAbsolute(shapeOutsideInfo->shapeToRendererPoint(point)));
             };
 
             switch (pathElement.type) {
@@ -395,9 +403,8 @@ static void drawShapeHighlight(GraphicsContext& context, Node& node, InspectorOv
     context.fillPath(shapePath);
 }
 
-InspectorOverlay::InspectorOverlay(PageInspectorController& controller, InspectorBackendClient* client)
-    : m_controller(controller)
-    , m_client(client)
+InspectorOverlay::InspectorOverlay(InspectorOverlayOwner& owner)
+    : m_owner(owner)
     , m_paintRectUpdateTimer(*this, &InspectorOverlay::updatePaintRectsTimerFired)
 {
 }
@@ -406,17 +413,28 @@ InspectorOverlay::~InspectorOverlay() = default;
 
 void InspectorOverlay::ref() const
 {
-    m_controller->ref();
+    m_owner->overlayOwnerRef();
 }
 
 void InspectorOverlay::deref() const
 {
-    m_controller->deref();
+    m_owner->overlayOwnerDeref();
 }
 
-Page& InspectorOverlay::page() const
+Page* InspectorOverlay::page() const
 {
-    return m_controller->inspectedPage();
+    return m_owner->overlayOwnerPage();
+}
+
+LocalFrame* InspectorOverlay::frameForGeometry() const
+{
+    // localMainFrame(), not localMainOrRootFrame(): the page overlay must not draw against a
+    // subframe's geometry, matching PageOverlay::frameForGeometry() that this is named after.
+    if (LocalFrame* ownerFrame = m_owner->overlayOwnerFrame())
+        return ownerFrame;
+
+    Page* page = this->page();
+    return page ? page->localMainFrame() : nullptr;
 }
 
 void InspectorOverlay::paint(GraphicsContext& context)
@@ -424,8 +442,27 @@ void InspectorOverlay::paint(GraphicsContext& context)
     if (!shouldShowOverlay())
         return;
 
-    auto viewportSize = protect(protect(protect(page())->mainFrame())->virtualView())->sizeForVisibleContent();
+    // Null when the frame has no view, or this process's main frame is remote.
+    RefPtr geometryFrame = frameForGeometry();
+    RefPtr pageView = geometryFrame ? geometryFrame->virtualView() : nullptr;
+    if (!pageView)
+        return;
+
+    auto viewportSize = pageView->sizeForVisibleContent();
     RefPtr highlightNodeList = m_highlightNodeList;
+
+    // Everything below emits root-view coordinates, but a frame overlay paints into an
+    // OverlayType::Document surface positioned at the contents origin, so it receives contents
+    // coordinates. Undo contentsToView(), which subtracts documentScrollPositionRelativeToViewOrigin()
+    // -- and is a no-op when scrolling is delegated, so this must be too. PageOverlay::drawRect() has
+    // already translated by scrollOrigin(), which is part of that same conversion and must not be
+    // re-applied here. Must precede the clearRect below, which is also viewport-relative.
+    // FIXME: <rdar://116202544> Remove once frame overlays can use OverlayType::View, which needs a
+    // per-frame view-overlay root layer and attachViewOverlayGraphicsLayer() to stop hardcoding the
+    // main frame.
+    GraphicsContextStateSaver documentSurfaceStateSaver(context);
+    if (isFrameScoped() && !pageView->delegatesScrollingToNativeView())
+        context.translate(pageView->documentScrollPositionRelativeToViewOrigin() - pageView->scrollOrigin());
 
     context.clearRect({ FloatPoint::zero(), viewportSize });
 
@@ -508,7 +545,7 @@ void InspectorOverlay::paint(GraphicsContext& context)
     if (!m_paintRects.isEmpty())
         drawPaintRects(context, m_paintRects);
 
-    if (m_showRulers || m_showRulersForNodeHighlight)
+    if (shouldDrawRulers())
         drawRulers(context, rulerExclusion);
 }
 
@@ -623,8 +660,12 @@ void InspectorOverlay::highlightNode(Node* node, const InspectorOverlay::Highlig
 
 void InspectorOverlay::highlightQuad(std::unique_ptr<FloatQuad> quad, const InspectorOverlay::Highlight::Config& highlightConfig)
 {
-    if (highlightConfig.usePageCoordinates)
-        *quad -= toIntSize(protect(protect(protect(page())->mainFrame())->virtualView())->scrollPosition());
+    // Page coordinates are relative to the geometry frame's own scroll position.
+    if (highlightConfig.usePageCoordinates) {
+        RefPtr geometryFrame = frameForGeometry();
+        if (RefPtr geometryView = geometryFrame ? geometryFrame->virtualView() : nullptr)
+            *quad -= toIntSize(geometryView->scrollPosition());
+    }
 
     m_quadHighlightConfig = highlightConfig;
     m_highlightQuad = WTF::move(quad);
@@ -638,7 +679,8 @@ Node* InspectorOverlay::highlightedNode() const
 
 void InspectorOverlay::didSetSearchingForNode(bool enabled)
 {
-    m_client->didSetSearchingForNode(enabled);
+    if (auto* client = m_owner->overlayOwnerBackendClient())
+        client->didSetSearchingForNode(enabled);
 }
 
 void InspectorOverlay::setIndicating(bool indicating)
@@ -651,31 +693,58 @@ void InspectorOverlay::setIndicating(bool indicating)
     update();
 }
 
+bool InspectorOverlay::shouldDrawRulers() const
+{
+    // Rulers are page-wide, so a frame overlay draws neither them nor their guide lines and insets.
+    if (isFrameScoped())
+        return false;
+
+    return m_showRulers || m_showRulersForNodeHighlight;
+}
+
 bool InspectorOverlay::shouldShowOverlay() const
 {
+    // Rulers alone must not install a frame surface that would paint nothing.
+    if (m_showRulers && !isFrameScoped())
+        return true;
+
     return m_highlightNode
         || m_highlightNodeList
         || m_highlightQuad
         || m_activeGridOverlays.size()
         || m_activeFlexOverlays.size()
         || m_indicating
-        || m_showPaintRects
-        || m_showRulers;
+        || m_showPaintRects;
 }
 
 void InspectorOverlay::update()
 {
+    auto* client = m_owner->overlayOwnerBackendClient();
+    if (!client)
+        return;
+
+    RefPtr geometryFrame = frameForGeometry();
+
+    // Dispatch on frame-scoped, not on whether a geometry frame exists, so the page path stays direct.
     if (!shouldShowOverlay()) {
-        if (std::exchange(m_isVisible, false))
-            m_client->hideHighlight();
+        if (std::exchange(m_isVisible, false)) {
+            if (isFrameScoped() && geometryFrame)
+                client->hideHighlightForFrame(*geometryFrame);
+            else
+                client->hideHighlight();
+        }
         return;
     }
 
-    if (!protect(protect(page())->mainFrame())->virtualView())
+    // Scoped to the geometry frame: the old main-frame check blocked painting in subframe processes.
+    if (!geometryFrame || !geometryFrame->virtualView())
         return;
 
     m_isVisible = true;
-    m_client->highlight();
+    if (isFrameScoped())
+        client->highlightFrame(*geometryFrame);
+    else
+        client->highlight();
 }
 
 void InspectorOverlay::setShowPaintRects(bool showPaintRects)
@@ -696,7 +765,12 @@ void InspectorOverlay::showPaintRect(const FloatRect& rect)
     if (!m_showPaintRects)
         return;
 
-    auto rootRect = protect(protect(protect(page())->mainFrame())->virtualView())->contentsToRootView(enclosingIntRect(rect));
+    RefPtr geometryFrame = frameForGeometry();
+    RefPtr pageView = geometryFrame ? geometryFrame->virtualView() : nullptr;
+    if (!pageView)
+        return;
+
+    auto rootRect = pageView->contentsToRootView(enclosingIntRect(rect));
 
     const auto removeDelay = 250_ms;
 
@@ -823,7 +897,7 @@ InspectorOverlay::RulerExclusion InspectorOverlay::drawNodeHighlight(GraphicsCon
     if (m_nodeHighlightConfig.showInfo)
         drawShapeHighlight(context, node, rulerExclusion.bounds);
 
-    if (m_showRulers || m_showRulersForNodeHighlight)
+    if (shouldDrawRulers())
         drawBounds(context, rulerExclusion.bounds);
 
     // Ensure that the title information is drawn after the bounds.
@@ -846,7 +920,7 @@ InspectorOverlay::RulerExclusion InspectorOverlay::drawQuadHighlight(GraphicsCon
     if (highlight.quads.size() >= 1) {
         drawOutlinedQuad(context, highlight.quads[0], highlight.contentColor, highlight.contentOutlineColor, rulerExclusion.bounds);
 
-        if (m_showRulers || m_showRulersForNodeHighlight)
+        if (shouldDrawRulers())
             drawBounds(context, rulerExclusion.bounds);
     }
 
@@ -866,8 +940,11 @@ void InspectorOverlay::drawPaintRects(GraphicsContext& context, const Deque<Time
 
 void InspectorOverlay::drawBounds(GraphicsContext& context, const InspectorOverlay::Highlight::Bounds& bounds)
 {
-    Ref mainFrame = page().mainFrame();
-    RefPtr pageView = mainFrame->virtualView();
+    RefPtr geometryFrame = frameForGeometry();
+    RefPtr pageView = geometryFrame ? geometryFrame->virtualView() : nullptr;
+    if (!pageView)
+        return;
+
     FloatSize viewportSize = pageView->sizeForVisibleContent();
     auto obscuredContentInsets = pageView->obscuredContentInsets(ScrollView::InsetType::WebCoreOrPlatformInset);
 
@@ -921,18 +998,25 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
     constexpr auto lightRulerColor = Color::black.colorWithAlphaByte(51);
     constexpr auto darkRulerColor = Color::black.colorWithAlphaByte(128);
 
+    // Rulers are page-wide. Every caller gates on shouldDrawRulers(), which is false when frame scoped.
+    ASSERT(!isFrameScoped());
+
     IntPoint scrollOffset;
-    RefPtr localMainFrame = page().localMainFrame();
+    RefPtr page = this->page();
+    RefPtr localMainFrame = page ? page->localMainFrame() : nullptr;
     if (!localMainFrame)
         return;
 
     RefPtr pageView = localMainFrame->view();
+    if (!pageView)
+        return;
+
     if (!pageView->delegatesScrollingToNativeView())
         scrollOffset = pageView->visibleContentRect().location();
 
     FloatSize viewportSize = pageView->sizeForVisibleContent();
     auto obscuredContentInsets = pageView->obscuredContentInsets(ScrollView::InsetType::WebCoreOrPlatformInset);
-    float pageScaleFactor = page().pageScaleFactor();
+    float pageScaleFactor = page->pageScaleFactor();
     float pageZoomFactor = localMainFrame->pageZoomFactor();
 
     float pageFactor = pageZoomFactor * pageScaleFactor;
@@ -997,7 +1081,7 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
     // Draw lines.
     {
         FontCascadeDescription fontDescription;
-        fontDescription.setOneFamily(AtomString { page().settings().sansSerifFontFamily() });
+        fontDescription.setOneFamily(AtomString { page->settings().sansSerifFontFamily() });
         fontDescription.setUsedSize(10);
 
         FontCascade font(WTF::move(fontDescription));
@@ -1041,7 +1125,7 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
 
                 GraphicsContextStateSaver verticalLabelStateSaver(context);
                 context.translate(zoom(x) + 0.5f, scrollY);
-                context.drawText(font, TextRun(String::number(x)), { 2, drawTopEdge ? rulerLabelSize : rulerLabelSize - rulerSize + font.metricsOfPrimaryFont().intHeight() - 1.0f });
+                context.drawText(font, TextRun { String::number(x) }, { 2, drawTopEdge ? rulerLabelSize : rulerLabelSize - rulerSize + font.metricsOfPrimaryFont().intHeight() - 1.0f });
             }
         }
 
@@ -1079,7 +1163,7 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
                 GraphicsContextStateSaver horizontalLabelStateSaver(context);
                 context.translate(scrollX, zoom(y) + 0.5f);
                 context.rotate(drawLeftEdge ? -piOverTwoFloat : piOverTwoFloat);
-                context.drawText(font, TextRun(String::number(y)), { 2, drawLeftEdge ? rulerLabelSize : rulerLabelSize - rulerSize });
+                context.drawText(font, TextRun { String::number(y) }, { 2, drawLeftEdge ? rulerLabelSize : rulerLabelSize - rulerSize });
             }
         }
     }
@@ -1087,7 +1171,7 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
     // Draw viewport size.
     {
         FontCascadeDescription fontDescription;
-        fontDescription.setOneFamily(AtomString { page().settings().sansSerifFontFamily() });
+        fontDescription.setOneFamily(AtomString { page->settings().sansSerifFontFamily() });
         fontDescription.setUsedSize(12);
 
         FontCascade font(WTF::move(fontDescription));
@@ -1142,12 +1226,12 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
     }
 }
 
-static bool NODELETE rendererIsFlexboxItem(RenderObject& renderer)
+static bool LEGACY_NODELETE rendererIsFlexboxItem(RenderObject& renderer)
 {
     return is<RenderFlexibleBox>(renderer.parent()) && !renderer.isOutOfFlowPositioned() && !renderer.isExcludedFromNormalLayout();
 }
 
-static bool NODELETE rendererIsGridItem(RenderObject& renderer)
+static bool LEGACY_NODELETE rendererIsGridItem(RenderObject& renderer)
 {
     if (is<RenderGrid>(renderer.parent()))
         return !renderer.isOutOfFlowPositioned() && !renderer.isExcludedFromNormalLayout();
@@ -1204,10 +1288,13 @@ Path InspectorOverlay::drawElementTitle(GraphicsContext& context, Node& node, co
         elementWidth = String::number(Style::unapplyingZoom<int>(roundToInt(modelObject->offsetWidth()), *modelObject));
         elementHeight = String::number(Style::unapplyingZoom<int>(roundToInt(modelObject->offsetHeight()), *modelObject));
     } else {
-        RefPtr containingView = document->frame()->view();
-        IntRect boundingBox = snappedIntRect(containingView->contentsToRootView(renderer->absoluteBoundingBoxRect()));
-        elementWidth = String::number(boundingBox.width());
-        elementHeight = String::number(boundingBox.height());
+        // A missing view only costs one line of the tooltip; draw the rest.
+        RefPtr containingFrame = document->frame();
+        if (RefPtr containingView = containingFrame ? containingFrame->view() : nullptr) {
+            IntRect boundingBox = snappedIntRect(containingView->contentsToRootView(renderer->absoluteBoundingBoxRect()));
+            elementWidth = String::number(boundingBox.width());
+            elementHeight = String::number(boundingBox.height());
+        }
     }
 
     Vector<String> layoutContextBubbleStrings;
@@ -1269,14 +1356,23 @@ Path InspectorOverlay::drawElementTitle(GraphicsContext& context, Node& node, co
         }
     }
 
-    Ref mainFrame = page().mainFrame();
-    RefPtr pageView = mainFrame->virtualView();
+    RefPtr geometryFrame = frameForGeometry();
+    RefPtr pageView = geometryFrame ? geometryFrame->virtualView() : nullptr;
+    if (!pageView)
+        return { };
+
     FloatSize viewportSize = pageView->sizeForVisibleContent();
     auto obscuredContentInsets = pageView->obscuredContentInsets(ScrollView::InsetType::WebCoreOrPlatformInset);
-    if (m_showRulers || m_showRulersForNodeHighlight) {
+    // Only reserve space for rulers that were actually drawn, or the label is displaced by rulerSize.
+    if (shouldDrawRulers()) {
         obscuredContentInsets.setTop(obscuredContentInsets.top() + rulerSize);
         obscuredContentInsets.setLeft(obscuredContentInsets.left() + rulerSize);
     }
+
+    // FIXME: For a frame overlay these clamps are against the frame's own viewport, so a tooltip for a
+    // node near an iframe edge is confined to the iframe instead of the window. Fixing it needs the
+    // label drawn into a surface that can extend past the frame, which a per-frame overlay cannot do
+    // today -- it is the same constraint as <rdar://116202544>'s OverlayType::View work.
 
     auto expectedLabelSize = InspectorOverlayLabel::expectedSize(labelContents, InspectorOverlayLabel::Arrow::Direction::Up);
     auto boundsCenterX = bounds.center().x();
@@ -1421,11 +1517,11 @@ void InspectorOverlay::drawGridOverlay(GraphicsContext& context, const Inspector
 
 static Vector<String> authoredGridTrackSizes(Node* node, Style::GridTrackSizingDirection direction, unsigned expectedTrackCount)
 {
-    auto* element = dynamicDowncast<StyledElement>(node);
+    RefPtr element = dynamicDowncast<StyledElement>(node);
     if (!element)
         return { };
 
-    auto directionCSSPropertyID = direction == Style::GridTrackSizingDirection::Columns ? CSSPropertyID::CSSPropertyGridTemplateColumns : CSSPropertyID::CSSPropertyGridTemplateRows;
+    auto directionCSSPropertyID = direction == Style::GridTrackSizingDirection::Columns ? CSSPropertyID::GridTemplateColumns : CSSPropertyID::GridTemplateRows;
     RefPtr<CSSValue> cssValue;
     if (RefPtr inlineStyle = element->inlineStyle())
         cssValue = inlineStyle->getPropertyCSSValue(directionCSSPropertyID);
@@ -1556,7 +1652,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
     // Always re-check because the node's renderer may have changed since being added.
     // If renderer is no longer a grid, then remove the grid overlay for the node.
     RefPtr node = gridOverlay.gridNode.get();
-    auto renderer = node->renderer();
+    CheckedPtr renderer = node->renderer();
     if (!is<RenderGrid>(renderer)) {
         removeGridOverlayForNode(*node);
         return { };
@@ -1564,7 +1660,8 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
 
     constexpr auto translucentLabelBackgroundColor = Color::white.colorWithAlphaByte(230);
 
-    RefPtr pageView = protect(protect(page())->mainFrame())->virtualView();
+    RefPtr geometryFrame = frameForGeometry();
+    RefPtr pageView = geometryFrame ? geometryFrame->virtualView() : nullptr;
     if (!pageView)
         return { };
     FloatRect viewportBounds = { { 0, 0 }, pageView->sizeForVisibleContent() };
@@ -1573,7 +1670,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
     if (offsetBoundsByScroll)
         viewportBounds.setLocation(scrollPosition);
     
-    CheckedRef renderGrid = *downcast<RenderGrid>(renderer);
+    CheckedRef renderGrid = downcast<RenderGrid>(*renderer);
     auto columnPositions = renderGrid->columnPositions();
     auto rowPositions = renderGrid->rowPositions();
     if (!columnPositions.size() || !rowPositions.size())
@@ -1604,8 +1701,10 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
     if (!containingFrame)
         return { };
     RefPtr containingView = containingFrame->view();
+    if (!containingView)
+        return { };
 
-    auto computedStyle = node->computedStyle();
+    CheckedPtr computedStyle = node->computedStyle();
     if (!computedStyle)
         return { };
 
@@ -1625,8 +1724,8 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
             endPoint = { isWritingModeFlipped ? contentBox.width() - gridEndY : gridEndY, isDirectionFlipped ? contentBox.height() - x : x };
         }
         return {
-            localPointToRootPoint(containingView, renderGrid->localToContainerPoint(startPoint, nullptr)),
-            localPointToRootPoint(containingView, renderGrid->localToContainerPoint(endPoint, nullptr)),
+            containingView->contentsToRootView(renderGrid->localToContainerPoint(startPoint, nullptr)),
+            containingView->contentsToRootView(renderGrid->localToContainerPoint(endPoint, nullptr)),
         };
     };
     auto rowLineAt = [&](float y) -> FloatLine {
@@ -1640,8 +1739,8 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
             endPoint = { isWritingModeFlipped ? contentBox.width() - y : y, isDirectionFlipped ? contentBox.height() - gridEndX : gridEndX };
         }
         return {
-            localPointToRootPoint(containingView, renderGrid->localToContainerPoint(startPoint, nullptr)),
-            localPointToRootPoint(containingView, renderGrid->localToContainerPoint(endPoint, nullptr)),
+            containingView->contentsToRootView(renderGrid->localToContainerPoint(startPoint, nullptr)),
+            containingView->contentsToRootView(renderGrid->localToContainerPoint(endPoint, nullptr)),
         };
     };
 
@@ -1703,7 +1802,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
 
     // Draw columns and rows.
     auto& columnWidths = renderGrid->trackSizesForComputedStyle(Style::GridTrackSizingDirection::Columns);
-    auto columnLineNames = gridLineNames(node->renderStyle(), Style::GridTrackSizingDirection::Columns, columnPositions.size());
+    auto columnLineNames = gridLineNames(protect(node->renderStyle()), Style::GridTrackSizingDirection::Columns, columnPositions.size());
     auto authoredTrackColumnSizes = authoredGridTrackSizes(node, Style::GridTrackSizingDirection::Columns, columnWidths.size());
     FloatLine previousColumnEndLine;
     for (unsigned i = 0; i < columnPositions.size(); ++i) {
@@ -1792,7 +1891,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
     }
 
     auto& rowHeights = renderGrid->trackSizesForComputedStyle(Style::GridTrackSizingDirection::Rows);
-    auto rowLineNames = gridLineNames(node->renderStyle(), Style::GridTrackSizingDirection::Rows, rowPositions.size());
+    auto rowLineNames = gridLineNames(protect(node->renderStyle()), Style::GridTrackSizingDirection::Rows, rowPositions.size());
     auto authoredTrackRowSizes = authoredGridTrackSizes(node, Style::GridTrackSizingDirection::Rows, rowHeights.size());
     FloatLine previousRowEndLine;
     for (unsigned i = 0; i < rowPositions.size(); ++i) {
@@ -1904,28 +2003,25 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
         };
 
         Vector<ItemInfo> allItems;
-        for (CheckedPtr gridItem = orderIterator.first(); gridItem; gridItem = orderIterator.next()) {
-            if (orderIterator.shouldSkipChild(*gridItem))
-                continue;
-
-            auto gridArea = renderGrid->currentGrid().gridItemArea(*gridItem);
+        for (CheckedRef gridItem : orderIterator.gridItems()) {
+            auto gridArea = renderGrid->currentGrid().gridItemArea(gridItem);
             auto absoluteRect = FloatRect { gridItem->absoluteBoundingBoxRect(true) };
             absoluteRect.expand(gridItem->marginBox());
 
-            auto minCorner = localPointToRootPoint(containingView, absoluteRect.minXMinYCorner());
-            auto maxCorner = localPointToRootPoint(containingView, absoluteRect.maxXMaxYCorner());
+            auto minCorner = containingView->contentsToRootView(absoluteRect.minXMinYCorner());
+            auto maxCorner = containingView->contentsToRootView(absoluteRect.maxXMaxYCorner());
             FloatRect rootRect { minCorner, maxCorner - minCorner };
 
             if (renderGrid->hasStackingAxisRows()) {
                 auto& columnSpan = gridArea.columns;
                 if (!columnSpan.isTranslatedDefinite())
                     continue;
-                allItems.append({ gridItem, rootRect, columnSpan.startLine(), columnSpan.endLine() });
+                allItems.append({ gridItem.ptr(), rootRect, columnSpan.startLine(), columnSpan.endLine() });
             } else {
                 auto& rowSpan = gridArea.rows;
                 if (!rowSpan.isTranslatedDefinite())
                     continue;
-                allItems.append({ gridItem, rootRect, rowSpan.startLine(), rowSpan.endLine() });
+                allItems.append({ gridItem.ptr(), rootRect, rowSpan.startLine(), rowSpan.endLine() });
             }
         }
 
@@ -1998,20 +2094,17 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
     }
 
     if (gridOverlay.config.showOrderNumbers) {
-        Vector<RenderBox*> gridItemsInGridOrder;
         Vector<RenderBox*> gridItemsInDOMOrder;
         bool hasCustomOrder = false;
 
         auto& orderIterator = renderGrid->currentGrid().orderIterator();
-        for (CheckedPtr gridItem = orderIterator.first(); gridItem; gridItem = orderIterator.next()) {
-            if (orderIterator.shouldSkipChild(*gridItem))
-                continue;
-            gridItemsInGridOrder.append(gridItem);
-        }
+        HashSet<SingleThreadWeakRef<const RenderBox>> gridItemSet;
+        for (CheckedRef gridItem : orderIterator.gridItems())
+            gridItemSet.add(gridItem.get());
 
         for (RefPtr child = node->firstChild(); child; child = child->nextSibling()) {
             if (CheckedPtr renderer = dynamicDowncast<RenderBox>(child->renderer())) {
-                if (!gridItemsInGridOrder.contains(renderer))
+                if (!gridItemSet.contains(*renderer))
                     continue;
 
                 gridItemsInDOMOrder.append(renderer);
@@ -2021,7 +2114,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
             }
         }
 
-        for (CheckedPtr gridItem : gridItemsInGridOrder) {
+        for (CheckedRef gridItem : orderIterator.gridItems()) {
             FloatQuad itemBounds;
 
             if (renderGrid->isGridLanes()) {
@@ -2031,14 +2124,14 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
                 auto margins = gridItem->marginBox();
                 absoluteRect.expand(FloatBoxExtent { margins.top(), margins.right(), margins.bottom(), margins.left() });
                 itemBounds = FloatQuad {
-                    localPointToRootPoint(containingView, absoluteRect.minXMinYCorner()),
-                    localPointToRootPoint(containingView, absoluteRect.maxXMinYCorner()),
-                    localPointToRootPoint(containingView, absoluteRect.maxXMaxYCorner()),
-                    localPointToRootPoint(containingView, absoluteRect.minXMaxYCorner())
+                    containingView->contentsToRootView(absoluteRect.minXMinYCorner()),
+                    containingView->contentsToRootView(absoluteRect.maxXMinYCorner()),
+                    containingView->contentsToRootView(absoluteRect.maxXMaxYCorner()),
+                    containingView->contentsToRootView(absoluteRect.minXMaxYCorner())
                 };
             } else {
                 // For regular grid layouts, compute bounds from the grid area.
-                auto gridArea = renderGrid->currentGrid().gridItemArea(*gridItem);
+                auto gridArea = renderGrid->currentGrid().gridItemArea(gridItem);
                 if (!gridArea.rows.isTranslatedDefinite() || !gridArea.columns.isTranslatedDefinite())
                     continue;
 
@@ -2070,7 +2163,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
 
             StringBuilder orderNumbers;
 
-            if (auto index = gridItemsInDOMOrder.find(gridItem); index != notFound)
+            if (auto index = gridItemsInDOMOrder.find(gridItem.ptr()); index != notFound)
                 orderNumbers.append(WEB_UI_FORMAT_STRING("Item %lu", "Inspector Grid Item DOM order label", static_cast<unsigned long>(index + 1)));
 
             if (auto order = gridItem->style().order(); !order.isZero() || hasCustomOrder)
@@ -2135,22 +2228,24 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
     // Always re-check because the node's renderer may have changed since being added.
     // If renderer is no longer a flex, then remove the flex overlay for the node.
     RefPtr node = flexOverlay.flexNode.get();
-    auto renderer = node->renderer();
+    CheckedPtr renderer = node->renderer();
     if (!is<RenderFlexibleBox>(renderer)) {
         removeFlexOverlayForNode(*node);
         return { };
     }
 
-    CheckedRef renderFlex = *downcast<RenderFlexibleBox>(renderer);
+    CheckedRef renderFlex = downcast<RenderFlexibleBox>(*renderer);
 
-    auto itemsAtStartOfLine = protect(m_controller)->ensureDOMAgent().flexibleBoxRendererCachedItemsAtStartOfLine(renderFlex);
+    auto itemsAtStartOfLine = m_owner->overlayOwnerFlexLineStarts(renderFlex);
 
     RefPtr containingFrame = protect(node->document())->frame();
     if (!containingFrame)
         return { };
     RefPtr containingView = containingFrame->view();
+    if (!containingView)
+        return { };
 
-    auto computedStyle = node->computedStyle();
+    CheckedPtr computedStyle = node->computedStyle();
     if (!computedStyle)
         return { };
 
@@ -2164,19 +2259,19 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
 
     auto localQuadToRootQuad = [&](const FloatQuad& quad) {
         return FloatQuad(
-            localPointToRootPoint(containingView, quad.p1()),
-            localPointToRootPoint(containingView, quad.p2()),
-            localPointToRootPoint(containingView, quad.p3()),
-            localPointToRootPoint(containingView, quad.p4())
+            containingView->contentsToRootView(quad.p1()),
+            containingView->contentsToRootView(quad.p2()),
+            containingView->contentsToRootView(quad.p3()),
+            containingView->contentsToRootView(quad.p4())
         );
     };
 
     auto childQuadToRootQuad = [&](const FloatQuad& quad) {
         return FloatQuad(
-            localPointToRootPoint(containingView, renderFlex->localToContainerPoint(quad.p1(), nullptr)),
-            localPointToRootPoint(containingView, renderFlex->localToContainerPoint(quad.p2(), nullptr)),
-            localPointToRootPoint(containingView, renderFlex->localToContainerPoint(quad.p3(), nullptr)),
-            localPointToRootPoint(containingView, renderFlex->localToContainerPoint(quad.p4(), nullptr))
+            containingView->contentsToRootView(renderFlex->localToContainerPoint(quad.p1(), nullptr)),
+            containingView->contentsToRootView(renderFlex->localToContainerPoint(quad.p2(), nullptr)),
+            containingView->contentsToRootView(renderFlex->localToContainerPoint(quad.p3(), nullptr)),
+            containingView->contentsToRootView(renderFlex->localToContainerPoint(quad.p4(), nullptr))
         );
     };
 
@@ -2252,9 +2347,9 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
     // The container's in-flow children in order-modified document order, which is the order the flex algorithm laid
     // them out in and so the order the cached line-start indices below are relative to. A stable sort by the used
     // 'order' value keeps document order among equal values.
-    for (auto& flexItem : childrenOfType<RenderBox>(renderFlex.get())) {
-        if (!flexItem.isOutOfFlowPositioned() && !flexItem.isExcludedFromNormalLayout())
-            renderChildrenInFlexOrder.append(&flexItem);
+    for (CheckedRef flexItem : childrenOfType<RenderBox>(renderFlex.get())) {
+        if (!flexItem->isOutOfFlowPositioned() && !flexItem->isExcludedFromNormalLayout())
+            renderChildrenInFlexOrder.append(flexItem.ptr());
     }
     std::stable_sort(renderChildrenInFlexOrder.begin(), renderChildrenInFlexOrder.end(), [](auto& a, auto& b) {
         return a->style().order().value < b->style().order().value;

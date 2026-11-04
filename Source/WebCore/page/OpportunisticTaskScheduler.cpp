@@ -180,13 +180,19 @@ static bool isBusyForTimerBasedGC(JSC::VM& vm)
 OpportunisticTaskScheduler::FullGCActivityCallback::FullGCActivityCallback(JSC::Heap& heap)
     : Base(heap, JSC::Synchronousness::Sync)
     , m_vm(heap.vm())
-    , m_runLoopObserver(makeUniqueRef<RunLoopObserver>(RunLoopObserver::WellKnownOrder::PostRenderingUpdate, [this] {
+    , m_runLoopObserver(createRunLoopObserver())
+{
+}
+
+UniqueRef<RunLoopObserver> OpportunisticTaskScheduler::FullGCActivityCallback::createRunLoopObserver()
+{
+    // m_runLoopObserver is owned by this object and invalidated upon destruction so capturing this is safe.
+    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE return makeUniqueRef<RunLoopObserver>(RunLoopObserver::WellKnownOrder::PostRenderingUpdate, [this] {
         JSC::JSLockHolder locker(m_vm);
         m_version = 0;
         m_deferCount = 0;
         Base::doCollection(m_vm);
-    }, RunLoopObserver::Type::OneShot))
-{
+    }, RunLoopObserver::Type::OneShot);
 }
 
 // We would like to keep FullGCActivityCallback::doCollection and EdenGCActivityCallback::doCollection separate
@@ -226,13 +232,19 @@ void OpportunisticTaskScheduler::FullGCActivityCallback::doCollection(JSC::VM& v
 OpportunisticTaskScheduler::EdenGCActivityCallback::EdenGCActivityCallback(JSC::Heap& heap)
     : Base(heap, JSC::Synchronousness::Sync)
     , m_vm(heap.vm())
-    , m_runLoopObserver(makeUniqueRef<RunLoopObserver>(RunLoopObserver::WellKnownOrder::PostRenderingUpdate, [this] {
+    , m_runLoopObserver(createRunLoopObserver())
+{
+}
+
+UniqueRef<RunLoopObserver> OpportunisticTaskScheduler::EdenGCActivityCallback::createRunLoopObserver()
+{
+    // m_runLoopObserver is owned by this object and invalidated upon destruction so capturing this is safe.
+    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE return makeUniqueRef<RunLoopObserver>(RunLoopObserver::WellKnownOrder::PostRenderingUpdate, [this] {
         JSC::JSLockHolder locker(m_vm);
         m_version = 0;
         m_deferCount = 0;
         Base::doCollection(m_vm);
-    }, RunLoopObserver::Type::OneShot))
-{
+    }, RunLoopObserver::Type::OneShot);
 }
 
 void OpportunisticTaskScheduler::EdenGCActivityCallback::doCollection(JSC::VM& vm)

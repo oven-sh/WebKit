@@ -248,6 +248,7 @@
     macro(profiledBytecodes) \
     macro(propertyIsEnumerable) \
     macro(prototype) \
+    macro(proxy) \
     macro(raw) \
     macro(rawJSON) \
     macro(read) \
@@ -259,6 +260,7 @@
     macro(resolve) \
     macro(reject) \
     macro(reason) \
+    macro(revoke) \
     macro(roundingIncrement) \
     macro(roundingMode) \
     macro(roundingPriority) \

@@ -62,6 +62,7 @@ void RenderSVGPath::updateShapeFromElement()
     m_fillBoundingBox = ensurePath().boundingRect();
     m_strokeBoundingBox = std::nullopt;
     m_approximateStrokeBoundingBox = std::nullopt;
+    m_hitTestStrokeBoundingBox = std::nullopt;
     updateMarkerPositions();
     updateZeroLengthSubpaths();
 
@@ -187,7 +188,7 @@ void RenderSVGPath::strokeZeroLengthSubpaths(GraphicsContext& context) const
     }
 }
 
-static inline RenderSVGResourceMarker* NODELETE markerForType(SVGMarkerType type, RenderSVGResourceMarker* markerStart, RenderSVGResourceMarker* markerMid, RenderSVGResourceMarker* markerEnd)
+static inline RenderSVGResourceMarker* LEGACY_NODELETE markerForType(SVGMarkerType type, RenderSVGResourceMarker* markerStart, RenderSVGResourceMarker* markerMid, RenderSVGResourceMarker* markerEnd)
 {
     switch (type) {
     case SVGMarkerType::Start:
@@ -230,7 +231,7 @@ void RenderSVGPath::drawMarkers(PaintInfo& paintInfo)
 
     float strokeWidth = this->strokeWidthForMarkerUnits();
     for (auto& markerPosition : m_markerPositions) {
-        if (auto* marker = markerForType(markerPosition.type, markerStart.get(), markerMid.get(), markerEnd.get()); marker && marker->hasLayer()) {
+        if (CheckedPtr marker = markerForType(markerPosition.type, markerStart.get(), markerMid.get(), markerEnd.get()); marker && marker->hasLayer()) {
             auto& context = paintInfo.context();
             GraphicsContextStateSaver stateSaver(context);
 
@@ -262,7 +263,7 @@ FloatRect RenderSVGPath::computeMarkerBoundingBox(const SVGBoundingBoxComputatio
 
     FloatRect boundaries;
     for (auto& markerPosition : m_markerPositions) {
-        if (auto* marker = markerForType(markerPosition.type, markerStart.get(), markerMid.get(), markerEnd.get()))
+        if (CheckedPtr marker = markerForType(markerPosition.type, markerStart.get(), markerMid.get(), markerEnd.get()))
             boundaries.unite(marker->computeMarkerBoundingBox(options, marker->markerTransformation(markerPosition.origin, markerPosition.angle, strokeWidth())));
     }
 
@@ -277,7 +278,7 @@ void RenderSVGPath::updateMarkerPositions()
         return;
 
     ASSERT(hasPath());
-    auto* markerStart = svgMarkerStartResourceFromStyle();
+    CheckedPtr markerStart = svgMarkerStartResourceFromStyle();
 
     SVGMarkerData markerData(m_markerPositions, markerStart && markerStart->hasReverseStart());
     path().applyElements([&markerData](const PathElement& pathElement) {

@@ -28,7 +28,6 @@
 #include "Event.h"
 #include "GPUError.h"
 #include "GPUUncapturedErrorEventInit.h"
-#include "WebGPUUncapturedErrorEvent.h"
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
@@ -45,7 +44,7 @@ public:
         return adoptRef(*new GPUUncapturedErrorEvent(type, WTF::move(gpuUncapturedErrorEventInitDict)));
     }
 
-    GPUError& error() const;
+    GPUError& LEGACY_NODELETE error() const;
 
 private:
     GPUUncapturedErrorEvent(const AtomString&, GPUUncapturedErrorEventInit&&);

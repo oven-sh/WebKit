@@ -26,6 +26,7 @@
 #include "config.h"
 #include "TypeProfiler.h"
 
+#include "AOTRemovableFeature.h"
 #include "TypeLocationInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
@@ -150,12 +151,14 @@ TypeLocation* TypeProfiler::nextTypeLocation()
 
 void TypeProfiler::invalidateTypeSetCache(VM& vm)
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Profilers, ReturnDefault, void)
     for (Bag<TypeLocation>::iterator iter = m_typeLocationInfo.begin(); !!iter; ++iter) {
         TypeLocation* location = *iter;
         location->m_instructionTypeSet->invalidateCache(vm);
         if (location->m_globalTypeSet)
             location->m_globalTypeSet->invalidateCache(vm);
     }
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
 void TypeProfiler::dumpTypeProfilerData(VM& vm)

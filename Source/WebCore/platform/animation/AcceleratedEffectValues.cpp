@@ -34,6 +34,8 @@
 #include "Path.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderLayerModelObject.h"
+#include "RotateTransformOperation.h"
+#include "ScaleTransformOperation.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleOffsetAnchor.h"
 #include "StyleOffsetDistance.h"
@@ -42,6 +44,7 @@
 #include "StyleTransformResolver.h"
 #include "TransformationMatrix.h"
 #include "TransformOperationData.h"
+#include "TranslateTransformOperation.h"
 
 namespace WebCore {
 
@@ -82,7 +85,7 @@ AcceleratedEffectValues AcceleratedEffectValues::clone() const
     };
 }
 
-static constexpr AcceleratedEffectTransformBox NODELETE toAcceleratedEffectTransformBox(TransformBox transformBox)
+static constexpr AcceleratedEffectTransformBox LEGACY_NODELETE toAcceleratedEffectTransformBox(TransformBox transformBox)
 {
     switch (transformBox) {
     case TransformBox::StrokeBox:   return AcceleratedEffectTransformBox::StrokeBox;
@@ -94,7 +97,7 @@ static constexpr AcceleratedEffectTransformBox NODELETE toAcceleratedEffectTrans
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static constexpr TransformBox NODELETE toTransformBox(AcceleratedEffectTransformBox transformBox)
+static constexpr TransformBox LEGACY_NODELETE toTransformBox(AcceleratedEffectTransformBox transformBox)
 {
     switch (transformBox) {
     case AcceleratedEffectTransformBox::StrokeBox:   return TransformBox::StrokeBox;
@@ -106,7 +109,7 @@ static constexpr TransformBox NODELETE toTransformBox(AcceleratedEffectTransform
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-AcceleratedEffectValues::AcceleratedEffectValues(const Style::ComputedStyle& style, const IntRect& borderBoxRect, const RenderLayerModelObject* renderer)
+AcceleratedEffectValues::AcceleratedEffectValues(const Style::ComputedStyle& style, const IntRect& borderBoxRect, const RenderLayerModelObject* renderer, OptionSet<AcceleratedEffectProperty> explicitProperties)
 {
     auto borderBoxSize = borderBoxRect.size();
 
@@ -121,8 +124,14 @@ AcceleratedEffectValues::AcceleratedEffectValues(const Style::ComputedStyle& sty
     transformBox = toAcceleratedEffectTransformBox(style.transformBox());
     transform = Style::toPlatform(style.transform(), borderBoxSize, zoom);
     translate = Style::toPlatform(style.translate(), borderBoxSize, zoom);
+    if (!translate && explicitProperties.contains(AcceleratedEffectProperty::Translate))
+        translate = TranslateTransformOperation::create();
     scale = Style::toPlatform(style.scale(), borderBoxSize, zoom);
+    if (!scale && explicitProperties.contains(AcceleratedEffectProperty::Scale))
+        scale = ScaleTransformOperation::create();
     rotate = Style::toPlatform(style.rotate(), borderBoxSize, zoom);
+    if (!rotate && explicitProperties.contains(AcceleratedEffectProperty::Rotate))
+        rotate = RotateTransformOperation::create();
 
     if (transformOperationData && transformOperationData->motionPathData && !style.offsetPath().isNone()) {
         auto evaluatedOffsetPath = Style::evaluate<AcceleratedEffectOffsetPath>(style.offsetPath(), *transformOperationData, zoom);
@@ -194,6 +203,70 @@ TransformationMatrix AcceleratedEffectValues::computedTransformationMatrix(const
     // (not needed, the GraphicsLayer handles that)
 
     return matrix;
+}
+
+String AcceleratedEffectValues::dumpProperty(AcceleratedEffectProperty property) const
+{
+    TextStream ts;
+    switch (property) {
+    case AcceleratedEffectProperty::Opacity:
+        ts << "opacity: " << opacity.value;
+        break;
+    case AcceleratedEffectProperty::Transform:
+        if (transform.isEmpty())
+            ts << "transform: none";
+        else
+            ts << "transform: " << transform;
+        break;
+    case AcceleratedEffectProperty::Translate:
+        if (RefPtr translate = this->translate)
+            ts << "translate: " << *translate;
+        else
+            ts << "translate: none";
+        break;
+    case AcceleratedEffectProperty::Rotate:
+        if (RefPtr rotate = this->rotate)
+            ts << "rotate: " << *rotate;
+        else
+            ts << "rotate: none";
+        break;
+    case AcceleratedEffectProperty::Scale:
+        if (RefPtr scale = this->scale)
+            ts << "scale: " << *scale;
+        else
+            ts << "scale: none";
+        break;
+    case AcceleratedEffectProperty::OffsetPath:
+        ts << "offset-path: n/a";
+        break;
+    case AcceleratedEffectProperty::OffsetDistance:
+        ts << "offset-distance: n/a";
+        break;
+    case AcceleratedEffectProperty::OffsetPosition:
+        ts << "offset-position: n/a";
+        break;
+    case AcceleratedEffectProperty::OffsetAnchor:
+        ts << "offset-anchor: n/a";
+        break;
+    case AcceleratedEffectProperty::OffsetRotate:
+        ts << "offset-rotate: n/a";
+        break;
+    case AcceleratedEffectProperty::Filter:
+        if (filter.isEmpty())
+            ts << "filter: none";
+        else
+            ts << "filter: " << filter;
+        break;
+    case AcceleratedEffectProperty::BackdropFilter:
+        if (backdropFilter.isEmpty())
+            ts << "backdrop-filter: none";
+        else
+            ts << "backdrop-filter: " << backdropFilter;
+        break;
+    default:
+        break;
+    }
+    return ts.release();
 }
 
 } // namespace WebCore

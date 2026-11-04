@@ -1,0 +1,26 @@
+# EliminateDeadCode asks for the effects of every value and changes nothing here, so the analyses still hold its answers. `"round " + i + ": "` becomes one concatenation of
+# three parts that fit in a string, and stands between `text + " "` and the concatenation that reads both. The call between them keeps `text + " "` where it is
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: function-passes EliminateDeadCode FuseConcatenations
+
+module m0 path="main.js" displayPath="main.js"
+
+# CHECK: f0 EliminateDeadCode: Unchanged
+# CHECK-NEXT: f0 FuseConcatenations: Changed
+function f0 name="join" parameters=[{type=string}, {type=int[0, 3]}, {type=anything}] results=[{type=string}] {
+    v3 = String string=" "
+    v4 = Add v0, v3
+    v5 = Call v2
+    v6 = String string="round "
+    v7 = Add v6, v1
+    v8 = String string=": "
+    v9 = Add v7, v8
+    v10 = Add v9, v4
+    Return v10
+# CHECK: v4: string = Add v0, v3
+# CHECK-NEXT: v5: anything = Call v2
+# CHECK-NOT: Add
+# CHECK: v10: string = Strcat v6, v1, v8, v4
+# CHECK-NEXT: Return v10
+}

@@ -68,13 +68,14 @@ struct SessionWrapper : public CanMakeWeakPtr<SessionWrapper>, public CanMakeChe
 
     void initialize(NSURLSessionConfiguration*, NetworkSessionCocoa&, WebCore::StoredCredentialsPolicy, NavigatingToAppBoundDomain);
 
-    void recreateSessionWithUpdatedProxyConfigurations(NetworkSessionCocoa&);
-
     RetainPtr<NSURLSession> session;
     RetainPtr<WKNetworkSessionDelegate> delegate;
     HashMap<NetworkDataTaskCocoa::TaskIdentifier, ThreadSafeWeakPtr<NetworkDataTaskCocoa>> dataTaskMap;
     HashMap<NetworkDataTaskCocoa::TaskIdentifier, DownloadID> downloadMap;
     HashMap<NetworkDataTaskCocoa::TaskIdentifier, ThreadSafeWeakPtr<WebSocketTask>> webSocketDataTaskMap;
+#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
+    bool isConfiguredForAdvancedPrivacyProtections { false };
+#endif
 };
 
 struct IsolatedSession {
@@ -141,7 +142,7 @@ public:
     bool deviceManagementRestrictionsEnabled() const { return m_deviceManagementRestrictionsEnabled; }
     bool allLoadsBlockedByDeviceManagementRestrictionsForTesting() const { return m_allLoadsBlockedByDeviceManagementRestrictionsForTesting; }
 
-    DMFWebsitePolicyMonitor *NODELETE deviceManagementPolicyMonitor();
+    DMFWebsitePolicyMonitor *LEGACY_NODELETE deviceManagementPolicyMonitor();
 
     CFDictionaryRef proxyConfiguration() const { return m_proxyConfiguration.get(); }
 
@@ -165,14 +166,14 @@ public:
     void removeDataTask(DataTaskIdentifier);
     void removeBlobDataTask(DataTaskIdentifier);
 
-#if HAVE(NW_PROXY_CONFIG)
     const Vector<RetainPtr<nw_proxy_config_t>>& proxyConfigs() const LIFETIME_BOUND { return m_nwProxyConfigs; }
 
     void clearProxyConfigData() final;
     void setProxyConfigData(const Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>>&) final;
 
     void applyProxyConfigurationToSessionConfiguration(NSURLSessionConfiguration *);
-#endif
+    void replacedSessionDidBecomeInvalid(NSURLSession *);
+
     bool isLegacyTLSAllowed() const { return m_isLegacyTLSAllowed; }
 
 private:
@@ -195,18 +196,19 @@ private:
     void deleteAlternativeServicesForHostNames(const Vector<String>&) override;
     void clearAlternativeServices(WallTime) override;
 
-    RefPtr<WebSocketTask> createWebSocketTask(WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::StoredCredentialsPolicy, WebCore::IsInitiatedByDedicatedWorker) final;
-    void addWebSocketTask(WebPageProxyIdentifier, WebSocketTask&) final;
-    void removeWebSocketTask(SessionSet&, WebSocketTask&) final;
+    RefPtr<WebSocketTask> createWebSocketTask(WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::StoredCredentialsPolicy, WebCore::IsInitiatedByWorker) final;
+    void addWebSocketTask(WebSocketTask&) final;
+    void removeWebSocketTask(WebSocketTask&) final;
 
-    void loadImageForDecoding(WebCore::ResourceRequest&&, WebPageProxyIdentifier, size_t, CompletionHandler<void(std::expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)>&&) final;
     void dataTaskWithRequest(WebPageProxyIdentifier, WebCore::ResourceRequest&&, const std::optional<WebCore::SecurityOriginData>& topOrigin, CompletionHandler<void(DataTaskIdentifier)>&&) final;
     void cancelDataTask(DataTaskIdentifier) final;
     void addWebPageNetworkParameters(WebPageProxyIdentifier, WebPageNetworkParameters&&) final;
     void removeWebPageNetworkParameters(WebPageProxyIdentifier) final;
     size_t countNonDefaultSessionSets() const final;
 
-    void forEachSessionWrapper(NOESCAPE const Function<void(SessionWrapper&)>&);
+    void forEachSessionWrapper(NOESCAPE const Function<void(UniqueRef<SessionWrapper>&)>&);
+    void replaceSessionsWithUpdatedProxyConfigurations();
+    void removeFinishedReplacedSessionWrappers();
 
     bool isNetworkSessionCocoa() const final { return true; }
 
@@ -223,11 +225,11 @@ private:
     String m_boundInterfaceIdentifier;
     String m_sourceApplicationBundleIdentifier;
     String m_sourceApplicationSecondaryIdentifier;
-    RetainPtr<CFDictionaryRef> m_proxyConfiguration;
-#if HAVE(NW_PROXY_CONFIG)
+    const RetainPtr<CFDictionaryRef> m_proxyConfiguration;
+    Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>> m_proxyConfigData;
     Vector<RetainPtr<nw_proxy_config_t>> m_nwProxyConfigs;
-#endif
-    RetainPtr<DMFWebsitePolicyMonitor> m_deviceManagementPolicyMonitor;
+    Vector<UniqueRef<SessionWrapper>> m_replacedSessionWrappers;
+    const RetainPtr<DMFWebsitePolicyMonitor> m_deviceManagementPolicyMonitor;
     bool m_deviceManagementRestrictionsEnabled { false };
     bool m_allLoadsBlockedByDeviceManagementRestrictionsForTesting { false };
     bool m_shouldLogCookieInformation { false };

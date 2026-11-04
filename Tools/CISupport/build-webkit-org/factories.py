@@ -49,6 +49,9 @@ class Factory(factory.BuildFactory):
                 self.addStep(InstallGtkDependencies())
             if platform.startswith("wpe"):
                 self.addStep(InstallWpeDependencies())
+            if '--cmake' in (additionalArguments or []):
+                self.addStep(InstallCMake())
+                self.addStep(InstallNinja())
 
 
 class BuildFactory(Factory):

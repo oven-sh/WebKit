@@ -54,8 +54,8 @@ class NamedLineCollectionBase {
 public:
     NamedLineCollectionBase(const RenderGrid&, const CustomIdent& name, GridPositionSide, bool nameIsAreaName);
 
-    bool NODELETE hasNamedLines() const;
-    bool NODELETE hasExplicitNamedLines() const;
+    bool LEGACY_NODELETE hasNamedLines() const;
+    bool LEGACY_NODELETE hasExplicitNamedLines() const;
     bool contains(unsigned line) const;
 protected:
 
@@ -80,22 +80,22 @@ class NamedLineCollection : public NamedLineCollectionBase {
 public:
     NamedLineCollection(const RenderGrid&, const CustomIdent& name, GridPositionSide, bool nameIsAreaName = false);
 
-    int firstPosition() const;
+    int LEGACY_NODELETE firstPosition() const;
 
-    unsigned NODELETE lastLine() const;
+    unsigned LEGACY_NODELETE lastLine() const;
 
 private:
-    int NODELETE firstExplicitPosition() const;
+    int LEGACY_NODELETE firstExplicitPosition() const;
 };
 
 } // namespace (anonymous)
 
-static inline bool NODELETE isStartSide(GridPositionSide side)
+static inline bool LEGACY_NODELETE isStartSide(GridPositionSide side)
 {
     return side == GridPositionSide::ColumnStartSide || side == GridPositionSide::RowStartSide;
 }
 
-static inline GridTrackSizingDirection NODELETE directionFromSide(GridPositionSide side)
+static inline GridTrackSizingDirection LEGACY_NODELETE directionFromSide(GridPositionSide side)
 {
     return side == GridPositionSide::ColumnStartSide || side == GridPositionSide::ColumnEndSide ? GridTrackSizingDirection::Columns : GridTrackSizingDirection::Rows;
 }
@@ -110,7 +110,7 @@ static unsigned explicitGridSizeForSide(const RenderGrid& gridContainer, GridPos
     return GridPositionsResolver::explicitGridCount(gridContainer, directionFromSide(side));
 }
 
-static inline GridPositionSide NODELETE transposedSide(GridPositionSide side)
+static inline GridPositionSide LEGACY_NODELETE transposedSide(GridPositionSide side)
 {
     switch (side) {
     case GridPositionSide::ColumnStartSide: return GridPositionSide::RowStartSide;
@@ -120,7 +120,7 @@ static inline GridPositionSide NODELETE transposedSide(GridPositionSide side)
     }
 }
 
-static std::optional<int> clampedImplicitLineForArea(const Style::ComputedStyle& style, const CustomIdent& name, int min, int max, GridTrackSizingDirection direction, bool isStartSide)
+static std::optional<int> LEGACY_NODELETE clampedImplicitLineForArea(const Style::ComputedStyle& style, const CustomIdent& name, int min, int max, GridTrackSizingDirection direction, bool isStartSide)
 {
     auto& areas = style.gridTemplateAreas().map.map;
     auto gridAreaIt = areas.find(name.value);
@@ -187,14 +187,16 @@ NamedLineCollectionBase::NamedLineCollectionBase(const RenderGrid& initialGrid, 
         auto areaName = name;
         bool startSide = isStartSide(side);
         if (!nameIsAreaName) {
-            size_t suffix = name.value.find("-start"_s);
-            if (suffix == notFound) {
-                suffix = name.value.find("-end"_s);
-                ASSERT(suffix != notFound);
-                startSide = false;
-            } else
+            size_t suffixLength;
+            if (name.value.endsWith("-start"_s)) {
                 startSide = true;
-            areaName = CustomIdent { AtomString { name.value.string().left(suffix) } };
+                suffixLength = "-start"_s.length();
+            } else {
+                ASSERT(name.value.endsWith("-end"_s));
+                startSide = false;
+                suffixLength = "-end"_s.length();
+            }
+            areaName = CustomIdent { AtomString { name.value.string().left(name.value.length() - suffixLength) } };
         }
         auto implicitLine = clampedImplicitLineForArea(*gridContainerStyle, areaName, 0, m_lastLine, direction, startSide);
         if (implicitLine)
@@ -392,7 +394,7 @@ int NamedLineCollection::firstPosition() const
 }
 
 // https://drafts.csswg.org/css-grid-2/#indefinite-grid-span
-static bool NODELETE isIndefiniteSpan(const GridPosition& initialPosition, const GridPosition& finalPosition)
+static bool LEGACY_NODELETE isIndefiniteSpan(const GridPosition& initialPosition, const GridPosition& finalPosition)
 {
     if (initialPosition.isAuto())
         return !finalPosition.isSpan();

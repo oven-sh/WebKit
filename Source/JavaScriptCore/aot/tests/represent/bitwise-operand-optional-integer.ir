@@ -1,0 +1,55 @@
+# A bitwise operator takes the low word of an operand that is an integer, undefined or null; an operand that may hold a fraction, and the operand of an addition, become doubles
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+# Where the target converts a number to an int32 in one instruction (ARM64 with FEAT_JSCVT) there is no call to see.
+# RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): x86_64
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="xorWithIntegerOrUndefined" parameters=[{type=i32}, {type=undefined|i32}] results=[{type=i32}] {
+    v2 = BitXor v0, v1 form=Numbers
+    Return v2
+}
+# CHECK-LABEL: function f0 name="xorWithIntegerOrUndefined"
+# CHECK: b0(v0: i32 @Int32, v1: undefined|i32 @OptionalInt64):
+# CHECK-NEXT: i32 @Int32 = BitXor v0, v1 form=Numbers
+# CODE-LABEL: f0:
+# CODE-NOT: operation
+
+function f1 name="everyOperatorWithWideIntegerOrNull" parameters=[{type=undefined|null|int}, {type=i32}] results=[{type=int}] {
+    v2 = BitAnd v0, v1 form=Numbers
+    v3 = BitOr v2, v0 form=Numbers
+    v4 = LShift v0, v3 form=Numbers
+    v5 = RShift v4, v0 form=Numbers
+    v6 = URShift v0, v5 form=Numbers
+    Return v6
+}
+# CHECK-LABEL: function f1 name="everyOperatorWithWideIntegerOrNull"
+# CHECK: b0(v0: undefined|null|int @OptionalInt64, v1: i32 @Int32):
+# CHECK-NEXT: = BitAnd v0, v1 form=Numbers
+# CHECK-NEXT: = BitOr v2, v0 form=Numbers
+# CHECK-NEXT: = LShift v0, v3 form=Numbers
+# CHECK-NEXT: = RShift v4, v0 form=Numbers
+# CHECK-NEXT: = URShift v0, v5 form=Numbers
+# CODE-LABEL: f1:
+# CODE-NOT: operation
+
+function f2 name="xorWithNumberOrUndefined" parameters=[{type=i32}, {type=undefined|number}] results=[{type=i32}] {
+    v2 = BitXor v0, v1 form=Numbers
+    Return v2
+}
+# CHECK-LABEL: function f2 name="xorWithNumberOrUndefined"
+# CHECK: b0(v0: i32 @Int32, v1: undefined|number @OptionalDouble):
+# CHECK-NEXT: i32 @Int32 = BitXor v0, v1 form=Numbers
+# CODE-LABEL: f2:
+# CALLS-LABEL: f2:
+# CALLS: operation operationAOTToInt32 x1
+
+function f3 name="sumWithIntegerOrUndefined" parameters=[{type=i32}, {type=undefined|i32}] results=[{type=number}] {
+    v2 = Add v0, v1 form=Numbers
+    Return v2
+# CHECK: b0(v0: i32 @Int32, v1: undefined|i32 @OptionalInt64):
+# CHECK-NEXT: number @DoubleWithPayload = Add v0, v1 form=Numbers
+}

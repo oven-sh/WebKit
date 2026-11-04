@@ -1,0 +1,30 @@
+# Where a call stores the return address itself, the call of a stub that calls nothing needs no frame: outside fast code a number is boxed by such a stub, and a function that does nothing else has no frame, no stack check and no poll
+# FORM: Placed
+# OPTIONS: heat=only-loops-are-hot check=validate-back-end
+# RUN: generate-code calls
+# REQUIRES: x86_64
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="double" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number @Double):
+    v1 @JSValue = Box v0
+    Return v1
+}
+# CHECK: f0: size={{*}} frame=none
+# CHECK-NEXT: stub BoxNumber.Double x1
+# S: f0 b0 Balanced
+function f1 name="integer" parameters=[{type=int}] results=[{type=anything}] {
+  b0(v0: int @Int64):
+    v1 @JSValue = Box v0
+    Return v1
+}
+# CHECK-NEXT: f1: size={{*}} frame=none
+# CHECK-NEXT: stub BoxNumber.Integer x1
+function f2 name="optionalDouble" parameters=[{type=undefined|null|number}] results=[{type=anything}] {
+  b0(v0: undefined|null|number @OptionalDouble):
+    v1 @JSValue = Box v0
+    Return v1
+}
+# CHECK-NEXT: f2: size={{*}} frame=none
+# CHECK-NEXT: stub BoxNumber.OptionalDouble x1

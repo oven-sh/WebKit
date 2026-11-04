@@ -73,11 +73,12 @@ public:
         StorageAccess,
         LocalNetwork,
         LoopbackNetwork,
+        CrossOriginIsolated,
         Invalid
     };
     enum class ShouldReportViolation : bool { No, Yes };
     WEBCORE_EXPORT static bool isFeatureEnabled(Feature, const Document&, ShouldReportViolation = ShouldReportViolation::Yes);
-    bool NODELETE inheritedPolicyValueForFeature(Feature) const;
+    bool LEGACY_NODELETE inheritedPolicyValueForFeature(Feature) const;
 
     // InheritedPolicy contains enabled features.
     using InheritedPolicy = HashSet<Feature, IntHash<Feature>, WTF::StrongEnumHashTraits<Feature>>;

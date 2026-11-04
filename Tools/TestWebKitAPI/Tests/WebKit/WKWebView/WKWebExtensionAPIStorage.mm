@@ -437,6 +437,113 @@ TEST(WKWebExtensionAPIStorage, GetWithDefaultValue)
     Util::loadAndRunExtension(storageManifest, @{ @"background.js": backgroundScript });
 }
 
+TEST(WKWebExtensionAPIStorage, GetDoesNotAliasEmptyArrays)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"await browser.storage.local.set({ data: { first: [], second: [] } })",
+        @"const { data } = await browser.storage.local.get('data')",
+        @"browser.test.assertFalse(data.first === data.second, 'Empty arrays should be distinct')",
+
+        @"data.first.push(1)",
+        @"browser.test.assertEq(data.second.length, 0, 'Mutating one empty array should not change the other')",
+
+        @"browser.test.notifyPass()",
+    ]);
+
+    Util::loadAndRunExtension(storageManifest, @{ @"background.js": backgroundScript });
+}
+
+TEST(WKWebExtensionAPIStorage, GetDoesNotAliasEmptyObjects)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"await browser.storage.local.set({ data: { first: {}, second: {} } })",
+        @"const { data } = await browser.storage.local.get('data')",
+        @"browser.test.assertFalse(data.first === data.second, 'Empty objects should be distinct')",
+
+        @"data.first.key = 1",
+        @"browser.test.assertEq(Object.keys(data.second).length, 0, 'Mutating one empty object should not change the other')",
+
+        @"browser.test.notifyPass()",
+    ]);
+
+    Util::loadAndRunExtension(storageManifest, @{ @"background.js": backgroundScript });
+}
+
+TEST(WKWebExtensionAPIStorage, GetDoesNotAliasNestedEmptyContainers)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"await browser.storage.local.set({ data: { arrays: [[], []], objects: [{}, {}], nested: { array: [], object: {}, deeper: { array: [], object: {} } }, mixed: [[], {}, [[]], [{}]] } })",
+        @"const { data } = await browser.storage.local.get('data')",
+
+        @"const containers = [",
+        @"  data.arrays[0], data.arrays[1], data.objects[0], data.objects[1],",
+        @"  data.nested.array, data.nested.object, data.nested.deeper.array, data.nested.deeper.object,",
+        @"  data.mixed[0], data.mixed[1], data.mixed[2], data.mixed[2][0], data.mixed[3], data.mixed[3][0]",
+        @"]",
+
+        @"for (let i = 0; i < containers.length; ++i) {",
+        @"  for (let j = i + 1; j < containers.length; ++j)",
+        @"    browser.test.assertFalse(containers[i] === containers[j], `Containers ${i} and ${j} should be distinct`)",
+        @"}",
+
+        @"browser.test.notifyPass()",
+    ]);
+
+    Util::loadAndRunExtension(storageManifest, @{ @"background.js": backgroundScript });
+}
+
+TEST(WKWebExtensionAPIStorage, GetDoesNotAliasEmptyContainersAcrossKeys)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"await browser.storage.local.set({ firstArray: [], secondArray: [], firstObject: {}, secondObject: {} })",
+
+        @"const byKeys = await browser.storage.local.get(['firstArray', 'secondArray', 'firstObject', 'secondObject'])",
+        @"browser.test.assertFalse(byKeys.firstArray === byKeys.secondArray, 'Empty arrays from different keys should be distinct')",
+        @"browser.test.assertFalse(byKeys.firstObject === byKeys.secondObject, 'Empty objects from different keys should be distinct')",
+
+        @"const all = await browser.storage.local.get(null)",
+        @"browser.test.assertFalse(all.firstArray === all.secondArray, 'Empty arrays from a get of all keys should be distinct')",
+        @"browser.test.assertFalse(all.firstObject === all.secondObject, 'Empty objects from a get of all keys should be distinct')",
+
+        @"browser.test.assertFalse(byKeys.firstArray === all.firstArray, 'Empty arrays from separate get calls should be distinct')",
+        @"browser.test.assertFalse(byKeys.firstObject === all.firstObject, 'Empty objects from separate get calls should be distinct')",
+
+        @"browser.test.notifyPass()",
+    ]);
+
+    Util::loadAndRunExtension(storageManifest, @{ @"background.js": backgroundScript });
+}
+
+TEST(WKWebExtensionAPIStorage, GetDoesNotAliasEmptyContainersInSessionStorage)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"await browser.storage.session.set({ data: { first: [], second: [], third: {}, fourth: {} } })",
+        @"const { data } = await browser.storage.session.get('data')",
+        @"browser.test.assertFalse(data.first === data.second, 'Empty arrays should be distinct')",
+        @"browser.test.assertFalse(data.third === data.fourth, 'Empty objects should be distinct')",
+
+        @"browser.test.notifyPass()",
+    ]);
+
+    Util::loadAndRunExtension(storageManifest, @{ @"background.js": backgroundScript });
+}
+
+TEST(WKWebExtensionAPIStorage, GetWithDefaultValuesDoesNotAliasEmptyContainers)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"await browser.storage.local.set({ stored: [] })",
+
+        @"const result = await browser.storage.local.get({ stored: [], firstArray: [], secondArray: [], firstObject: {}, secondObject: {} })",
+        @"browser.test.assertFalse(result.stored === result.firstArray, 'A stored empty array should differ from a default')",
+        @"browser.test.assertFalse(result.firstArray === result.secondArray, 'Default empty arrays should be distinct')",
+        @"browser.test.assertFalse(result.firstObject === result.secondObject, 'Default empty objects should be distinct')",
+
+        @"browser.test.notifyPass()",
+    ]);
+
+    Util::loadAndRunExtension(storageManifest, @{ @"background.js": backgroundScript });
+}
+
 TEST(WKWebExtensionAPIStorage, GetKeys)
 {
     auto *backgroundScript = Util::constructScript(@[
@@ -702,6 +809,39 @@ TEST(WKWebExtensionAPIStorage, StorageAreaOnChanged)
     Util::loadAndRunExtension(storageManifest, @{ @"background.js": backgroundScript });
 }
 
+TEST(WKWebExtensionAPIStorage, OnChangedDoesNotAliasEmptyContainers)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"let changeCount = 0",
+
+        @"browser.storage.onChanged.addListener((changes) => {",
+        @"  const { newValue, oldValue } = changes.data",
+
+        @"  if (changeCount === 0) {",
+        @"    browser.test.assertEq(oldValue, undefined, 'The first change should have no old value')",
+        @"    browser.test.assertFalse(newValue.firstArray === newValue.secondArray, 'New empty arrays should be distinct')",
+        @"    browser.test.assertFalse(newValue.firstObject === newValue.secondObject, 'New empty objects should be distinct')",
+        @"  } else {",
+        @"    browser.test.assertFalse(oldValue.firstArray === oldValue.secondArray, 'Old empty arrays should be distinct')",
+        @"    browser.test.assertFalse(oldValue.firstObject === oldValue.secondObject, 'Old empty objects should be distinct')",
+        @"    browser.test.assertFalse(newValue.firstArray === newValue.secondArray, 'New empty arrays should be distinct')",
+        @"    browser.test.assertFalse(newValue.firstObject === newValue.secondObject, 'New empty objects should be distinct')",
+        @"    browser.test.assertFalse(oldValue.firstArray === newValue.firstArray, 'Old and new empty arrays should be distinct')",
+        @"    browser.test.assertFalse(oldValue.firstObject === newValue.firstObject, 'Old and new empty objects should be distinct')",
+
+        @"    browser.test.notifyPass()",
+        @"  }",
+
+        @"  ++changeCount",
+        @"})",
+
+        @"await browser.storage.local.set({ data: { firstArray: [], secondArray: [], firstObject: {}, secondObject: {} } })",
+        @"await browser.storage.local.set({ data: { firstArray: [], secondArray: [], firstObject: {}, secondObject: {}, extra: 1 } })",
+    ]);
+
+    Util::loadAndRunExtension(storageManifest, @{ @"background.js": backgroundScript });
+}
+
 TEST(WKWebExtensionAPIStorage, StorageFromSubframe)
 {
     TestWebKitAPI::HTTPServer server({
@@ -758,13 +898,34 @@ TEST(WKWebExtensionAPIStorage, StorageFromSubframe)
 TEST(WKWebExtensionAPIStorage, SetExceedsMaximumDataSize)
 {
     auto *backgroundScript = Util::constructScript(@[
-        // 5120 keys × 200 KB ≈ 1GB of data, exceeding the 950 MB per-call limit.
-        @"const value = 'x'.repeat(200 * 1024)",
-        @"const data = {}",
-        @"for (let i = 0; i < 5120; i++)",
-        @"    data[`key${i}`] = value",
+        // 3 keys × 400 KB ≈ 1.2 MB of data, exceeding the 1 MB per-call limit used in testing mode.
+        @"const value = 'x'.repeat(400 * 1024)",
 
-        @"browser.test.assertThrows(() => browser.storage.local.set(data), /exceeded maximum data size allowed per call/i)",
+        @"browser.test.assertThrows(() => browser.storage.local.set({ key0: value, key1: value, key2: value }), /exceeded maximum data size allowed per call/i)",
+
+        // Data under the limit can still be set.
+        @"await browser.test.assertSafeResolve(() => browser.storage.local.set({ key0: value, key1: value }))",
+
+        @"browser.test.notifyPass()",
+    ]);
+
+    Util::loadAndRunExtension(unlimitedStorageManifest, @{ @"background.js": backgroundScript });
+}
+
+TEST(WKWebExtensionAPIStorage, GetExceedsMaximumDataSize)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        // Each call stays under the 1 MB per-call limit used in testing mode, but getting all 3 keys at once exceeds it.
+        @"const value = 'x'.repeat(400 * 1024)",
+
+        @"await browser.test.assertSafeResolve(() => browser.storage.local.set({ key0: value, key1: value }))",
+        @"await browser.test.assertSafeResolve(() => browser.storage.local.set({ key2: value }))",
+
+        @"await browser.test.assertRejects(browser.storage.local.get(), /exceeded maximum data size allowed per call/i)",
+
+        // Getting fewer keys stays under the limit.
+        @"const result = await browser.test.assertSafeResolve(() => browser.storage.local.get([ 'key0', 'key1' ]))",
+        @"browser.test.assertEq(Object.keys(result).length, 2)",
 
         @"browser.test.notifyPass()",
     ]);

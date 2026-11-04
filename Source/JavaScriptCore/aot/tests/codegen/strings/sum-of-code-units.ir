@@ -1,0 +1,121 @@
+# function checksum(text: string): number {
+#   let sum = 0;
+#   for (let i = 0; i < text.length; i++) sum = (sum + text.charCodeAt(i)) | 0;
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = checksum(input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized loops f1
+# REQUIRES: unsanitized-code
+# RUN(HOT): lower-to-b3 optimized loops f1
+# REQUIRES(HOT): unsanitized-code
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=18 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=206 kind=CallResult
+typesite w3 module=m0 position=48 kind=Variable
+typesite w4 module=m0 position=68 kind=Variable
+typesite w5 module=m0 position=79 kind=PropertyRead
+typesite w6 module=m0 position=110 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+    v9 = Call v1, -, v8 calleeName="checksum"
+    v10 = Convert v9 declared={type=number site=w2}
+    PropSet v5, v10 key="answer"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="checksum" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = Integer
+    v2 = Convert v1 declared={type=number site=w3}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number site=w4}
+    Jump -> next b2(v2, v4)
+  b2(v5: number, v6: number):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Convert v8 declared={type=number site=w5} illTypedCause=Assertion
+    v10 = Less v6, v9
+    Branch v10 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v11):
+    Jump -> next b4()
+  b4():
+    v12 = Convert v5 declared={type=i32 flags=[IsExpected]}
+    v13 = PropGet v0 key="charCodeAt"
+    v14 = Call v13, v0, v11 calleeKey="charCodeAt" calleeName="text.charCodeAt"
+    v15 = Convert v14 declared={type=number site=w6} illTypedCause=DeclarationWithoutBody
+    v16 = Add v12, v15
+    v17 = Integer
+    v18 = BitOr v16, v17
+    v19 = Convert v18 declared={type=number site=w3}
+    Jump -> next b5()
+  b5():
+    v20 = Increment v11
+    v21 = Convert v20 declared={type=number site=w4}
+    Jump -> next b2(v19, v21)
+  b6(v22):
+    Jump -> next b7()
+  b7():
+    v23 = Convert v5 declared={type=i32 flags=[IsExpected]}
+    v24 = Convert v23 declared={type=number site=w1}
+    Return v24
+}
+
+# Ahead of the loop the text is made flat, and its characters, length and width are read once. The loop for 8-bit characters is written out eight times: eight loads of a byte off one counter, at the offsets 0 to 7.
+# CHECK-LABEL: steps by 8
+# CHECK: Int32 b@{{*}} = Load8Z(b@{{*}}, ControlDependent|ReadsImmutable|Reads:characters8, {{*}}:GetStringCodeUnit)
+# REPEAT: turn = 1..7
+# CHECK: Int32 b@{{*}} = Load8Z(b@{{*}}, offset = %(turn), ControlDependent|ReadsImmutable|Reads:characters8, {{*}}:GetStringCodeUnit)
+# END REPEAT
+# CHECK-NOT: Reads:characters
+# CHECK-LABEL: end of loop
+# What is left over goes through the same loop, one character a turn.
+# CHECK-LABEL: steps by 1
+# CHECK: Int32 b@[[unit]] = Load8Z(b@{{*}}, ControlDependent|ReadsImmutable|Reads:characters8, {{*}}:GetStringCodeUnit)
+# CHECK: Int32 b@{{*}} = Add(b@[[unit]], b@{{*}}:Add)
+# CHECK-LABEL: end of loop
+# 16-bit characters have a loop of their own.
+# CHECK-LABEL: steps by 1
+# CHECK: Int32 b@{{*}} = Load16Z(b@{{*}}, ControlDependent|ReadsImmutable|Reads:characters16, {{*}}:GetStringCodeUnit)
+# CHECK-LABEL: end of loop
+
+# The eight turns have no range check, no test of the width or for a rope, no poll, no reload of the length or the characters, and no conversion to a number: the only branch is the loop's condition.
+# HOT-LABEL: steps by 8
+# HOT-NOT: Branch(
+# HOT-NOT: isLoopPoll
+# HOT-NOT: Reads:StringImpl
+# HOT-NOT: Reads:JSRopeString
+# HOT-NOT: ExitsSideways
+# HOT-NOT: IToD
+# HOT: Branch(b@{{*}}, Terminal, {{*}}:Less)
+# HOT-NOT: Branch(
+# HOT-NOT: isLoopPoll
+# HOT-LABEL: end of loop
+
+# One character costs a load, an addition, the counter and the branch. The eight turns have eight loads, eight additions, the counter and the branch. ARM64 adds the characters and the counter first.
+# X64: instructions: 4, patchpoints: 1, {{*}} steps by 1
+# X64: instructions: 18, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 4, patchpoints: 1, {{*}} steps by 1
+# ARM64: instructions: 19, patchpoints: 8, {{*}} steps by 8

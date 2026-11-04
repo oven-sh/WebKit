@@ -43,11 +43,11 @@ void ComputedStyleDependenciesCollector<LengthUnit>::operator()(ComputedStyleDep
     case Rex:
     case Ric:
     case Rem:
-        dependencies.rootProperties.appendIfNotContains(CSSPropertyFontSize);
+        dependencies.rootProperties.appendIfNotContains(CSSPropertyID::FontSize);
         break;
     case Rlh:
-        dependencies.rootProperties.appendIfNotContains(CSSPropertyFontSize);
-        dependencies.rootProperties.appendIfNotContains(CSSPropertyLineHeight);
+        dependencies.rootProperties.appendIfNotContains(CSSPropertyID::FontSize);
+        dependencies.rootProperties.appendIfNotContains(CSSPropertyID::LineHeight);
         break;
     case Em:
     case QuirkyEm:
@@ -55,11 +55,11 @@ void ComputedStyleDependenciesCollector<LengthUnit>::operator()(ComputedStyleDep
     case Cap:
     case Ch:
     case Ic:
-        dependencies.properties.appendIfNotContains(CSSPropertyFontSize);
+        dependencies.properties.appendIfNotContains(CSSPropertyID::FontSize);
         break;
     case Lh:
-        dependencies.properties.appendIfNotContains(CSSPropertyFontSize);
-        dependencies.properties.appendIfNotContains(CSSPropertyLineHeight);
+        dependencies.properties.appendIfNotContains(CSSPropertyID::FontSize);
+        dependencies.properties.appendIfNotContains(CSSPropertyID::LineHeight);
         break;
     case Cqw:
     case Cqh:

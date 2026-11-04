@@ -148,12 +148,14 @@ ImageBufferSkiaAcceleratedBackend::ImageBufferSkiaAcceleratedBackend(const Image
 #if USE(COORDINATED_GRAPHICS)
     // Use a content layer for canvas.
     if (parameters.purpose == RenderingPurpose::Canvas)
-        m_layerContentsDisplayDelegate = GraphicsLayerContentsDisplayDelegateCoordinated::create();
+        lazyInitialize(m_layerContentsDisplayDelegate, GraphicsLayerContentsDisplayDelegateCoordinated::create());
 #endif
 }
 
 ImageBufferSkiaAcceleratedBackend::~ImageBufferSkiaAcceleratedBackend()
 {
+    PlatformDisplay::makeSkiaGLContextCurrentIfExists();
+
     // Unwind the surface context's save/restore stack before destruction
     if (m_canvasRecordingContext)
         m_canvasRecordingContext->unwindStateStack();
@@ -182,12 +184,12 @@ void ImageBufferSkiaAcceleratedBackend::ensureCanvasRecordingContext()
     // Create a switchable canvas that will delegate to either recording or surface canvas.
     // GraphicsContextSkia holds a reference to this canvas, which never changes - only the
     // target canvas it delegates to changes.
-    m_switchableCanvas = makeUnique<SkiaSwitchableCanvas>(size());
+    lazyInitialize(m_switchableCanvas, makeUnique<SkiaSwitchableCanvas>(size()));
 
     auto* recordingCanvas = m_pictureRecorder.beginRecording(size().width(), size().height());
     m_switchableCanvas->switchToCanvas(recordingCanvas);
 
-    m_canvasRecordingContext = makeUnique<GraphicsContextSkia>(static_cast<SkCanvas&>(*m_switchableCanvas), RenderingMode::Accelerated, RenderingPurpose::Canvas);
+    lazyInitialize(m_canvasRecordingContext, makeUnique<GraphicsContextSkia>(static_cast<SkCanvas&>(*m_switchableCanvas), RenderingMode::Accelerated, RenderingPurpose::Canvas));
     m_canvasRecordingContext->applyDeviceScaleFactor(resolutionScale());
     m_canvasRecordingContext->beginRecording(GraphicsContextSkia::RecordingMode::Canvas);
     m_hasActiveRecording = true;
@@ -251,6 +253,8 @@ void ImageBufferSkiaAcceleratedBackend::flushContext()
 
 void ImageBufferSkiaAcceleratedBackend::prepareForDisplay()
 {
+    flushContext();
+
 #if USE(COORDINATED_GRAPHICS)
     if (!m_layerContentsDisplayDelegate)
         return;
@@ -341,7 +345,7 @@ void ImageBufferSkiaAcceleratedBackend::putPixelBuffer(const PixelBufferSourceVi
 }
 
 #if USE(COORDINATED_GRAPHICS)
-RefPtr<GraphicsLayerContentsDisplayDelegate> ImageBufferSkiaAcceleratedBackend::layerContentsDisplayDelegate() const
+RefPtr<GraphicsLayerContentsDisplayDelegate> ImageBufferSkiaAcceleratedBackend::layerContentsDisplayDelegate()
 {
     return m_layerContentsDisplayDelegate;
 }

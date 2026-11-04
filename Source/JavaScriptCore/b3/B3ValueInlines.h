@@ -44,6 +44,7 @@
 #include "B3PatchpointValue.h"
 #include "B3PhiChildren.h"
 #include "B3Procedure.h"
+#include "B3RelocatableValue.h"
 #include "B3SIMDValue.h"
 #include "B3SlotBaseValue.h"
 #include "B3SwitchValue.h"
@@ -85,8 +86,41 @@ ALWAYS_INLINE bool Value::mustExecute() const
     const Effects& entry = constantEffectsTable[opcode()];
     if (entry.isValid()) [[likely]]
         return entry.mustExecute();
+    std::optional<bool> result;
+    switch (opcode()) {
+    case Load8Z:
+    case Load8S:
+    case Load16Z:
+    case Load16S:
+    case Load:
+        result = static_cast<const MemoryValue*>(this)->hasFence() || traps();
+        break;
+    case Store8:
+    case Store16:
+    case Store:
+        result = static_cast<const MemoryValue*>(this)->range() || static_cast<const MemoryValue*>(this)->hasFence() || traps();
+        break;
+    case Patchpoint:
+        result = static_cast<const PatchpointValue*>(this)->effects.mustExecute();
+        break;
+    case CCall:
+        result = static_cast<const CCallValue*>(this)->effects.mustExecute();
+        break;
+    default:
+        break;
+    }
+    if (result) {
+        ASSERT(*result == effectsSlow().mustExecute());
+        return *result;
+    }
     return effectsSlow().mustExecute();
 }
+
+#if ENABLE(WEBASSEMBLY)
+#define B3_WASM_GC_VALUE_TYPE(ValueType) ValueType
+#else
+#define B3_WASM_GC_VALUE_TYPE(ValueType) Value
+#endif
 
 #define DISPATCH_ON_KIND(MACRO) \
     switch (kind().opcode()) { \
@@ -102,6 +136,7 @@ ALWAYS_INLINE bool Value::mustExecute() const
     case Neg: \
     case PurifyNaN: \
     case Clz: \
+    case PopCount: \
     case Abs: \
     case Ceil: \
     case Floor: \
@@ -154,7 +189,7 @@ ALWAYS_INLINE bool Value::mustExecute() const
     case Select: \
         return MACRO(Value); \
     case WasmArrayLength: \
-        return MACRO(WasmArrayLengthValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmArrayLengthValue)); \
     case ArgumentReg: \
         return MACRO(ArgumentRegValue); \
     case Const32: \
@@ -173,6 +208,8 @@ ALWAYS_INLINE bool Value::mustExecute() const
         return MACRO(FenceValue); \
     case SlotBase: \
         return MACRO(SlotBaseValue); \
+    case Relocatable: \
+        return MACRO(RelocatableValue); \
     case Get: \
     case Set: \
         return MACRO(VariableValue); \
@@ -185,7 +222,7 @@ ALWAYS_INLINE bool Value::mustExecute() const
     case Store16: \
     case Store: \
         return MACRO(MemoryValue); \
-    case MemoryCopy: \
+    case MemoryMove: \
     case MemoryFill: \
         return MACRO(BulkMemoryValue); \
     case Switch: \
@@ -199,20 +236,20 @@ ALWAYS_INLINE bool Value::mustExecute() const
     case WasmBoundsCheck: \
         return MACRO(WasmBoundsCheckValue); \
     case WasmStructGet: \
-        return MACRO(WasmStructGetValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmStructGetValue)); \
     case WasmStructSet: \
-        return MACRO(WasmStructSetValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmStructSetValue)); \
     case WasmStructNew: \
-        return MACRO(WasmStructNewValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmStructNewValue)); \
     case WasmArrayGet: \
-        return MACRO(WasmArrayGetValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmArrayGetValue)); \
     case WasmArraySet: \
-        return MACRO(WasmArraySetValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmArraySetValue)); \
     case WasmArrayNew: \
-        return MACRO(WasmArrayNewValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmArrayNewValue)); \
     case WasmRefCast: \
     case WasmRefTest: \
-        return MACRO(WasmRefTypeCheckValue); \
+        return MACRO(B3_WASM_GC_VALUE_TYPE(WasmRefTypeCheckValue)); \
     case AtomicXchgAdd: \
     case AtomicXchgAnd: \
     case AtomicXchgOr: \
@@ -320,16 +357,16 @@ ALWAYS_INLINE size_t Value::computeAdjacencyListOffset() const
 #undef VALUE_TYPE_SIZE
 }
 
-ALWAYS_INLINE Value* Value::cloneImpl() const
+ALWAYS_INLINE Value* Value::cloneImpl(Arena* arena) const
 {
     ASSERT(!kind().isCloningForbidden());
-#define VALUE_TYPE_CLONE(ValueType) allocate<ValueType>(*static_cast<const ValueType*>(this))
+#define VALUE_TYPE_CLONE(ValueType) allocateCloneIn<ValueType>(arena, *static_cast<const ValueType*>(this))
     DISPATCH_ON_KIND(VALUE_TYPE_CLONE);
 #undef VALUE_TYPE_CLONE
 }
 
 template<typename BottomProvider>
-void Value::replaceWithBottom(const BottomProvider& bottomProvider)
+void Value::replaceWithBottom(NOESCAPE const BottomProvider& bottomProvider)
 {
     if (m_type == Void) {
         replaceWithNop();
@@ -524,7 +561,7 @@ inline T Value::asNumber() const
 }
 
 template<typename Functor>
-void Value::walk(const Functor& functor, PhiChildren* phiChildren)
+void Value::walk(NOESCAPE const Functor& functor, PhiChildren* phiChildren)
 {
     GraphNodeWorklist<Value*> worklist;
     worklist.push(this);

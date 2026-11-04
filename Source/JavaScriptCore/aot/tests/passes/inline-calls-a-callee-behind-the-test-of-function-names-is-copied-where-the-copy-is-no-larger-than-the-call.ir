@@ -1,0 +1,62 @@
+# A call behind the test that no function object was renamed stands beside the call by value that is made once one was. However hot the place is, the body takes the place of the
+# call only where the copy is no larger than the call. A callee that nothing renames is copied as the budget of the place allows.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineCalls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="small" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee, RecordsCalleeOnceRenamed] {
+    Return v1
+}
+function f1 name="large" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee, RecordsCalleeOnceRenamed] {
+    v2 = PropGet v1 key="first"
+    v3 = PropGet v2 key="second"
+    v4 = PropGet v3 key="third"
+    v5 = PropGet v4 key="fourth"
+    v6 = PropGet v5 key="fifth"
+    Return v6
+}
+function f2 name="largeAndNeverRenamed" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = PropGet v1 key="first"
+    v3 = PropGet v2 key="second"
+    v4 = PropGet v3 key="third"
+    v5 = PropGet v4 key="fourth"
+    v6 = PropGet v5 key="fifth"
+    Return v6
+}
+
+function f3 name="callsTheSmallOne" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+    v2 = AreFunctionNamesUnchanged
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetCapture v0 function=f0
+    v4 = CallDirect v3, v1 function=f0
+    Return v4
+  b2() frequency=Unlikely:
+    v5 = Call v0, -, v1
+    Return v5
+# CHECK-NOT: CallDirect
+# CHECK: = Call v0, -, v1
+}
+
+function f4 name="callsTheLargeOne" parameters=[{type=f1}, {type=anything}] results=[{type=anything}] {
+    v2 = AreFunctionNamesUnchanged
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetCapture v0 function=f1
+    v4 = CallDirect v3, v1 function=f1
+    Return v4
+  b2() frequency=Unlikely:
+    v5 = Call v0, -, v1
+    Return v5
+# CHECK: = CallDirect {{*}}, v1 function=f1
+# CHECK: = Call v0, -, v1
+}
+
+function f5 name="callsTheOneNeverRenamed" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
+    v2 = GetCapture v0 function=f2
+    v3 = CallDirect v2, v1 function=f2
+    Return v3
+# CHECK-NOT: CallDirect
+# CHECK: key="fifth"
+}

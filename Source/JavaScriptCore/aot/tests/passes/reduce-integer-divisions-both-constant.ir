@@ -1,0 +1,56 @@
+# A quotient of two constants is left for constant folding, whatever rounds it
+# FORM: Prepared
+# RUN: pass ReduceIntegerDivisions
+# STATISTIC: IntegerDivisionsReduced = 0
+# CHECK: outcome: Unchanged
+# CHECK-NOT: DivideIntegers
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="floor" results=[{type=number}] {
+    v0 = Integer integer=7
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    v3 = CallBuiltin -, v2 overload=MathFloor/0 builtinCallForm=Whole
+    Return v3
+}
+function f1 name="ceil" results=[{type=number}] {
+    v0 = Integer integer=7
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    v3 = CallBuiltin -, v2 overload=MathCeil/0 builtinCallForm=Whole
+    Return v3
+}
+function f2 name="trunc" results=[{type=number}] {
+    v0 = Integer integer=7
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    v3 = CallBuiltin -, v2 overload=MathTrunc/0 builtinCallForm=Whole
+    Return v3
+}
+function f3 name="round" results=[{type=number}] {
+    v0 = Integer integer=7
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    v3 = CallBuiltin -, v2 overload=MathRound/0 builtinCallForm=Whole
+    Return v3
+}
+function f4 name="bitOr" results=[{type=i32}] {
+    v0 = Integer integer=7
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    Return v4
+}
+function f5 name="toInt32OfDivisionByZero" results=[{type=i32}] {
+    v0 = Integer integer=7
+    v1 = Integer integer=0
+    v2 = Div v0, v1
+    v3 = ToInt32 v2
+    Return v3
+}
+function f6 name="parametersOfOneValue" parameters=[{type=7}, {type=2}] results=[{type=number}] {
+    v2 = Div v0, v1
+    v3 = CallBuiltin -, v2 overload=MathFloor/0 builtinCallForm=Whole
+    Return v3
+}

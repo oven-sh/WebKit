@@ -142,6 +142,9 @@
 #ifndef __UTF_OLD_H__
 #define __UTF_OLD_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/utf.h"
 #include "unicode/utf8.h"
 #include "unicode/utf16.h"

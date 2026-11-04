@@ -1,0 +1,62 @@
+# interface Handle { readonly brand?: never }  interface Fiber { next: Fiber | null; state: Handle | null }  interface Root { current: Fiber }
+# function FiberNode(this: Fiber) { this.next = null; this.state = null }  function RootNode(this: Root, current: Fiber) { this.current = current }
+# fiber.state = root; fiber.state = other    (fiber.state as Root).current    (handle as Fiber).next
+# Handle requires no name, so every object passes for it: a fiber and a root are both stored as one. The program asserts a Handle to be a Root here and a Fiber there.
+# What has gone up into Handle does not come down on that account: an assertion out of a type that says nothing about an object is an assertion out of `object`.
+# So a Fiber is an object of FiberNode, a Root one of RootNode, and an access through either type is planned for one layout. Both are Handles,
+# and both are what a Handle is converted to that requires no name either, Opaque: every object satisfies such a type, so nothing may be kept out of it.
+# Beside them: Options requires no name either, but object literals are born with its layout, L5. Those go wherever the program converts them: to Settings, and to Loud, which requires `verbose`.
+# The literal L7, which the program converts to Options, goes on to Settings, which requires nothing of it; it is a Loud because it has the name. The objects of Recorder, which are
+# converted to Options too, are Settings and no Loud
+# FORM: AsRead
+# RUN: members
+# RUN(READ): print
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="FiberNode" constructor=f1 fields=[{key="next" declared={type=undefined|null|L2}}, {key="state" declared={type=undefined|null|L4}}] supertypes=[L2] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="RootNode" constructor=f2 fields=[{key="current" declared={type=undefined|null|L2}}] supertypes=[L3] flags=[IsConstructorFunction]
+layout L2 name="Fiber" fields=[{key="next" declared={type=undefined|null|L2} flags=[IsRequired]}, {key="state" declared={type=undefined|null|L4} flags=[IsRequired]}] supertypes=[L4] flags=[IsNeverAllocated]
+layout L3 name="Root" fields=[{key="current" declared={type=undefined|null|L2} flags=[IsRequired]}] supertypes=[L4] flags=[IsNeverAllocated]
+layout L4 name="Handle" fields=[{key="brand" declared={type=undefined} flags=[IsNeverWritten]}] supertypes=[L2, L3, L8] flags=[IsNeverAllocated]
+layout L5 name="Options" fields=[{key="verbose" declared={type=undefined|boolean}}] supertypes=[L6, L9]
+layout L6 name="Settings" fields=[{key="depth" declared={type=undefined|number}}, {key="verbose" declared={type=undefined|boolean}}] flags=[IsNeverAllocated]
+layout L7 name="Flags" fields=[{key="quiet" declared={type=boolean} flags=[IsRequired]}, {key="verbose" declared={type=boolean} flags=[IsRequired]}] supertypes=[L5]
+layout L8 name="Opaque" flags=[IsNeverAllocated]
+layout L9 name="Loud" fields=[{key="verbose" declared={type=boolean} flags=[IsRequired]}] flags=[IsNeverAllocated]
+layout L10 kind=Instance name="Recorder" constructor=f4 fields=[{key="tape" declared={type=anything}}] supertypes=[L5] flags=[IsConstructorFunction]
+# CHECK: L0: members [L0]
+# CHECK-NEXT: L1: members [L1]
+# CHECK-NEXT: L2: members [L0]
+# CHECK-NEXT: L3: members [L1]
+# CHECK-NEXT: L4: members [L0, L1]
+# CHECK-NEXT: L5: members [L5, L7, L10]
+# CHECK-NEXT: L6: members [L5, L7, L10]
+# CHECK-NEXT: L7: members [L7]
+# CHECK-NEXT: L8: members [L0, L1]
+# CHECK-NEXT: L9: members [L5, L7]
+# CHECK-NEXT: L10: members [L10]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="FiberNode" flags=[HasThis] thisType={type=undefined|null|L2} results=[{type=anything}] {
+    v1 = Null
+    PropSet v0, v1 key="next" mode=Strict
+    PropSet v0, v1 key="state" mode=Strict
+    Return
+}
+function f2 name="RootNode" flags=[HasThis] thisType={type=undefined|null|L3} parameters=[{type=undefined|null|L2}] results=[{type=anything}] {
+    PropSet v0, v1 key="current" mode=Strict
+    Return
+}
+function f3 name="take" parameters=[{type=undefined|null|L2}, {type=undefined|null|L3}, {type=undefined|null|L4}, {type=undefined|null|L6}] results=[{type=anything}] {
+    Return
+}
+function f4 name="Recorder" flags=[HasThis] results=[{type=anything}] {
+    v1 = Null
+    PropSet v0, v1 key="tape" mode=Strict
+    Return
+}
+# READ-LABEL: function f3 name="take"
+# READ: parameters=[{type=undefined|null|L0}, {type=undefined|null|L1}, {type=undefined|null|L0|L1}, {type=undefined|null|L5|L7|L10}]

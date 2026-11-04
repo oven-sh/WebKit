@@ -1,0 +1,44 @@
+# The storage of a parameter is tested ahead of a loop that appends to a list made here, and the list reaches the loop as a block parameter.
+# The verifier follows the list with the usual work limit, whatever the build lowers it to. An append to the parameter itself still ends the guard
+# FORM: Prepared
+# OPTIONS: limit=MaxEscapeAnalysisWork:1
+# RUN: verify
+# DIAGNOSTIC: GuardNotAvailable 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodAppendToTheNewList" parameters=[{type=Array<number, proven, pristine[Storage, Names, Dense]>}, {type=i32}] results=[{type=undefined}] {
+    v2 = NewArray contents=number
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b1(| 0), notTaken b4()
+  b1(v4):
+    Jump -> next b2(v2)
+  b2(v5: Array<number>):
+    LoopHint
+    v7 = IsInBounds v0, v1
+    Branch v7 -> taken b3(| 0), notTaken b4()
+  b3(v8):
+    v9 = AllGuards v4, v8
+    v10 = GetArrayElement v0, v1, v9 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
+    AppendElement v5, v10
+    Jump -> next b2(v5)
+  b4():
+    Return
+}
+function f1 name="badAppendToTheParameter" parameters=[{type=Array<number, proven, pristine[Storage, Names, Dense]>}, {type=i32}] results=[{type=undefined}] {
+    v2 = Upcast v0 castType=Array<number>
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    Branch v3 -> taken b1(| 0), notTaken b4()
+  b1(v4):
+    Jump -> next b2(v2)
+  b2(v5: Array<number>):
+    LoopHint
+    v7 = IsInBounds v0, v1
+    Branch v7 -> taken b3(| 0), notTaken b4()
+  b3(v8):
+    v9 = AllGuards v4, v8
+    v10 = GetArrayElement v0, v1, v9 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
+    AppendElement v5, v10
+    Jump -> next b2(v5)
+  b4():
+    Return
+}

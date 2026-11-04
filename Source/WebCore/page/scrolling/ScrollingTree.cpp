@@ -90,8 +90,7 @@ bool ScrollingTree::isUserScrollInProgressAtEventLocation(const PlatformWheelEve
     if (m_treeState.nodesWithActiveUserScrolls.isEmpty())
         return false;
 
-    FloatPoint position = wheelEvent.position();
-    position.move(rootNode->viewToContentsOffset(m_treeState.mainFrameScrollPosition));
+    auto position = rootNode->viewToContentsPoint(wheelEvent.position(), m_treeState.mainFrameScrollPosition);
     if (auto node = scrollingNodeForPoint(position))
         return m_treeState.nodesWithActiveUserScrolls.contains(node->scrollingNodeID());
 
@@ -104,8 +103,7 @@ OptionSet<WheelEventProcessingSteps> ScrollingTree::computeWheelProcessingSteps(
     if (!rootNode)
         return { WheelEventProcessingSteps::AsyncScrolling };
 
-    FloatPoint position = wheelEvent.position();
-    position.move(rootNode->viewToContentsOffset(m_treeState.mainFrameScrollPosition));
+    auto position = rootNode->viewToContentsPoint(wheelEvent.position(), m_treeState.mainFrameScrollPosition);
 
     if (!m_treeState.eventTrackingRegions.isEmpty()) {
         IntPoint roundedPosition = roundedIntPoint(position);
@@ -200,10 +198,10 @@ WheelEventHandlingResult ScrollingTree::handleWheelEvent(const PlatformWheelEven
             }
         }
 
-        FloatPoint position = wheelEvent.position();
+        FloatPoint position;
         {
             Locker locker { m_treeStateLock };
-            position.move(rootNode->viewToContentsOffset(m_treeState.mainFrameScrollPosition));
+            position = rootNode->viewToContentsPoint(wheelEvent.position(), m_treeState.mainFrameScrollPosition);
         }
         auto node = scrollingNodeForPoint(position);
 
@@ -307,12 +305,26 @@ void ScrollingTree::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNode& node,
         setMainFrameScrollPosition(node.currentScrollPosition());
 }
 
-void ScrollingTree::mainFrameViewportChangedViaDelegatedScrolling(const FloatPoint& scrollPosition, const FloatRect& layoutViewport, double)
+void ScrollingTree::mainFrameViewportChangedViaDelegatedScrolling(const FloatPoint& scrollPosition, const FloatRect& layoutViewport, double scale)
 {
-    LOG_WITH_STREAM(Scrolling, stream << "ScrollingTree::mainFrameViewportChangedViaDelegatedScrolling - layoutViewport " << layoutViewport);
-    
-    if (RefPtr rootNode = m_rootNode)
+    LOG_WITH_STREAM(Scrolling, stream << "ScrollingTree::mainFrameViewportChangedViaDelegatedScrolling - layoutViewport " << layoutViewport << " scale " << scale);
+
+    // repositionScrollingLayers() requires the tree lock, and the scrolling thread may be reading the tree.
+    Locker locker { m_treeLock };
+
+    if (RefPtr rootNode = m_rootNode) {
+        // Whenever we hold m_treeLock we expect to be holding the m_rootNode->scrollingTree()->treeLock() as well,
+        // but the inverse is not necessarily true
+        assertIsHeld(rootNode->scrollingTree()->treeLock());
+
+        // wasScrolledByDelegatedScrolling() bails out when the position is unchanged, but the scrolled contents
+        // layer's position is scaled by this, so a scale change on its own still needs a reposition.
+        bool scaleChanged = rootNode->delegatedPageScaleFactor() != static_cast<float>(scale);
+        rootNode->setDelegatedPageScaleFactor(scale);
         rootNode->wasScrolledByDelegatedScrolling(scrollPosition, layoutViewport);
+        if (scaleChanged)
+            rootNode->repositionScrollingLayersForDelegatedScaleChange();
+    }
 }
 
 void ScrollingTree::setOverlayScrollbarsEnabled(bool enabled)
@@ -343,9 +355,9 @@ void ScrollingTree::removeFromActiveNodes(ScrollingTreeNode& node)
 {
     // The active node sets hold refs, so a node removed from m_nodeMap would otherwise stay in
     // them and remain unresolvable via nodeForID() for the rest of the tree's lifetime.
-    if (auto* positionedNode = dynamicDowncast<ScrollingTreePositionedNode>(node))
+    if (RefPtr positionedNode = dynamicDowncast<ScrollingTreePositionedNode>(node))
         m_activePositionedNodes.remove(*positionedNode);
-    else if (auto* scrollProxyNode = dynamicDowncast<ScrollingTreeOverflowScrollProxyNode>(node))
+    else if (RefPtr scrollProxyNode = dynamicDowncast<ScrollingTreeOverflowScrollProxyNode>(node))
         m_activeOverflowScrollProxyNodes.remove(*scrollProxyNode);
 
     // Active nodes can also reference the node going away, and those references resolve
@@ -539,19 +551,19 @@ bool ScrollingTree::updateTreeFromStateNodeRecursive(const ScrollingStateNode* s
         auto parentIt = m_nodeMap.find(*parentNodeID);
         ASSERT_WITH_SECURITY_IMPLICATION(parentIt != m_nodeMap.end());
         if (parentIt != m_nodeMap.end()) {
-            RefPtr parent = parentIt->value.get();
+            Ref parent = parentIt->value;
 
             RefPtr oldParent = node->parent();
             if (oldParent)
                 oldParent->removeChild(*node);
 
-            if (oldParent != parent)
+            if (oldParent != parent.ptr())
                 node->setParent(parent.copyRef());
 
             parent->appendChild(*node);
         } else {
-            // FIXME: Use WeakPtr in m_nodeMap.
-            m_nodeMap.remove(nodeID);
+            removeNode(nodeID, state.frameHostingNode.get());
+            return true;
         }
     }
 
@@ -756,6 +768,20 @@ float ScrollingTree::mainFrameScaleFactor() const
     return m_rootNode ? m_rootNode->frameScaleFactor() : 1;
 }
 
+void ScrollingTree::setMainFrameDelegatedPageScaleFactor(float scale)
+{
+    Locker locker { m_treeLock };
+    RefPtr rootNode = m_rootNode;
+    if (!rootNode || rootNode->delegatedPageScaleFactor() == scale)
+        return;
+
+    // As in mainFrameViewportChangedViaDelegatedScrolling().
+    assertIsHeld(rootNode->scrollingTree()->treeLock());
+
+    rootNode->setDelegatedPageScaleFactor(scale);
+    rootNode->repositionScrollingLayersForDelegatedScaleChange();
+}
+
 FloatSize ScrollingTree::totalContentsSize() const
 {
     Locker locker { m_treeLock };
@@ -766,6 +792,13 @@ FloatRect ScrollingTree::layoutViewport() const
 {
     Locker locker { m_treeLock };
     return m_rootNode ? m_rootNode->layoutViewport() : FloatRect();
+}
+
+FloatSize ScrollingTree::mainFrameSizeForVisibleContent() const
+{
+    Locker locker { m_treeLock };
+    RefPtr rootNode = m_rootNode;
+    return rootNode ? rootNode->sizeForVisibleContent() : FloatSize();
 }
 
 void ScrollingTree::viewWillStartLiveResize()
@@ -824,10 +857,10 @@ WebCore::RectEdges<bool> ScrollingTree::pinnedStateIncludingAncestorsAtPoint(Flo
     if (!rootNode)
         return false;
 
-    FloatPoint position = viewPoint;
+    FloatPoint position;
     {
         Locker locker { m_treeStateLock };
-        position.move(rootNode->viewToContentsOffset(m_treeState.mainFrameScrollPosition));
+        position = rootNode->viewToContentsPoint(viewPoint, m_treeState.mainFrameScrollPosition);
     }
 
     HitTestLocker hitTestLocker { *this };

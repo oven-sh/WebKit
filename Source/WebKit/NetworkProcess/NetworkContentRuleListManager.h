@@ -51,7 +51,10 @@ public:
     using BackendCallback = CompletionHandler<void(WebCore::ContentExtensions::ContentExtensionsBackend&)>;
     void contentExtensionsBackend(UserContentControllerIdentifier, BackendCallback&&);
 
-    void NODELETE ref() const;
+    void setTrackingPreventionContentRuleList(std::optional<WebCompiledContentRuleListData>&&);
+    const WebCore::ContentExtensions::ContentExtensionsBackend* trackingPreventionContentExtensionBackend() const LIFETIME_BOUND { return m_trackingPreventionContentExtensionBackend.get(); }
+
+    void LEGACY_NODELETE ref() const;
     void deref() const;
 
 private:
@@ -62,6 +65,7 @@ private:
 
     HashMap<UserContentControllerIdentifier, std::unique_ptr<WebCore::ContentExtensions::ContentExtensionsBackend>> m_contentExtensionBackends;
     HashMap<UserContentControllerIdentifier, Vector<BackendCallback>> m_pendingCallbacks;
+    std::unique_ptr<WebCore::ContentExtensions::ContentExtensionsBackend> m_trackingPreventionContentExtensionBackend;
     WeakRef<NetworkProcess> m_networkProcess;
 };
 

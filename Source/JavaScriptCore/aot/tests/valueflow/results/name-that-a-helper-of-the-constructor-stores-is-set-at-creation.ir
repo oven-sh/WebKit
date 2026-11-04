@@ -1,0 +1,29 @@
+# class Filled { constructor(v) { this.own = v; fill(this, v) } }  function fill(o, v) { o.extra = v }  new Filled(5).extra
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Filled" {{*}}{key="extra" {{*}}flags=[IsAddedLate{{*}}initialization=SetAtCreation{{*}}occupancy=AlwaysFilled
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Filled" constructor=f1 fields=[{key="own" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=5
+    v1 = NewClosure function=f1
+    v2 = NewClass v1 layout=L0
+    v3 = FinishClass v2 layout=L0
+    v4 = Construct v3, -, v0
+    v5 = PropGet v4 key="extra"
+    v6 = PropGet v4 key="own"
+    Return v5
+}
+function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="own" mode=Strict
+    v5 = CallDirect v3, v1 function=f2
+    Return v3
+}
+function f2 name="fill" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="extra" mode=Strict
+    Return
+}

@@ -90,9 +90,9 @@ ThreadedCompositor::ThreadedCompositor(WebPage& webPage, LayerTreeHost& layerTre
 {
     ASSERT(RunLoop::isMain());
 
-    m_didCompositeRunLoopObserver = makeUnique<RunLoopObserver>(RunLoopObserver::WellKnownOrder::GraphicsCommit, [this] {
+    lazyInitialize(m_didCompositeRunLoopObserver, makeUnique<RunLoopObserver>(RunLoopObserver::WellKnownOrder::GraphicsCommit, [this] {
         this->didCompositeRunLoopObserverFired();
-    });
+    }));
 
     initializeFPSCounter();
 #if ENABLE(DAMAGE_TRACKING)
@@ -131,6 +131,10 @@ ThreadedCompositor::ThreadedCompositor(WebPage& webPage, LayerTreeHost& layerTre
 #if USE(TEXTURE_MAPPER)
         m_context = WTF::move(context);
         m_textureMapper = TextureMapper::create();
+#if USE(WPE_RENDERER)
+        if (m_surface->isLegacyWPERenderer() && !nativeSurfaceHandle)
+            m_flipY = !m_flipY;
+#endif
 #else
         PlatformDisplay::sharedDisplay().setSkiaGLContextForCurrentThread(WTF::move(context));
         m_threadSafeGrContext = PlatformDisplay::sharedDisplay().skiaGrContext()->threadSafeProxy();
@@ -622,7 +626,7 @@ void ThreadedCompositor::renderLayerTree()
     if (shouldNotifiyDidComposite)
         m_didCompositeRunLoopObserver->schedule(&RunLoop::mainSingleton());
 
-    WTFEmitSignpost(this, DidRenderFrame, "reasons: %s", reasonsToString(reasons).ascii().data());
+    WTFEmitSignpost(this, DidRenderFrame, "reasons: %s", reasonsToString(reasons).utf8());
 
 #if USE(TEXTURE_MAPPER)
     if (m_context)
@@ -679,7 +683,7 @@ ASCIILiteral ThreadedCompositor::stateToString(ThreadedCompositor::State state)
 void ThreadedCompositor::scheduleUpdateLocked()
 {
     assertIsHeld(m_state.lock);
-    WTFEmitSignpost(this, ScheduleComposition, "reasons: %s, state: %s, waiting for tiles: %s, render timer active: %s", reasonsToString(m_state.reasons).ascii().data(), stateToString(m_state.state).characters(), m_state.isWaitingForTiles ? "yes" : "no", m_state.isRenderTimerActive ? "yes" : "no");
+    WTFEmitSignpost(this, ScheduleComposition, "reasons: %s, state: %s, waiting for tiles: %s, render timer active: %s", reasonsToString(m_state.reasons).utf8(), stateToString(m_state.state).characters(), m_state.isWaitingForTiles ? "yes" : "no", m_state.isRenderTimerActive ? "yes" : "no");
 
     switch (m_state.state) {
     case State::Idle:
@@ -705,7 +709,7 @@ void ThreadedCompositor::frameComplete()
     ASSERT(m_workQueue->runLoop().isCurrent());
 
     Locker locker { m_state.lock };
-    WTFEmitSignpost(this, FrameComplete, "reasons: %s, state: %s, waiting for tiles: %s", reasonsToString(m_state.reasons).ascii().data(), stateToString(m_state.state).characters(), m_state.isWaitingForTiles ? "yes" : "no");
+    WTFEmitSignpost(this, FrameComplete, "reasons: %s, state: %s, waiting for tiles: %s", reasonsToString(m_state.reasons).utf8(), stateToString(m_state.state).characters(), m_state.isWaitingForTiles ? "yes" : "no");
 
     switch (m_state.state) {
     case State::Idle:

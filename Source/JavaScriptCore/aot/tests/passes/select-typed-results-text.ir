@@ -1,0 +1,166 @@
+# JSON.parse whose result is checked for, or expected to have, a type with a layout opens a source and calls the parser of that type, and the original call stays on the rare path
+# FORM: Prepared
+# OPTIONS: report=Declines
+# RUN: pass SelectTypedResults SelectTypedResults
+# STATISTIC: TypedResultsSelected = 6
+# STATISTIC: ParsersCreated = 3
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+# CHECK-NEXT: decline TypedResultNotSelected f6 v2 None [0] reason=NoTarget
+# CHECK-NEXT: decline TypedResultNotSelected f7 v2 None [0] reason=NoTarget
+# CHECK-NEXT: decline TypedResultNotSelected f8 v3 None [0] reason=NoTarget
+# CHECK-NEXT: decline TypedResultNotSelected f9 v2 None [0] reason=NoTarget
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=undefined|null|L0 layouts=[L0]
+layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=string}}]
+layout L1 name="Other" fields=[{key="z" declared={type=number}}]
+variable g0 name="user" module=m0 declared={type=undefined|null|L0 flags=[IsExpected]} initialization=Undefined
+
+function f0 name="expectedResult" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0 expectedResult=x0
+    Return v2
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: [[open0]]: boolean = JSONSourceOpen v0
+# CHECK-NEXT: Branch [[open0]] -> taken [[opened0]](| 0), notTaken
+# CHECK: [[done0]](v2:{{*}}):
+# CHECK-NEXT: Return v2
+# CHECK: [[generic0]]() frequency=Rare:
+# CHECK-NEXT: [[original0]]:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK-NOT: expectedResult
+# CHECK: Jump -> next [[done0]]([[original0]])
+# CHECK: [[opened0]]([[source0]]: guard):
+# CHECK-NEXT: [[start0]]: cursor = JSONSourceStart [[source0]]
+# CHECK-NEXT: [[first0]]: cursor = JSONSkipWhitespace [[start0]]
+# CHECK-NEXT: [[results0]]:{{*}}= CallDirect [[first0]] function=[[parserOfUser]]
+# CHECK-NEXT: [[outcome0]]: int[0, 2] = ResultAt [[results0]]
+# CHECK-NEXT: [[value0]]:{{*}}= ResultAt [[results0]] index=1
+# CHECK-NEXT: [[next0]]: cursor = ResultAt [[results0]] index=2
+# CHECK-NEXT: Switch [[outcome0]] cases=[1] -> case [[parsed0]](), otherwise [[abandon0]]()
+# CHECK: [[parsed0]]():
+# CHECK-NEXT: [[closed0]]: boolean = JSONSourceClose [[source0]], [[next0]]
+# CHECK-NEXT: Branch [[closed0]] -> taken [[whole0]](), notTaken [[trailing0]]()
+# CHECK: [[abandon0]]() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon [[source0]]
+# CHECK-NEXT: Jump -> next [[generic0]]()
+# CHECK: [[whole0]]():
+# CHECK: Jump -> next [[done0]](
+# CHECK: [[trailing0]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[generic0]]()
+}
+
+function f1 name="checked" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = Check v2 expectedType=undefined|null|L0
+    Return v3
+# CHECK: = JSONSourceOpen v0
+# CHECK: = Check v2 expectedType=undefined|null|L0
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+}
+
+function f2 name="storedInTypedVariable" parameters=[{type=string}] results=[{type=undefined}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = Check v2 expectedType=undefined|null|L0
+    PutModuleVariable v3 variable=g0
+    Return
+# CHECK: = JSONSourceOpen v0
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+}
+
+function f3 name="doubleCast" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = Upcast v2 castType=anything
+    v4 = Check v3 expectedType=undefined|null|L0
+    Return v4
+# CHECK: = JSONSourceOpen v0
+# CHECK: = CallDirect {{*}} function=[[parserOfUser]]
+}
+
+function f4 name="expected" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 ~ null|L0 = Upcast v2 castType=anything
+    Return v3
+# JSON.parse never returns undefined, so it is not among what is expected of the result, and the parser is another one
+# CHECK: = JSONSourceOpen v0
+# CHECK-NOT: function=[[parserOfUser]]
+# CHECK: = CallDirect {{*}} function=[[parserOfExpectedUser]]
+}
+
+function f5 name="checkedAsArray" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = Check v2 expectedType=Array<number>
+    Return v3
+# CHECK: = JSONSourceOpen v0
+# CHECK-NOT: function=[[parserOfUser]]
+# CHECK-NOT: function=[[parserOfExpectedUser]]
+# CHECK: = CallDirect {{*}} function=[[parserOfNumbers]]
+}
+
+function f6 name="twoDifferentChecks" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = Check v2 expectedType=undefined|null|L0
+    v4 = Check v2 expectedType=undefined|null|L1
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: v2:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK-NEXT: v3:{{*}}= Check v2 expectedType=undefined|null|L0
+}
+
+function f7 name="checkOfPrimitive" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = Check v2 expectedType=string
+    Return v3
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: v2:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK-NEXT: v3:{{*}}= Check v2 expectedType=string
+}
+
+function f8 name="checkBehindBlockParameter" parameters=[{type=string}, {type=boolean}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = CallBuiltin -, v0, v2 overload=JSONParse/0
+    Branch v1 -> taken b1(), notTaken b2(v2)
+  b1():
+    Jump -> next b2(v3)
+  b2(v4):
+    v5 = Check v4 expectedType=undefined|null|L0
+    Return v5
+# CHECK: v2: undefined = Undefined
+# CHECK-NEXT: v3:{{*}}= CallBuiltin -, v0, v2 overload=JSONParse/0
+# CHECK-NEXT: Branch v1
+}
+
+function f9 name="noCheck" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    Return v2
+# CHECK: v1: undefined = Undefined
+# CHECK-NEXT: v2:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK-NEXT: Return v2
+}
+
+function f10 name="checkedInRareBlock" parameters=[{type=string}, {type=boolean}] results=[{type=anything}] {
+    v2 = Undefined
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2() frequency=Rare:
+    v3 = CallBuiltin -, v0, v2 overload=JSONParse/0
+    v4 = Check v3 expectedType=undefined|null|L0
+    Return v4
+# CHECK: b2() frequency=Rare:
+# CHECK-NEXT: v3:{{*}}= CallBuiltin -, v0, v2 overload=JSONParse/0
+# CHECK-NEXT: v4:{{*}}= Check v3 expectedType=undefined|null|L0
+# CHECK-NEXT: Return v4
+# CHECK: function [[parserOfUser]] {{*}}role=Parser {{*}}parameters=[{type=cursor}] results=[{type=int[0, 2]}, {type=undefined|null|L0}, {type=cursor}]
+# CHECK: function [[parserOfNumbers]] {{*}}role=Parser {{*}}parameters=[{type=cursor}] results=[{type=int[0, 2]}, {type=undefined|Array<number>{{*}}}, {type=cursor}]
+}

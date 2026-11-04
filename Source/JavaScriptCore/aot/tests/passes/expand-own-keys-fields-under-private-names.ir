@@ -1,0 +1,45 @@
+# An order that leaves out a field under a private name is the order of no object: where orders are tested the walk gets no arm for it
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Copy"
+layout L1 name="WithPrivate" fields=[{key=#"p"@L1 declared={type=number} flags=[IsPrivate]}, {key="a" declared={type=number}}, {key="b" declared={type=number}}] flow={constructorOrders=[{fields=[1, 2]}]}
+layout L2 name="WithoutPrivate" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1]}]}
+layout L3 name="WithPrivateAndOneProvenOrder" fields=[{key=#"p"@L3 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled}}, {key="a" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={baseState=None constructorOrders=[{fields=[1]}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, StoreOfOtherType]}
+
+function f0 name="spreadOfInstanceWithPrivateField" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L1):
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+# CHECK-NEXT: b0(v0: object ~ L1):
+# CHECK-NEXT: = NewObject layout=L0
+# CHECK-NEXT: CopyDataProperties v1, v0
+# CHECK-NOT: HasKeyOrder
+}
+
+function f1 name="oneOfTwoLayoutsHasAPrivateField" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L1|L2):
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+# CHECK-NOT: layout=L1
+# CHECK: = HasKeyOrder v0, {{*}} layout=L2 fields=[0, 1]
+# CHECK-NOT: layout=L1
+}
+
+function f2 name="oneProvenOrderNeedsNoTest" parameters=[{type=L3}] results=[{type=anything}] {
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+# CHECK-NOT: HasKeyOrder
+# CHECK-NOT: CopyDataProperties
+# CHECK: = GetSlot v0 key="a" receivers=[L3]
+# CHECK-NOT: CopyDataProperties
+}

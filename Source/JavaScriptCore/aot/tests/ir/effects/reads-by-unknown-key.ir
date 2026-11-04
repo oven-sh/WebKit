@@ -1,0 +1,53 @@
+# A read or a test under a string nobody knows looks the key up and runs no code of the program when every own property of the receiver is data and every object above it is a locked built-in: a record that gets no accessor, no other property and no other prototype. One of the three left open, an instance of a class, a key that is converted by code of the program, or a store is unknown code
+# FORM: Prepared
+# RUN: effects f0 f1
+# RUN(OPERANDS): operands f0 f1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Plain" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}] flow={members=[L0] impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L1 name="MayGetAccessor" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}] flow={members=[L1] impossibleMutations=[AddProperty, ChangePrototype]}
+layout L2 name="MayGetProperty" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}] flow={members=[L2] impossibleMutations=[RedefineProperty, ChangePrototype]}
+layout L3 name="MayGetPrototype" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}] flow={members=[L3] impossibleMutations=[RedefineProperty, AddProperty]}
+layout L4 kind=Instance name="Instance" constructor=f2 fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}] flow={baseState=None members=[L4] impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+function f0 name="looksUp" parameters=[{type=L0}, {type=string}, {type=null|L0}, {type=string|symbol}] results=[{type=undefined}] {
+    v4 = ElemGet v0, v1
+    v5 = ElemHas v0, v1
+    v6 = ElemGet v2, v1
+    v7 = ElemGet v0, v3
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: nknownCode
+# CHECK: v4 ElemGet: reads(ObjectFields, ShapeWords, OrderWords, PrototypeLinks, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v5 ElemHas: reads(ObjectFields, ShapeWords, OrderWords, PrototypeLinks, NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v6 ElemGet: reads(ObjectFields,
+# CHECK-NEXT: v7 ElemGet: reads(ObjectFields,
+# CHECK-NOT: nknownCode
+# OPERANDS-LABEL: function f0
+# OPERANDS-NEXT: v4 ElemGet 0: [Inspects] reads(
+# OPERANDS: v5 ElemHas 0: [Inspects] reads(
+function f1 name="runsCode" parameters=[{type=L0}, {type=string}, {type=L1}, {type=L2}, {type=L3}, {type=L4}, {type=object}, {type=L0|L1}] results=[{type=undefined}] {
+    v8 = ElemGet v2, v1
+    v9 = ElemGet v3, v1
+    v10 = ElemGet v4, v1
+    v11 = ElemGet v5, v1
+    v12 = ElemGet v0, v6
+    v13 = ElemGet v7, v1
+    v14 = ElemGet v6, v1
+    ElemSet v0, v1, v1 mode=Strict
+    v16 = ElemDelete v0, v1 mode=Strict
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v8 ElemGet: unknownCode
+# CHECK-NEXT: v9 ElemGet: unknownCode
+# CHECK-NEXT: v10 ElemGet: unknownCode
+# CHECK-NEXT: v11 ElemGet: unknownCode
+# CHECK-NEXT: v12 ElemGet: unknownCode
+# CHECK-NEXT: v13 ElemGet: unknownCode
+# CHECK-NEXT: v14 ElemGet: unknownCode
+# CHECK-NEXT: v15 ElemSet: unknownCode
+# CHECK-NEXT: v16 ElemDelete: unknownCode
+# OPERANDS-LABEL: function f1
+# OPERANDS-NEXT: v8 ElemGet 0: [Inspects, PassesToUserCode]
+function f2 name="Instance" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4

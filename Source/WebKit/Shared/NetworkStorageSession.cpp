@@ -37,6 +37,7 @@
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ShouldPartitionCookie.h>
 #include <WebCore/StorageAccessQuirks.h>
+#include <wtf/Borrow.h>
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -120,12 +121,12 @@ bool NetworkStorageSession::hasHadUserInteractionAsFirstParty(const RegistrableD
     return m_registrableDomainsWithUserInteractionAsFirstParty.contains(registrableDomain);
 }
 
-ThirdPartyCookieBlockingDecision NetworkStorageSession::thirdPartyCookieBlockingDecisionForRequest(const ResourceRequest& request, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, bool isInitiatedByDedicatedWorker, bool navigationLosesFrameSpecificStorageAccess) const
+ThirdPartyCookieBlockingDecision NetworkStorageSession::thirdPartyCookieBlockingDecisionForRequest(const ResourceRequest& request, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, bool isInitiatedByWorker, bool navigationLosesFrameSpecificStorageAccess) const
 {
-    return thirdPartyCookieBlockingDecisionForRequest(request.firstPartyForCookies(), request.url(), frameID, webPageProxyID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker, isInitiatedByDedicatedWorker, navigationLosesFrameSpecificStorageAccess);
+    return thirdPartyCookieBlockingDecisionForRequest(request.firstPartyForCookies(), request.url(), frameID, webPageProxyID, shouldRelaxThirdPartyCookieBlocking, isKnownCrossSiteTracker, isInitiatedByWorker, navigationLosesFrameSpecificStorageAccess);
 }
 
-ThirdPartyCookieBlockingDecision NetworkStorageSession::thirdPartyCookieBlockingDecisionForRequest(const URL& firstPartyForCookies, const URL& resource, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, bool isInitiatedByDedicatedWorker, bool navigationLosesFrameSpecificStorageAccess) const
+ThirdPartyCookieBlockingDecision NetworkStorageSession::thirdPartyCookieBlockingDecisionForRequest(const URL& firstPartyForCookies, const URL& resource, std::optional<FrameIdentifier> frameID, std::optional<WebPageProxyIdentifier> webPageProxyID, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker, bool isInitiatedByWorker, bool navigationLosesFrameSpecificStorageAccess) const
 {
     if (shouldRelaxThirdPartyCookieBlocking == ShouldRelaxThirdPartyCookieBlocking::Yes)
         return ThirdPartyCookieBlockingDecision::None;
@@ -153,7 +154,7 @@ ThirdPartyCookieBlockingDecision NetworkStorageSession::thirdPartyCookieBlocking
     // A navigation that loses its frame-specific storage access grant must not attach first-party
     // cookies to its network request.
     std::optional<FrameIdentifier> grantFrameID = navigationLosesFrameSpecificStorageAccess ? std::nullopt : frameID;
-    if (hasStorageAccess(resourceDomain, firstPartyDomain, grantFrameID, webPageProxyID) && !isInitiatedByDedicatedWorker)
+    if (hasStorageAccess(resourceDomain, firstPartyDomain, grantFrameID, webPageProxyID) && !isInitiatedByWorker)
         return ThirdPartyCookieBlockingDecision::None;
 
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES)
@@ -272,7 +273,7 @@ void NetworkStorageSession::setDomainsWithCrossPageStorageAccess(const HashMap<T
 {
     m_pairsGrantedCrossPageStorageAccess.clear();
     for (auto& [topDomain, subResourceDomains] : domains) {
-        for (auto&& subResourceDomain : subResourceDomains)
+        for (auto&& subResourceDomain : borrow(subResourceDomains))
             grantCrossPageStorageAccess(topDomain, subResourceDomain);
     }
 }
@@ -518,7 +519,7 @@ std::optional<Seconds> NetworkStorageSession::clientSideCookieCap(const Registra
 
 void NetworkStorageSession::deleteCookiesForHostnames(std::span<const String> cookieHostNames, CompletionHandler<void()>&& completionHandler)
 {
-    deleteCookiesForHostnames(cookieHostNames, IncludeHttpOnlyCookies::Yes, ScriptWrittenCookiesOnly::No, WTF::move(completionHandler));
+    deleteCookiesForHostnames(cookieHostNames, IncludeHttpOnlyCookies::Yes, ScriptWrittenCookiesOnly::No, ExemptAllowlistedCookies::No, WTF::move(completionHandler));
 }
 
 #if !PLATFORM(COCOA)

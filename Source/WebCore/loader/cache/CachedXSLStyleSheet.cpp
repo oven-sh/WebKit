@@ -38,7 +38,7 @@ namespace WebCore {
 
 CachedXSLStyleSheet::CachedXSLStyleSheet(CachedResourceRequest&& request, PAL::SessionID sessionID, const CookieJar* cookieJar)
     : CachedResource(WTF::move(request), Type::XSLStyleSheet, sessionID, cookieJar)
-    , m_decoder(TextResourceDecoder::create("text/xsl"_s))
+    , m_decoder(TextResourceDecoder::create(TextResourceDecoder::ContentType::XML))
 {
 }
 
@@ -53,7 +53,7 @@ void CachedXSLStyleSheet::didAddClient(CachedResourceClient& client)
 
 void CachedXSLStyleSheet::setEncoding(const String& chs)
 {
-    protect(m_decoder)->setEncoding(chs, TextResourceDecoder::EncodingFromHTTPHeader);
+    m_decoder->setEncoding(chs, TextResourceDecoder::EncodingSource::HTTPHeader);
 }
 
 ASCIILiteral CachedXSLStyleSheet::encoding() const
@@ -66,7 +66,7 @@ void CachedXSLStyleSheet::finishLoading(const FragmentedSharedBuffer* data, cons
     if (data) {
         Ref contiguousData = data->makeContiguous();
         setEncodedSize(data->size());
-        m_sheet = protect(m_decoder)->decodeAndFlush(contiguousData->span());
+        m_sheet = m_decoder->decodeAndFlush(contiguousData->span());
         m_data = WTF::move(contiguousData);
     } else {
         m_data = nullptr;

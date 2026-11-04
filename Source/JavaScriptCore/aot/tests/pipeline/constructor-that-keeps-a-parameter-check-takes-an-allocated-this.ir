@@ -1,0 +1,40 @@
+# The class reaches code that the compiler does not see, so the check of the constructor's parameter survives. It stands behind the constructor's own allocation,
+# so `new Meter(..)` in the program still allocates the object itself and enters the version of the constructor that takes it
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls
+# RUN: pipeline Select
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: GetConstructPrototype
+# CHECK: [[meter]]: L0 = NewObject layout=L0
+# CHECK-NEXT: = CallDirect [[meter]], {{*}} function=[[version]]
+# CHECK-NEXT: TryFinishBirth [[meter]]
+# CHECK-LABEL: function f1 name="Meter"
+# CHECK: b0(
+# CHECK-NEXT: = GetConstructPrototype v0 layout=L0
+# CHECK-NEXT: = NewObject {{*}} layout=L0
+# CHECK: = TypeTest v1 testedType=number
+# CHECK: function [[version]] name="Meter" module=m0 position=5 kind=BaseConstructor role=AllocatedThisVersion
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=20 kind=Parameter
+layout L0 kind=Instance name="Meter" module=m0 constructor=f1 fields=[{key="total" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v2
+    v6 = Builtin builtin=MathRandom
+    v7 = Call v6
+    v8 = ToNumber v7
+    v9 = Construct v2, -, v8
+    Return v9
+}
+function f1 name="Meter" module=m0 position=5 kind=BaseConstructor flags=[HasNewTarget, IsChecked] length=1 parameters=[{type=number site=w0}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0 fields=[]
+    PropSet v3, v1 key="total" mode=Strict
+    Return v3
+}

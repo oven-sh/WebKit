@@ -89,7 +89,7 @@ String createTemporaryZipArchive(const String& path)
 
     RetainPtr coordinator = adoptNS([[NSFileCoordinator alloc] initWithFilePresenter:nil]);
     [coordinator coordinateReadingItemAtURL:[NSURL fileURLWithPath:path.createNSString().get()] options:NSFileCoordinatorReadingWithoutChanges error:nullptr byAccessor:[&](NSURL *newURL) mutable {
-        UTF8CString archivePath { byteCast<char8_t>([NSTemporaryDirectory() stringByAppendingPathComponent:@"WebKitGeneratedFileXXXXXX"].fileSystemRepresentation) };
+        auto archivePath = UTF8CString::unsafeFromUTF8([NSTemporaryDirectory() stringByAppendingPathComponent:@"WebKitGeneratedFileXXXXXX"].fileSystemRepresentation);
         int fd = mkostemp(byteCast<char>(archivePath.mutableSpanIncludingNullTerminator().data()), O_CLOEXEC);
         if (fd == -1)
             return;
@@ -215,7 +215,7 @@ std::pair<FileHandle, String> createTemporaryFileInDirectory(const String& direc
 }
 
 #ifdef IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES
-static int NODELETE toIOPolicyScope(PolicyScope scope)
+static int LEGACY_NODELETE toIOPolicyScope(PolicyScope scope)
 {
     switch (scope) {
     case PolicyScope::Process:
@@ -382,7 +382,7 @@ std::optional<String> homeDirectory()
 
 UTF8CString currentExecutableName()
 {
-    return UTF8CString { byteCast<char8_t>(getprogname()) };
+    return UTF8CString::unsafeFromUTF8(getprogname());
 }
 
 } // namespace FileSystemImpl

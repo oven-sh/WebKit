@@ -33,7 +33,7 @@ namespace WebCore {
 namespace Style {
 
 class CalcSizeValue;
-Ref<CalcSizeValue> CLANG_POINTER_CONVERSION protect(CalcSizeValue&);
+Ref<CalcSizeValue> CLANG_POINTER_CONVERSION LEGACY_NODELETE protect(CalcSizeValue&);
 
 struct ZoomFactor;
 
@@ -54,15 +54,21 @@ public:
     WEBCORE_EXPORT ~UnevaluatedCalcSize();
 
     CalcSizeValue& calcSize() const { return m_calcSize; }
-    [[nodiscard]] CalcSizeValue& NODELETE leakRef();
+    [[nodiscard]] CalcSizeValue& LEGACY_NODELETE leakRef();
 
-    // CSSValueInvalid for a <calc-sum> or `any` basis, which behave as an ordinary length.
+    // CSSValueID::Invalid for a <calc-sum> or `any` basis, which behave as an ordinary length.
     WEBCORE_EXPORT CSSValueID basisKeyword() const;
-    bool behavesAsKeyword() const { return basisKeyword() != CSSValueInvalid; }
+    bool behavesAsKeyword() const { return basisKeyword() != CSSValueID::Invalid; }
 
     WEBCORE_EXPORT bool hasPercentage() const;
     WEBCORE_EXPORT bool basisHasPercentage() const;
 
+    // Resolves the calculation with `size` standing for keywordBasisSize, the used size of the basis
+    // keyword, which only layout knows.
+    WEBCORE_EXPORT double evaluate(double percentResolutionLength, const ZoomFactor&, double keywordBasisSize) const;
+
+    // The same for a value that does not behave as a keyword, where the calculation cannot mention
+    // `size` and so has nothing to stand in for.
     WEBCORE_EXPORT double evaluate(double percentResolutionLength, const ZoomFactor&) const;
 
     WEBCORE_EXPORT bool operator==(const UnevaluatedCalcSize&) const;
@@ -75,9 +81,9 @@ WTF::TextStream& operator<<(WTF::TextStream&, const UnevaluatedCalcSize&);
 
 // Queries on the value itself, for headers that only have it forward declared. Taking it by
 // reference keeps the predicates free of the Ref that constructing an UnevaluatedCalcSize would
-// bring, whose destructor is not allowed in the NODELETE callers that ask these questions.
-WEBCORE_EXPORT CSSValueID NODELETE calcSizeBasisKeyword(const CalcSizeValue&);
-WEBCORE_EXPORT bool NODELETE calcSizeHasPercentage(const CalcSizeValue&);
+// bring, whose destructor is not allowed in the LEGACY_NODELETE callers that ask these questions.
+WEBCORE_EXPORT CSSValueID LEGACY_NODELETE calcSizeBasisKeyword(const CalcSizeValue&);
+WEBCORE_EXPORT bool LEGACY_NODELETE calcSizeHasPercentage(const CalcSizeValue&);
 
 } // namespace Style
 } // namespace WebCore

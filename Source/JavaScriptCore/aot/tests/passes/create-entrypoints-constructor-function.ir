@@ -1,0 +1,33 @@
+# A short constructor function that reads no new.target and is entered from outside gets a second generic entrypoint, which `new` of a value enters where the function is its own new.target:
+# it allocates the object with the layout of the function, calls the function on it, and returns the object unless the function has returned another.
+# A function of the same form whose layout nobody allocates, and one that is no constructor function, have the one entrypoint.
+# FORM: Prepared
+# RUN: pass CreateEntrypoints
+# STATISTIC: GenericEntrypoints = 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" constructor=f0 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Never" constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction] flow={allocation=NeverAllocated}
+variable g0 name="Point" module=m0 declared={type=anything} initialization=Function function=f0
+variable g1 name="Never" module=m0 declared={type=anything} initialization=Function function=f1
+variable g2 name="plain" module=m0 declared={type=anything} initialization=Function function=f2
+function f0 name="Point" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    PropSet v0, v1 key="x"
+    Return v1
+}
+function f1 name="Never" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
+    PropSet v0, v1 key="x"
+    Return v1
+}
+function f2 name="plain" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}
+# CHECK: function [[construct]] name="Point" module=m0 role=GenericEntrypoint flags=[HasThis, HasNewTarget]{{*}}derivation={source=f0 parameter=2} creator=Entrypoint{target=f0 arguments=Registers takesNewTarget=true} {
+# CHECK: [[object]]: L0 = NewObject {{*}}layout=L0
+# CHECK: [[returned]]: anything = CallDirect [[object]], {{*}}function=f0 [isConstruction]
+# CHECK: TypeTest [[returned]] testedType=object
+# CHECK: Return [[object]]
+# CHECK: name="Point" module=m0 role=GenericEntrypoint flags=[HasThis] {{*}}derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers constructEntrypoint=[[construct]]} {
+# CHECK: name="Never" module=m0 role=GenericEntrypoint flags=[HasThis] {{*}}creator=Entrypoint{target=f1 arguments=Registers} {
+# CHECK: name="plain" module=m0 role=GenericEntrypoint flags=[HasThis] {{*}}creator=Entrypoint{target=f2 arguments=Registers} {
+# CHECK-NOT: role=GenericEntrypoint

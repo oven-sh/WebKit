@@ -55,7 +55,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(FallbackPopupMenu);
 
 class FallbackPopupMenuItemEventListener final : public EventListener {
 public:
-    static Ref<FallbackPopupMenuItemEventListener> create(FallbackPopupMenu& menu, int listIndex)
+    static Ref<FallbackPopupMenuItemEventListener> LEGACY_NODELETE create(FallbackPopupMenu& menu, int listIndex)
     {
         return adoptRef(*new FallbackPopupMenuItemEventListener(menu, listIndex));
     }
@@ -82,10 +82,10 @@ private:
 
 static void applyFontCascade(HTMLElement& element, const FontCascade& font)
 {
-    element.setInlineStyleProperty(CSSPropertyFontSize, font.size(), CSSUnitType::Px);
-    element.setInlineStyleProperty(CSSPropertyFontWeight, static_cast<double>(font.weight()), CSSUnitType::Number);
+    element.setInlineStyleProperty(CSSPropertyID::FontSize, font.size(), CSSUnitType::Px);
+    element.setInlineStyleProperty(CSSPropertyID::FontWeight, static_cast<double>(font.weight()), CSSUnitType::Number);
     if (font.fontStyleSlope())
-        element.setInlineStyleProperty(CSSPropertyFontStyle, CSSValueItalic);
+        element.setInlineStyleProperty(CSSPropertyID::FontStyle, CSSValueID::Italic);
 
     StringBuilder families;
     for (unsigned i = 0; i < font.familyCount(); ++i) {
@@ -94,17 +94,17 @@ static void applyFontCascade(HTMLElement& element, const FontCascade& font)
         families.append(serializeFontFamily(font.familyAt(i).name));
     }
     if (!families.isEmpty())
-        element.setInlineStyleProperty(CSSPropertyFontFamily, families.toString());
+        element.setInlineStyleProperty(CSSPropertyID::FontFamily, families.toString());
 }
 
 static void applyItemStyle(HTMLElement& item, const PopupMenuStyle& style)
 {
     if (auto& foreground = style.foregroundColor(); foreground.isValid())
-        item.setInlineStyleProperty(CSSPropertyColor, serializationForCSS(foreground));
+        item.setInlineStyleProperty(CSSPropertyID::Color, serializationForCSS(foreground));
 
     if (style.backgroundColorType() == PopupMenuStyle::CustomBackgroundColor) {
         if (auto& background = style.backgroundColor(); background.isValid())
-            item.setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForCSS(background));
+            item.setInlineStyleProperty(CSSPropertyID::BackgroundColor, serializationForCSS(background));
     }
 
     if (auto& language = style.language(); !language.isEmpty())
@@ -113,32 +113,32 @@ static void applyItemStyle(HTMLElement& item, const PopupMenuStyle& style)
     if (CheckedRef font = style.font())
         applyFontCascade(item, font);
 
-    item.setInlineStyleProperty(CSSPropertyDirection, style.textDirection() == TextDirection::RTL ? CSSValueRtl : CSSValueLtr);
+    item.setInlineStyleProperty(CSSPropertyID::Direction, style.textDirection() == TextDirection::RTL ? CSSValueID::Rtl : CSSValueID::Ltr);
     if (style.hasTextDirectionOverride())
-        item.setInlineStyleProperty(CSSPropertyUnicodeBidi, CSSValueBidiOverride);
+        item.setInlineStyleProperty(CSSPropertyID::UnicodeBidi, CSSValueID::BidiOverride);
 }
 
 static void applyMenuStyle(HTMLElement& container, const PopupMenuStyle& style)
 {
     if (auto& foreground = style.foregroundColor(); foreground.isValid())
-        container.setInlineStyleProperty(CSSPropertyColor, serializationForCSS(foreground));
+        container.setInlineStyleProperty(CSSPropertyID::Color, serializationForCSS(foreground));
 
     if (style.backgroundColorType() == PopupMenuStyle::CustomBackgroundColor) {
         if (auto& background = style.backgroundColor(); background.isValid())
-            container.setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForCSS(background));
+            container.setInlineStyleProperty(CSSPropertyID::BackgroundColor, serializationForCSS(background));
     }
 
     if (CheckedRef font = style.font())
         applyFontCascade(container, font);
 
-    container.setInlineStyleProperty(CSSPropertyDirection, style.textDirection() == TextDirection::RTL ? CSSValueRtl : CSSValueLtr);
+    container.setInlineStyleProperty(CSSPropertyID::Direction, style.textDirection() == TextDirection::RTL ? CSSValueID::Rtl : CSSValueID::Ltr);
     if (style.hasTextDirectionOverride())
-        container.setInlineStyleProperty(CSSPropertyUnicodeBidi, CSSValueBidiOverride);
+        container.setInlineStyleProperty(CSSPropertyID::UnicodeBidi, CSSValueID::BidiOverride);
 }
 
 class FallbackPopupMenuDismissListener final : public EventListener {
 public:
-    static Ref<FallbackPopupMenuDismissListener> create(FallbackPopupMenu& menu)
+    static Ref<FallbackPopupMenuDismissListener> LEGACY_NODELETE create(FallbackPopupMenu& menu)
     {
         return adoptRef(*new FallbackPopupMenuDismissListener(menu));
     }
@@ -285,9 +285,9 @@ void FallbackPopupMenu::buildPopupTree(const IntRect& elementRect, LocalFrameVie
     shadowRoot->appendChild(container);
     container->setUserAgentPart(UserAgentParts::internalFallbackPopupMenu());
     applyMenuStyle(container, element->menuStyle());
-    container->setInlineStyleProperty(CSSPropertyPosition, CSSValueFixed);
-    container->setInlineStyleProperty(CSSPropertyLeft, elementRect.x() - scrollX, CSSUnitType::Px);
-    container->setInlineStyleProperty(CSSPropertyWidth, elementRect.width(), CSSUnitType::Px);
+    container->setInlineStyleProperty(CSSPropertyID::Position, CSSValueID::Fixed);
+    container->setInlineStyleProperty(CSSPropertyID::Left, elementRect.x() - scrollX, CSSUnitType::Px);
+    container->setInlineStyleProperty(CSSPropertyID::Width, elementRect.width(), CSSUnitType::Px);
 
     if (viewportHeight) {
         // There are some heuristics here to try and position the popup in a pleasing way.
@@ -303,14 +303,14 @@ void FallbackPopupMenu::buildPopupTree(const IntRect& elementRect, LocalFrameVie
         static constexpr int minSpaceBelow = 96;
         static constexpr int popupPadding = 12; // It doesn't look nice to touch the edges of the viewport.
         if (spaceBelow < minSpaceBelow) {
-            container->setInlineStyleProperty(CSSPropertyBottom, viewportHeight - elementTop, CSSUnitType::Px);
-            container->setInlineStyleProperty(CSSPropertyMaxHeight, std::min(spaceAbove - popupPadding, halfViewport), CSSUnitType::Px);
+            container->setInlineStyleProperty(CSSPropertyID::Bottom, viewportHeight - elementTop, CSSUnitType::Px);
+            container->setInlineStyleProperty(CSSPropertyID::MaxHeight, std::min(spaceAbove - popupPadding, halfViewport), CSSUnitType::Px);
         } else {
-            container->setInlineStyleProperty(CSSPropertyTop, elementBottom, CSSUnitType::Px);
-            container->setInlineStyleProperty(CSSPropertyMaxHeight, std::min(spaceBelow - popupPadding, halfViewport), CSSUnitType::Px);
+            container->setInlineStyleProperty(CSSPropertyID::Top, elementBottom, CSSUnitType::Px);
+            container->setInlineStyleProperty(CSSPropertyID::MaxHeight, std::min(spaceBelow - popupPadding, halfViewport), CSSUnitType::Px);
         }
     } else
-        container->setInlineStyleProperty(CSSPropertyTop, elementRect.maxY() - scrollY, CSSUnitType::Px);
+        container->setInlineStyleProperty(CSSPropertyID::Top, elementRect.maxY() - scrollY, CSSUnitType::Px);
 
     int size = element->listSize();
     for (int i = 0; i < size; ++i) {

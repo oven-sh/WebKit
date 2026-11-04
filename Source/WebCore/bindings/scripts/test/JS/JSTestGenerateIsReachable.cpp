@@ -225,7 +225,8 @@ JSTestGenerateIsReachableOwner::JSTestGenerateIsReachableOwner(ClangVTableWorkar
 bool JSTestGenerateIsReachableOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     auto* jsTestGenerateIsReachable = uncheckedDowncast<JSTestGenerateIsReachable>(handle.slot()->asCell());
-    TestGenerateIsReachable* owner = &jsTestGenerateIsReachable->wrapped();
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_LOCAL SUPPRESS_UNCHECKED_LOCAL TestGenerateIsReachable* owner = &jsTestGenerateIsReachable->wrapped();
     if (reason) [[unlikely]]
         *reason = "Reachable from TestGenerateIsReachable"_s;
     return containsWebCoreOpaqueRoot(visitor, owner);

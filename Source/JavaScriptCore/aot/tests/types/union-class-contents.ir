@@ -1,0 +1,20 @@
+# Parts of one class unite: the contents unite per slot, and a proof stays only when both sides have it
+# RUN: union
+# CHECK: t0 | t1 = Array<int|string, proven>
+# CHECK-NEXT: t0 | t2 = Array<number>
+# CHECK-NEXT: t0 | t3 = Array<int, proven>
+# CHECK-NEXT: t0 | t4 = Array<int, proven>|Map<string, int, proven>
+# CHECK-NEXT: t0 | t5 = Array<int>
+# CHECK-NEXT: t0 | t6 = Array<int, proven>
+# CHECK-NEXT: t0 | t7 = Array<number, proven>
+# CHECK-NEXT: t0 | t8 = Array
+# CHECK-NOT: <
+# CHECK: t0 | t9 = Array<int, proven>
+# CHECK: t3 | t5 = Array<int, pristine[Storage, Names]>
+# CHECK: t3 | t9 = Array<int, proven, pristine[Names]>
+# CHECK: t6 | t6 = Array<int, proven, Int32>
+# CHECK-NEXT: t6 | t7 = Array<number, proven>
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=Array<int, proven>}, {type=Array<string, proven>}, {type=Array<number>}, {type=Array<int, proven, pristine[Storage, Names]>}, {type=Map<string, int, proven>}, {type=Array<int, pristine[Storage, Names]>}, {type=Array<int, proven, Int32>}, {type=Array<number, proven, Double>}, {type=Array}, {type=Array<int, proven, pristine[Names]>}] results=[{type=undefined}]

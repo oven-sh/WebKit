@@ -1,0 +1,42 @@
+# for (const n of numbers) console.log(byColor[keyOf(n)])        keyOf(): "color-0" | "color-1"
+# A read under a string nobody knows runs no code of the program when every own property of the receiver is data and every object above it is a locked built-in.
+# The same holds under one key that is known, also where the plan for that name needs a test. Were it otherwise, SplitUnions, which gives each literal key an arm of its own, would widen the effects of the read,
+# and a guard about an array that was hoisted out of the loop would end at it. So would ResolveAccesses, which reads the slot of the field and, where the slot holds no number, starts the lookup over at the object.
+# FORM: Prepared
+# RUN: effects f0 f1
+# CHECK-LABEL: function f0
+# CHECK-NOT: nknownCode
+# CHECK: v4 ElemGet: reads(
+# CHECK-NEXT: v5 ElemGet: reads(
+# CHECK-NEXT: v6 ElemGet: reads(
+# CHECK-NEXT: v7 PropGet: reads(
+# CHECK-NEXT: v8 ElemHas: reads(
+# CHECK-NEXT: v9 SuperGet: reads(
+# CHECK-NOT: nknownCode
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v4 ElemGet: unknownCode
+# CHECK-NEXT: v5 PropGet: unknownCode
+# CHECK-NEXT: v6 PropSet: unknownCode
+# CHECK-NEXT: v7 SuperGet: unknownCode
+# CHECK-NEXT: v8 SuperGet: unknownCode
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Expected" fields=[{key="x" declared={type=number flags=[IsExpected]}}, {key="y" declared={type=number flags=[IsExpected]}}] flow={members=[L0] impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L1 name="MayGetAccessor" fields=[{key="x" declared={type=number flags=[IsExpected]}}] flow={members=[L1] impossibleMutations=[AddProperty, ChangePrototype]}
+function f0 name="looksUp" parameters=[{type=L0}, {type=string}, {type="x"|"y"}, {type="x"}] results=[{type=undefined}] {
+    v4 = ElemGet v0, v1
+    v5 = ElemGet v0, v2
+    v6 = ElemGet v0, v3
+    v7 = PropGet v0 key="x"
+    v8 = ElemHas v0, v3
+    v9 = SuperGet v0, v0 key="x"
+    Return
+}
+function f1 name="runsCode" parameters=[{type=L1}, {type="x"}, {type=L0}, {type=anything}] results=[{type=undefined}] {
+    v4 = ElemGet v0, v1
+    v5 = PropGet v0 key="x"
+    PropSet v0, v1 key="x" mode=Strict
+    v7 = SuperGet v0, v0 key="x"
+    v8 = SuperGet v2, v2, v3
+    Return
+}

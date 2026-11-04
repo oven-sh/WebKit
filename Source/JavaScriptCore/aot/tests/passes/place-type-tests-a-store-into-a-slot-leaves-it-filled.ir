@@ -1,0 +1,78 @@
+# A store into a slot puts a value there: what a test has proven about the slot being filled holds behind it. That the slot holds a value of the field's type without undefined and null holds behind a store of such a value
+# FORM: Prepared
+# RUN(F0): test-placement function=f0 site=v3:v6 site=v5:v6 effects=own
+# RUN(F1): test-placement function=f1 site=v3:v6 site=v5:v6 effects=own
+# RUN(F2): test-placement function=f2 site=v3:v6 site=v5:v6 effects=own
+# RUN(F3): test-placement function=f3 site=v3:v6 site=v5:v6 effects=own
+# RUN(F4): test-placement function=f4 site=v3:v6 site=v5:v6 effects=own
+# RUN(F5): test-placement function=f5 site=v4:v7 site=v6:v7 effects=own
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=undefined|number}}, {key="y" declared={type=undefined|number}}]
+
+function f0 name="storeThroughPossibleAlias" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
+    v3 = StrictEq v0, v0
+    PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
+    v5 = StrictEq v0, v0
+    v6 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
+    Return v5
+}
+# F0: stretch 0: test IsSlotFilled v0 key="x" receivers=[L0] level=Proven before v3; uses v3 v5; cloned 8
+# F0-NOT: stretch
+
+function f1 name="storeThatMayAddTheField" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
+    v3 = StrictEq v0, v0
+    PutSlotOrAdd v1, -, v2 key="x" receivers=[L0] level=Proven
+    v5 = StrictEq v0, v0
+    v6 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
+    Return v5
+}
+# F1: stretch 0: test IsSlotFilled v0 key="x" receivers=[L0] level=Proven before v3; uses v3 v5;
+# F1-NOT: stretch
+
+function f2 name="storeOfNumberKeepsDeclaredType" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
+    v3 = StrictEq v0, v0
+    PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
+    v5 = StrictEq v0, v0
+    v6 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven [holdsDeclaredType]
+    Return v5
+}
+# F2: stretch 0: test IsSlotFilled v0 key="x" receivers=[L0] level=Proven before v3; uses v3 v5; cloned 8
+# F2-NOT: stretch
+
+function f3 name="storeOfUndefinedEndsDeclaredType" parameters=[{type=L0}, {type=L0}, {type=undefined|number}] results=[{type=boolean}] {
+    v3 = StrictEq v0, v0
+    PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
+    v5 = StrictEq v0, v0
+    v6 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven [holdsDeclaredType]
+    Return v5
+}
+# F3: stretch 0: test IsSlotFilled v0 key="x" receivers=[L0] level=Proven before v3; uses v3; cloned 0
+# F3-NEXT: stretch 1: test IsSlotFilled v0 key="x" receivers=[L0] level=Proven before v5; uses v5; cloned 0
+# F3-NOT: stretch
+
+function f4 name="storeByNameEndsIt" parameters=[{type=L0}, {type=object}, {type=number}] results=[{type=boolean}] {
+    v3 = StrictEq v0, v0
+    PropSet v1, v2 key="x"
+    v5 = StrictEq v0, v0
+    v6 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
+    Return v5
+}
+# F4: stretch 0: test IsSlotFilled v0 key="x" receivers=[L0] level=Proven before v3; uses v3; cloned 0
+# F4-NEXT: stretch 1: test IsSlotFilled v0 key="x" receivers=[L0] level=Proven before v5; uses v5; cloned 0
+# F4-NOT: stretch
+
+function f5 name="storeInLoop" parameters=[{type=L0}, {type=number}, {type=boolean}] results=[{type=boolean}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = StrictEq v0, v0
+    PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
+    v6 = StrictEq v0, v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    v7 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
+    Return v6
+}
+# F5: stretch 0: test IsSlotFilled v0 key="x" receivers=[L0] level=Proven on b0.0; uses v4 v6;
+# F5-NOT: stretch

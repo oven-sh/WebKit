@@ -1,0 +1,29 @@
+# A leaf whose only call creates a constant in rare code sets no frame up at its entry, in fast code
+# FORM: AsRead
+# RUN: generate-code
+# OPTIONS: heat=everything-is-hot disable=pass:InlineCalls,pass:RemoveUnusedParameters check=validate-back-end
+# CHECK: f1: size={{*}} frame={{*}}@[[setup]]-
+# CHECK: f2: size=
+# CHECK-NOT: frame=none
+# CHECK-NOT: @[[setup]]-
+# CHECK: f4: size=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+function f2 name="leaf" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = BigInt digits="12345678901234567890"
+    Return v1
+}

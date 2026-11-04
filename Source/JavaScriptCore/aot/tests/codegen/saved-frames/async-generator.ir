@@ -1,0 +1,60 @@
+# An async generator suspends through three forms of one stub: at an await, at a yield, and at a yield that awaits its value first
+# FORM: Selected
+# RUN: generate-code calls
+# OPTIONS: check=validate-back-end
+# DIAGNOSTIC: OpcodeWithoutCode 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="asyncGenerator" role=CoroutineRamp flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f4 promiseType=Promise promiseParameter=2}
+function f1 name="generatorAwaits" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f1 body=f5 promiseParameter=2}
+function f2 name="generatorYieldsAfterAwait" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f2 body=f6 promiseParameter=2}
+function f3 name="asyncFunctionYieldsAfterAwait" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1}
+function f4 name="asyncGenerator" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f4 promiseType=Promise promiseParameter=2} {
+    v3 = Undefined
+    v4 = YieldBySavingFrame v2, v3 @10
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1() frequency=Rare:
+    Throw v5
+  b2() frequency=Rare:
+    Return v5
+  b3():
+    v7 = AwaitBySavingFrame v1, v2 @11
+    v8 = AsyncGeneratorYield v2, v7 @12
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+  b4() frequency=Rare:
+    Throw v9
+  b5() frequency=Rare:
+    Return v9
+  b6():
+    Return v9
+}
+# CHECK: f4: size=
+# CHECK: operation operationAOTThrow x2
+# CHECK-NOT: stub AwaitBySavingFrame
+# CHECK: stub SuspendGenerator.AsyncAwait x1
+# CHECK-NEXT: stub SuspendGenerator.AsyncYield x1
+# CHECK-NEXT: stub SuspendGenerator.AsyncYieldAfterAwait x1
+# CHECK-NOT: stub SuspendGenerator.Yield
+function f5 name="generatorAwaits" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{ramp=f1 body=f5 promiseParameter=2} {
+    v3 = AwaitBySavingFrame v1, v2 @20
+    Return v3
+}
+# CHECK: f5: no code
+function f6 name="generatorYieldsAfterAwait" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f2} creator=Coroutine{ramp=f2 body=f6 promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @30
+    v4 = ResultAt v3 index=0
+    Return v4
+}
+# CHECK: f6: no code
+function f7 name="asyncFunctionYieldsAfterAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{kind=AsyncFunction ramp=f3 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {
+    v2 = Undefined
+    v3 = AsyncGeneratorYield v0, v2 @40
+    v4 = ResultAt v3 index=0
+    v5 = ReturnAsyncResult v1, v4
+    Return v5
+}
+# CHECK: f7: no code

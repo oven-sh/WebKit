@@ -1,0 +1,25 @@
+# The callee promises the type of its result and leaves through ReturnMisfit with what fails its test: that lies in a word of the instance when the landing of the call site is reached.
+# The callee writes nothing that a program can see, and its summary says so. The call still says that it writes the word, which the landing reads: no read of it goes in front of the call or is taken for an earlier one.
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: lower-to-b3 f0
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 kind=Record name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
+
+function f0 name="reliesOnPromise" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
+    v1 = CallDirect v0 function=f1
+    v2 = TypeTest v1 testedType=L0
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: L0):
+    Return v3
+  b2() frequency=Unlikely:
+    v4 = Undefined
+    Return v4
+}
+# CHECK: = Patchpoint({{*}}Writes:AOTInstance_misfit, v1:CallDirect)
+# CHECK: = Load({{*}}Reads:AOTInstance_misfit, v2:TypeTest)
+
+function f1 name="returnsWhatItGets" parameters=[{type=anything}] results=[{type=L0 flags=[IsExpected]}] capabilities=[HasOrdinaryFrame] {
+    Return v0
+}

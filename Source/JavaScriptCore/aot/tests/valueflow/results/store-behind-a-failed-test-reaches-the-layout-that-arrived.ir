@@ -1,0 +1,34 @@
+# `(config as { size: number }).size = 60`: the object fails the test for the other layout and the code behind the test stores into it all the same, so the field of type 6 may be stored another type. Beside it an object that is stored 6 twice, with no test between
+# FORM: AsRead
+# RUN: flow
+# CHECK: class C0 layout=L0 impossibleMutations=[{{*}}BecomePrototype] keys=NeverEnumerated
+# CHECK: class C1 layout=L2 impossibleMutations=[{{*}}BecomePrototype, StoreOfOtherType] keys=NeverEnumerated
+# CHECK: field L0.0 "size" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}
+# CHECK: field L2.0 "size" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Container name="Config" module=m0 fields=[{key="size" declared={type=6}}]
+layout L1 name="Sized" fields=[{key="size" declared={type=number}}]
+layout L2 kind=Container name="Kept" module=m0 fields=[{key="size" declared={type=6}}]
+
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    v2 = Integer integer=6
+    v3 = Convert v2 declared={type=6}
+    PropSet v1, v3 key="size"
+    v5 = Convert v1 declared={type=undefined|null|object} illTypedCause=Assertion
+    v6 = Convert v5 declared={type=undefined|null|L1} illTypedCause=FromLooseType
+    v7 = Integer integer=60
+    v8 = Convert v7 declared={type=number}
+    PropSet v6, v8 key="size"
+    v10 = PropGet v5 key="size"
+    v11 = NewObject layout=L2
+    v12 = FinishObject v11
+    PropSet v12, v3 key="size"
+    PropSet v12, v3 key="size"
+    v15 = PropGet v12 key="size"
+    v16 = Add v10, v15
+    Return v16
+}

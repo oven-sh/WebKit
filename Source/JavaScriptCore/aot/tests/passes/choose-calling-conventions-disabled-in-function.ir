@@ -1,0 +1,9 @@
+# A function in the range of the switch returns its result boxed, and an equal function outside the range does not
+# FORM: Prepared
+# OPTIONS: disable=pass:ChooseCallingConventions disable-in=0:1
+# RUN: pass ChooseCallingConventions
+# STATISTIC: ResultsBoxedForTailCalls = 0
+# CHECK: f0 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK-NEXT: f1 Direct ({{*}}:Double) -> ({{*}}:Double)
+# CHECK-NEXT: f2 Direct
+# PROGRAM-OF: choose-calling-conventions-disabled.ir

@@ -1,0 +1,64 @@
+# An edge that fills the parameter of the merge block with what its own test proves keeps its target
+# FORM: Prepared
+# RUN: pass ThreadJumps
+# STATISTIC: ThreadJumpsChanges = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="edgePassesNarrowedOperand" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    v2 = TypeTest v0 testedType=undefined
+    Branch v2 -> taken b2(| 0), notTaken b1()
+  b1():
+    Jump -> next b2(v1)
+  b2(v3):
+    v4 = ToBoolean v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v1
+  b4():
+    v5 = Integer integer=0
+    Return v5
+# CHECK: Branch v2 -> taken b2(| 0), notTaken b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Jump -> next b2(v1)
+# CHECK-NEXT: b2(v3: undefined|number):
+# CHECK-NEXT: ToBoolean v3
+# CHECK-NEXT: Branch v4 -> taken b3(), notTaken b4()
+}
+
+function f1 name="edgePassesConstant" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    v2 = TypeTest v0 testedType=undefined
+    v3 = Undefined
+    Branch v2 -> taken b2(v3), notTaken b1()
+  b1():
+    Jump -> next b2(v1)
+  b2(v4):
+    v5 = ToBoolean v4
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    Return v1
+  b4():
+    v6 = Integer integer=0
+    Return v6
+# CHECK: Branch v2 -> taken b4(), notTaken b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Jump -> next b2(v1)
+}
+
+function f2 name="branchOnParameterFilledByProof" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=number}] {
+    v3 = TypeTest v0 testedType=boolean
+    Branch v3 -> taken b2(| 0), notTaken b1()
+  b1():
+    Jump -> next b2(v1)
+  b2(v4):
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v2
+  b4():
+    v5 = Integer integer=0
+    Return v5
+# CHECK: Branch v3 -> taken b2(| 0), notTaken b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Branch v1 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b2(v4: boolean):
+# CHECK-NEXT: Branch v4 -> taken b3(), notTaken b4()
+}

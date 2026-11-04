@@ -1,0 +1,28 @@
+# total += i & 255; return total & 1023, where total is a number in memory: the sum in numbers is stored, so it is made anyway, and nothing waits for its truncation.
+# A test whether what was read is a whole int32 would only come on top: three conversions, a comparison and a branch. The number is added and truncated as it is.
+# FORM: Selected
+# RUN: generate-code ExactIntegersBehindNumbers
+# CHECK: : size=
+# CHECK-NOT: no code
+# CHECK: statistic ExactIntegersBehindNumbers 0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lowBitsOfSumWithElement" parameters=[{type=i32}, {type=Array<number>}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: i32, v1: Array<number>, v2: int[0, 100]):
+    v3 = HasArrayStorage v1 arrayStorage=Double
+    TestAndBranch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4: guard):
+    v5 = IsElementPresent v1, v2, v4 arrayStorage=Double [keyIsIntegral]
+    TestAndBranch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6: guard):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v1, v2, v7 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    v9 = Integer integer=255
+    v10 = BitAnd v0, v9 form=Integers
+    v11 = Add v8, v10 form=Numbers
+    v12 = Integer integer=1023
+    v13 = BitAnd v11, v12 form=Numbers
+    Return v13
+  b3():
+    Return v0
+}

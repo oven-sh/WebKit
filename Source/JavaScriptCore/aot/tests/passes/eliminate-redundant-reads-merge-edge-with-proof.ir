@@ -1,0 +1,44 @@
+# A read is not merged into a block parameter when an incoming edge passes what its test proves
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+# STATISTIC: EliminateRedundantReadsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="n" module=m0 declared={type=undefined|number} initialization=Undefined
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="narrowedValueOnEdge" parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=anything}] {
+    PutModuleVariable v0 variable=g0
+    v4 = TypeTest v2 testedType=string
+    Branch v4 -> taken b1(), notTaken b2(| 0)
+  b1():
+    PutModuleVariable v1 variable=g0
+    Jump -> next b2(v2)
+  b2(v6):
+    v7 = GetModuleVariable variable=g0
+    Return v7
+# CHECK: Branch v4 -> taken b1(), notTaken b2(| 0)
+# CHECK: Jump -> next b2(v2)
+# CHECK: b2(v6{{*}}):
+# CHECK-NEXT: v7: undefined|number = GetModuleVariable variable=g0
+}
+
+function f1 name="guardOnEachEdge" parameters=[{type=number}, {type=number}, {type=object}, {type=boolean}] results=[{type=anything}] {
+    v4 = ShapeTest v2 layouts=[L0]
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v0 variable=g0
+    Branch v4 -> taken b3(| 0), notTaken b4()
+  b2():
+    PutModuleVariable v1 variable=g0
+    Branch v4 -> taken b3(| 0), notTaken b4()
+  b3(v7):
+    v8 = GetModuleVariable variable=g0
+    Return v8
+  b4():
+    Return
+# CHECK-COUNT-2: Branch v4 -> taken b3(| 0), notTaken b4()
+# CHECK: b3(v7{{*}}):
+# CHECK-NEXT: v8: undefined|number = GetModuleVariable variable=g0
+}

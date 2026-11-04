@@ -1,0 +1,69 @@
+# class Base { x; on }  class Derived extends Base { y }  class Other extends Base { z }  new (Math.random() < 2 ? Derived : Other)()
+# Where the callee of a call may be anything the call makes an object nobody knows in the place of the object of its site, and the unknown object stands for that object. It stands for no other
+# object that the wider solve holds nowhere: the seed gives what Base makes a value nobody knows, the node then lists no instance of Derived, and that is reported.
+# Once the node lists the instance beside what it is given, this test takes another program.
+# OPTIONS: flow=widened layout-seed=9
+# RUN: valueflow-solve given-more
+# DIAGNOSTIC: FlowFindsLessFromMore
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}, {key="on" declared={type=anything}}]
+layout L1 kind=Instance name="Derived" module=m0 base=L0 constructor=f2 fields=[{key="y" declared={type=anything}}] flags=[HasHeritage]
+layout L2 kind=Instance name="Other" module=m0 base=L0 constructor=f3 fields=[{key="z" declared={type=anything}}] flags=[HasHeritage]
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = NewClosure function=f2
+    v6 = ResolveHeritage v4
+    v7 = NewClass v5, v4, v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = NewClosure function=f3
+    v10 = ResolveHeritage v4
+    v11 = NewClass v9, v4, v10 layout=L2
+    v12 = FinishClass v11 layout=L2
+    v13 = Builtin builtin=MathRandom
+    v14 = Call v13
+    v15 = Integer integer=2
+    v16 = Less v14, v15
+    Branch v16 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v8)
+  b2():
+    Jump -> next b3(v12)
+  b3(v17: anything):
+    v18 = Construct v17
+    v19 = PropGet v18 key="x"
+    v20 = PropGet v18 key="on"
+    v21 = PropGet v18 key="y"
+    v22 = PropGet v18 key="z"
+    v23 = Call v1, -, v19, v20, v21, v22
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x" mode=Strict
+    v5 = Boolean boolean=true
+    PropSet v2, v5 key="on" mode=Strict
+    Return v2
+}
+function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    v4 = Integer integer=2
+    PropSet v3, v4 key="y" mode=Strict
+    Return v3
+}
+function f3 name="Other" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    v4 = Integer integer=3
+    PropSet v3, v4 key="z" mode=Strict
+    Return v3
+}
+

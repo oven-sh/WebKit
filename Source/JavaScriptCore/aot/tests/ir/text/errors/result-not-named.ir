@@ -1,0 +1,10 @@
+# An operation with a result and no value id before it
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" results=[{type=undefined}] {
+  b0():
+    Undefined
+    Return
+}

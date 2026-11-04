@@ -85,12 +85,7 @@ struct WKWebExtensionAPIAlarmsTests {
         )
     }
 
-    // FIXME when rdar://174495016 is resolved.
-    #if WTF_PLATFORM_MAC
-    @Test(.disabled("rdar://174495016"))
-    #else
     @Test
-    #endif
     func delaySingleShot() async throws {
         try await loadAndRun(
             backgroundScript: """
@@ -108,6 +103,8 @@ struct WKWebExtensionAPIAlarmsTests {
 
                   if (fireCount++)
                       browser.test.notifyFail('This listener should not have been called more than once.')
+                  else
+                      browser.test.notifyPass()
                 }
 
                 browser.test.assertFalse(browser.alarms.onAlarm.hasListener(listener), 'Should not have onAlarm listener.')
@@ -116,13 +113,6 @@ struct WKWebExtensionAPIAlarmsTests {
                 browser.test.assertTrue(browser.alarms.onAlarm.hasListener(listener), 'Should have onAlarm listener.')
 
                 browser.alarms.create('single', { delayInMinutes: (delayInMilliseconds / 1000 / 60) })
-
-                setTimeout(() => {
-                  if (fireCount === 1)
-                      browser.test.notifyPass()
-                  else
-                      browser.test.notifyFail('This timeout should have been called after the alarm fired once.')
-                }, 500)
                 """
         )
     }
@@ -162,12 +152,7 @@ struct WKWebExtensionAPIAlarmsTests {
         )
     }
 
-    // FIXME when webkit.org/b/311933 is resolved.
-    #if WTF_PLATFORM_MAC
-    @Test(.disabled("webkit.org/b/311933"))
-    #else
     @Test
-    #endif
     func whenSingleShot() async throws {
         try await loadAndRun(
             backgroundScript: """
@@ -185,6 +170,8 @@ struct WKWebExtensionAPIAlarmsTests {
 
                   if (fireCount++)
                       browser.test.notifyFail('This listener should not have been called more than once.')
+                  else
+                      browser.test.notifyPass()
                 }
 
                 browser.test.assertFalse(browser.alarms.onAlarm.hasListener(listener), 'Should not have onAlarm listener.')
@@ -193,13 +180,6 @@ struct WKWebExtensionAPIAlarmsTests {
                 browser.test.assertTrue(browser.alarms.onAlarm.hasListener(listener), 'Should have onAlarm listener.')
 
                 browser.alarms.create('when', { when: (startDate + delayInMilliseconds) })
-
-                setTimeout(() => {
-                  if (fireCount === 1)
-                      browser.test.notifyPass()
-                  else
-                      browser.test.notifyFail('This timeout should have been called after the alarm fired once.')
-                }, 500)
                 """
         )
     }
@@ -237,6 +217,37 @@ struct WKWebExtensionAPIAlarmsTests {
                 browser.alarms.create('repeat', { when: (startDate + delayInMilliseconds), periodInMinutes })
                 """
         )
+    }
+
+    @Test
+    func repeatingScheduledTimeWithUnloadedBackground() async throws {
+        let manager = try loadWebExtension(
+            manifest: alarmsManifest,
+            resources: [
+                "background.js": """
+                browser.alarms.onAlarm.addListener(async (alarmInfo) => {
+                  const alarm = await browser.alarms.get(alarmInfo.name)
+
+                  browser.test.assertTrue(alarmInfo.scheduledTime < alarm.scheduledTime, 'The event should have the time the alarm was scheduled to fire, not its next scheduled time.')
+
+                  browser.test.notifyPass()
+                })
+
+                if (!(await browser.alarms.get('repeat'))) {
+                  await browser.alarms.create('repeat', { delayInMinutes: (1000 / 1000 / 60), periodInMinutes: 1 })
+
+                  browser.test.sendMessage('Alarm Created')
+                }
+                """
+            ]
+        )
+
+        try await manager.waitForTestMessage("Alarm Created")
+
+        let context = try #require(manager.context)
+        context._unloadBackgroundContentForTesting()
+
+        try await manager.run()
     }
 
     @Test
@@ -299,13 +310,10 @@ struct WKWebExtensionAPIAlarmsTests {
 
                 browser.alarms.onAlarm.addListener(listener)
 
-                browser.test.assertFalse(await browser.alarms.clearAll(), 'Should return false when there are no alarms.')
-
                 browser.alarms.create('one', { delayInMinutes: 0.01 })
                 browser.alarms.create('two', { delayInMinutes: 0.1 })
 
-                browser.test.assertTrue(await browser.alarms.clearAll(), 'Should return true when alarms were cleared.')
-                browser.test.assertFalse(await browser.alarms.clearAll(), 'Should return false once all alarms are gone.')
+                browser.test.assertTrue(await browser.alarms.clearAll() === undefined)
 
                 setTimeout(() => {
                   browser.test.notifyPass()
@@ -339,6 +347,25 @@ struct WKWebExtensionAPIAlarmsTests {
                 browser.test.assertEq(result[0].name, 'two')
 
                 browser.test.notifyPass()
+                """
+        )
+    }
+
+    @Test
+    func singleShotRemovedAfterFiring() async throws {
+        try await loadAndRun(
+            backgroundScript: """
+                browser.alarms.onAlarm.addListener(async (alarmInfo) => {
+                  browser.test.assertEq(alarmInfo.name, 'single')
+
+                  browser.test.assertEq(await browser.alarms.get('single'), undefined, 'Should not return an alarm that already fired.')
+                  browser.test.assertEq((await browser.alarms.getAll()).length, 0, 'Should not include an alarm that already fired.')
+                  browser.test.assertFalse(await browser.alarms.clear('single'), 'Should return false for an alarm that already fired.')
+
+                  browser.test.notifyPass()
+                })
+
+                browser.alarms.create('single', { delayInMinutes: (100 / 1000 / 60) })
                 """
         )
     }

@@ -1,0 +1,19 @@
+# A function that somebody enters by value keeps a parameter that has one value: what would keep the old signature for the closure costs more than a constant in a register
+# FORM: Prepared
+# RUN: pass RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="scale" parameters=[{type=number}, {type=3}] results=[{type=number}] {
+    v2 = Mul v0, v1
+    Return v2
+}
+
+function f1 name="callsBothWays" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = Integer integer=3
+    v2 = CallDirect v0, v1 function=f0
+    v3 = NewClosure function=f0
+    v4 = Call v3, -, v2, v1
+    Return v4
+}

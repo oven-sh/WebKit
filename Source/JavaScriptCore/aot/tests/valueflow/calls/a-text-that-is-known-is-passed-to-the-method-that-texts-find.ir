@@ -1,0 +1,21 @@
+# value = "toString"; value = [1]; value.toString()
+# The call may be String.prototype.toString or Array.prototype.toString. Each gets the receivers that find it: the text goes to the first alone, as a text nobody knows does,
+# so nobody asks what Array.prototype.toString answers for a text, and the call answers a string
+# RUN: valueflow-why values=f0:v7
+# CHECK: operand 0 {{*}} ArrayPrototypeToString {{*}} StringPrototypeToString
+# CHECK: result {{*}} 1 members: primitive7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="value" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="toString"
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=1
+    v3 = NewArray v2 contents=anything
+    PutModuleVariable v3 variable=g0
+    v5 = GetModuleVariable variable=g0
+    v6 = PropGet v5 key="toString"
+    v7 = Call v6, v5 calleeKey="toString"
+    Return v7
+}

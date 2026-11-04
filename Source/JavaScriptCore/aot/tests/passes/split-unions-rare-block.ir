@@ -1,0 +1,37 @@
+# An access in a rare block is not split: generic copies live there, and a split would only add bytes
+# FORM: Prepared
+# RUN: pass SplitUnions
+# STATISTIC: UnionsSplit = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="in-a-rare-block" parameters=[{type=string|Array<number>}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2() frequency=Rare:
+    v2 = PropGet v0 key="length"
+    Return v2
+# CHECK-NEXT: b0(v0: string|Array<number>, v1: boolean):
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Return
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: = PropGet v0 key="length"
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}
+function f1 name="in-an-unlikely-block" parameters=[{type=string|Array<number>}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2() frequency=Unlikely:
+    v2 = PropGet v0 key="length"
+    Return v2
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: = TypeTest v0 testedType=string
+# CHECK: ([[text]]: string) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[text]] key="length"
+# CHECK: ([[list]]: Array<number>) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[list]] key="length"
+}

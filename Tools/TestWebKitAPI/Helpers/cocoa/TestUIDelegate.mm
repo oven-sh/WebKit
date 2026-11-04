@@ -106,10 +106,10 @@
         completionHandler(CGRectZero);
 }
 
-- (void)webView:(WKWebView *)webView runOpenPanelWithParameters:(WKOpenPanelParameters *)parameters initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(NSArray<NSURL *> *))completionHandler
+- (void)_webView:(WKWebView *)webView setWindowFrame:(CGRect)frame
 {
-    if (_runOpenPanelWithParameters)
-        _runOpenPanelWithParameters(webView, parameters, frame, completionHandler);
+    if (_setWindowFrame)
+        _setWindowFrame(webView, frame);
 }
 
 #if ENABLE(CONTENT_INSET_BACKGROUND_FILL)
@@ -125,6 +125,12 @@
 #endif // ENABLE(CONTENT_INSET_BACKGROUND_FILL)
 
 #endif // PLATFORM(MAC)
+
+- (void)webView:(WKWebView *)webView runOpenPanelWithParameters:(WKOpenPanelParameters *)parameters initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(NSArray<NSURL *> *))completionHandler
+{
+    if (_runOpenPanelWithParameters)
+        _runOpenPanelWithParameters(webView, parameters, frame, completionHandler);
+}
 
 - (void)webViewDidClose:(WKWebView *)webView
 {

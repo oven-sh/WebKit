@@ -39,6 +39,8 @@
 #include "HTMLNames.h"
 #include "Node.h"
 #include "RenderImage.h"
+#include "RenderObject.h"
+#include "RenderObjectNode.h"
 #include "RenderStyleConstants.h"
 #include "RenderTreeBuilder.h"
 #include "SpaceSplitString.h"
@@ -81,6 +83,14 @@ const Style::ComputedStyle* safeStyleFrom(Element& element)
     // We cannot resolve style (as computedStyle() does) if we are downstream of an existing render tree
     // update. Otherwise, a RELEASE_ASSERT preventing re-entrancy will be hit inside RenderTreeBuilder.
     return RenderTreeBuilder::current() ? element.existingComputedStyle() : element.computedStyle();
+}
+
+AffineTransform localToAbsoluteLinearTransform(const RenderObject& renderer)
+{
+    auto origin = renderer.localToAbsolute(FloatPoint(), MapCoordinatesMode::UseTransforms);
+    auto xAxis = renderer.localToAbsolute(FloatPoint(1, 0), MapCoordinatesMode::UseTransforms) - origin;
+    auto yAxis = renderer.localToAbsolute(FloatPoint(0, 1), MapCoordinatesMode::UseTransforms) - origin;
+    return { xAxis.width(), xAxis.height(), yAxis.width(), yAxis.height(), 0, 0 };
 }
 
 bool hasARIAAccNameAttribute(Element& element)
@@ -535,7 +545,7 @@ OptionSet<DocumentNeeds> needsLayoutOrStyleRecalc(const Document& document)
 std::optional<CursorType> cursorTypeFrom(const StyleProperties& properties)
 {
     for (auto property : properties) {
-        if (property.id() == CSSPropertyCursor) {
+        if (property.id() == CSSPropertyID::Cursor) {
             if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(property.value()))
                 return fromCSSValue<CursorType>(*keywordValue);
             if (RefPtr valueList = dynamicDowncast<CSSValueList>(property.value()); valueList && valueList->size() >= 2) {

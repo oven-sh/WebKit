@@ -80,10 +80,16 @@ typedef struct {
     bool use_marge_bitfit;
     uint8_t marge_bitfit_min_align_shift;
     size_t marge_bitfit_page_size;
+    size_t small_segregated_min_objects_per_page;
+    size_t medium_segregated_min_objects_per_page;
+    size_t small_bitfit_min_objects_per_page;
+    size_t medium_bitfit_min_objects_per_page;
+    size_t marge_bitfit_min_objects_per_page;
     bool pgm_enabled;
     bool delegate_large_user_allocations;
     pas_large_map_variant large_map_variant;
     bool allow_mte_tagging;
+    pas_memory_flavor memory_flavor;
 } pas_basic_heap_config_arguments;
 
 #define PAS_BASIC_HEAP_CONFIG_SEGREGATED_HEAP_FIELDS(name, ...) \
@@ -102,10 +108,11 @@ typedef struct {
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_segregated_page_size, \
             .granule_size = \
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_segregated_page_size, \
-            .max_object_size = PAS_MAX_OBJECT_SIZE(PAS_BASIC_SEGREGATED_PAYLOAD_SIZE_EXCLUSIVE( \
+            .max_object_size = PAS_MAX_OBJECT_SIZE_WITH_MIN_OBJECTS(PAS_BASIC_SEGREGATED_PAYLOAD_SIZE_EXCLUSIVE( \
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_segregated_min_align_shift, \
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_segregated_page_size, \
-                ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_segregated_page_size)), \
+                ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_segregated_page_size), \
+                ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_segregated_min_objects_per_page), \
             .page_header_for_boundary = name ## _small_segregated_page_header_for_boundary, \
             .boundary_for_page_header = name ## _small_segregated_boundary_for_page_header, \
             .page_header_for_boundary_remote = name ## _small_segregated_page_header_for_boundary_remote, \
@@ -157,8 +164,9 @@ typedef struct {
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).medium_segregated_page_size, \
             .granule_size = \
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).granule_size, \
-            .max_object_size = PAS_MAX_OBJECT_SIZE( \
-                ((pas_basic_heap_config_arguments){__VA_ARGS__}).medium_segregated_page_size), \
+            .max_object_size = PAS_MAX_OBJECT_SIZE_WITH_MIN_OBJECTS( \
+                ((pas_basic_heap_config_arguments){__VA_ARGS__}).medium_segregated_page_size, \
+                ((pas_basic_heap_config_arguments){__VA_ARGS__}).medium_segregated_min_objects_per_page), \
             .page_header_for_boundary = name ## _medium_segregated_page_header_for_boundary, \
             .boundary_for_page_header = name ## _medium_segregated_boundary_for_page_header, \
             .page_header_for_boundary_remote = \
@@ -204,13 +212,14 @@ typedef struct {
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_bitfit_page_size, \
             .granule_size = \
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_bitfit_page_size, \
-            .max_object_size = PAS_MAX_BITFIT_OBJECT_SIZE( \
+            .max_object_size = PAS_MAX_BITFIT_OBJECT_SIZE_WITH_MIN_OBJECTS( \
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_bitfit_page_size - \
                 PAS_BITFIT_PAGE_HEADER_SIZE( \
                     ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_bitfit_page_size, \
                     ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_bitfit_page_size, \
                     ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_bitfit_min_align_shift), \
-                ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_bitfit_min_align_shift), \
+                ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_bitfit_min_align_shift, \
+                ((pas_basic_heap_config_arguments){__VA_ARGS__}).small_bitfit_min_objects_per_page), \
             .page_header_for_boundary = name ## _small_bitfit_page_header_for_boundary, \
             .boundary_for_page_header = name ## _small_bitfit_boundary_for_page_header, \
             .page_header_for_boundary_remote = name ## _small_bitfit_page_header_for_boundary_remote, \
@@ -248,10 +257,11 @@ typedef struct {
                 (((pas_basic_heap_config_arguments){__VA_ARGS__}).medium_bitfit_page_size), \
             .granule_size = \
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).granule_size, \
-            .max_object_size = PAS_MAX_BITFIT_OBJECT_SIZE_WITH_MAX_BITS( \
+            .max_object_size = PAS_MAX_BITFIT_OBJECT_SIZE_WITH_MAX_BITS_AND_MIN_OBJECTS( \
                 (((pas_basic_heap_config_arguments){__VA_ARGS__}).medium_bitfit_page_size), \
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).medium_bitfit_min_align_shift, \
-                PAS_BITFIT_MAX_FREE_MAX_VALID_MEDIUM), \
+                PAS_BITFIT_MAX_FREE_MAX_VALID_MEDIUM, \
+                ((pas_basic_heap_config_arguments){__VA_ARGS__}).medium_bitfit_min_objects_per_page), \
             .page_header_for_boundary = name ## _medium_bitfit_page_header_for_boundary, \
             .boundary_for_page_header = name ## _medium_bitfit_boundary_for_page_header, \
             .page_header_for_boundary_remote = name ## _medium_bitfit_page_header_for_boundary_remote, \
@@ -282,9 +292,10 @@ typedef struct {
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).marge_bitfit_page_size, \
             .granule_size = \
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).granule_size, \
-            .max_object_size = PAS_MAX_BITFIT_OBJECT_SIZE( \
+            .max_object_size = PAS_MAX_BITFIT_OBJECT_SIZE_WITH_MIN_OBJECTS( \
                 ((pas_basic_heap_config_arguments){__VA_ARGS__}).marge_bitfit_page_size, \
-                ((pas_basic_heap_config_arguments){__VA_ARGS__}).marge_bitfit_min_align_shift), \
+                ((pas_basic_heap_config_arguments){__VA_ARGS__}).marge_bitfit_min_align_shift, \
+                ((pas_basic_heap_config_arguments){__VA_ARGS__}).marge_bitfit_min_objects_per_page), \
             .page_header_for_boundary = name ## _marge_bitfit_page_header_for_boundary, \
             .boundary_for_page_header = name ## _marge_bitfit_boundary_for_page_header, \
             .page_header_for_boundary_remote = name ## _marge_bitfit_page_header_for_boundary_remote, \
@@ -318,12 +329,13 @@ typedef struct {
         .aligned_allocator = name ## _aligned_allocator, \
         .aligned_allocator_talks_to_sharing_pool = true, \
         .deallocator = NULL, \
-        .page_flags = pas_page_flags_none, \
+        .memory_flavor = ((pas_basic_heap_config_arguments){__VA_ARGS__}).memory_flavor, \
         .root_data = &name ## _root_data, \
         .prepare_to_enumerate = name ## _prepare_to_enumerate, \
         PAS_HEAP_CONFIG_SPECIALIZATIONS(name ## _heap_config), \
         .pgm_enabled = true, \
         .delegate_large_user_allocations = ((pas_basic_heap_config_arguments){__VA_ARGS__}).delegate_large_user_allocations, \
+        .allow_mte_tagging = ((pas_basic_heap_config_arguments){__VA_ARGS__}).allow_mte_tagging, \
         .large_map_variant = ((pas_basic_heap_config_arguments){__VA_ARGS__}).large_map_variant \
     })
 

@@ -26,7 +26,7 @@
 #include "config.h"
 #include "CorpseExportsTrieTest.h"
 
-#if (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#if ENABLE(LIB_JSC_TOOLS)
 
 #include "LibJSCToolsTestUtilities.h"
 
@@ -341,21 +341,6 @@ static void testFoundExports()
         if (found) {
             TEST_ASSERT(found->kind == Kind::Regular, "a stub-and-resolver export is Regular");
             TEST_ASSERT_HEX_EQ(found->value, 0x1000, "a stub-and-resolver export yields the stub offset");
-        }
-    }
-    {
-        // The highest defined flag bit. It carries no payload of its own, so a
-        // terminal that sets it still decodes; nothing in dyld, ld or cctools reads
-        // it, which is why it must not be mistaken for an unknown bit.
-        TerminalSpec spec;
-        spec.flags = EXPORT_SYMBOL_FLAGS_STATIC_RESOLVER | EXPORT_SYMBOL_FLAGS_KIND_REGULAR;
-        spec.values.append(0x50);
-        Vector<uint8_t> trie = singleExportTrie("_staticResolver", spec);
-        auto found = ExportsTrie::lookUp(trie.span(), "_staticResolver");
-        TEST_ASSERT(found, "an export with the highest defined flag bit is found");
-        if (found) {
-            TEST_ASSERT(found->kind == Kind::Regular, "a static-resolver export is Regular");
-            TEST_ASSERT_HEX_EQ(found->value, 0x50, "a static-resolver export yields its offset");
         }
     }
     {
@@ -810,4 +795,4 @@ void fuzzExportsTrie(uint64_t seed, unsigned iterations)
 
 } // namespace JSCToolsTest
 
-#endif // (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#endif // ENABLE(LIB_JSC_TOOLS)

@@ -28,6 +28,7 @@
 
 #if ENABLE(DFG_JIT)
 
+#include <wtf/BitVector.h>
 #include <wtf/IndexMap.h>
 #include "DFGGraph.h"
 #include "DFGPhase.h"
@@ -37,7 +38,7 @@
 namespace JSC { namespace DFG {
 
 // This phase is run at the end of BytecodeParsing, so the graph isn't in a fully formed state.
-// For example, we can't access the predecessor list of any basic blocks yet.
+// Reachability and predecessor lists have been computed, but unreachable blocks may still be present.
 //
 // Note that, so far, this phase should only be used in the byte code parsing phase
 // or after the fix up phases. We don't want to validate graph since
@@ -52,19 +53,26 @@ public:
 
     bool run()
     {
+        BitVector needsPropagation(m_graph.numBlocks());
         for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
+            if (!block->isReachable)
+                continue;
             m_flagsAtHead[block] = Operands<NodeFlags>(OperandsLike, m_graph.block(0)->variablesAtHead);
             m_flagsAtHead[block].fill(0);
+            needsPropagation.quickSet(block->index());
         }
 
+        // A block's propagation depends only on the flags at the heads of its successors, so it has
+        // to be revisited only when one of those changes.
         bool changed;
         do {
             changed = false;
 
             for (BlockIndex blockIndex = m_graph.numBlocks(); blockIndex--;) {
-                BasicBlock* block = m_graph.block(blockIndex);
-                if (!block)
+                if (!needsPropagation.quickClear(blockIndex))
                     continue;
+                BasicBlock* block = m_graph.block(blockIndex);
+                ASSERT(block);
 
                 {
                     unsigned numSuccessors = block->numSuccessors();
@@ -91,6 +99,8 @@ public:
 
                 if (m_flagsAtHead[block] != m_currentFlags) {
                     m_flagsAtHead[block] = m_currentFlags;
+                    for (BasicBlock* predecessor : block->predecessors)
+                        needsPropagation.quickSet(predecessor->index());
                     changed = true;
                 }
             }
@@ -154,86 +164,12 @@ private:
         return (value || 1.0 / value < 0.0);
     }
 
-    // Tests if the absolute value is strictly less than the power of two.
-    template<int power>
-    bool isWithinPowerOfTwoForConstant(Node* node)
-    {
-        JSValue immediateValue = node->asJSValue();
-        if (!immediateValue.isNumber())
-            return false;
-        double immediate = immediateValue.asNumber();
-        return immediate > -(static_cast<int64_t>(1) << power) && immediate < (static_cast<int64_t>(1) << power);
-    }
-    
-    template<int power>
-    bool isWithinPowerOfTwo(Node* node)
-    {
-        switch (node->op()) {
-        case DoubleConstant:
-        case JSConstant:
-        case Int52Constant: {
-            return isWithinPowerOfTwoForConstant<power>(node);
-        }
-            
-        case ValueBitAnd:
-        case ArithBitAnd: {
-            if (power > 31)
-                return true;
-
-            // (x & mask) is only bounded by |mask| when mask is non-negative; a negative
-            // mask preserves the sign bit and the result can span the full int32 range.
-            auto isNonNegativeMaskWithinPower = [](Node* operand) {
-                if (!operand->isNumberConstant())
-                    return false;
-                double immediate = operand->asNumber();
-                return immediate >= 0 && immediate < (static_cast<int64_t>(1) << power);
-            };
-            return isNonNegativeMaskWithinPower(node->child1().node())
-                || isNonNegativeMaskWithinPower(node->child2().node());
-        }
-            
-        case ArithBitOr:
-        case ArithBitXor:
-        case ValueBitOr:
-        case ValueBitXor:
-        case ValueBitLShift:
-        case ArithBitLShift: {
-            return power > 31;
-        }
-            
-        case ArithBitRShift:
-        case ValueBitRShift:
-        case ArithBitURShift:
-        case ValueBitURShift: {
-            if (power > 31)
-                return true;
-            
-            Node* shiftAmount = node->child2().node();
-            if (!node->isNumberConstant())
-                return false;
-            JSValue immediateValue = shiftAmount->asJSValue();
-            if (!immediateValue.isInt32())
-                return false;
-            return immediateValue.asInt32() > 32 - power;
-        }
-            
-        default:
-            return false;
-        }
-    }
-
-    template<int power>
-    bool isWithinPowerOfTwo(Edge edge)
-    {
-        return isWithinPowerOfTwo<power>(edge.node());
-    }
-
-    static bool NODELETE mergeFlags(NodeFlags& flagsRef, NodeFlags newFlags)
+    static bool LEGACY_NODELETE mergeFlags(NodeFlags& flagsRef, NodeFlags newFlags)
     {
         return checkAndSet(flagsRef, flagsRef | newFlags);
     }
 
-    bool NODELETE mergeDefaultFlags(Node* node)
+    bool LEGACY_NODELETE mergeDefaultFlags(Node* node)
     {
         bool changed = false;
         if (node->flags() & NodeHasVarArgs) {
@@ -431,7 +367,7 @@ private:
                 flags &= ~NodeBytecodeNeedsNegZero;
             if (node->child1()->hasNumericResult() || node->child2()->hasNumericResult() || node->child1()->hasNumberResult() || node->child2()->hasNumberResult())
                 flags &= ~NodeBytecodeUsesAsOther;
-            if (!isWithinPowerOfTwo<32>(node->child1()) && !isWithinPowerOfTwo<32>(node->child2()))
+            if (!m_graph.isWithinPowerOfTwo<32>(node->child1()) && !m_graph.isWithinPowerOfTwo<32>(node->child2()))
                 flags |= NodeBytecodeUsesAsNumber;
             if (!m_allowNestedOverflowingAdditions)
                 flags |= NodeBytecodeUsesAsNumber;
@@ -446,7 +382,7 @@ private:
             flags &= ~NodeBytecodeUsesAsOther;
             if (isNotNegZero(node->child1().node()) || isNotNegZero(node->child2().node()))
                 flags &= ~NodeBytecodeNeedsNegZero;
-            if (!isWithinPowerOfTwo<32>(node->child1()) && !isWithinPowerOfTwo<32>(node->child2()))
+            if (!m_graph.isWithinPowerOfTwo<32>(node->child1()) && !m_graph.isWithinPowerOfTwo<32>(node->child2()))
                 flags |= NodeBytecodeUsesAsNumber;
             if (!m_allowNestedOverflowingAdditions)
                 flags |= NodeBytecodeUsesAsNumber;
@@ -468,7 +404,7 @@ private:
             flags &= ~NodeBytecodeUsesAsOther;
             if (isNotNegZero(node->child1().node()) || isNotPosZero(node->child2().node()))
                 flags &= ~NodeBytecodeNeedsNegZero;
-            if (!isWithinPowerOfTwo<32>(node->child1()) && !isWithinPowerOfTwo<32>(node->child2()))
+            if (!m_graph.isWithinPowerOfTwo<32>(node->child1()) && !m_graph.isWithinPowerOfTwo<32>(node->child2()))
                 flags |= NodeBytecodeUsesAsNumber;
             if (!m_allowNestedOverflowingAdditions)
                 flags |= NodeBytecodeUsesAsNumber;
@@ -491,7 +427,7 @@ private:
         case Dec: {
             flags &= ~NodeBytecodeNeedsNegZero;
             flags &= ~NodeBytecodeUsesAsOther;
-            if (!isWithinPowerOfTwo<32>(node->child1()))
+            if (!m_graph.isWithinPowerOfTwo<32>(node->child1()))
                 flags |= NodeBytecodeUsesAsNumber;
             if (!m_allowNestedOverflowingAdditions)
                 flags |= NodeBytecodeUsesAsNumber;
@@ -506,14 +442,9 @@ private:
             // As soon as a multiply happens, we can easily end up in the part
             // of the double domain where the point at which you do truncation
             // can change the outcome. So, ArithMul always forces its inputs to
-            // check for overflow. Additionally, it will have to check for overflow
-            // itself unless we can prove that there is no way for the values
-            // produced to cause double rounding.
-            
-            if (!isWithinPowerOfTwo<22>(node->child1().node())
-                && !isWithinPowerOfTwo<22>(node->child2().node()))
-                flags |= NodeBytecodeUsesAsNumber;
-            
+            // check for overflow. Whether the multiply itself can be truncated
+            // also depends on its product being exact, which Graph::mulProductIsExact
+            // decides from the operands when the multiply is speculated.
             node->mergeFlags(flags);
             
             flags |= NodeBytecodeUsesAsNumber | NodeBytecodeNeedsNegZero | NodeBytecodeNeedsNaNOrInfinity;
@@ -550,18 +481,22 @@ private:
             break;
         }
 
+        case Branch:
         case LogicalNot: {
+            // The result is a boolean, so how it is used says nothing about how the operand is
+            // observed. The operand is compared against zero, so truncation is observable but -0 is not.
+            NodeFlags childFlags = NodeBytecodeUsesAsNumber | NodeBytecodeNeedsNaNOrInfinity | NodeBytecodeUsesAsOther;
             switch (node->child1()->op()) {
             case ValueMod:
             case ArithMod:
-                // We can clear this flag since Mod and Div never produces Infinity. It is only NaN.
-                flags &= ~NodeBytecodeNeedsNaNOrInfinity;
+                // Mod never produces Infinity. This lets Mod return 0 instead of NaN for a zero
+                // divisor, which is fine here because NaN and 0 are both falsy.
+                childFlags &= ~NodeBytecodeNeedsNaNOrInfinity;
                 break;
             default:
                 break;
             }
-            flags &= ~NodeBytecodeNeedsNegZero;
-            node->child1()->mergeFlags(flags);
+            node->child1()->mergeFlags(childFlags);
             break;
         }
 
@@ -658,6 +593,7 @@ private:
         }
 
         case Identity:
+        case ValueRep:
             ASSERT(m_graph.afterFixup());
             node->child1()->mergeFlags(flags);
             break;

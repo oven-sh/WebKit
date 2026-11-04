@@ -68,6 +68,8 @@ DECLARE_SYSTEM_HEADER
 
 @optional
 
+- (void)characterIndexForPoint:(NSPoint)point completionHandler:(void(^)(NSUInteger))completionHandler;
+
 - (void)insertTextPlaceholderWithSize:(CGSize)size completionHandler:(void (^)(NSTextPlaceholder *))completionHandler;
 
 - (void)removeTextPlaceholder:(NSTextPlaceholder *)placeholder willInsertText:(BOOL)willInsertText completionHandler:(void (^)(void))completionHandler;
@@ -120,6 +122,7 @@ NSString * const NSInspectorBarTextAlignmentItemIdentifier = @"NSInspectorBarTex
 @end
 
 @interface NSScrollPocket : NSView
+@property (readonly, strong) NSView *captureView;
 @property (copy, nullable) NSColor *captureColor;
 @property BOOL prefersSolidColorHardPocket;
 @end

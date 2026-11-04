@@ -28,7 +28,12 @@
 #include <wtf/HashSet.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Vector.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
+
+#if PLATFORM(COCOA)
+#include <WebCore/AttributedString.h>
+#endif
 
 namespace WebCore {
 
@@ -81,5 +86,62 @@ struct LiveRegionSnapshot {
     // True when a limit stopped the walk, so this is an incomplete view of the region.
     bool isTruncated { false };
 };
+
+// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
+struct AriaNotifyData {
+    String message;
+    NotifyPriority priority { NotifyPriority::Normal };
+    InterruptBehavior interrupt { InterruptBehavior::None };
+    String language;
+
+    String debugDescription() const
+    {
+        auto priorityString = [&] {
+            switch (priority) {
+            case NotifyPriority::Normal:
+                return "normal"_s;
+            case NotifyPriority::High:
+                return "high"_s;
+            }
+            return "unknown"_s;
+        };
+        auto interruptString = [&] {
+            switch (interrupt) {
+            case InterruptBehavior::None:
+                return "none"_s;
+            case InterruptBehavior::All:
+                return "all"_s;
+            case InterruptBehavior::Pending:
+                return "pending"_s;
+            }
+            return "unknown"_s;
+        };
+        return makeString("AriaNotifyData { message: \""_s, message, "\", priority: "_s, priorityString(), ", interrupt: "_s, interruptString(), ", language: \""_s, language, "\" }"_s);
+    }
+};
+
+#if PLATFORM(COCOA)
+// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
+struct LiveRegionAnnouncementData {
+    AttributedString message;
+    LiveRegionStatus status { LiveRegionStatus::Polite };
+
+    String debugDescription() const
+    {
+        auto statusString = [&] {
+            switch (status) {
+            case LiveRegionStatus::Off:
+                return "off"_s;
+            case LiveRegionStatus::Polite:
+                return "polite"_s;
+            case LiveRegionStatus::Assertive:
+                return "assertive"_s;
+            }
+            return "unknown"_s;
+        };
+        return makeString("LiveRegionAnnouncementData { message: \""_s, message.string, "\", status: "_s, statusString(), " }"_s);
+    }
+};
+#endif
 
 } // namespace WebCore

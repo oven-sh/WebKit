@@ -81,7 +81,7 @@ void WebAssemblyRuntimeErrorConstructor::finishCreation(VM& vm, WebAssemblyRunti
 }
 
 WebAssemblyRuntimeErrorConstructor::WebAssemblyRuntimeErrorConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callJSWebAssemblyRuntimeError, constructJSWebAssemblyRuntimeError)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callJSWebAssemblyRuntimeError), JSC_REGISTERED_HOST_FUNCTION(constructJSWebAssemblyRuntimeError))
 {
 }
 

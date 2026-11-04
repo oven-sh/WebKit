@@ -43,16 +43,15 @@ class InjectedScriptManager;
 
 namespace WebCore {
 
-class Page;
+class LocalFrame;
 
-class InspectorIndexedDBAgent final : public InspectorAgentBase, public Inspector::IndexedDBBackendDispatcherHandler, public CanMakeCheckedPtr<InspectorIndexedDBAgent> {
+class InspectorIndexedDBAgent : public InspectorAgentBase, public Inspector::IndexedDBBackendDispatcherHandler, public CanMakeCheckedPtr<InspectorIndexedDBAgent> {
     WTF_MAKE_TZONE_ALLOCATED(InspectorIndexedDBAgent);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorIndexedDBAgent);
     WTF_MAKE_NONCOPYABLE(InspectorIndexedDBAgent);
 public:
     OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
 
-    InspectorIndexedDBAgent(PageAgentContext&);
     ~InspectorIndexedDBAgent();
 
     // InspectorAgentBase
@@ -67,13 +66,14 @@ public:
     void requestData(const String& securityOrigin, const String& databaseName, const String& objectStoreName, const String& indexName, int skipCount, int pageSize, RefPtr<JSON::Object>&& keyRange, Ref<RequestDataCallback>&&);
     void clearObjectStore(const String& securityOrigin, const String& databaseName, const String& objectStoreName, Ref<ClearObjectStoreCallback>&&);
 
-private:
-    Page& inspectedPage() const { return m_inspectedPage.get(); }
+protected:
+    InspectorIndexedDBAgent(WebAgentContext&);
 
+    virtual Inspector::Protocol::ErrorStringOr<Ref<LocalFrame>> frameForSecurityOrigin(const String& securityOrigin) = 0;
+
+private:
     const CheckedRef<Inspector::InjectedScriptManager> m_injectedScriptManager;
     const Ref<Inspector::IndexedDBBackendDispatcher> m_backendDispatcher;
-
-    WeakRef<Page> m_inspectedPage;
 };
 
 } // namespace WebCore

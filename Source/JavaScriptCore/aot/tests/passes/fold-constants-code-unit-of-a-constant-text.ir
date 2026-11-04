@@ -1,0 +1,16 @@
+# A code unit of a constant text is a constant. A position outside it stays.
+# FORM: Prepared
+# RUN: pass FoldConstants
+
+module m0 path="main.js" displayPath="main.js" 
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="abc"
+    v1 = Integer integer=1
+    v2 = GetStringCodeUnit v0, v1
+# CHECK: v2: 98 = Integer integer=98
+    v3 = Integer integer=3
+    v4 = GetStringCodeUnit v0, v3
+# CHECK: v4{{*}}= GetStringCodeUnit
+    Return v2
+}

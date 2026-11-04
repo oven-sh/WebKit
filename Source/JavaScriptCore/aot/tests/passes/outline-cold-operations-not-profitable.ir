@@ -1,0 +1,59 @@
+# A site stays where it is when a shared body would not make the program smaller: it has no equal, or it is no larger than the call
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="onlySite" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = String string="fatal"
+    v4 = PropGet v1 key="console"
+    v5 = CallMethod v4, v3, v3, v3, v2 key="unique"
+    Return v5
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK: = PropGet v1 key="console"
+# CHECK-NEXT: = CallMethod {{*}} key="unique"
+# CHECK-NOT: CallDirect
+
+function f1 name="sitesSmallerThanCall" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 3..8
+  b%(i-2)() frequency=Rare:
+    v%(i) = Mul v1, v2 form=Numbers
+    Return v%(i)
+# END REPEAT
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-6: = Mul v1, v2
+# CHECK-NOT: CallDirect
+
+function f2 name="largeSites" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*3) = String string="fatal"
+    v%(i*3+1) = PropGet v1 key="console"
+    v%(i*3+2) = CallMethod v%(i*3+1), v%(i*3), v%(i*3), v%(i*3), v2 key="repeated"
+    Return v%(i*3+2)
+# END REPEAT
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: CallMethod
+# CHECK-COUNT-6: anything = CallDirect v1, v2 function=f3
+# CHECK-NOT: CallMethod
+
+# CHECK-LABEL: function f3 {{*}}role=OutlinedBody
+# CHECK: = CallMethod {{*}} key="repeated"

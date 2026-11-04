@@ -31,6 +31,7 @@
 #include "Logging.h"
 #include "MemoryRelease.h"
 #include "SQLiteDatabaseTracker.h"
+#include "SQLiteExtras.h"
 #include "SQLiteFileSystem.h"
 #include "SQLiteStatement.h"
 #include <bmalloc/BPlatform.h>
@@ -55,7 +56,7 @@ static constexpr auto notOpenErrorMessage = "database is not open"_s;
 static void unauthorizedSQLFunction(sqlite3_context *context, int, sqlite3_value **)
 {
     auto* functionName = static_cast<const char*>(sqlite3_user_data(context));
-    sqlite3_result_error(context, makeString("Function "_s, unsafeSpan(functionName), " is unauthorized"_s).utf8().legacyCStringPointer(), -1);
+    sqliteResultError(context, makeString("Function "_s, unsafeSpan(functionName), " is unauthorized"_s).utf8());
 }
 
 static void initializeSQLiteIfNecessary()
@@ -135,7 +136,7 @@ bool SQLiteDatabase::open(const String& filename, OpenMode openMode, OptionSet<O
             return;
 
         m_openingThreadID = 0;
-        m_openErrorMessage = sqlite3_errmsg(m_db);
+        m_openErrorMessage = UTF8CString::unsafeFromUTF8(sqlite3_errmsg(m_db));
         m_openError = sqlite3_errcode(m_db);
         close();
     });
@@ -157,7 +158,7 @@ bool SQLiteDatabase::open(const String& filename, OpenMode openMode, OptionSet<O
         int result = SQLITE_OK;
         {
             SQLiteTransactionInProgressAutoCounter transactionCounter;
-            result = sqlite3_open_v2(FileSystem::fileSystemRepresentation(filename).legacyCStringPointer(), &m_db, flags, nullptr);
+            result = sqliteOpen(FileSystem::fileSystemRepresentation(filename), &m_db, flags);
 #if PLATFORM(COCOA)
             if (result == SQLITE_OK && options.contains(OpenOptions::CanSuspendWhileLocked))
                 SQLiteFileSystem::setCanSuspendLockedFileAttribute(filename);
@@ -169,7 +170,7 @@ bool SQLiteDatabase::open(const String& filename, OpenMode openMode, OptionSet<O
         if (result != SQLITE_OK) {
             if (!m_db) {
                 m_openError = result;
-                m_openErrorMessage = "sqlite_open returned null";
+                m_openErrorMessage = "sqlite_open returned null"_s;
             }
             return false;
         }
@@ -236,7 +237,7 @@ void SQLiteDatabase::enableAutomaticWALTruncation()
     sqlite3_wal_hook(m_db, walAutomaticTruncationHook, nullptr);
 }
 
-static int NODELETE checkpointModeValue(SQLiteDatabase::CheckpointMode mode)
+static int LEGACY_NODELETE checkpointModeValue(SQLiteDatabase::CheckpointMode mode)
 {
     switch (mode) {
     case SQLiteDatabase::CheckpointMode::Full:
@@ -531,7 +532,7 @@ void SQLiteDatabase::clearAllTables()
         tables.append(statement->columnText(0));
     for (auto& table : tables) {
         if (!executeCommandSlow(makeString("DROP TABLE "_s, table)))
-            LOG(SQLDatabase, "Unable to drop table %s", table.ascii().data());
+            LOG(SQLDatabase, "Unable to drop table %s", table.utf8());
     }
 }
 
@@ -591,7 +592,7 @@ const char* SQLiteDatabase::lastErrorMsg()
 {
     if (m_db)
         return sqlite3_errmsg(m_db);
-    return m_openErrorMessage.isNull() ? notOpenErrorMessage : m_openErrorMessage.data();
+    return m_openErrorMessage.isNull() ? notOpenErrorMessage : m_openErrorMessage.legacyCStringPointer();
 }
 
 #if ASSERT_ENABLED
@@ -759,7 +760,7 @@ static int callCollationFunction(void* arg, int aLength, const void* a, int bLen
 void SQLiteDatabase::setCollationFunction(const String& collationName, Function<int(int, const void*, int, const void*)>&& collationFunction)
 {
     auto functionObject = new Function<int(int, const void*, int, const void*)>(WTF::move(collationFunction));
-    sqlite3_create_collation_v2(m_db, collationName.utf8().legacyCStringPointer(), SQLITE_UTF8, functionObject, callCollationFunction, destroyCollationFunction);
+    sqliteCreateCollation(m_db, collationName.utf8(), SQLITE_UTF8, functionObject, callCollationFunction, destroyCollationFunction);
 }
 
 void SQLiteDatabase::releaseMemory()
@@ -778,9 +779,7 @@ static std::expected<sqlite3_stmt*, int> constructAndPrepareStatement(SQLiteData
     sqlite3_stmt* statement = nullptr;
     const char* tail = nullptr;
 
-    // Pass the length of the string including the null character to sqlite3_prepare_v2;
-    // this lets SQLite avoid an extra string copy.
-    int error = sqlite3_prepare_v2(database.sqlite3Handle(), queryIncludingNullTerminator.data(), queryIncludingNullTerminator.size(), &statement, &tail);
+    int error = sqlitePrepare(database.sqlite3Handle(), queryIncludingNullTerminator, &statement, &tail);
     if (error != SQLITE_OK)
         LOG(SQLDatabase, "sqlite3_prepare16 failed (%i)\n%s\n%s", error, queryIncludingNullTerminator.data(), sqlite3_errmsg(database.sqlite3Handle()));
 

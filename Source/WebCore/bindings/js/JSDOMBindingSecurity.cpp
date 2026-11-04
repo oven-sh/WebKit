@@ -44,12 +44,15 @@ void printErrorMessageForFrame(LocalFrame* frame, const String& message)
 {
     if (!frame)
         return;
-    protect(frame)->document()->window()->printErrorMessage(message);
+    protect(protect(frame)->document()->window())->printErrorMessage(message);
 }
 
 static String remoteFrameAccessError(JSC::JSGlobalObject* lexicalGlobalObject, DOMWindow& targetWindow)
 {
-    return targetWindow.crossDomainAccessErrorMessage(activeDOMWindow(*lexicalGlobalObject), IncludeTargetOrigin::No);
+    RefPtr activeWindow = dynamicDowncast<LocalDOMWindow>(asJSDOMWindow(lexicalGlobalObject)->wrapped());
+    if (!activeWindow)
+        return { };
+    return targetWindow.crossDomainAccessErrorMessage(*activeWindow, IncludeTargetOrigin::No);
 }
 
 // FIXME: Refactor to share more code with canAccessDocument.
@@ -70,11 +73,12 @@ static void reportErrorAccessingRemoteFrame(JSC::JSGlobalObject* lexicalGlobalOb
     }
 }
 
-static inline bool canAccessTargetOrigin(JSC::JSGlobalObject* lexicalGlobalObject, SecurityOrigin& targetSecurityOrigin, DOMWindow* targetDOMWindow, SecurityReportingOption reportingOption)
+static inline bool canAccessTargetOrigin(JSC::JSGlobalObject* lexicalGlobalObject, SecurityOrigin& targetSecurityOrigin, std::optional<AgentClusterIdentifier> targetAgentClusterIdentifier, DOMWindow* targetDOMWindow, SecurityReportingOption reportingOption)
 {
     Ref active = activeDOMWindow(*lexicalGlobalObject);
 
-    if (protect(active->document()->securityOrigin())->isSameOriginDomain(targetSecurityOrigin))
+    Ref activeDocument = *active->document();
+    if (isPlatformObjectSameOrigin(protect(activeDocument->securityOrigin()), activeDocument->agentClusterIdentifier(), targetSecurityOrigin, targetAgentClusterIdentifier))
         return true;
 
     switch (reportingOption) {
@@ -94,12 +98,14 @@ static inline bool canAccessTargetOrigin(JSC::JSGlobalObject* lexicalGlobalObjec
     return false;
 }
 
+// FIXME: With site isolation, a remote frame's document is in another process and therefore in another agent cluster.
+// Make remote frames inaccessible instead of syncing their agent cluster identifier.
 static inline bool canAccessFrame(JSC::JSGlobalObject* lexicalGlobalObject, Frame* targetFrame, SecurityReportingOption reportingOption)
 {
     if (!targetFrame || !targetFrame->frameDocumentSecurityOrigin())
         return false;
 
-    return canAccessTargetOrigin(lexicalGlobalObject, protect(*targetFrame->frameDocumentSecurityOrigin()), protect(targetFrame->window()), reportingOption);
+    return canAccessTargetOrigin(lexicalGlobalObject, protect(*targetFrame->frameDocumentSecurityOrigin()), targetFrame->frameAgentClusterIdentifier(), protect(targetFrame->window()), reportingOption);
 }
 
 static inline bool canAccessDocument(JSC::JSGlobalObject* lexicalGlobalObject, Document* targetDocument, SecurityReportingOption reportingOption)
@@ -110,7 +116,7 @@ static inline bool canAccessDocument(JSC::JSGlobalObject* lexicalGlobalObject, D
     if (auto* templateHost = targetDocument->templateDocumentHost())
         targetDocument = templateHost;
 
-    return canAccessTargetOrigin(lexicalGlobalObject, protect(targetDocument->securityOrigin()), protect(targetDocument->window()), reportingOption);
+    return canAccessTargetOrigin(lexicalGlobalObject, protect(targetDocument->securityOrigin()), targetDocument->agentClusterIdentifier(), protect(targetDocument->window()), reportingOption);
 }
 
 bool BindingSecurity::shouldAllowAccessToFrame(JSGlobalObject& lexicalGlobalObject, Frame& frame, String& message)

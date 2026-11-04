@@ -101,9 +101,12 @@ static void releaseNoncriticalMemory(MaintainMemoryCache maintainMemoryCache)
         if (CheckedPtr renderView = document->renderView()) {
             LayoutIntegration::LineLayout::releaseCaches(*renderView);
             Layout::TextBreakingPositionCache::singleton().clear();
-            renderView->layoutContext().deleteDetachedRenderersNow();
-            renderView->layoutContext().deleteDetachedInlineContentNow();
+            CheckedRef layoutContext = renderView->layoutContext();
+            layoutContext->deleteDetachedRenderersNow();
+            layoutContext->deleteDetachedInlineContentNow();
         }
+        if (maintainMemoryCache == MaintainMemoryCache::No)
+            protect(document->cachedResourceLoader())->garbageCollectDocumentResources();
     }
 
     if (maintainMemoryCache == MaintainMemoryCache::No)
@@ -142,22 +145,26 @@ static void releaseCriticalMemory(Synchronous synchronous, MaintainBackForwardCa
         page.cookieJar().clearCache();
     });
 
-    auto allDocuments = Document::allDocuments();
-    auto protectedDocuments = WTF::map(allDocuments, [](auto& document) -> Ref<Document> {
-        return document.get();
-    });
-    for (auto& document : protectedDocuments) {
-        document->clearQuerySelectorAllResults();
-        document->styleScope().releaseMemory();
-        if (RefPtr fontSelector = document->fontSelectorIfExists())
-            fontSelector->emptyCaches();
-        protect(document->cachedResourceLoader())->garbageCollectDocumentResources();
+    {
+        // Iterate the documents in a scope so that we don't leave a pointer to them on the stack
+        // when we call GC later in this function.
+        auto allDocuments = Document::allDocuments();
+        auto protectedDocuments = WTF::map(allDocuments, [](auto& document) -> Ref<Document> {
+            return document.get();
+        });
+        for (auto& document : protectedDocuments) {
+            document->clearQuerySelectorResults();
+            document->styleScope().releaseMemory();
+            if (RefPtr fontSelector = document->fontSelectorIfExists())
+                fontSelector->emptyCaches();
+            protect(document->cachedResourceLoader())->garbageCollectDocumentResources();
 
-        if (RefPtr pluginDocument = dynamicDowncast<PluginDocument>(document))
-            pluginDocument->releaseMemory();
+            if (RefPtr pluginDocument = dynamicDowncast<PluginDocument>(document))
+                pluginDocument->releaseMemory();
 
-        if (RefPtr localFrame = document->frame())
-            protect(localFrame->editor())->releaseMemory();
+            if (RefPtr editor = document->editorIfExists())
+                editor->releaseMemory();
+        }
     }
 
     if (synchronous == Synchronous::Yes)

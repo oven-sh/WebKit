@@ -144,7 +144,7 @@ public:
     WEBCORE_EXPORT bool doAction() const;
 
     WEBCORE_EXPORT String documentAttribute(const String&) const;
-    void loadEvent(const char*);
+    void loadEvent(ASCIILiteral);
 
     WEBCORE_EXPORT AccessibilityObjectAtspi* activeDescendant() const;
     void activeDescendantChanged();
@@ -291,7 +291,7 @@ private:
 
     RefPtr<AXCoreObject> m_coreObject;
     OptionSet<Interface> m_interfaces;
-    RefPtr<AccessibilityRootAtspi> m_root;
+    const RefPtr<AccessibilityRootAtspi> m_root;
     std::optional<RefPtr<AccessibilityObjectAtspi>> m_parent;
     bool m_isRegistered { false };
     String m_path;

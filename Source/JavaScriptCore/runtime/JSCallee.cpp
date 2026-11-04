@@ -51,7 +51,7 @@ void JSCallee::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_scope);
+    visitFields(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSCallee);

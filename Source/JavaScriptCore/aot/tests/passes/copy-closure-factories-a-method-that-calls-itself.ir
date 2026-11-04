@@ -1,0 +1,56 @@
+# Helper.prototype.define = function (name, more) { this.target[name] = function () { return name; }; if (more) this.define(name, more); return this; };
+# new Helper(object).define("a", true);
+# Each copy finds the call of `define` again. Copies are made three calls deep: the last one calls the function as written.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: NewClosure v5 function=f5
+# CHECK-LABEL: function f5 name="define"
+# CHECK: NewClosure {{*}} function=f7
+# CHECK-LABEL: function f7 name="define"
+# CHECK: NewClosure {{*}} function=f9
+# CHECK-LABEL: function f9 name="define"
+# CHECK-NOT: IsClosureOf
+# CHECK-NOT: name="define"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="define" mode=Sloppy
+    v4 = NewObject layout=L0
+    v5 = FinishObject v4
+    v6 = Boolean boolean=true
+    v7 = Construct v0, -, v5
+    v8 = PropGet v7 key="define"
+    v9 = String string="a"
+    v10 = Call v8, v7, v9, v6
+    Return
+}
+function f1 name="Helper" module=m0 position=10 flags=[IsSloppy, HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = ToThis v0
+    PropSet v2, v1 key="target" mode=Sloppy
+    Return
+}
+function f2 name="define" module=m0 position=20 flags=[IsSloppy, HasThis] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0, v1, v2):
+    v3 = ToThis v0
+    v4 = PropGet v3 key="target"
+    v5 = NewClosure v1 function=f3
+    ElemSet v4, v1, v5 mode=Sloppy
+    v7 = ToBoolean v2
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    v8 = PropGet v3 key="define"
+    v9 = Call v8, v3, v1, v2
+    Jump -> next b2()
+  b2():
+    Return v3
+}
+function f3 name="member" module=m0 position=30 captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

@@ -209,6 +209,7 @@ const aliases = {
     'int': 'uint32_t',
     'unsigned': 'uint32_t',
     'char': 'uint8_t',
+    'char8_t': 'uint8_t',
     'pid_t': 'uint32_t',
     'unsigned short': 'uint16_t',
     'unsigned char': 'uint8_t',
@@ -613,7 +614,7 @@ export class ArgumentSerializer {
             if (typeof argument != 'number' && typeof argument != 'bigint') {
                 throw new SerializationError(`Identifier of type ${ argumentDefinition.type } is not a number`);
             }
-            if (argument < MIN_INT64 || argument > MAX_INT64) {
+            if (argument < MIN_UINT || argument > MAX_UINT64) {
                 throw new SerializationError(`Identifier value (${ argumentDefinition.name }) of type ${ argumentDefinition.type } is out-of-bounds.`);
             }
             // magic object identifier for WebGL hotpatches
@@ -1089,6 +1090,7 @@ export class ArgumentParser {
                 case 'std::vector':
                 case 'ArrayReference':
                 case 'Span':
+                case 'FixedVector':
                 case 'Vector': {
                     const [newPosition, values] = ArgumentParser.parseVector(buffer, position, innerType, false);
                     return [newPosition, {parsedType: argumentDefinition.type, parsedValue: values}];
@@ -1225,6 +1227,8 @@ export class ArgumentParser {
                 return [position, {parsedValue: null, parsedType: 'std::nullptr_t'}];
             case 'std::monostate':
                 return [position, {parsedValue: null, parsedType: 'std::monostate'}];
+            case 'MachSendRight':
+                return [position, {parsedValue: null, parsedType: 'MachSendRight'}];
         }
         return undefined;
     }

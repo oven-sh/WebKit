@@ -116,6 +116,8 @@ bool AXSearchManager::matchForSearchKeyAtIndex(Ref<AXCoreObject> axObject, const
         return axObject->isHeading();
     case AccessibilitySearchKey::Highlighted:
         return axObject->hasHighlighting();
+    case AccessibilitySearchKey::FormFieldWithError:
+        return axObject->isControl() && axObject->invalidStatusIncludingInferred() != "false"_s;
     case AccessibilitySearchKey::KeyboardFocusable:
         return axObject->isKeyboardFocusable();
     case AccessibilitySearchKey::ItalicFont:
@@ -309,7 +311,7 @@ static void appendChildrenToArray(AXCoreObject& object, bool isForward, RefPtr<A
 DidTimeout AXSearchManager::revealHiddenMatchWithTimeout(AXCoreObject& matchedObject, Seconds timeout)
 {
     auto revealAndUpdateAccessibilityTrees = [axID = matchedObject.objectID(), treeID = matchedObject.treeID()] {
-        WeakPtr cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(treeID);
+        CheckedPtr cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(treeID);
         RefPtr object = cache ? cache->objectForID(axID) : nullptr;
         if (!object)
             return;
@@ -345,12 +347,12 @@ DidTimeout AXSearchManager::revealHiddenMatchWithTimeout(AXCoreObject& matchedOb
     return didTimeout;
 }
 
-AccessibilitySearchResultStream AXSearchManager::findMatchingObjectsAsStream(AccessibilitySearchCriteria&& criteria, RemoteFrameSearchCallback&& remoteFrameCallback)
+AccessibilitySearchResultStream AXSearchManager::findMatchingObjectsAsStream(AccessibilitySearchCriteria&& criteria, NOESCAPE const RemoteFrameSearchCallback& remoteFrameCallback)
 {
     return findMatchingObjectsInternalAsStream(criteria, remoteFrameCallback);
 }
 
-AccessibilitySearchResultStream AXSearchManager::findMatchingObjectsInternalAsStream(const AccessibilitySearchCriteria& criteria, const RemoteFrameSearchCallback& remoteFrameCallback)
+AccessibilitySearchResultStream AXSearchManager::findMatchingObjectsInternalAsStream(const AccessibilitySearchCriteria& criteria, NOESCAPE const RemoteFrameSearchCallback& remoteFrameCallback)
 {
     AXTRACE("AXSearchManager::findMatchingObjectsInternalAsStream"_s);
     AXLOG(criteria);

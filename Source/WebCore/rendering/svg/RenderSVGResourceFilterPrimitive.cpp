@@ -44,7 +44,12 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGResourceFilterPrimitive);
 
 RenderSVGResourceFilterPrimitive::RenderSVGResourceFilterPrimitive(SVGFilterPrimitiveStandardAttributes& element, Style::ComputedStyle&& style)
-    : RenderSVGHiddenContainer(Type::SVGResourceFilterPrimitive, element, WTF::move(style))
+    : RenderSVGResourceFilterPrimitive(Type::SVGResourceFilterPrimitive, element, WTF::move(style))
+{
+}
+
+RenderSVGResourceFilterPrimitive::RenderSVGResourceFilterPrimitive(Type type, SVGFilterPrimitiveStandardAttributes& element, Style::ComputedStyle&& style)
+    : RenderSVGHiddenContainer(type, element, WTF::move(style))
 {
     ASSERT(isRenderSVGResourceFilterPrimitive());
 }
@@ -72,7 +77,7 @@ void RenderSVGResourceFilterPrimitive::markFilterEffectForRebuild()
 
 SVGFilterPrimitiveStandardAttributes& RenderSVGResourceFilterPrimitive::filterPrimitiveElement() const
 {
-    return static_cast<SVGFilterPrimitiveStandardAttributes&>(RenderSVGHiddenContainer::element());
+    return downcast<SVGFilterPrimitiveStandardAttributes>(RenderSVGHiddenContainer::element());
 }
 
 void RenderSVGResourceFilterPrimitive::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)

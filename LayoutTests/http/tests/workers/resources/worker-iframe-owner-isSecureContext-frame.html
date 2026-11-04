@@ -1,7 +1,0 @@
-<p>HTTPS iframe</p>
-<script>
-worker = new Worker("worker-iframe-owner-isSecureContext-worker.js");
-worker.onmessage = (message) => {
-    top.postMessage(message.data, "*");
-};
-</script>

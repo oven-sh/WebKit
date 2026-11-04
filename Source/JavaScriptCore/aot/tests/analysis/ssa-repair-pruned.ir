@@ -1,0 +1,80 @@
+# A merge point gets a parameter only where the variable is live at its head.
+# FORM: Prepared
+# RUN(MERGE): repair function=f0 redirect=b6.0:b3 variable=v4,v7
+# RUN(REDEFINED): repair function=f1 redirect=b0.1:b2 variable=v3,v4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="mergePoints" parameters=[{type=boolean}, {type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b8()
+  b1():
+    Branch v1 -> taken b2(), notTaken b6()
+  b2():
+    v4 = Add v2, v3
+    v5 = Negate v4
+    Branch v1 -> taken b3(), notTaken b7()
+  b3():
+    Branch v0 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b5()
+  b5():
+    v6 = Mul v4, v4
+    Jump -> next b8()
+  b6():
+    v7 = Less v2, v3
+    Branch v1 -> taken b8(), notTaken b7()
+  b7():
+    Jump -> next b8()
+  b8():
+    Return v2
+}
+# MERGE: function f0 name="mergePoints"
+# MERGE: b0(v0: boolean, v1: boolean, v2: number, v3: number):
+# MERGE: Branch v0 -> taken b1(), notTaken b8()
+# MERGE: b1():
+# MERGE: Branch v1 -> taken b2(), notTaken b6()
+# MERGE: b2():
+# MERGE: v4: number = Add v2, v3
+# MERGE: v5: number = Negate v4
+# MERGE: Branch v1 -> taken b3(v4), notTaken b7()
+# MERGE: b3([[P]]: boolean|number):
+# MERGE: Branch v0 -> taken b4(), notTaken b5()
+# MERGE: b4():
+# MERGE: Jump -> next b5()
+# MERGE: b5():
+# MERGE: v6: number = Mul [[P]], [[P]]
+# MERGE: Jump -> next b8()
+# MERGE: b6():
+# MERGE: v7: boolean = Less v2, v3
+# MERGE: Branch v1 -> taken b3(v7), notTaken b7()
+# MERGE: b7():
+# MERGE: Jump -> next b8()
+# MERGE: b8():
+# MERGE: Return v2
+function f1 name="redefinedBeforeUse" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b4(v1)
+  b1():
+    v3 = Add v1, v2
+    Jump -> next b2()
+  b2():
+    v4 = Sub v1, v2
+    Jump -> next b3()
+  b3():
+    v5 = Mul v3, v3
+    Jump -> next b4(v5)
+  b4(v6):
+    Return v6
+}
+# REDEFINED: function f1 name="redefinedBeforeUse"
+# REDEFINED: b0(v0: boolean, v1: number, v2: number):
+# REDEFINED: Branch v0 -> taken b1(), notTaken b2()
+# REDEFINED: b1():
+# REDEFINED: v3: number = Add v1, v2
+# REDEFINED: Jump -> next b2()
+# REDEFINED: b2():
+# REDEFINED: v4: number = Sub v1, v2
+# REDEFINED: Jump -> next b3()
+# REDEFINED: b3():
+# REDEFINED: v5: number = Mul v4, v4
+# REDEFINED: Jump -> next b4(v5)
+# REDEFINED: b4(v6: number):
+# REDEFINED: Return v6

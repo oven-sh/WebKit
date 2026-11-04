@@ -74,7 +74,7 @@ public:
         return m_totalLength;
     }
     
-    uint32_t length(JSGlobalObject*) const;
+    uint64_t length(JSGlobalObject*) const;
     
     bool isMappedArgument(uint32_t i) const
     {
@@ -147,7 +147,7 @@ public:
 
     static JSArray* fastSlice(JSGlobalObject*, ScopedArguments*, uint64_t startIndex, uint64_t count);
 
-    JS_EXPORT_PRIVATE bool NODELETE isIteratorProtocolFastAndNonObservable();
+    JS_EXPORT_PRIVATE bool LEGACY_NODELETE isIteratorProtocolFastAndNonObservable();
 
     DECLARE_INFO;
     

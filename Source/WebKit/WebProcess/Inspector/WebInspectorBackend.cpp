@@ -50,6 +50,7 @@
 #include <WebCore/InspectorIdentifierRegistry.h>
 #include <WebCore/InspectorPageAgent.h>
 #include <WebCore/InspectorResourceUtilities.h>
+#include <WebCore/InstrumentingAgents.h>
 #include <WebCore/LocalFrame.h>
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
@@ -331,6 +332,23 @@ void WebInspectorBackend::updateDockingAvailability()
     protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebInspectorBackendProxy::AttachAvailabilityChanged(canAttachWindow), m_page->identifier());
 }
 
+static void forEachLocalOrProvisionalFrame(Page& page, NOESCAPE const Function<void(LocalFrame&)>& function)
+{
+    Vector<Ref<LocalFrame>> frames;
+    for (RefPtr frame = &page.mainFrame(); frame; frame = frame->tree().traverseNext()) {
+        RefPtr localFrame = dynamicDowncast<LocalFrame>(*frame);
+        if (!localFrame) {
+            if (RefPtr webFrame = WebFrame::fromCoreFrame(*frame))
+                localFrame = webFrame->provisionalFrame();
+        }
+        if (localFrame)
+            frames.append(localFrame.releaseNonNull());
+    }
+
+    for (auto& frame : frames)
+        function(frame);
+}
+
 void WebInspectorBackend::ensureInstrumentationForFrame(LocalFrame& frame)
 {
     ensureNetworkInstrumentationForFrame(frame);
@@ -392,7 +410,7 @@ void WebInspectorBackend::enableNetworkInstrumentation()
         CheckedRef { m_resourceDataStore.get() }->setSupportsShowingCertificate(corePage->settings().inspectorSupportsShowingCertificate());
     }
 
-    corePage->forEachLocalFrame([&](LocalFrame& frame) {
+    forEachLocalOrProvisionalFrame(*corePage, [&](LocalFrame& frame) {
         ensureNetworkInstrumentationForFrame(frame);
     });
 }
@@ -420,8 +438,9 @@ void WebInspectorBackend::disableNetworkInstrumentation()
     }
 }
 
-void WebInspectorBackend::removeInstrumentationForFrame(FrameIdentifier frameID)
+void WebInspectorBackend::removeInstrumentationForFrame(LocalFrame& frame)
 {
+    auto frameID = frame.frameID();
     m_frameNetworkAgentProxies.remove(frameID);
     m_framePageAgentProxies.remove(frameID);
 
@@ -429,8 +448,22 @@ void WebInspectorBackend::removeInstrumentationForFrame(FrameIdentifier frameID)
     // overlay controller, so it wouldn't be released just by the proxy above going away.
     if (RefPtr corePage = m_page ? m_page->corePage() : nullptr) {
         if (auto* client = corePage->inspectorController().inspectorBackendClient())
-            client->willDestroyFrameOverlays(frameID);
+            client->willDestroyFrameOverlays(frame);
     }
+}
+
+void WebInspectorBackend::removeInstrumentationForDestroyedFrame(LocalFrame& frame)
+{
+    // A proxy unregisters from the frame's InstrumentingAgents when destroyed, so it must go while they are alive.
+    // A FrameIdentifier names the logical frame, not this LocalFrame, so only remove a proxy registered on this frame's agents.
+    Ref agents = frame.inspectorController().instrumentingAgents();
+    auto frameID = frame.frameID();
+
+    if (auto it = m_frameNetworkAgentProxies.find(frameID); it != m_frameNetworkAgentProxies.end() && agents->enabledNetworkProxy() == it->value.get())
+        m_frameNetworkAgentProxies.remove(it);
+
+    if (auto it = m_framePageAgentProxies.find(frameID); it != m_framePageAgentProxies.end() && agents->enabledPageProxy() == it->value.get())
+        m_framePageAgentProxies.remove(it);
 }
 
 void WebInspectorBackend::getResponseBody(ResourceLoaderIdentifier resourceID, CompletionHandler<void(std::expected<std::pair<String, bool>, String>&&)>&& completionHandler)
@@ -698,11 +731,24 @@ void WebInspectorBackend::ensurePageInstrumentationForFrame(LocalFrame& frame)
     auto proxy = makeUnique<PageAgentProxy>(webContext, *page);
     std::ignore = proxy->enable();
 
-    // Seed the just-created proxy with the current toggle: a frame can commit after
-    // setShowPaintRects(true) was fanned out, and would otherwise default to off.
+    // Seed the just-created proxy with the current toggle and script: a frame can commit after
+    // they were fanned out, and would otherwise default to off.
     proxy->setShowPaintRects(m_showPaintRects);
+    proxy->setBootstrapScript(m_bootstrapScript);
 
     m_framePageAgentProxies.add(frameID, WTF::move(proxy));
+}
+
+void WebInspectorBackend::suspendForDebugger(WebCore::DebuggerPauseSessionIdentifier sessionID)
+{
+    if (RefPtr corePage = m_page ? m_page->corePage() : nullptr)
+        corePage->inspectorController().suspendForDebuggerSession(sessionID);
+}
+
+void WebInspectorBackend::resumeFromDebugger(WebCore::DebuggerPauseSessionIdentifier sessionID)
+{
+    if (RefPtr corePage = m_page ? m_page->corePage() : nullptr)
+        corePage->inspectorController().resumeFromDebuggerSession(sessionID);
 }
 
 void WebInspectorBackend::enablePageInstrumentation()
@@ -718,7 +764,7 @@ void WebInspectorBackend::enablePageInstrumentation()
     RefPtr corePage = m_page->corePage();
     corePage->settings().setDeveloperExtrasEnabled(true);
 
-    corePage->forEachLocalFrame([&](LocalFrame& frame) {
+    forEachLocalOrProvisionalFrame(*corePage, [&](LocalFrame& frame) {
         ensurePageInstrumentationForFrame(frame);
     });
 }
@@ -739,6 +785,7 @@ void WebInspectorBackend::disablePageInstrumentation()
     // Reset so a later re-enable seeds fresh proxies as off; the UIProcess ProxyingPageAgent also
     // resets on disable().
     m_showPaintRects = false;
+    m_bootstrapScript = { };
 }
 
 void WebInspectorBackend::setShowPaintRects(bool show)
@@ -748,6 +795,13 @@ void WebInspectorBackend::setShowPaintRects(bool show)
     m_showPaintRects = show;
     for (auto& proxy : m_framePageAgentProxies.values())
         proxy->setShowPaintRects(show);
+}
+
+void WebInspectorBackend::setBootstrapScript(const String& source)
+{
+    m_bootstrapScript = source;
+    for (auto& proxy : m_framePageAgentProxies.values())
+        proxy->setBootstrapScript(source);
 }
 
 void WebInspectorBackend::getFrameResourceData(Vector<WebCore::FrameIdentifier>&& frameIDs, CompletionHandler<void(Vector<std::pair<WebCore::FrameIdentifier, Inspector::FrameResourceData>>&&)>&& completionHandler)

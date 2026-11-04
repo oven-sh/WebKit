@@ -53,8 +53,9 @@ void ControlPart::setOverrideControlFactory(RefPtr<ControlFactory>&& controlFact
 
 PlatformControl* ControlPart::platformControl() const
 {
-    if (!m_platformControl)
+    if (!m_platformControl) {
         m_platformControl = const_cast<ControlPart&>(*this).createPlatformControl();
+    }
     return m_platformControl.get();
 }
 

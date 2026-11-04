@@ -31,10 +31,15 @@
 #include "B3BasicBlockInlines.h"
 #include "B3CaseCollectionInlines.h"
 #include "B3InsertionSet.h"
+#include "B3Limits.h"
 #include "B3PhaseScope.h"
+#include "B3ProcedureInlines.h"
 #include "B3SwitchValue.h"
+#include "B3UpsilonValue.h"
 #include "B3UseCounts.h"
 #include "B3ValueInlines.h"
+#include <wtf/HashSet.h>
+#include <wtf/IndexSet.h>
 #include <wtf/ListDump.h>
 
 namespace JSC { namespace B3 {
@@ -50,7 +55,6 @@ public:
     InferSwitches(Procedure& proc)
         : m_proc(proc)
         , m_insertionSet(proc)
-        , m_useCounts(proc)
     {
     }
     
@@ -68,7 +72,7 @@ public:
                 dataLog("Performing fixpoint iteration:\n");
             
             for (BasicBlock* block : m_proc)
-                changed |= attemptToMergeWithPredecessor(block);
+                changed |= attemptToMergeWithPredecessor(block) || attemptToMergeComparisonUsedAsValue(block);
 
             everChanged |= changed;
         }
@@ -122,6 +126,22 @@ private:
         }
         
         BasicBlock* predecessor = block->predecessor(0);
+        if (m_proc.policy().optimization.stopsSwitchInferenceAtRareEdges) {
+            for (const FrequentedBlock& successor : predecessor->successors()) {
+                if (successor.block() == block && successor.isRare())
+                    return false;
+            }
+        }
+        if (SwitchValue* grown = predecessor->last()->as<SwitchValue>(); grown && grown->numCaseValues() >= Limits::minCasesToGrowSwitchInPlace) {
+            switch (tryGrowInPlace(block, description, predecessor, grown)) {
+            case GrowthOutcome::Merged:
+                return true;
+            case GrowthOutcome::NotMergeable:
+                return false;
+            case GrowthOutcome::UseGeneralPath:
+                break;
+            }
+        }
         SwitchDescription predecessorDescription = describe(predecessor);
         if (B3InferSwitchesInternal::verbose)
             dataLog("    Description of predecessor block ", *predecessor, ": ", predecessorDescription, "\n");
@@ -176,7 +196,10 @@ private:
         if (B3InferSwitchesInternal::verbose)
             dataLog("    Doing it!\n");
         // We're committed to doing the thing.
-        
+        if (!m_useCounts)
+            m_useCounts.emplace(m_proc);
+        m_grown = nullptr;
+
         // Delete the extra value from the predecessor, since that would break downstream inference
         // on the next fixpoint iteration. We would think that this block is too expensive to merge
         // because of the Equal or NotEqual value even though that value is dead! We know it's dead
@@ -229,6 +252,79 @@ private:
         return true;
     }
 
+    // When `a == 1 || a == 2 || a == 3 || a == 4` is used as a value, the first three comparisons branch to a block that produces true and the last comparison is the result.
+    // Turn the last comparison into a case with the same target, as long as all the cases fit in one bit test.
+    bool attemptToMergeComparisonUsedAsValue(BasicBlock* block)
+    {
+        if (!m_proc.policy().switchLowering.usesBitTests || block->numPredecessors() != 1 || block->last()->opcode() != Jump)
+            return false;
+        BasicBlock* predecessor = block->predecessor(0);
+        SwitchValue* switchValue = predecessor->last()->as<SwitchValue>();
+        if (!switchValue || predecessor->fallThrough().block() != block || switchValue->numCaseValues() + 1 < Limits::minCasesForBitTests)
+            return false;
+
+        UpsilonValue* upsilon = nullptr;
+        for (Value* value : *block) {
+            if (value->isFree() || value == block->last())
+                continue;
+            if (auto* candidate = value->as<UpsilonValue>(); candidate && !upsilon) {
+                upsilon = candidate;
+                continue;
+            }
+            if ((value->opcode() == Equal || value->opcode() == NotEqual) && value->child(0) == switchValue->child(0) && value->child(1)->hasInt())
+                continue;
+            return false;
+        }
+        if (!upsilon)
+            return false;
+        Value* comparison = upsilon->child(0);
+        if ((comparison->opcode() != Equal && comparison->opcode() != NotEqual) || comparison->child(0) != switchValue->child(0) || !comparison->child(1)->hasInt() || useCounts().numUses(comparison) != 1)
+            return false;
+        if (!block->values().contains(comparison))
+            return false;
+
+        int32_t resultOnMatch = comparison->opcode() == Equal;
+        int64_t caseValue = comparison->child(1)->asInt();
+        int64_t smallest = caseValue;
+        int64_t largest = caseValue;
+        std::optional<FrequentedBlock> target;
+        for (SwitchCase switchCase : switchValue->cases(predecessor)) {
+            if (switchCase.caseValue() == caseValue)
+                return false;
+            smallest = std::min(smallest, switchCase.caseValue());
+            largest = std::max(largest, switchCase.caseValue());
+            if (!target && onlyProducesConstant(switchCase.targetBlock(), upsilon->phi(), resultOnMatch, block->successorBlock(0)))
+                target = switchCase.target();
+        }
+        if (!target || static_cast<uint64_t>(largest) - static_cast<uint64_t>(smallest) >= 64)
+            return false;
+
+        m_grown = nullptr;
+        Value* resultOnMismatch = m_proc.add<Const32Value>(comparison->origin(), !resultOnMatch);
+        block->values().insert(0, resultOnMismatch);
+        resultOnMismatch->owner = block;
+        upsilon->child(0) = resultOnMismatch;
+        comparison->replaceWithNopIgnoringType();
+        switchValue->appendCase(predecessor, SwitchCase(caseValue, *target));
+        return true;
+    }
+
+    static bool onlyProducesConstant(BasicBlock* block, Value* phi, int32_t constant, BasicBlock* successor)
+    {
+        if (block->last()->opcode() != Jump || block->successorBlock(0) != successor)
+            return false;
+        bool foundUpsilon = false;
+        for (Value* value : *block) {
+            if (value->isFree() || value == block->last())
+                continue;
+            auto* upsilon = value->as<UpsilonValue>();
+            if (!upsilon || foundUpsilon || upsilon->phi() != phi || !upsilon->child(0)->isInt32(constant))
+                return false;
+            foundUpsilon = true;
+        }
+        return foundUpsilon;
+    }
+
     struct SwitchDescription {
         SwitchDescription()
         {
@@ -255,6 +351,68 @@ private:
         FrequentedBlock fallThrough;
     };
     
+    enum class GrowthOutcome : uint8_t { UseGeneralPath, NotMergeable, Merged };
+
+    GrowthOutcome tryGrowInPlace(BasicBlock* block, SwitchDescription& description, BasicBlock* predecessor, SwitchValue* grown)
+    {
+        auto isRepresentableCase = [](int64_t value) {
+            return value != std::numeric_limits<int64_t>::min() && value != std::numeric_limits<int64_t>::max();
+        };
+        if (m_grown != grown || m_numberOfGrownCases != grown->numCaseValues()) {
+            m_grown = nullptr;
+            m_grownValues.clear();
+            m_grownTargets = IndexSet<BasicBlock*>();
+            for (SwitchCase switchCase : grown->cases(predecessor)) {
+                if (!isRepresentableCase(switchCase.caseValue()))
+                    return GrowthOutcome::UseGeneralPath;
+                m_grownValues.add(switchCase.caseValue());
+                m_grownTargets.add(switchCase.targetBlock());
+            }
+            m_grown = grown;
+            m_numberOfGrownCases = grown->numCaseValues();
+        }
+        for (SwitchCase switchCase : description.cases) {
+            if (!isRepresentableCase(switchCase.caseValue()))
+                return GrowthOutcome::UseGeneralPath;
+        }
+        if (description.source != grown->child(0) || predecessor->fallThrough().block() != block)
+            return GrowthOutcome::NotMergeable;
+        if (description.fallThrough.block() == block || description.fallThrough.block() == predecessor)
+            return GrowthOutcome::NotMergeable;
+        for (SwitchCase switchCase : description.cases) {
+            if (switchCase.targetBlock() == block || switchCase.targetBlock() == predecessor)
+                return GrowthOutcome::NotMergeable;
+        }
+        if (m_grownTargets.contains(block) || m_grownTargets.contains(predecessor))
+            return GrowthOutcome::NotMergeable;
+
+        useCounts();
+        auto& values = predecessor->values();
+        for (unsigned i = 0; i < block->size() - 1; ++i) {
+            Value* value = block->at(i);
+            if (value == description.extra || value->opcode() == Nop)
+                continue;
+            values.append(values.last());
+            values[values.size() - 2] = value;
+        }
+        block->values().shrink(0);
+        block->appendNew<Value>(m_proc, Oops, description.branch->origin());
+        block->removePredecessor(predecessor);
+        for (BasicBlock* successorBlock : description.block->successorBlocks())
+            successorBlock->replacePredecessor(block, predecessor);
+        block->clearSuccessors();
+        grown->owner = predecessor;
+        grown->setFallThrough(predecessor, description.fallThrough);
+        for (SwitchCase switchCase : description.cases) {
+            if (!m_grownValues.add(switchCase.caseValue()).isNewEntry)
+                continue;
+            grown->appendCase(predecessor, switchCase);
+            m_grownTargets.add(switchCase.targetBlock());
+        }
+        m_numberOfGrownCases = grown->numCaseValues();
+        return GrowthOutcome::Merged;
+    }
+
     SwitchDescription describe(BasicBlock* block)
     {
         SwitchDescription result;
@@ -272,7 +430,7 @@ private:
             // predicates.
             if (predicate->numChildren() == 2
                 && predicate->child(1)->hasInt()
-                && m_useCounts.numUses(predicate) == 1) {
+                && useCounts().numUses(predicate) == 1) {
                 switch (predicate->opcode()) {
                 case Equal:
                     result.source = predicate->child(0);
@@ -320,7 +478,18 @@ private:
     
     Procedure& m_proc;
     InsertionSet m_insertionSet;
-    UseCountsWithoutUsingInstructions m_useCounts;
+    UseCountsWithoutUsingInstructions& useCounts()
+    {
+        if (!m_useCounts)
+            m_useCounts.emplace(m_proc);
+        return *m_useCounts;
+    }
+
+    std::optional<UseCountsWithoutUsingInstructions> m_useCounts;
+    SwitchValue* m_grown { nullptr };
+    unsigned m_numberOfGrownCases { 0 };
+    UncheckedKeyHashSet<int64_t, IntHash<int64_t>, WTF::SignedWithZeroKeyHashTraits<int64_t>> m_grownValues;
+    IndexSet<BasicBlock*> m_grownTargets;
 };
 
 } // anonymous namespace

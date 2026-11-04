@@ -31,7 +31,8 @@
 #include "GPUTextureDescriptor.h"
 #include "GPUTextureView.h"
 #include "GPUTextureViewDescriptor.h"
-#include "WebGPUTextureViewDescriptor.h"
+#include <WebCore/WebGPUCppAPI.h>
+#include <bit>
 #include <wtf/CheckedArithmetic.h>
 
 namespace WebCore {
@@ -59,6 +60,7 @@ static uint32_t getDimension(auto& extent3D)
 
 GPUTexture::GPUTexture(Ref<WebGPU::Texture>&& backing, const GPUTextureDescriptor& descriptor, GPUDevice& device, bool isCanvasBacking)
     : m_backing(WTF::move(backing))
+    , m_label(descriptor.label)
     , m_format(descriptor.format)
     , m_width(getDimension<0>(descriptor.size))
     , m_height(getDimension<1>(descriptor.size))
@@ -89,15 +91,16 @@ GPUDevice* GPUTexture::device() const
 
 String GPUTexture::label() const
 {
-    return m_backing->label();
+    return m_label;
 }
 
 void GPUTexture::setLabel(String&& label)
 {
+    m_label = label;
     m_backing->setLabel(WTF::move(label));
 }
 
-static WebGPU::TextureViewDescriptor NODELETE convertToBacking(const std::optional<GPUTextureViewDescriptor>& textureViewDescriptor)
+static std::optional<WebGPU::TextureViewDescriptor> LEGACY_NODELETE convertToBacking(const std::optional<GPUTextureViewDescriptor>& textureViewDescriptor)
 {
     if (!textureViewDescriptor)
         return WebGPU::TextureViewDescriptor { };
@@ -111,10 +114,13 @@ ExceptionOr<Ref<GPUTextureView>> GPUTexture::createView(const std::optional<GPUT
         if (auto error = m_device->errorValidatingSupportedFormat(*textureViewDescriptor->format))
             return Exception { ExceptionCode::TypeError, makeString("GPUTexture.createView: Unsupported texture format: "_s, *error) };
     }
-    RefPtr view = m_backing->createView(convertToBacking(textureViewDescriptor));
+    auto backingDescriptor = convertToBacking(textureViewDescriptor);
+    if (!backingDescriptor)
+        return Exception { ExceptionCode::TypeError, "GPUTexture.createView: swizzle must be four characters, each of which is one of \"rgba01\"."_s };
+    RefPtr view = m_backing->createView(backingDescriptor);
     if (!view)
         return Exception { ExceptionCode::InvalidStateError, "GPUTexture.createView: Unable to create view."_s };
-    return GPUTextureView::create(view.releaseNonNull(), *this);
+    return GPUTextureView::create(view.releaseNonNull(), WTF::move(backingDescriptor->label), *this);
 }
 
 void GPUTexture::destroy()
@@ -123,6 +129,7 @@ void GPUTexture::destroy()
         return;
 
     m_isDestroyed = true;
+    m_memoryCost.store(0, std::memory_order_relaxed);
     m_backing->destroy();
     m_device->didChangeTextureMemoryCost(*this);
 }
@@ -169,7 +176,7 @@ JSC::JSValue GPUTexture::textureBindingViewDimension() const
     return JSC::jsUndefined();
 }
 
-static GPUTextureFormat NODELETE depthSpecificFormat(GPUTextureFormat textureFormat)
+static GPUTextureFormat LEGACY_NODELETE depthSpecificFormat(GPUTextureFormat textureFormat)
 {
     // https://gpuweb.github.io/gpuweb/#aspect-specific-format
 
@@ -183,7 +190,7 @@ static GPUTextureFormat NODELETE depthSpecificFormat(GPUTextureFormat textureFor
     }
 }
 
-static GPUTextureFormat NODELETE stencilSpecificFormat(GPUTextureFormat textureFormat)
+static GPUTextureFormat LEGACY_NODELETE stencilSpecificFormat(GPUTextureFormat textureFormat)
 {
     // https://gpuweb.github.io/gpuweb/#aspect-specific-format
 
@@ -576,14 +583,33 @@ uint32_t GPUTexture::texelBlockHeight(GPUTextureFormat format)
     return 0;
 }
 
-static uint32_t NODELETE texelBlockCount(uint32_t size, uint32_t blockSize)
+static uint32_t LEGACY_NODELETE texelBlockCount(uint32_t size, uint32_t blockSize)
 {
     return size / blockSize + !!(size % blockSize);
 }
 
-size_t GPUTexture::memoryCost() const
+// The most mip levels a texture this size can have.
+static uint32_t LEGACY_NODELETE maxMipLevelCount(GPUTextureDimension dimension, uint32_t width, uint32_t height, uint32_t depthOrArrayLayers)
+{
+    switch (dimension) {
+    case GPUTextureDimension::_1d:
+        return 1;
+    case GPUTextureDimension::_2d:
+        return static_cast<uint32_t>(std::bit_width(WTF::max(width, height)));
+    case GPUTextureDimension::_3d:
+        return static_cast<uint32_t>(std::bit_width(WTF::max(WTF::max(width, height), depthOrArrayLayers)));
+    }
+    ASSERT_NOT_REACHED();
+    return 0;
+}
+
+size_t GPUTexture::estimatedMemoryCost() const
 {
     if (m_isDestroyed)
+        return 0;
+
+    // A texture with impossible mip levels or samples is invalid, so it holds no memory. Checking this also bounds the loop below.
+    if (m_mipLevelCount > maxMipLevelCount(m_dimension, m_width, m_height, m_depthOrArrayLayers) || (m_sampleCount != 1 && m_sampleCount != 4))
         return 0;
 
     // WebGPU does not expose allocation sizes, so estimate from its texture layout rules.

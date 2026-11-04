@@ -1,0 +1,69 @@
+# the entry block is ordinary, a cleanup of an iteration or of a disposal names its subject, and no other block has one
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidBlockRole 6
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="badEntryBlockIsHandler" results=[{type=undefined}] {
+  b0() role=CatchHandler:
+    Return
+}
+function f1 name="badSubjectOfOrdinaryBlock" parameters=[{type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1() subject=v0:
+    Return
+}
+function f2 name="badSubjectOfCatchHandler" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything) handler=b1():
+    v1 = Call v0
+    Return
+  b1() role=CatchHandler subject=v0:
+    v2 = CatchValue
+    Return
+}
+function f3 name="badIterationCleanupWithoutSubject" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Call v0
+    Return
+  b2() role=IterationCleanup:
+    v3 = CatchException
+    Rethrow v3
+}
+function f4 name="badSubjectOfIterationCleanupIsNoIterator" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Call v0
+    Return
+  b2() role=IterationCleanup subject=v0:
+    v3 = CatchException
+    Rethrow v3
+}
+function f5 name="badDisposalCleanupWithoutSubject" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything) handler=b1():
+    v1 = Call v0
+    Return
+  b1() role=DisposalCleanup:
+    v2 = CatchException
+    Rethrow v2
+}
+function f6 name="good" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Call v0
+    Jump -> next b3()
+  b2() role=IterationCleanup subject=v1:
+    v3 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v3
+  b3() handler=b4():
+    v5 = Call v0
+    Return
+  b4() role=DisposalCleanup subject=v0:
+    v6 = CatchException
+    Rethrow v6
+}

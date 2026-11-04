@@ -1,0 +1,30 @@
+# a finished record names the function as read at the end of the chain of sources, without block and value of the other body, and none when the engine made the first function of the chain
+# RUN: diagnostics OperandTypeMismatch,f0,b0,v1 OperandTypeMismatch,f1,b0,v1 OperandTypeMismatch,f2,b0,v1 OperandTypeMismatch,f3,b0,v1 OperandTypeMismatch,f4,b0,v1 OperandTypeMismatch,f5,b0,v1 OperandTypeMismatch,f6,b0,v1 OperandTypeMismatch,f7,b0,v1 OperandTypeMismatch,f8,b0,v1 OperandTypeMismatch,f9,b0,v1 LimitExceeded,f0,v1 LimitExceeded,f5,v1 LimitExceeded,f9,v1
+# CHECK: user records 3
+# CHECK-NEXT: LimitExceeded f0 - v1 - None 0 0:10 Error |
+# CHECK-NEXT: LimitExceeded f0 - - - None 0 0:60 Error |
+# CHECK-NEXT: LimitExceeded - - - - None 0 0:100 Error |
+# CHECK-NEXT: internal records 10
+# CHECK-NEXT: OperandTypeMismatch f0 b0 v1 - None 0 0:10 - | {{*}}'asyncRamp' (f0), block b0, value v1
+# CHECK-NEXT: OperandTypeMismatch f1 b0 v1 - None 0 0:20 - | {{*}}'resultWrapper' (f1), block b0, value v1
+# CHECK-NEXT: OperandTypeMismatch f2 b0 v1 - None 0 0:30 - | {{*}}'parameterWrapper' (f2), block b0, value v1
+# CHECK-NEXT: OperandTypeMismatch f0 - - - None 0 0:40 - | {{*}}'body' (f3), block b0, value v1
+# CHECK-NEXT: OperandTypeMismatch f0 - - - None 0 0:50 - | {{*}}'genericRamp' (f4), block b0, value v1
+# CHECK-NEXT: OperandTypeMismatch f0 - - - None 0 0:60 - | {{*}}'genericBody' (f5), block b0, value v1
+# CHECK-NEXT: OperandTypeMismatch f1 - - - None 0 0:70 - | {{*}}'resultWorker' (f6), block b0, value v1
+# CHECK-NEXT: OperandTypeMismatch f2 - - - None 0 0:80 - | {{*}}'promotedBody' (f7), block b0, value v1
+# CHECK-NEXT: OperandTypeMismatch - - - - None 0 0:90 - | {{*}}'serializer' (f8), block b0, value v1
+# CHECK-NEXT: OperandTypeMismatch - - - - None 0 0:100 - | {{*}}'outlinedFromSerializer' (f9), block b0, value v1
+# CHECK-NEXT: of 13 added
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="asyncRamp" position=10 role=CoroutineRamp flags=[IsAsync] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f3 entryWithoutPromise=f3 promiseType=Promise<anything> promiseParameter=0}
+function f1 name="resultWrapper" position=20 role=ResultWrapper results=[{type=anything}] creator=ResultWrapper{worker=f6 nullish=Undefined}
+function f2 name="parameterWrapper" position=30 role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f7 parameter=0}
+function f3 name="body" position=40 role=CoroutineBody parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f3 entryWithoutPromise=f3 promiseType=Promise<anything> promiseParameter=0}
+function f4 name="genericRamp" position=50 role=CoroutineRamp flags=[IsAsync] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise<anything> promiseParameter=0}
+function f5 name="genericBody" position=60 role=CoroutineBody parameters=[{type=anything}] results=[{type=anything}] derivation={source=f4} creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise<anything> promiseParameter=0}
+function f6 name="resultWorker" position=70 role=ResultWorker results=[{type=anything}] derivation={source=f1} creator=ResultWorker{origin=f1}
+function f7 name="promotedBody" position=80 parameters=[{type=anything}] results=[{type=anything}] derivation={source=f2}
+function f8 name="serializer" position=90 role=Serializer results=[{type=anything}] creator=Serializer{}
+function f9 name="outlinedFromSerializer" position=100 role=OutlinedBody results=[{type=anything}] derivation={source=f8}

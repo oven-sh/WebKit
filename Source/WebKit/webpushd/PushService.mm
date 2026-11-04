@@ -27,8 +27,8 @@
 #import "PushService.h"
 
 #import "ApplePushServiceConnection.h"
-#import "MockPushServiceConnection.h"
 #import "Logging.h"
+#import "MockPushServiceConnection.h"
 #import "WebPushDaemonConstants.h"
 #import <Foundation/Foundation.h>
 #import <WebCore/PushMessageCrypto.h>
@@ -36,11 +36,13 @@
 #import <notify.h>
 #import <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/OSObjectPtr.h>
 #import <wtf/RunLoop.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/WorkQueue.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/darwin/DispatchExtras.h>
 #import <wtf/spi/darwin/XPCSPI.h>
 #import <wtf/text/Base64.h>
@@ -216,8 +218,8 @@ public:
 
     virtual ASCIILiteral description() const = 0;
 
-    const PushSubscriptionSetIdentifier& NODELETE subscriptionSetIdentifier() const { return m_identifier; }
-    const String& NODELETE scope() const { return m_scope; };
+    const PushSubscriptionSetIdentifier& LEGACY_NODELETE subscriptionSetIdentifier() const { return m_identifier; }
+    const String& LEGACY_NODELETE scope() const { return m_scope; };
 
     virtual void start() = 0;
 
@@ -233,9 +235,9 @@ protected:
     {
     }
 
-    PushService& NODELETE service() const { return m_service.get(); }
-    PushServiceConnection& NODELETE connection() const { return m_connection.get(); }
-    PushDatabase& NODELETE database() const { return m_database.get(); }
+    PushService& LEGACY_NODELETE service() const { return m_service.get(); }
+    PushServiceConnection& LEGACY_NODELETE connection() const { return m_connection.get(); }
+    PushDatabase& LEGACY_NODELETE database() const { return m_database.get(); }
 
     virtual void finish() = 0;
 
@@ -614,7 +616,7 @@ void PushService::subscribe(const PushSubscriptionSetIdentifier& identifier, con
     }
 
     if (m_topicCount >= maxTopicCount) {
-        RELEASE_LOG_ERROR(Push, "Subscribe request from %{public}s and scope %{sensitive}s failed: reached max push topic count", identifier.debugDescription().ascii().data(), scope.ascii().data());
+        RELEASE_LOG_ERROR(Push, "Subscribe request from %{public}s and scope %{sensitive}s failed: reached max push topic count", identifier.debugDescription().utf8(), scope.utf8());
         return completionHandler(makeUnexpected(WebCore::ExceptionData { WebCore::ExceptionCode::NotAllowedError, "Reached maximum push subscription count"_s }));
     }
 
@@ -709,7 +711,7 @@ void PushService::removeRecordsImpl(const PushSubscriptionSetIdentifier& identif
             return handler(removedRecords.size());
 
         Ref connection = protectedThis->connection();
-        for (auto& record : removedRecords) {
+        for (auto& record : borrow(removedRecords)) {
             connection->unsubscribe(record.topic, record.serverVAPIDPublicKey, [topic = record.topic](bool unsubscribed, NSError* error) {
                 RELEASE_LOG_ERROR_IF(!unsubscribed, Push, "removeRecordsImpl couldn't remove subscription for topic %{sensitive}s: %{public}s code: %lld)", topic.utf8(), error.domain.UTF8String ?: "none", static_cast<int64_t>(error.code));
             });
@@ -728,14 +730,14 @@ void PushService::removeRecordsImpl(const PushSubscriptionSetIdentifier& identif
 
 void PushService::removeRecordsForBundleIdentifierAndDataStore(const String& bundleIdentifier, const std::optional<WTF::UUID>& dataStoreIdentifier, CompletionHandler<void(unsigned)>&& handler)
 {
-    RELEASE_LOG(Push, "Removing push subscriptions associated with %{public}s | ds: %{public}s", bundleIdentifier.utf8(), dataStoreIdentifier ? dataStoreIdentifier->toString().ascii().data() : "default");
+    RELEASE_LOG(Push, "Removing push subscriptions associated with %{public}s | ds: %{public}s", bundleIdentifier.utf8(), dataStoreIdentifier ? dataStoreIdentifier->toString().utf8() : UTF8CString { "default"_s });
     m_database->removeRecordsByBundleIdentifierAndDataStore(bundleIdentifier, dataStoreIdentifier, [weakThis = WeakPtr { *this }, handler = WTF::move(handler)](auto&& removedRecords) mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return handler(removedRecords.size());
 
         Ref connection = protectedThis->connection();
-        for (auto& record : removedRecords) {
+        for (auto& record : borrow(removedRecords)) {
             connection->unsubscribe(record.topic, record.serverVAPIDPublicKey, [topic = record.topic](bool unsubscribed, NSError* error) {
                 RELEASE_LOG_ERROR_IF(!unsubscribed, Push, "removeRecordsImpl couldn't remove subscription for topic %{sensitive}s: %{public}s code: %lld)", topic.utf8(), error.domain.UTF8String ?: "none", static_cast<int64_t>(error.code));
             });
@@ -865,8 +867,8 @@ static std::optional<RawPushMessage> makeRawPushMessage(NSString *topic, NSDicti
 
     @autoreleasepool {
         message.topic = topic;
-        RetainPtr<NSString> contentEncoding = userInfo[@"content_encoding"];
-        RetainPtr<NSString> payloadBase64 = userInfo[@"payload"];
+        RetainPtr contentEncoding = dynamic_objc_cast<NSString>(userInfo[@"content_encoding"]);
+        RetainPtr payloadBase64 = dynamic_objc_cast<NSString>(userInfo[@"payload"]);
 
         if (!contentEncoding.get().length || !payloadBase64.get().length) {
             message.encoding = ContentEncoding::Empty;
@@ -878,8 +880,8 @@ static std::optional<RawPushMessage> makeRawPushMessage(NSString *topic, NSDicti
         else if ([contentEncoding isEqualToString:@"aesgcm"]) {
             message.encoding = ContentEncoding::AESGCM;
 
-            RetainPtr<NSString> serverPublicKeyBase64URL = userInfo[@"as_publickey"];
-            RetainPtr<NSString> saltBase64URL = userInfo[@"as_salt"];
+            RetainPtr serverPublicKeyBase64URL = dynamic_objc_cast<NSString>(userInfo[@"as_publickey"]);
+            RetainPtr saltBase64URL = dynamic_objc_cast<NSString>(userInfo[@"as_salt"]);
             if (!serverPublicKeyBase64URL || !saltBase64URL) {
                 RELEASE_LOG_ERROR(Push, "Dropping aesgcm-encrypted push without required server key and salt");
                 return std::nullopt;
@@ -917,7 +919,7 @@ void PushService::setPublicTokenForTesting(Vector<uint8_t>&& token)
 
 void PushService::didReceivePublicToken(Vector<uint8_t>&& token)
 {
-    m_database->updatePublicToken(token, [weakThis = WeakPtr { *this }](auto result) mutable {
+    m_database->updatePublicToken(borrow(token), [weakThis = WeakPtr { *this }](auto result) mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -963,11 +965,12 @@ void PushService::didReceivePushMessage(NSString* topic, NSDictionary* userInfo,
             WTF::move(record.sharedAuthSecret)
         };
 
+        Borrow borrowedEncryptedPayload = message.encryptedPayload;
         std::optional<Vector<uint8_t>> decryptedPayload;
         if (message.encoding == ContentEncoding::AES128GCM)
-            decryptedPayload = decryptAES128GCMPayload(clientKeys, message.encryptedPayload);
+            decryptedPayload = decryptAES128GCMPayload(clientKeys, borrowedEncryptedPayload);
         else if (message.encoding == ContentEncoding::AESGCM)
-            decryptedPayload = decryptAESGCMPayload(clientKeys, message.serverPublicKey, message.salt, message.encryptedPayload);
+            decryptedPayload = decryptAESGCMPayload(clientKeys, borrow(message.serverPublicKey), borrow(message.salt), borrowedEncryptedPayload);
 
         if (!decryptedPayload) {
             RELEASE_LOG_ERROR(Push, "Dropping incoming push due to decryption error for topic %{sensitive}s", message.topic.utf8());

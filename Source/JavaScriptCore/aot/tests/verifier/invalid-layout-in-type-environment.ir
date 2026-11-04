@@ -1,0 +1,10 @@
+# the environment of a type is a layout of an environment kind
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidLayout 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="c" declared={type=anything}}]
+layout L1
+function f0 name="good" captures=[{type=env L0}] parameters=[{type=L1}] results=[{type=undefined}]
+function f1 name="badRecordAsEnvironment" captures=[{type=env L1}] results=[{type=undefined}]

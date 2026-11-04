@@ -195,7 +195,7 @@ int32_t hwNumberOfCores(CoreCategory category)
 bool isARM64_LSE()
 {
 #if ENABLE(ASSEMBLER)
-    return MacroAssembler::supportsLSE();
+    return MacroAssembler::supportsLSE(CPUFeatureSet::host());
 #else
     return false;
 #endif
@@ -206,7 +206,7 @@ bool isARM64_LSE()
 bool isARM64_SHA3()
 {
 #if ENABLE(ASSEMBLER)
-    return MacroAssembler::supportsSHA3();
+    return MacroAssembler::supportsSHA3(CPUFeatureSet::host());
 #else
     return false;
 #endif
@@ -235,7 +235,7 @@ bool isARM64E_FPAC()
 bool isX86_64_AVX()
 {
 #if ENABLE(ASSEMBLER)
-    return MacroAssembler::supportsAVX();
+    return MacroAssembler::supportsAVX(CPUFeatureSet::host());
 #else
     return false;
 #endif

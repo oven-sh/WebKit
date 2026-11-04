@@ -34,8 +34,15 @@
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "TestURLSchemeHandler.h"
 #import "Helpers/cocoa/TestWKWebView.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <WebKit/WKPreferencesPrivate.h>
 #import <WebKit/_WKArchiveConfiguration.h>
 #import <WebKit/_WKArchiveExclusionRule.h>
+#import <WebKit/_WKFeature.h>
+
+#if PLATFORM(IOS_FAMILY)
+#import <MobileCoreServices/MobileCoreServices.h>
+#endif
 
 namespace TestWebKitAPI {
 
@@ -109,7 +116,7 @@ TEST(WebArchive, CreateCustomScheme)
     done = false;
 
     [webView performAfterReceivingMessage:@"done" action:[&] { done = true; }];
-    [webView loadData:archiveData.get() MIMEType:@"application/x-webarchive" characterEncodingName:@"utf-8" baseURL:[NSURL URLWithString:@"about:blank"]];
+    [webView loadData:archiveData.get() MIMEType:UTTypeArchive.identifier characterEncodingName:@"utf-8" baseURL:[NSURL URLWithString:@"about:blank"]];
 
     Util::run(&done);
     done = false;
@@ -2295,6 +2302,159 @@ TEST(WebArchive, ArchiveWithConfigurationLinkIcon)
         saved = true;
     }];
     Util::run(&saved);
+}
+
+TEST(WebArchive, ArchiveWithConfigurationSavesOriginalURLs)
+{
+    RetainPtr<NSURL> directoryURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"ArchiveWithConfigurationSavesOriginalURLsTest"] isDirectory:YES];
+    [[NSFileManager defaultManager] removeItemAtURL:directoryURL.get() error:nil];
+
+    NSData *imageData = [NSData dataWithContentsOfURL:[NSBundle.test_resourcesBundle URLForResource:@"400x400-green" withExtension:@"png"]];
+    NSDictionary<NSString *, NSArray *> *responses = @{
+        @"webarchivetest://host/main.html": @[ @"text/html", [@"<img src='image.png'><iframe src='frame/iframe.html'></iframe><script>window.onload = () => window.webkit.messageHandlers.testHandler.postMessage('done');</script>" dataUsingEncoding:NSUTF8StringEncoding] ],
+        @"webarchivetest://host/image.png": @[ @"image/png", imageData ],
+        @"webarchivetest://host/frame/iframe.html": @[ @"text/html", [@"<img src='icon.png'>" dataUsingEncoding:NSUTF8StringEncoding] ],
+        @"webarchivetest://host/frame/icon.png": @[ @"image/png", imageData ],
+    };
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    RetainPtr schemeHandler = adoptNS([[TestURLSchemeHandler alloc] init]);
+    [configuration setURLSchemeHandler:schemeHandler.get() forURLScheme:@"webarchivetest"];
+    [schemeHandler setStartURLSchemeTaskHandler:^(WKWebView *, id<WKURLSchemeTask> task) {
+        NSArray *response = responses[task.request.URL.absoluteString];
+        RetainPtr urlResponse = adoptNS([[NSURLResponse alloc] initWithURL:task.request.URL MIMEType:response[0] expectedContentLength:[response[1] length] textEncodingName:nil]);
+        [task didReceiveResponse:urlResponse.get()];
+        [task didReceiveData:response[1]];
+        [task didFinish];
+    }];
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+    static bool messageReceived = false;
+    [webView performAfterReceivingMessage:@"done" action:[&] {
+        messageReceived = true;
+    }];
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"webarchivetest://host/main.html"]]];
+    Util::run(&messageReceived);
+
+    static bool saved = false;
+    __block RetainPtr<NSError> saveError;
+    RetainPtr<_WKArchiveConfiguration> archiveConfiguration = adoptNS([[_WKArchiveConfiguration alloc] init]);
+    archiveConfiguration.get().directory = directoryURL.get();
+    archiveConfiguration.get().suggestedFileName = @"host";
+    archiveConfiguration.get().originalURLsFileName = @"originalURLs.json";
+    [webView _archiveWithConfiguration:archiveConfiguration.get() completionHandler:^(NSError *error) {
+        saveError = error;
+        saved = true;
+    }];
+    Util::run(&saved);
+    EXPECT_NULL(saveError.get());
+
+    NSData *originalURLsData = [NSData dataWithContentsOfURL:[directoryURL URLByAppendingPathComponent:@"originalURLs.json"]];
+    ASSERT_NOT_NULL(originalURLsData);
+    NSDictionary<NSString *, NSString *> *originalURLs = [NSJSONSerialization JSONObjectWithData:originalURLsData options:0 error:nil];
+    EXPECT_EQ(originalURLs.count, 4u);
+    EXPECT_WK_STREQ(originalURLs[@"host.html"], "webarchivetest://host/main.html");
+    EXPECT_WK_STREQ(originalURLs[@"host_files/image.png"], "webarchivetest://host/image.png");
+    EXPECT_WK_STREQ(originalURLs[@"host_files/icon.png"], "webarchivetest://host/frame/icon.png");
+    for (NSString *path in originalURLs) {
+        if ([path hasPrefix:@"host_files/frame_"])
+            EXPECT_WK_STREQ(originalURLs[path], "webarchivetest://host/frame/iframe.html");
+    }
+}
+
+enum class LoadWithEphemeralStorage : bool { No, Yes };
+static void runReplaceStateAfterLoadRequestTest(LoadWithEphemeralStorage loadWithEphemeralStorage)
+{
+    NSDictionary *archive = @{
+        @"WebMainResource" : @{
+            @"WebResourceData" : [@"<script>history.replaceState(null, '', '?replaced')</script>" dataUsingEncoding:NSUTF8StringEncoding],
+            @"WebResourceFrameName" : @"",
+            @"WebResourceMIMEType" : @"text/html",
+            @"WebResourceTextEncodingName" : @"UTF-8",
+            @"WebResourceURL" : @"https://webkit.org/"
+        }
+    };
+    NSData *archiveData = [NSPropertyListSerialization dataWithPropertyList:archive format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+    // Use a unique path since tests may run in parallel.
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"ReplaceStateTest-%@.webarchive", NSUUID.UUID.UUIDString]];
+    EXPECT_TRUE([archiveData writeToFile:path atomically:YES]);
+
+    RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+    for (_WKFeature *feature in WKPreferences._features) {
+        if ([feature.key isEqualToString:@"LoadWebArchiveWithEphemeralStorageEnabled"])
+            [[configuration preferences] _setEnabled:loadWithEphemeralStorage == LoadWithEphemeralStorage::Yes forFeature:feature];
+    }
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero configuration:configuration.get()]);
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    __block bool done = false;
+    __block bool webProcessTerminated = false;
+    navigationDelegate.get().didFinishNavigation = ^(WKWebView *, WKNavigation *) {
+        done = true;
+    };
+    navigationDelegate.get().webContentProcessDidTerminate = ^(WKWebView *, _WKProcessTerminationReason) {
+        webProcessTerminated = true;
+        done = true;
+    };
+    webView.get().navigationDelegate = navigationDelegate.get();
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL fileURLWithPath:path isDirectory:NO]]];
+    Util::run(&done);
+    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+
+    EXPECT_FALSE(webProcessTerminated);
+    if (!webProcessTerminated)
+        EXPECT_WK_STREQ([webView stringByEvaluatingJavaScript:@"location.href"], "https://webkit.org/?replaced");
+}
+
+TEST(WebArchive, ReplaceStateAfterLoadRequest)
+{
+    runReplaceStateAfterLoadRequestTest(LoadWithEphemeralStorage::Yes);
+}
+
+TEST(WebArchive, ReplaceStateAfterLoadRequestWithoutEphemeralStorage)
+{
+    runReplaceStateAfterLoadRequestTest(LoadWithEphemeralStorage::No);
+}
+
+TEST(WebArchive, CookieAccessWithoutEphemeralStorage)
+{
+    NSDictionary *archive = @{
+        @"WebMainResource" : @{
+            @"WebResourceData" : [@"<script>try { window.result = typeof document.cookie; } catch (error) { window.result = error.name; }</script>" dataUsingEncoding:NSUTF8StringEncoding],
+            @"WebResourceFrameName" : @"",
+            @"WebResourceMIMEType" : @"text/html",
+            @"WebResourceTextEncodingName" : @"UTF-8",
+            @"WebResourceURL" : @"https://webkit.org/"
+        }
+    };
+    NSData *archiveData = [NSPropertyListSerialization dataWithPropertyList:archive format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"CookieAccessTest-%@.webarchive", NSUUID.UUID.UUIDString]];
+    EXPECT_TRUE([archiveData writeToFile:path atomically:YES]);
+
+    RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+    for (_WKFeature *feature in WKPreferences._features) {
+        if ([feature.key isEqualToString:@"LoadWebArchiveWithEphemeralStorageEnabled"])
+            [[configuration preferences] _setEnabled:NO forFeature:feature];
+    }
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero configuration:configuration.get()]);
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    __block bool done = false;
+    __block bool webProcessTerminated = false;
+    navigationDelegate.get().didFinishNavigation = ^(WKWebView *, WKNavigation *) {
+        done = true;
+    };
+    navigationDelegate.get().webContentProcessDidTerminate = ^(WKWebView *, _WKProcessTerminationReason) {
+        webProcessTerminated = true;
+        done = true;
+    };
+    webView.get().navigationDelegate = navigationDelegate.get();
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL fileURLWithPath:path isDirectory:NO]]];
+    Util::run(&done);
+    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+
+    EXPECT_FALSE(webProcessTerminated);
+    if (!webProcessTerminated)
+        EXPECT_WK_STREQ([webView stringByEvaluatingJavaScript:@"window.result"], "string");
 }
 
 } // namespace TestWebKitAPI

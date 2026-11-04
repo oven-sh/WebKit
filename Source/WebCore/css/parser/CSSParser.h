@@ -204,7 +204,7 @@ private:
     StyleSheetContents* styleSheet() const { return m_styleSheet.get(); }
 
     Ref<StyleRuleBase> createNestedDeclarationsRule();
-    void runInNewNestingContext(auto&& run);
+    void runInNewNestingContext(NOESCAPE const auto&);
     NestingContext& topContext()
     {
         ASSERT(!m_nestingContextStack.isEmpty());
@@ -230,7 +230,7 @@ private:
     // https://bugs.webkit.org/show_bug.cgi?id=265566
     unsigned m_ruleListNestingLevel { 0 };
     Vector<CSSParserEnum::NestedContextType, 16> m_ancestorRuleTypeStack;
-    Vector<NestingContext, 16> m_nestingContextStack { NestingContext { } };
+    Vector<NestingContext, 16> m_nestingContextStack { 1 };
 
     std::optional<CSSParserEnum::NestedContextType> lastAncestorRuleType() const
     {
@@ -241,8 +241,8 @@ private:
 
     const CSSParserContext& m_context;
 
-    RefPtr<StyleSheetContents> m_styleSheet;
-    std::unique_ptr<CSSTokenizer> m_tokenizer;
+    const RefPtr<StyleSheetContents> m_styleSheet;
+    const std::unique_ptr<CSSTokenizer> m_tokenizer;
 
     // For the inspector
     WeakPtr<CSSParserObserverWrapper> m_observerWrapper;

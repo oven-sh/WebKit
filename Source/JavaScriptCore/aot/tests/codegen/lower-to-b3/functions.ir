@@ -1,0 +1,51 @@
+# Without a function word every function but the library's is printed. A function word selects that function and what was derived from it, printed right after it.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3
+# RUN(ONE): lower-to-b3 f1
+# RUN(ENTRY): lower-to-b3 entry-modules
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+module m1 path="other.ts" displayPath="other.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    v4 = Add v2, v3
+    v5 = CallDirect v1 function=f3
+    v6 = Add v4, v5
+    Return v6
+}
+function f1 name="checked" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=number site=w0}] results=[{type=anything}] {
+    v1 = Increment v0
+    Return v1
+}
+function f2 name="plain" module=m0 position=6 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+function f3 name="elsewhere" module=m1 position=7 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="width"
+    Return v1
+}
+
+# CHECK: function f0 name="main"
+# CHECK: function f1 name="checked" role=EntryChecks
+# CHECK: end of function f1
+# CHECK: function [[body]] name="checked" role=Source
+# CHECK: end of function [[body]]
+# CHECK: function f2 name="plain" role=Source
+# CHECK: function f3 name="elsewhere" role=Source
+# CHECK-NOT: name="library"
+
+# ONE-NOT: name="main"
+# ONE: function f1 name="checked" role=EntryChecks
+# ONE: function f{{*}} name="checked" role=Source
+# ONE-NOT: name="plain"
+
+# ENTRY: function f1 name="checked" role=EntryChecks
+# ENTRY: function f2 name="plain" role=Source
+# ENTRY-NOT: name="elsewhere"

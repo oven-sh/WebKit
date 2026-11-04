@@ -44,20 +44,20 @@ public:
     bool operator==(const FELighting&) const;
 
     const Color& lightingColor() const LIFETIME_BOUND { return m_lightingColor; }
-    bool NODELETE setLightingColor(const Color&);
+    bool setLightingColor(const Color&);
 
     float surfaceScale() const { return m_surfaceScale; }
-    bool NODELETE setSurfaceScale(float);
+    bool LEGACY_NODELETE setSurfaceScale(float);
 
     float diffuseConstant() const { return m_diffuseConstant; }
     float specularConstant() const { return m_specularConstant; }
     float specularExponent() const { return m_specularExponent; }
 
     float kernelUnitLengthX() const { return m_kernelUnitLengthX; }
-    bool NODELETE setKernelUnitLengthX(float);
+    bool LEGACY_NODELETE setKernelUnitLengthX(float);
 
     float kernelUnitLengthY() const { return m_kernelUnitLengthY; }
-    bool NODELETE setKernelUnitLengthY(float);
+    bool LEGACY_NODELETE setKernelUnitLengthY(float);
 
     LightSource& lightSource() const { return m_lightSource; }
 

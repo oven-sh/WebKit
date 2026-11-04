@@ -81,7 +81,7 @@ auto CSSValueConversion<BoxShadows>::operator()(BuilderState& state, const CSSVa
 {
     if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
         switch (keywordValue->valueID()) {
-        case CSSValueNone:
+        case CSSValueID::None:
             return CSS::Keyword::None { };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -114,7 +114,7 @@ void Serialize<BoxShadowList>::operator()(StringBuilder& builder, const CSS::Ser
 
 // MARK: - Blending
 
-static inline std::optional<CSS::Keyword::Inset> NODELETE blendInset(std::optional<CSS::Keyword::Inset> a, std::optional<CSS::Keyword::Inset> b, const BlendingContext& context)
+static inline std::optional<CSS::Keyword::Inset> LEGACY_NODELETE blendInset(std::optional<CSS::Keyword::Inset> a, std::optional<CSS::Keyword::Inset> b, const BlendingContext& context)
 {
     if (a == b)
         return b;

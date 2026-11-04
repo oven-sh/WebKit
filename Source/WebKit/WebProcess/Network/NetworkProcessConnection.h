@@ -40,6 +40,7 @@
 
 namespace WebCore {
 class RegistrableDomain;
+class Report;
 class ResourceError;
 class ResourceRequest;
 class ResourceResponse;
@@ -89,7 +90,7 @@ public:
 #endif
 
     WebCore::HTTPCookieAcceptPolicy cookieAcceptPolicy() const { return m_cookieAcceptPolicy; }
-    bool NODELETE cookiesEnabled() const;
+    bool LEGACY_NODELETE cookiesEnabled() const;
 
 #if HAVE(COOKIE_CHANGE_LISTENER_API)
     void cookiesAdded(const String& host, Vector<WebCore::Cookie>&&);
@@ -125,6 +126,7 @@ private:
 #endif
 
     void broadcastConsoleMessage(MessageSource, MessageLevel, const String& message);
+    void notifyWorkerReportObservers(WebCore::ScriptExecutionContextIdentifier, Ref<WebCore::Report>&&);
 
     void storageAccessPermissionChanged(const WebCore::RegistrableDomain& topFrameDomain, const WebCore::RegistrableDomain& subFrameDomain);
 
@@ -137,7 +139,7 @@ private:
     RefPtr<WebIDBConnectionToServer> m_webIDBConnection;
 
     RefPtr<WebSWClientConnection> m_swConnection;
-    RefPtr<WebSharedWorkerObjectConnection> m_sharedWorkerConnection;
+    const RefPtr<WebSharedWorkerObjectConnection> m_sharedWorkerConnection;
     WebCore::HTTPCookieAcceptPolicy m_cookieAcceptPolicy;
 };
 

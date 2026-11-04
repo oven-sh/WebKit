@@ -1,0 +1,36 @@
+# With the pass disabled the store to a module variable that nothing reads stays
+# FORM: AsRead
+# OPTIONS: disable=pass:RemoveUnreadExports
+# RUN: pass TypeValues AnalyzeFlow ApplyFlowResults RemoveUnreadExports
+# STATISTIC: RemoveUnreadExportsChanges = 0
+# STATISTIC: UnreadVariableStoresRemoved = 0
+# CHECK-COUNT-3: outcome:
+# CHECK-NEXT: outcome: Unchanged
+# CHECK-NEXT: variable g0 name="read"
+# CHECK-NEXT: variable g1 name="unread"{{*}}flow={writers=AllKnown stores=AtMostOnce{{*}}reads=NeverRead isUnchangedDuringActivation=true}
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/library.ts" displayPath="library.ts" body=f1 exports=[{name="read" variable=g0}, {name="unread" variable=g1}]
+entry module=m0
+variable g0 name="read" module=m1 declared={type=anything}
+variable g1 name="unread" module=m1 declared={type=anything}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+
+function f1 name="library" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = Integer integer=2
+    PutModuleVariable v2 variable=g1
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 1 = Integer integer=1
+# CHECK-NEXT: PutModuleVariable v0 variable=g0
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PutModuleVariable v2 variable=g1
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+}

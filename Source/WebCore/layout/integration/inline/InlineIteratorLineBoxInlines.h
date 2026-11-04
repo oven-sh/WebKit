@@ -27,7 +27,6 @@
 
 #include "InlineIteratorBox.h"
 #include "InlineIteratorLineBox.h"
-#include "InlineIteratorLineBoxLegacyPathInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 
 namespace WebCore {
@@ -57,13 +56,6 @@ inline LeafBoxIterator LineBox::logicalRightmostLeafBox() const
     return formattingContextRoot().writingMode().isLogicalLeftLineLeft()
         ? lineRightmostLeafBox()
         : lineLeftmostLeafBox();
-}
-
-inline size_t LineBox::lineIndex() const
-{
-    return WTF::switchOn(m_pathVariant, [](const auto& path) {
-        return path.lineIndex();
-    });
 }
 
 }

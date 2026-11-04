@@ -42,8 +42,8 @@ class MutableStyleProperties;
 class Node;
 class RenderElement;
 
-enum CSSPropertyID : uint16_t;
-enum CSSValueID : uint16_t;
+enum class CSSPropertyID : uint16_t;
+enum class CSSValueID : uint16_t;
 
 namespace CSS {
 struct SerializationContext;
@@ -100,7 +100,7 @@ public:
     bool propertyMatches(CSSPropertyID, const CSSValue*) const;
     bool propertyMatches(CSSPropertyID, CSSValueID) const;
 
-    static bool updateStyleIfNeededForProperty(Element&, CSSPropertyID);
+    static bool updateStyleIfNeededForProperty(Element&, const std::optional<Style::PseudoElementIdentifier>&, CSSPropertyID);
 
     WEBCORE_EXPORT static WTF::String appleColorFilterSerializationForTesting(Element&);
 
@@ -114,7 +114,7 @@ private:
     // The ComputedStyle we should use for resolving custom properties.
     const Style::ComputedStyle* computeStyleForCustomProperty(std::unique_ptr<Style::ComputedStyle>&) const;
 
-    RefPtr<Element> m_element;
+    const RefPtr<Element> m_element;
     std::optional<Style::PseudoElementIdentifier> m_pseudoElementIdentifier;
     bool m_allowVisitedStyle;
 };

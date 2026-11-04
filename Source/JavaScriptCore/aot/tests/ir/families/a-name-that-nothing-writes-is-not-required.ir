@@ -1,0 +1,18 @@
+# interface Expression { _expressionBrand: any; kind: number }  const made = { kind: 1 }
+# No object has a name that nothing in the program writes, so no type can ask for it: the link flags the field (IsNeverWritten), and Made, which has `kind` alone, passes for
+# Expression. Beside it: the same name without the flag is required, and Made is no Branded.
+# FORM: AsRead
+# RUN: members
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+layout L0 name="Expression" fields=[{key="_expressionBrand" declared={type=anything} flags=[IsRequired, IsNeverWritten]}, {key="kind" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Made" fields=[{key="kind" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Branded" fields=[{key="_expressionBrand" declared={type=anything} flags=[IsRequired]}, {key="kind" declared={type=number} flags=[IsRequired]}]
+# CHECK: L0: members [L0, L1, L2]
+# CHECK-NEXT: L1: members [L0, L1, L2]
+# CHECK-NEXT: L2: members [L0, L2]
+
+function f0 name="take" parameters=[{type=L0}] results=[{type=anything}] {
+    Return
+}

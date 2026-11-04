@@ -55,10 +55,17 @@ void TransparencyLayerContextSwitcher::beginClipAndDrawSourceImage(GraphicsConte
 
     for (auto& filterStyle : m_filterStyles) {
         destinationContext.save();
-        destinationContext.clip(intersection(filterStyle.imageRect, clipRect));
+        auto layerRect = intersection(filterStyle.imageRect, clipRect);
+        destinationContext.clip(layerRect);
         destinationContext.setStyle(filterStyle.style);
         destinationContext.beginTransparencyLayer(1);
     }
+
+#if !HAVE(FIX_FOR_RADAR_190563103)
+    // FIXME: Remove this workaround once the system framework rdar://190563103 is fixed.
+    if (RefPtr filter = m_filter)
+        destinationContext.clearRect(filter->filterRegion());
+#endif
 }
 
 void TransparencyLayerContextSwitcher::beginDrawSourceImage(GraphicsContext& destinationContext, float opacity)
@@ -72,6 +79,12 @@ void TransparencyLayerContextSwitcher::beginDrawSourceImage(GraphicsContext& des
         destinationContext.setStyle(filterStyle.style);
         destinationContext.beginTransparencyLayer(1);
     }
+
+#if !HAVE(FIX_FOR_RADAR_190563103)
+    // FIXME: Remove this workaround once the system framework rdar://190563103 is fixed.
+    if (RefPtr filter = m_filter)
+        destinationContext.clearRect(filter->filterRegion());
+#endif
 }
 
 void TransparencyLayerContextSwitcher::endDrawSourceImage(GraphicsContext& destinationContext, const ColorSpace&)

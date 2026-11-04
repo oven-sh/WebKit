@@ -1,0 +1,35 @@
+# function both(a, b) { b() }  both(one, two); both(one, two)    function some(a, b) { b() }  some(one, two); some(one)
+# A parameter that every caller fills holds what the callers pass and nothing else. One that a caller leaves out may be undefined.
+# RUN: valueflow-why values=f1:v2 values=f2:v2
+# CHECK: values=f1:v2
+# CHECK: operand 0 {{*}} 1 members: f4
+# CHECK: values=f2:v2
+# CHECK: operand 0 {{*}} 2 members: primitive{{*}} f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Call v0, -, v2, v3
+    v5 = Call v0, -, v2, v3
+    v6 = Call v1, -, v2, v3
+    v7 = Call v1, -, v2
+    Return
+}
+function f1 name="both" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -
+    Return
+}
+function f2 name="some" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -
+    Return
+}
+function f3 name="one" module=m0 results=[{type=anything}] {
+    Return
+}
+function f4 name="two" module=m0 results=[{type=anything}] {
+    Return
+}

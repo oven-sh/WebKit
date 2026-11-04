@@ -139,7 +139,7 @@ public:
     inline bool inherits(const ClassInfo*) const; // Defined inline in Structure.h
     JS_EXPORT_PRIVATE bool inheritsSlow(const ClassInfo*) const;
     template<typename Target> inline bool inherits() const; // Defined inline in Structure.h
-    JS_EXPORT_PRIVATE bool NODELETE isValidCallee() const;
+    JS_EXPORT_PRIVATE bool LEGACY_NODELETE isValidCallee() const;
     bool isAPIValueWrapper() const { return m_type == APIValueWrapperType; }
     
     // Each cell has a built-in lock. Currently it's simply available for use if you need it. It's
@@ -149,10 +149,18 @@ public:
     // We use this abstraction to make it easier to grep for places where we lock cells.
     // to lock a cell you can just do:
     // Locker locker { cell->cellLock() };
-    JSCellLock& cellLock() const { return *reinterpret_cast<JSCellLock*>(const_cast<JSCell*>(this)); }
+    JSCellLock& cellLock() const
+    {
+        ASSERT(m_type != CompiledEnvironmentType);
+        return *reinterpret_cast<JSCellLock*>(const_cast<JSCell*>(this));
+    }
     
     JSType type() const { return m_type; }
-    IndexingType indexingTypeAndMisc() const { return m_indexingTypeAndMisc; }
+    IndexingType indexingTypeAndMisc() const
+    {
+        ASSERT(m_type != CompiledEnvironmentType);
+        return m_indexingTypeAndMisc;
+    }
     IndexingType indexingMode() const { return indexingTypeAndMisc() & AllArrayTypes; }
     IndexingType indexingType() const { return indexingTypeAndMisc() & AllWritableArrayTypes; }
     StructureID structureID() const { return m_structureID; }
@@ -161,14 +169,19 @@ public:
     void setStructureIDDirectly(StructureID id) { m_structureID = id; }
     void clearStructure() { m_structureID = StructureID(); }
 
-    TypeInfo::InlineTypeFlags inlineTypeFlags() const { return m_flags; }
+    TypeInfo::InlineTypeFlags inlineTypeFlags() const
+    {
+        ASSERT(m_type != CompiledEnvironmentType);
+        return m_flags;
+    }
+    bool isPristine() const;
     
-    ASCIILiteral NODELETE className() const;
+    ASCIILiteral LEGACY_NODELETE className() const;
 
     // Extracting the value.
     JS_EXPORT_PRIVATE bool getString(JSGlobalObject*, String&) const;
     JS_EXPORT_PRIVATE String getString(JSGlobalObject*) const; // null string if not a string
-    JS_EXPORT_PRIVATE JSObject* NODELETE getObject(); // NULL if not an object
+    JS_EXPORT_PRIVATE JSObject* LEGACY_NODELETE getObject(); // NULL if not an object
     const JSObject* getObject() const; // NULL if not an object
         
     // Returns information about how to call/construct this cell as a function/constructor. May tell
@@ -177,8 +190,8 @@ public:
     // this is an object, then typeof will return "function" instead of "object". These methods
     // cannot change their minds and must be thread-safe. They are sometimes called from compiler
     // threads.
-    JS_EXPORT_PRIVATE static CallData NODELETE getCallData(JSCell*);
-    JS_EXPORT_PRIVATE static CallData NODELETE getConstructData(JSCell*);
+    JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getCallData(JSCell*);
+    JS_EXPORT_PRIVATE static CallData LEGACY_NODELETE getConstructData(JSCell*);
 
     // Basic conversions.
     JS_EXPORT_PRIVATE JSValue toPrimitive(JSGlobalObject*, PreferredPrimitiveType) const;
@@ -194,12 +207,12 @@ public:
     JS_EXPORT_PRIVATE static void dumpToStream(const JSCell*, PrintStream&);
 
     size_t estimatedSizeInBytes(VM&) const;
-    JS_EXPORT_PRIVATE static size_t NODELETE estimatedSize(JSCell*, VM&);
+    JS_EXPORT_PRIVATE static size_t LEGACY_NODELETE estimatedSize(JSCell*, VM&);
 
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(inline);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS_WITH_MODIFIER(inline);
 
-    JS_EXPORT_PRIVATE static void NODELETE analyzeHeap(JSCell*, HeapAnalyzer&);
+    JS_EXPORT_PRIVATE static void LEGACY_NODELETE analyzeHeap(JSCell*, HeapAnalyzer&);
 
     // Object operations, with the toObject operation included.
     inline const ClassInfo* classInfo() const; // Defined inline in Structure.h
@@ -271,18 +284,18 @@ protected:
     void finishCreation(VM&, Structure*, CreatingEarlyCellTag);
 
     // Dummy implementations of override-able static functions for classes to put in their MethodTable
-    static NO_RETURN_DUE_TO_CRASH void NODELETE getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
-    static NO_RETURN_DUE_TO_CRASH void NODELETE getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
+    static NO_RETURN_DUE_TO_CRASH void LEGACY_NODELETE getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
+    static NO_RETURN_DUE_TO_CRASH void LEGACY_NODELETE getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
 
-    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool NODELETE preventExtensions(JSObject*, JSGlobalObject*);
-    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool NODELETE isExtensible(JSObject*, JSGlobalObject*);
-    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool NODELETE setPrototype(JSObject*, JSGlobalObject*, JSValue, bool);
-    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH JSValue NODELETE getPrototype(JSObject*, JSGlobalObject*);
+    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool LEGACY_NODELETE preventExtensions(JSObject*, JSGlobalObject*);
+    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool LEGACY_NODELETE isExtensible(JSObject*, JSGlobalObject*);
+    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool LEGACY_NODELETE setPrototype(JSObject*, JSGlobalObject*, JSValue, bool);
+    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH JSValue LEGACY_NODELETE getPrototype(JSObject*, JSGlobalObject*);
 
-    JS_EXPORT_PRIVATE static bool NODELETE customHasInstance(JSObject*, JSGlobalObject*, JSValue);
-    JS_EXPORT_PRIVATE static bool NODELETE defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
-    JS_EXPORT_PRIVATE static bool NODELETE getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
-    JS_EXPORT_PRIVATE static bool NODELETE getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
+    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE customHasInstance(JSObject*, JSGlobalObject*, JSValue);
+    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
+    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
+    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
 
 private:
     friend class LLIntOffsetsExtractor;
@@ -301,6 +314,9 @@ private:
         };
     };
 };
+
+static_assert(JSCell::indexingTypeAndMiscOffset() == 4 && JSCell::typeInfoTypeOffset() == 5 && JSCell::typeInfoFlagsOffset() == 6, "AOT::Environment keeps its shape number in bytes 4 and 6, and one 32-bit load at 4 gives the indexing mode, the JSType and IsPristine");
+static_assert(CompiledEnvironmentType < ObjectType, "a cell whose header bytes are shape bytes is never an object");
 
 class JSCellLock : public JSCell {
 public:

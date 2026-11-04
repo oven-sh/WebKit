@@ -1,0 +1,63 @@
+# No bound is computed for a number that is defined in the loop; a cast in the loop of a number from outside does not count, and a constant is rounded at build time
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: IntegerBoundGroups = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="number-is-header-parameter" parameters=[{type=int}, {type=number}] results=[{type=number}] {
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Less v0, v3
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Sub v3, v2
+    Jump -> next b1(v6)
+  b3():
+    Return v3
+# CHECK-NOT: IntegerBound
+# CHECK: boolean = Less v0, v3
+}
+
+function f1 name="constant-number" parameters=[{type=int}] results=[{type=int}] {
+    v1 = Double number=2.5
+    v2 = Integer integer=1
+    v3 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Add v4, v2
+    v8 = BitOr v7, v3
+    Jump -> next b1(v8)
+  b3():
+    Return v4
+# CHECK-NOT: IntegerBound
+# CHECK-NOT: Double
+# CHECK: [[three]]: 3 = Integer integer=3
+# CHECK-NEXT: boolean = Less v3, [[three]]
+# CHECK-NOT: IntegerBound
+}
+
+function f2 name="cast-in-loop" parameters=[{type=int}, {type=number}] results=[{type=int}] {
+    v2 = Integer integer=1
+    v3 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v4):
+    LoopHint
+    v6 = Upcast v1 castType=number
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v4, v2
+    v9 = BitOr v8, v3
+    Jump -> next b1(v9)
+  b3():
+    Return v4
+# CHECK: [[bound]]: int = IntegerBound v1 comparison=Less
+# CHECK-NEXT: Jump -> next b1(v0)
+# CHECK: boolean = Less v5, [[bound]]
+}

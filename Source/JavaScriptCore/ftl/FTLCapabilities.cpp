@@ -32,7 +32,7 @@ namespace JSC { namespace FTL {
 
 using namespace DFG;
 
-static bool NODELETE verboseCapabilities()
+static bool LEGACY_NODELETE verboseCapabilities()
 {
     return verboseCompilationEnabled() || Options::verboseFTLFailure();
 }
@@ -324,7 +324,6 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case IsUndefinedOrNull:
     case IsBoolean:
     case IsNumber:
-    case IsBigInt:
     case NumberIsInteger:
     case GlobalIsNaN:
     case NumberIsNaN:
@@ -527,6 +526,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case BufferReadInt:
     case BufferReadFloat:
     case BufferWrite:
+    case TypedArraySet:
     case DateNow:
     case DateGetStorage:
     case DateGetInt32OrNaN:
@@ -623,8 +623,6 @@ CapabilityLevel canCompile(Graph& graph)
                 case StringObjectUse:
                 case StringOrStringObjectUse:
                 case SymbolUse:
-                case AnyBigIntUse:
-                case BigInt32Use:
                 case HeapBigIntUse:
                 case DateObjectUse:
                 case MapObjectUse:

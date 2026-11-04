@@ -65,7 +65,7 @@ void RenderMedia::styleDidChange(Style::Difference difference, const Style::Comp
     RenderImage::styleDidChange(difference, oldStyle);
 
     Ref mediaElement = this->mediaElement();
-    if (!oldStyle || style().usedVisibility() != oldStyle->usedVisibility())
+    if (!oldStyle || (style().visibility() != oldStyle->visibility() || style().isForceHidden() != oldStyle->isForceHidden()))
         mediaElement->visibilityDidChange();
 
     if (!oldStyle || style().dynamicRangeLimit() != oldStyle->dynamicRangeLimit())

@@ -36,6 +36,7 @@
 #include "NotImplemented.h"
 #include "PlatformDisplay.h"
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkBitmap.h>
 #include <skia/gpu/ganesh/SkImageGanesh.h>
 #include <skia/gpu/ganesh/SkSurfaceGanesh.h>
 #include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
@@ -234,10 +235,13 @@ public:
     ~PromiseImageContext()
     {
         if (auto runLoop = m_runLoop.get()) {
-            if (runLoop.get() == &RunLoop::currentSingleton())
+            if (runLoop.get() == &RunLoop::currentSingleton()) {
+                PlatformDisplay::makeSkiaGLContextCurrentIfExists();
                 return;
+            }
 
-            runLoop->dispatch([image = WTF::move(m_image)]() mutable {
+            runLoop->dispatch([image = WTF::move(m_image)] mutable {
+                PlatformDisplay::makeSkiaGLContextCurrentIfExists();
                 image = nullptr;
             });
         }
@@ -285,6 +289,22 @@ sk_sp<SkImage> createPromiseImageIfNeeded(const sk_sp<SkImage>& image, const sk_
         +[](void* userData) {
             std::unique_ptr<PromiseImageContext> context(static_cast<PromiseImageContext*>(userData));
         }, context.release());
+}
+
+sk_sp<SkImage> scaleImagePixels(const sk_sp<SkImage>& image, const IntSize& scaledSize)
+{
+    auto imageInfo = SkImageInfo::Make(scaledSize.width(), scaledSize.height(), image->imageInfo().colorType(), image->imageInfo().alphaType());
+    SkBitmap bitmap;
+    bitmap.allocPixels(imageInfo);
+
+    SkPixmap pixmap;
+    if (!bitmap.peekPixels(&pixmap))
+        return nullptr;
+
+    if (!image->scalePixels(pixmap, SkSamplingOptions(SkCubicResampler::CatmullRom())))
+        return nullptr;
+
+    return SkImages::RasterFromBitmap(bitmap);
 }
 
 } // namespace SkiaUtilities

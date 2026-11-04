@@ -1,0 +1,93 @@
+# function typed(p: Point) { return p.x + p.y }  function untyped(p) { return p.x + p.y + p.z }  function optional(o) { return globalThis.seen = o.size }
+# function loop(p) { let sum = 0; for (let i = 0; i < 10; i++) sum += p.x; return sum }
+# The report says of every property access what its code does where it stands, which is not what flow knows about its receivers.
+# `typed` escapes, so flow proves nothing about its parameter, and the check at its entry is the only test: both reads are free.
+# In `untyped` the test of the receiver was made for the first read. The second read relies on it and is free. No Point has a z: that read is by name.
+# The test for the read in `loop` is hoisted out of the loop, so it is no longer in front of the read: the read is free.
+# The receiver of `o.size` is proven and the field may be missing, so the read tests its slot and nothing else. A store to a global tests the record of its binding.
+# The counts by cost are: by name, tests the receiver, tests the slot, free
+# TODO: nobody: the flow report calls the two reads behind the entry check of a typed function Unknown where it said Expected
+# RUN: flow-report through=Select
+# OPTIONS: report=Flow
+# CHECK: access-count m0 accesses=[1, 10, 1] accessCosts=[1, 5, 1, 5]
+# CHECK: access m0:10 Store Expected TestsReceiver
+# CHECK: access m0:30 Read Proven Free
+# CHECK: access m0:110 Read Expected Free
+# CHECK-NEXT: access m0:120 Read Expected Free
+# CHECK-NEXT: access m0:210 Read Expected TestsReceiver
+# CHECK-NEXT: access m0:220 Read Expected Free
+# CHECK-NEXT: access m0:230 Read Unknown ByName
+# CHECK-NEXT: access m0:310 Read Expected TestsSlot
+# CHECK-NEXT: access m0:320 Store Expected TestsReceiver
+# CHECK-NEXT: access m0:410 Read Expected Free
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Options" fields=[{key="size" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v3
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v3
+    v8 = Builtin builtin=GlobalThis
+    PropSet v8, v4 key="typed" @10
+    PropSet v8, v6 key="untyped" @20
+    v11 = PropGet v3 key="x" @30
+    v12 = NewObject layout=L1 fields=[]
+    v13 = FinishObject v12
+    v14 = NewObject -, v0 layout=L1 fields=[0]
+    v15 = FinishObject v14
+    v16 = NewClosure function=f3
+    v17 = Call v16, -, v13
+    v18 = Call v16, -, v15
+    v19 = NewClosure function=f4
+    v20 = Call v19, -, v3
+    PropSet v8, v19 key="loop" @40
+    Return v11
+}
+function f1 name="typed" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0):
+    v1 = Check v0 expectedType=L0 @100
+    v2 = PropGet v1 key="x" @110
+    v3 = PropGet v1 key="y" @120
+    v4 = Add v2, v3 @130
+    Return v4
+}
+function f2 name="untyped" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0):
+    v1 = PropGet v0 key="x" @210
+    v2 = PropGet v0 key="y" @220
+    v3 = PropGet v0 key="z" @230
+    v4 = Add v1, v2 @240
+    v5 = Add v4, v3 @250
+    Return v5
+}
+function f3 name="optional" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0):
+    v1 = PropGet v0 key="size" @310
+    v2 = Builtin builtin=GlobalThis
+    PropSet v2, v1 key="seen" @320
+    Return v1
+}
+function f4 name="loop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0):
+    v1 = Integer
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Integer integer=10
+    v6 = Less v3, v5 @400
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = PropGet v0 key="x" @410
+    v8 = Add v2, v7 @420
+    v9 = Increment v3 @430
+    Jump -> next b1(v8, v9)
+  b3():
+    Return v2
+}

@@ -46,8 +46,8 @@ public:
     static Ref<WorkerAnimationController> create(WorkerGlobalScope&);
     ~WorkerAnimationController();
 
-    int requestAnimationFrame(Ref<RequestAnimationFrameCallback>&&);
-    void cancelAnimationFrame(int);
+    unsigned requestAnimationFrame(Ref<RequestAnimationFrameCallback>&&);
+    void cancelAnimationFrame(unsigned);
 
     // ActiveDOMObject.
     void ref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
@@ -70,7 +70,7 @@ private:
 
     typedef Vector<Ref<RequestAnimationFrameCallback>> CallbackList;
     CallbackList m_animationCallbacks;
-    typedef int CallbackId;
+    typedef unsigned CallbackId;
     CallbackId m_nextAnimationCallbackId { 0 };
 
     Timer m_animationTimer;

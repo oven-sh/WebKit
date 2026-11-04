@@ -1,0 +1,55 @@
+# class B {}  Atomics.first = function () { this.x }  Reflect.last = function () { this.x }
+# function run(o) { o.first(); o.last() }  run(Atomics); run(JSON); run(Math); run(Reflect); run(new B())
+# Five objects at the calls where the analysis tells four apart: four objects of the table of built-ins and an instance. The instance has a place, the objects of the table that count as one have a place,
+# and the two places that are left go to objects of the table by themselves: beside what code nobody sees may pass, one function sees its own holder alone, the other the two objects that count as one.
+# OPTIONS: limit=MaxValueFlowMembersToldApart:4
+# RUN: valueflow-why values=f2:v1 values=f3:v1
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} unknown Atomics
+# CHECK: values=f3:v1
+# CHECK: operand 0 {{*}} unknown Math Reflect
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="B" constructor=f1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=Atomics
+    v4 = Builtin builtin=JSON
+    v5 = Builtin builtin=Math
+    v6 = Builtin builtin=Reflect
+    v7 = NewClosure function=f2
+    PropSet v3, v7 key="first" mode=Strict
+    v9 = NewClosure function=f3
+    PropSet v6, v9 key="last" mode=Strict
+    v11 = NewClosure function=f4
+    v12 = Call v11, -, v3
+    v13 = Call v11, -, v4
+    v14 = Call v11, -, v5
+    v15 = Call v11, -, v6
+    v16 = Construct v2
+    v17 = Call v11, -, v16
+    Return
+}
+function f1 name="B" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="first" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return
+}
+function f3 name="last" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return
+}
+function f4 name="run" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="first"
+    v2 = Call v1, v0 calleeKey="first"
+    v3 = PropGet v0 key="last"
+    v4 = Call v3, v0 calleeKey="last"
+    Return
+}

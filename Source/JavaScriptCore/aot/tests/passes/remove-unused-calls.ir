@@ -1,0 +1,73 @@
+# A call whose answer nothing uses goes where all that its callee does is compute and make objects, itself or by the calls that it makes. What was computed for that call alone goes with it.
+# It stays where the callee writes what somebody may read, or may throw, and where its answer is used
+# FORM: Prepared
+# RUN: pass RemoveUnusedCalls
+# STATISTIC: UnusedCallsRemoved = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Line" fields=[{key="from" declared={type=L0} flags=[IsRequired]}, {key="to" declared={type=L0} flags=[IsRequired]}]
+
+function f0 name="makesAnObject" parameters=[{type=number}] results=[{type=L0}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Return v1
+}
+
+function f1 name="callsTheMaker" parameters=[{type=number}] results=[{type=L1}] {
+    v1 = CallDirect v0 function=f0
+    v2 = CallDirect v0 function=f0
+    v3 = NewObject -, v1, v2 layout=L1 fields=[0, 1]
+    Return v3
+}
+
+function f2 name="returnsParts" role=ResultWorker parameters=[{type=number}] results=[{type=number}, {type=L0}] creator=ResultWorker{origin=f3} {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = Results v0, v1
+    Return v2
+}
+
+function f3 name="returnsParts" role=ResultWrapper parameters=[{type=number}] results=[{type=anything}] creator=ResultWrapper{worker=f2}
+
+function f4 name="writesAVariable" parameters=[{type=number}] results=[{type=number}] {
+    PutModuleVariable v0 variable=g0
+    Return v0
+}
+
+function f5 name="mayThrow" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+
+function f6 name="usesNoAnswer" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+    v2 = Integer integer=7
+    v3 = Add v0, v2
+    v4 = CallDirect v3 function=f0
+    v5 = CallDirect v0 function=f1
+    v6 = CallDirect v0 function=f2
+    v7 = CallDirect v0 function=f4
+    v8 = CallDirect v1 function=f5
+    Return v0
+# CHECK-NEXT: b0(v0: number, v1: anything):
+# CHECK-NEXT: CallDirect v0 function=f4
+# CHECK-NEXT: CallDirect v1 function=f5
+# CHECK-NEXT: Return v0
+}
+
+function f7 name="usesOneAnswer" parameters=[{type=number}] results=[{type=L0}] {
+    v1 = CallDirect v0 function=f0
+    v2 = CallDirect v0 function=f0
+    Return v2
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: CallDirect v0 function=f0
+# CHECK-NEXT: Return
+}
+
+function f8 name="usesEveryAnswer" parameters=[{type=number}] results=[{type=L1}] {
+    v1 = CallDirect v0 function=f1
+    Return v1
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: CallDirect v0 function=f1
+# CHECK-NEXT: Return
+}

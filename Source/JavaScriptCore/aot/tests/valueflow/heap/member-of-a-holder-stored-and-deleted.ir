@@ -1,0 +1,23 @@
+# helpers.traverseArray = one; helpers.traverseArray(); delete helpers.createElement; (0, helpers.createElement)()
+# A store leaves a member of a built-in holder where it is: the next read finds what the table has there and what was stored, and asks nothing above the holder.
+# After a delete the read goes on to what lies above, of which the table says nothing for this holder.
+# RUN: valueflow-solve calls
+# CHECK: f0 v4 -> CompilerHelpersTraverseArray f1
+# CHECK: f0 v7 -> unknown CompilerHelpersCreateElement
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+    v0 = Builtin builtin=CompilerHelpers
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="traverseArray" mode=Strict
+    v3 = PropGet v0 key="traverseArray"
+    v4 = Call v3, v0
+    v5 = PropDelete v0 key="createElement" mode=Strict
+    v6 = PropGet v0 key="createElement"
+    v7 = Call v6
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}

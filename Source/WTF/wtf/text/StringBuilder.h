@@ -47,7 +47,7 @@ public:
     void clear();
     void swap(StringBuilder&);
 
-    void NODELETE didOverflow();
+    void LEGACY_NODELETE didOverflow();
     bool hasOverflowed() const { return m_length > String::MaxLength; }
     bool crashesOnOverflow() const { return m_shouldCrashOnOverflow; }
 
@@ -64,6 +64,7 @@ public:
     void append(char16_t);
     void append(Latin1Character);
     void append(char character) { append(byteCast<Latin1Character>(character)); }
+    void append(uint8_t) = delete; // Ambiguous: pass Latin1Character for a character or use the variadic append for a number.
 
     template<typename... StringTypeAdapters> void appendFromAdapters(const StringTypeAdapters&...);
 
@@ -96,13 +97,13 @@ public:
     WTF_EXPORT_PRIVATE void reserveCapacity(unsigned newCapacity);
 
     WTF_EXPORT_PRIVATE void shrink(unsigned newLength);
-    WTF_EXPORT_PRIVATE bool NODELETE shouldShrinkToFit() const;
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE shouldShrinkToFit() const;
     WTF_EXPORT_PRIVATE void shrinkToFit();
 
-    WTF_EXPORT_PRIVATE bool NODELETE containsOnlyASCII() const;
+    WTF_EXPORT_PRIVATE bool LEGACY_NODELETE containsOnlyASCII() const;
 
 private:
-    static unsigned expandedCapacity(unsigned capacity, unsigned requiredCapacity);
+    static unsigned LEGACY_NODELETE expandedCapacity(unsigned capacity, unsigned requiredCapacity);
 
     template<typename AllocationCharacterType, typename CurrentCharacterType> void allocateBuffer(std::span<const CurrentCharacterType> currentCharacters, unsigned requiredCapacity);
     template<typename CharacterType> void reallocateBuffer(unsigned requiredCapacity);

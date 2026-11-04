@@ -1,0 +1,93 @@
+# Along a proven chain of bases an inherited field has the storage, the representation and the offset that it has in the class that declares it, whatever the class below adds and however it is used there
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key="flag" declared={type=boolean} flags=[IsRequired]}, {key="count" declared={type=number} flags=[IsRequired]}, {key="link" declared={type=undefined|L0}}]
+layout L1 kind=Instance name="Left" base=L0 constructor=f2 fields=[{key="small" declared={type=boolean} flags=[IsRequired]}, {key="wide" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L2 kind=Instance name="Right" base=L0 constructor=f3 fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="second" declared={type=number} flags=[IsRequired]}, {key="third" declared={type=undefined|L0}}] flags=[HasHeritage]
+variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewClosure function=f1
+    v4 = NewClass v3 layout=L0
+    v5 = FinishClass v4 layout=L0
+    PutModuleVariable v5 variable=g0
+    v7 = ResolveHeritage v5
+    v8 = NewClosure function=f2
+    v9 = NewClass v8, v5, v7 layout=L1
+    v10 = FinishClass v9 layout=L1
+    v11 = ResolveHeritage v5
+    v12 = NewClosure function=f3
+    v13 = NewClass v12, v5, v11 layout=L2
+    v14 = FinishClass v13 layout=L2
+    v15 = Construct v5, -, v2
+    v16 = Construct v10, -, v2
+    v17 = Construct v14, -, v2
+    PropSet v16, v15 key="link"
+    PropSet v17, v16 key="third"
+    v20 = PropGet v16 key="wide"
+    v21 = PropGet v17 key="second"
+    v22 = PropGet v17 key="first"
+    v23 = PropGet v16 key="small"
+    v24 = PropGet v17 key="third"
+    v25 = PropGet v15 key="flag"
+    v26 = PropGet v16 key="count"
+    v27 = PropGet v17 key="link"
+    v28 = ForInOpen v15
+    v29 = ForInOpen v16
+    v30 = ForInOpen v17
+    v31 = ToString v2
+    ElemSet v15, v31, v2
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Boolean boolean=true
+    PropSet v3, v4 key="flag"
+    PropSet v3, v1 key="count"
+    v7 = FinishObject v3
+    Return v7
+}
+function f2 name="Left" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = GetModuleVariable variable=g0
+    v3 = SuperConstruct v2, v0, v1 layout=L1
+    v4 = Boolean boolean=false
+    PropSet v3, v4 key="small"
+    PropSet v3, v1 key="wide"
+    Return v3
+}
+function f3 name="Right" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = GetModuleVariable variable=g0
+    v3 = SuperConstruct v2, v0, v1 layout=L2
+    PropSet v3, v1 key="first"
+    PropSet v3, v1 key="second"
+    Return v3
+}
+
+# No class gets the names of the classes beside it or below it, so nothing is out of line. An instance of Base is stored into under a computed key, so Base has the word for extra properties, which is inherited like a field.
+# CHECK: L0 CompiledObject size=48 extension=0
+# CHECK-NEXT: .0 "flag" OptionalBoolean @[[flag]]
+# CHECK-NEXT: .1 "count" OptionalDouble @[[count]]
+# CHECK-NEXT: .2 "link" OptionalCell32 @[[link]]
+# CHECK-NEXT: extra-properties Cell32 @[[extra]]
+# CHECK-NEXT: L1 CompiledObject size=48 extension=0
+# CHECK-NEXT: .0 "small"
+# CHECK-NEXT: .1 "wide"
+# CHECK-NEXT: "flag" OptionalBoolean @[[flag]]
+# CHECK-NEXT: "count" OptionalDouble @[[count]]
+# CHECK-NEXT: "link" OptionalCell32 @[[link]]
+# CHECK-NEXT: extra-properties Cell32 @[[extra]]
+# CHECK-NEXT: L2 CompiledObject size=64 extension=0
+# CHECK-NEXT: .0 "first"
+# CHECK-NEXT: .1 "second"
+# CHECK-NEXT: .2 "third"
+# CHECK-NEXT: "flag" OptionalBoolean @[[flag]]
+# CHECK-NEXT: "count" OptionalDouble @[[count]]
+# CHECK-NEXT: "link" OptionalCell32 @[[link]]
+# CHECK-NEXT: extra-properties Cell32 @[[extra]]

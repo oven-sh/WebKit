@@ -1,0 +1,52 @@
+# full = [1, 2]; holed = [1, , 2];  sliced = full.slice(); slicedHoled = holed.slice();  joined = full.concat(full); joinedHoled = full.concat(holed);  twice = full.slice().slice()
+# reversed = holed.toReversed();  ofObject = Array.prototype.slice.call(unknown)
+# The table says of what slice and concat make that every index below the length holds a value, and of their operands that their holes are copied.
+# So the new array has no hole where the arrays that it copies have none. toReversed fills a hole with undefined. Of an object that nobody knows nobody knows the indexes.
+# RUN: valueflow-apply
+# CHECK: variable g0 name="sliced" {{*}}declared={type=Array<{{*}}, proven, pristine[Storage, Names, Dense]>}
+# CHECK: variable g1 name="slicedHoled" {{*}}declared={type=Array<{{*}}, proven, pristine[Storage, Names]>}
+# CHECK: variable g2 name="joined" {{*}}declared={type=Array<{{*}}, proven, pristine[Storage, Names, Dense]>}
+# CHECK: variable g3 name="joinedHoled" {{*}}declared={type=Array<{{*}}, proven, pristine[Storage, Names]>}
+# CHECK: variable g4 name="twice" {{*}}declared={type=Array<{{*}}, proven, pristine[Storage, Names, Dense]>}
+# CHECK: variable g5 name="reversed" {{*}}declared={type=Array<{{*}}, proven, pristine[Storage, Names, Dense]>}
+# CHECK-NOT: variable g6 name="ofObject" {{*}}Dense
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="sliced" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="slicedHoled" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="joined" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="joinedHoled" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="twice" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="reversed" module=m0 declared={type=anything} initialization=Undefined
+variable g6 name="ofObject" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = NewArray v0, v1 contents=anything
+    v3 = NewArray v0, v1 contents=anything holes=[1]
+    v4 = PropGet v2 key="slice"
+    v5 = Call v4, v2 calleeKey="slice"
+    PutModuleVariable v5 variable=g0
+    v7 = PropGet v3 key="slice"
+    v8 = Call v7, v3 calleeKey="slice"
+    PutModuleVariable v8 variable=g1
+    v10 = PropGet v2 key="concat"
+    v11 = Call v10, v2, v2 calleeKey="concat"
+    PutModuleVariable v11 variable=g2
+    v13 = Call v10, v2, v3 calleeKey="concat"
+    PutModuleVariable v13 variable=g3
+    v15 = Call v4, v2 calleeKey="slice"
+    v16 = PropGet v15 key="slice"
+    v17 = Call v16, v15 calleeKey="slice"
+    PutModuleVariable v17 variable=g4
+    v19 = PropGet v3 key="toReversed"
+    v20 = Call v19, v3 calleeKey="toReversed"
+    PutModuleVariable v20 variable=g5
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="unknown" [isFreeName]
+    v24 = Builtin builtin=ArrayPrototypeSlice
+    v25 = Call v24, v23
+    PutModuleVariable v25 variable=g6
+    Return
+}

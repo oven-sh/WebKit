@@ -26,7 +26,7 @@
 #include "config.h"
 #include "CorpseExportsTrie.h"
 
-#if (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#if ENABLE(LIB_JSC_TOOLS)
 
 #include <mach-o/loader.h>
 #include <optional>
@@ -38,8 +38,7 @@ namespace Corpse {
 constexpr uint64_t knownExportFlagBits = EXPORT_SYMBOL_FLAGS_KIND_MASK
     | EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION
     | EXPORT_SYMBOL_FLAGS_REEXPORT
-    | EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER
-    | EXPORT_SYMBOL_FLAGS_STATIC_RESOLVER;
+    | EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER;
 
 std::expected<ExportsTrie::Export, ExportsTrie::Failure> ExportsTrie::lookUp(std::span<const uint8_t> trie, std::string_view name)
 {
@@ -141,4 +140,4 @@ std::expected<ExportsTrie::Export, ExportsTrie::Failure> ExportsTrie::lookUp(std
 } // namespace Corpse
 } // namespace JSC
 
-#endif // (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#endif // ENABLE(LIB_JSC_TOOLS)

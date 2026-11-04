@@ -139,6 +139,11 @@ JSC_DEFINE_HOST_FUNCTION(mapPrivateFuncMapIterationNext, (JSGlobalObject* global
     if (cell == vm.orderedHashTableSentinel())
         return JSValue::encode(vm.orderedHashTableSentinel());
 
+#if ENABLE(AOT)
+    if (JSMap::Helper::isCompact(*cell)) [[unlikely]]
+        return JSValue::encode(JSMap::Helper::nextAndUpdateIterationEntry(vm, *cell, JSMap::Helper::toNumber(callFrame->uncheckedArgument(1))));
+#endif
+
     JSMap::Storage& storage = *uncheckedDowncast<JSMap::Storage>(cell);
     JSMap::Helper::Entry entry = JSMap::Helper::toNumber(callFrame->uncheckedArgument(1));
     return JSValue::encode(JSMap::Helper::nextAndUpdateIterationEntry(vm, storage, entry));
@@ -152,6 +157,11 @@ JSC_DEFINE_HOST_FUNCTION(mapPrivateFuncMapIterationEntry, (JSGlobalObject* globa
     JSCell* cell = callFrame->uncheckedArgument(0).asCell();
     ASSERT_UNUSED(vm, cell != vm.orderedHashTableSentinel());
 
+#if ENABLE(AOT)
+    if (JSMap::Helper::isCompact(*cell)) [[unlikely]]
+        return JSValue::encode(JSMap::Helper::getIterationEntry(*cell));
+#endif
+
     JSMap::Storage& storage = *uncheckedDowncast<JSMap::Storage>(cell);
     return JSValue::encode(JSMap::Helper::getIterationEntry(storage));
 }
@@ -164,6 +174,11 @@ JSC_DEFINE_HOST_FUNCTION(mapPrivateFuncMapIterationEntryKey, (JSGlobalObject* gl
     JSCell* cell = callFrame->uncheckedArgument(0).asCell();
     ASSERT_UNUSED(vm, cell != vm.orderedHashTableSentinel());
 
+#if ENABLE(AOT)
+    if (JSMap::Helper::isCompact(*cell)) [[unlikely]]
+        return JSValue::encode(JSMap::Helper::getIterationEntryKey(*cell));
+#endif
+
     JSMap::Storage& storage = *uncheckedDowncast<JSMap::Storage>(cell);
     return JSValue::encode(JSMap::Helper::getIterationEntryKey(storage));
 }
@@ -175,6 +190,11 @@ JSC_DEFINE_HOST_FUNCTION(mapPrivateFuncMapIterationEntryValue, (JSGlobalObject* 
     VM& vm = globalObject->vm();
     JSCell* cell = callFrame->uncheckedArgument(0).asCell();
     ASSERT_UNUSED(vm, cell != vm.orderedHashTableSentinel());
+
+#if ENABLE(AOT)
+    if (JSMap::Helper::isCompact(*cell)) [[unlikely]]
+        return JSValue::encode(JSMap::Helper::getIterationEntryValue(*cell));
+#endif
 
     JSMap::Storage& storage = *uncheckedDowncast<JSMap::Storage>(cell);
     return JSValue::encode(JSMap::Helper::getIterationEntryValue(storage));

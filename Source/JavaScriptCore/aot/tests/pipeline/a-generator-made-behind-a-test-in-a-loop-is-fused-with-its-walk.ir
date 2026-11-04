@@ -1,0 +1,251 @@
+# A loop makes a generator from its counter and walks it. The test of the counter has a generic copy, and the copy does not come back between the creation and the walk:
+# only a generator with one creation is merged into the loop that walks it.
+# class Span {
+#   constructor(from, to) {
+#     this.from = from;
+#     this.to = to;
+#   }
+#   *values() {
+#     for (let k = this.from; k < this.to; k++) yield k;
+#   }
+#   [Symbol.iterator]() {
+#     return this.values();
+#   }
+# }
+# function sums(n) {
+#   let sum = 0;
+#   for (let i = 0; i < n; i++) {
+#     for (const value of new Span(i & 3, 8)) sum = (sum + value) | 0;
+#   }
+#   return sum;
+# }
+# globalThis.answer = sums(Math.random() * 1000);
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# CHECK-LABEL: function {{*}}name="sums"
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK-NOT: NewGenerator
+# CHECK-NOT: StepGenerator
+# CHECK: frequency=Unlikely:
+# CHECK: = CallDirect {{*}}function=f3
+# CHECK: = StepGenerator
+
+module m0 path="generator-made-behind-a-test-in-a-loop.js" displayPath="generator-made-behind-a-test-in-a-loop.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/GeneratorPrototype.ts" displayPath="/$bun/js/engine/GeneratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Span" module=m0 position=6 constructor=f2 fields=[{key="from" declared={type=anything} flags=[IsRequired]}, {key="to" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="Span" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g1 @0
+    v5 = NewClosure function=f3 @86
+    DefineMethod v3, v5 layout=L0 key="values" @86
+    v7 = NewClosure function=f4 @158
+    DefineMethod v3, v7 layout=L0 index=1 key=@@iterator @158
+    v9 = FinishClass v3 layout=L0 @0
+    v10 = Convert v9 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v11 = Convert v9 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    PutModuleVariable v11 variable=g0 @0
+    v13 = Builtin builtin=GlobalThis @367
+    v14 = PropGet v13 key="globalThis" [isFreeName] @367
+    v15 = Convert v14 declared={type=builtin(GlobalThis) flags=[IsExpected]} @367
+    v16 = Builtin builtin=Math @392
+    v17 = PropGet v16 key="random" @392
+    v18 = Convert v17 declared={type=builtin(MathRandom) flags=[IsExpected]} @392
+    v19 = Call v18, v16 calleeKey="random" calleeName="Math.random" @397
+    v20 = Convert v19 declared={type=number flags=[IsExpected]} @392
+    v21 = Integer integer=1000 @408
+    v22 = Mul v20, v21 @392
+    v23 = Call v1, -, v22 calleeName="sums" @387
+    v24 = Convert v23 declared={type=number flags=[IsExpected]} @387
+    PropSet v15, v24 key="answer" @367
+    v26 = Undefined @367
+    Return v26 @367
+}
+function f1 name="sums" module=m0 position=212 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @212
+  b1():
+    v1 = Integer @243
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @243
+    v3 = Integer @261
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @261
+    Jump -> next b2(v2, v4) @257
+  b2(v5, v6):
+    LoopHint @257
+    v8 = Convert v0 declared={type=number flags=[IsExpected]} @268
+    v9 = Less v6, v8 @264
+    Branch v9 -> taken b3(| 0, 1), notTaken b12(| 0, 1) @264
+  b3(v10, v11):
+    Jump -> next b4() @264
+  b4():
+    v12 = GetModuleVariable variable=g0 @306
+    v13 = CheckInitialized v12 name="Span" @306
+    v14 = Integer integer=3 @315
+    v15 = BitAnd v10, v14 @311
+    v16 = Integer integer=8 @318
+    v17 = Construct v13, -, v15, v16 calleeName="Span" @306 constructs
+    v18 = Convert v17 declared={type=undefined|null|L0 flags=[IsExpected]} @302
+    v19 = IteratorOpen v18 @293
+    Jump -> next b5(v5) @293
+  b5(v20):
+    LoopHint @293
+    v22 = IteratorResume v19 @293
+    v23 = ResultAt v22 @293
+    v24 = ResultAt v22 index=1 @293
+    Branch v23 -> taken b6(), notTaken b8() @293
+  b6():
+    Jump -> next b7() @293
+  b7():
+    v25 = Increment v10 @293
+    v26 = Convert v25 declared={type=i32 flags=[IsExpected]} @271
+    Jump -> next b2(v20, v26) @271
+  b8():
+    Jump -> next b9() @293
+  b9() handler=b11():
+    v27 = Convert v24 declared={type=number flags=[IsExpected]} @293
+    v28 = Add v20, v27 @329
+    v29 = Integer @344
+    v30 = BitOr v28, v29 @329
+    v31 = Convert v30 declared={type=i32 flags=[IsExpected]} @322
+    Jump -> next b10() @322
+  b10() handler=b11():
+    Jump -> next b5(v31) @322
+  b11() role=IterationCleanup subject=v19:
+    v32 = CatchException @293
+    IteratorClose v19 completion=Throw @293
+    Rethrow v32 @293
+  b12(v34, v35):
+    Jump -> next b13() @264
+  b13():
+    v36 = Convert v5 declared={type=number flags=[IsExpected]} @360
+    Return v36 @360
+}
+function f2 name="Span" module=m0 position=26 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything, v2: anything):
+    Jump -> next b1() @26
+  b1():
+    v3 = GetConstructPrototype v0 layout=L0 @0
+    v4 = NewObject v3 layout=L0 @0
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[IsExpected]} @43
+    PropSet v6, v1 key="from" @43
+    v8 = Convert v5 declared={type=undefined|null|L0 flags=[IsExpected]} @65
+    PropSet v8, v2 key="to" @65
+    v10 = Undefined @65
+    v11 = TypeTest v10 testedType=object @65
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0) @65
+  b2(v12):
+    Jump -> next b4(v12) @65
+  b3(v13):
+    Jump -> next b4(v5) @65
+  b4(v14):
+    Return v14 @65
+}
+function f3 name="values" module=m0 position=85 kind=Method flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=undefined|null|Generator flags=[IsExpected]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: L0, v1: function):
+    Jump -> next b1() @85
+  b1():
+    InitialYield @85
+    v3 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @114
+    v4 = PropGet v3 key="from" @114
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @114
+    Jump -> next b2(v5) @110
+  b2(v6):
+    LoopHint @110
+    v8 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @129
+    v9 = PropGet v8 key="to" @129
+    v10 = Less v6, v9 @125
+    Branch v10 -> taken b3(| 0), notTaken b9(| 0) @125
+  b3(v11):
+    Jump -> next b4() @125
+  b4():
+    v12 = Yield v11 @143
+    v13 = ResultAt v12 @143
+    v14 = ResultAt v12 index=1 @143
+    Switch v14 cases=[1, 2] -> case b5(), case b6(), otherwise b7() @143
+  b5():
+    Throw v13 @143
+  b6():
+    Return v13 @143
+  b7():
+    Jump -> next b8() @143
+  b8():
+    v15 = Increment v11 @149
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @138
+    Jump -> next b2(v16) @138
+  b9(v17):
+    Jump -> next b10() @125
+  b10():
+    v18 = Undefined @138
+    Return v18 @138
+}
+function f4 name="[Symbol.iterator]" module=m0 position=158 kind=Method flags=[HasThis, IsNamedByComputedKey] thisType={type=L0 flags=[IsExpected]} results=[{type=undefined|null|Generator flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @158
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @191
+    v2 = PropGet v1 key="values" @191
+    v3 = Convert v2 declared={type=undefined|null|function|f3 flags=[IsExpected]} @191
+    v4 = Call v3, v1 calleeKey="values" calleeName="this.values" @196
+    ReturnCall v4 casts=[{declared={type=undefined|null|Generator flags=[IsExpected]}}] @196
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeNext thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @25
+  b1():
+    v2 = StepGenerator v0, v1 check=IsGenerator @91
+    v3 = ResultAt v2 @188
+    v4 = ResultAt v2 index=1 @251
+    v5 = Integer integer=2 @315
+    v6 = StrictEq v4, v5 @304
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @304
+  b2(v7):
+    Jump -> next b3() @304
+  b3():
+    v8 = ResumeGenerator v0, v1 @362
+    Return v8 @362
+  b4(v9):
+    Jump -> next b5() @304
+  b5():
+    v10 = Integer integer=1 @460
+    v11 = StrictEq v9, v10 @449
+    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @421
+    v13 = CreateIteratorResult v3, v12 @421
+    Return v13 @421
+}
+function f7 name="return" module=m1 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @548
+  b1():
+    v2 = StepGenerator v0, v1 resumeMode=Return check=IsGenerator @617
+    v3 = ResultAt v2 @716
+    v4 = ResultAt v2 index=1 @779
+    v5 = Integer integer=2 @843
+    v6 = StrictEq v4, v5 @832
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0) @832
+  b2(v7):
+    Jump -> next b3() @832
+  b3():
+    v8 = ResumeGenerator v0, v1 resumeMode=Return @890
+    Return v8 @890
+  b4(v9):
+    Jump -> next b5() @832
+  b5():
+    v10 = Integer integer=1 @990
+    v11 = StrictEq v9, v10 @979
+    v12 = Convert v11 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @951
+    v13 = CreateIteratorResult v3, v12 @951
+    Return v13 @951
+}
+runtimefunction id=GeneratorPrototypeNext function=f6 visibility=Private
+runtimefunction id=GeneratorPrototypeReturn function=f7 visibility=Private
+# -- generated: *

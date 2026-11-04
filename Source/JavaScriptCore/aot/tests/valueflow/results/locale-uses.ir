@@ -1,0 +1,45 @@
+# One record per locale operand: Constant for a string literal, HostDefault for a missing or undefined operand, Unknown otherwise. Unreachable calls add nothing
+# RUN: valueflow-results
+# CHECK: locale Unknown f1:v3
+# CHECK: locale HostDefault f0:v6
+# CHECK-NOT: locale HostDefault
+# CHECK: locale Constant "de-DE" f0:v4
+# CHECK: locale Constant "en-US" f0:v10
+# RUN(ALL): valueflow-results
+# ALL-NOT: locale Constant "ja"
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="format" variable=g0}]
+entry module=m0 hostReads=[{exportName="format"}]
+variable g0 name="format" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1234.5
+    v1 = PropGet v0 key="toLocaleString"
+    v2 = String string="de-DE"
+    v3 = Undefined
+    v4 = Call v1, v0, v2 calleeKey="toLocaleString"
+    v5 = PropGet v0 key="toLocaleString"
+    v6 = Call v5, v0 calleeKey="toLocaleString"
+    v7 = Call v5, v0, v3 calleeKey="toLocaleString"
+    v8 = Builtin builtin=IntlNumberFormat
+    v9 = String string="en-US"
+    v10 = Construct v8, -, v9
+    v11 = NewClosure function=f1
+    PutModuleVariable v11 variable=g0
+    Return
+}
+function f1 name="format" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5
+    v2 = PropGet v1 key="toLocaleString"
+    v3 = Call v2, v1, v0 calleeKey="toLocaleString"
+    Return v3
+}
+function f2 name="unreached" results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = PropGet v0 key="toLocaleString"
+    v2 = String string="ja"
+    v3 = Call v1, v0, v2 calleeKey="toLocaleString"
+    Return v3
+}

@@ -1,0 +1,9 @@
+# The classes of a very large program are read off its structure. So in a build that runs to its end the heats in front of CallModules are made without the estimate of activations
+# and without all that is weighed with it. The slots, the places and the names of type tests are weighed with that, behind CallModules: the heat that they read has it.
+# Each of them ends the build where it has not.
+# FORM: AsRead
+# REQUIRES: x86_64
+# OPTIONS: limit=MaxWarmCodeValues:1
+# RUN: generate-code
+# CHECK: f0: size={{*}}
+# PROGRAM-OF: estimate-heat-very-large-program.ir

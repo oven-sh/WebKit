@@ -1,0 +1,66 @@
+# function* inner() { (yield one)(); return returned }  function* outer() { (yield* inner())() }  g = outer(); g.next().value(); g.next(sent)
+# A delegating yield steps the inner generator with what the outer one is handed, hands out what the inner one yields, and gives what the inner one returns.
+# One node holds what such a step answers, whether or not it is the last one, so what is yielded and what is returned are not told apart behind it.
+# RUN: valueflow-solve calls
+# CHECK: f0 v5 -> f3 f4
+# CHECK: f1 v5 -> f5
+# CHECK: f2 v13 -> f3 f4
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+# UNREACHED-NOT: unreached f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    v2 = PropGet v1 key="next"
+    v3 = Call v2, v1 calleeKey="next"
+    v4 = PropGet v3 key="value"
+    v5 = Call v4
+    v6 = NewClosure function=f5
+    v7 = Call v2, v1, v6 calleeKey="next"
+    Return
+}
+function f1 name="inner" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+    InitialYield
+    v2 = NewClosure function=f3
+    v3 = Yield v2
+    v4 = ResultAt v3
+    v5 = Call v4
+    v6 = NewClosure function=f4
+    Return v6
+}
+function f2 name="outer" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+    InitialYield
+    v2 = NewClosure function=f1
+    v3 = Call v2
+    v4 = IteratorOpen v3
+    v5 = Undefined
+    Jump -> next b1(v5)
+  b1(v6):
+    LoopHint
+    v8 = IteratorResume v4, v6 [readsValueWhenDone]
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b3(), notTaken b2()
+  b2():
+    v11 = Yield v10
+    v12 = ResultAt v11
+    Jump -> next b1(v12)
+  b3():
+    v13 = Call v10
+    Return
+}
+function f3 name="one" results=[{type=anything}] {
+    Return
+}
+function f4 name="returned" results=[{type=anything}] {
+    Return
+}
+function f5 name="sent" results=[{type=anything}] {
+    Return
+}

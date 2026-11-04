@@ -72,12 +72,17 @@ public:
         m_cacheability = CachingDisallowed;
     }
 
+    // Reflect.deleteProperty() returns false where the delete operator throws: see ImmutablePropertyNames::OutsideNames::throwsInSloppyMode().
+    void setIsReflectDeleteProperty() { m_isReflectDeleteProperty = true; }
+    bool isReflectDeleteProperty() const { return m_isReflectDeleteProperty; }
+
 private:
     bool isCacheable() const { return m_cacheability == CachingAllowed; }
 
     PropertyOffset m_offset;
     CacheabilityType m_cacheability;
     Type m_type;
+    bool m_isReflectDeleteProperty { false };
 };
 
 } // namespace JSC

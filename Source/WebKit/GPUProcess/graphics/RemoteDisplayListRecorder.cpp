@@ -35,12 +35,12 @@ using namespace WebCore;
 
 Ref<RemoteDisplayListRecorder> RemoteDisplayListRecorder::create(RemoteDisplayListRecorderIdentifier identifier, RemoteRenderingBackend& renderingBackend)
 {
-    Ref instance = adoptRef(*new RemoteDisplayListRecorder(makeUniqueRef<DisplayList::RecorderImpl>(FloatRect { }), identifier, renderingBackend));
+    Ref instance = adoptRef(*new RemoteDisplayListRecorder(DisplayList::RecorderImpl::create(FloatRect { }), identifier, renderingBackend));
     instance->startListeningForIPC();
     return instance;
 }
 
-RemoteDisplayListRecorder::RemoteDisplayListRecorder(UniqueRef<DisplayList::RecorderImpl>&& recorder, RemoteDisplayListRecorderIdentifier identifier, RemoteRenderingBackend& renderingBackend)
+RemoteDisplayListRecorder::RemoteDisplayListRecorder(Ref<DisplayList::RecorderImpl>&& recorder, RemoteDisplayListRecorderIdentifier identifier, RemoteRenderingBackend& renderingBackend)
     : RemoteGraphicsContext(recorder, renderingBackend)
     , m_recorder(WTF::move(recorder))
     , m_identifier(identifier)

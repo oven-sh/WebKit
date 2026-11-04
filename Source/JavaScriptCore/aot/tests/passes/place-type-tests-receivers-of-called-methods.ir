@@ -1,0 +1,192 @@
+# Of a value that nobody could follow, a method that is called on it says who can receive the call: the instances of the built-in classes that have the method and the objects of the layouts
+# that have the name. Where they are few, the value is expected to be one of them: one test of the receiver, the built-in or the member behind it, and the read by name on the failing side.
+# Several names leave the receivers that have them all. Several kinds of receivers are tested for together, and what has passed is told apart like any value whose type lists them.
+# Where more kinds are left than a site dispatches over, the callee is read by name and tested, as before
+# FORM: Prepared optimizing
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass ResolveBuiltins PlaceTypeTests ResolveBuiltins ResolveCalls ResolveAccesses SplitUnions ResolveBuiltins ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Impostor" fields=[{key="trimStart" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="oneClassHasTheMethod" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = PropGet v0 key="charCodeAt"
+    v3 = Call v2, v0, v1 calleeKey="charCodeAt"
+    Return v3
+# CHECK-NEXT: b0(v0: anything ~ string):
+# CHECK-NOT: PropGet
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NOT: PropGet
+# CHECK: number = CallBuiltin {{*}} overload=StringPrototypeCharCodeAt/0
+# CHECK: frequency=Unlikely:
+# CHECK: = PropGet {{*}} key="charCodeAt"
+# CHECK: = Call {{*}} calleeKey="charCodeAt"
+}
+
+function f1 name="manyClassesHaveTheMethod" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = PropGet v0 key="slice"
+    v3 = Call v2, v0, v1 calleeKey="slice"
+    Return v3
+# CHECK-NEXT: b0(v0: anything):
+# CHECK: v2: anything = PropGet v0 key="slice"
+# CHECK-NEXT: = TypeTest v2 testedType=builtin(
+}
+
+function f2 name="twoNamesLeaveOneClass" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+    v2 = PropGet v0 key="indexOf"
+    v3 = Call v2, v0, v1 calleeKey="indexOf"
+    v4 = PropGet v0 key="charCodeAt"
+    v5 = Call v4, v0, v3 calleeKey="charCodeAt"
+    Return v5
+# CHECK-NEXT: b0(v0: anything ~ string, v1: string):
+# CHECK-NEXT: = TypeTest v0 testedType=string
+# CHECK-NOT: TypeTest v0
+# CHECK: = CallBuiltin {{*}} overload=StringPrototypeIndexOf/0
+# CHECK-NOT: TypeTest v0
+# CHECK: = CallBuiltin {{*}} overload=StringPrototypeCharCodeAt/0
+}
+
+function f3 name="layoutOfTheProgramHasTheNameToo" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="trimStart"
+    v2 = Call v1, v0 calleeKey="trimStart"
+    Return v2
+# CHECK-NEXT: b0(v0: anything ~ string|L0):
+# CHECK-NEXT: = TypeTest v0 testedType=string|L0
+# CHECK: = TypeTest {{*}} testedType=string
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet {{*}} key="trimStart"
+# CHECK: ([[text3]]: string):
+# CHECK-NEXT: = PropGet [[text3]] key="trimStart"
+# CHECK: ([[impostor3]]: L0):
+# CHECK-NEXT: = PropGet [[impostor3]] key="trimStart" receivers=[L0]
+}
+
+function f4 name="readAndNotCalled" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="charCodeAt"
+    Return v1
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: anything = PropGet v0 key="charCodeAt"
+# CHECK-NEXT: Return v1
+}
+
+function f5 name="everyObjectHasTheMethod" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="toString"
+    v2 = Call v1, v0 calleeKey="toString"
+    Return v2
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: anything = PropGet v0 key="toString"
+}
+
+function f6 name="methodOfArrays" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+# CHECK-NEXT: b0(v0: anything ~ Array, v1: number):
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK: = CallBuiltin {{*}} overload=ArrayPrototypePush/0
+# CHECK: = PropGet v0 key="push"
+# CHECK: = IsPristine {{*}} builtinClass=Array aspects=[Names]
+# CHECK: frequency=Unlikely:
+}
+
+function f7 name="methodOfNumbers" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=2
+    v2 = PropGet v0 key="toFixed"
+    v3 = Call v2, v0, v1 calleeKey="toFixed"
+    Return v3
+# CHECK-NEXT: b0(v0: anything ~ number):
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: string = CallBuiltin {{*}} overload=NumberPrototypeToFixed/0
+}
+
+function f8 name="twoClassesHaveTheMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="concat"
+    v3 = Call v2, v0, v1 calleeKey="concat"
+    Return v3
+# CHECK-NEXT: b0(v0: anything ~ string|Array, v1: anything):
+# CHECK-NEXT: = TypeTest v0 testedType=string|Array
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet {{*}} key="concat"
+# CHECK: string = CallBuiltin {{*}} overload=StringPrototypeConcat/0
+# CHECK: ([[array8]]: Array):
+# CHECK-NEXT: = PropGet [[array8]] key="concat"
+}
+
+function f9 name="namesOfTwoClasses" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = PropGet v0 key="charCodeAt"
+    v3 = Call v2, v0, v1 calleeKey="charCodeAt"
+    v4 = PropGet v0 key="push"
+    v5 = Call v4, v0, v3 calleeKey="push"
+    Return v5
+# CHECK-NEXT: b0(v0: anything ~ string, v1: number):
+# CHECK: = CallBuiltin {{*}} overload=StringPrototypeCharCodeAt/0
+}
+
+function f10 name="makesImpostor" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+
+function f11 name="expectedToBeOfAClassWithoutATest" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    v3: anything ~ DataView|TypedArray|Uint8Array = Call v0, v2
+    v4 = PropGet v3 key="subarray"
+    v5 = Call v4, v3, v1 calleeKey="subarray"
+    Return v5
+# CHECK-NOT: TypeTest
+# CHECK: = PropGet v3 key="subarray"
+}
+
+function f12 name="expectedAlreadyToBeOfTwoKinds" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    v3: anything ~ string|Array<number> = Call v0, v2
+    v4 = PropGet v3 key="concat"
+    v5 = Call v4, v3, v1 calleeKey="concat"
+    Return v5
+# CHECK: v3: anything ~ string|Array<number> = Call v0, v2
+# CHECK: = TypeTest v3 testedType=string|Array<number>
+# CHECK: string = CallBuiltin {{*}} overload=StringPrototypeConcat/0
+}
+
+function f13 name="whatIsExpectedAlreadyIsNarrowedAndNotReplaced" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    v3: anything ~ number|Array<number> = Call v0, v2
+    v4 = PropGet v3 key="concat"
+    v5 = Call v4, v3, v1 calleeKey="concat"
+    Return v5
+# CHECK: v3: anything ~ Array<number> = Call v0, v2
+}
+
+function f14 name="whatIsExpectedAlreadyGoesWhereNoReceiverOfTheMethodIsInIt" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    v3: anything ~ number = Call v0, v2
+    v4 = PropGet v3 key="charCodeAt"
+    v5 = Call v4, v3, v1 calleeKey="charCodeAt"
+    Return v5
+# CHECK: v3: anything ~ string = Call v0, v2
+# CHECK: = TypeTest v3 testedType=string
+}
+
+function f15 name="seldomEntered" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = Undefined
+    v4: anything ~ string|Array<number> = Call v0, v3
+    v5 = PropGet v4 key="concat"
+    v6 = Call v5, v4, v1 calleeKey="concat"
+    Return v6
+  b2():
+    Return v1
+# CHECK-NOT: TypeTest v4 testedType=string|Array
+}
+
+function f16 name="calleesListedByFlow" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="charCodeAt"
+    v3 = Call v2, v0, v1 calleeKey="charCodeAt" callees=[f10]
+    Return v3
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NOT: TypeTest
+# CHECK: = Call v2, v0, v1 calleeKey="charCodeAt" callees=[f10]
+}

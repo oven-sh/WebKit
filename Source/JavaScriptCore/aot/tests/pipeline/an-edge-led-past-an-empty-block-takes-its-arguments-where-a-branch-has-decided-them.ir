@@ -1,0 +1,35 @@
+# SimplifyControlFlow leads edges past a block that is empty once dead code is gone. The arguments of the block's jump then stand on those edges.
+# One of them comes from a block that only the failed side of a branch on the argument leads to, so PropagateBranchConditions has something to do there:
+# a run of SimplifyControlFlow that has moved arguments does not say that it leaves that pass idle
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pipeline RemoveUnreadFields
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+
+function f1 name="eitherTest" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = ToBoolean v0
+    Branch v4 -> taken b2(), notTaken b1()
+  b1():
+    v5 = ToBoolean v1
+    Branch v5 -> taken b4(), notTaken b2()
+  b2():
+    v6 = Integer integer=4
+    Jump -> next b3(v4)
+  b3(v7):
+    Return v7
+  b4():
+    v8 = Call v3, -, v1
+    Jump -> next b3(v8)
+}
+# CHECK: function f1 name="eitherTest"
