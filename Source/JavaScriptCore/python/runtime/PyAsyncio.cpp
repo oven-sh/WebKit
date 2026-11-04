@@ -412,7 +412,10 @@ static JSValue loopOfHost(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, { });
     if (!loop)
         return { };
-    RELEASE_AND_RETURN(scope, call(globalObject, loop));
+    JSValue result = call(globalObject, loop);
+    RETURN_IF_EXCEPTION(scope, { });
+    // None: it is being made.
+    return result.isUndefinedOrNull() ? JSValue() : result;
 }
 
 static JSValue getEventLoop(JSGlobalObject* globalObject, PyRecord* state)
