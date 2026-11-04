@@ -21,6 +21,12 @@ inline PyType* typeOf(JSGlobalObject* globalObject, JSValue value) { return runt
 // ---- Attributes ----
 
 JSValue getAttr(JSGlobalObject*, JSValue object, JSString* name);
+// The same for op_py_get_attr, which calls the getter of a property itself if that is a function written in Python. Then nothing is
+// returned, nothing is raised, and `getter` is that function.
+class PyFunction;
+JSValue getAttrForInstruction(JSGlobalObject*, JSValue object, JSString* name, PyFunction*& getter);
+// What getAttr() does for an AttributeError that comes out of the lookup without saying which attribute it was.
+void completeAttributeError(JSGlobalObject*, JSValue thrown, JSValue object, JSString* name);
 // Empty, with no exception, if there is no such attribute.
 JSValue getAttrIfPresent(JSGlobalObject*, JSValue object, JSString* name);
 void setAttr(JSGlobalObject*, JSValue object, JSString* name, JSValue value);
@@ -29,7 +35,7 @@ bool hasAttr(JSGlobalObject*, JSValue object, JSString* name);
 
 // object.__getattribute__, object.__setattr__ (an empty value deletes).
 // With `suppress`, a missing attribute is an empty value and no exception.
-JSValue genericGetAttr(JSGlobalObject*, JSValue object, JSString* name, bool suppress = false);
+JSValue genericGetAttr(JSGlobalObject*, JSValue object, JSString* name, bool suppress = false, PyFunction** getterForCaller = nullptr);
 // `key`: what goes in the __dict__, if that is not the name: an instance of a class derived from str.
 void genericSetAttr(JSGlobalObject*, JSValue object, JSString* name, JSValue value, JSValue key = { });
 
@@ -200,7 +206,6 @@ bool isTrue(JSGlobalObject*, JSValue);
 // Operators, for the interpreter, which calls the methods that are written in Python itself: begin...() returns the result (empty: an
 // exception), or nothing, and says which function is to be called, with the operands. What that returns is the result, unless it
 // is NotImplemented: then continue...(), given `progress`, says how it goes on.
-class PyFunction;
 struct MethodToCall {
     // Where the caller will read the operands again. Those may be variables, and a method that C++ has called in the meantime can
     // have given them other values (frame.f_locals): then C++ calls the rest as well.

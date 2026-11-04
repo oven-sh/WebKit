@@ -20,7 +20,7 @@ enum class UnboundKind : uint8_t {
     Free, // NameError: cannot access free variable 'x' where it is not associated with a value in enclosing scope
 };
 
-// An instruction that comes to call a function written in Python (__add__, __getitem__) makes the frame and calls it itself, so that no
+// An instruction that comes to call a function written in Python (__add__, __getitem__, the getter of a property) makes the frame and calls it itself, so that no
 // frame of C++ is on the stack meanwhile. The frame goes below the registers of the caller: the stack grows for the call and shrinks
 // after it, as for the getters that JSC's inline caches call (InlineCacheCompiler.cpp, "we temporarily grow the stack"). Only the
 // interpreter makes such a frame (LowLevelInterpreter64.asm, "Calls that instructions make").
@@ -60,6 +60,14 @@ enum : unsigned {
     IsReflected = OperatorProgress::IsReflected,
 };
 }
+// The instruction that calls the getter of a property keeps the object behind the argument: an AttributeError out of the getter is told
+// which object it was.
+namespace RegisterOfGetter {
+enum : unsigned {
+    Object = 1,
+    End,
+};
+}
 // Those instructions, with the number of registers of the frame from the first argument on.
 #define FOR_EACH_PYTHON_OPCODE_THAT_CALLS_METHODS(macro) \
     macro(op_py_binary, RegisterOfOperator::End) \
@@ -87,6 +95,7 @@ enum : unsigned {
     macro(op_py_jnle, RegisterOfOperator::End) \
     macro(op_py_jngt, RegisterOfOperator::End) \
     macro(op_py_jnge, RegisterOfOperator::End) \
+    macro(op_py_get_attr, RegisterOfGetter::End) \
     macro(op_py_get_item, 2)
 
 // op_py_binary. In the order of ast.operator; the in-place forms follow.

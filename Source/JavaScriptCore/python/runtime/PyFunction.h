@@ -205,8 +205,10 @@ PyCode* codeOf(JSGlobalObject*, PyFunction*, FunctionExecutable*);
 // Puts the arguments of a call in the parameters of the function that is starting in the frame. False: an exception.
 bool bindArguments(JSGlobalObject*, CallFrame*, PyFunction*);
 
-// Whether the instruction of an operator can call it by itself, with the operands (pyOperatorSlowPath in LowLevelInterpreter64.asm).
-// Not before it has been called once, in the way that makes its code.
+// Whether an instruction can call it by itself, in a frame with room for so many parameters ("Calls that instructions make" in
+// LowLevelInterpreter64.asm). Not before it has been called once, in the way that makes its code.
+bool canBeCalledByInstruction(PyFunction*, unsigned maxParameterCount);
+// With the operands of an operator.
 bool canBeCalledByOperator(PyFunction*);
 
 } // namespace Python

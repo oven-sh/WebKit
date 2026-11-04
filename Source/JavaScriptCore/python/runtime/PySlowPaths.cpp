@@ -381,8 +381,14 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_attr)
     auto bytecode = pc->as<OpPyGetAttr>();
     JSValue base = GET_C(bytecode.m_base).jsValue();
     JSString* name = asString(GET_C(bytecode.m_name).jsValue());
-    JSValue result = getAttr(globalObject, base, name);
+    PyFunction* getter = nullptr;
+    JSValue result = getAttrForInstruction(globalObject, base, name, getter);
     CHECK_EXCEPTION();
+    // See "Calls that instructions make" below. Nothing of the program's has run: the interpreter finds the object where it was.
+    if (getter) {
+        ASSERT(canBeCalledByInstruction(getter, 1) && GET_C(bytecode.m_base).jsValue() == base);
+        return encodeResult(getter, nullptr);
+    }
     rememberAttribute(globalObject, bytecode.metadata(codeBlock), base, name, false);
     RETURN(result);
 }
@@ -485,15 +491,21 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_set_item)
 // operator will have got in place of the frame. The interpreter makes the call, looks at what comes back, and if that does not settle
 // it asks a second slow path, which may come up with another function (pyOperatorSlowPath in LowLevelInterpreter64.asm).
 
-bool Python::canBeCalledByOperator(PyFunction* function)
+bool Python::canBeCalledByInstruction(PyFunction* function, unsigned maxParameterCount)
 {
 #if !ENABLE(C_LOOP) && !CPU(ARM64E)
     CodeBlock* codeBlock = function->functionExecutable()->codeBlockForCall();
-    return codeBlock && codeBlock->numParameters() <= 1 + 2 + parametersOperatorMethodMayHaveBeyondOperands;
+    return codeBlock && codeBlock->numParameters() <= 1 + maxParameterCount;
 #else
     UNUSED_PARAM(function);
+    UNUSED_PARAM(maxParameterCount);
     return false;
 #endif
+}
+
+bool Python::canBeCalledByOperator(PyFunction* function)
+{
+    return canBeCalledByInstruction(function, 2 + parametersOperatorMethodMayHaveBeyondOperands);
 }
 
 // The frame of the method that has returned, from the first argument on. It is still there for the second slow path, and for any other
@@ -506,6 +518,7 @@ static ALWAYS_INLINE Register* registersOfOperator(CallFrame* callFrame, CodeBlo
 
 // As pyGiveUpFrameOfOperator: all that is left for the interpreter to do is to move the stack pointer.
 static_assert(sizeOfFrameMadeByInstruction(RegisterOfOperator::End) - CallerFrameAndPC::sizeInRegisters == 12 && sizeOfFrameMadeByInstruction(2) - CallerFrameAndPC::sizeInRegisters == 6, "pyGiveUpFrame...");
+static_assert(sizeOfFrameMadeByInstruction(RegisterOfGetter::End) == sizeOfFrameMadeByInstruction(2), "pyGiveUpFrameWithTwoRegisters");
 static ALWAYS_INLINE void clearFrameOfOperator(CallFrame* callFrame, CodeBlock* codeBlock)
 {
     Register* end = endOfFrameMadeByInstruction(callFrame, codeBlock);

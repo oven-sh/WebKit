@@ -268,7 +268,7 @@ static NEVER_INLINE JSValue raiseNoAttribute(JSGlobalObject* globalObject, Throw
     return raiseAttributeError(globalObject, scope, object, name, makeString('\'', typeName(globalObject, object), "' object has no attribute '"_s, stringOf(name), '\''));
 }
 
-JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress)
+JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress, PyFunction** getterForCaller)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(rt.vm());
@@ -298,8 +298,15 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
                 }
                 // As property.__get__(). (A class derived from property may have its own.)
                 if (info == PyProperty::info() && uncheckedDowncast<PyProperty>(cell)->type() == rt.propertyType()) {
-                    if (JSValue function = uncheckedDowncast<PyProperty>(cell)->getter.get(); !isNone(function))
+                    if (JSValue function = uncheckedDowncast<PyProperty>(cell)->getter.get(); !isNone(function)) {
+                        if (getterForCaller) {
+                            if (PyFunction* getter = PyFunction::tryFrom(function); getter && canBeCalledByInstruction(getter, 1)) {
+                                *getterForCaller = getter;
+                                return { };
+                            }
+                        }
                         RELEASE_AND_RETURN(scope, call(globalObject, function, object));
+                    }
                 }
             }
             PyType* descriptorType = uncheckedDowncast<PyObject>(cell)->type();
@@ -457,23 +464,25 @@ static ALWAYS_INLINE bool isNative(JSValue method, NativeDef::F3 function)
 
 // An AttributeError that comes out of the lookup of an attribute without saying which (`raise AttributeError` in a __getattr__ or
 // a property) is told, as in CPython: what may have been meant instead is worked out from that.
-static NEVER_INLINE void completeAttributeError(JSGlobalObject* globalObject, JSValue object, JSString* name)
+void completeAttributeError(JSGlobalObject* globalObject, JSValue thrown, JSValue object, JSString* name)
 {
     Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    Exception* thrown = vm.exceptionForInspection();
-    if (!thrown)
-        return;
-    PyException* exception = exceptionOfThrownValueIfKnown(globalObject, thrown->value());
+    PyException* exception = exceptionOfThrownValueIfKnown(globalObject, thrown);
     if (!exception || !exception->type()->isSubtypeOf(rt.AttributeError()))
         return;
     if (exception->field(ExceptionField::attributeErrorName) || exception->field(ExceptionField::attributeErrorObj))
         return;
-    exception->setField(vm, ExceptionField::attributeErrorName, name);
-    exception->setField(vm, ExceptionField::attributeErrorObj, object);
+    exception->setField(rt.vm(), ExceptionField::attributeErrorName, name);
+    exception->setField(rt.vm(), ExceptionField::attributeErrorObj, object);
 }
 
-static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress)
+static NEVER_INLINE void completeAttributeError(JSGlobalObject* globalObject, JSValue object, JSString* name)
+{
+    if (Exception* thrown = getVM(globalObject).exceptionForInspection())
+        completeAttributeError(globalObject, thrown->value(), object, name);
+}
+
+static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress, PyFunction** getterForCaller = nullptr)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -486,7 +495,7 @@ static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSStrin
 
     JSValue result;
     if (isNative(getAttribute, objectGetAttribute)) [[likely]]
-        result = genericGetAttr(globalObject, object, name, suppress || fallback);
+        result = genericGetAttr(globalObject, object, name, suppress || fallback, fallback ? nullptr : getterForCaller); // If the getter raises AttributeError, __getattr__ is asked.
     else if (isNative(getAttribute, typeGetAttribute) && PyType::is(object))
         result = typeGetAttr(globalObject, PyType::from(object), name, suppress || fallback);
     else if (isNative(getAttribute, moduleGetAttribute) && PyModule::is(object))
@@ -496,6 +505,9 @@ static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSStrin
     EXCEPTION_ASSERT(!scope.exception() || !result);
     if (result) [[likely]]
         return result;
+
+    if (getterForCaller && *getterForCaller)
+        return { };
 
     if (scope.exception()) {
         if (!suppress && !fallback) {
@@ -522,6 +534,13 @@ JSValue getAttr(JSGlobalObject* globalObject, JSValue object, JSString* name)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     RELEASE_AND_RETURN(scope, getAttrImpl(globalObject, object, name, false));
+}
+
+JSValue getAttrForInstruction(JSGlobalObject* globalObject, JSValue object, JSString* name, PyFunction*& getter)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, getAttrImpl(globalObject, object, name, false, &getter));
 }
 
 JSValue getAttrIfPresent(JSGlobalObject* globalObject, JSValue object, JSString* name)

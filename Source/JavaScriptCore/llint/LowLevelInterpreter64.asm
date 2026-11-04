@@ -2824,7 +2824,7 @@ end
 # the call and the prologue of the callee push, and up again when the instruction has no more use for it. Every word of that is written
 # when the frame is made, and zeroed before it is given up: that part of the stack will be the frames of others, which do not write
 # all of their words. (If an exception comes out of the callee: clearFrameMadeByInstruction() in PyFrame.cpp.)
-const PyRoomForFrameWithTwoArguments = (constexpr (Python::sizeOfFrameMadeByInstruction(2))) * 8 - CallerFrameAndPCSize
+const PyRoomForFrameWithTwoRegisters = (constexpr (Python::sizeOfFrameMadeByInstruction(2))) * 8 - CallerFrameAndPCSize
 const PyRoomForFrameOfOperator = (constexpr (Python::sizeOfFrameMadeByInstruction(Python::RegisterOfOperator::End))) * 8 - CallerFrameAndPCSize
 const PyFirstArgumentOfCallee = FirstArgumentOffset - CallerFrameAndPCSize
 
@@ -2885,8 +2885,8 @@ macro pyGiveUpFrame(room, clear)
 end
 
 # So many bytes: see the static_assert in PySlowPaths.cpp.
-macro pyGiveUpFrameWithTwoArguments()
-    pyGiveUpFrame(PyRoomForFrameWithTwoArguments, macro (clear16Bytes)
+macro pyGiveUpFrameWithTwoRegisters()
+    pyGiveUpFrame(PyRoomForFrameWithTwoRegisters, macro (clear16Bytes)
         clear16Bytes(0)
         clear16Bytes(16)
         clear16Bytes(32)
@@ -3332,8 +3332,23 @@ llintOpWithMetadata(op_py_get_attr, OpPyGetAttr, macro (size, get, dispatch, met
     return(t0)
 
 .slow:
-    callSlowPath(_slow_path_py_get_attr)
+    pyCallSlowPathThatLeavesCalls(_slow_path_py_get_attr, .callGetter)
     dispatch()
+
+# Of a property.
+.callGetter:
+    move r0, t2
+    loadPC()
+    get(m_base, t1)
+    loadConstantOrVariable(size, t1, t3)
+    pyLoadCodeBlockOfCallee()
+    subp PyRoomForFrameWithTwoRegisters, sp
+    pyStoreHeaderOfCallee(1)
+    storeq t3, PyFirstArgumentOfCallee[sp]
+    storeq t3, PyFirstArgumentOfCallee + (constexpr Python::RegisterOfGetter::Object) * 8[sp]
+    pyCallFrame()
+    pyGiveUpFrameWithTwoRegisters()
+    return(r0)
 end)
 
 
@@ -4053,12 +4068,12 @@ llintOpWithReturn(op_py_get_item, OpPyGetItem, macro (size, get, dispatch, retur
     loadConstantOrVariable(size, t1, t0)
     pyLoadCodeBlockOfCallee()
     pyCheckCodeBlockOfCallee(2, .generic)
-    subp PyRoomForFrameWithTwoArguments, sp
+    subp PyRoomForFrameWithTwoRegisters, sp
     pyStoreHeaderOfCallee(2)
     storeq t3, PyFirstArgumentOfCallee[sp]
     storeq t0, PyFirstArgumentOfCallee + 8[sp]
     pyCallFrame()
-    pyGiveUpFrameWithTwoArguments()
+    pyGiveUpFrameWithTwoRegisters()
     return(r0)
 
 .generic:

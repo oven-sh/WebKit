@@ -109,10 +109,11 @@ Register* endOfFrameMadeByInstruction(CallFrame* callFrame, CodeBlock* codeBlock
 }
 
 // If an exception has come out of what the instruction called: it would have emptied the frame it made for that before giving it up.
-static void clearFrameMadeByInstruction(CallFrame* callFrame, CodeBlock* codeBlock, BytecodeIndex index, CallFrame* frameBefore)
+static void clearFrameMadeByInstruction(CallFrame* callFrame, CodeBlock* codeBlock, BytecodeIndex index, CallFrame* frameBefore, JSValue thrown)
 {
     unsigned registerCount;
-    switch (codeBlock->instructions().at(index)->opcodeID()) {
+    const JSInstruction* instruction = codeBlock->instructions().at(index).ptr();
+    switch (instruction->opcodeID()) {
 #define CASE(opcode, count) \
     case opcode: \
         registerCount = count; \
@@ -129,6 +130,9 @@ static void clearFrameMadeByInstruction(CallFrame* callFrame, CodeBlock* codeBlo
     if (frameBefore->registers() != frame)
         return;
     ASSERT(frameBefore->callerFrame() == callFrame);
+    // No getAttr() is on the way of what the getter raises.
+    if (instruction->opcodeID() == op_py_get_attr)
+        completeAttributeError(codeBlock->globalObject(), thrown, frame[static_cast<int>(CallFrameSlot::firstArgument) + RegisterOfGetter::Object].jsValue(), asString(callFrame->r(instruction->as<OpPyGetAttr>().m_name).jsValue()));
     // All but the head: if the exception was thrown in that frame, the machine code that goes on to the handler asks its callee for the VM.
     for (Register* slot = frame + static_cast<int>(CallFrameSlot::firstArgument); slot < end; ++slot)
         *slot = JSValue();
@@ -1715,7 +1719,7 @@ JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, 
     CodeBlock* codeBlock = callFrame->codeBlock();
     if (!isPastStart(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset()))
         return exceptionValue;
-    clearFrameMadeByInstruction(callFrame, codeBlock, index, frameBefore);
+    clearFrameMadeByInstruction(callFrame, codeBlock, index, frameBefore, exceptionValue);
     if (!isRaisedAgain) {
         DeferGC deferGC(vm);
         auto makeEntry = [&](JSValue next) -> JSValue {

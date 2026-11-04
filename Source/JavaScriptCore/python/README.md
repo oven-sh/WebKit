@@ -136,9 +136,9 @@ finds is a C++ function of its own that takes just the operands (`PyType::isNati
 that function. These are the slots of CPython's types, found out on first use and forgotten when the type changes. What calling a
 built-in type comes to is remembered in the same way (`PyType::Construction`).
 
-**Methods written in Python that the language itself calls** (`__add__`, `__lt__`, `__getitem__`) are called by the instruction,
-not by C++: an entry into the interpreter from C++ costs more than the call, and the frames of C++ would lie on the stack for as
-long as the method runs. The frame of the callee goes below the registers of the caller: the stack grows for the call and shrinks
+**Methods written in Python that the language itself calls** (`__add__`, `__lt__`, `__getitem__`, the getter of a property) are
+called by the instruction, not by C++: an entry into the interpreter from C++ costs more than the call, and the frames of C++ would
+lie on the stack for as long as the method runs. The frame of the callee goes below the registers of the caller: the stack grows for the call and shrinks
 after it, as for the getters that JSC's inline caches call (`InlineCacheCompiler.cpp`), so it costs code that never comes to such a
 call nothing: no operand, no register. Only the interpreter makes such a frame, and only when it makes the call
 (`LowLevelInterpreter64.asm`, "Calls that instructions make"; `PyBytecode.h` has the layout and the list of the instructions). A
@@ -159,6 +159,11 @@ function is called in this way once it has been called in the ordinary way, whic
   or the class of an operand. A comparison fused with a jump jumps on `True` and `False` by itself and leaves other results to a
   third slow path (`..._finish`). Between the arguments and those registers is room for two more parameters
   (`def __add__(self, other, context=None)`); a method with more is called by C++.
+- _The getter of a property_ is found by the slow path of `op_py_get_attr` in the ordinary lookup (`genericGetAttr()` knows a
+  `property`), and returned to the interpreter in the same way. No cache. Not for a class with a `__getattr__`, which is asked when
+  the getter raises `AttributeError`: then C++ makes the call. No `getAttr()` is on the way of what the getter raises, so it is the
+  unwinder that tells an `AttributeError` which attribute it was, if it does not say. The object is kept in the frame, behind the
+  argument (`RegisterOfGetter`).
 - _Nothing is left behind._ Where the frame was, the frames of others will be, and C++ does not write every word of its own: what
   shows through is a reference as far as the collector can tell. So every word of the frame is written when it is made and zeroed
   before it is given up: by the interpreter, by a slow path that finds the frame there and settles the matter, or, if an exception
