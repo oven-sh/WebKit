@@ -430,8 +430,7 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
             raise(globalObject, scope, rt.AttributeError(), makeString('\'', type->nameInMessages(), "' object attribute '"_s, text, "' is read-only"_s));
         else {
             // The hint is for classes that leave setting attributes to object.
-            auto* setter = PyNativeFunction::tryFrom(type->lookup(Special::SetAttr));
-            bool isGeneric = setter && setter->def().pointer.f3 == objectSetAttr;
+            bool isGeneric = isNative(type->lookup(Special::SetAttr), objectSetAttr);
             raiseAttributeError(globalObject, scope, object, name, makeString('\'', type->nameInMessages(), "' object has no attribute '"_s, text, '\'', isGeneric ? " and no __dict__ for setting new attributes"_s : ""_s));
         }
         return;
@@ -451,18 +450,6 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
     }
     if (!removed)
         raiseNoAttribute(globalObject, scope, object, name);
-}
-
-static ALWAYS_INLINE bool isNative(JSValue method, NativeDef::F2 function)
-{
-    auto* native = PyNativeFunction::tryFrom(method);
-    return native && native->def().pointer.f2 == function;
-}
-
-static ALWAYS_INLINE bool isNative(JSValue method, NativeDef::F3 function)
-{
-    auto* native = PyNativeFunction::tryFrom(method);
-    return native && native->def().pointer.f3 == function;
 }
 
 // An AttributeError that comes out of the lookup of an attribute without saying which (`raise AttributeError` in a __getattr__ or

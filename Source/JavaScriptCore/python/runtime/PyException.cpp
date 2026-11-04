@@ -1381,11 +1381,8 @@ static JSValue jsErrorGetAttr(JSGlobalObject* globalObject, JSValue object, JSVa
 // That is for Python. JS has what was thrown itself, error.value, and is shown the exception as any other: its class, its message.
 JSValue attributeOfExceptionForJS(JSGlobalObject* globalObject, PyException* exception, JSString* name)
 {
-    auto isNative = [&](Special special, NativeDef::F2 function) {
-        auto* native = PyNativeFunction::tryFrom(exception->type()->lookup(special));
-        return native && native->def().pointer.f2 == function;
-    };
-    if (isNative(Special::GetAttr, jsErrorGetAttr) && isNative(Special::GetAttribute, objectGetAttribute))
+    PyType* type = exception->type();
+    if (isNative(type->lookup(Special::GetAttr), jsErrorGetAttr) && isNative(type->lookup(Special::GetAttribute), objectGetAttribute))
         return genericGetAttr(globalObject, exception, name, true);
     return getAttrIfPresent(globalObject, exception, name);
 }

@@ -417,6 +417,19 @@ private:
     WriteBarrier<Unknown> m_owner;
 };
 
+// Whether what a class has under a name is this function of C++.
+ALWAYS_INLINE bool isNative(JSValue method, NativeDef::F2 function)
+{
+    auto* native = PyNativeFunction::tryFrom(method);
+    return native && native->def().pointer.f2 == function;
+}
+
+ALWAYS_INLINE bool isNative(JSValue method, NativeDef::F3 function)
+{
+    auto* native = PyNativeFunction::tryFrom(method);
+    return native && native->def().pointer.f3 == function;
+}
+
 // Calls the C++ function, having matched the arguments with its signature. `self` is ignored if the signature has none.
 JSValue invokeNative(JSGlobalObject*, const NativeDef&, JSValue self, const CallArgs&);
 

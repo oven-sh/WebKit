@@ -417,18 +417,39 @@ static JSValue keysAsList(JSGlobalObject* globalObject, PyDict* dict)
     return result;
 }
 
+static JSValue instanceGetDict(JSGlobalObject*, JSValue self);
+
+// Whether instance.__dict__ would move the attributes to a dict now (PyInstance::ensureDict()), after which no instruction remembers
+// where they are. Who only reads them has forEachAttribute().
+static bool dictWouldBeMadeOfAttributes(Runtime& rt, PyInstance* instance)
+{
+    PyType* type = instance->type();
+    if (instance->dict() || !isNative(type->lookup(Special::GetAttribute), objectGetAttribute))
+        return false;
+    auto* descriptor = PyGetSetDescriptor::tryFrom(type->lookup(rt.names.dDict()));
+    return descriptor && descriptor->def().getter == instanceGetDict;
+}
+
 static JSValue objectDir(JSGlobalObject* globalObject, JSValue self)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyDict* names;
-    JSValue dict = getAttrIfPresent(globalObject, self, rt.names.dDict());
-    RETURN_IF_EXCEPTION(scope, { });
-    if (PyDict* own = PyDict::tryFrom(dict))
-        names = own->copy(globalObject);
-    else
+    if (auto* instance = PyInstance::tryFrom(self); instance && dictWouldBeMadeOfAttributes(rt, instance)) {
         names = PyDict::create(globalObject);
+        instance->forEachAttribute(globalObject, [&](JSString* name, JSValue value) {
+            names->set(vm, name, value);
+            return true;
+        });
+    } else {
+        JSValue dict = getAttrIfPresent(globalObject, self, rt.names.dDict());
+        RETURN_IF_EXCEPTION(scope, { });
+        if (PyDict* own = PyDict::tryFrom(dict))
+            names = own->copy(globalObject);
+        else
+            names = PyDict::create(globalObject);
+    }
     JSValue cls = getAttrIfPresent(globalObject, self, rt.names.dClass());
     RETURN_IF_EXCEPTION(scope, { });
     if (cls) {

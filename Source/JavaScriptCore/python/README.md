@@ -119,7 +119,9 @@ unpacking, cells, the binding of arguments when they are simply the parameters, 
 - _Attributes_ (`AttributeCache` in `runtime/PyAbstract.h`). The attributes of an instance are properties, so its Structure tells which it
   has and where. A type has a number too, new whenever it or one of its bases changes (`PyType::version`). An instruction
   remembers Structure, version and offset, or the value found in the class, or the method to call. `obj.__dict__` moves the
-  attributes into a real dict, for good, and gives the object a Structure that says so.
+  attributes into a real dict, for good, and gives the object a Structure that says so: of such an object nothing is remembered that
+  depends on what it holds itself, so neither its attributes nor the methods of its class. What only reads the attributes
+  therefore does not ask for the dict (`dir()`, `PyInstance::forEachAttribute`).
   What is found in the class may also be a `staticmethod` or a `classmethod` (what it wraps is read each time, since `__init__` can
   replace it), the field of a named tuple, or a property (below). The object may be a class itself: then its own number is checked, and that of its class.
   The numbers are finite, so a type takes one only when something is to be remembered about it, and at most 1000, as in CPython:
