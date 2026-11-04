@@ -39,8 +39,8 @@ static ALWAYS_INLINE bool isSequenceOperation(JSValue method)
     return native && (native->def().flags & SequenceOperation);
 }
 
-// For an operator in JS code, only the classes of objects of Python have a say: "%s" % x is not a format there.
-enum class OperatorOf : bool { Python, JS };
+// JSConcatenation: `+` in code of JS with a string on one side. Only the class of the other operand, an object of Python's, has a say.
+enum class OperatorOf : bool { Python, JSConcatenation };
 
 // The result, or NotImplemented.
 static JSValue numberOperation(JSGlobalObject* globalObject, Special method, Special reflected, JSValue a, JSValue b, OperatorOf language = OperatorOf::Python)
@@ -53,12 +53,12 @@ static JSValue numberOperation(JSGlobalObject* globalObject, Special method, Spe
     PyType* typeA = rt.typeOf(a);
     PyType* typeB = rt.typeOf(b);
     JSValue left = typeA->lookup(method);
-    if (left && (isSequenceOperation(left) || (language == OperatorOf::JS && !isPyObject(a))))
+    if (left && (isSequenceOperation(left) || (language == OperatorOf::JSConcatenation && !isPyObject(a))))
         left = JSValue();
     JSValue right;
     if (typeB != typeA) {
         right = typeB->lookup(reflected);
-        if (right && (isSequenceOperation(right) || (language == OperatorOf::JS && !isPyObject(b))))
+        if (right && (isSequenceOperation(right) || (language == OperatorOf::JSConcatenation && !isPyObject(b))))
             right = JSValue();
     }
 
@@ -161,11 +161,16 @@ JSValue binaryOperatorForJS(JSGlobalObject* globalObject, JSOperator op, JSValue
     ASSERT(static_cast<unsigned>(op) < std::size(operators));
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result = binaryOperationOrNotImplemented(globalObject, static_cast<unsigned>(operators[static_cast<unsigned>(op)]), a, b, false, OperatorOf::JS);
+    unsigned index = static_cast<unsigned>(operators[static_cast<unsigned>(op)]);
+    // "total: " + x is what it is everywhere in JS, unless the class of x has an idea of its own.
+    bool concatenates = op == JSOperator::Add && (a.isString() || b.isString());
+    JSValue result = binaryOperationOrNotImplemented(globalObject, index, a, b, false, concatenates ? OperatorOf::JSConcatenation : OperatorOf::Python);
     RETURN_IF_EXCEPTION(scope, { });
-    if (result == runtime(globalObject).notImplemented())
+    if (result != runtime(globalObject).notImplemented())
+        return valueForJS(result);
+    if (concatenates)
         return { };
-    return valueForJS(result);
+    RELEASE_AND_RETURN(scope, raiseUnsupportedOperands(globalObject, binarySymbols[index], a, b));
 }
 
 JSValue unaryOperatorForJS(JSGlobalObject* globalObject, JSOperator op, JSValue operand)
@@ -173,10 +178,7 @@ JSValue unaryOperatorForJS(JSGlobalObject* globalObject, JSOperator op, JSValue 
     ASSERT(op == JSOperator::Negate || op == JSOperator::BitNot);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue method = typeOf(globalObject, operand)->lookup(op == JSOperator::Negate ? Special::Neg : Special::Invert);
-    if (!method)
-        return { };
-    JSValue result = callSpecial(globalObject, method, operand);
+    JSValue result = unaryOperation(globalObject, op == JSOperator::Negate ? UnaryOperator::Negative : UnaryOperator::Invert, operand);
     RETURN_IF_EXCEPTION(scope, { });
     return valueForJS(result);
 }

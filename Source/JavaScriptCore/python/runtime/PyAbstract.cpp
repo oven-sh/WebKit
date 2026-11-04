@@ -1340,10 +1340,8 @@ std::optional<bool> compareForJS(JSGlobalObject* globalObject, JSOperator op, JS
     ASSERT(op >= JSOperator::Less);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result = richCompareOrNotImplemented(globalObject, a, b, operators[static_cast<unsigned>(op) - static_cast<unsigned>(JSOperator::Less)]);
+    JSValue result = richCompare(globalObject, a, b, operators[static_cast<unsigned>(op) - static_cast<unsigned>(JSOperator::Less)]);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
-    if (result == runtime(globalObject).notImplemented())
-        return std::nullopt;
     RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
 }
 

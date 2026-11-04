@@ -91,14 +91,15 @@ bool isCalledByPython(JSGlobalObject*, CallFrame*);
 JS_EXPORT_PRIVATE bool propertiesArePythons(JSObject*);
 
 // The operators of JS on objects of Python (mayOverloadOperators() in JSCJSValueInlines.h says which values those are):
-// a + b is what it is in Python if the class of one of them says what it is (__add__, __radd__). If neither does, the
-// operator does what it does to any other object in JS.
+// a + b is what it is in Python, whatever the other operand is: its type is asked as well ("%s" % x, [1] * n), and if neither has an
+// answer that is a TypeError. But for `+` with a string of JS: there only the class of the object of Python's is asked, and if
+// it has no answer the operator does what it does to any other object in JS, which is to concatenate.
 enum class JSOperator : uint8_t {
     Add, Sub, Mul, Div, Mod, Pow, LShift, RShift, BitOr, BitXor, BitAnd,
     Negate, BitNot,
     Less, LessEq, Greater, GreaterEq,
 };
-// Empty without an exception: not overloaded.
+// Empty without an exception: not overloaded (that `+`).
 JS_EXPORT_PRIVATE JSValue binaryOperatorForJS(JSGlobalObject*, JSOperator, JSValue left, JSValue right);
 JS_EXPORT_PRIVATE JSValue unaryOperatorForJS(JSGlobalObject*, JSOperator, JSValue);
 // JS has it that a comparison is true or false: that is the truth of whatever the method returns.
