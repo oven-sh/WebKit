@@ -177,7 +177,7 @@ function is called in this way once it has been called in the ordinary way, whic
 - _Nothing is left behind._ Where the frame was, the frames of others will be, and C++ does not write every word of its own: what
   shows through is a reference as far as the collector can tell. So every word of the frame is written when it is made and zeroed
   before it is given up: by the interpreter, by a slow path that finds the frame there and settles the matter, or, if an exception
-  comes out of the callee, by the unwinder, which says which frame the exception has just left (`clearFrameMadeByInstruction()`:
+  comes out of the callee, by the unwinder, which says which frame of code the exception left last (`clearFrameMadeByInstruction()`:
   all but the function and its code block, which the machine code still reads, and which stay until the next call from there).
 - _While the method runs_ the caller holds the operands, as any instruction does that has not finished, but not what was in the
   register for the result (`liveLocalsOfFrame()`).

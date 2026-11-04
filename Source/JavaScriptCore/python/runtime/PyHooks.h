@@ -32,7 +32,7 @@ void throwUnboundLocal(JSGlobalObject*, CodeBlock*, VirtualRegister);
 
 // An exception has been thrown in a frame of Python code, or has come up to it from what it called. Then, it is about to be
 // caught there, or to leave the frame. Whoever is told of that (sys.monitoring) may raise another in its place: these return what
-// is being thrown now. `frameBefore`: the frame that the exception has just left, or this one if it was thrown here.
+// is being thrown now. `frameBefore`: the frame with a code block that the exception left last, or the one it was thrown in.
 JSValue addTracebackEntry(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex, CallFrame* frameBefore);
 JSValue exceptionStaysOrLeaves(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex, bool isCaught);
 // The same for a call of a function of JS, where there is a Python to tell. (The frame may be that of a caller which the call has

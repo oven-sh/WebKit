@@ -1312,6 +1312,7 @@ public:
         , m_handler(handler)
         , m_seenRemoteFunction(seenRemoteFunction)
         , m_tellsPython(!vm.heap.pythonRuntimes().isEmpty())
+        , m_frameToldOfLast(callFrame)
         , m_thrownValue(thrownValue)
 #if ENABLE(WEBASSEMBLY)
         , m_exception(exception)
@@ -1392,8 +1393,9 @@ public:
 
     // What is done about a frame that has a code block where there is a Python to tell: the same, and the telling. True: it is caught here.
     template<typename Visitor>
-    NEVER_INLINE bool findHandlerAndTellPython(Visitor& visitor, bool reachesMachineFrame, CallFrame* frameBefore) const
+    NEVER_INLINE bool findHandlerAndTellPython(Visitor& visitor, bool reachesMachineFrame) const
     {
+        CallFrame* frameBefore = std::exchange(m_frameToldOfLast, m_callFrame);
         JSGlobalObject* globalObject = m_codeBlock->globalObject();
         bool isPython = m_codeBlock->unlinkedCodeBlock()->isPython();
         if (!m_isTermination) {
@@ -1441,7 +1443,6 @@ public:
             reachesMachineFrame = addTracebackEntriesForInlinedCalls(visitor);
 #endif
         visitor.unwindToMachineCodeBlockFrame();
-        CallFrame* frameBefore = m_callFrame;
         m_callFrame = visitor->callFrame();
 #if ENABLE(AOT)
         if constexpr (Visitor::visitsCompiledFrames) {
@@ -1454,7 +1455,7 @@ public:
         m_handler.m_valid = false;
         if (m_codeBlock) {
             if (m_tellsPython) [[unlikely]] {
-                if (findHandlerAndTellPython(visitor, reachesMachineFrame, frameBefore))
+                if (findHandlerAndTellPython(visitor, reachesMachineFrame))
                     return IterationStatus::Done;
             } else if (!m_isTermination) {
                 m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
@@ -1522,6 +1523,9 @@ private:
     JSRemoteFunction*& m_seenRemoteFunction;
     // There is a Python in this VM. (Without one there is no code of Python's either.) All that is done on its account is behind this.
     bool m_tellsPython;
+    // The frame with a code block that came before this one, or the one that the exception was thrown in. (That is not always gone
+    // through: not one for which there was no room on the stack.)
+    mutable CallFrame* m_frameToldOfLast;
     // See Python::addTracebackEntryForJS().
     mutable bool m_thrownValueHasNoTraceback { false };
     mutable JSValue m_thrownValue;
