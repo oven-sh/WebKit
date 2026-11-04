@@ -252,7 +252,8 @@ void DataOnlyCallLinkInfo::initialize(VM& vm, CodeBlock* owner, CallType callTyp
     m_codeOrigin = codeOrigin;
     m_callType = callType;
     m_mode = static_cast<unsigned>(Mode::Init);
-    m_isInPythonCode = owner->unlinkedCodeBlock()->isPython();
+    // Code compiled ahead of time has call sites without a CodeBlock.
+    m_isInPythonCode = owner && owner->unlinkedCodeBlock()->isPython();
     if (!Options::useLLIntICs() && !m_isInPythonCode) [[unlikely]]
         setVirtualCall(vm);
 }
