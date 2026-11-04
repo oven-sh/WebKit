@@ -255,14 +255,18 @@ void Runtime::initializeModules()
     RELEASE_AND_RETURN(scope, initializeSysModule(globalObject, sys));
 }
 
+// Without the lock, which is there for the collector: it reads the table from a thread of its own. Only a thread that is running
+// Python adds to it, and there is one of those at a time.
+PyType* Runtime::typeIfMadeFor(const TypeDef& def) const
+{
+    auto it = m_moduleTypes.find(&def);
+    return it != m_moduleTypes.end() ? it->value.get() : nullptr;
+}
+
 PyType* Runtime::typeFor(const TypeDef& def, PyType* base)
 {
-    {
-        Locker locker { m_moduleTypesLock };
-        auto it = m_moduleTypes.find(&def);
-        if (it != m_moduleTypes.end())
-            return it->value.get();
-    }
+    if (PyType* type = typeIfMadeFor(def)) [[likely]]
+        return type;
     PyType* type = PyType::createBare(m_vm, m_typeStructure.get());
     {
         // In the table first: filling the type may ask for it.
