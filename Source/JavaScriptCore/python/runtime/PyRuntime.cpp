@@ -415,10 +415,12 @@ static std::optional<unsigned> offsetInCodeOfFrame(CallFrame* callFrame, CodeBlo
         if (!codeBlock->canGetCodeOrigin(index))
             return std::nullopt;
         CodeOrigin origin = codeBlock->codeOrigin(index);
+        // What called in tail position may itself be a part of the code: then it is that part which has made way.
         while (InlineCallFrame* inlineCallFrame = origin.inlineCallFrame()) {
-            if (inlineCallFrame->isTail())
+            CodeOrigin* caller = inlineCallFrame->getCallerSkippingTailCalls();
+            if (!caller)
                 return std::nullopt;
-            origin = inlineCallFrame->directCaller;
+            origin = *caller;
         }
         return origin.bytecodeIndex().offset();
     }
