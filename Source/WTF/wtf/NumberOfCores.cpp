@@ -26,6 +26,7 @@
 #include "config.h"
 #include <wtf/NumberOfCores.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <wtf/text/ASCIILiteral.h>
@@ -48,6 +49,8 @@
 
 namespace WTF {
 
+static constexpr unsigned maxNumberOfProcessorCoresOverride = 1024;
+
 int numberOfProcessorCores()
 {
     const int defaultIfUnavailable = 1;
@@ -68,7 +71,10 @@ int numberOfProcessorCores()
 #endif
     if (!coresEnv.isNull()) {
         if (auto numberOfCores = parseInteger<unsigned>(coresEnv.span())) {
-            s_numberOfCores = *numberOfCores;
+            // The value sizes thread pools and is reported as navigator.hardwareConcurrency
+            // and os.availableParallelism(), so it must be at least 1. The cap keeps it in
+            // `int` range; it matches the UV_THREADPOOL_SIZE cap.
+            s_numberOfCores = static_cast<int>(std::clamp<unsigned>(*numberOfCores, 1, maxNumberOfProcessorCoresOverride));
             return s_numberOfCores;
         }
         SAFE_FPRINTF(stderr, "WARNING: failed to parse %s=%s\n", coresEnvName, coresEnv);
