@@ -1,0 +1,27 @@
+# main.js: const holder = { __proto__: Error.prototype, secret }; holder[0] = true; new Function(input)()
+# The text may have laid a setter at an index of Error.prototype. A store to that index on an object of the program below it enters the setter with the object.
+# RUN: valueflow-why escaped=f1
+# CHECK: escaped=f1
+# CHECK-NEXT: n0 escaped
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="secret" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ErrorPrototype
+    v1 = NewClosure function=f1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    SetLiteralPrototype v2, v0
+    v4 = Integer integer=0
+    v5 = Boolean boolean=true
+    ElemSet v2, v4, v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = Builtin builtin=Function
+    v10 = Construct v9, -, v8
+    v11 = Call v10
+    Return
+}
+function f1 name="secret" module=m0 results=[{type=anything}] {
+    Return
+}

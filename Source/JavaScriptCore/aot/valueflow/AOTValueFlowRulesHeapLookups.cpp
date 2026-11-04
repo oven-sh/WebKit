@@ -142,8 +142,14 @@ ValueSetID HeapRule::holdersOfUndeclaredPropertiesUnder(const HeapKey& key)
             return holders;
         return m_context.maker().unite(holders, m_context.maker().intersect(m_universe.builtinObjects(), ValueSets::complement(closedHolders)));
     };
-    if (key.keyClass == HeapKeyClass::Index)
-        return withWhatImagesBelowStoredOn(m_tables.holdersOfUndeclaredPropertiesUnderIndexes(), m_context.maker().unite(m_tables.lockedObjects(), m_tables.holdersWithLockedIndexes()));
+    if (key.keyClass == HeapKeyClass::Index) {
+        ValueSetID closedHolders = m_context.maker().unite(m_tables.lockedObjects(), m_tables.holdersWithLockedIndexes());
+        ValueSetID holders = m_tables.holdersOfUndeclaredPropertiesUnderIndexes();
+        // Unseen code comes to every object of the realm, and lays an accessor at an index of one that does not lock its indexes as it lays one under a name.
+        if (doesUnseenCodeRun())
+            holders = m_context.maker().unite(holders, m_context.maker().intersect(m_tables.objectsOfRealm(), ValueSets::complement(closedHolders)));
+        return withWhatImagesBelowStoredOn(holders, closedHolders);
+    }
     if (key.keyClass != HeapKeyClass::Name)
         return withWhatImagesBelowStoredOn(m_tables.holdersOfUndeclaredPropertiesUnderAnyKey(), m_tables.lockedObjects());
     if (m_nameOfHoldersOfUndeclaredProperties == key.name && m_holdersOfUndeclaredPropertiesUnderName)
