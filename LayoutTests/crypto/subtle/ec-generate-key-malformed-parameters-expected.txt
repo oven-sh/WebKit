@@ -8,7 +8,7 @@ PASS crypto.subtle.generateKey({name: "ecdh"}, extractable, ["deriveKey", "deriv
 PASS crypto.subtle.generateKey({name: "ecdh", namedCurve: true}, extractable, ["deriveKey", "deriveBits"]) rejected promise  with NotSupportedError: The algorithm is not supported.
 PASS crypto.subtle.generateKey({name: "ecdh", namedCurve: null}, extractable, ["deriveKey", "deriveBits"]) rejected promise  with NotSupportedError: The algorithm is not supported.
 PASS crypto.subtle.generateKey({name: "ecdh", namedCurve: undefined}, extractable, ["deriveKey", "deriveBits"]) rejected promise  with TypeError: Member EcKeyParams.namedCurve is required and must be an instance of DOMString.
-PASS crypto.subtle.generateKey({name: "ecdh", namedCurve: Symbol()}, extractable, ["deriveKey", "deriveBits"]) rejected promise  with TypeError: Cannot convert a symbol to a string.
+PASS crypto.subtle.generateKey({name: "ecdh", namedCurve: Symbol()}, extractable, ["deriveKey", "deriveBits"]) rejected promise  with TypeError: Cannot convert a Symbol value to a string.
 PASS crypto.subtle.generateKey({name: "ecdh", namedCurve: { }}, extractable, ["deriveKey", "deriveBits"]) rejected promise  with NotSupportedError: The algorithm is not supported.
 PASS crypto.subtle.generateKey({name: "ecdh", namedCurve: 1}, extractable, ["deriveKey", "deriveBits"]) rejected promise  with NotSupportedError: The algorithm is not supported.
 PASS crypto.subtle.generateKey({name: "ecdh", namedCurve: "P-256"}, extractable, ["encrypt"]) rejected promise  with SyntaxError: A required parameter was missing or out-of-range.

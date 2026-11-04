@@ -18,7 +18,7 @@ var symbol = Symbol("Cocoa");
 shouldThrow(() => {
     // ToString => error.
     "" + symbol;
-}, `TypeError: Cannot convert a symbol to a string`);
+}, `TypeError: Cannot convert a Symbol value to a string`);
 
 shouldThrow(() => {
     // ToNumber => error.
