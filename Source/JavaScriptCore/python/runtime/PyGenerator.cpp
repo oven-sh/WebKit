@@ -58,8 +58,10 @@ PyGenerator* PyGenerator::create(JSGlobalObject* globalObject, PyFunction* funct
     generator->m_state.setWithoutWriteBarrier(jsNumber(NotStarted));
     generator->m_body.set(vm, generator, body);
     generator->m_function.set(vm, generator, function);
-    generator->m_name.set(vm, generator, function->name());
-    generator->m_qualname.set(vm, generator, function->qualname());
+    if (JSValue name = function->nameIfMade())
+        generator->m_name.set(vm, generator, name);
+    if (JSValue qualname = function->qualnameIfMade())
+        generator->m_qualname.set(vm, generator, qualname);
     generator->isIterableCoroutine = function->isIterableCoroutine();
     if (kind == Kind::Coroutine && rt.coroutineOriginTrackingDepth > 0) [[unlikely]]
         generator->m_origin.set(vm, generator, coroutineOrigin(globalObject, rt.coroutineOriginTrackingDepth));
@@ -70,6 +72,16 @@ PyGenerator* PyGenerator::create(JSGlobalObject* globalObject, PyFunction* funct
         rt.registerNewGenerator(generator);
     }
     return generator;
+}
+
+void PyGenerator::takeNamesFromCode()
+{
+    VM& vm = this->vm();
+    CodeInfo& info = body()->codeInfo();
+    if (!m_name)
+        m_name.set(vm, this, jsString(vm, info.name.string().string()));
+    if (!m_qualname)
+        m_qualname.set(vm, this, makeStr(vm, info.qualname));
 }
 
 template<typename Visitor>

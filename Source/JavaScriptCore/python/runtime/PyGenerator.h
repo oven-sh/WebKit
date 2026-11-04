@@ -48,9 +48,10 @@ public:
     JSValue slot(unsigned index) const { ASSERT(index < m_slotCount); return slots()[index].get(); }
     void setSlot(VM& vm, unsigned index, JSValue value) { ASSERT(index < m_slotCount); slots()[index].set(vm, this, value); }
     static constexpr size_t allocationSize(unsigned slotCount) { return offsetOfSlots() + slotCount * sizeof(WriteBarrier<Unknown>); }
-    JSValue name() const { return m_name.get(); }
+    // Those the function had when this was made. If they were still those of its code, the strs are made when one is first asked for.
+    JSValue name() { return m_name ? m_name.get() : (takeNamesFromCode(), m_name.get()); }
     void setName(VM& vm, JSValue value) { m_name.set(vm, this, value); }
-    JSValue qualname() const { return m_qualname.get(); }
+    JSValue qualname() { return m_qualname ? m_qualname.get() : (takeNamesFromCode(), m_qualname.get()); }
     void setQualname(VM& vm, JSValue value) { m_qualname.set(vm, this, value); }
 
     // What `yield from` or `await` is waiting on. Empty: nothing.
@@ -133,6 +134,7 @@ public:
 private:
     PyGenerator(VM&, Structure*, PyType*, Kind, unsigned slotCount);
     void leaveBody(Runtime&);
+    void takeNamesFromCode();
     WriteBarrier<Unknown>* slots() const { return storageBehind<WriteBarrier<Unknown>>(const_cast<PyGenerator*>(this)); }
 
     WriteBarrier<Unknown> m_state; // An int32.

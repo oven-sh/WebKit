@@ -134,6 +134,8 @@ public:
     JSValue name() { return m_name ? m_name.get() : (takeNamesFromCode(), m_name.get()); }
     JSValue qualname() { return m_qualname ? m_qualname.get() : (takeNamesFromCode(), m_qualname.get()); }
     JSValue doc() { return m_doc ? m_doc.get() : (takeNamesFromCode(), m_doc.get()); }
+    JSValue nameIfMade() const { return m_name.get(); }
+    JSValue qualnameIfMade() const { return m_qualname.get(); }
     JSValue module() const { return m_module.get(); }
     JSValue annotations() const { return m_annotations.get(); } // Empty: not computed.
     JSValue annotate() const { return m_annotate.get(); } // Empty: none.

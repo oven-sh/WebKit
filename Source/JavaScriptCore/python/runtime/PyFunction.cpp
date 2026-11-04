@@ -314,7 +314,16 @@ PyFunction* PyFunction::generatorBody(JSGlobalObject* globalObject, CodeBlock* o
     if (PyFunction* body = m_generatorBody.get())
         return body;
     VM& vm = getVM(globalObject);
-    PyFunction* body = create(globalObject, ownCodeBlock->functionExpr(CodeInfo::generatorBodyIndex), globals());
+    // (This may be what makes it.)
+    FunctionExecutable* executable = ownCodeBlock->functionExpr(CodeInfo::generatorBodyIndex);
+    // No program ever sees the function. It looks names up where this one does.
+    auto* body = new (NotNull, allocateCell<PyFunction>(vm)) PyFunction(vm, executable, globalObject, structure());
+    body->finishCreation(vm);
+    body->m_globals.set(vm, body, globals());
+    body->m_builtins.set(vm, body, builtins());
+    if (m_builtinsObject)
+        body->m_builtinsObject.set(vm, body, m_builtinsObject.get());
+    body->m_hasUnusualNamespaces = m_hasUnusualNamespaces;
     body->setClosure(vm, closure());
     body->m_generatorOwner.set(vm, body, this);
     if (ownCodeBlock->ownerExecutable() == functionExecutable()) [[likely]]
