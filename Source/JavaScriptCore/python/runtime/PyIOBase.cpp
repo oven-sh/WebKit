@@ -746,6 +746,25 @@ static JSValue ioBaseDel(JSGlobalObject* globalObject, JSValue self)
     return jsUndefined();
 }
 
+bool ioIsOfTypeThatOpenMakes(JSGlobalObject* globalObject, JSCell* cell)
+{
+    auto* record = PyRecord::tryFrom(cell);
+    if (!record)
+        return false;
+    for (IOType type : { IOType::TextIOWrapper, IOType::BufferedReader, IOType::BufferedWriter, IOType::BufferedRandom, IOType::FileIO }) {
+        if (record->type() == ioType(globalObject, type))
+            return true;
+    }
+    return false;
+}
+
+void ioFinalizeNow(JSGlobalObject* globalObject, PyRecord* stream)
+{
+    SuspendExceptionScope suspended(getVM(globalObject));
+    ioBaseDel(globalObject, stream);
+    runtime(globalObject).unregisterFinalizable(stream);
+}
+
 static constexpr NativeDef ioBaseMethods[] = {
     PY_METHOD("seek", ioBaseSeek, "($self, offset, whence=0, /)"),
     PY_METHOD("tell", ioBaseTell, "($self, /)"),
@@ -764,8 +783,8 @@ static constexpr NativeDef ioBaseMethods[] = {
     PY_METHOD("__enter__", ioBaseEnter, "($self, /)"),
     PY_METHOD("__exit__", ioBaseExit, "($self, /, *args)"),
     PY_METHOD("readline", ioBaseReadline, "($self, size=-1, /)"),
-    PY_METHOD("readlines", ioBaseReadlines, "($self, hint=-1, /)"),
-    PY_METHOD("writelines", ioBaseWritelines, "($self, lines, /)"),
+    PY_STREAM_METHOD("readlines", ioBaseReadlines, "($self, hint=-1, /)"),
+    PY_STREAM_METHOD("writelines", ioBaseWritelines, "($self, lines, /)"),
     PY_SLOT("__iter__", ioBaseIter, "($self, /)"),
     PY_SLOT("__next__", ioBaseNext, "($self, /)"),
     PY_SLOT("__del__", ioBaseDel, "($self, /)"),
@@ -1105,6 +1124,13 @@ static JSValue ioOpen(JSGlobalObject* globalObject, JSValue file, JSValue modeVa
     return { };
 }
 
+static JSValue ioOpenForProgram(JSGlobalObject* globalObject, JSValue file, JSValue mode, JSValue buffering, JSValue encoding, JSValue errors, JSValue newline, JSValue closefd, JSValue opener)
+{
+    JSValue stream = ioOpen(globalObject, file, mode, buffering, encoding, errors, newline, closefd, opener);
+    runtime(globalObject).didCallFunction(ioOpenForProgram, stream);
+    return stream;
+}
+
 static JSValue ioOpenCode(JSGlobalObject* globalObject, JSValue path)
 {
     VM& vm = getVM(globalObject);
@@ -1211,7 +1237,7 @@ void flushStandardStreams(VM& vm)
 // ---- The module ----
 
 static constexpr NativeDef ioFunctions[] = {
-    PY_FUNCTION("open", ioOpen, "(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None)"),
+    PY_FUNCTION("open", ioOpenForProgram, "(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None)"),
     PY_FUNCTION("open_code", ioOpenCode, "(path)"),
     PY_FUNCTION("text_encoding", ioTextEncoding, "(encoding, stacklevel=2, /)"),
 };

@@ -51,6 +51,24 @@ bool bufferedIsBusy(PyRecord*);
 // For writeOutPendingOutput(): a TextIOWrapper, BufferedWriter or BufferedRandom, none of a class derived from those, over a FileIO
 // itself, so that nothing of the program's runs when it is written out. The list keeps it alive until then.
 void ioNotePendingOutput(JSGlobalObject*, PyRecord*);
+// For PyTemporaries.cpp. A FileIO, BufferedReader, BufferedWriter, BufferedRandom or TextIOWrapper, none of a class derived from those.
+bool ioIsOfTypeThatOpenMakes(JSGlobalObject*, JSCell*);
+// What the collector would do when it found that nothing refers to the stream, and will not do again. An exception that is pending stays.
+void ioFinalizeNow(JSGlobalObject*, PyRecord*);
+
+// A method that keeps nothing of the stream it is called on (NativeFlag::KeepsNothing).
+template<auto function> struct StreamUse;
+template<typename... Arguments, JSValue (*function)(JSGlobalObject*, JSValue, Arguments...)>
+struct StreamUse<function> {
+    static JSValue call(JSGlobalObject* globalObject, JSValue self, Arguments... arguments)
+    {
+        JSValue result = function(globalObject, self, arguments...);
+        if (Runtime& rt = runtime(globalObject); rt.ownsTemporaries()) [[unlikely]]
+            rt.didCallMethod(self, result, false, reinterpret_cast<void*>(&call));
+        return result;
+    }
+};
+#define PY_STREAM_METHOD(name, function, signature) PY_METHOD_WITH_FLAGS(name, StreamUse<function>::call, signature, KeepsNothing)
 void textIOWriteOutPending(JSGlobalObject*, PyRecord*);
 void bufferedWriteOutPending(JSGlobalObject*, PyRecord*);
 

@@ -15,6 +15,7 @@
 #include "PyBytes.h"
 #include "PyFunction.h"
 #include "PyGenerator.h"
+#include "PyIO.h"
 #include "PyMonitoring.h"
 #include "PyNative.h"
 #include "PreciseJumpTargetsInlines.h"
@@ -29,9 +30,9 @@ namespace Python {
 
 // Objects that only a temporary register refers to.
 //
-// With reference counts, the view in bytes(memoryview(b)[:n]) is gone when bytes() returns, and the generator in
-// `for x in g(): break` is closed by the `break`. Programs count on it: the next statement resizes b, or expects what a `finally` in g
-// has done. Here nothing is known about who refers to an object until the collector has looked. But of some objects it can
+// With reference counts, the view in bytes(memoryview(b)[:n]) is gone when bytes() returns, the file in open(p, "w").write(s) is closed
+// when write() returns, and the generator in `for x in g(): break` is closed by the `break`. Programs count on it: the next statement
+// resizes b, reads the file, or expects what a `finally` in g has done. Here nothing is known about who refers to an object until the collector has looked. But of some objects it can
 // be known without looking: those that were made for an instruction whose result goes in a temporary register with a
 // single use, if that use is known to keep nothing. When it is over, they are finalized. (Finalized, not freed: an error
 // here would be a view released too early, not memory used after it is freed.)
@@ -129,7 +130,7 @@ void Runtime::ownTemporary(CallFrame* callFrame, unsigned offset, JSCell* object
     VirtualRegister reg(TemporaryUse::registerOffsetOf(firstUse->bits));
     switch (TemporaryUse::kindOf(firstUse->bits)) {
     case TemporaryUse::Receiver: {
-        // The type is built in and cannot be changed, and its instances have no attributes of their own.
+        // The type is built in and cannot be changed, and the instance has no attributes but what its maker gave it.
         auto* method = PyNativeFunction::tryFrom(typeOf(object)->lookup(asString(codeBlock->getConstant(reg))));
         if (!method || !(method->def().flags & KeepsNothing))
             return;
@@ -157,15 +158,15 @@ void Runtime::ownTemporary(CallFrame* callFrame, unsigned offset, JSCell* object
     m_ownedTemporaries[m_ownedTemporaryCount++] = { object, callFrame, firstUse->offset, lastUse->offset };
 }
 
-// So far the only objects taken on are memoryviews.
-static bool canBeOwned(JSCell* object)
+// Memoryviews, and what open() returns.
+static bool canBeOwned(JSGlobalObject* globalObject, JSCell* object)
 {
-    return PyMemoryView::is(object);
+    return PyMemoryView::is(object) || ioIsOfTypeThatOpenMakes(globalObject, object);
 }
 
 void Runtime::didMakeResult(CallFrame* nativeFrame, JSCell* object)
 {
-    if (!canBeOwned(object))
+    if (!canBeOwned(m_globalObject, object))
         return;
     if (CallFrame* callFrame = pythonCallerOf(m_vm, nativeFrame))
         ownTemporary(callFrame, callFrame->bytecodeIndex().offset(), object);
@@ -173,7 +174,7 @@ void Runtime::didMakeResult(CallFrame* nativeFrame, JSCell* object)
 
 void Runtime::didMakeResultOfInstruction(CallFrame* callFrame, JSCell* object)
 {
-    if (canBeOwned(object) && isFrameOfPythonCode(callFrame))
+    if (canBeOwned(m_globalObject, object) && isFrameOfPythonCode(callFrame))
         ownTemporary(callFrame, callFrame->bytecodeIndex().offset(), object);
 }
 
@@ -181,7 +182,7 @@ template<typename IsOperand>
 void Runtime::releaseTemporariesUsedAt(CallFrame* callFrame, unsigned offset, JSValue result, const IsOperand& isOperand)
 {
     // On the stack, which keeps them: to release one may run a __release_buffer__() of the program.
-    std::array<PyMemoryView*, maxOwnedTemporaries> views;
+    std::array<JSCell*, maxOwnedTemporaries> objects;
     unsigned count = 0;
     for (unsigned i = 0; i < m_ownedTemporaryCount;) {
         OwnedTemporary temporary = m_ownedTemporaries[i];
@@ -192,13 +193,16 @@ void Runtime::releaseTemporariesUsedAt(CallFrame* callFrame, unsigned offset, JS
         std::copy(m_ownedTemporaries.begin() + i + 1, m_ownedTemporaries.begin() + m_ownedTemporaryCount, m_ownedTemporaries.begin() + i);
         --m_ownedTemporaryCount;
         if (isOperand(temporary.object) && result != JSValue(temporary.object))
-            views[count++] = uncheckedDowncast<PyMemoryView>(temporary.object);
+            objects[count++] = temporary.object;
     }
     // As when the reference count falls to zero. There may be an exception pending, which stays.
     for (unsigned i = 0; i < count; ++i) {
-        if (!views[i]->exports)
-            views[i]->release(m_globalObject);
-        ensureStillAliveHere(views[i]);
+        if (auto* view = PyMemoryView::tryFrom(objects[i])) {
+            if (!view->exports)
+                view->release(m_globalObject);
+        } else
+            ioFinalizeNow(m_globalObject, uncheckedDowncast<PyRecord>(objects[i]));
+        ensureStillAliveHere(objects[i]);
     }
 }
 
@@ -236,7 +240,7 @@ void Runtime::didCallType(PyType* type, JSValue result, bool resultIsFresh)
         didMakeResult(nativeFrame, result.asCell());
 }
 
-void Runtime::didCallMethod(JSValue self, JSValue result, bool resultIsFresh)
+void Runtime::didCallMethod(JSValue self, JSValue result, bool resultIsFresh, void* function)
 {
     CallFrame* nativeFrame = m_vm.topCallFrame;
     if (!nativeFrame || !nativeFrame->callee().isCell())
@@ -244,9 +248,21 @@ void Runtime::didCallMethod(JSValue self, JSValue result, bool resultIsFresh)
     auto* method = PyNativeFunction::tryFrom(nativeFrame->jsCallee());
     if (!method || !(method->def().flags & KeepsNothing) || !nativeFrame->argumentCount() || nativeFrame->uncheckedArgument(0) != self)
         return;
+    if (function && std::bit_cast<void*>(method->def().pointer) != function)
+        return;
     if (ownsTemporaries())
         didCallWithTemporaries(nativeFrame, result);
     if (resultIsFresh && result && result.isCell())
+        didMakeResult(nativeFrame, result.asCell());
+}
+
+void Runtime::didCallFunction(NativeDef::F8 function, JSValue result)
+{
+    CallFrame* nativeFrame = m_vm.topCallFrame;
+    if (!nativeFrame || !nativeFrame->callee().isCell() || !result || !result.isCell())
+        return;
+    auto* callee = PyNativeFunction::tryFrom(nativeFrame->jsCallee());
+    if (callee && callee->def().signature.parameterCount == 8 && callee->def().pointer.f8 == function)
         didMakeResult(nativeFrame, result.asCell());
 }
 

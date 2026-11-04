@@ -727,8 +727,11 @@ public:
     void didRunInstructionWithTemporaries(CallFrame*, std::span<const JSValue> operands, JSValue result);
     // For the code of a type that keeps none of the arguments it is called with, when it has made the instance or failed to.
     void didCallType(PyType*, JSValue result, bool resultIsFresh);
-    // For a method that is NativeFlag::KeepsNothing, when it is done.
-    void didCallMethod(JSValue self, JSValue result, bool resultIsFresh);
+    // For a method that is NativeFlag::KeepsNothing, when it is done. `function`: the one in its definition, if another such method
+    // of the object may have called it without a frame of its own: then the use is not over.
+    void didCallMethod(JSValue self, JSValue result, bool resultIsFresh, void* function = nullptr);
+    // For a function that has made what it returns, and has shown it to nobody.
+    void didCallFunction(JSValue (*function)(JSGlobalObject*, JSValue, JSValue, JSValue, JSValue, JSValue, JSValue, JSValue, JSValue), JSValue result);
     // For the code of a type whose instances may be owned: base[key] has given `result`, or raised.
     void didSubscript(JSValue base, JSValue result);
     // If ownsTemporaries(): for the code of a type that copies what is stored in its items: base[key] = value is done, or has raised.

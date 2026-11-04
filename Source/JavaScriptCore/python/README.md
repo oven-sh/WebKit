@@ -524,7 +524,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   - Not covered: `recv` and the like on a blocking socket in a thread other than the main one, writes, `connect`, `flock`,
     `wait()` for any child, `sigwait`.
 - **What only a temporary holds is finalized at once**, where that can be known without the collector (`PyTemporaries.cpp`, which has the
-  argument in full). `bytes(memoryview(b)[:n]); del b[:n]` and `for x in g(): break` count on it. The compiler leaves marks beside the
+  argument in full). `bytes(memoryview(b)[:n]); del b[:n]`, `open(p, "w").write(s)` and `for x in g(): break` count on it. The compiler leaves marks beside the
   code, no instructions: this call or subscript makes a value that goes in a temporary register, and that instruction is its one
   use (`PythonMark::TemporaryMade`, `TemporaryUsed`).
   - A memoryview looks at the marks when it is made. It is noted as owned by the temporary only if the use is known *then* to keep
@@ -533,6 +533,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     with nothing to run in between. To find out afterwards is not sound: a use that keeps the object (a function in
     Python, a store in a list) runs no code that could say so, and addresses of frames and offsets of instructions come
     round again. When the use is over, or has raised, the view is released.
+  - `open()` does the same with the stream it returns, which nobody else has seen: `open(p).read()`, `open(p, "w").write(s)`, and so with `readline`,
+    `readlines`, `readall` and `writelines`, which keep nothing of the stream they are called on. When the method has returned or raised, the stream is
+    finalized as the collector would do it, `ResourceWarning` included, on the line where CPython gives it. Not `json.load(open(p))` or
+    `for line in open(p)`: what a function written in Python does with its argument is not known when the file is opened.
   - A generator function looks at the marks too, and notes the last generator made if its use is the head of a `for` loop, or to be
     passed to a built-in function that is already waiting in a register and says that it goes through such an argument and keeps
     nothing of it (`NativeFlag::ClosesGeneratorArgument`: `next`, `any`, `all`, `sum`, `min`, `max`). The use takes the note up:
