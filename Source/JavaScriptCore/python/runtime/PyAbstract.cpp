@@ -310,6 +310,14 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
     if (value)
         return value;
     RETURN_IF_EXCEPTION(scope, { });
+    // object.__getattribute__(cls, name): a class is an instance of its metaclass, and its dict the dict of that instance. So what
+    // the class itself defines is found, as it is there.
+    if (PyType* itself = PyType::tryFrom(object); itself && itself->isHeapType()) [[unlikely]] {
+        value = itself->dict()->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (value)
+            return value;
+    }
 
     if (bindsDirectly)
         RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, descriptor, object, type));

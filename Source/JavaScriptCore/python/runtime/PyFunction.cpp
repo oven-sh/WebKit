@@ -2279,8 +2279,6 @@ static JSValue nativeFunctionRepr(JSGlobalObject* globalObject, JSValue self)
         bound = native->ownerType();
     if (!bound || PyModule::is(bound))
         return makeStr(globalObject, makeString("<built-in function "_s, native->def().name, '>'));
-    if (auto* type = PyType::tryFrom(bound))
-        return makeStr(globalObject, makeString("<built-in method "_s, native->def().name, " of type object at "_s, addressForRepr(globalObject, type), '>'));
     return makeStr(globalObject, makeString("<built-in method "_s, native->def().name, " of "_s, typeName(globalObject, bound), " object at "_s, addressForRepr(globalObject, bound), '>'));
 }
 
