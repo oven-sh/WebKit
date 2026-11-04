@@ -10,6 +10,7 @@
 #include "MarkedSpaceInlines.h"
 #include "PyAbstract.h"
 #include "PyBuffer.h"
+#include "PyCtypes.h"
 #include "PyErrors.h"
 #include "PyException.h"
 #include "PyExec.h"
@@ -230,6 +231,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
     // All of them are found before any is marked.
     Vector<JSCell*> candidates;
     Vector<Finalizable*> places;
+    Vector<Finalizable*> callbacksOfForeignCode;
     unsigned finalizersOfProgram = 0;
     auto look = [&](Vector<Finalizable>& list) {
         size_t kept = 0;
@@ -244,6 +246,10 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
             // What has nothing to finalize is left to die, unless one of the others reaches it: see didMarkAll().
             if (visitor.isMarked(cell) || hasNothingToFinalize(cell))
                 continue;
+            if (cell->classInfo() == Ctypes::PyCThunk::info()) {
+                callbacksOfForeignCode.append(&place);
+                continue;
+            }
             candidates.append(cell);
             places.append(&place);
             finalizersOfProgram += hasFinalizerOfProgram(*this, cell);
@@ -254,6 +260,25 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
     if (isFull)
         look(m_oldFinalizable);
     look(m_youngFinalizable);
+    // Nothing in the heap says who calls a callback of ctypes: a library has its address. Finalizers do, by way of the library: they
+    // close what it opened, and it tells the program so. And a package keeps its callbacks in its modules, which CPython lets go
+    // after the program's own at exit, where here all that dies is found at once. So the code of a callback is freed when no finalizer
+    // is left to run: until then it is kept, and comes up again in the next collection.
+    if (!callbacksOfForeignCode.isEmpty()) {
+        bool finalizersAreLeft = !candidates.isEmpty() || std::ranges::any_of(m_callsOwed, [](auto& owed) {
+            return owed->hasFinalizers();
+        });
+        for (Finalizable* place : callbacksOfForeignCode) {
+            if (finalizersAreLeft)
+                visitor.appendUnbarriered(place->cell);
+            else {
+                candidates.append(place->cell);
+                places.append(place);
+            }
+        }
+        if (finalizersAreLeft && candidates.isEmpty())
+            return true;
+    }
     auto finish = [&]() WTF_REQUIRES_LOCK(m_finalizationLock) {
         if (m_markingObserver && m_markingObserver->didFinishMarking(visitor))
             return true;
@@ -1017,11 +1042,13 @@ void Runtime::finalizeAllAtExit()
         forgetThreadLocalsOfOtherThreads(m_globalObject);
         auto heldByOtherThreads = whatOtherThreadsHold();
         Vector<JSCell*> rest;
+        Vector<JSCell*> callbacksOfForeignCode; // Which the finalizers of the others may call.
         forEachFinalizable([&](JSCell* cell) {
             // A generator someone still holds is not closed, nor is a coroutine complained about.
             if (cell->type() != PyGeneratorType && !heldByOtherThreads.contains(cell))
-                rest.append(cell);
+                (cell->classInfo() == Ctypes::PyCThunk::info() ? callbacksOfForeignCode : rest).append(cell);
         });
+        rest.appendVector(callbacksOfForeignCode);
         for (auto* list : { &m_oldFinalizable, &m_youngFinalizable }) {
             for (auto& entry : *list)
                 didTakeOffList(entry.cell);

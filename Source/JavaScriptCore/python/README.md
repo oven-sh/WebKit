@@ -799,7 +799,10 @@ define what happens, C++ does not. Callbacks are taken from a fixed table of ent
 `CDLL` functions run without the GIL, `PyDLL` functions with it. A callback that arrives on a thread that is in a foreign call takes the GIL back for as long as it
 runs; on a thread that holds the VM's lock it just runs; on any other thread (one that C started) it is refused: a message on stderr, and zero
 for a result. An exception in a callback goes to `sys.unraisablehook`. The entry point of a callback is free again once the collector has found that
-nothing refers to the callback; a call that comes after that is refused too.
+nothing refers to the callback; a call that comes after that is refused too. Nothing in the heap says who calls a callback, though: a library has its
+address, and finalizers call it by way of the library (they close what it opened, and it says so). A package keeps its callbacks in its modules,
+which CPython lets go after the program's own at exit; here all that dies is found at once. So a callback that is found dead is kept while there is
+a finalizer left to run, and comes up again in the next collection.
 
 ## decimal
 
