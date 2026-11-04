@@ -18,6 +18,7 @@
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #include <wtf/Threading.h>
+#include <wtf/WorkQueue.h>
 
 #if !OS(WINDOWS)
 #include <pthread.h>
@@ -211,6 +212,11 @@ void Threads::enable()
 #if !OS(WINDOWS)
     makeSignalInterrupt();
 #endif
+#if OS(LINUX)
+    // (Elsewhere that one is SIGURG too.)
+    if (!m_vm.heap.pythonRuntimes().isEmpty())
+        prepareToWakeMainThread(m_vm.heap.pythonRuntimes().first()->globalObject());
+#endif
 }
 
 // ---- The GIL ----
@@ -290,6 +296,12 @@ void Threads::acquire(ThreadState& thread, JSLock::ParkedThread& parked, SavedSt
     m_vm.apiLock().unpark(parked);
     thread.parked = nullptr;
     thread.saved = nullptr;
+    // Now that it is back in the VM nobody hands out calls: that takes the GIL, or a collector that has stopped the VM's thread.
+    thread.losesNothingIfInterrupted = false;
+#if !OS(WINDOWS)
+    if (thread.isBeingInterrupted.load(std::memory_order_relaxed)) [[unlikely]]
+        stopInterrupting(thread);
+#endif
     for (auto& entry : saved.entries) {
         // A runtime goes away with its global object, which something on this thread's stack may well have kept.
         if (entry.runtime && m_vm.heap.pythonRuntimes().contains(entry.runtime))
@@ -338,13 +350,57 @@ void Threads::wakeToMakeCalls(uint32_t number)
             noteCallsOwed(m_vm); // The host's event loop.
 #if !OS(WINDOWS)
         // Out of a system call too, where that does no harm. Elsewhere the calls are made when the system call returns.
-        // (The thread cannot have gone on to another call meanwhile: for that it has to come back to the VM, which makes it wait
-        // while a collection hands out calls. It takes itself out of the list, with the GIL, before it ends.)
         if (thread->parked && thread->losesNothingIfInterrupted)
-            pthread_kill(reinterpret_cast<pthread_t>(reinterpret_cast<void*>(static_cast<uintptr_t>(thread->ident))), signalThatInterrupts);
+            interrupt(thread.get());
 #endif
     }
 }
+
+#if !OS(WINDOWS)
+void Threads::interrupt(ThreadState& thread)
+{
+    Locker locker { m_interruptLock };
+    if (thread.isBeingInterrupted.exchange(true))
+        return;
+    ++thread.timesInterrupted;
+    sendInterrupt(thread);
+    interruptAgainAfter(1_ms, thread);
+}
+
+// The thread cannot have gone on to another system call, or have ended: before that it says that it is back, with the lock.
+void Threads::sendInterrupt(ThreadState& thread)
+{
+    // SIGURG is the program's to handle, to block and to send, and the host's. On the thread where the handlers of Python run there
+    // is a signal that is nobody else's.
+    if (thread.isMain && wakeMainThreadFromSystemCall(m_vm))
+        return;
+    pthread_kill(reinterpret_cast<pthread_t>(reinterpret_cast<void*>(static_cast<uintptr_t>(thread.ident))), signalThatInterrupts);
+}
+
+void Threads::interruptAgainAfter(Seconds pause, ThreadState& thread)
+{
+    // Twice as long each time. A thread that has the signal blocked, or whose system calls begin again by themselves
+    // (signal.siginterrupt()), is soon left alone, and one that was kept from its system call for long is reached all the same.
+    VMTraps::queue().dispatchAfter(pause, [protectedThis = Ref { *this }, thread = Ref { thread }, pause, time = thread.timesInterrupted] {
+        Locker locker { protectedThis->m_interruptLock };
+        if (!thread->isBeingInterrupted.load() || thread->timesInterrupted != time)
+            return;
+        protectedThis->sendInterrupt(thread.get());
+        protectedThis->interruptAgainAfter(2 * pause, thread.get());
+    });
+}
+
+void Threads::stopInterrupting(ThreadState& thread)
+{
+    {
+        Locker locker { m_interruptLock };
+        thread.isBeingInterrupted.store(false);
+    }
+    // What has been sent arrives when a system call returns, at the latest: here, and not in a call that would lose something.
+    sigset_t pending;
+    sigpending(&pending);
+}
+#endif
 
 void mainThreadHasTrapsToHandle(VM& vm)
 {
@@ -374,8 +430,12 @@ void AllowThreads::acquire()
 {
     int savedErrno = errno;
     auto* luggage = std::launder(reinterpret_cast<Luggage*>(m_luggage));
+#if !OS(WINDOWS)
+    // It may have to wait for the GIL. (Until it is back in the VM it may be interrupted anew: Threads::acquire().)
+    if (m_thread->isBeingInterrupted.load(std::memory_order_relaxed)) [[unlikely]]
+        m_threads->stopInterrupting(*m_thread);
+#endif
     m_threads->takeGIL(*m_thread);
-    m_thread->losesNothingIfInterrupted = false;
     m_threads->acquire(*m_thread, luggage->parked, luggage->saved);
     luggage->~Luggage();
     errno = savedErrno;

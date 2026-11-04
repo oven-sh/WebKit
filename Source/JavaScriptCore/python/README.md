@@ -408,8 +408,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   - **A thread that waits is woken** (`Threads::wakeToMakeCalls`: what it sleeps on, the host's event loop, or the signal that gets it out of
     a system call), makes its calls where it would look at signals (`checkSignals()`, as `PyErr_CheckSignals()` runs the collector in CPython), and
     goes on waiting for the time it has left. One that only waits for the GIL finds out when it has it: the flag that the safe points
-    look at is the running thread's. In foreign code: when it comes back. A wake can be lost, if the signal comes just before the system call;
-    every later collection wakes again.
+    look at is the running thread's. In foreign code: when it comes back. A signal that comes just before the system call does nothing, so it
+    is sent again, after 1 ms, 2 ms, 4 ms and so on, until the thread is back (`Threads::interrupt`, on the queue from which `VMTraps`
+    sends its signals again and again). Once it is back none is sent, and none is on its way. The main thread gets a signal that is
+    nobody else's (`wakeMainThreadFromSystemCall()`), the others `SIGURG`.
   - **The signal is sent only where it loses nothing** (`AllowThreads::LosesNothing`, which the call site says): a call that transfers nothing
     before it returns and is made again when it was interrupted: `read`, `readv`, `recv` and its kin, `accept`, `poll`/`select`/`epoll`, the
     `wait` family, `flock`, `lockf`, `open` (of a FIFO), a semaphore, a sleep. CPython sends a thread no signal at all, and one that comes in the

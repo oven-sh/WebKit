@@ -494,7 +494,7 @@ static int signalChooseOneThatWakes(bool canUnblock)
 #endif
 }
 
-void prepareForTracebackDumpRequests(JSGlobalObject* globalObject)
+void prepareToWakeMainThread(JSGlobalObject* globalObject)
 {
     signalHandlers(globalObject);
     if (!signalCanHandle(globalObject))
@@ -533,15 +533,22 @@ bool requestTracebackDump()
 
 bool repeatTracebackDumpRequest()
 {
-    if (!s_signalState.vm.load())
+    VM* vm = s_signalState.vm.load();
+    if (!vm)
         return false;
     // Once the thread has taken note, it is out of the call.
     if (!s_signalState.tripped[0].load())
         return true;
     Threads::wakeMainThreadOfProcess();
+    wakeMainThreadFromSystemCall(*vm);
+    return true;
+}
+
+bool wakeMainThreadFromSystemCall(VM& vm)
+{
     int number = s_signalState.wakeSignal.load();
-    if (!number)
-        return true;
+    if (!number || s_signalState.vm.load() != &vm)
+        return false;
     Locker locker { s_signalState.wakeLock };
     if (s_signalState.wakesHeldBack || (number == signalThatWakes() && s_signalState.isWakeOnItsWay.exchange(true)))
         return true;
@@ -1310,7 +1317,8 @@ void finalizeSignals(JSGlobalObject*) { }
 void detachSignals(Runtime&) { }
 int watchSignal(JSGlobalObject*, int, bool) { return EINVAL; }
 void unwatchSignal(int) { }
-void prepareForTracebackDumpRequests(JSGlobalObject*) { }
+void prepareToWakeMainThread(JSGlobalObject*) { }
+bool wakeMainThreadFromSystemCall(VM&) { return false; }
 bool requestTracebackDump() { return false; }
 bool repeatTracebackDumpRequest() { return false; }
 void withdrawTracebackDumpRequest() { }

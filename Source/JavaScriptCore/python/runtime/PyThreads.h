@@ -66,6 +66,9 @@ public:
     // For Runtime::currentThread().
     uint32_t number() const { return isMain ? 0 : static_cast<uint32_t>(serial); }
     Sleeper sleeper;
+    // See Threads::interrupt(). Written with the lock of that.
+    std::atomic<bool> isBeingInterrupted { false };
+    uint64_t timesInterrupted { 0 };
 
     // The rest is for whoever holds the GIL.
 
@@ -208,7 +211,6 @@ public:
     // The thread of that number (ThreadState::number()), which does not hold the GIL, owes calls: finalizers, callbacks of weak
     // references. Wherever it waits, it is woken, makes them (checkSignals()) and goes on waiting for the time it has left. If it only waits
     // for the GIL, it finds out when it has it. With the GIL, or for the collector while whoever holds it is stopped.
-    // A wake can be lost: the thread may be about to make the system call that the signal was to interrupt.
     void wakeToMakeCalls(uint32_t number);
 
     // _imp.acquire_lock()
@@ -257,6 +259,15 @@ private:
     static void* threadEntry(void*);
     void runThread(ThreadState&, Function<void()>&& body);
 
+#if !OS(WINDOWS)
+    // Gets a thread out of the system call for which it gave up the GIL. A signal that comes just before the call begins does
+    // nothing, so it is sent again and again, as VMTraps does and from the same queue, until the thread is back.
+    void interrupt(ThreadState&);
+    void sendInterrupt(ThreadState&) WTF_REQUIRES_LOCK(m_interruptLock);
+    void interruptAgainAfter(Seconds, ThreadState&) WTF_REQUIRES_LOCK(m_interruptLock);
+    void stopInterrupting(ThreadState&);
+#endif
+
     void release(ThreadState&, JSLock::ParkedThread&, SavedStates&);
     void acquire(ThreadState&, JSLock::ParkedThread&, SavedStates&);
     bool shouldCollectWhileIdle(JSGlobalObject*, bool isLastResort);
@@ -293,6 +304,9 @@ private:
     ThreadState* m_lastHolder WTF_GUARDED_BY_LOCK(m_gilLock) { nullptr };
     uint64_t m_switchNumber WTF_GUARDED_BY_LOCK(m_gilLock) { 0 };
     unsigned m_waitingForGIL WTF_GUARDED_BY_LOCK(m_gilLock) { 0 };
+#if !OS(WINDOWS)
+    Lock m_interruptLock; // Held while a signal is sent.
+#endif
     std::atomic<bool> m_dropIsRequested { false };
     std::atomic<bool> m_isFinalized { false };
     std::atomic<bool> m_isStopping { false };

@@ -744,7 +744,7 @@ static JSValue faultDumpTracebackLater(JSGlobalObject* globalObject, JSValue tim
         Locker locker { watchdog.lock };
         watchdog.isCancelled = false;
     }
-    prepareForTracebackDumpRequests(globalObject);
+    prepareToWakeMainThread(globalObject);
     watchdog.thread = Thread::create("faulthandler watchdog"_s, faultRunWatchdog);
     return jsUndefined();
 }

@@ -346,11 +346,14 @@ void detachSignals(Runtime&);
 // safe point; what would have happened without this happens after that if `chains`, and not at all otherwise. Returns an errno.
 int watchSignal(JSGlobalObject*, int number, bool chains);
 void unwatchSignal(int number);
-// Asks for dumpTracebackForSignal(globalObject, 0), from any thread. The first function is to be called beforehand.
-void prepareForTracebackDumpRequests(JSGlobalObject*);
-// False: there is nobody to do it.
+// Gets the thread that handles signals out of a system call, with a signal that is kept for this. From any thread; the first function
+// is to be called beforehand. The signal does nothing if it comes just before the system call: to be called until the thread has
+// taken note. False: nothing is sent, because that thread is not the main one of this VM, or there is no signal to be had.
+void prepareToWakeMainThread(JSGlobalObject*);
+bool wakeMainThreadFromSystemCall(VM&);
+// Asks for dumpTracebackForSignal(globalObject, 0), from any thread, after prepareToWakeMainThread(). False: there is nobody to do it.
 bool requestTracebackDump();
-// The signal that gets the thread out of a system call does nothing if it comes just before the call. To be called until it is done.
+// To be called until it is done: see wakeMainThreadFromSystemCall().
 bool repeatTracebackDumpRequest();
 // It is not to be done after all.
 void withdrawTracebackDumpRequest();
