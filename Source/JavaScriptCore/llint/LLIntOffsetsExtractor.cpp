@@ -92,6 +92,7 @@
 #include "WasmCallingConvention.h"
 #include "PyAbstract.h"
 #include "PyBytecode.h"
+#include "PyDescriptors.h"
 #include "PyFunction.h"
 #include "PyGenerator.h"
 #include "PyIterators.h"

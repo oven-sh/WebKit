@@ -47,14 +47,25 @@ struct AttributeCache {
     static constexpr int32_t classValue = -1; // `payload` is the attribute. In a call, it is a function that takes the object as its first argument.
     static constexpr int32_t unboundClassValue = -2; // op_py_get_method only: `payload` is the attribute.
     static constexpr int32_t moduleEntry = -3; // The attribute is the value of entry `typeVersion` of the dict of the module, while PyDict::watchedVersion() of that is `payload`.
+    static constexpr int32_t staticMethod = -4; // `payload` is a staticmethod: the attribute is what that wraps now.
+    static constexpr int32_t classMethod = -5; // op_py_get_method only: `payload` is a classmethod. What that wraps now takes the class of the object as its first argument.
+    static constexpr int32_t tupleItem = -6; // op_py_get_attr only: the attribute is item `payload` of the object, a tuple.
+    // The object is a class, and the attribute was found in it or in one of its bases. As the three above.
+    static constexpr int32_t valueOfClass = -7;
+    static constexpr int32_t staticMethodOfClass = -8;
+    static constexpr int32_t classMethodOfClass = -9; // The first argument is the object.
 
     uint64_t payload { 0 };
-    // The object is alike if it has this Structure and, unless it is a module, its type has this version...
+    // The object is alike if it has this Structure and
+    // - its type has this version;
+    // - if it is a class, it has this version itself, and its type has `metatypeVersion`;
+    // - if it is a module, as said above...
     StructureID structureID;
     uint32_t typeVersion { 0 };
     int32_t offset { 0 };
     // ... or, if this is not 0, if it has this JSType: a str, a list. Then `payload` is as for classValue.
     uint32_t jsType { 0 };
+    uint32_t metatypeVersion { 0 };
 };
 // False: there is nothing to remember. The object has the attribute.
 bool describeAttribute(JSGlobalObject*, JSValue object, JSString* name, bool forCall, AttributeCache&);

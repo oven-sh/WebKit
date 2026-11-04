@@ -462,6 +462,8 @@ void initializeStatModule(JSGlobalObject*, PyModule*); // _stat
 // ---- Containers and binary data (PyCollections.cpp, PyHeapq.cpp, PyArray.cpp, PyStruct.cpp, PyBinascii.cpp) ----
 
 void initializeCollectionsModule(JSGlobalObject*, PyModule*); // _collections
+// Which item of a tuple the value is a descriptor for, if it is what the fields of a named tuple are (collections._tuplegetter). Negative: none.
+int64_t indexOfTupleGetter(JSGlobalObject*, JSValue);
 void initializeHeapqModule(JSGlobalObject*, PyModule*); // _heapq
 void initializeBisectModule(JSGlobalObject*, PyModule*); // _bisect
 void initializeArrayModule(JSGlobalObject*, PyModule*); // array

@@ -42,6 +42,7 @@ public:
 
     JSValue wrapped() const { return m_wrapped.get(); }
     void setWrapped(VM& vm, JSValue value) { m_wrapped.set(vm, this, value); }
+    static constexpr ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(PyWrapperObject, m_wrapped); }
     PyDict* dict() const { return m_dict.get(); }
     void setDict(VM& vm, PyDict* dict) { m_dict.setMayBeNull(vm, this, dict); }
     // A staticmethod of a built-in type is made before there are attributes to copy: see copyAttributesOfWrapped().

@@ -575,11 +575,30 @@ static bool isDataDescriptor(JSValue descriptor)
     return type->lookup(Special::Set) || type->lookup(Special::Delete);
 }
 
-// What was found in the class of an object stays there while the class has its version. But what it does as a descriptor is up
-// to its own class, which may be given a __get__ or a __set__ at any time, unless it is a built-in one.
-static bool mayBecomeAnotherKindOfDescriptor(Runtime& rt, JSValue descriptor)
+// What was found in `type` stays there while that has its version. But what it does as a descriptor is up to its own class, which
+// may be given a __get__ or a __set__ at any time, unless it is a built-in one. If `type` is derived from that class, as an enum is
+// from the class of its members, its version changes then; and objectSetClass() sees to it that it does when such a value is given
+// another class.
+static bool mayBecomeAnotherKindOfDescriptor(Runtime& rt, JSValue descriptor, PyType* type)
 {
-    return descriptor && rt.typeOf(descriptor)->isHeapType();
+    if (!descriptor)
+        return false;
+    PyType* descriptorType = rt.typeOf(descriptor);
+    if (!descriptorType->isHeapType())
+        return false;
+    if (!type->isSubtypeOf(descriptorType))
+        return true;
+    descriptorType->setHasInstancesAmongAttributes();
+    return false;
+}
+
+enum class MethodWrapper : uint8_t { None, StaticMethod, ClassMethod };
+static MethodWrapper methodWrapperKind(Runtime& rt, JSValue value)
+{
+    if (!value.isCell() || value.asCell()->type() != PyObjectType)
+        return MethodWrapper::None;
+    PyType* type = uncheckedDowncast<PyObject>(value.asCell())->type();
+    return type == rt.staticmethodType() ? MethodWrapper::StaticMethod : type == rt.classmethodType() ? MethodWrapper::ClassMethod : MethodWrapper::None;
 }
 
 // Whether the Structure tells all about which attributes the object itself has.
@@ -593,6 +612,42 @@ static bool structureTellsAttributes(Runtime& rt, JSCell* cell, PyType* type, St
     if (cell->type() == PyObjectType && cell->classInfo() == PyRecord::info())
         return !isValidOffset(structure->get(rt.vm(), rt.dictKey()));
     return cell->type() == PyInstanceType && !uncheckedDowncast<PyInstance>(cell)->dict() && !isValidOffset(structure->get(rt.vm(), rt.instanceHasDictKey()));
+}
+
+static bool describeAttributeOfClass(Runtime& rt, PyType* cls, JSString* name, bool forCall, AttributeCache& cache)
+{
+    // As in typeGetAttr().
+    PyType* metatype = cls->type();
+    if (!isNative(metatype->lookup(Special::GetAttribute), typeGetAttribute))
+        return false;
+    if (JSValue metaAttribute = metatype->lookup(name)) {
+        PyType* attributeType = rt.typeOf(metaAttribute);
+        if (attributeType->lookup(Special::Set) || attributeType->lookup(Special::Delete) || mayBecomeAnotherKindOfDescriptor(rt, metaAttribute, metatype))
+            return false;
+    }
+    JSValue attribute = cls->lookup(name);
+    if (!attribute || mayBecomeAnotherKindOfDescriptor(rt, attribute, cls))
+        return false;
+    cache.structureID = cls->structureID();
+    cache.payload = JSValue::encode(attribute);
+    cache.offset = AttributeCache::valueOfClass;
+
+    // As in bindDescriptor(), without an object.
+    if (!attribute.isCell() || attribute.asCell()->type() == JSFunctionType)
+        return true;
+    if (auto* native = PyNativeFunction::tryFrom(attribute))
+        return native->kind() != NativeKind::ClassMethod;
+    switch (methodWrapperKind(rt, attribute)) {
+    case MethodWrapper::StaticMethod:
+        cache.offset = AttributeCache::staticMethodOfClass;
+        return true;
+    case MethodWrapper::ClassMethod:
+        cache.offset = AttributeCache::classMethodOfClass;
+        return forCall; // Otherwise the attribute is a new bound method each time.
+    case MethodWrapper::None:
+        break;
+    }
+    return !rt.typeOf(attribute)->lookup(Special::Get);
 }
 
 // All but the versions. `type`: whose version is to be remembered, if any.
@@ -629,7 +684,7 @@ static bool describeAttributeOfObject(JSGlobalObject* globalObject, JSCell* cell
     if (!isNative(typeOfObject->lookup(Special::GetAttribute), objectGetAttribute))
         return false;
     JSValue descriptor = typeOfObject->lookup(name);
-    if (mayBecomeAnotherKindOfDescriptor(rt, descriptor))
+    if (mayBecomeAnotherKindOfDescriptor(rt, descriptor, typeOfObject))
         return false;
 
     if (!isPython) {
@@ -651,6 +706,14 @@ static bool describeAttributeOfObject(JSGlobalObject* globalObject, JSCell* cell
         cache.offset = structure->get(vm, PropertyName(&uncheckedDowncast<PyMemberDescriptor>(descriptor.asCell())->key()->uid()));
         return isValidOffset(cache.offset);
     }
+    // A field of a named tuple.
+    if (jsType == PyTupleType && !forCall) {
+        if (int64_t index = indexOfTupleGetter(globalObject, descriptor); index >= 0) {
+            cache.offset = AttributeCache::tupleItem;
+            cache.payload = index;
+            return true;
+        }
+    }
     if (isDataDescriptor(descriptor) || !structureTellsAttributes(rt, cell, type, structure))
         return false;
 
@@ -670,6 +733,16 @@ static bool describeAttributeOfObject(JSGlobalObject* globalObject, JSCell* cell
         cache.offset = AttributeCache::classValue;
         return forCall; // Otherwise the attribute is a new bound method each time.
     }
+    switch (methodWrapperKind(rt, descriptor)) {
+    case MethodWrapper::StaticMethod:
+        cache.offset = AttributeCache::staticMethod;
+        return true;
+    case MethodWrapper::ClassMethod:
+        cache.offset = AttributeCache::classMethod;
+        return forCall;
+    case MethodWrapper::None:
+        break;
+    }
     // What is left is the attribute as it is, if there is nothing to bind.
     if (descriptor.isCell()) {
         if (auto* native = PyNativeFunction::tryFrom(descriptor); native && native->kind() == NativeKind::ClassMethod)
@@ -687,6 +760,14 @@ bool describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* n
         return false;
     // A type is asked for its version last: it has only so many to give.
     JSCell* cell = object.asCell();
+    if (PyType::is(cell)) {
+        auto* cls = uncheckedDowncast<PyType>(cell);
+        if (!describeAttributeOfClass(runtime(globalObject), cls, name, forCall, cache))
+            return false;
+        cache.typeVersion = cls->version();
+        cache.metatypeVersion = cls->type()->version();
+        return cache.typeVersion && cache.metatypeVersion;
+    }
     PyType* type = nullptr;
     if (!describeAttributeOfObject(globalObject, cell, name, forCall, cache, type))
         return false;
@@ -703,7 +784,7 @@ bool describeSpecialMethod(JSGlobalObject* globalObject, JSValue object, Special
     Runtime& rt = runtime(globalObject);
     PyType* type = rt.typeOf(object);
     JSValue descriptor = type->lookup(special);
-    if (!descriptor || !isMethodDescriptor(descriptor) || mayBecomeAnotherKindOfDescriptor(rt, descriptor))
+    if (!descriptor || !isMethodDescriptor(descriptor))
         return false;
     cache.structureID = object.asCell()->structureID();
     cache.typeVersion = type->version();
@@ -728,7 +809,7 @@ bool describeSetAttribute(JSGlobalObject* globalObject, JSValue object, JSString
         return false;
 
     JSValue descriptor = type->lookup(name);
-    if (mayBecomeAnotherKindOfDescriptor(rt, descriptor))
+    if (mayBecomeAnotherKindOfDescriptor(rt, descriptor, type))
         return false;
     UniquedStringImpl* key;
     if (descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && descriptor.asCell()->classInfo() == PyMemberDescriptor::info())

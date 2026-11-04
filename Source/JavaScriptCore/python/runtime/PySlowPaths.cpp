@@ -354,16 +354,23 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_store_name)
 }
 
 template<typename Metadata>
-static ALWAYS_INLINE void rememberAttribute(JSGlobalObject* globalObject, Metadata& metadata, JSValue base, JSString* name, bool forCall)
+static ALWAYS_INLINE void remember(Metadata& metadata, const AttributeCache& cache)
 {
-    AttributeCache cache;
-    if (!describeAttribute(globalObject, base, name, forCall, cache))
-        cache = { };
     metadata.m_payload = cache.payload;
     metadata.m_structureID = cache.structureID;
     metadata.m_typeVersion = cache.typeVersion;
     metadata.m_offset = cache.offset;
     metadata.m_jsType = cache.jsType;
+    metadata.m_metatypeVersion = cache.metatypeVersion;
+}
+
+template<typename Metadata>
+static ALWAYS_INLINE void rememberAttribute(JSGlobalObject* globalObject, Metadata& metadata, JSValue base, JSString* name, bool forCall)
+{
+    AttributeCache cache;
+    if (!describeAttribute(globalObject, base, name, forCall, cache))
+        cache = { };
+    remember(metadata, cache);
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_attr)
@@ -415,12 +422,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_method)
         AttributeCache cache;
         JSValue method = loadSpecialForWith(globalObject, base, static_cast<SpecialMethodForWith>(which.asInt32()), self, cache);
         CHECK_EXCEPTION();
-        auto& metadata = bytecode.metadata(codeBlock);
-        metadata.m_payload = cache.payload;
-        metadata.m_structureID = cache.structureID;
-        metadata.m_typeVersion = cache.typeVersion;
-        metadata.m_offset = cache.offset;
-        metadata.m_jsType = cache.jsType;
+        remember(bytecode.metadata(codeBlock), cache);
         GET(bytecode.m_self) = self;
         GET(bytecode.m_dst) = method;
         END_IMPL();

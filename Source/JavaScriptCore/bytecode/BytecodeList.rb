@@ -688,6 +688,7 @@ op :py_get_attr,
         typeVersion: unsigned,
         offset: int,
         jsType: unsigned,
+        metatypeVersion: unsigned,
     }
 
 # For base.name(...): the function and what to pass it as its first argument, or what base.name is and the empty value.
@@ -704,6 +705,7 @@ op :py_get_method,
         typeVersion: unsigned,
         offset: int,
         jsType: unsigned,
+        metatypeVersion: unsigned,
     }
 
 # Alignment: 4

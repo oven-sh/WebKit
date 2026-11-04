@@ -1157,6 +1157,14 @@ static constexpr NativeGetSet tupleGetterGetSets[] = {
 
 static constexpr TypeDef tupleGetterTypeDef { "collections._tuplegetter"_s, { }, tupleGetterMethods, tupleGetterGetSets, { } };
 
+int64_t indexOfTupleGetter(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!PyRecord::is(value))
+        return -1;
+    auto* record = uncheckedDowncast<PyRecord>(value.asCell());
+    return record->type() == runtime(globalObject).typeIfMadeFor(tupleGetterTypeDef) ? record->number : -1;
+}
+
 // ---- _count_elements ----
 
 static JSValue collectionsCountElements(JSGlobalObject* globalObject, JSValue mapping, JSValue iterable)

@@ -106,6 +106,7 @@ public:
 
     PyType* type() const { return m_type.get(); } // The metaclass.
     void setType(VM& vm, PyType* type) { m_type.set(vm, this, type); }
+    static constexpr ptrdiff_t offsetOfType() { return OBJECT_OFFSETOF(PyType, m_type); }
     JSString* nameString() const { return m_name.get(); } // __name__
     void setNameString(VM& vm, JSString* name)
     {
@@ -162,6 +163,10 @@ public:
         unsigned index = static_cast<unsigned>(special);
         return static_cast<unsigned>(m_specialStates[index]) == static_cast<unsigned>(SpecialState::NativeTakingNone) + count && m_specials[index].get() == method;
     }
+
+    // An instance of this very class is an attribute of it, or of a class derived from it, and something is remembered about that.
+    bool hasInstancesAmongAttributes() const { return m_hasInstancesAmongAttributes; }
+    void setHasInstancesAmongAttributes() { m_hasInstancesAmongAttributes = true; }
 
     // After a change to the dict of the type, or to its bases.
     void didChange(VM&);
@@ -244,6 +249,7 @@ private:
     uint32_t m_numberOfChanges { 0 };
     uint16_t m_versionsLeft { 1000 };
     bool m_isBeingToldOfChange { false };
+    bool m_hasInstancesAmongAttributes { false };
     enum class SpecialState : uint8_t { Unknown, Known, NativeTakingNone, NativeTakingOne, NativeTakingTwo };
     std::array<SpecialState, numberOfSpecials> m_specialStates { };
     std::array<WriteBarrier<Unknown>, numberOfSpecials> m_specials;

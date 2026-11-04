@@ -538,6 +538,9 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
         PyType::from(self)->setType(vm, newType);
     if (newType->lookup(Special::Del) && !oldType->lookup(Special::Del) && !rt.hasBeenFinalized(cell)) [[unlikely]]
         rt.registerFinalizable(cell);
+    // See mayBecomeAnotherKindOfDescriptor().
+    if (oldType->hasInstancesAmongAttributes()) [[unlikely]]
+        oldType->didChange(vm);
 }
 
 static constexpr NativeDef defaultComparisonMethods[] = {

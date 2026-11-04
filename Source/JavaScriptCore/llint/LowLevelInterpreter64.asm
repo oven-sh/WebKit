@@ -2971,6 +2971,15 @@ macro pyLoadCachedModuleEntry(opcodeStruct, slow)
     pyBranchIfLazyImport(t0, t1, slow)
 end
 
+# The same for an object that is a class.
+macro pyCheckVersionsOfClass(opcodeStruct, slow)
+    loadi (constexpr (Python::PyType::offsetOfVersion()))[t3], t0
+    bineq t0, %opcodeStruct%::Metadata::m_typeVersion[t5], slow
+    loadp (constexpr (Python::PyType::offsetOfType()))[t3], t0
+    loadi (constexpr (Python::PyType::offsetOfVersion()))[t0], t0
+    bineq t0, %opcodeStruct%::Metadata::m_metatypeVersion[t5], slow
+end
+
 llintOpWithMetadata(op_py_get_attr, OpPyGetAttr, macro (size, get, dispatch, metadata, return)
     get(m_base, t0)
     loadConstantOrVariableCell(size, t0, t3, .slow)
@@ -2978,7 +2987,7 @@ llintOpWithMetadata(op_py_get_attr, OpPyGetAttr, macro (size, get, dispatch, met
     loadi OpPyGetAttr::Metadata::m_structureID[t5], t0
     bineq t0, JSCell::m_structureID[t3], .slow
     loadi OpPyGetAttr::Metadata::m_offset[t5], t1
-    bieq t1, constexpr Python::AttributeCache::moduleEntry, .module
+    bilt t1, constexpr Python::AttributeCache::classValue, .other
     pyCheckTypeVersion(OpPyGetAttr, .slow)
     bilt t1, 0, .classValue
     loadPropertyAtVariableOffset(t1, t3, t0)
@@ -2986,6 +2995,27 @@ llintOpWithMetadata(op_py_get_attr, OpPyGetAttr, macro (size, get, dispatch, met
 
 .classValue:
     loadq OpPyGetAttr::Metadata::m_payload[t5], t0
+    return(t0)
+
+.other:
+    bieq t1, constexpr Python::AttributeCache::moduleEntry, .module
+    bilteq t1, constexpr Python::AttributeCache::valueOfClass, .ofClass
+    pyCheckTypeVersion(OpPyGetAttr, .slow)
+    loadq OpPyGetAttr::Metadata::m_payload[t5], t0
+    bieq t1, constexpr Python::AttributeCache::staticMethod, .wrapped
+    # tupleItem
+    loadi (constexpr (Python::PyTuple::offsetOfLength()))[t3], t1
+    bqaeq t0, t1, .slow
+    loadq (constexpr (Python::PyTuple::offsetOfItems()))[t3, t0, 8], t0
+    return(t0)
+
+.ofClass:
+    pyCheckVersionsOfClass(OpPyGetAttr, .slow)
+    loadq OpPyGetAttr::Metadata::m_payload[t5], t0
+    bieq t1, constexpr Python::AttributeCache::valueOfClass, .done
+.wrapped:
+    loadq (constexpr (Python::PyWrapperObject::offsetOfWrapped()))[t0], t0
+.done:
     return(t0)
 
 .module:
@@ -3005,7 +3035,7 @@ llintOpWithMetadata(op_py_get_method, OpPyGetMethod, macro (size, get, dispatch,
     loadi OpPyGetMethod::Metadata::m_structureID[t5], t0
     bineq t0, JSCell::m_structureID[t3], .byJSType
     loadi OpPyGetMethod::Metadata::m_offset[t5], t1
-    bieq t1, constexpr Python::AttributeCache::moduleEntry, .module
+    bilt t1, constexpr Python::AttributeCache::unboundClassValue, .other
     pyCheckTypeVersion(OpPyGetMethod, .slow)
     bigteq t1, 0, .property
     loadq OpPyGetMethod::Metadata::m_payload[t5], t0
@@ -3022,6 +3052,31 @@ llintOpWithMetadata(op_py_get_method, OpPyGetMethod, macro (size, get, dispatch,
     bineq t0, t1, .slow
     loadq OpPyGetMethod::Metadata::m_payload[t5], t0
     jmp .bound
+
+.other:
+    bieq t1, constexpr Python::AttributeCache::moduleEntry, .module
+    bilteq t1, constexpr Python::AttributeCache::valueOfClass, .ofClass
+    pyCheckTypeVersion(OpPyGetMethod, .slow)
+    loadq OpPyGetMethod::Metadata::m_payload[t5], t0
+    loadq (constexpr (Python::PyWrapperObject::offsetOfWrapped()))[t0], t0
+    bieq t1, constexpr Python::AttributeCache::staticMethod, .unbound
+    # classMethod
+    loadp (constexpr (Python::PyObject::offsetOfType()))[t3], t3
+.boundToClass:
+    # To anything but a function of Python's, the class may be something else than the first argument.
+    btqnz t0, notCellMask, .slow
+    loadPythonRuntime(t2)
+    loadi Python::Runtime::functionStructureID[t2], t2
+    bineq t2, JSCell::m_structureID[t0], .slow
+    jmp .bound
+
+.ofClass:
+    pyCheckVersionsOfClass(OpPyGetMethod, .slow)
+    loadq OpPyGetMethod::Metadata::m_payload[t5], t0
+    bieq t1, constexpr Python::AttributeCache::valueOfClass, .unbound
+    loadq (constexpr (Python::PyWrapperObject::offsetOfWrapped()))[t0], t0
+    bieq t1, constexpr Python::AttributeCache::staticMethodOfClass, .unbound
+    jmp .boundToClass
 
 .module:
     pyLoadCachedModuleEntry(OpPyGetMethod, .slow)
