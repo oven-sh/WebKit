@@ -575,6 +575,32 @@ void forEachVariableOfRunningGenerators(VM&, const ScopedLambda<void(PyGenerator
 // frame that this one called. False: there is no telling.
 bool liveLocalsOfFrame(CallFrame*, CodeBlock*, bool isCalling, FastBitVector& live);
 std::span<const BlockPiece> blockPiecesOf(CodeBlock*, bool onlyIfALoopOwnsItsIterator = false);
+// For a built-in function that goes through what it is given, may stop before the end, and keeps nothing: any(g()), next(g()). If the
+// generator was made for this call and only the temporary register refers to it, it is closed when the function is done or
+// has raised, as when its reference count falls to zero. The function is NativeFlag::ClosesGeneratorArgument, and has one of these
+// before it runs any code of the program or returns. In PyTemporaries.cpp.
+class GeneratorArgumentScope {
+    WTF_MAKE_NONCOPYABLE(GeneratorArgumentScope);
+public:
+    ALWAYS_INLINE GeneratorArgumentScope(JSGlobalObject* globalObject, JSValue argument)
+        : m_runtime(runtime(globalObject))
+    {
+        if (m_runtime.hasNewGenerator()) [[unlikely]]
+            m_generator = m_runtime.claimGeneratorArgument(argument, m_whereToLeaveIt);
+    }
+    ALWAYS_INLINE ~GeneratorArgumentScope()
+    {
+        if (m_generator) [[unlikely]]
+            release();
+    }
+
+private:
+    void release();
+
+    Runtime& m_runtime;
+    PyGenerator* m_generator { nullptr };
+    PyGenerator** m_whereToLeaveIt { nullptr };
+};
 
 // A function of the host's event loop module (setEventLoopModule). Empty without an exception: the host has none.
 JSValue eventLoopFunction(JSGlobalObject*, ASCIILiteral name);

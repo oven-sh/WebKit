@@ -356,12 +356,17 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     with nothing to run in between. To find out afterwards is not sound: a use that keeps the object (a function in
     Python, a store in a list) runs no code that could say so, and addresses of frames and offsets of instructions come
     round again. When the use is over, or has raised, the view is released.
-  - Generators are made too often for that. A generator function notes the last one it made and for which instruction, and
-    `op_py_get_iter`, the next instruction to run there, claims it if the marks say that it is at the head of a `for` over that very
-    call. The loop then closes it on every way out but the end: an instruction on the way of `break`, `return` and the `continue`
+  - A generator function looks at the marks too, and notes the last generator made if its use is the head of a `for` loop, or to be
+    passed to a built-in function that is already waiting in a register and says that it goes through such an argument and keeps
+    nothing of it (`NativeFlag::ClosesGeneratorArgument`: `next`, `any`, `all`, `sum`, `min`, `max`). The use takes the note up:
+    `op_py_get_iter`, the next instruction to run there, or the function when it begins (`GeneratorArgumentScope`). There is one note, so of two
+    generators in one call the first waits for the collector.
+  - The loop closes a generator it owns on every way out but the end: an instruction on the way of `break`, `return` and the `continue`
     of an outer loop; for an exception the unwinder does it, from the marks that tracing has for loops, before anybody is
-    told that the exception is caught or leaves the frame, as CPython pops the stack of a frame first. A generator that the
-    collector would leave alone (no handler in it, nothing in its frame to close) is left alone here too.
+    told that the exception is caught or leaves the frame, as CPython pops the stack of a frame first. The function closes it when it
+    returns or raises; if a profiler is waiting to hear of that, after it has. A generator that the
+    collector would leave alone (no handler in it, nothing in its frame to close) is left alone here too, unless a tool listens to
+    its code, which is then told of the `GeneratorExit`, as in CPython.
   - The unwinder reads the iterator from its register, and no instruction shows that use. Nor does any show that a trace function may send the frame
     back to the head of a loop from where the code only leaves it (`frame.f_lineno = line`). So whoever asks which registers are live adds
     what the blocks that are open hold (`BlockPiece`): the collector, before it empties dead temporaries, and what decides
@@ -369,7 +374,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   - A program can get at an object that it has no reference to through `gc.get_objects()`, `get_referrers()`, `get_referents()` and
     `DEBUG_SAVEALL`, and at a generator through `frame.f_generator`: those end all such ownership
     (`temporariesMayHaveEscaped()`). What traces the program is shown arguments of calls and can assign to variables: that forgets the
-    notes of views.
+    notes of views, and to be told of a call forgets that of a generator.
   - The notes are weak: nobody visits them, and a collection forgets those of objects that it has found dead. To forget them all
     whenever a collection begins will not do: it is allocation that sets a collection off, and in `bytes(memoryview(b))` it is the
     use that allocates, as raising an exception does in a loop.

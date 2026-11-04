@@ -8,12 +8,14 @@
 
 #include "BytecodeStructs.h"
 #include "CodeBlock.h"
+#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyBuffer.h"
 #include "PyBytecode.h"
 #include "PyBytes.h"
 #include "PyFunction.h"
 #include "PyGenerator.h"
+#include "PyMonitoring.h"
 #include "PyNative.h"
 #include "PreciseJumpTargetsInlines.h"
 #include "TopExceptionScope.h"
@@ -61,9 +63,9 @@ void Runtime::forgetDeadTemporaries(SlotVisitor& visitor)
             m_ownedTemporaries[kept++] = m_ownedTemporaries[i];
     }
     m_ownedTemporaryCount = kept;
-    // The code block is only compared with. While it lives, there is no other at its address.
-    if (m_newGenerator && (!visitor.isMarked(m_newGenerator) || !visitor.isMarked(m_codeBlockOfCallerOfNewGenerator)))
+    if (m_newGenerator && !visitor.isMarked(m_newGenerator))
         m_newGenerator = nullptr;
+    m_usesOfCalls.fill({ });
 }
 
 static ALWAYS_INLINE bool isFrameOfPythonCode(CallFrame* callFrame)
@@ -279,34 +281,100 @@ void Runtime::didStoreInItem(JSValue value)
     didRunInstructionWithTemporaries(callFrame, { &value, 1 }, { });
 }
 
-// ---- The iterator of a `for` loop ----
+// ---- Generators ----
 //
-// for x in g(): the generator is in the register where the loop keeps its iterator, and nowhere else. Generators are made too
-// often to look at marks each time. So a generator function only notes the last one made and for whom (didMakeGenerator()), and
-// op_py_get_iter, which is the very next instruction to run in the caller, looks: whether it is at the head of a `for` loop,
-// over a call, and that call is the one that made the generator. Every generator made by such a call is looked at there,
-// so a note that is left over was made by some other instruction, and does not pass.
+// for x in g(): the generator is in the register where the loop keeps its iterator, and nowhere else. next(g()): it is in the register
+// of the argument. A generator function notes the last generator made, if it was made for such a use: at the head of a `for`
+// loop, or as an argument of a built-in function that is already waiting in its register and says that it closes such an
+// argument (NativeFlag::ClosesGeneratorArgument).
+// The use takes the note up: op_py_get_iter, which is the very next instruction to run in the caller, or the function, which does so
+// whether or not the generator is the argument that it goes through (next(it, g()) may return it). So no note outlives the use. One that
+// the use never came for, because another argument raised, is of a generator that can never turn up again. Other arguments are
+// evaluated between the making and the use; they cannot get at the generator, and if they make another for such a use,
+// the note is of that one and this one is left to the collector.
 // A loop that is left before its end closes the generator it owns: ReleaseIterator on the way of `break`, `return` and a `continue`
-// of an outer loop; for an exception, the unwinder asks releaseIteratorsOfLoopsLeft().
+// of an outer loop; for an exception, the unwinder asks releaseIteratorsOfLoopsLeft(). A function does when it is done: GeneratorArgumentScope.
 
-void Runtime::claimIteratorOfLoop(CallFrame* callFrame, unsigned offset)
+void Runtime::findUseOfCall(UseOfCall& found, CallFrame* callFrame)
+{
+    found = { callFrame->codeBlock(), callFrame->callSiteIndex().bits() };
+    if (!isFrameOfPythonCode(callFrame))
+        return;
+    auto marks = found.codeBlock->unlinkedCodeBlock()->pythonMarks();
+    const PythonMark* made = markAt(marks, found.call, PythonMark::TemporaryMade);
+    if (!made)
+        return;
+    const PythonMark* use = made + 1;
+    const PythonMark* end = marks.data() + marks.size();
+    while (use != end && (use->kind() != PythonMark::TemporaryUsed || use->value() != made->value()))
+        ++use;
+    if (use == end)
+        return;
+    found.use = use->offset;
+    switch (TemporaryUse::kindOf(use->bits)) {
+    case TemporaryUse::ForHeader:
+        found.kind = UseOfCall::ForHeader;
+        break;
+    case TemporaryUse::Argument:
+        found.kind = UseOfCall::Argument;
+        found.callee = TemporaryUse::registerOffsetOf(use->bits);
+        break;
+    default:
+        break;
+    }
+}
+
+void Runtime::didMakeGenerator(PyGenerator* generator, CallFrame* frameOfFunction)
+{
+    m_newGenerator = nullptr;
+    void* caller = frameOfFunction->callerFrameOrEntryFrame();
+    if (caller == m_vm.topEntryFrame) [[unlikely]]
+        return;
+    auto* callFrame = static_cast<CallFrame*>(caller);
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    unsigned call = callFrame->callSiteIndex().bits();
+    UseOfCall& use = m_usesOfCalls[(call ^ std::bit_cast<uintptr_t>(codeBlock) >> 5) % m_usesOfCalls.size()];
+    if (use.codeBlock != codeBlock || use.call != call) [[unlikely]]
+        findUseOfCall(use, callFrame);
+    if (use.kind == UseOfCall::Other)
+        return;
+    if (use.kind == UseOfCall::Argument) {
+        auto* native = PyNativeFunction::tryFrom(callFrame->r(VirtualRegister(use.callee)).jsValue());
+        if (!native || !(native->def().flags & ClosesGeneratorArgument))
+            return;
+    }
+    m_newGenerator = generator;
+    m_callerOfNewGenerator = callFrame;
+    m_useOfNewGenerator = use.use;
+}
+
+void Runtime::claimIteratorOfLoop(unsigned offset)
 {
     PyGenerator* generator = std::exchange(m_newGenerator, nullptr);
-    CodeBlock* codeBlock = callFrame->codeBlock();
-    if (m_codeBlockOfCallerOfNewGenerator != codeBlock)
+    if (m_useOfNewGenerator == offset)
+        generator->loopOwnership = m_ownershipEpoch;
+}
+
+// Nothing but the call that the note is about can have passed the generator on.
+PyGenerator* Runtime::claimGeneratorArgument(JSValue argument, PyGenerator**& whereToLeaveIt)
+{
+    PyGenerator* generator = std::exchange(m_newGenerator, nullptr);
+    whereToLeaveIt = std::exchange(m_whereToLeaveGeneratorArgument, nullptr);
+    if (argument != JSValue(generator))
+        return nullptr;
+    generator->loopOwnership = m_ownershipEpoch;
+    return generator;
+}
+
+void GeneratorArgumentScope::release()
+{
+    if (m_whereToLeaveIt) {
+        *m_whereToLeaveIt = m_generator;
         return;
-    auto marks = codeBlock->unlinkedCodeBlock()->pythonMarks();
-    const PythonMark* use = markAt(marks, offset, PythonMark::TemporaryUsed);
-    if (!use || TemporaryUse::kindOf(use->bits) != TemporaryUse::ForHeader)
-        return;
-    // The call comes right before.
-    unsigned callSite = m_callSiteOfNewGenerator.bits();
-    for (const PythonMark* mark = use; mark != marks.data() && (--mark)->offset >= callSite;) {
-        if (mark->offset == callSite && mark->kind() == PythonMark::TemporaryMade && mark->value() == use->value()) {
-            generator->loopOwnership = m_ownershipEpoch;
-            return;
-        }
     }
+    // An exception that the function has raised waits.
+    SuspendExceptionScope suspended(m_runtime.vm());
+    m_runtime.releaseIteratorOfLoop(m_generator);
 }
 
 std::span<const BlockPiece> blockPiecesOf(CodeBlock* codeBlock, bool onlyIfALoopOwnsItsIterator)
@@ -333,6 +401,9 @@ std::span<const BlockPiece> blockPiecesOf(CodeBlock* codeBlock, bool onlyIfALoop
 static bool hasNothingToClose(PyGenerator* generator)
 {
     if (generator->finalization() != PyGenerator::Finalization::None || generator->delegate())
+        return false;
+    // A tool is told of the GeneratorExit all the same.
+    if (CodeMonitor* monitor = generator->function()->codeInfo().monitor.get(); monitor && monitor->isAwake())
         return false;
     for (unsigned i = 0; i < generator->slotCount(); ++i) {
         if (auto* held = PyGenerator::tryFrom(generator->slot(i)); held && held->loopOwnership)

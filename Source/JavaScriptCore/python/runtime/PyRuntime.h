@@ -678,21 +678,23 @@ public:
         ++m_ownershipEpoch;
     }
     // A generator function is about to return the generator to whoever called it.
-    ALWAYS_INLINE void didMakeGenerator(PyGenerator* generator, CallFrame* frameOfFunction)
-    {
-        void* caller = frameOfFunction->callerFrameOrEntryFrame();
-        if (caller == m_vm.topEntryFrame) [[unlikely]] {
-            m_newGenerator = nullptr;
-            return;
-        }
-        m_newGenerator = generator;
-        m_callerOfNewGenerator = static_cast<CallFrame*>(caller);
-        m_codeBlockOfCallerOfNewGenerator = m_callerOfNewGenerator->codeBlock();
-        m_callSiteOfNewGenerator = m_callerOfNewGenerator->callSiteIndex();
-    }
+    void didMakeGenerator(PyGenerator*, CallFrame* frameOfFunction);
     // For op_py_get_iter, which the frame is at: the generator is its own iterator.
     ALWAYS_INLINE bool isNewGenerator(JSValue value, CallFrame* callFrame) const { return value.isCell() && value.asCell() == std::bit_cast<JSCell*>(m_newGenerator) && m_callerOfNewGenerator == callFrame; }
-    void claimIteratorOfLoop(CallFrame*, unsigned offsetOfGetIter);
+    void claimIteratorOfLoop(unsigned offsetOfGetIter);
+    // See GeneratorArgumentScope. Null: it is not known to be out of the program's reach.
+    ALWAYS_INLINE bool hasNewGenerator() const { return m_newGenerator; }
+    PyGenerator* claimGeneratorArgument(JSValue argument, PyGenerator**& whereToLeaveIt);
+    // A tool is about to be shown the arguments of a call.
+    void forgetNewGenerator() { m_newGenerator = nullptr; }
+    // For what makes the call at the offset on behalf of the frame, and has something to do between the return of the function and the
+    // closing of the generator: the function leaves it there. When the call is over, whether the function got that far or not: didCallWithGeneratorArgument().
+    void leaveGeneratorArgumentIn(PyGenerator*& slot, CallFrame* callFrame, unsigned offset)
+    {
+        if (m_newGenerator && m_callerOfNewGenerator == callFrame && m_useOfNewGenerator == offset)
+            m_whereToLeaveGeneratorArgument = &slot;
+    }
+    void didCallWithGeneratorArgument() { m_whereToLeaveGeneratorArgument = nullptr; }
     // The loop is left before the iterator is exhausted.
     void releaseIteratorOfLoop(JSValue iterator);
     // An exception is caught in the frame, or leaves it.
@@ -890,8 +892,20 @@ private:
     unsigned m_ownershipEpoch { 1 };
     PyGenerator* m_newGenerator { nullptr };
     CallFrame* m_callerOfNewGenerator { nullptr };
-    CodeBlock* m_codeBlockOfCallerOfNewGenerator { nullptr };
-    CallSiteIndex m_callSiteOfNewGenerator;
+    unsigned m_useOfNewGenerator { 0 }; // The offset of the instruction.
+    PyGenerator** m_whereToLeaveGeneratorArgument { nullptr };
+    // What the marks say of the value of a call, for didMakeGenerator(), which asks about the same few calls over and over. A code
+    // block is only compared with, and a collection forgets them all: until then there is no other at its address.
+    struct UseOfCall {
+        enum Kind : uint8_t { Other, ForHeader, Argument };
+        CodeBlock* codeBlock { nullptr };
+        unsigned call { 0 }; // Offsets of instructions.
+        unsigned use { 0 };
+        int callee { 0 }; // Argument: the register.
+        Kind kind { Other };
+    };
+    std::array<UseOfCall, 16> m_usesOfCalls;
+    void findUseOfCall(UseOfCall&, CallFrame*);
     void registerNotedGenerators() WTF_REQUIRES_LOCK(m_finalizationLock);
     Deque<JSCell*> m_pendingFinalization WTF_GUARDED_BY_LOCK(m_finalizationLock);
     Deque<PyWeakRef*> m_pendingWeakRefCallbacks WTF_GUARDED_BY_LOCK(m_finalizationLock);

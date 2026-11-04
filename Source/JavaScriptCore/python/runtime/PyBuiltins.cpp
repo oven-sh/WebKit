@@ -315,6 +315,7 @@ static JSValue builtinAll(JSGlobalObject* globalObject, JSValue iterable)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    GeneratorArgumentScope argument(globalObject, iterable);
     bool result = forEach(globalObject, iterable, [&](JSValue item) { return isTrue(globalObject, item); });
     RETURN_IF_EXCEPTION(scope, { });
     return jsBoolean(result);
@@ -324,6 +325,7 @@ static JSValue builtinAny(JSGlobalObject* globalObject, JSValue iterable)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    GeneratorArgumentScope argument(globalObject, iterable);
     bool noneIsTrue = forEach(globalObject, iterable, [&](JSValue item) { return !isTrue(globalObject, item); });
     RETURN_IF_EXCEPTION(scope, { });
     return jsBoolean(!noneIsTrue);
@@ -352,6 +354,7 @@ static JSValue builtinNext(JSGlobalObject* globalObject, const CallArgs& args)
     if (failed(scope, rejectKeywords(globalObject, "next"_s, args)) || failed(scope, checkPositional(globalObject, "next"_s, args, 1, 2)))
         return { };
     JSValue iterator = args[0];
+    GeneratorArgumentScope argument(globalObject, iterator);
     PyType* type = rt.typeOf(iterator);
     JSValue method = type->lookup(Special::Next);
     if (!method || isNone(method))
@@ -417,6 +420,8 @@ static JSValue minOrMax(JSGlobalObject* globalObject, const CallArgs& args)
     bool isPositional = args.size() > 1;
     if (isPositional && defaultValue)
         return raiseTypeError(globalObject, scope, "Cannot specify a default for "_s, name, "() with multiple positional arguments"_s);
+    // (One of several arguments may be what is returned.)
+    GeneratorArgumentScope argument(globalObject, isPositional ? JSValue() : args[0]);
 
     JSValue bestItem;
     JSValue bestKey;
@@ -503,6 +508,7 @@ static JSValue builtinSum(JSGlobalObject* globalObject, JSValue iterable, JSValu
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    GeneratorArgumentScope argument(globalObject, iterable);
     JSValue iterator = getIter(globalObject, iterable);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue result = start ? start : jsNumber(0);
@@ -1081,9 +1087,9 @@ static constexpr NativeDef builtinFunctions[] = {
     PY_FUNCTION("__lazy_import__", builtinLazyImport, "(name, globals=None, locals=None, fromlist=(), level=0)"),
     PY_FUNCTION("abs", builtinAbs, "(number, /)"),
     PY_FUNCTION("aiter", builtinAIter, "(async_iterable, /)"),
-    PY_FUNCTION("all", builtinAll, "(iterable, /)"),
+    PY_FUNCTION_WITH_FLAGS("all", builtinAll, "(iterable, /)", ClosesGeneratorArgument),
     PY_FUNCTION("anext", builtinANext, "(async_iterator, default=<unrepresentable>, /)"),
-    PY_FUNCTION("any", builtinAny, "(iterable, /)"),
+    PY_FUNCTION_WITH_FLAGS("any", builtinAny, "(iterable, /)", ClosesGeneratorArgument),
     PY_FUNCTION("ascii", builtinAscii, "(obj, /)"),
     PY_FUNCTION("bin", builtinBin, "(integer, /)"),
     PY_FUNCTION("breakpoint", builtinBreakpoint, "(*args, **kws)"),
@@ -1108,9 +1114,9 @@ static constexpr NativeDef builtinFunctions[] = {
     PY_FUNCTION("iter", builtinIter, "(*args)"),
     PY_FUNCTION("len", builtinLen, "(obj, /)"),
     PY_FUNCTION("locals", builtinLocals, "()"),
-    PY_FUNCTION("max", minOrMax<CompareOperator::Gt>, "(*args, **kwargs)"),
-    PY_FUNCTION("min", minOrMax<CompareOperator::Lt>, "(*args, **kwargs)"),
-    PY_FUNCTION("next", builtinNext, "(*args)"),
+    PY_FUNCTION_WITH_FLAGS("max", minOrMax<CompareOperator::Gt>, "(*args, **kwargs)", ClosesGeneratorArgument),
+    PY_FUNCTION_WITH_FLAGS("min", minOrMax<CompareOperator::Lt>, "(*args, **kwargs)", ClosesGeneratorArgument),
+    PY_FUNCTION_WITH_FLAGS("next", builtinNext, "(*args)", ClosesGeneratorArgument),
     PY_FUNCTION("oct", builtinOct, "(integer, /)"),
     PY_FUNCTION("ord", builtinOrd, "(character, /)"),
     PY_FUNCTION("pow", builtinPow, "(base, exp, mod=None)"),
@@ -1119,7 +1125,7 @@ static constexpr NativeDef builtinFunctions[] = {
     PY_FUNCTION("round", builtinRound, "(number, ndigits=None)"),
     PY_FUNCTION("setattr", builtinSetAttr, "(obj, name, value, /)"),
     PY_FUNCTION("sorted", builtinSorted, "!(iterable, /, *, key=None, reverse=False)"),
-    PY_FUNCTION("sum", builtinSum, "(iterable, /, start=0)"),
+    PY_FUNCTION_WITH_FLAGS("sum", builtinSum, "(iterable, /, start=0)", ClosesGeneratorArgument),
     PY_FUNCTION("vars", builtinVars, "(*args)"),
 };
 

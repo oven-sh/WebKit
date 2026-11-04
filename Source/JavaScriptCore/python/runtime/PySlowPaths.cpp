@@ -575,7 +575,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_iter)
     auto bytecode = pc->as<OpPyGetIter>();
     JSValue iterable = GET_C(bytecode.m_iterable).jsValue();
     if (Runtime& rt = runtime(globalObject); rt.isNewGenerator(iterable, callFrame))
-        rt.claimIteratorOfLoop(callFrame, codeBlock->bytecodeOffset(pc));
+        rt.claimIteratorOfLoop(codeBlock->bytecodeOffset(pc));
     RETURN(getIter(globalObject, iterable));
 }
 

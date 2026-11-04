@@ -1856,6 +1856,9 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             callable = method->function();
             first = method->self();
         }
+        // It may keep what it is shown. (A profile function is only shown the function.)
+        if (tools & ~(1 << profileTool))
+            m_runtime.forgetNewGenerator();
         if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::Call, tools, callable, first)))
             return threw;
         // What is not a function written in Python is also told of when it is over. So it is called from here.
@@ -1869,7 +1872,17 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         }
         if (!listening)
             return runIt;
+        // next(g()): the arguments are dropped, and the generator is closed, after the tools have been told that the function is done.
+        PyGenerator* generatorArgument = nullptr;
+        m_runtime.leaveGeneratorArgumentIn(generatorArgument, callFrame, offset);
+        auto dropArguments = makeScopeExit([&] {
+            if (!generatorArgument)
+                return;
+            SuspendExceptionScope suspended(vm);
+            m_runtime.releaseIteratorOfLoop(generatorArgument);
+        });
         JSValue result = call(globalObject, callee, CallArgs(arguments, count - (keywordNames ? keywordNames->length() : 0), keywordNames));
+        m_runtime.didCallWithGeneratorArgument();
         // It may have been sys.monitoring.set_events().
         listening &= wanted(Event::Call);
         if (failed(scope, result)) {
@@ -1883,6 +1896,9 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         // it is over (liveLocalsOfFrame()): a collection while a tool runs would empty the register.
         if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::CReturn, listening, callable, first)))
             return threw;
+        dropArguments.release();
+        if (generatorArgument)
+            m_runtime.releaseIteratorOfLoop(generatorArgument);
         callFrame->uncheckedR(dst) = result;
         return { next(), goOn };
     }
