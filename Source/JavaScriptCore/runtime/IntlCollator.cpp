@@ -310,8 +310,17 @@ UCollationResult IntlCollator::compareStrings(JSGlobalObject* globalObject, Stri
         return std::nullopt;
     }());
 
-    if (!result)
+    if (!result) {
+        // StringView::upconvertedCharacters() copies a Latin-1 string into a Vector<char16_t>, which CRASH()es past its maximum capacity.
+        auto canUpconvert = [](StringView view) {
+            return !view.is8Bit() || WTF::isValidCapacityForVector<char16_t>(view.length());
+        };
+        if (!canUpconvert(x) || !canUpconvert(y)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return { };
+        }
         result = ucol_strcoll(m_collator.get(), x.upconvertedCharacters(), x.length(), y.upconvertedCharacters(), y.length());
+    }
 
     if (U_FAILURE(status)) {
         throwException(globalObject, scope, createError(globalObject, "Failed to compare strings."_s));
