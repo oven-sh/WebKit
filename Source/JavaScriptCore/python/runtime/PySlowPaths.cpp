@@ -15,6 +15,7 @@
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "PyAbstract.h"
 #include "PyBytecode.h"
+#include "PyDescriptors.h"
 #include "PyErrors.h"
 #include "PyException.h"
 #include "PyFunction.h"
@@ -27,6 +28,7 @@
 #include "PyRange.h"
 #include "PySet.h"
 #include "PyStr.h"
+#include "PyTuple.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -371,13 +373,65 @@ static ALWAYS_INLINE void remember(Metadata& metadata, const AttributeCache& cac
     metadata.m_metatypeVersion = cache.metatypeVersion;
 }
 
+// The lookup that op_py_get_attr and op_py_get_method make when they remember nothing of an object like this one. One walk finds the
+// attribute and what there is to remember. An object of which nothing can be remembered leaves what is remembered as it is.
+// Empty, and no exception: the attribute is not of a kind that is read in a line. That is left to getAttr() or getMethod(), and to the
+// caller if it is a property, which is in `property` then.
+// `self`: as for getMethod().
 template<typename Metadata>
-static ALWAYS_INLINE void rememberAttribute(JSGlobalObject* globalObject, Metadata& metadata, JSValue base, JSString* name, bool forCall)
+static ALWAYS_INLINE JSValue findAttribute(JSGlobalObject* globalObject, Metadata& metadata, JSValue base, JSString* name, JSValue* self, PyProperty** property = nullptr)
 {
     AttributeCache cache;
-    if (!describeAttribute(globalObject, base, name, forCall, cache))
-        cache = { };
-    remember(metadata, cache);
+    switch (describeAttribute(globalObject, base, name, !!self, cache)) {
+    case AttributeDescription::None:
+        return { };
+    case AttributeDescription::Absent:
+        return getAttrOfAbsent(globalObject, base, name);
+    case AttributeDescription::OfAllAlike:
+        remember(metadata, cache);
+        break;
+    case AttributeDescription::OfThisObjectNow:
+        break;
+    }
+    if (cache.jsType) {
+        *self = base;
+        return JSValue::decode(cache.payload);
+    }
+    if (cache.offset >= 0)
+        return asObject(base)->getDirect(cache.offset);
+    switch (cache.offset) {
+    case AttributeCache::classValue:
+        if (self)
+            *self = base;
+        [[fallthrough]];
+    case AttributeCache::unboundClassValue:
+    case AttributeCache::valueOfClass:
+        return JSValue::decode(cache.payload);
+    case AttributeCache::classMethod:
+    case AttributeCache::classMethodOfClass: {
+        // To anything but a function of Python's, the class may be something else than the first argument.
+        JSValue function = uncheckedDowncast<PyWrapperObject>(JSValue::decode(cache.payload).asCell())->wrapped();
+        if (!PyFunction::is(function))
+            return { };
+        *self = cache.offset == AttributeCache::classMethod ? JSValue(typeOf(globalObject, base)) : base;
+        return function;
+    }
+    case AttributeCache::staticMethod:
+    case AttributeCache::staticMethodOfClass:
+        return uncheckedDowncast<PyWrapperObject>(JSValue::decode(cache.payload).asCell())->wrapped();
+    case AttributeCache::moduleEntry: {
+        JSValue value = uncheckedDowncast<PyModule>(base.asCell())->dict()->valueAt(cache.typeVersion);
+        return asLazyImport(globalObject, value) ? JSValue() : value;
+    }
+    case AttributeCache::tupleItem:
+        if (auto* tuple = uncheckedDowncast<PyTuple>(base.asCell()); cache.payload < tuple->length())
+            return tuple->at(cache.payload);
+        return { };
+    case AttributeCache::propertyGetter:
+        *property = uncheckedDowncast<PyProperty>(JSValue::decode(cache.payload).asCell());
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_attr)
@@ -386,17 +440,18 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_attr)
     auto bytecode = pc->as<OpPyGetAttr>();
     JSValue base = GET_C(bytecode.m_base).jsValue();
     JSString* name = asString(GET_C(bytecode.m_name).jsValue());
-    PyFunction* getter = nullptr;
-    JSValue result = getAttrForInstruction(globalObject, base, name, getter);
+    PyProperty* property = nullptr;
+    JSValue result = findAttribute(globalObject, bytecode.metadata(codeBlock), base, name, nullptr, &property);
     CHECK_EXCEPTION();
+    if (result)
+        RETURN(result);
     // See "Calls that instructions make" below. Nothing of the program's has run: the interpreter finds the object where it was.
-    if (getter) {
-        ASSERT(canBeCalledByInstruction(getter, 1) && GET_C(bytecode.m_base).jsValue() == base);
-        rememberAttribute(globalObject, bytecode.metadata(codeBlock), base, name, false);
+    PyFunction* getter = property ? PyFunction::tryFrom(property->getter.get()) : nullptr;
+    if (getter && canBeCalledByInstruction(getter, 1)) {
+        ASSERT(GET_C(bytecode.m_base).jsValue() == base);
         return encodeResult(getter, nullptr);
     }
-    rememberAttribute(globalObject, bytecode.metadata(codeBlock), base, name, false);
-    RETURN(result);
+    RETURN(getAttr(globalObject, base, name));
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_set_attr)
@@ -431,21 +486,26 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_method)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyGetMethod>();
+    auto& metadata = bytecode.metadata(codeBlock);
     JSValue self;
     JSValue base = GET_C(bytecode.m_base).jsValue();
     if (JSValue which = GET_C(bytecode.m_name).jsValue(); which.isInt32()) [[unlikely]] {
         AttributeCache cache;
         JSValue method = loadSpecialForWith(globalObject, base, static_cast<SpecialMethodForWith>(which.asInt32()), self, cache);
         CHECK_EXCEPTION();
-        remember(bytecode.metadata(codeBlock), cache);
+        if (cache.structureID)
+            remember(metadata, cache);
         GET(bytecode.m_self) = self;
         GET(bytecode.m_dst) = method;
         END_IMPL();
     }
     JSString* name = asString(GET_C(bytecode.m_name).jsValue());
-    JSValue method = getMethod(globalObject, base, name, self);
+    JSValue method = findAttribute(globalObject, metadata, base, name, &self);
     CHECK_EXCEPTION();
-    rememberAttribute(globalObject, bytecode.metadata(codeBlock), base, name, true);
+    if (!method) {
+        method = getMethod(globalObject, base, name, self);
+        CHECK_EXCEPTION();
+    }
     GET(bytecode.m_self) = self;
     GET(bytecode.m_dst) = method;
     END_IMPL();

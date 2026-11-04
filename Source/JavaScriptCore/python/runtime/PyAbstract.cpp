@@ -271,7 +271,7 @@ static NEVER_INLINE JSValue raiseNoAttribute(JSGlobalObject* globalObject, Throw
     return raiseAttributeError(globalObject, scope, object, name, makeString('\'', typeName(globalObject, object), "' object has no attribute '"_s, stringOf(name), '\''));
 }
 
-JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress, PyFunction** getterForCaller)
+JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(rt.vm());
@@ -301,15 +301,8 @@ JSValue genericGetAttr(JSGlobalObject* globalObject, JSValue object, JSString* n
                 }
                 // As property.__get__(). (A class derived from property may have its own.)
                 if (info == PyProperty::info() && uncheckedDowncast<PyProperty>(cell)->type() == rt.propertyType()) {
-                    if (JSValue function = uncheckedDowncast<PyProperty>(cell)->getter.get(); !isNone(function)) {
-                        if (getterForCaller) {
-                            if (PyFunction* getter = PyFunction::tryFrom(function); getter && canBeCalledByInstruction(getter, 1)) {
-                                *getterForCaller = getter;
-                                return { };
-                            }
-                        }
+                    if (JSValue function = uncheckedDowncast<PyProperty>(cell)->getter.get(); !isNone(function))
                         RELEASE_AND_RETURN(scope, call(globalObject, function, object));
-                    }
                 }
             }
             PyType* descriptorType = uncheckedDowncast<PyObject>(cell)->type();
@@ -472,7 +465,29 @@ static NEVER_INLINE void completeAttributeError(JSGlobalObject* globalObject, JS
         completeAttributeError(globalObject, thrown->value(), object, name);
 }
 
-static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress, PyFunction** getterForCaller = nullptr)
+static JSValue callGetAttrHook(JSGlobalObject* globalObject, JSValue hook, JSValue object, JSString* name, bool suppress)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSValue result = callSpecial(globalObject, hook, object, name);
+    if (failed(scope, result)) [[unlikely]] {
+        if (suppress)
+            clearPendingExceptionIfMatches(globalObject, runtime(globalObject).AttributeError());
+        else
+            completeAttributeError(globalObject, object, name);
+    }
+    return result;
+}
+
+JSValue getAttrOfAbsent(JSGlobalObject* globalObject, JSValue object, JSString* name)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSValue hook = typeOf(globalObject, object)->lookup(Special::GetAttr);
+    if (!hook)
+        return raiseNoAttribute(globalObject, scope, object, name);
+    RELEASE_AND_RETURN(scope, callGetAttrHook(globalObject, hook, object, name, false));
+}
+
+static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSString* name, bool suppress)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -485,7 +500,7 @@ static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSStrin
 
     JSValue result;
     if (isNative(getAttribute, objectGetAttribute)) [[likely]]
-        result = genericGetAttr(globalObject, object, name, suppress || fallback, fallback ? nullptr : getterForCaller); // If the getter raises AttributeError, __getattr__ is asked.
+        result = genericGetAttr(globalObject, object, name, suppress || fallback);
     else if (isNative(getAttribute, typeGetAttribute) && PyType::is(object))
         result = typeGetAttr(globalObject, PyType::from(object), name, suppress || fallback);
     else if (isNative(getAttribute, moduleGetAttribute) && PyModule::is(object))
@@ -495,9 +510,6 @@ static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSStrin
     EXCEPTION_ASSERT(!scope.exception() || !result);
     if (result) [[likely]]
         return result;
-
-    if (getterForCaller && *getterForCaller)
-        return { };
 
     if (scope.exception()) {
         if (!suppress && !fallback) {
@@ -509,14 +521,7 @@ static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSStrin
     }
     if (!fallback)
         return { };
-    result = callSpecial(globalObject, fallback, object, name);
-    if (failed(scope, result)) [[unlikely]] {
-        if (suppress)
-            clearPendingExceptionIfMatches(globalObject, rt.AttributeError());
-        else
-            completeAttributeError(globalObject, object, name);
-    }
-    return result;
+    RELEASE_AND_RETURN(scope, callGetAttrHook(globalObject, fallback, object, name, suppress));
 }
 
 JSValue getAttr(JSGlobalObject* globalObject, JSValue object, JSString* name)
@@ -524,13 +529,6 @@ JSValue getAttr(JSGlobalObject* globalObject, JSValue object, JSString* name)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     RELEASE_AND_RETURN(scope, getAttrImpl(globalObject, object, name, false));
-}
-
-JSValue getAttrForInstruction(JSGlobalObject* globalObject, JSValue object, JSString* name, PyFunction*& getter)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RELEASE_AND_RETURN(scope, getAttrImpl(globalObject, object, name, false, &getter));
 }
 
 JSValue getAttrIfPresent(JSGlobalObject* globalObject, JSValue object, JSString* name)
@@ -626,19 +624,6 @@ static MethodWrapper methodWrapperKind(Runtime& rt, JSValue value)
     return type == rt.staticmethodType() ? MethodWrapper::StaticMethod : type == rt.classmethodType() ? MethodWrapper::ClassMethod : MethodWrapper::None;
 }
 
-// Whether the Structure tells all about which attributes the object itself has.
-static bool structureTellsAttributes(Runtime& rt, JSCell* cell, PyType* type, Structure* structure)
-{
-    if (structure->isDictionary())
-        return false;
-    if (!type->has(TypeFlag::HasDict))
-        return true;
-    // The __dict__ of a record, once it has one, is a property of it: see instanceDict().
-    if (cell->type() == PyObjectType && cell->classInfo() == PyRecord::info())
-        return !isValidOffset(structure->get(rt.vm(), rt.dictKey()));
-    return cell->type() == PyInstanceType && !uncheckedDowncast<PyInstance>(cell)->dict() && !isValidOffset(structure->get(rt.vm(), rt.instanceHasDictKey()));
-}
-
 static bool describeAttributeOfClass(Runtime& rt, PyType* cls, JSString* name, bool forCall, AttributeCache& cache)
 {
     // As in typeGetAttr().
@@ -676,8 +661,9 @@ static bool describeAttributeOfClass(Runtime& rt, PyType* cls, JSString* name, b
 }
 
 // All but the versions. `type`: whose version is to be remembered, if any.
-static bool describeAttributeOfObject(JSGlobalObject* globalObject, JSCell* cell, JSString* name, bool forCall, AttributeCache& cache, PyType*& type)
+static AttributeDescription describeAttributeOfObject(JSGlobalObject* globalObject, JSCell* cell, JSString* name, bool forCall, AttributeCache& cache, PyType*& type, uint64_t timesLookupRanCode)
 {
+    using enum AttributeDescription;
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     JSValue object = cell;
@@ -687,127 +673,174 @@ static bool describeAttributeOfObject(JSGlobalObject* globalObject, JSCell* cell
     if (jsType == PyModuleType) {
         auto* module = uncheckedDowncast<PyModule>(cell);
         if (module->type() != rt.moduleType() || rt.moduleType()->lookup(name))
-            return false;
+            return None;
         StringImpl* impl = name->tryGetValueImpl();
         if (impl == rt.names.dSpec()->tryGetValueImpl() || impl == rt.names.dLoader()->tryGetValueImpl())
-            return false;
+            return None;
         int32_t index = module->dict()->indexOf(name);
         if (index < 0)
-            return false;
+            return None;
         cache.structureID = cell->structureID();
         cache.offset = AttributeCache::moduleEntry;
         cache.typeVersion = index;
         cache.payload = module->dict()->watchedVersion();
-        return true;
+        return OfAllAlike;
     }
 
     // As in genericGetAttr() and getMethod().
     bool isPython = isPyObjectType(jsType);
     if (!isPython && jsType != StringType && jsType != ArrayType)
-        return false;
+        return None;
     PyType* typeOfObject = rt.typeOf(object);
     if (!isNative(typeOfObject->lookup(Special::GetAttribute), objectGetAttribute))
-        return false;
+        return None;
     JSValue descriptor = typeOfObject->lookup(name);
-    if (mayBecomeAnotherKindOfDescriptor(rt, descriptor, typeOfObject))
-        return false;
+    // From here on: whether what is found out holds for every object with the Structure, while the class has its version.
+    AttributeDescription description = mayBecomeAnotherKindOfDescriptor(rt, descriptor, typeOfObject) ? OfThisObjectNow : OfAllAlike;
 
     if (!isPython) {
         if (!forCall || !descriptor || !isMethodDescriptor(descriptor))
-            return false;
+            return None;
         cache.jsType = jsType;
         cache.payload = JSValue::encode(descriptor);
-        return true;
+        return description;
     }
 
     type = typeOfObject;
+    bool hasHook = !!type->lookup(Special::GetAttr);
+    // Where the class has a __getattr__ a method is bound before the arguments are evaluated: getMethod(). One of a built-in type may
+    // refuse that, and goes by another name once it is bound.
+    if (forCall && hasHook && PyNativeFunction::is(descriptor))
+        return None;
+    bool isData = isDataDescriptor(descriptor);
+    // The Structure is looked at when the lookups are over. Code that one of them ran may have given the object another, and a
+    // collection may have freed this one.
+    if (PyType::timesLookupRanCode() != timesLookupRanCode) [[unlikely]]
+        return None;
     Structure* structure = cell->structure();
     cache.structureID = cell->structureID();
+    if (structure->isDictionary())
+        description = OfThisObjectNow;
 
     // One of the __slots__.
     if (descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && descriptor.asCell()->classInfo() == PyMemberDescriptor::info()) {
-        if (structure->isDictionary())
-            return false;
-        cache.offset = structure->get(vm, PropertyName(&uncheckedDowncast<PyMemberDescriptor>(descriptor.asCell())->key()->uid()));
-        return isValidOffset(cache.offset);
+        auto* member = uncheckedDowncast<PyMemberDescriptor>(descriptor.asCell());
+        if (type != member->owner() && !type->isSubtypeOf(member->owner()))
+            return None;
+        cache.offset = structure->get(vm, PropertyName(&member->key()->uid()));
+        return isValidOffset(cache.offset) ? description : None;
     }
     // A field of a named tuple.
     if (jsType == PyTupleType && !forCall) {
         if (int64_t index = indexOfTupleGetter(globalObject, descriptor); index >= 0) {
             cache.offset = AttributeCache::tupleItem;
             cache.payload = index;
-            return true;
+            return description;
         }
     }
     // A property. If its getter raises AttributeError, __getattr__ is asked: that is for C++.
-    if (!forCall && descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && rt.typeOf(descriptor) == rt.propertyType() && !type->lookup(Special::GetAttr)) {
+    if (!forCall && descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && rt.typeOf(descriptor) == rt.propertyType() && !hasHook) {
         cache.offset = AttributeCache::propertyGetter;
         cache.payload = JSValue::encode(descriptor);
-        return true;
+        return description;
     }
-    if (isDataDescriptor(descriptor) || !structureTellsAttributes(rt, cell, type, structure))
-        return false;
+    if (isData)
+        return None;
 
+    // What the object holds itself. Its Structure tells, if the attributes are properties: those of an instance that has not been asked
+    // for its __dict__.
+    PyDict* dict = nullptr;
     if (jsType == PyInstanceType) {
-        UniquedStringImpl* key = propertyKeyOfAttribute(name);
-        if (!key)
-            return false;
-        cache.offset = structure->get(vm, PropertyName(key));
-        if (isValidOffset(cache.offset))
-            return true;
+        dict = uncheckedDowncast<PyInstance>(cell)->dict();
+        if (!dict) {
+            UniquedStringImpl* key = propertyKeyOfAttribute(name);
+            if (!key)
+                return None;
+            cache.offset = structure->get(vm, PropertyName(key));
+            // No other object of the Structure has a dict either: PyInstance::ensureDict().
+            if (isValidOffset(cache.offset))
+                return description;
+            if (isValidOffset(structure->get(vm, rt.instanceHasDictKey())))
+                description = OfThisObjectNow;
+        }
+    } else if (type->has(TypeFlag::HasDict)) {
+        bool isWrapper = cell->inherits<PyWrapperObject>();
+        if (isWrapper && uncheckedDowncast<PyWrapperObject>(cell)->copiesAttributesLater())
+            return None;
+        dict = instanceDict(globalObject, object, false);
+        // The others have their __dict__, once they have one, as a property: see instanceDict().
+        if (jsType == PyExceptionType || isWrapper)
+            description = OfThisObjectNow;
+    }
+    if (dict) {
+        if (!dict->hasOnlyStringKeys())
+            return None;
+        description = OfThisObjectNow;
+        if (JSValue value = dict->get(name)) {
+            cache.payload = JSValue::encode(value);
+            cache.offset = forCall ? AttributeCache::unboundClassValue : AttributeCache::classValue;
+            return description;
+        }
     }
 
     if (!descriptor)
-        return false;
+        return Absent;
     cache.payload = JSValue::encode(descriptor);
     if (isMethodDescriptor(descriptor)) {
         cache.offset = AttributeCache::classValue;
-        return forCall; // Otherwise the attribute is a new bound method each time.
+        return forCall ? description : None; // Otherwise the attribute is a new bound method each time.
     }
     switch (methodWrapperKind(rt, descriptor)) {
     case MethodWrapper::StaticMethod:
         cache.offset = AttributeCache::staticMethod;
-        return true;
+        return description;
     case MethodWrapper::ClassMethod:
         cache.offset = AttributeCache::classMethod;
-        return forCall;
+        return forCall ? description : None;
     case MethodWrapper::None:
         break;
     }
     // What is left is the attribute as it is, if there is nothing to bind.
     if (descriptor.isCell()) {
         if (auto* native = PyNativeFunction::tryFrom(descriptor); native && native->kind() == NativeKind::ClassMethod)
-            return false;
+            return None;
         if (rt.typeOf(descriptor)->lookup(Special::Get))
-            return false;
+            return None;
     }
     cache.offset = forCall ? AttributeCache::unboundClassValue : AttributeCache::classValue;
-    return true;
+    return description;
 }
 
-bool describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name, bool forCall, AttributeCache& cache)
+AttributeDescription describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name, bool forCall, AttributeCache& cache)
 {
+    using enum AttributeDescription;
     if (!object.isCell())
-        return false;
-    // A type is asked for its version last: it has only so many to give. And if code of the program has run meanwhile, that may no
-    // longer be the version of what was found.
+        return None;
+    Runtime& rt = runtime(globalObject);
     uint64_t timesLookupRanCode = PyType::timesLookupRanCode();
     JSCell* cell = object.asCell();
-    if (PyType::is(cell)) {
-        auto* cls = uncheckedDowncast<PyType>(cell);
-        if (!describeAttributeOfClass(runtime(globalObject), cls, name, forCall, cache) || PyType::timesLookupRanCode() != timesLookupRanCode)
-            return false;
+    PyType* type = nullptr;
+    PyType* cls = PyType::is(cell) ? uncheckedDowncast<PyType>(cell) : nullptr;
+    AttributeDescription description;
+    if (cls)
+        description = describeAttributeOfClass(rt, cls, name, forCall, cache) ? OfAllAlike : None;
+    else
+        description = describeAttributeOfObject(globalObject, cell, name, forCall, cache, type, timesLookupRanCode);
+    // Then anything may have become of the class, the object, and the frame that holds it.
+    if (PyType::timesLookupRanCode() != timesLookupRanCode) [[unlikely]]
+        return None;
+    if (description != OfAllAlike)
+        return description;
+    // A type is asked for its version last: it has only so many to give.
+    if (cls) {
         cache.typeVersion = cls->version();
         cache.metatypeVersion = cls->type()->version();
-        return cache.typeVersion && cache.metatypeVersion;
+        return cache.typeVersion && cache.metatypeVersion ? OfAllAlike : OfThisObjectNow;
     }
-    PyType* type = nullptr;
-    if (!describeAttributeOfObject(globalObject, cell, name, forCall, cache, type) || PyType::timesLookupRanCode() != timesLookupRanCode)
-        return false;
     if (!type)
-        return true;
+        return description;
     cache.typeVersion = type->version();
-    return !!cache.typeVersion;
+    return cache.typeVersion ? OfAllAlike : OfThisObjectNow;
 }
 
 bool describeSpecialMethod(JSGlobalObject* globalObject, JSValue object, Special special, AttributeCache& cache)
@@ -845,8 +878,7 @@ bool describeSetAttribute(JSGlobalObject* globalObject, JSValue object, JSString
     bool isSlot = descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && descriptor.asCell()->classInfo() == PyMemberDescriptor::info();
     if (!isSlot && isDataDescriptor(descriptor))
         return false;
-    // The Structure is looked at when the lookups are over. Code that one of them ran may have given the object another, and a
-    // collection may have freed this one.
+    // As in describeAttributeOfObject(): the Structure is looked at when the lookups are over.
     if (PyType::timesLookupRanCode() != timesLookupRanCode) [[unlikely]]
         return false;
 
@@ -857,7 +889,10 @@ bool describeSetAttribute(JSGlobalObject* globalObject, JSValue object, JSString
     if (isSlot)
         key = &uncheckedDowncast<PyMemberDescriptor>(descriptor.asCell())->key()->uid();
     else {
-        if (cell->JSCell::type() != PyInstanceType || !type->has(TypeFlag::HasDict) || !structureTellsAttributes(rt, cell, type, structure))
+        if (cell->JSCell::type() != PyInstanceType || !type->has(TypeFlag::HasDict))
+            return false;
+        // Whether the attributes are properties, so that the Structure tells which there are.
+        if (uncheckedDowncast<PyInstance>(cell)->dict() || isValidOffset(structure->get(vm, rt.instanceHasDictKey())))
             return false;
         key = propertyKeyOfAttribute(name);
         if (!key)

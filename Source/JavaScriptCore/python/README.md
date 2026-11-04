@@ -122,6 +122,23 @@ unpacking, cells, the binding of arguments when they are simply the parameters, 
   attributes into a real dict, for good, and gives the object a Structure that says so: of such an object nothing is remembered that
   depends on what it holds itself, so neither its attributes nor the methods of its class. What only reads the attributes
   therefore does not ask for the dict (`dir()`, `PyInstance::forEachAttribute`).
+  One object is remembered. Where objects of two classes come by in turn, or of one class with their attributes set in
+  another order, each is looked up anew, and once: `describeAttribute()` finds the attribute and says where it is in the terms of
+  the cache, and whether that holds for all objects alike or for this one now (it keeps its attributes in a dict, its class has no
+  number left), or that there is none. The slow path (`findAttribute()`) reads through the description and remembers it if it holds for all, so an
+  object of which nothing can be remembered leaves what is remembered as it is. What cannot be said in those terms goes to `getAttr()`.
+  The description comes before the lookup, not after one that has succeeded, so it has to keep what the lookup keeps:
+  - Whatever `genericGetAttr()`, `getMethod()`, `typeGetAttr()` and `bindDescriptor()` check or raise before they return is checked, or the
+    attribute is not described: a slot belongs to the class or a base of it; a method of a built-in type is bound first where the class
+    has a `__getattr__`; a data descriptor, a `__get__` written in Python, a class method of a built-in type are not described.
+  - No code of the program has run. Only one thing in the walk can run any: a key that is no str in the dict of a class
+    (`type('C', (), {key: 1})`) is asked whether it equals the name. `PyType::lookupSlow()` counts that (`PyType::timesLookupRanCode()`), and
+    a description during which the count has moved is thrown away: the class, the object or the frame may have changed. (JS's lookups say
+    the like through the `PropertySlot`: `disableCaching()`, `isTaintedByOpaqueObject()`.) So for stores and for the methods of `with`.
+  - The Structure of the object is read when the last lookup that could run code is over: the compiler may keep no more of it over a
+    call than its 32-bit ID, which the collector does not know.
+  - The number of the class is taken after the walk, which is right only because no code has run.
+  - What is remembered is checked at each use by the handler; what is not remembered is used at once and dropped.
   What is found in the class may also be a `staticmethod` or a `classmethod` (what it wraps is read each time, since `__init__` can
   replace it), the field of a named tuple, or a property (below). The object may be a class itself: then its own number is checked, and that of its class.
   The numbers are finite, so a type takes one only when something is to be remembered about it, and at most 1000, as in CPython:

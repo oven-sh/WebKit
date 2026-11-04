@@ -21,10 +21,6 @@ inline PyType* typeOf(JSGlobalObject* globalObject, JSValue value) { return runt
 // ---- Attributes ----
 
 JSValue getAttr(JSGlobalObject*, JSValue object, JSString* name);
-// The same for op_py_get_attr, which calls the getter of a property itself if that is a function written in Python. Then nothing is
-// returned, nothing is raised, and `getter` is that function.
-class PyFunction;
-JSValue getAttrForInstruction(JSGlobalObject*, JSValue object, JSString* name, PyFunction*& getter);
 // What getAttr() does for an AttributeError that comes out of the lookup without saying which attribute it was.
 void completeAttributeError(JSGlobalObject*, JSValue thrown, JSValue object, JSString* name);
 // Empty, with no exception, if there is no such attribute.
@@ -35,7 +31,7 @@ bool hasAttr(JSGlobalObject*, JSValue object, JSString* name);
 
 // object.__getattribute__, object.__setattr__ (an empty value deletes).
 // With `suppress`, a missing attribute is an empty value and no exception.
-JSValue genericGetAttr(JSGlobalObject*, JSValue object, JSString* name, bool suppress = false, PyFunction** getterForCaller = nullptr);
+JSValue genericGetAttr(JSGlobalObject*, JSValue object, JSString* name, bool suppress = false);
 // `key`: what goes in the __dict__, if that is not the name: an instance of a class derived from str.
 void genericSetAttr(JSGlobalObject*, JSValue object, JSString* name, JSValue value, JSValue key = { });
 
@@ -83,8 +79,17 @@ struct AttributeCache {
     uint32_t jsType { 0 };
     uint32_t metatypeVersion { 0 };
 };
-// False: there is nothing to remember. The object has the attribute.
-bool describeAttribute(JSGlobalObject*, JSValue object, JSString* name, bool forCall, AttributeCache&);
+// Finds the attribute and says where it is in the terms of AttributeCache. No code of the program has run when it says anything but None,
+// and whatever getAttr(), or with `forCall` getMethod(), would check or raise before it returns the attribute has been checked.
+enum class AttributeDescription : uint8_t {
+    None, // Not to be said in those terms: that is for getAttr().
+    Absent, // Neither the class nor the object has it: that is for getAttrOfAbsent().
+    OfThisObjectNow, // Not to be remembered: the object keeps its attributes in a dict, its class has no version left...
+    OfAllAlike,
+};
+AttributeDescription describeAttribute(JSGlobalObject*, JSValue object, JSString* name, bool forCall, AttributeCache&);
+// What is left of getAttr() then: __getattr__, or the AttributeError.
+JSValue getAttrOfAbsent(JSGlobalObject*, JSValue object, JSString* name);
 // For getSpecialMethod().
 bool describeSpecialMethod(JSGlobalObject*, JSValue object, Special, AttributeCache&);
 
