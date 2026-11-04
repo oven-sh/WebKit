@@ -595,6 +595,8 @@ static NEVER_INLINE bool finalizeInterpreterOnWipedStack(JSGlobalObject*);
 // lie now. See wipeStackBelow() for why these two have a frame with nothing in it that it does not write.
 void runExitHandlers(JSGlobalObject* globalObject)
 {
+    if (!globalObject->pythonRuntime())
+        return;
     size_t size = 128 * KB;
     wipeStackBelow(globalObject, size);
     runExitHandlersOnWipedStack(globalObject);
@@ -602,6 +604,8 @@ void runExitHandlers(JSGlobalObject* globalObject)
 
 bool finalizeInterpreter(JSGlobalObject* globalObject)
 {
+    if (!globalObject->pythonRuntime())
+        return true;
     size_t size = 128 * KB;
     wipeStackBelow(globalObject, size);
     return finalizeInterpreterOnWipedStack(globalObject);
@@ -609,8 +613,6 @@ bool finalizeInterpreter(JSGlobalObject* globalObject)
 
 static NEVER_INLINE void runExitHandlersOnWipedStack(JSGlobalObject* globalObject)
 {
-    if (!globalObject->pythonRuntime())
-        return;
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     // One of them may end the process itself.
@@ -645,8 +647,6 @@ static NEVER_INLINE void runExitHandlersOnWipedStack(JSGlobalObject* globalObjec
 
 static NEVER_INLINE bool finalizeInterpreterOnWipedStack(JSGlobalObject* globalObject)
 {
-    if (!globalObject->pythonRuntime())
-        return true;
     Runtime& rt = runtime(globalObject);
     if (rt.isFinalized)
         return true;
