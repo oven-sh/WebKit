@@ -1088,6 +1088,12 @@ JSValue call(JSGlobalObject* globalObject, JSValue callable, const CallArgs& arg
 
 JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self, const CallArgs& args)
 {
+    // Whoever takes a method of `object` for granted (__getattribute__, __repr__) finds none in a class whose metaclass has given it an MRO
+    // without `object`.
+    if (!method) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        return raiseTypeError(globalObject, scope, "type '"_s, typeName(globalObject, self), "' has no such method: 'object' is not in its MRO"_s);
+    }
     if (method.isCell()) {
         JSCell* cell = method.asCell();
         if (cell->type() == InternalFunctionType) {
