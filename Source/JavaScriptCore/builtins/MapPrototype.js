@@ -39,7 +39,7 @@ function forEach(callback /*, thisArg */)
 
     do {
         storage = @mapIterationNext(storage, entry);
-        if (storage == @orderedHashTableSentinel)
+        if (storage === @orderedHashTableSentinel)
             return;
         entry = @mapIterationEntry(storage) + 1;
         callback.@call(thisArg, @mapIterationEntryValue(storage), @mapIterationEntryKey(storage), this);

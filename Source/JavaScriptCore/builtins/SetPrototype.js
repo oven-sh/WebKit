@@ -39,7 +39,7 @@ function forEach(callback /*, thisArg */)
 
     do {
         storage = @setIterationNext(storage, entry);
-        if (storage == @orderedHashTableSentinel)
+        if (storage === @orderedHashTableSentinel)
             break;
         entry = @setIterationEntry(storage) + 1;
         var key = @setIterationEntryKey(storage);
