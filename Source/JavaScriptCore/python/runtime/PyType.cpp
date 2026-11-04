@@ -294,7 +294,14 @@ JSValue PyType::lookupSpecialSlow(Special special)
         return value;
     unsigned index = static_cast<unsigned>(special);
     m_specials[index].set(rt.vm(), this, value);
-    m_specialIsCached[index] = true;
+    m_specialStates[index] = SpecialState::Known;
+    if (auto* native = PyNativeFunction::tryFrom(value); native && (native->kind() == NativeKind::Method || native->kind() == NativeKind::SlotWrapper)) {
+        auto& signature = native->def().signature;
+        bool takesAllOrNothing = signature.hasSelf && !signature.isVariadic && signature.minPositional == signature.parameterCount && signature.maxPositional == signature.parameterCount;
+        // A class may have the method of a type it has nothing to do with: class C: __len__ = list.__len__
+        if (takesAllOrNothing && signature.parameterCount <= 2 && !(native->def().flags & (DescriptorGet | OnWipedStack | MayWait)) && native->ownerType() && isSubtypeOf(native->ownerType()))
+            m_specialStates[index] = static_cast<SpecialState>(static_cast<unsigned>(SpecialState::NativeTakingNone) + signature.parameterCount);
+    }
     return value;
 }
 
@@ -351,7 +358,7 @@ void PyType::didChange(VM& vm)
     m_version = 0;
     ++m_numberOfChanges;
     // What the caches held must not be kept alive by them: it may be what was just taken out of the class.
-    m_specialIsCached.fill(false);
+    m_specialStates.fill(SpecialState::Unknown);
     for (auto& special : m_specials)
         special.clear();
     for (auto& entry : m_lookupCache) {

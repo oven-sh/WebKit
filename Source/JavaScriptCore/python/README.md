@@ -125,6 +125,13 @@ Python function, and Python a JS function, with the engine's own call sequence a
 When Python calls what is not Python, the frame is adapted on the way (`prepareForeignCall`, from `linkFor`): keyword arguments
 become a trailing object, whole floats become numbers.
 
+**Functions written in C++.** How the arguments of a call get from the frame to the C++ function depends on its signature and on the
+kind of function, so it is decided when the `PyNativeFunction` is made (`entryFor`): for a fixed number of parameters there is an
+entry that passes positional arguments straight on and leaves every other call (keywords, a wrong count, a `self` of the wrong type)
+to the general one. Likewise for the methods that the language itself calls: a type knows of each whether what `lookup(Special)`
+finds is a C++ function of its own that takes just the operands (`PyType::isNativeSpecialTaking`), and then `len(x)`, `x[i]`, `a < b` call
+that function. These are the slots of CPython's types, found out on first use and forgotten when the type changes.
+
 **Generators, coroutines, async generators** are made as JSC makes generators: a function that makes the generator object
 (`PyGenerator`), and a body, a function of its own, that the generatorification pass turns into a state machine.
 

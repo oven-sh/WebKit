@@ -150,9 +150,17 @@ public:
     ALWAYS_INLINE JSValue lookup(Special special)
     {
         unsigned index = static_cast<unsigned>(special);
-        if (m_specialIsCached[index]) [[likely]]
+        if (m_specialStates[index] != SpecialState::Unknown) [[likely]]
             return m_specials[index].get();
         return lookupSpecialSlow(special);
+    }
+    // Whether `method` is what lookup(special) finds now (code of the program's may have run since it was looked up), and that is a
+    // method written in C++, of this type or of one it is derived from, that takes `self` and exactly `count` values more. To
+    // call it on an instance of this type is to call the C++ function.
+    ALWAYS_INLINE bool isNativeSpecialTaking(Special special, JSValue method, unsigned count) const
+    {
+        unsigned index = static_cast<unsigned>(special);
+        return static_cast<unsigned>(m_specialStates[index]) == static_cast<unsigned>(SpecialState::NativeTakingNone) + count && m_specials[index].get() == method;
     }
 
     // After a change to the dict of the type, or to its bases.
@@ -236,7 +244,8 @@ private:
     uint32_t m_numberOfChanges { 0 };
     uint16_t m_versionsLeft { 1000 };
     bool m_isBeingToldOfChange { false };
-    std::array<bool, numberOfSpecials> m_specialIsCached { };
+    enum class SpecialState : uint8_t { Unknown, Known, NativeTakingNone, NativeTakingOne, NativeTakingTwo };
+    std::array<SpecialState, numberOfSpecials> m_specialStates { };
     std::array<WriteBarrier<Unknown>, numberOfSpecials> m_specials;
     std::array<LookupCacheEntry, lookupCacheSize> m_lookupCache;
 };

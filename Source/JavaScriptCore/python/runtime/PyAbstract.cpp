@@ -999,6 +999,14 @@ static JSValue callSpecialIfThere(JSGlobalObject* globalObject, JSValue& method,
     RELEASE_AND_RETURN(scope, call(globalObject, bound, arguments...));
 }
 
+template<typename... Arguments>
+static ALWAYS_INLINE JSValue callSpecialIfThere(JSGlobalObject* globalObject, PyType* type, Special special, JSValue& method, JSValue self, Arguments... arguments)
+{
+    if (canCallNativeSpecial<Arguments...>(globalObject, type, special, method)) [[likely]]
+        return callNativeSpecial(globalObject, method, self, arguments...);
+    return callSpecialIfThere(globalObject, method, self, arguments...);
+}
+
 JSValue callWithTupleAndDict(JSGlobalObject* globalObject, JSValue callable, PyTuple* positional, PyDict* keywords)
 {
     Runtime& rt = runtime(globalObject);
@@ -1057,8 +1065,9 @@ JSValue reprObject(JSGlobalObject* globalObject, JSValue value)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!vm.isSafeToRecurseSoft()) [[unlikely]]
         return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded while getting the repr of an object"_s);
-    JSValue method = typeOf(globalObject, value)->lookup(Special::Repr);
-    JSValue result = callSpecial(globalObject, method, value);
+    PyType* type = typeOf(globalObject, value);
+    JSValue method = type->lookup(Special::Repr);
+    JSValue result = callSpecial(globalObject, type, Special::Repr, method, value);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, checkString(globalObject, value, result, "__repr__"_s));
 }
@@ -1077,8 +1086,9 @@ JSValue strObject(JSGlobalObject* globalObject, JSValue value)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!vm.isSafeToRecurseSoft()) [[unlikely]]
         return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded while getting the str of an object"_s);
-    JSValue method = typeOf(globalObject, value)->lookup(Special::Str);
-    JSValue result = callSpecial(globalObject, method, value);
+    PyType* type = typeOf(globalObject, value);
+    JSValue method = type->lookup(Special::Str);
+    JSValue result = callSpecial(globalObject, type, Special::Str, method, value);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, checkString(globalObject, value, result, "__str__"_s));
 }
@@ -1207,7 +1217,7 @@ int64_t hash(JSGlobalObject* globalObject, JSValue value)
     JSValue method = type->lookup(Special::Hash);
     JSValue result;
     if (method && !isNone(method)) {
-        result = callSpecialIfThere(globalObject, method, value);
+        result = callSpecialIfThere(globalObject, type, Special::Hash, method, value);
         RETURN_IF_EXCEPTION(scope, -1);
     }
     if (!method || isNone(method)) {
@@ -1276,7 +1286,7 @@ bool isTrue(JSGlobalObject* globalObject, JSValue value)
             raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' cannot be interpreted as a boolean"_s);
             return false;
         }
-        JSValue result = callSpecialIfThere(globalObject, method, value);
+        JSValue result = callSpecialIfThere(globalObject, type, Special::Bool, method, value);
         RETURN_IF_EXCEPTION(scope, false);
         if (method && !result.isBoolean()) {
             raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".__bool__() must return a bool, not "_s, typeNameForMessage(globalObject, rt.typeOf(result)));
@@ -1394,21 +1404,21 @@ static JSValue richCompareOrNotImplemented(JSGlobalObject* globalObject, JSValue
     if (typeA != typeB && typeB->isSubtypeOf(typeA)) {
         if (JSValue method = typeB->lookup(reflected)) {
             checkedReflected = true;
-            JSValue result = callOperatorMethod(globalObject, method, b, a);
+            JSValue result = callOperatorMethod(globalObject, typeB, reflected, method, b, a);
             RETURN_IF_EXCEPTION(scope, { });
             if (result != notImplemented)
                 return result;
         }
     }
     if (JSValue method = typeA->lookup(comparisonMethods[index])) {
-        JSValue result = callOperatorMethod(globalObject, method, a, b);
+        JSValue result = callOperatorMethod(globalObject, typeA, comparisonMethods[index], method, a, b);
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
     }
     if (!checkedReflected) {
         if (JSValue method = typeB->lookup(reflected)) {
-            JSValue result = callOperatorMethod(globalObject, method, b, a);
+            JSValue result = callOperatorMethod(globalObject, typeB, reflected, method, b, a);
             RETURN_IF_EXCEPTION(scope, { });
             if (result != notImplemented)
                 return result;
@@ -1487,7 +1497,7 @@ int64_t length(JSGlobalObject* globalObject, JSValue value)
         raiseTypeError(globalObject, scope, "object of type '"_s, type->nameInMessages(), "' has no len()"_s);
         return -1;
     }
-    JSValue result = callSpecial(globalObject, method, value);
+    JSValue result = callSpecial(globalObject, type, Special::Len, method, value);
     RETURN_IF_EXCEPTION(scope, -1);
     if (result.isInt32() && result.asInt32() >= 0) [[likely]]
         return result.asInt32();
@@ -1617,7 +1627,7 @@ JSValue getItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
             key = indexIntoSequence(globalObject, key);
             RETURN_IF_EXCEPTION(scope, { });
         }
-        RELEASE_AND_RETURN(scope, callSpecial(globalObject, method, object, key));
+        RELEASE_AND_RETURN(scope, callSpecial(globalObject, type, Special::GetItem, method, object, key));
     }
 
     if (PyType* asType = PyType::tryFrom(object)) {
@@ -1679,7 +1689,7 @@ void setItem(JSGlobalObject* globalObject, JSValue object, JSValue key, JSValue 
         RETURN_IF_EXCEPTION(scope, void());
     }
     scope.release();
-    callSpecial(globalObject, method, object, key, value);
+    callSpecial(globalObject, type, Special::SetItem, method, object, key, value);
 }
 
 void delItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
@@ -1703,7 +1713,7 @@ void delItem(JSGlobalObject* globalObject, JSValue object, JSValue key)
         RETURN_IF_EXCEPTION(scope, void());
     }
     scope.release();
-    callSpecial(globalObject, method, object, key);
+    callSpecial(globalObject, type, Special::DelItem, method, object, key);
 }
 
 // Anything with a __getitem__ written in Python may be a sequence, and can then be iterated over without an __iter__. A built-in
@@ -1727,7 +1737,7 @@ bool contains(JSGlobalObject* globalObject, JSValue container, JSValue item)
     PyType* type = rt.typeOf(container);
     JSValue method = type->lookup(Special::Contains);
     if (method && !isNone(method)) {
-        JSValue result = callSpecialIfThere(globalObject, method, container, item);
+        JSValue result = callSpecialIfThere(globalObject, type, Special::Contains, method, container, item);
         RETURN_IF_EXCEPTION(scope, false);
         if (method && result.isBoolean())
             return result.asBoolean();
@@ -1771,7 +1781,7 @@ JSValue getIter(JSGlobalObject* globalObject, JSValue value)
     JSValue method = type->lookup(Special::Iter);
     bool hadMethod = !!method;
     if (method && !isNone(method)) {
-        JSValue iterator = callSpecialIfThere(globalObject, method, value);
+        JSValue iterator = callSpecialIfThere(globalObject, type, Special::Iter, method, value);
         RETURN_IF_EXCEPTION(scope, { });
         if (method && !isIterator(globalObject, iterator))
             return raiseTypeError(globalObject, scope, typeNameForMessage(globalObject, type), ".__iter__() must return an iterator, not "_s, typeNameForMessage(globalObject, rt.typeOf(iterator)));
@@ -1833,7 +1843,7 @@ JSValue iterNext(JSGlobalObject* globalObject, JSValue iterator)
     JSValue method = type->lookup(Special::Next);
     if (!method || isNone(method))
         return raiseTypeError(globalObject, scope, '\'', type->name(), "' object is not an iterator"_s);
-    JSValue result = callSpecial(globalObject, method, iterator);
+    JSValue result = callSpecial(globalObject, type, Special::Next, method, iterator);
     EXCEPTION_ASSERT(!scope.exception() || !result);
     if (result) [[likely]]
         return result;

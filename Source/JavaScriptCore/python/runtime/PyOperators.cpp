@@ -64,20 +64,20 @@ static JSValue numberOperation(JSGlobalObject* globalObject, Special method, Spe
 
     // A subclass that has its own idea of the reflected operation goes first.
     if (right && typeB->isSubtypeOf(typeA) && right != typeA->lookup(reflected)) {
-        JSValue result = callOperatorMethod(globalObject, right, b, a);
+        JSValue result = callOperatorMethod(globalObject, typeB, reflected, right, b, a);
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
         right = JSValue();
     }
     if (left) {
-        JSValue result = callOperatorMethod(globalObject, left, a, b);
+        JSValue result = callOperatorMethod(globalObject, typeA, method, left, a, b);
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
     }
     if (right) {
-        JSValue result = callOperatorMethod(globalObject, right, b, a);
+        JSValue result = callOperatorMethod(globalObject, typeB, reflected, right, b, a);
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;

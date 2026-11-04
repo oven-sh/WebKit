@@ -101,6 +101,35 @@ inline JSValue callSpecial(JSGlobalObject* globalObject, JSValue method, JSValue
     return callSpecial(globalObject, method, self, CallArgs(arguments, 2));
 }
 
+// The same two, given where `method` was found: it is what type->lookup(special) gave, and `self` is an instance of `type`. What the type
+// knows to be a C++ function that takes just these values (PyType::isNativeSpecialTaking()) is called as that: these are the slots
+// of CPython's types.
+template<typename... Arguments>
+ALWAYS_INLINE bool canCallNativeSpecial(JSGlobalObject* globalObject, PyType* type, Special special, JSValue method)
+{
+    // As PyNativeFunction::invoke(): whatever recursion there is among functions written in C++ comes through here.
+    return type->isNativeSpecialTaking(special, method, sizeof...(Arguments)) && getVM(globalObject).isSafeToRecurseSoft();
+}
+template<typename... Arguments>
+ALWAYS_INLINE JSValue callNativeSpecial(JSGlobalObject* globalObject, JSValue method, JSValue self, Arguments... arguments)
+{
+    return uncheckedDowncast<PyNativeFunction>(method.asCell())->def().template functionOfArity<1 + sizeof...(Arguments)>()(globalObject, self, arguments...);
+}
+template<typename... Arguments>
+ALWAYS_INLINE JSValue callSpecial(JSGlobalObject* globalObject, PyType* type, Special special, JSValue method, JSValue self, Arguments... arguments)
+{
+    if (canCallNativeSpecial<Arguments...>(globalObject, type, special, method)) [[likely]]
+        return callNativeSpecial(globalObject, method, self, arguments...);
+    return callSpecial(globalObject, method, self, arguments...);
+}
+template<typename... Arguments>
+ALWAYS_INLINE JSValue callOperatorMethod(JSGlobalObject* globalObject, PyType* type, Special special, JSValue method, JSValue self, Arguments... arguments)
+{
+    if (canCallNativeSpecial<Arguments...>(globalObject, type, special, method)) [[likely]]
+        return callNativeSpecial(globalObject, method, self, arguments...);
+    return callOperatorMethod(globalObject, method, self, arguments...);
+}
+
 // ---- Calls ----
 
 JSValue call(JSGlobalObject*, JSValue callable, const CallArgs&);
