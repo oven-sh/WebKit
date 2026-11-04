@@ -13,6 +13,7 @@
 #include "PyHooks.h"
 #include "PyInternals.h"
 #include "PyMonitoring.h"
+#include "PyPosix.h"
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #include <wtf/Threading.h>
@@ -279,6 +280,10 @@ void Threads::didTakeGIL(ThreadState& thread)
     if (thread.isMain) {
         m_didTellMainThreadOfFinalizers = false;
         m_vm.traps().fireTrapsLeftToEmbedderThread();
+#if !OS(WINDOWS)
+        if (std::exchange(m_mainThreadTellsHostOfDirectory, false) && !m_vm.heap.pythonRuntimes().isEmpty()) [[unlikely]]
+            posixDidChangeDirectory(m_vm.heap.pythonRuntimes().first()->globalObject());
+#endif
     }
 }
 

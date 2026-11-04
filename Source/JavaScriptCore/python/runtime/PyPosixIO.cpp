@@ -700,7 +700,6 @@ static JSValue posixFchdir(JSGlobalObject* globalObject, JSValue fdValue)
     JSValue result = posixCallWithDescriptor(globalObject, [&] { return fchdir(fd); });
     RETURN_IF_EXCEPTION(scope, { });
     posixDidChangeDirectory(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
     return result;
 }
 

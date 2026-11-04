@@ -59,7 +59,8 @@ JS_EXPORT_PRIVATE bool callWithoutGIL(VM&, void (*function)(void*), void* argume
 JS_EXPORT_PRIVATE void setCallsOwedFunction(void (*)(VM&));
 
 // os.chdir() has changed the current directory of the process. For a host that keeps its name, or things that depend on it.
-// The function may throw.
+// The function is called on the main thread: at once, or, if it was another thread, as soon as the main thread has the VM again,
+// wherever that is. So it throws nothing and runs no code.
 JS_EXPORT_PRIVATE void setDidChangeDirectoryFunction(void (*)(JSGlobalObject*));
 
 // `import` of a file, for code that is not Python: the module, or an exception. `source`, if it is not null, is taken for what

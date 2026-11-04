@@ -216,8 +216,14 @@ void setDidChangeDirectoryFunction(void (*function)(JSGlobalObject*))
 
 void posixDidChangeDirectory(JSGlobalObject* globalObject)
 {
-    if (s_didChangeDirectory)
-        s_didChangeDirectory(globalObject);
+    if (!s_didChangeDirectory)
+        return;
+    // Nothing of the host's is called on another thread.
+    if (Threads& threads = runtime(globalObject).threads(); !threads.isMainThread()) [[unlikely]] {
+        threads.mainThreadTellsHostOfDirectory();
+        return;
+    }
+    s_didChangeDirectory(globalObject);
 }
 
 static JSValue posixChdir(JSGlobalObject* globalObject, JSValue pathValue)
@@ -232,7 +238,6 @@ static JSValue posixChdir(JSGlobalObject* globalObject, JSValue pathValue)
     if (path.isFd() ? fchdir(path.fd()) : chdir(path.narrow()))
         RELEASE_AND_RETURN(scope, path.error(globalObject));
     posixDidChangeDirectory(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }
 
