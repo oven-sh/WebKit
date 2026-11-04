@@ -600,7 +600,7 @@ static bool isDataDescriptor(JSValue descriptor)
 }
 
 // What was found in `type` stays there while that has its version. But what it does as a descriptor is up to its own class, which
-// may be given a __get__ or a __set__ at any time, unless it is a built-in one. If `type` is derived from that class, as an enum is
+// may be given a __get__ or a __set__ at any time, unless it is a built-in one that cannot be changed. If `type` is derived from that class, as an enum is
 // from the class of its members, its version changes then; and objectSetClass() sees to it that it does when such a value is given
 // another class.
 static bool mayBecomeAnotherKindOfDescriptor(Runtime& rt, JSValue descriptor, PyType* type)
@@ -608,7 +608,8 @@ static bool mayBecomeAnotherKindOfDescriptor(Runtime& rt, JSValue descriptor, Py
     if (!descriptor)
         return false;
     PyType* descriptorType = rt.typeOf(descriptor);
-    if (!descriptorType->isHeapType())
+    // (A module may be given another class, whatever its class is.)
+    if (!descriptorType->isHeapType() && !descriptorType->has(TypeFlag::Mutable) && !PyModule::is(descriptor))
         return false;
     if (!type->isSubtypeOf(descriptorType))
         return true;
