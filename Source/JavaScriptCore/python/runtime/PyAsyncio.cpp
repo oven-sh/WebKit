@@ -119,7 +119,7 @@ enum FutureField : unsigned {
     TaskName, // An int until somebody asks: the number in "Task-1".
     TaskContext,
     TaskIndex, // Where it is in Runtime::scheduledTasks. Empty: it is not there.
-    TaskWakeup, // The callables the task hands to the loop and to futures, which are made once.
+    TaskWakeup, // Weak references to the callables the task hands to the loop and to futures (callableMadeLastTime).
     TaskStep,
     TaskFieldCount
 };
@@ -1229,34 +1229,45 @@ static constexpr NativeGetSet stepWrapperGetSets[] = {
 };
 static constexpr TypeDef stepWrapperTypeDef { "_asyncio.TaskStepMethWrapper"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation }, stepWrapperMethods, stepWrapperGetSets, { } };
 
+// The callables that a task hands to the loop and to futures: the one made last time will do, if it is still there. The task does
+// not hold on to it: the two would be a cycle, which a task is not in CPython, and what is in a cycle is finalized in another
+// order and counted by gc.collect().
+static JSValue callableMadeLastTime(PyRecord* task, FutureField field)
+{
+    if (JSValue last = task->get(field)) {
+        if (JSCell* cell = PyWeakRef::from(last)->referent())
+            return cell;
+    }
+    return { };
+}
+
+static void rememberCallable(Runtime& rt, PyRecord* task, FutureField field, JSCell* callable)
+{
+    VM& vm = rt.vm();
+    JSValue last = task->get(field);
+    if (!last) {
+        PyWeakRef* reference = PyWeakRef::create(vm, rt.weakRefStructure(), rt.weakRefType(), nullptr, { });
+        reference->setIsInternal();
+        task->set(vm, field, reference);
+        last = reference;
+    }
+    PyWeakRef::from(last)->setReferent(callable);
+}
+
 // loop.call_soon(task.__step[, exception], context=task's). False: an exception.
 static bool callStepSoon(JSGlobalObject* globalObject, PyRecord* state, PyRecord* task, JSValue exception)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    // The one made last time will do, if it is still there. The task does not hold on to it: the two would be a cycle, which a
-    // task is not in CPython, and what is in a cycle is finalized in another order and counted by gc.collect().
     JSValue wrapper;
-    PyWeakRef* last = nullptr;
-    if (!exception) {
-        if (JSValue field = task->get(TaskStep)) {
-            last = PyWeakRef::from(field);
-            if (JSCell* cell = last->referent())
-                wrapper = cell;
-        }
-    }
+    if (!exception)
+        wrapper = callableMadeLastTime(task, TaskStep);
     if (!wrapper) {
         PyRecord* record = PyRecord::create(globalObject, typeIn(state, StateStepWrapperType), StepWrapperFieldCount);
         record->set(vm, StepWrapperTask, task);
         record->set(vm, StepWrapperException, exception);
-        if (!exception) {
-            if (!last) {
-                last = PyWeakRef::create(vm, rt.weakRefStructure(), rt.weakRefType(), nullptr, { });
-                last->setIsInternal();
-                task->set(vm, TaskStep, last);
-            }
-            last->setReferent(record);
-        }
+        if (!exception)
+            rememberCallable(rt, task, TaskStep, record);
         wrapper = record;
     }
     return callSoon(globalObject, state, task->get(FutureLoop), wrapper, { }, task->get(TaskContext));
@@ -1464,10 +1475,10 @@ static bool cancelWaiterIfMustCancel(JSGlobalObject* globalObject, PyRecord* sta
 
 static JSValue wakeupOf(JSGlobalObject* globalObject, PyRecord* state, PyRecord* task)
 {
-    if (JSValue wakeup = task->get(TaskWakeup)) [[likely]]
+    if (JSValue wakeup = callableMadeLastTime(task, TaskWakeup)) [[likely]]
         return wakeup;
-    JSValue wakeup = PyNativeFunction::createBound(globalObject, uncheckedDowncast<PyNativeFunction>(state->get(StateWakeupMethod).asCell()), task);
-    task->set(getVM(globalObject), TaskWakeup, wakeup);
+    JSCell* wakeup = PyNativeFunction::createBound(globalObject, uncheckedDowncast<PyNativeFunction>(state->get(StateWakeupMethod).asCell()), task);
+    rememberCallable(runtime(globalObject), task, TaskWakeup, wakeup);
     return wakeup;
 }
 
