@@ -1,0 +1,27 @@
+# main.js: const holder = { __proto__: Math, secret }; holder[0]; new Function(input)()
+# Text that Function is given comes to every object of the realm. Math does not lock its indexes, so the text may have laid an accessor at an index of it,
+# as it may have laid one under a name. An object of the program below Math that is read at an index is handed to that accessor, and with it what it holds.
+# RUN: valueflow-why escaped=f1
+# CHECK: escaped=f1
+# CHECK-NEXT: n0 escaped
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="secret" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Math
+    v1 = NewClosure function=f1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    SetLiteralPrototype v2, v0
+    v4 = Integer integer=0
+    v5 = ElemGet v2, v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Builtin builtin=Function
+    v9 = Construct v8, -, v7
+    v10 = Call v9
+    Return
+}
+function f1 name="secret" module=m0 results=[{type=anything}] {
+    Return
+}
