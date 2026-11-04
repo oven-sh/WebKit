@@ -640,7 +640,9 @@ an exception handler, which CPython moves out of the way; between the two ways a
 
 **Offsets.** What a program is given for a place in the code (`f_lasti`, `tb_lasti`, `co_lines()`, `co_positions()`, `co_branches()`, the arguments of callbacks) is twice the offset
 in JSC's instructions (`shownOffset()`): in CPython code is made of units of two bytes, and `traceback.py` and `dis` count on it. `co_code` is an outline in those
-units: a `NOP` for each byte, and `RESUME` before the program's own code, which is how `pdb` finds the first line of a function.
+units: a `NOP` for each byte, `RESUME` before the program's own code, which is how `pdb` finds the first line of a function, and CPython's instructions for what decides where the code goes on,
+with the distances they have here: `JUMP_FORWARD`, `JUMP_BACKWARD`, `POP_JUMP_IF_TRUE`, `POP_JUMP_IF_FALSE`, `FOR_ITER`, `RETURN_VALUE`, `YIELD_VALUE`, `RAISE_VARARGS`, `RERAISE`.
+`coverage.py` follows them from where a branch went to the next line, to tell which of the branches in the source that was.
 
 **Comparing code.** Code objects are equal if their names, flags, first lines, variables and instructions (as the compiler left them) are, and then their text, or, for code made from a tree,
 their constants (by type and bits: `0`, `0.0`, `-0.0` and `False` are four) and `co_positions()`. The hash leaves the instructions out: `bdb` keeps code objects in dictionaries while it traces them.

@@ -10,6 +10,7 @@
 #include "CodeBlock.h"
 #include "FunctionCodeBlock.h"
 #include "JSCInlines.h"
+#include "PreciseJumpTargetsInlines.h"
 #include "PyAbstract.h"
 #include "PyBytes.h"
 #include "PyCodeCache.h"
@@ -1928,15 +1929,18 @@ static JSValue codePositions(JSGlobalObject* globalObject, JSValue self)
 }
 
 // The instructions are JSC's, which nothing written for CPython can read. This is an outline of them in CPython's terms, for what goes
-// through the code to find where things are, as pdb does for the first line of a function: a unit for each byte (see
-// shownOffset()), all NOP but for the RESUME that comes before the program's own code.
+// through the code to find where things are: a unit for each byte (see shownOffset()), all NOP but for the RESUME that comes before the
+// program's own code, which is how pdb finds the first line of a function, and what decides where the code goes on: jumps, branches,
+// returns and the like. coverage.py follows those from where a branch went to the next line.
 static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
 {
-    // Lib/_opcode_metadata.py. RESUME has a unit of cache.
+    // Lib/_opcode_metadata.py. RESUME, JUMP_BACKWARD, POP_JUMP_IF_* and FOR_ITER have a unit of cache.
     static constexpr uint8_t cache = 0;
     static constexpr uint8_t nop = 25;
     static constexpr uint8_t resume = 128;
     static constexpr uint8_t extendedArg = 67;
+    static constexpr uint8_t jumpForward = 76, jumpBackward = 74, popJumpIfTrue = 102, popJumpIfFalse = 99, forIter = 68;
+    static constexpr uint8_t returnValue = 33, yieldValue = 119, raiseVarargs = 103, reraise = 104;
     static constexpr uint8_t loadAttr = 79, loadGlobal = 91, loadName = 92, storeAttr = 109, storeGlobal = 114, storeName = 115;
     static constexpr uint8_t importFrom = 71, importName = 72, loadCommonConstant = 80, loadConst = 81, loadSmallInt = 93;
     static constexpr unsigned cachesOfLoadAttr = 9, cachesOfLoadGlobal = 4, cachesOfStoreAttr = 4;
@@ -1950,19 +1954,21 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     Vector<uint8_t> code;
     code.fill(0, shownOffset(codeBlock->instructions().size()));
+    Monitoring::OriginalInstructions originalInstructions(runtime(globalObject).monitoring(), PyCode::from(self));
     {
         // The argument of a NOP means nothing. It is the byte the unit stands for, because programs take functions whose co_code is
         // the same to do the same (hypothesis drops a map(f) if f has the co_code of `lambda x: x`).
-        Monitoring::OriginalInstructions originalInstructions(runtime(globalObject).monitoring(), PyCode::from(self));
         auto* bytes = static_cast<const uint8_t*>(codeBlock->instructions().rawPointer());
         for (unsigned i = 0; i < code.size(); i += 2) {
             code[i] = nop;
             code[i + 1] = bytes[i / 2];
         }
     }
+    unsigned start = codeBlock->instructions().size();
     for (auto& mark : codeBlock->unlinkedCodeBlock()->pythonMarks()) {
         if (mark.kind() != PythonMark::Start)
             continue;
+        start = mark.offset;
         if (mark.offset >= 2) {
             for (unsigned offset : { mark.offset - 2, mark.offset - 1 })
                 code[shownOffset(offset) + 1] = 0;
@@ -1970,6 +1976,99 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
             code[shownOffset(mark.offset - 1)] = cache;
         }
         break;
+    }
+    auto putUnit = [&](unsigned offset, uint8_t opcode, uint8_t argument) {
+        code[shownOffset(offset)] = opcode;
+        code[shownOffset(offset) + 1] = argument;
+    };
+    // In the first `room` units of the instruction at `offset`. The distance is counted from after the caches.
+    auto putJump = [&](unsigned offset, unsigned room, uint8_t forward, unsigned cachesOfForward, uint8_t backward, unsigned cachesOfBackward, unsigned target) {
+        for (unsigned prefixes = 0; prefixes < 4; ++prefixes) {
+            bool isForward = target >= offset + prefixes + 1 + cachesOfForward;
+            if (!isForward && !backward)
+                return;
+            unsigned caches = isForward ? cachesOfForward : cachesOfBackward;
+            unsigned from = offset + prefixes + 1 + caches;
+            if (from - offset > room)
+                return;
+            uint64_t distance = isForward ? target - from : from - target;
+            if (distance >> (8 * (prefixes + 1)))
+                continue;
+            for (unsigned i = 0; i < prefixes; ++i)
+                putUnit(offset + i, extendedArg, distance >> (8 * (prefixes - i)));
+            putUnit(offset + prefixes, isForward ? forward : backward, distance);
+            for (unsigned i = 0; i < caches; ++i)
+                putUnit(offset + prefixes + 1 + i, cache, 0);
+            return;
+        }
+    };
+    OpcodeID previous = op_nop;
+    for (const auto& instruction : codeBlock->instructions()) {
+        unsigned offset = instruction.offset();
+        // BytecodeGenerator::emitOutOfLineCatchHandler()
+        bool isPartOfCatch = std::exchange(previous, instruction->opcodeID()) == op_catch;
+        if (offset < start || isPartOfCatch)
+            continue;
+        unsigned size = instruction->size();
+        auto target = [&] {
+            unsigned result = offset;
+            extractStoredJumpTargetsForInstruction(codeBlock->unlinkedCodeBlock(), instruction, [&](int32_t relative) {
+                result = offset + relative;
+            });
+            return result;
+        };
+        switch (instruction->opcodeID()) {
+        case op_jmp:
+            putJump(offset, size, jumpForward, 0, jumpBackward, 1, target());
+            break;
+        case op_py_jtrue:
+        case op_py_jeq:
+        case op_py_jne:
+        case op_py_jlt:
+        case op_py_jle:
+        case op_py_jgt:
+        case op_py_jge:
+            putJump(offset, size, popJumpIfTrue, 1, 0, 0, target());
+            break;
+        case op_py_jfalse:
+        case op_py_jneq:
+        case op_py_jnne:
+        case op_py_jnlt:
+        case op_py_jnle:
+        case op_py_jngt:
+        case op_py_jnge:
+            putJump(offset, size, popJumpIfFalse, 1, 0, 0, target());
+            break;
+        case op_py_for_iter:
+            // Its last unit is where it is said to go on.
+            putJump(offset, size - 1, forIter, 1, 0, 0, target());
+            break;
+        case op_ret:
+        case op_py_ret:
+        case op_py_generator_return:
+            putUnit(offset, returnValue, 0);
+            break;
+        case op_py_generator_suspend:
+            putUnit(offset, yieldValue, 0);
+            break;
+        case op_throw:
+            putUnit(offset, reraise, 0);
+            break;
+        case op_py_runtime:
+            switch (static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function)) {
+            case RuntimeFunction::Raise:
+                putUnit(offset, raiseVarargs, 0);
+                break;
+            case RuntimeFunction::Reraise:
+                putUnit(offset, reraise, 0);
+                break;
+            default:
+                break;
+            }
+            break;
+        default:
+            break;
+        }
     }
 
     // After all that, where no offset of the program's points: which names the code reads and writes and what it imports, in order,
