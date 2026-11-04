@@ -570,7 +570,7 @@ void noteCallsOwed(VM& vm)
         function(vm);
 }
 
-static void makeCallsOwedToProgram(VM&);
+static bool makeCallsOwedToProgram(VM&);
 
 void makeCallsOwed(VM& vm)
 {
@@ -589,12 +589,19 @@ void makeCallsOwed(VM& vm)
         vm.heap.runPostponedEmbedderFinalizers();
     // The frames of C++ from here down to a finalizer or a handler stay while that runs, and it may ask for a collection.
     wipeStackBelow(vm.heap.pythonRuntimes().first()->globalObject(), stackBytesWipedForCallsOwed);
-    RELEASE_AND_RETURN(scope, makeCallsOwedToProgram(vm));
+    bool hasFinalized = makeCallsOwedToProgram(vm);
+    scope.release();
+    // What has been finalized is to be found dead by the next collection. The frames of its finalizer are gone, but not what they
+    // held, and this may be the loop of the host, where the same few frames of C++ come to lie there again and again.
+    if (hasFinalized && !vm.heap.pythonRuntimes().isEmpty())
+        wipeStackBelow(vm.heap.pythonRuntimes().first()->globalObject());
 }
 
-static NEVER_INLINE void makeCallsOwedToProgram(VM& vm)
+// Whether it has called anything but handlers of signals.
+static NEVER_INLINE bool makeCallsOwedToProgram(VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    bool hasFinalized = false;
     // What is called may start Python in another global object, and a collection may find one gone.
     Vector<Runtime*, 1> runtimes = vm.heap.pythonRuntimes();
     for (Runtime* runtime : runtimes) {
@@ -602,12 +609,14 @@ static NEVER_INLINE void makeCallsOwedToProgram(VM& vm)
             continue;
         // What the handler of a signal raises is thrown. The trap is set again then: the rest is for the next safe point.
         if (failed(scope, checkSignals(runtime->globalObject())))
-            return;
+            return hasFinalized;
         if (runtime->hasPendingCalls()) {
+            hasFinalized = true;
             runtime->runPendingCalls(true);
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION(scope, hasFinalized);
         }
     }
+    return hasFinalized;
 }
 
 void Runtime::runPendingCalls(bool mayPutOff)
