@@ -624,6 +624,15 @@ bool bindArguments(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunctio
         return bindArgumentsSlow(globalObject, callFrame, function, count - 1, keywordNames, valuesOf(values));
     } else if (count == info.argCount && info.parameterCount() == count) [[likely]]
         return true; // Every argument is where its parameter is.
+    else if (count < info.argCount && info.parameterCount() == info.argCount) {
+        // So it is, and what is left out has defaults. The last default is that of the last parameter.
+        PyTuple* defaults = function->defaults();
+        if (unsigned defaultCount = defaults ? defaults->length() : 0; info.argCount - count <= defaultCount) {
+            for (unsigned i = count; i < info.argCount; ++i)
+                callFrame->setArgument(i, defaults->at(i + defaultCount - info.argCount));
+            return true;
+        }
+    }
     return bindArgumentsSlow(globalObject, callFrame, function, count, keywordNames, reinterpret_cast<const JSValue*>(callFrame->addressOfArgumentsStart()) + count);
 }
 
