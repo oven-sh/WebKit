@@ -1105,6 +1105,7 @@ void initializeJSView(JSGlobalObject* globalObject)
     addConversions(makePrototype(JSViewObject::FunctionPrototype, globalObject->functionPrototype()));
     // An exception is shown as an Error is, "ValueError: message", by what Error.prototype has.
     addFunction(makePrototype(JSViewObject::ExceptionPrototype, globalObject->errorPrototype()), inspectSymbol, "[nodejs.util.inspect.custom]"_s, 0, jsViewInspect);
+    addFunction(makePrototype(JSViewObject::TypeErrorPrototype, globalObject->errorStructure(ErrorType::TypeError)->storedPrototypeObject()), inspectSymbol, "[nodejs.util.inspect.custom]"_s, 0, jsViewInspect);
 
     JSObject* iteratorPrototype = makePrototype(JSViewObject::IteratorPrototype, globalObject->iteratorPrototype());
     rt.setJSViewObject(JSViewObject::Next, makeFunction("next"_s, 1, jsViewNext));

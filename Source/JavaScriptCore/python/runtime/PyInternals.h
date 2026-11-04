@@ -509,6 +509,18 @@ JSValue leaveAsyncFor(JSGlobalObject*, JSValue iterator, JSValue exception, bool
 // function, a function written in C++ (as in Python).
 // prototype[name], read for the object, which inherits from it: a function is bound to the object. Empty: there is none, or an exception.
 JSValue attributeFromPrototypeOfJS(JSGlobalObject*, JSObject* prototype, JSValue object, JSString* name);
+// object.name in Python, as far as it is a property of the object. Empty: it has none, or an exception.
+JSValue attributeFromPropertyOfJS(JSGlobalObject*, JSObject*, JSString* name);
+// _js.JSTypeError. It is made when it is first asked for; JSError, if it cannot be made.
+PyType* jsTypeErrorType(JSGlobalObject*);
+// exception.name, for JS. Empty: there is none, or an exception.
+JSValue attributeOfExceptionForJS(JSGlobalObject*, PyException*, JSString* name);
+// `with object:` is `using`. The method, bound to the object. Empty: it is no object of JS, or an exception: it cannot be disposed of.
+JSValue contextManagerMethodOfJS(JSGlobalObject*, JSValue object, SpecialMethodForWith);
+// [(name, value), ...] of its own enumerable properties. Null: an exception.
+JSArray* itemsOfObjectOfJS(JSGlobalObject*, JSObject*);
+// Once the import system works.
+void registerInteropTypes(JSGlobalObject*);
 enum class ForeignMethodKind : uint8_t { NotAMethod, TakesThis, TakesFirstArgument };
 ForeignMethodKind foreignMethodKind(JSCell*);
 // What to call a bound method of such a function is.

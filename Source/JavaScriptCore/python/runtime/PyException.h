@@ -21,8 +21,13 @@ class PyTraceback;
 // An instance of BaseException or of a class derived from it.
 class PyException final : public PyObject {
 public:
+    static constexpr unsigned StructureFlags = PyObject::StructureFlags | OverridesGetPrototype;
     PY_DECLARE_CELL(PyException, PyObject, PyExceptionType);
     DECLARE_VISIT_CHILDREN;
+
+    // To JS every exception is an Error, and a TypeError is a TypeError: `e instanceof TypeError`. Which of the two prototypes it is goes
+    // by the class, and an object can change its class.
+    static JSValue getPrototype(JSObject*, JSGlobalObject*);
 
     // Some of the built-in classes have attributes of their own, which are kept here: OSError.errno and so on.
     static constexpr unsigned numberOfFields = 9;

@@ -44,6 +44,15 @@ PyException* PyException::create(VM& vm, Structure* structure, PyType* type)
     return exception;
 }
 
+JSValue PyException::getPrototype(JSObject* object, JSGlobalObject*)
+{
+    auto* exception = uncheckedDowncast<PyException>(object);
+    Runtime& rt = runtime(exception->realm());
+    if (exception->type()->isSubtypeOf(rt.TypeError()))
+        return rt.jsViewObject(JSViewObject::TypeErrorPrototype);
+    return exception->getPrototypeDirect();
+}
+
 template<typename Visitor>
 void PyException::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -86,6 +95,37 @@ static constexpr unsigned jsErrorHiddenField = 1;
 // The frames of Python it has passed through before there was a JSError to have the traceback.
 static constexpr unsigned jsErrorTracebackHiddenField = 2;
 
+// `thrown instanceof TypeError`, without running code.
+static bool isTypeErrorOfJS(JSObject* thrown)
+{
+    JSObject* typeErrorPrototype = thrown->realm()->errorStructure(ErrorType::TypeError)->storedPrototypeObject();
+    for (JSValue prototype = thrown->getPrototypeDirect(); prototype.isObject(); prototype = asObject(prototype)->getPrototypeDirect()) {
+        if (asObject(prototype) == typeErrorPrototype)
+            return true;
+    }
+    return false;
+}
+
+// class JSTypeError(JSError, TypeError): what stands for a TypeError of JS, so that `except TypeError` catches it.
+PyType* jsTypeErrorType(JSGlobalObject* globalObject)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    if (JSValue type = rt.slot(Runtime::Slot::JSTypeError))
+        return PyType::from(type);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PyDict* ns = PyDict::create(globalObject);
+    ns->set(vm, rt.names.dModule(), internString(vm, "_js"_s));
+    JSValue type = call(globalObject, rt.typeType(), makeStr(vm, "JSTypeError"_s), PyTuple::create(globalObject, { rt.JSError(), rt.TypeError() }), ns);
+    // There may be next to no stack left, or memory.
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return rt.JSError();
+    }
+    rt.setSlot(Runtime::Slot::JSTypeError, type);
+    return PyType::from(type);
+}
+
 JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
 {
     if (PyException::is(thrown))
@@ -115,7 +155,7 @@ JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
             scope.clearException();
             message = "<exception>"_s;
         }
-        exception = newException(globalObject, rt.JSError(), message);
+        exception = newException(globalObject, thrown.isObject() && isTypeErrorOfJS(asObject(thrown)) ? jsTypeErrorType(globalObject) : rt.JSError(), message);
         exception->setField(vm, ExceptionField::jsErrorValue, thrown);
     }
     if (remembers) {

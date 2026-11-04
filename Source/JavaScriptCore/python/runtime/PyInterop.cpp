@@ -1390,6 +1390,7 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
     Runtime& rt = runtime(globalObject);
     module->add(globalObject, "globalThis"_s, globalObject->globalThis());
     module->add(globalObject, "JSError"_s, rt.JSError());
+    module->add(globalObject, "JSTypeError"_s, jsTypeErrorType(globalObject));
     module->add(globalObject, "JSObject"_s, rt.jsObjectType());
     module->add(globalObject, "JSFunction"_s, rt.jsFunctionType());
     module->add(globalObject, "JSPromise"_s, rt.jsPromiseType());

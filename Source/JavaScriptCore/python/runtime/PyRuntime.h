@@ -271,6 +271,7 @@ enum class JSViewObject : uint8_t {
     ObjectPrototype, // Of every PyObject.
     FunctionPrototype, // Of functions and types.
     ExceptionPrototype,
+    TypeErrorPrototype, // Of the instances of TypeError: see PyException::getPrototype().
     IteratorPrototype, // Of what [Symbol.iterator]() returns.
     AsyncIteratorPrototype,
     Namespace, // importModuleFromJS("__python__")
@@ -396,6 +397,7 @@ public:
         IntactPycFile, // See readPycFile() in PyCodeCache.cpp.
         GCGarbage, // gc.garbage and gc.callbacks, lists. The program has them too.
         GCCallbacks,
+        JSTypeError, // The class of what stands for a TypeError of JS: see exceptionFromThrownValue().
         BoundMethodsOfJS, // A JSWeakMap: see bindIfFunction() in PyInterop.cpp.
         TypesOfJSClasses, // A JSWeakMap: see typeForClassOfJS() in PyJSClass.cpp.
         ArgumentsOfJSConstructors, // A JSWeakMap: see classOfJSNew() there.
