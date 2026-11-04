@@ -826,6 +826,7 @@ runtime/AsyncGeneratorFunctionPrototype.cpp
 runtime/AsyncGeneratorPrototype.cpp
 runtime/AsyncIteratorPrototype.cpp
 runtime/AtomicsObject.cpp
+runtime/AtomicsSync.cpp
 runtime/AsyncFunctionConstructor.cpp
 runtime/AsyncFunctionPrototype.cpp
 runtime/BasicBlockLocation.cpp
@@ -1040,12 +1041,15 @@ runtime/JSRegExpStringIterator.cpp
 runtime/JSRemoteFunction.cpp
 runtime/JSRunLoopTimer.cpp
 runtime/JSScope.cpp
+runtime/JSSharedArray.cpp
+runtime/JSSharedStruct.cpp
 runtime/JSSegmentedVariableObject.cpp
 runtime/JSSentinel.cpp
 runtime/JSSet.cpp
 runtime/JSSetIterator.cpp
 runtime/JSSourceCode.cpp
 runtime/JSString.cpp
+runtime/JSStruct.cpp
 runtime/JSStringIterator.cpp
 runtime/JSStringJoiner.cpp
 runtime/JSSymbolTableObject.cpp
@@ -1140,6 +1144,7 @@ runtime/ScopeOffset.cpp
 runtime/ScopedArguments.cpp
 runtime/ScopedArgumentsTable.cpp
 runtime/ScriptExecutable.cpp
+runtime/SharedStructBlock.cpp
 runtime/ScriptFetchParameters.cpp
 runtime/SetConstructor.cpp
 runtime/SetIteratorPrototype.cpp

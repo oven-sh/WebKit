@@ -805,7 +805,7 @@ namespace JSC {
 
         static bool LEGACY_NODELETE shouldCreateLexicalScopeForClass(PropertyListNode*);
 
-        RegisterID* emitBytecode(BytecodeGenerator&, RegisterID*, RegisterID*, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>*, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>*);
+        RegisterID* emitBytecode(BytecodeGenerator&, RegisterID*, RegisterID*, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>*, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>*, bool brandPrivateMethods = false);
 
         void emitDeclarePrivateFieldNames(BytecodeGenerator&, RegisterID* scope);
 
@@ -814,7 +814,7 @@ namespace JSC {
         {
             return emitBytecode(generator, dst, nullptr, nullptr, nullptr);
         }
-        void emitPutConstantProperty(BytecodeGenerator&, RegisterID*, PropertyNode&);
+        void emitPutConstantProperty(BytecodeGenerator&, RegisterID*, PropertyNode&, bool brandPrivateMethods = false);
         void emitSaveComputedFieldName(BytecodeGenerator&, PropertyNode&);
 
         PropertyNode* m_node;
@@ -2258,6 +2258,9 @@ namespace JSC {
         LexicallyScopedFeatures lexicallyScopedFeatures() const { return m_lexicallyScopedFeatures; }
         SuperBinding superBinding() { return static_cast<SuperBinding>(m_superBinding); }
         ConstructorKind constructorKind() { return static_cast<ConstructorKind>(m_constructorKind); }
+        // A struct's constructor is parsed as a derived constructor (so that it may call super()) and then compiled as
+        // a method: the struct constructor function is native and only calls it.
+        void setConstructorKind(ConstructorKind constructorKind) { m_constructorKind = static_cast<unsigned>(constructorKind); }
         bool isConstructorAndNeedsClassFieldInitializer() const { return m_needsClassFieldInitializer; }
         void setNeedsClassFieldInitializer(bool value)
         {
@@ -2390,7 +2393,12 @@ namespace JSC {
 
     class DefineFieldNode final : public StatementNode {
     public:
-        enum class Type { Name, PrivateName, ComputedName };
+        enum class Type {
+            Name, PrivateName, ComputedName,
+            // The fields of a struct exist before their initializers run, so these store into the existing property
+            // instead of defining it. StructBrand installs the private brand of the struct's instance private methods.
+            StructName, StructComputedName, StructPrivateName, StructBrand
+        };
         DefineFieldNode(const JSTokenLocation&, const Identifier&, ExpressionNode*, Type);
 
     private:
@@ -2408,7 +2416,7 @@ namespace JSC {
     public:
         ClassExprNode(const JSTokenLocation&, const Identifier&, const SourceCode& classSource,
             VariableEnvironment&& classHeadEnvironment, VariableEnvironment&& classEnvironment, ExpressionNode* constructorExpresssion,
-            ExpressionNode* parentClass, PropertyListNode* classElements);
+            ExpressionNode* parentClass, PropertyListNode* classElements, StructKind, String&& structFieldNames);
 
         const Identifier& name() { return m_name; }
         const Identifier& ecmaName() { return m_ecmaName ? *m_ecmaName : m_name; }
@@ -2429,6 +2437,8 @@ namespace JSC {
         ExpressionNode* m_constructorExpression;
         ExpressionNode* m_classHeritage;
         PropertyListNode* m_classElements;
+        String m_structFieldNames;
+        StructKind m_structKind;
         bool m_needsLexicalScope;
     };
 

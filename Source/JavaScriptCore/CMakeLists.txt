@@ -1558,6 +1558,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSRemoteFunctionInlines.h
     runtime/JSRunLoopTimer.h
     runtime/JSScope.h
+    runtime/JSSharedArray.h
+    runtime/JSSharedStruct.h
     runtime/JSScopeInlines.h
     runtime/JSSegmentedVariableObject.h
     runtime/JSSentinel.h
@@ -1722,6 +1724,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ScopedArgumentsTable.h
     runtime/Scribble.h
     runtime/ScriptExecutable.h
+    runtime/SharedStructBlock.h
     runtime/ScriptExecutableInlines.h
     runtime/ScriptFetchParameters.h
     runtime/ScriptFetcher.h

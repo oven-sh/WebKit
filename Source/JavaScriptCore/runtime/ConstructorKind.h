@@ -36,4 +36,10 @@ enum class ConstructorKind : uint8_t {
     Naked, // Naked constructor, only used for builtin functions
 };
 
+enum class StructKind : uint8_t {
+    None, // Not a struct declaration
+    Struct,
+    Shared,
+};
+
 } // namespace JSC

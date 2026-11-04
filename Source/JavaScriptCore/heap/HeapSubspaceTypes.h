@@ -79,6 +79,8 @@
 #include "JSMap.h"
 #include "JSMapIterator.h"
 #include "JSModuleNamespaceObject.h"
+#include "JSSharedArray.h"
+#include "JSSharedStruct.h"
 #include "JSModuleRecord.h"
 #include "JSNativeStdFunction.h"
 #include "JSPromise.h"

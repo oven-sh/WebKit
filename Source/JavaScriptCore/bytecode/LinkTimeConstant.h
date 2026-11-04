@@ -130,6 +130,7 @@ class JSGlobalObject;
     v(hasOwnPropertyFunction, nullptr) \
     v(reflectConstructFunction, nullptr) \
     v(createPrivateSymbol, nullptr) \
+    v(structDefine, nullptr) \
     v(emptyPropertyNameEnumerator, nullptr) \
     v(sentinelString, nullptr) \
     v(orderedHashTableSentinel, nullptr) \

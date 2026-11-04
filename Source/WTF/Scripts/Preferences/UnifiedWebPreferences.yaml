@@ -6140,6 +6140,17 @@ StorageBlockingPolicy:
     WebCore: StorageBlockingPolicy::AllowAll
   sharedPreferenceForWebProcess: true
 
+StructsEnabled:
+  type: bool
+  status: internal
+  category: javascript
+  humanReadableName: "Structs"
+  humanReadableDescription: "Enable the TC39 structs proposal (struct and shared struct)."
+  jscOptionName: useStructs
+  sharedPreferenceForWebProcess: true
+  excludeFrom: [ WebKitLegacy, WebCore ]
+  defaultValue: false
+
 SupportHDRCompositorTonemappingEnabled:
   type: bool
   status: testable

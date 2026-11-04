@@ -125,6 +125,8 @@
 #include "IntlSegmentIterator.h"
 #include "IntlSegmentIteratorPrototype.h"
 #include "IntlSegmenter.h"
+#include "JSSharedArray.h"
+#include "JSSharedStruct.h"
 #include "IntlSegmenterPrototype.h"
 #include "IntlSegments.h"
 #include "IntlSegmentsPrototype.h"
@@ -174,6 +176,7 @@
 #include "JSIteratorPrototypeInlines.h"
 #include "JSLexicalEnvironmentInlines.h"
 #include "JSMapInlines.h"
+#include "JSStruct.h"
 #include "JSMapIteratorInlines.h"
 #include "JSMicrotask.h"
 #include "JSMicrotaskDispatcher.h"
@@ -1002,6 +1005,13 @@ JSGlobalObject::~JSGlobalObject()
         m_debugger->detach(this, Debugger::GlobalObjectIsDestructing);
 }
 
+SharedStructWrapperCache& JSGlobalObject::sharedStructWrapperCache()
+{
+    if (!m_sharedStructWrapperCache)
+        m_sharedStructWrapperCache = std::make_unique<SharedStructWrapperCache>();
+    return *m_sharedStructWrapperCache;
+}
+
 void JSGlobalObject::destroy(JSCell* cell)
 {
     static_cast<JSGlobalObject*>(cell)->JSGlobalObject::~JSGlobalObject();
@@ -1653,6 +1663,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     if (Options::useSharedArrayBuffer())
         putDirectWithoutTransition(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
 
+    if (Options::useStructs())
+        putDirectWithoutTransition(vm, Identifier::fromString(vm, "SharedArray"_s), createSharedArrayConstructor(vm, this), static_cast<unsigned>(PropertyAttribute::DontEnum));
+
     if (Options::useExplicitResourceManagement()) {
         putDirectWithoutTransition(vm, vm.propertyNames->SuppressedError, m_suppressedErrorStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
         putDirectWithoutTransition(vm, vm.propertyNames->DisposableStack, m_disposableStackStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -1745,6 +1758,14 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             JSGlobalObject* globalObject = init.owner;
             IntlSegmenterPrototype* segmenterPrototype = IntlSegmenterPrototype::create(init.vm, IntlSegmenterPrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
             init.set(IntlSegmenter::createStructure(init.vm, globalObject, segmenterPrototype));
+        });
+    m_sharedStructStructure.initLater(
+        [] (const Initializer<Structure>& init) {
+            init.set(JSSharedStruct::createStructure(init.vm, init.owner));
+        });
+    m_sharedArrayStructure.initLater(
+        [] (const Initializer<Structure>& init) {
+            init.set(JSSharedArray::createStructure(init.vm, init.owner));
         });
     m_segmentsStructure.initLater(
         [] (const Initializer<Structure>& init) {
@@ -2262,6 +2283,10 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     // PrivateSymbols / PrivateNames
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::createPrivateSymbol)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 1, "createPrivateSymbol"_s, createPrivateSymbol, ImplementationVisibility::Private));
+        });
+
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::structDefine)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 5, "structDefine"_s, structDefine, ImplementationVisibility::Private));
         });
 
     // JSON helpers
@@ -3315,6 +3340,8 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_relativeTimeFormatStructure.visit(visitor);
     thisObject->m_segmentIteratorStructure.visit(visitor);
     thisObject->m_segmenterStructure.visit(visitor);
+    thisObject->m_sharedStructStructure.visit(visitor);
+    thisObject->m_sharedArrayStructure.visit(visitor);
     thisObject->m_segmentsStructure.visit(visitor);
     thisObject->m_segmentDataObjectStructure.visit(visitor);
     thisObject->m_segmentDataObjectWithIsWordLikeStructure.visit(visitor);

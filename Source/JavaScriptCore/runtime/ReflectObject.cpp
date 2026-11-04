@@ -28,12 +28,14 @@
 
 #include "Interpreter.h"
 #include "JSCInlines.h"
+#include "JSSharedStruct.h"
 #include "ObjectConstructor.h"
 #include "VMInlines.h"
 #include <wtf/StackPointer.h>
 
 namespace JSC {
 
+static JSC_DECLARE_HOST_FUNCTION(reflectObjectCanBeShared);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectDefineProperty);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectDeleteProperty);
 static JSC_DECLARE_HOST_FUNCTION(reflectObjectGetOwnPropertyDescriptor);
@@ -81,11 +83,20 @@ ReflectObject::ReflectObject(VM& vm, Structure* structure)
 {
 }
 
-void ReflectObject::finishCreation(VM& vm, JSGlobalObject*)
+void ReflectObject::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+
+    if (Options::useStructs())
+        putDirectNativeFunctionWithoutTransition(vm, globalObject, Identifier::fromString(vm, "canBeShared"_s), 1, reflectObjectCanBeShared, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));
+}
+
+// https://github.com/tc39/proposal-structs
+JSC_DEFINE_HOST_FUNCTION(reflectObjectCanBeShared, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(jsBoolean(canBeShared(globalObject->vm(), callFrame->argument(0))));
 }
 
 // ------------------------------ Functions --------------------------------
