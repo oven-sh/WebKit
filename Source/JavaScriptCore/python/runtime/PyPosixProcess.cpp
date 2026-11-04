@@ -10,6 +10,7 @@
 
 #include "JSCInlines.h"
 #include "PyEventWait.h"
+#include "PyExec.h"
 #include "PySet.h"
 #include <dlfcn.h>
 #include <grp.h>
@@ -976,6 +977,7 @@ static JSValue posixExecv(JSGlobalObject* globalObject, JSValue pathValue, JSVal
     if (failed(scope, audit(globalObject, "os.exec"_s, path.object(), argv, jsUndefined())))
         return { };
     PosixChildEnvironment environment(globalObject);
+    WithoutWakeSignal withoutWakeSignal;
     execve(path.narrow(), arguments.pointers(), environment.pointers());
     RELEASE_AND_RETURN(scope, posixError(globalObject));
 }
@@ -1010,6 +1012,7 @@ static JSValue posixExecve(JSGlobalObject* globalObject, JSValue pathValue, JSVa
         return { };
     if (failed(scope, audit(globalObject, "os.exec"_s, path.object(), argv, env)))
         return { };
+    WithoutWakeSignal withoutWakeSignal;
 #if OS(LINUX)
     if (path.isFd())
         fexecve(path.fd(), arguments.pointers(), environment.pointers());

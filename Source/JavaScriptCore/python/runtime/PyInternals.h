@@ -322,8 +322,6 @@ bool systemRandomBytes(JSGlobalObject*, std::span<uint8_t>, SystemRandomBytes);
 // Calls the handlers of the signals that have arrived. False: one of them raised. (PyErr_CheckSignals)
 // For a function that waits in a system call, when that fails with EINTR: if this returns true, it tries again (PEP 475).
 bool checkSignals(JSGlobalObject*);
-// Sleeps for so many nanoseconds (negative: for ever) or until a signal arrives, whichever is first, then does the above.
-bool waitForSignal(JSGlobalObject*, int64_t timeout);
 // Whether the program has given a function for any signal. (Not counting the one SIGINT has to begin with.)
 bool signalMayBeHandled(JSGlobalObject*);
 // As if the signal had arrived. Nothing happens if it is ignored or has its default effect. False: there is no such signal.
@@ -347,9 +345,16 @@ int watchSignal(JSGlobalObject*, int number, bool chains);
 void unwatchSignal(int number);
 // Asks for dumpTracebackForSignal(globalObject, 0), from any thread. The first function is to be called beforehand.
 void prepareForTracebackDumpRequests(JSGlobalObject*);
-void requestTracebackDump();
+// False: there is nobody to do it.
+bool requestTracebackDump();
+// The signal that gets the thread out of a system call does nothing if it comes just before the call. To be called until it is done.
+bool repeatTracebackDumpRequest();
+// It is not to be done after all.
+void withdrawTracebackDumpRequest();
 // There will be no more of them: faulthandler.cancel_dump_traceback_later().
 void cancelTracebackDumpRequests();
+// If it is this interpreter that asked for them: it ends.
+void cancelTracebackDumpRequests(Runtime&);
 void dumpTracebackForSignal(JSGlobalObject*, int number);
 
 // What _thread.get_ident() returns.

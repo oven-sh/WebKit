@@ -52,6 +52,16 @@ JS_EXPORT_PRIVATE void setEventLoopModule(ASCIILiteral name);
 // False: there are no other threads, and the function has not been called.
 JS_EXPORT_PRIVATE bool callWithoutGIL(VM&, void (*function)(void*), void* argument);
 
+// While there is one of these, the main thread is sent no signal to get it out of a system call (as it is when a traceback of
+// faulthandler.dump_traceback_later() falls due), and none is on its way to the thread that made this. For execve(): the signal
+// would find a program that does not expect it, and end it. (What is on its way to another thread ends with that thread.)
+class WithoutWakeSignal {
+    WTF_MAKE_NONCOPYABLE(WithoutWakeSignal);
+public:
+    JS_EXPORT_PRIVATE WithoutWakeSignal();
+    JS_EXPORT_PRIVATE ~WithoutWakeSignal();
+};
+
 // A host that destroys a VM while the process goes on (a worker ends) calls this first, on the thread of the VM, when no code of the
 // program is to run any more: with or without finalizeInterpreter() before it. It ends the threads that Python started in the VM and
 // returns when they are gone. They run no more code in Python. One that is in the middle of something in C++ finishes that first.

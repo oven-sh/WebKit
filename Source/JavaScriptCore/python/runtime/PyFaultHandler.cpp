@@ -63,6 +63,7 @@ struct FaultWatchdog {
     Lock lock;
     Condition condition;
     RefPtr<Thread> thread;
+    Runtime* owner { nullptr };
     bool isCancelled WTF_GUARDED_BY_LOCK(lock) { false };
     // These do not change while the thread runs.
     int fd { -1 };
@@ -230,6 +231,7 @@ void dumpTracebackForSignal(JSGlobalObject* globalObject, int number)
         auto& watchdog = faultWatchdog();
         faultDumpTraceback(globalObject, watchdog.fd, FaultHeader::Thread, watchdog.maxThreads);
         watchdog.isDumped.store(true);
+        watchdog.condition.notifyAll();
         return;
     }
     auto& user = s_faultUserSignals[number];
@@ -654,6 +656,13 @@ void cancelTracebackDumpRequests()
     }
     watchdog.thread->waitForCompletion();
     watchdog.thread = nullptr;
+    withdrawTracebackDumpRequest();
+}
+
+void cancelTracebackDumpRequests(Runtime& rt)
+{
+    if (faultWatchdog().owner == &rt)
+        cancelTracebackDumpRequests();
 }
 
 static void faultRunWatchdog()
@@ -668,13 +677,25 @@ static void faultRunWatchdog()
             return;
         faultWrite(watchdog.fd, watchdog.header.span());
         watchdog.isDumped.store(false);
-        requestTracebackDump();
-        if (watchdog.exits) {
-            // The thread of Python may be beyond reach. It is given a moment.
-            for (unsigned i = 0; i < 200 && !watchdog.isDumped.load(); ++i)
-                WTF::sleep(5_ms);
-            _exit(1);
+        bool canBeDone = requestTracebackDump();
+        // The thread of Python may be beyond reach. If the process is to end, it is given a moment.
+        Seconds pause = 1_ms;
+        MonotonicTime end = watchdog.exits ? MonotonicTime::now() + 1_s : MonotonicTime::infinity();
+        while (canBeDone && !watchdog.isDumped.load() && MonotonicTime::now() < end) {
+            if (watchdog.exits)
+                WTF::sleep(pause);
+            else {
+                watchdog.condition.waitFor(watchdog.lock, pause, [&]() WTF_REQUIRES_LOCK(watchdog.lock) { return watchdog.isCancelled || watchdog.isDumped.load(); });
+                if (watchdog.isCancelled)
+                    return;
+            }
+            canBeDone = repeatTracebackDumpRequest();
+            pause = std::min(2 * pause, 50_ms);
         }
+        if (watchdog.exits)
+            _exit(1);
+        if (!canBeDone)
+            return;
     } while (watchdog.repeats);
 }
 
@@ -718,6 +739,7 @@ static JSValue faultDumpTracebackLater(JSGlobalObject* globalObject, JSValue tim
     watchdog.repeats = repeats;
     watchdog.exits = exits;
     watchdog.maxThreads = maxThreadCount;
+    watchdog.owner = &runtime(globalObject);
     {
         Locker locker { watchdog.lock };
         watchdog.isCancelled = false;

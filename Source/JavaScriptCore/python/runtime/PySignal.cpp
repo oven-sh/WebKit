@@ -9,6 +9,7 @@
 #include "PyAbstract.h"
 #include "PyErrors.h"
 #include "PyException.h"
+#include "PyExec.h"
 #include "PyHooks.h"
 #include "PyInternals.h"
 #include "PyList.h"
@@ -20,6 +21,7 @@
 #include "PyThreads.h"
 #include "VMTraps.h"
 #include <atomic>
+#include <wtf/Lock.h>
 #include <wtf/WTFConfig.h>
 
 #if !OS(WINDOWS)
@@ -28,7 +30,6 @@
 #include <pthread.h>
 #include <signal.h>
 #include <string.h>
-#include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -80,6 +81,11 @@ struct SignalState {
     struct sigaction hostAction[signalLimit] { };
     // Sent to the thread to get it out of a system call. 0: not set up.
     std::atomic<int> wakeSignal { 0 };
+    // Real-time signals queue. There is never more than one of these.
+    std::atomic<bool> isWakeOnItsWay { false };
+    // Held while it is sent. WithoutWakeSignal
+    Lock wakeLock;
+    unsigned wakesHeldBack WTF_GUARDED_BY_LOCK(wakeLock) { 0 };
     std::atomic<int> wakeupDescriptor { -1 };
     std::atomic<bool> warnsOnFullBuffer { true };
     // The errno of a write to the wakeup descriptor that failed, until it has been reported.
@@ -214,26 +220,50 @@ static constexpr int signalIgnore = 1; // SIG_IGN
 static ALWAYS_INLINE bool signalIsAction(JSValue handler, int action) { return isSmallInt(handler) && smallIntValue(handler) == action; }
 static ALWAYS_INLINE bool signalIsFunction(JSValue handler) { return !isNone(handler) && !signalIsAction(handler, signalDefault) && !signalIsAction(handler, signalIgnore); }
 
-// The engine stops and resumes threads with one. It cannot be had, or blocked.
-static ALWAYS_INLINE bool signalIsReserved(int number)
+// Three signals are sent to threads of Python behind the program's back. 0: there is none, or not for this thread.
+// The engine suspends and resumes threads with this one.
+static ALWAYS_INLINE int signalThatSuspends()
 {
 #if OS(DARWIN)
-    UNUSED_PARAM(number);
-    return false;
+    return 0;
 #else
-    return number == g_wtfConfig.sigThreadSuspendResume;
+    return g_wtfConfig.sigThreadSuspendResume;
 #endif
 }
 
-static void signalRemoveReserved(sigset_t& set)
+static ALWAYS_INLINE int signalThatStops() { return Threads::isOnStartedThread() ? signalThatInterruptsThreads() : 0; }
+
+// This one gets the main thread out of a system call. Where it would end the process by default, it is kept from the program.
+static ALWAYS_INLINE int signalThatWakes()
 {
-#if OS(DARWIN)
-    UNUSED_PARAM(set);
+#if OS(LINUX)
+    return s_signalState.wakeSignal.load(std::memory_order_relaxed);
 #else
-    sigdelset(&set, g_wtfConfig.sigThreadSuspendResume);
+    return 0;
 #endif
-    if (Threads::isOnStartedThread())
-        sigdelset(&set, signalThatInterruptsThreads());
+}
+
+// (Whichever interpreter it is that runs on that thread.)
+static ALWAYS_INLINE int signalThatWakesThisThread()
+{
+    int number = signalThatWakes();
+    return number && pthread_equal(pthread_self(), s_signalState.thread) ? number : 0;
+}
+
+// What it does when it arrives is not the program's to say.
+static ALWAYS_INLINE bool signalIsReserved(int number) { return number == signalThatSuspends() || number == signalThatWakes(); }
+
+// Whether there was one of them in the set.
+static bool signalRemove(sigset_t& set, std::initializer_list<int> numbers)
+{
+    bool removed = false;
+    for (int number : numbers) {
+        if (number && sigismember(&set, number) == 1) {
+            sigdelset(&set, number);
+            removed = true;
+        }
+    }
+    return removed;
 }
 
 // A list with an item for each signal: what signal.getsignal() returns.
@@ -339,25 +369,6 @@ bool checkSignals(JSGlobalObject* globalObject)
     return signalRunHandlers(globalObject);
 }
 
-bool waitForSignal(JSGlobalObject* globalObject, int64_t timeout)
-{
-    // A signal that arrives between the look at the flag and the wait must end the wait: none can, they are blocked until the
-    // wait has begun.
-    sigset_t all, previous;
-    sigfillset(&all);
-    signalRemoveReserved(all);
-    pthread_sigmask(SIG_SETMASK, &all, &previous);
-    if (!signalIsOnHandlingThread(globalObject) || !s_signalState.isTripped.load()) {
-        struct timespec time;
-        time.tv_sec = timeout / 1000000000;
-        time.tv_nsec = timeout % 1000000000;
-        AllowThreads allow(globalObject);
-        pselect(0, nullptr, nullptr, nullptr, timeout < 0 ? nullptr : &time, &previous);
-    }
-    pthread_sigmask(SIG_SETMASK, &previous, nullptr);
-    return checkSignals(globalObject);
-}
-
 static JSValue signalDefaultIntHandler(JSGlobalObject* globalObject, JSValue numberValue, JSValue)
 {
     Runtime& rt = runtime(globalObject);
@@ -425,35 +436,125 @@ void unwatchSignal(int number)
         sigaction(number, &s_signalState.actionBeforeWatch[number], nullptr);
 }
 
-static void signalWake(int) { }
+static void signalWake(int) { s_signalState.isWakeOnItsWay.store(false); }
+
+// 0: there is none to be had.
+static int signalChooseOneThatWakes(bool canUnblock)
+{
+#if OS(LINUX)
+    // It may be on its way at any time, and by default it would end the process. So it is one that nobody has done anything about
+    // so far, and from here on nobody can: signalIsReserved(). If there is none, one that has only been blocked, or else one that
+    // is ignored. Not one that waits to be taken.
+    sigset_t blocked, pending;
+    pthread_sigmask(SIG_BLOCK, nullptr, &blocked);
+    sigpending(&pending);
+    int chosen = 0;
+    unsigned best = std::numeric_limits<unsigned>::max();
+    for (int number = SIGRTMAX - 2; number >= SIGRTMIN; --number) {
+        struct sigaction action;
+        if (signalIsReserved(number) || sigaction(number, nullptr, &action))
+            continue;
+        bool isShielded = s_signalState.isShielded[number].load();
+        // (What another thread than the one it is sent to blocks does not matter.)
+        bool isBlocked = isShielded || (canUnblock && sigismember(&blocked, number) == 1);
+        if (isBlocked && (!canUnblock || sigismember(&pending, number) == 1))
+            continue;
+        bool isFunction = action.sa_flags & SA_SIGINFO;
+        unsigned rank;
+        if (isShielded || (!isFunction && action.sa_handler == SIG_DFL))
+            rank = isBlocked;
+        else if (!isFunction && action.sa_handler == SIG_IGN)
+            rank = 2;
+        else
+            continue;
+        if (rank < best) {
+            best = rank;
+            chosen = number;
+        }
+    }
+    return chosen;
+#else
+    UNUSED_PARAM(canUnblock);
+    return SIGURG;
+#endif
+}
 
 void prepareForTracebackDumpRequests(JSGlobalObject* globalObject)
 {
     signalHandlers(globalObject);
-    if (!signalCanHandle(globalObject) || s_signalState.wakeSignal.load())
+    if (!signalCanHandle(globalObject))
         return;
-    // One that programs have little use for, and that does nothing if it should arrive when nobody expects it any more.
-#if defined(SIGRTMAX)
-    int number = SIGRTMAX - 2;
-#else
-    int number = SIGURG;
-#endif
-    int error;
-    signalSetAction(number, signalWake, error);
-    if (!error)
+    bool isOnHandlingThread = signalIsOnHandlingThread(globalObject);
+    if (!s_signalState.wakeSignal.load()) {
+        int number = signalChooseOneThatWakes(isOnHandlingThread);
+        int error = EINVAL;
+        if (number)
+            signalSetAction(number, signalWake, error);
+        if (error)
+            return;
+        s_signalState.isShielded[number].store(false);
+        s_signalState.isOurs[number] = false;
         s_signalState.wakeSignal.store(number);
+    }
+    s_signalState.isWakeOnItsWay.store(false);
+    if (int number = signalThatWakesThisThread()) {
+        sigset_t set;
+        sigemptyset(&set);
+        sigaddset(&set, number);
+        pthread_sigmask(SIG_UNBLOCK, &set, nullptr);
+    }
 }
 
-void requestTracebackDump()
+bool requestTracebackDump()
 {
-    s_signalState.tripped[0].store(true);
-    s_signalState.isTripped.store(true);
     VM* vm = s_signalState.vm.load();
     if (!vm)
-        return;
+        return false;
+    s_signalState.tripped[0].store(true);
+    s_signalState.isTripped.store(true);
     noteCallsOwed(*vm);
-    if (int number = s_signalState.wakeSignal.load())
-        pthread_kill(s_signalState.thread, number);
+    return repeatTracebackDumpRequest();
+}
+
+bool repeatTracebackDumpRequest()
+{
+    if (!s_signalState.vm.load())
+        return false;
+    // Once the thread has taken note, it is out of the call.
+    if (!s_signalState.tripped[0].load())
+        return true;
+    Threads::wakeMainThreadOfProcess();
+    int number = s_signalState.wakeSignal.load();
+    if (!number)
+        return true;
+    Locker locker { s_signalState.wakeLock };
+    if (s_signalState.wakesHeldBack || (number == signalThatWakes() && s_signalState.isWakeOnItsWay.exchange(true)))
+        return true;
+    if (pthread_kill(s_signalState.thread, number))
+        s_signalState.isWakeOnItsWay.store(false);
+    return true;
+}
+
+void withdrawTracebackDumpRequest()
+{
+    s_signalState.tripped[0].store(false);
+}
+
+WithoutWakeSignal::WithoutWakeSignal()
+{
+    {
+        Locker locker { s_signalState.wakeLock };
+        ++s_signalState.wakesHeldBack;
+    }
+    // What has been sent to this thread arrives when a system call returns, at the latest.
+    sigset_t pending;
+    sigpending(&pending);
+}
+
+WithoutWakeSignal::~WithoutWakeSignal()
+{
+    Locker locker { s_signalState.wakeLock };
+    --s_signalState.wakesHeldBack;
 }
 
 void installSignalHandlers(JSGlobalObject* globalObject)
@@ -490,6 +591,7 @@ static void signalRestoreActions()
 
 void finalizeSignals(JSGlobalObject* globalObject)
 {
+    cancelTracebackDumpRequests(runtime(globalObject));
     if (!signalCanHandle(globalObject))
         return;
     cancelTracebackDumpRequests();
@@ -501,6 +603,7 @@ void finalizeSignals(JSGlobalObject* globalObject)
 
 void detachSignals(Runtime& rt)
 {
+    cancelTracebackDumpRequests(rt);
     if (s_signalState.runtime != &rt || !s_signalState.vm.load())
         return;
     signalRestoreActions();
@@ -808,7 +911,7 @@ static JSValue signalPthreadSigmask(JSGlobalObject* globalObject, JSValue howVal
         return { };
     JSArray* handlers = signalHandlers(globalObject);
     if (how != SIG_UNBLOCK)
-        signalRemoveReserved(mask);
+        signalRemove(mask, { signalThatSuspends(), signalThatStops(), signalThatWakesThisThread() });
 
     sigset_t previous;
     bool shields = signalIsOnHandlingThread(globalObject) && (how == SIG_BLOCK || how == SIG_UNBLOCK || how == SIG_SETMASK);
@@ -870,24 +973,6 @@ static JSValue signalValidSignals(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, signalFromSet(globalObject, all));
 }
 
-static JSValue signalSigWait(JSGlobalObject* globalObject, JSValue setValue)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    sigset_t set;
-    if (failed(scope, signalToSet(globalObject, setValue, set)))
-        return { };
-    int number;
-    int error;
-    {
-        AllowThreads allow(globalObject);
-        error = sigwait(&set, &number);
-    }
-    if (error)
-        return raiseOSError(globalObject, scope, error);
-    return jsNumber(number);
-}
-
 #if OS(LINUX) || OS(FREEBSD) || OS(NETBSD)
 #define PY_HAVE_SIGWAITINFO 1
 
@@ -916,6 +1001,77 @@ static JSValue signalMakeInfo(JSGlobalObject* globalObject, const siginfo_t& inf
         jsNumber(info.si_status), makeInt(globalObject, static_cast<int64_t>(info.si_band)) });
 }
 
+static int64_t signalMonotonicNanoseconds()
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return static_cast<int64_t>(now.tv_sec) * 1000000000 + now.tv_nsec;
+}
+
+// False: time was up, or it has raised. No timeout: for as long as it takes.
+static bool signalWaitFor(JSGlobalObject* globalObject, sigset_t& set, std::optional<int64_t> timeout, siginfo_t& info)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    int64_t deadline = std::numeric_limits<int64_t>::max();
+    if (timeout && __builtin_add_overflow(signalMonotonicNanoseconds(), *timeout, &deadline))
+        deadline = std::numeric_limits<int64_t>::max();
+    while (true) {
+        // A thread that took them for signals of the program's would not do what they are sent for. (In the loop: the one that
+        // wakes may have been chosen since the wait began.)
+        if (signalRemove(set, { signalThatSuspends(), signalThatWakesThisThread() })) {
+            bool isEmpty = true;
+            for (int number = 1; number < signalLimit && isEmpty; ++number)
+                isEmpty = sigismember(&set, number) != 1;
+            if (isEmpty) {
+                raiseOSError(globalObject, scope, EINVAL);
+                return false;
+            }
+        }
+        int result;
+        {
+            struct timespec time;
+            if (timeout) {
+                time.tv_sec = *timeout / 1000000000;
+                time.tv_nsec = *timeout % 1000000000;
+            }
+            AllowThreads allow(globalObject);
+            result = sigtimedwait(&set, &info, timeout ? &time : nullptr);
+        }
+        if (result != -1 && result != signalThatWakesThisThread())
+            return true;
+        if (result != -1)
+            signalWake(result);
+        if (result == -1 && errno == EAGAIN)
+            return false;
+        if (result == -1 && errno != EINTR) {
+            raiseOSError(globalObject, scope, errno);
+            return false;
+        }
+        if (failed(scope, checkSignals(globalObject)))
+            return false;
+        if (timeout) {
+            timeout = deadline - signalMonotonicNanoseconds();
+            if (*timeout < 0)
+                return false;
+        }
+    }
+}
+
+// (The function of that name in the C library goes on waiting when it is interrupted.)
+static JSValue signalSigWait(JSGlobalObject* globalObject, JSValue setValue)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    sigset_t set;
+    if (failed(scope, signalToSet(globalObject, setValue, set)))
+        return { };
+    siginfo_t info;
+    if (failed(scope, signalWaitFor(globalObject, set, std::nullopt, info)))
+        return { };
+    return jsNumber(info.si_signo);
+}
+
 static JSValue signalSigWaitInfo(JSGlobalObject* globalObject, JSValue setValue)
 {
     VM& vm = getVM(globalObject);
@@ -924,24 +1080,9 @@ static JSValue signalSigWaitInfo(JSGlobalObject* globalObject, JSValue setValue)
     if (failed(scope, signalToSet(globalObject, setValue, set)))
         return { };
     siginfo_t info;
-    auto wait = [&] {
-        AllowThreads allow(globalObject);
-        return sigwaitinfo(&set, &info);
-    };
-    while (wait() == -1) {
-        if (errno != EINTR)
-            return raiseOSError(globalObject, scope, errno);
-        if (failed(scope, checkSignals(globalObject)))
-            return { };
-    }
+    if (failed(scope, signalWaitFor(globalObject, set, std::nullopt, info)))
+        return { };
     RELEASE_AND_RETURN(scope, signalMakeInfo(globalObject, info));
-}
-
-static int64_t signalMonotonicNanoseconds()
-{
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    return static_cast<int64_t>(now.tv_sec) * 1000000000 + now.tv_nsec;
 }
 
 static JSValue signalSigTimedWait(JSGlobalObject* globalObject, JSValue setValue, JSValue timeoutValue)
@@ -956,35 +1097,34 @@ static JSValue signalSigTimedWait(JSGlobalObject* globalObject, JSValue setValue
         return { };
     if (timeout < 0)
         return raiseValueError(globalObject, scope, "timeout must be non-negative"_s);
-    int64_t deadline;
-    if (__builtin_add_overflow(signalMonotonicNanoseconds(), timeout, &deadline))
-        deadline = std::numeric_limits<int64_t>::max();
     siginfo_t info;
-    while (true) {
-        struct timespec time;
-        time.tv_sec = timeout / 1000000000;
-        time.tv_nsec = timeout % 1000000000;
-        int result;
-        {
-            AllowThreads allow(globalObject);
-            result = sigtimedwait(&set, &info, &time);
-        }
-        if (result != -1)
-            break;
-        if (errno == EAGAIN)
-            return jsUndefined();
-        if (errno != EINTR)
-            return raiseOSError(globalObject, scope, errno);
-        if (failed(scope, checkSignals(globalObject)))
-            return { };
-        timeout = deadline - signalMonotonicNanoseconds();
-        if (timeout < 0)
-            return jsUndefined();
-    }
+    bool hasArrived = signalWaitFor(globalObject, set, timeout, info);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!hasArrived)
+        return jsUndefined();
     RELEASE_AND_RETURN(scope, signalMakeInfo(globalObject, info));
 }
 #else
 #define PY_HAVE_SIGWAITINFO 0
+
+static JSValue signalSigWait(JSGlobalObject* globalObject, JSValue setValue)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    sigset_t set;
+    if (failed(scope, signalToSet(globalObject, setValue, set)))
+        return { };
+    signalRemove(set, { signalThatSuspends() });
+    int number;
+    int error;
+    {
+        AllowThreads allow(globalObject);
+        error = sigwait(&set, &number);
+    }
+    if (error)
+        return raiseOSError(globalObject, scope, error);
+    return jsNumber(number);
+}
 #endif
 
 static JSValue signalPthreadKill(JSGlobalObject* globalObject, JSValue threadValue, JSValue numberValue)
@@ -1155,13 +1295,11 @@ void detachSignals(Runtime&) { }
 int watchSignal(JSGlobalObject*, int, bool) { return EINVAL; }
 void unwatchSignal(int) { }
 void prepareForTracebackDumpRequests(JSGlobalObject*) { }
-void requestTracebackDump() { }
-
-bool waitForSignal(JSGlobalObject*, int64_t timeout)
-{
-    WTF::sleep(timeout < 0 ? Seconds::infinity() : Seconds::fromNanoseconds(timeout));
-    return true;
-}
+bool requestTracebackDump() { return false; }
+bool repeatTracebackDumpRequest() { return false; }
+void withdrawTracebackDumpRequest() { }
+WithoutWakeSignal::WithoutWakeSignal() = default;
+WithoutWakeSignal::~WithoutWakeSignal() = default;
 
 #endif // OS(WINDOWS)
 
