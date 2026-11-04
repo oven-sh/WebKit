@@ -326,9 +326,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   still has something to finalize is asked of the object, when a collection comes by. A generator knows, and an open file, a
   socket, a future with an exception nobody has looked at have two bits for it (`FinalizerState`: wanted, listed), so closing
   and opening again are a store each. An object must be in the list once. An instance is written down by whoever called the `__new__` of
-  a built-in type to make it (`didMakeObject()`), not by whoever got it from a `__new__` written in Python, which may hand out the
-  same object every time; the few kinds that are neither plain instances nor have the bits (an instance of a class derived from
-  `dict` that has a `__del__`) are kept in a set as well. What has been finalized waits in a vector for the next full collection, which
+  a built-in type to make it (`didMakeObject()`), or when it is given a class with a `__del__`, and once in its life: it has a bit
+  that says so (the one in the header of a cell that JSC leaves to each class of cells). The lists are whole whenever the program
+  can see them, which is also in the middle of a collection: one that the engine began lets the program run while it
+  marks what the objects to be finalized keep alive. What has been finalized waits in a vector for the next full collection, which
   finds nearly all of it dead; the rest, which somebody took hold of, goes to a set (`gc.is_finalized()`).
 - **Finalizers run in the order of reference counts.** A `__del__` that writes to `self.file` finds the file open, and the items of
   a list that is dropped go from the last to the first. When marking has converged, the dead cells are taken for a graph and let go

@@ -45,10 +45,10 @@ static FinalizerState* finalizerStateOf(JSCell* cell)
     return nullptr;
 }
 
-// These say for themselves whether they are in the list, or are put there once by whoever makes them.
-static bool isListedOnceByItself(JSCell* cell)
+// These are registered once, by whoever makes them.
+static bool isRegisteredWhenMade(JSCell* cell)
 {
-    return cell->type() == PyInstanceType || cell->type() == PyGeneratorType || cell->classInfo() == PyAsyncGenAwaitable::info();
+    return cell->type() == PyGeneratorType || cell->classInfo() == PyAsyncGenAwaitable::info();
 }
 
 void Runtime::registerFinalizable(JSCell* cell)
@@ -57,8 +57,14 @@ void Runtime::registerFinalizable(JSCell* cell)
         state->isWanted = true;
         if (std::exchange(state->isListed, true))
             return;
-    } else if (!isListedOnceByItself(cell) && !m_otherFinalizable.add(cell).isNewEntry)
-        return;
+    } else if (cell->type() == PyInstanceType || !isRegisteredWhenMade(cell)) {
+        // Once in its life: it is in the list, or queued, or has been finalized. The bit is the one that JSC leaves to each class of
+        // cells to use as it likes; objects have no use for it.
+        ASSERT(cell->isObject());
+        if (cell->perCellBit())
+            return;
+        cell->setPerCellBit(true);
+    }
     m_youngFinalizable.append(cell);
     if (allocationTracebackLimit) [[unlikely]]
         didRegisterWhileTracingAllocations(cell);
@@ -81,22 +87,11 @@ void Runtime::unregisterFinalizable(PyManagedBuffer* buffer)
 
 void Runtime::registerFinalizableLate(const MarkedArgumentBuffer& objects)
 {
-    UncheckedKeyHashSet<JSCell*> known;
-    forEachFinalizable([&](JSCell* cell) {
-        known.add(cell);
-    });
-    {
-        Locker locker { m_finalizationLock };
-        // A finalizer is called once.
-        for (JSCell* cell : m_finalized)
-            known.add(cell);
-        for (JSCell* cell : m_justFinalized)
-            known.add(cell);
-        for (JSCell* cell : m_pendingFinalization)
-            known.add(cell);
-    }
     for (unsigned i = 0; i < objects.size(); ++i) {
-        if (JSCell* cell = objects.at(i).asCell(); known.add(cell).isNewEntry)
+        JSCell* cell = objects.at(i).asCell();
+        // A finalizer of the program's is called once.
+        FinalizerState* state = finalizerStateOf(cell);
+        if (!state || !state->wasFoundDead)
             registerFinalizable(cell);
     }
 }
@@ -116,16 +111,14 @@ static bool isNoLongerWanted(JSCell* cell)
 }
 
 // Dead or alive.
-void Runtime::didTakeOffList(JSCell* cell)
+void Runtime::didTakeOffList(JSCell* cell, bool isToBeFinalized)
 {
     if (cell->type() == PyInstanceType)
         return;
     if (cell->type() == PyGeneratorType)
         uncheckedDowncast<PyGenerator>(cell)->setFinalization(PyGenerator::Finalization::None);
     else if (FinalizerState* state = finalizerStateOf(cell))
-        *state = { };
-    else if (!isListedOnceByItself(cell))
-        m_otherFinalizable.remove(cell);
+        *state = { false, false, state->wasFoundDead || isToBeFinalized };
 }
 
 // Those that still have something to finalize, as far as they know, in the order in which they were registered.
@@ -235,7 +228,7 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
             continue;
         m_pendingFinalization.append(cell);
         *places[order.now[n]] = nullptr;
-        didTakeOffList(cell);
+        didTakeOffList(cell, true);
     }
     // The others are kept alive by those. They come up again, in this order, in the collection that finds those gone: they go to the
     // end of the list.

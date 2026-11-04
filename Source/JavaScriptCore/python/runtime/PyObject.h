@@ -173,6 +173,7 @@ private:
 struct FinalizerState {
     bool isWanted { false }; // There is something to finalize.
     bool isListed { false }; // The runtime has it in its list. It stays there until a collection finds that it is not wanted.
+    bool wasFoundDead { false }; // A collection has queued it to be finalized, some time.
 };
 
 // An instance of a type written in C++ that needs no more than a few values: what each field holds is up to the type.

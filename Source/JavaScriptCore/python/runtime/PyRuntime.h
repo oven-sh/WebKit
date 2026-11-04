@@ -549,9 +549,9 @@ public:
     //
     // Registering is writing the object down. Most such objects are done, or dead, long before the next collection, so nothing
     // else is done until then, and nothing is ever looked up: whether an object still has something to finalize is asked of
-    // the object when a collection goes through the list. An object is written down once: when it is made, by whatever calls
-    // the __new__ of a built-in type for a class with a __del__ (didMakeObject()). For an object with a FinalizerState it makes no
-    // difference how often.
+    // the object when a collection goes through the list. An object is written down when it is made, by whatever calls the
+    // __new__ of a built-in type for a class with a __del__ (didMakeObject()). It makes no difference how often: the object
+    // knows. One with a FinalizerState may be written down again when it has been finalized, any other is so once in its life.
     void registerFinalizable(JSCell*);
     // The same for a generator, of which there are many, when it is made.
     ALWAYS_INLINE void registerNewGenerator(JSCell* generator)
@@ -563,8 +563,7 @@ public:
     // For an object with a FinalizerState: for the time being it has nothing to finalize.
     void unregisterFinalizable(PyRecord*);
     void unregisterFinalizable(PyManagedBuffer*);
-    // For objects that were made long ago and whose class has a __del__ only now. Those that are written down or have been finalized are
-    // left alone. It goes through the whole list.
+    // For objects that were made long ago and whose class has a __del__ only now. Those that have been finalized are left alone.
     void registerFinalizableLate(const MarkedArgumentBuffer&);
     // For the collector, with the world stopped, once all that is reachable is marked. True: it marked something.
     bool keepUnreachableObjectsToFinalize(SlotVisitor&);
@@ -914,11 +913,8 @@ private:
     // may be several times in one collection: see keepUnreachableObjectsToFinalize().
     Vector<JSCell*> m_oldFinalizable;
     Vector<JSCell*> m_youngFinalizable;
-    // Those in the list that are neither instances of a class of the program's that derives from object alone, which are made in one
-    // place, nor have a FinalizerState: an instance of a class derived from dict, say. So that they are in it once.
-    UncheckedKeyHashSet<JSCell*> m_otherFinalizable;
     void forEachFinalizable(const ScopedLambda<void(JSCell*)>&);
-    void didTakeOffList(JSCell*);
+    void didTakeOffList(JSCell*, bool isToBeFinalized = false);
     void didRegisterWhileTracingAllocations(JSCell*);
 
     // Nobody visits these. A collection forgets those of objects that it has found dead.
