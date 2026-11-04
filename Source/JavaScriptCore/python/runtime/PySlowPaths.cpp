@@ -1309,8 +1309,10 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
     // ---- Generators and coroutines ----
     case RuntimeFunction::GetYieldFromIter:
         RELEASE_AND_RETURN(scope, getYieldFromIter(globalObject, args[0], calleeOf(callFrame)->codeOwner()->isIterableCoroutine() || calleeOf(callFrame)->codeInfo().flags.contains(CodeFlag::Coroutine)));
-    case RuntimeFunction::GetAIter:
-        RELEASE_AND_RETURN(scope, getAIter(globalObject, args[0]));
+    case RuntimeFunction::GetAIterOfLoop:
+        RELEASE_AND_RETURN(scope, getAIterOfLoop(globalObject, args[0]));
+    case RuntimeFunction::LeaveAsyncFor:
+        RELEASE_AND_RETURN(scope, leaveAsyncFor(globalObject, args[0], args[1], true));
     case RuntimeFunction::GetANext:
         RELEASE_AND_RETURN(scope, getANext(globalObject, args[0]));
     case RuntimeFunction::EndAsyncFor: {
@@ -1318,6 +1320,11 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         RETURN_IF_EXCEPTION(scope, { });
         if (rt.typeOf(exception)->isSubtypeOf(rt.StopAsyncIteration()))
             return jsUndefined();
+        // The wait for the next item has been cut short (the task is cancelled), or has failed. An iterator of JS's is told that nobody
+        // will ask again, but what it answers may well come after what it still owes, which is never: nobody waits for that.
+        leaveAsyncFor(globalObject, args[1], { }, false);
+        if (scope.exception() && !scope.tryClearException()) [[unlikely]]
+            return { };
         rt.reraisingFrame = callFrame;
         throwPythonException(globalObject, scope, exception);
         return { };

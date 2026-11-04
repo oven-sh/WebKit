@@ -294,6 +294,8 @@ private:
     void whileLoop(AST::While*, bool isLast);
     void forLoop(AST::For*, bool isLast);
     void asyncForLoop(AST::For*, bool isLast);
+    // The loop is left before its end. `exception`: by that, or null.
+    void leaveAsyncFor(RegisterID* iterator, RegisterID* exception);
     void returnStatement(AST::Return*);
     void breakOrContinue(Stmt*, bool isBreak);
     void raiseStatement(AST::Raise*);
@@ -331,6 +333,8 @@ private:
     void endTry(Try&);
     // Starts the handler. Returns what was thrown.
     Reg beginHandler(Try&);
+    // What follows the code of an `async for` that `whole` covers: an exception leaves the loop.
+    void asyncForHandler(Try& whole, RegisterID* iterator);
     // The same, as a Python exception that is now the one being handled. `previous`: the one that was.
     Reg beginExceptionHandler(Try&, Reg& previous);
     void restoreHandledException(RegisterID* previous);

@@ -1788,9 +1788,10 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
             iterator = newTemporary();
             expr(generator->iter, iterator.get());
             loc(generator->iter->range);
-            callRuntime(iterator.get(), RuntimeFunction::GetAIter, { iterator.get() });
+            callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterator.get() });
         }
         g.settlePythonLineMark();
+        Try whole = beginTry();
         g.emitLabel(start.get());
         line(range.lineno);
         g.emitLoopHint();
@@ -1810,7 +1811,12 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
         Reg thrown = beginHandler(guard);
         silentLine(range.lineno);
         loc(range);
-        callRuntimeForEffect(RuntimeFunction::EndAsyncFor, { thrown.get() });
+        callRuntimeForEffect(RuntimeFunction::EndAsyncFor, { thrown.get(), iterator.get() });
+        thrown = nullptr;
+        endTry(whole);
+        hiddenJump(end.get());
+        asyncForHandler(whole, iterator.get());
+        g.emitLabel(end.get());
         return;
     }
 
@@ -1899,7 +1905,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         expr(outermost->iter, iterator.get());
         loc(outermost->iter->range);
         if (outermost->isAsync)
-            callRuntime(iterator.get(), RuntimeFunction::GetAIter, { iterator.get() });
+            callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterator.get() });
         else
             g.emitPyGetIter(iterator.get(), iterator.get());
 
@@ -1950,7 +1956,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         if (!isGenerator) {
             unit.loc(outermost->iter->range);
             if (outermost->isAsync)
-                unit.callRuntime(iterator.get(), RuntimeFunction::GetAIter, { iterator.get() });
+                unit.callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterator.get() });
             else
                 unit.g.emitPyGetIter(iterator.get(), iterator.get());
         }

@@ -483,6 +483,10 @@ JSValue importName(JSGlobalObject*, JSString* name, JSValue globals, JSValue loc
 JSValue callForeignFunction(JSGlobalObject*, JSValue function, const CallArgs&, JSValue thisValue = { });
 // new function(...). `newTarget`: new.target, if not the function.
 JSValue constructForeignFunction(JSGlobalObject*, JSValue function, const CallArgs&, JSValue newTarget = { });
+// `async for`: aiter(iterable), and what is to be awaited when the loop is left before the end, by `break`, `return` or the exception,
+// or None. It is None if nobody `waits`.
+JSValue getAIterOfLoop(JSGlobalObject*, JSValue iterable);
+JSValue leaveAsyncFor(JSGlobalObject*, JSValue iterator, JSValue exception, bool waits);
 // A function written in JS that is found in a class is a method of the instances, as one written in Python is. The instance is its
 // `this`; an arrow function, which has none, is to JS what a lambda is to Python and takes it first. Not a method: a class, a bound
 // function, a function written in C++ (as in Python).

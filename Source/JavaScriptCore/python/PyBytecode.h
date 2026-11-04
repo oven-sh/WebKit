@@ -208,9 +208,10 @@ constexpr int firstSendOfAwait = 8;
     v(WithExit, 3) /* __exit__, what to pass it first or empty, exception */ \
     /* Generators and coroutines */ \
     v(GetYieldFromIter, 1) \
-    v(GetAIter, 1) \
+    v(GetAIterOfLoop, 1) \
+    v(LeaveAsyncFor, 2) /* iterator, exception or empty: what to await, or None */ \
     v(GetANext, 1) \
-    v(EndAsyncFor, 1) /* exception: swallows StopAsyncIteration, throws anything else */ \
+    v(EndAsyncFor, 2) /* exception, iterator: swallows StopAsyncIteration, throws anything else */ \
     v(AsyncGenWrap, 1) \
     v(ThrowIntoGenerator, 1) \
     /* match */ \

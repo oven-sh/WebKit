@@ -350,7 +350,7 @@ static JSArray* ownPropertyNames(JSGlobalObject* globalObject, JSObject* object,
 // ---- Iterators of JS, as iterators of Python ----
 
 // The fields of the records that those are. The iterator is empty once it is exhausted.
-enum JSIteratorField : unsigned { JSIteratorObject, JSIteratorNextMethod, JSIteratorThen, JSIteratorFieldCount };
+enum JSIteratorField : unsigned { JSIteratorObject, JSIteratorNextMethod, JSIteratorThen, JSIteratorIsOfLoop, JSIteratorFieldCount };
 
 static JSValue jsIteratorSelf(JSGlobalObject*, JSValue self) { return self; }
 
@@ -417,9 +417,32 @@ static JSValue jsAsyncIteratorNext(JSGlobalObject* globalObject, JSValue self)
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, then, JSC::getCallData(then), promise, arguments));
 }
 
+// iterator.return(), by which whoever stops before the end says so in JS: `for await` does when it is left. A promise.
+static JSValue jsAsyncIteratorClose(JSGlobalObject* globalObject, JSValue self)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue iterator = uncheckedDowncast<PyRecord>(self.asCell())->get(JSIteratorObject);
+    JSValue returnMethod = iterator.get(globalObject, vm.propertyNames->returnKeyword);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue result = jsUndefined();
+    if (!returnMethod.isUndefinedOrNull()) {
+        auto callData = JSC::getCallData(returnMethod);
+        if (callData.type == CallData::Type::None)
+            return throwTypeError(globalObject, scope, "iterator.return is not a function"_s), JSValue();
+        MarkedArgumentBuffer noArguments;
+        result = JSC::call(globalObject, returnMethod, callData, iterator, noArguments);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, result));
+}
+
 static constexpr NativeDef jsAsyncIteratorMethods[] = {
     PY_SLOT("__aiter__", jsIteratorSelf, "($self, /)"),
     PY_SLOT("__anext__", jsAsyncIteratorNext, "($self, /)"),
+    PY_METHOD("aclose", jsAsyncIteratorClose, "($self, /)"),
 };
 static constexpr TypeDef jsAsyncIteratorTypeDef { "_js.async_iterator"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation }, jsAsyncIteratorMethods, { }, { } };
 
@@ -460,6 +483,38 @@ static JSValue jsObjectAsyncIter(JSGlobalObject* globalObject, JSValue self)
     record->set(vm, JSIteratorNextMethod, iteration.nextMethod);
     record->set(vm, JSIteratorThen, JSFunction::create(vm, globalObject, 1, String(), jsAsyncIteratorResult, ImplementationVisibility::Private));
     return record;
+}
+
+// An object of JS counts on whoever iterates over it to go by the protocol of JS, in which a loop that is left before the end tells
+// the iterator (a timer is cleared, a stream is cancelled and unlocked). So `async for` does that, for the iterator it has made
+// itself of an object of JS. One that the program made (aiter()) is the program's to close: aclose().
+JSValue getAIterOfLoop(JSGlobalObject* globalObject, JSValue iterable)
+{
+    JSValue iterator = getAIter(globalObject, iterable);
+    if (!iterator || iterator == iterable)
+        return iterator;
+    if (auto* record = PyRecord::tryFrom(iterator, runtime(globalObject).typeFor(jsAsyncIteratorTypeDef))) [[unlikely]]
+        record->set(getVM(globalObject), JSIteratorIsOfLoop, jsBoolean(true));
+    return iterator;
+}
+
+JSValue leaveAsyncFor(JSGlobalObject* globalObject, JSValue iterator, JSValue exception, bool waits)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* record = PyRecord::tryFrom(iterator, rt.typeFor(jsAsyncIteratorTypeDef));
+    if (!record || !record->get(JSIteratorIsOfLoop)) [[likely]]
+        return jsUndefined();
+    record->set(vm, JSIteratorIsOfLoop, { });
+    JSValue promise = jsAsyncIteratorClose(globalObject, iterator);
+    RETURN_IF_EXCEPTION(scope, { });
+    // A coroutine that is being closed cannot wait.
+    if (!waits || (exception && rt.typeOf(exception)->isSubtypeOf(rt.GeneratorExit()))) {
+        uncheckedDowncast<JSPromise>(promise.asCell())->markAsHandled();
+        return jsUndefined();
+    }
+    return promise;
 }
 
 // keys(), values(), items(), for an object that has no properties of these names: it is a mapping of its properties, so dict(object).

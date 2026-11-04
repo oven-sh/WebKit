@@ -691,7 +691,7 @@ void Unit::emitMakeGenerator(unsigned slotCount)
         Reg iterator = newTemporary();
         loc(m_scope->range);
         if (m_iterateFirstParameter == CodeSpec::IterateFirstParameter::Async)
-            callRuntime(iterator.get(), RuntimeFunction::GetAIter, { parameter });
+            callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { parameter });
         else
             g.emitPyGetIter(iterator.get(), parameter);
         callRuntime(result.get(), RuntimeFunction::MakeGenerator, { constant(jsNumber(slotCount)), iterator.get() });
@@ -1024,10 +1024,12 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
             callRuntimeForEffect(RuntimeFunction::ReleaseIterator, { block.saved });
         return;
     case BlockKind::WhileLoop:
-    case BlockKind::AsyncForLoop:
     case BlockKind::TryExcept:
     case BlockKind::ExceptionHandler:
     case BlockKind::ExceptionGroupHandler:
+        return;
+    case BlockKind::AsyncForLoop:
+        leaveAsyncFor(block.saved, nullptr);
         return;
     case BlockKind::InlinedComprehension:
     case BlockKind::MatchSubject:
@@ -1538,13 +1540,14 @@ void Unit::asyncForLoop(For* node, bool isLast)
     {
         Reg iterable = expr(node->iter);
         loc(node->iter->range);
-        callRuntime(iterator.get(), RuntimeFunction::GetAIter, { iterable.get() });
+        callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterable.get() });
     }
 
+    Try whole = beginTry();
     g.emitLabel(start.get());
     line(node->iter->range.lineno);
     g.emitLoopHint();
-    pushBlock({ .kind = BlockKind::AsyncForLoop, .tryDepth = g.tryDepth(), .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast });
+    pushBlock({ .kind = BlockKind::AsyncForLoop, .tryDepth = whole.depthBefore, .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast });
     m_finallyContexts.append({ false, true });
 
     // StopAsyncIteration from __anext__ ends the loop.
@@ -1566,10 +1569,43 @@ void Unit::asyncForLoop(For* node, bool isLast)
     // The end of the loop is not told of as a line.
     silentLine(node->iter->range.lineno);
     loc(node->iter->range);
-    callRuntimeForEffect(RuntimeFunction::EndAsyncFor, { thrown.get() });
+    callRuntimeForEffect(RuntimeFunction::EndAsyncFor, { thrown.get(), iterator.get() });
     thrown = nullptr;
+    endTry(whole);
     statements(node->orelse, 0, isLast);
+    leaveStatement(end.get(), isLast, JumpIs::Hidden);
+
+    asyncForHandler(whole, iterator.get());
     g.emitLabel(end.get());
+}
+
+// See getAIterOfLoop(). For all but an iterator of JS's there is nothing to await, and nothing is.
+void Unit::leaveAsyncFor(RegisterID* iterator, RegisterID* exception)
+{
+    Ref<Label> done = g.newLabel();
+    Reg closing = newTemporary();
+    callRuntime(closing.get(), RuntimeFunction::LeaveAsyncFor, { iterator, exception ? exception : emptyValue() });
+    Reg isNone = newTemporary();
+    g.emitPyIsNone(isNone.get(), closing.get());
+    g.emitJumpIfTrue(isNone.get(), done.get());
+    emitAwait(closing.get(), closing.get(), 0);
+    g.emitLabel(done.get());
+}
+
+void Unit::asyncForHandler(Try& whole, RegisterID* iterator)
+{
+    Reg previous;
+    Reg exception = beginExceptionHandler(whole, previous);
+    Try cleanup = beginTry();
+    leaveAsyncFor(iterator, exception.get());
+    // It goes on as if from where it was raised.
+    noLine();
+    reraise(exception.get());
+    endTry(cleanup);
+
+    Reg thrown = beginHandler(cleanup);
+    restoreHandledException(previous.get());
+    reraise(thrown.get());
 }
 
 void Unit::returnStatement(Return* node)
@@ -1615,6 +1651,8 @@ void Unit::breakOrContinue(Stmt* node, bool isBreak)
         suspendTry(loop->tryDepth, suspended);
         if (isBreak && loop->ownsIterator)
             callRuntimeForEffect(RuntimeFunction::ReleaseIterator, { loop->saved });
+        if (isBreak && loop->kind == BlockKind::AsyncForLoop)
+            leaveAsyncFor(loop->saved, nullptr);
         if (isBreak)
             leaveStatement(*loop->breakTarget, loop->isLast, JumpIs::OfTheProgram);
         else
