@@ -447,6 +447,10 @@ namespace {
 // has, lengthens short ones by binary insertion, merges them in the order "powersort" says, and gallops through a run that
 // keeps winning. Programs can see in which order their __lt__ is called, so each step compares what CPython's compares.
 // It sorts keys, and the values that go with them if they are not the keys themselves.
+// `keys`: what is known of all the keys beforehand. Comparing numbers or strs runs no code of the program's and cannot fail.
+enum class SortedKeys : uint8_t { Any, Int32s, Numbers, Strings };
+
+template<SortedKeys sortedKeys>
 class Sorter {
 public:
     // All four are arrays of `count` values that the collector knows of. `values` and its scratch space may be null.
@@ -464,7 +468,8 @@ public:
     {
         if (m_count < 2)
             return true;
-        chooseComparison();
+        if constexpr (sortedKeys == SortedKeys::Any)
+            chooseComparison();
 
         // Every run is made at least so long. The lengths vary by one, so that they add up to a count that halves evenly.
         unsigned shift = 0;
@@ -505,8 +510,9 @@ public:
         return true;
     }
 
-private:
     static constexpr size_t maxMinimumRun = 64;
+
+private:
     static constexpr ptrdiff_t initialMinimumGallop = 7;
 
     struct Slice {
@@ -624,7 +630,21 @@ private:
         return genericLess(a, b);
     }
 
-    bool less(JSValue a, JSValue b)
+    ALWAYS_INLINE bool hasFailed() const { return sortedKeys == SortedKeys::Any && m_failed; }
+
+    ALWAYS_INLINE bool less(JSValue a, JSValue b)
+    {
+        if constexpr (sortedKeys == SortedKeys::Int32s)
+            return a.asInt32() < b.asInt32();
+        else if constexpr (sortedKeys == SortedKeys::Numbers)
+            return a.asNumber() < b.asNumber();
+        else if constexpr (sortedKeys == SortedKeys::Strings)
+            return stringLess(asString(a), asString(b));
+        else
+            return lessOfAnyKind(a, b);
+    }
+
+    bool lessOfAnyKind(JSValue a, JSValue b)
     {
         if (m_failed)
             return false;
@@ -662,7 +682,7 @@ private:
             do {
                 ptrdiff_t middle = (low + high) >> 1;
                 bool isLess = less(pivot, keys[middle]);
-                if (m_failed)
+                if (hasFailed())
                     return false;
                 if (isLess)
                     high = middle;
@@ -687,13 +707,13 @@ private:
         auto nextIsSmaller = [&] { return less(keys[n], keys[n - 1]); };
         auto extendAscending = [&] {
             for (; n < remaining; ++n) {
-                if (nextIsSmaller() || m_failed)
+                if (nextIsSmaller() || hasFailed())
                     break;
             }
         };
 
         extendAscending();
-        if (m_failed)
+        if (hasFailed())
             return -1;
         if (n == remaining)
             return n;
@@ -702,7 +722,7 @@ private:
         // descending run begins.
         if (n > 1) {
             bool wentUp = less(keys[0], keys[n - 1]);
-            if (m_failed)
+            if (hasFailed())
                 return -1;
             if (wentUp)
                 return n;
@@ -722,14 +742,14 @@ private:
         };
         for (; n < remaining; ++n) {
             bool smaller = nextIsSmaller();
-            if (m_failed)
+            if (hasFailed())
                 return -1;
             if (smaller) {
                 reverseEqualItems();
                 continue;
             }
             bool larger = less(keys[n - 1], keys[n]);
-            if (m_failed)
+            if (hasFailed())
                 return -1;
             if (larger)
                 break;
@@ -740,7 +760,7 @@ private:
 
         // What follows may well go on upwards from there.
         extendAscending();
-        return m_failed ? -1 : n;
+        return hasFailed() ? -1 : n;
     }
 
     // Where the key belongs among n sorted items: before (Left) or after (Right) those equal to it. The search starts at
@@ -756,13 +776,13 @@ private:
         ptrdiff_t last = 0;
         ptrdiff_t offset = 1;
         bool goesRight = isAfter(items[hint]);
-        if (m_failed)
+        if (hasFailed())
             return -1;
         if (goesRight) {
             ptrdiff_t limit = n - hint;
             while (offset < limit) {
                 bool further = isAfter(items[hint + offset]);
-                if (m_failed)
+                if (hasFailed())
                     return -1;
                 if (!further)
                     break;
@@ -776,7 +796,7 @@ private:
             ptrdiff_t limit = hint + 1;
             while (offset < limit) {
                 bool found = isAfter(items[hint - offset]);
-                if (m_failed)
+                if (hasFailed())
                     return -1;
                 if (found)
                     break;
@@ -794,7 +814,7 @@ private:
         while (last < offset) {
             ptrdiff_t middle = last + ((offset - last) >> 1);
             bool after = isAfter(items[middle]);
-            if (m_failed)
+            if (hasFailed())
                 return -1;
             if (after)
                 last = middle + 1;
@@ -840,7 +860,7 @@ private:
             // One at a time, until one of the two keeps winning.
             while (true) {
                 bool takesB = less(b.keys[0], a.keys[0]);
-                if (m_failed)
+                if (hasFailed())
                     return finish(false);
                 if (takesB) {
                     take(b);
@@ -940,7 +960,7 @@ private:
             ptrdiff_t wonByB = 0;
             while (true) {
                 bool takesA = less(b.keys[0], a.keys[0]);
-                if (m_failed)
+                if (hasFailed())
                     return finish(false);
                 if (takesA) {
                     take(a);
@@ -1072,6 +1092,48 @@ private:
 
 }
 
+static SortedKeys whatAllAre(std::span<const WriteBarrier<Unknown>> items)
+{
+    bool allInt32s = true;
+    bool allNumbers = true;
+    bool allStrings = true;
+    for (auto& slot : items) {
+        JSValue item = slot.get();
+        if (!item) [[unlikely]]
+            return SortedKeys::Any;
+        allInt32s &= item.isInt32();
+        allNumbers &= item.isNumber();
+        allStrings &= item.isString() && !asString(item)->isRope();
+        if (!allNumbers && !allStrings)
+            return SortedKeys::Any;
+    }
+    return allInt32s ? SortedKeys::Int32s : allNumbers ? SortedKeys::Numbers : allStrings ? SortedKeys::Strings : SortedKeys::Any;
+}
+
+// Nothing gets to see the list while such items are sorted, so it keeps them meanwhile, and the collector need not know of the copy.
+template<SortedKeys sortedKeys>
+static bool sortItemsThatAreAll(JSGlobalObject* globalObject, JSArray* list, std::span<WriteBarrier<Unknown>> items, bool reverse)
+{
+    // A list that is a single run is not merged.
+    constexpr size_t shortList = Sorter<sortedKeys>::maxMinimumRun;
+    Vector<JSValue, shortList> values;
+    Vector<JSValue, 0> scratch;
+    if (!values.tryReserveInitialCapacity(items.size()) || (items.size() >= shortList && !scratch.tryGrow(items.size())))
+        return false;
+    for (auto& slot : items)
+        values.append(slot.get());
+    // Reversing before and after keeps equal items in their original order.
+    if (reverse)
+        values.reverse();
+    Sorter<sortedKeys>(globalObject, values.mutableSpan().data(), nullptr, scratch.mutableSpan().data(), nullptr, values.size()).sort();
+    if (reverse)
+        values.reverse();
+    for (size_t i = 0; i < items.size(); ++i)
+        items[i].setWithoutWriteBarrier(values[i]);
+    getVM(globalObject).writeBarrier(list);
+    return true;
+}
+
 void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool reverse)
 {
     VM& vm = getVM(globalObject);
@@ -1094,6 +1156,26 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
     }
     if (values.hasOverflowed() || keys.hasOverflowed() || scratch.hasOverflowed() || secondScratch.hasOverflowed()) [[unlikely]]
         RELEASE_AND_RETURN(scope, raiseListTooLong(globalObject));
+
+    if (ListStorage storage { vm, list }; storage && (!key || isNone(key))) {
+        std::span items { storage.items(), count };
+        bool isSorted = false;
+        switch (whatAllAre(items)) {
+        case SortedKeys::Int32s:
+            isSorted = sortItemsThatAreAll<SortedKeys::Int32s>(globalObject, list, items, reverse);
+            break;
+        case SortedKeys::Numbers:
+            isSorted = sortItemsThatAreAll<SortedKeys::Numbers>(globalObject, list, items, reverse);
+            break;
+        case SortedKeys::Strings:
+            isSorted = sortItemsThatAreAll<SortedKeys::Strings>(globalObject, list, items, reverse);
+            break;
+        case SortedKeys::Any:
+            break;
+        }
+        if (isSorted)
+            return;
+    }
 
     // The list is empty for as long as it is being sorted, so that what the comparisons do to it shows.
     for (unsigned i = 0; i < count; ++i)
@@ -1140,7 +1222,7 @@ void listSort(JSGlobalObject* globalObject, JSArray* list, JSValue key, bool rev
             reverseAll(keyData);
         }
         auto dataOf = [](MarkedArgumentBuffer& buffer) { return reinterpret_cast<JSValue*>(const_cast<EncodedJSValue*>(ArgList(buffer).data())); };
-        Sorter sorter(globalObject, keyData ? keyData : valueData, keyData ? valueData : nullptr, dataOf(scratch), keyData ? dataOf(secondScratch) : nullptr, count);
+        Sorter<SortedKeys::Any> sorter(globalObject, keyData ? keyData : valueData, keyData ? valueData : nullptr, dataOf(scratch), keyData ? dataOf(secondScratch) : nullptr, count);
         failed = !sorter.sort();
         if (reverse)
             reverseAll(valueData);
