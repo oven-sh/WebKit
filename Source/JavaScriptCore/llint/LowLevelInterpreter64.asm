@@ -1194,7 +1194,7 @@ llintOpWithReturn(op_to_numeric, OpToNumeric, macro (size, get, dispatch, return
     loadConstantOrVariable(size, t0, t2)
     bqaeq t2, numberTag, .opToNumericIsInt
     btqz t2, numberTag, .opToNumericSlow
-    updateUnaryArithProfile(size, OpToNumber, ArithProfileNumber, t5, t3)
+    updateUnaryArithProfile(size, OpToNumeric, ArithProfileNumber, t5, t3)
 .opToNumericIsInt:
     return(t2)
 .opToNumericSlow:
