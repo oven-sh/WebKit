@@ -2897,6 +2897,16 @@ llintOp(op_py_store_cell, OpPyStoreCell, macro (size, get, dispatch)
 end)
 
 
+# What a namespace has under a name may stand for a module that is yet to be imported.
+macro pyBranchIfLazyImport(value, scratch, isLazyImport)
+    btqnz value, notCellMask, .isNot
+    bbneq JSCell::m_type[value], PyObjectType, .isNot
+    loadPythonRuntime(scratch)
+    loadp Python::Runtime::lazyImportType[scratch], scratch
+    bpeq scratch, (constexpr (Python::PyObject::offsetOfType()))[value], isLazyImport
+.isNot:
+end
+
 # See Python::PyDict::watchedVersion().
 llintOpWithMetadata(op_py_load_global, OpPyLoadGlobal, macro (size, get, dispatch, metadata, return)
     metadata(t5, t0)
@@ -2913,10 +2923,7 @@ llintOpWithMetadata(op_py_load_global, OpPyLoadGlobal, macro (size, get, dispatc
     loadp (constexpr (Python::PyDict::offsetOfStorage()))[t1], t1
     lshiftq 1, t2
     loadq (constexpr (Python::PyDictStorage::offsetOfFirstValue()))[t1, t2, 8], t0
-    btqnz t0, notCellMask, .done
-    # It may stand for a module that is yet to be imported.
-    bbeq JSCell::m_type[t0], PyObjectType, .slow
-.done:
+    pyBranchIfLazyImport(t0, t1, .slow)
     return(t0)
 
 .slow:
@@ -2961,10 +2968,7 @@ macro pyLoadCachedModuleEntry(opcodeStruct, slow)
     loadp (constexpr (Python::PyDict::offsetOfStorage()))[t1], t1
     lshiftq 1, t2
     loadq (constexpr (Python::PyDictStorage::offsetOfFirstValue()))[t1, t2, 8], t0
-    btqnz t0, notCellMask, .loaded
-    # It may stand for a module that is yet to be imported.
-    bbeq JSCell::m_type[t0], PyObjectType, slow
-.loaded:
+    pyBranchIfLazyImport(t0, t1, slow)
 end
 
 llintOpWithMetadata(op_py_get_attr, OpPyGetAttr, macro (size, get, dispatch, metadata, return)

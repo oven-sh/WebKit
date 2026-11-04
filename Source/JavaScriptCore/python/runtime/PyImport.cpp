@@ -1547,7 +1547,13 @@ static constexpr NativeDef lazyImportMethods[] = {
 
 static constexpr TypeDef lazyImportTypeDef { "lazy_import"_s, { }, lazyImportMethods, { }, "What a lazy import binds a name to until the name is first used."_s };
 
-static PyType* lazyImportType(JSGlobalObject* globalObject) { return runtime(globalObject).typeFor(lazyImportTypeDef); }
+static PyType* lazyImportType(JSGlobalObject* globalObject)
+{
+    Runtime& rt = runtime(globalObject);
+    if (!rt.lazyImportType) [[unlikely]]
+        rt.lazyImportType = rt.typeFor(lazyImportTypeDef);
+    return rt.lazyImportType;
+}
 PyType* typeOfLazyImports(JSGlobalObject* globalObject) { return lazyImportType(globalObject); }
 
 } // namespace Python
