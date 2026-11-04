@@ -359,7 +359,7 @@ static void testCalleesOfSites()
 {
     static constexpr std::array<uint8_t, 2> handlers { 1, 2 };
     static constexpr std::array<uint8_t, 3> callSites { 7, 8, 9 };
-    static constexpr std::array<std::pair<uint32_t, CalleeOfSite>, 6> listed { { { 1, CalleeOfSite::ownFunctionObject() }, { 2, CalleeOfSite::inFrame(-1) }, { 130, CalleeOfSite::inFrame(0) }, { 131, CalleeOfSite::inFrame(-70000) }, { 70000, CalleeOfSite::ownFunctionObject() }, { 70002, CalleeOfSite::inEnvironmentInFrame(70000, 0x1000018) } } };
+    static constexpr std::array<CalleeAtSite, 6> listed { { { 1, CalleeOfSite::ownFunctionObject() }, { 2, CalleeOfSite::inFrame(-1) }, { 130, CalleeOfSite::inFrame(0) }, { 131, CalleeOfSite::inFrame(-70000) }, { 70000, CalleeOfSite::ownFunctionObject() }, { 70002, CalleeOfSite::inEnvironmentInFrame(70000, 0x1000018) } } };
 
     SideTableInputs inputs { };
     inputs.handlers = handlers;
@@ -390,7 +390,7 @@ static void testConstructedCallees()
 {
     static constexpr std::array<uint8_t, 2> handlers { 1, 2 };
     static constexpr std::array<uint8_t, 3> callSites { 7, 8, 9 };
-    static constexpr std::array<std::pair<uint32_t, CalleeOfSite>, 2> calleesOfSites { { { 2, CalleeOfSite::ownFunctionObject() }, { 130, CalleeOfSite::inFrame(-3) } } };
+    static constexpr std::array<CalleeAtSite, 2> calleesOfSites { { { 2, CalleeOfSite::ownFunctionObject() }, { 130, CalleeOfSite::inFrame(-3) } } };
     static constexpr std::array<std::pair<uint32_t, uint32_t>, 4> listed { { { 1, 5 }, { 2, 0 }, { 130, 70000 }, { 70000, 3 } } };
 
     SideTableInputs inputs { };

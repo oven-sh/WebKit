@@ -314,6 +314,12 @@ private:
 static_assert(CalleeOfSite::inFrame(0).wordInFrame() == 0 && CalleeOfSite::inFrame(-1).wordInFrame() == -1 && CalleeOfSite::inFrame(7).wordInFrame() == 7 && !CalleeOfSite::inFrame(0).isOwnFunctionObject() && !CalleeOfSite::inFrame(-3).fieldInEnvironment());
 static_assert(CalleeOfSite::inEnvironmentInFrame(-3, 0).wordInFrame() == -3 && CalleeOfSite::inEnvironmentInFrame(0, 9).fieldInEnvironment() == 9u && !CalleeOfSite::inEnvironmentInFrame(0, 0).isOwnFunctionObject());
 
+// A site and what it records. No std::pair: that of FreeBSD is copied and moved by constructors of its own, and ListOfUnit moves what it holds as bytes.
+struct CalleeAtSite {
+    uint32_t site;
+    CalleeOfSite callee;
+};
+
 // frameRanges says whether the function has its frame at a return address, and at nothing else: it holds the distances between the offsets at which the answer changes, in units of codeOffsetUnit.
 struct SideTableInputs {
     // Which parts are written. Their reader goes by these flags in the function's record.
@@ -323,7 +329,7 @@ struct SideTableInputs {
     uint32_t frame { 0 };
     std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
     std::span<const uint8_t> handlers;
-    std::span<const std::pair<uint32_t, CalleeOfSite>> calleesOfSites;
+    std::span<const CalleeAtSite> calleesOfSites;
     // A site and a FunctionID index.
     std::span<const std::pair<uint32_t, uint32_t>> constructedCallees;
     std::span<const uint8_t> callSites;

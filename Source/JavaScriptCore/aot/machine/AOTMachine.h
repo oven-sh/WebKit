@@ -42,7 +42,9 @@
 namespace JSC { namespace AOT { namespace Machine {
 
 class Allocation;
+class Allocator;
 class Block;
+class Builder;
 class Encoder;
 class Frame;
 class Liveness;

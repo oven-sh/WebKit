@@ -297,7 +297,7 @@ static RegExpObject* ensureSharedRegExpLiteral(VM& vm, Instance* instance, uint3
         RELEASE_ASSERT(shared && shared->regExp() == regExp);
         return shared;
     }
-    RegExpObject* shared = RegExpObject::create(vm, instance->globalObject->regExpStructure(), regExp);
+    RegExpObject* shared = RegExpObject::create(vm, WTF::opaque(instance->globalObject->regExpStructure()), regExp);
     vm.mutatorFence();
     statics.setCell(staticsOffset, shared);
     return shared;
@@ -311,8 +311,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpLiteral, JSCell*, (Instance* insta
     // The program never gets the object in the cell from here: each evaluation has an object of its own.
     if (staticsOffset != noSharedRegExpOffset)
         ensureSharedRegExpLiteral(vm, instance, staticsOffset, regExp);
-    prepareInlineAllocation<RegExpObject>(instance, InlineAllocation::RegExpObject, globalObject->regExpStructure());
-    OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
+    Structure* structure = WTF::opaque(globalObject->regExpStructure());
+    prepareInlineAllocation<RegExpObject>(instance, InlineAllocation::RegExpObject, structure);
+    OPERATION_RETURN(scope, RegExpObject::create(vm, structure, regExp));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSharedRegExpLiteral, JSCell*, (Instance* instance, uint32_t staticsOffset, uint32_t regExpRecord, uint32_t flags))
@@ -328,7 +329,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyOfSharedRegExpLiteral, JSCell*, (Instan
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyOfSharedRegExpLiteral);
     RegExp* regExp = cellArgument<RegExpObject>(shared, Entry::operationAOTCopyOfSharedRegExpLiteral)->regExp();
-    OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
+    OPERATION_RETURN(scope, RegExpObject::create(vm, WTF::opaque(globalObject->regExpStructure()), regExp));
 }
 JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSCell*, (Instance* instance, JSCell* patternCell, uint32_t flags))
 {

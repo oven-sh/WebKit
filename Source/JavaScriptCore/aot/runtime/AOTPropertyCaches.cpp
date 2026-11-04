@@ -2316,7 +2316,7 @@ static std::optional<AnswersAtSites::AnswerByStructure> answerOfSlot(SiteUse use
 
 void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse use)
 {
-    Structure* structure = base->structure();
+    Structure* structure = WTF::opaque(base->structure());
     StructureID id = structure->id();
     CachedName name = nameOf(identifierNumber);
 

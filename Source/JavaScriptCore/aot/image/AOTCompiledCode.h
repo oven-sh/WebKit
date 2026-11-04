@@ -241,7 +241,7 @@ struct SiteDescription {
     ListOfUnit<InlineFrame> inlineFrames;
     ListOfUnit<FlaggedSite> flaggedSites;
     // Sorted by site. A site without code stands for a call that an inline frame replaced.
-    ListOfUnit<std::pair<uint32_t, CalleeOfSite>> calleesOfSites;
+    ListOfUnit<CalleeAtSite> calleesOfSites;
     // In rising order of the sites. The callee is an index into CodeBody::callees.
     ListOfUnit<ConstructedCallee> constructedCallees;
     ListOfUnit<SiteHandler> handlers;
