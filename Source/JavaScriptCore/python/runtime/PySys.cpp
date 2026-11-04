@@ -917,7 +917,7 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "version"_s, text(versionText()));
     module->add(globalObject, "api_version"_s, jsNumber(1013));
     module->add(globalObject, "abiflags"_s, text(emptyString()));
-    module->add(globalObject, "copyright"_s, text("Copyright (c) 2001 Python Software Foundation.\nAll Rights Reserved."_s));
+    module->add(globalObject, "copyright"_s, text("Copyright (c) 2001 Python Software Foundation.\nAll Rights Reserved.\n\nCopyright (c) 2000 BeOpen.com.\nAll Rights Reserved.\n\nCopyright (c) 1995-2001 Corporation for National Research Initiatives.\nAll Rights Reserved.\n\nCopyright (c) 1991-1995 Stichting Mathematisch Centrum, Amsterdam.\nAll Rights Reserved."_s));
     module->add(globalObject, "_git"_s, PyTuple::create(globalObject, { text("Bun"_s), text(emptyString()), text(emptyString()) }));
 
     PyDict* implementation = PyDict::create(globalObject);

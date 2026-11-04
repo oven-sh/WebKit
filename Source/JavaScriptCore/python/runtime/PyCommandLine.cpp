@@ -1194,9 +1194,10 @@ static Vector<uint8_t> readAllOfStdin()
 
 // ---- The interactive interpreter ----
 
-// One line from standard input, with its end. Empty: there is no more.
-static Vector<uint8_t> readLineFromStdin(const String& prompt)
+// One line from standard input, with its end. Empty: there is no more. Nothing: the handler of a signal has raised an exception.
+static std::optional<Vector<uint8_t>> readLineFromStdin(VM& vm, const String& prompt)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     printToStderr(prompt);
     fflush(stderr);
     Vector<uint8_t> line;
@@ -1204,10 +1205,11 @@ static Vector<uint8_t> readLineFromStdin(const String& prompt)
         uint8_t byte;
         ssize_t count = read(STDIN_FILENO, &byte, 1);
         if (count < 0 && errno == EINTR) {
-            // Ctrl-C: whoever called sees to it.
-            line.clear();
-            line.append('\x03');
-            return line;
+            makeCallsOwed(vm);
+            if (!scope.exception())
+                continue;
+            printToStderr("\n"_s);
+            return std::nullopt;
         }
         if (count <= 0)
             return line;
@@ -1241,6 +1243,20 @@ static void flushStandardStreams(JSGlobalObject* globalObject)
             callMethod(globalObject, stream, rt.names.flush());
         scope.clearException();
     }
+}
+
+static bool hasOnlyBlankLinesAndComments(std::span<const uint8_t> text)
+{
+    bool isInComment = false;
+    for (uint8_t character : text) {
+        if (character == '\n')
+            isInComment = false;
+        else if (character == '#')
+            isInComment = true;
+        else if (!isInComment && character != ' ' && character != '\t' && character != '\f' && character != '\r')
+            return false;
+    }
+    return true;
 }
 
 // Reads statements from standard input and runs each as it is complete, until there are no more. No line editing.
@@ -1279,21 +1295,26 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
     Vector<uint8_t> pending;
     // A `from __future__ import` holds for the rest of the session.
     int compileFlags = CompileAllowTopLevelAwait | CompileSourceIsShown;
+    bool wasInterrupted = false;
     while (true) {
-        Vector<uint8_t> line = readLineFromStdin(promptText(globalObject, pending.isEmpty() ? "ps1"_s : "ps2"_s));
+        auto line = readLineFromStdin(vm, promptText(globalObject, pending.isEmpty() ? "ps1"_s : "ps2"_s));
         bool isAtEnd = false;
-        if (line.size() == 1 && line[0] == '\x03') {
+        if (!line)
             pending.clear();
-            makeCallsOwed(vm);
-            if (!scope.exception())
-                continue;
-        } else {
-            isAtEnd = line.isEmpty();
+        else {
+            isAtEnd = line->isEmpty();
             if (isAtEnd)
                 printToStderr("\n"_s);
             if (isAtEnd && pending.isEmpty())
                 break;
-            pending.appendVector(line);
+            pending.appendVector(*line);
+            // Nothing to run, and no mistake either.
+            if (hasOnlyBlankLinesAndComments(pending.span())) {
+                pending.clear();
+                if (isAtEnd)
+                    break;
+                continue;
+            }
         }
 
         JSValue code;
@@ -1308,9 +1329,11 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
                 code = call(globalObject, compiler, makeStr(vm, String::fromUTF8ReplacingInvalidSequences(text)), filename, mode);
                 if (code && isNone(code))
                     continue;
-                // Once more, so that tracebacks can show the lines.
-                if (code)
+                // Once more, so that tracebacks can show the lines, and a mistake is found in the lines as they were typed.
+                if (code || pendingExceptionMatches(globalObject, rt.SyntaxError())) {
+                    scope.clearException();
                     code = compileSource(globalObject, pending.span(), "<stdin>"_s, "single"_s, compileFlags, -1, globals->get(rt.names.dName()));
+                }
             }
             // Where the compiler was called from is of no interest.
             if (auto* exception = PyException::tryFrom(pendingException(globalObject)))
@@ -1339,6 +1362,7 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
             int status = handleUncaughtException(globalObject);
             if (exits)
                 return status;
+            wasInterrupted |= status == -SIGINT;
         }
         flushStandardStreams(globalObject);
     }
@@ -1346,6 +1370,9 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
         callMethod(globalObject, runner, internString(vm, "close"_s));
         scope.clearException();
     }
+    // As in CPython: a KeyboardInterrupt that was reported here is what the process dies of in the end.
+    if (wasInterrupted)
+        return -SIGINT;
     return std::nullopt;
 }
 
