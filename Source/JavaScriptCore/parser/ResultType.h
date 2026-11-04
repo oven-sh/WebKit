@@ -279,4 +279,20 @@ namespace JSC {
         }
     };
 
+    // What an op_to_number was written as. `x * 1` is `+x` for every value of JS; the class of a Python object may have its own `*`.
+    enum class ToNumberForm : uint8_t {
+        Plus, // +x
+        TimesOne, // x * 1
+        OneTimes, // 1 * x
+    };
+
 } // namespace JSC
+
+namespace WTF {
+
+inline void printInternal(PrintStream& out, JSC::ToNumberForm form)
+{
+    out.print(form == JSC::ToNumberForm::Plus ? "+x"_s : form == JSC::ToNumberForm::TimesOne ? "x * 1"_s : "1 * x"_s);
+}
+
+} // namespace WTF

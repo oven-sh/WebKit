@@ -183,6 +183,10 @@ private:
         bool changed = false;
 
         switch (op) {
+        case ToNumber:
+            if (node->toNumberForm() == ToNumberForm::Plus)
+                break;
+            [[fallthrough]];
         case ValueAdd:
         case ValueSub:
         case ValueMul:

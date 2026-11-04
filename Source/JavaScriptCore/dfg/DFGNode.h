@@ -2951,6 +2951,13 @@ public:
         return PrivateFieldPutKind::fromByte(m_opInfo2.as<uint8_t>());
     }
 
+    // Plus, unless the node comes from an op_to_number that says otherwise.
+    ToNumberForm toNumberForm()
+    {
+        ASSERT(op() == ToNumber);
+        return static_cast<ToNumberForm>(m_opInfo.as<uint32_t>());
+    }
+
     bool hasArithMode()
     {
         switch (op()) {

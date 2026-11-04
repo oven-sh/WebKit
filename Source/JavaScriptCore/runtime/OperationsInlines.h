@@ -25,6 +25,7 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/Operations.h>
+#include <JavaScriptCore/ResultType.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/text/MakeString.h>
 
@@ -517,6 +518,17 @@ ALWAYS_INLINE bool tryOverloadedOperator(JSGlobalObject* globalObject, Python::J
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     result = Python::unaryOperatorForJS(globalObject, op, v);
     return scope.exception() || result;
+}
+
+// op_to_number
+ALWAYS_INLINE JSValue jsToNumberAsWritten(JSGlobalObject* globalObject, JSValue v, ToNumberForm form)
+{
+    if (form != ToNumberForm::Plus) {
+        bool isOnTheRight = form == ToNumberForm::TimesOne;
+        if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Mul, isOnTheRight ? v : jsNumber(1), isOnTheRight ? jsNumber(1) : v, result)) [[unlikely]]
+            return result;
+    }
+    return jsNumber(v.toNumber(globalObject));
 }
 
 template<typename DoubleOperation, typename BigIntOp>

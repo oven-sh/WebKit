@@ -59,6 +59,7 @@ types [
     :StructureChain,
     :SymbolTable,
     :SymbolTableOrScopeDepth,
+    :ToNumberForm,
     :ToThisStatus,
     :TypeLocation,
     :InlineWatchpointSet,
@@ -1760,9 +1761,16 @@ op :has_structure_with_flags,
         flags: unsigned,
     }
 
+op :to_number,
+    args: {
+        dst: VirtualRegister,
+        operand: VirtualRegister,
+        profileIndex: unsigned,
+        form: ToNumberForm,
+    }
+
 op_group :ProfiledUnaryOp,
     [
-        :to_number,
         :to_numeric,
         :bitnot,
         :unsigned,

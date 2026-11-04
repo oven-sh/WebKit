@@ -548,8 +548,10 @@ namespace JSC {
 
     // UnaryPlus is guaranteed to always return a number, never a BigInt.
     // See https://tc39.es/ecma262/#sec-unary-plus-operator-runtime-semantics-evaluation
-    inline UnaryPlusNode::UnaryPlusNode(const JSTokenLocation& location, ExpressionNode* expr)
-        : UnaryOpNode(location, ResultType::numberType(), expr, op_to_number)
+    // What was written as a multiplication says of its result what a multiplication says.
+    inline UnaryPlusNode::UnaryPlusNode(const JSTokenLocation& location, ExpressionNode* expr, ToNumberForm form)
+        : UnaryOpNode(location, form == ToNumberForm::Plus ? ResultType::numberType() : ResultType::bigIntOrNumberType(), expr, op_to_number)
+        , m_form(form)
     {
     }
 

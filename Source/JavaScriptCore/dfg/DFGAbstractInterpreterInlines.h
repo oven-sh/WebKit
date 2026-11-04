@@ -3537,7 +3537,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         }
 
         clobberWorld();
-        setNonCellTypeForNode(node, SpecBytecodeNumber);
+        if (node->toNumberForm() == ToNumberForm::Plus)
+            setNonCellTypeForNode(node, SpecBytecodeNumber);
+        else
+            setTypeForOverloadableOperator(node, SpecBytecodeNumber);
         break;
     }
 

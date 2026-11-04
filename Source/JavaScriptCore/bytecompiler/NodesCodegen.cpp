@@ -3296,7 +3296,7 @@ RegisterID* UnaryPlusNode::emitBytecode(BytecodeGenerator& generator, RegisterID
     ASSERT(opcodeID() == op_to_number);
     RefPtr<RegisterID> src = generator.emitNode(expr());
     generator.emitExpressionInfo(position(), position(), position());
-    return generator.emitToNumber(generator.finalDestination(dst), src.get());
+    return generator.emitToNumber(generator.finalDestination(dst), src.get(), m_form);
 }
  
 // ------------------------------ LogicalNotNode -----------------------------------

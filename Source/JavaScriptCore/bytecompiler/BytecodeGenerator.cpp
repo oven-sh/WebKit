@@ -2407,7 +2407,7 @@ RegisterID* BytecodeGenerator::emitUnaryOp(OpcodeID opcodeID, RegisterID* dst, R
         OpBitnot::emit(this, dst, src, m_codeBlock->addUnaryArithProfile());
         break;
     case op_to_number:
-        OpToNumber::emit(this, dst, src, m_codeBlock->addUnaryArithProfile());
+        OpToNumber::emit(this, dst, src, m_codeBlock->addUnaryArithProfile(), ToNumberForm::Plus);
         break;
     case op_to_numeric:
         OpToNumeric::emit(this, dst, src, m_codeBlock->addUnaryArithProfile());
@@ -2503,9 +2503,9 @@ RegisterID* BytecodeGenerator::emitToObject(RegisterID* dst, RegisterID* src, co
     return dst;
 }
 
-RegisterID* BytecodeGenerator::emitToNumber(RegisterID* dst, RegisterID* src)
+RegisterID* BytecodeGenerator::emitToNumber(RegisterID* dst, RegisterID* src, ToNumberForm form)
 {
-    OpToNumber::emit(this, dst, src, m_codeBlock->addUnaryArithProfile());
+    OpToNumber::emit(this, dst, src, m_codeBlock->addUnaryArithProfile(), form);
     return dst;
 }
 

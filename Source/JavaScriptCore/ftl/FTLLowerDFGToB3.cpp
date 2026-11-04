@@ -11344,9 +11344,10 @@ IGNORE_CLANG_WARNINGS_END
         }
         case UntypedUse: {
             LValue value = lowJSValue(m_node->child1());
+            auto operation = operationToNumberFor(m_node->toNumberForm());
 
             if (!(abstractValue(m_node->child1()).m_type & SpecBytecodeNumber))
-                setJSValue(vmCall(Int64, operationToNumber, weakPointer(globalObject), value));
+                setJSValue(vmCall(Int64, operation, weakPointer(globalObject), value));
             else {
                 LBasicBlock notNumber = m_out.newBlock();
                 LBasicBlock continuation = m_out.newBlock();
@@ -11359,7 +11360,7 @@ IGNORE_CLANG_WARNINGS_END
                 // We have several attempts to remove ToNumber. But ToNumber still exists.
                 // It means that converting non-numbers to numbers by this ToNumber is not rare.
                 // Instead of the lazy slow path generator, we call the operation here.
-                ValueFromBlock slowResult = m_out.anchor(vmCall(Int64, operationToNumber, weakPointer(globalObject), value));
+                ValueFromBlock slowResult = m_out.anchor(vmCall(Int64, operation, weakPointer(globalObject), value));
                 m_out.jump(continuation);
 
                 // continuation case.

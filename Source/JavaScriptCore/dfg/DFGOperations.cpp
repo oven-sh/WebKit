@@ -2523,6 +2523,26 @@ JSC_DEFINE_JIT_OPERATION(operationToNumber, EncodedJSValue, (JSGlobalObject* glo
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(JSValue::decode(value).toNumber(globalObject))));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationToNumberTimesOne, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue value))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(jsToNumberAsWritten(globalObject, JSValue::decode(value), ToNumberForm::TimesOne)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationToNumberOneTimes, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue value))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(jsToNumberAsWritten(globalObject, JSValue::decode(value), ToNumberForm::OneTimes)));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationToNumberString, EncodedJSValue, (JSGlobalObject* globalObject, JSString* string))
 {
     VM& vm = globalObject->vm();

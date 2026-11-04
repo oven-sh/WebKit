@@ -1228,10 +1228,12 @@ namespace JSC {
 
     class UnaryPlusNode final : public UnaryOpNode {
     public:
-        UnaryPlusNode(const JSTokenLocation&, ExpressionNode*);
+        UnaryPlusNode(const JSTokenLocation&, ExpressionNode*, ToNumberForm = ToNumberForm::Plus);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+
+        ToNumberForm m_form;
     };
 
     class NegateNode final : public UnaryOpNode {

@@ -11297,7 +11297,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
         case op_to_number: {
             auto bytecode = currentInstruction->as<OpToNumber>();
             Node* value = get(bytecode.m_operand);
-            set(bytecode.m_dst, makeSafe(addToGraph(ToNumber, OpInfo(0), OpInfo(), value)));
+            set(bytecode.m_dst, makeSafe(addToGraph(ToNumber, OpInfo(bytecode.m_form), OpInfo(), value)));
             NEXT_OPCODE(op_to_number);
         }
 

@@ -939,7 +939,7 @@ namespace JSC {
         RegisterID* moveLinkTimeConstant(RegisterID* dst, LinkTimeConstant);
         RegisterID* moveEmptyValue(RegisterID* dst);
 
-        RegisterID* emitToNumber(RegisterID* dst, RegisterID* src);
+        RegisterID* emitToNumber(RegisterID* dst, RegisterID* src, ToNumberForm = ToNumberForm::Plus);
         RegisterID* emitToNumeric(RegisterID* dst, RegisterID* src);
         RegisterID* emitToString(RegisterID* dst, RegisterID* src);
         RegisterID* emitToObject(RegisterID* dst, RegisterID* src, const Identifier& message);

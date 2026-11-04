@@ -31,6 +31,7 @@
 #include "DFGNodeType.h"
 #include "IndexingType.h"
 #include "JITOperations.h"
+#include "ResultType.h"
 #include "TypedArrayType.h"
 #include "UGPRPair.h"
 #include <wtf/text/StringSearch.h>
@@ -127,6 +128,8 @@ JSC_DECLARE_JIT_OPERATION(operationToPrimitive, EncodedJSValue, (JSGlobalObject*
 JSC_DECLARE_JIT_OPERATION(operationToPropertyKey, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationToPropertyKeyOrNumber, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationToNumber, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationToNumberTimesOne, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationToNumberOneTimes, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationToNumberString, EncodedJSValue, (JSGlobalObject*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationToNumeric, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationCallNumberConstructor, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
@@ -603,6 +606,20 @@ inline auto operationOwnPropertyKeysVariantObject(NodeType type) -> decltype(&op
         RELEASE_ASSERT_NOT_REACHED();
         return nullptr;
     }
+}
+
+inline auto operationToNumberFor(ToNumberForm form) -> decltype(&operationToNumber)
+{
+    switch (form) {
+    case ToNumberForm::Plus:
+        return operationToNumber;
+    case ToNumberForm::TimesOne:
+        return operationToNumberTimesOne;
+    case ToNumberForm::OneTimes:
+        return operationToNumberOneTimes;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return nullptr;
 }
 
 } } // namespace JSC::DFG

@@ -165,13 +165,13 @@ public:
 
         return new (m_parserArena) LogicalNotNode(location, expr);
     }
-    ExpressionNode* createUnaryPlus(const JSTokenLocation& location, ExpressionNode* expr)
+    ExpressionNode* createUnaryPlus(const JSTokenLocation& location, ExpressionNode* expr, ToNumberForm form = ToNumberForm::Plus)
     {
         // Unary plus is ToNumber, which is the identity for Number. For anything else, it is observable.
         if (expr->resultDescriptor().definitelyIsNumber())
             return expr;
 
-        return new (m_parserArena) UnaryPlusNode(location, expr);
+        return new (m_parserArena) UnaryPlusNode(location, expr, form);
     }
     ExpressionNode* createVoid(const JSTokenLocation& location, ExpressionNode* expr)
     {
@@ -1298,7 +1298,12 @@ ExpressionNode* ASTBuilder::makeMultNode(const JSTokenLocation& location, Expres
         return createNumberFromBinaryOperation(location, numberExpr1.value() * numberExpr2.value(), numberExpr1, numberExpr2);
     }
 
-    // Not `+x` for `x * 1`: the class of an operand may have its own `*` (python/README.md, "Operators").
+    if (expr1->isNumber() && static_cast<NumberNode*>(expr1)->value() == 1)
+        return createUnaryPlus(location, expr2, ToNumberForm::OneTimes);
+
+    if (expr2->isNumber() && static_cast<NumberNode*>(expr2)->value() == 1)
+        return createUnaryPlus(location, expr1, ToNumberForm::TimesOne);
+
     return new (m_parserArena) MultNode(location, expr1, expr2, rightHasAssignments);
 }
 

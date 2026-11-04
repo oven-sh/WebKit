@@ -259,6 +259,8 @@ void Graph::dump(PrintStream& out, const char* prefixStr, Node* node, DumpContex
         out.print(comma, "Type:"_s, node->arithUnaryType());
     if (node->hasArithMode())
         out.print(comma, node->arithMode());
+    if (node->op() == ToNumber)
+        out.print(comma, node->toNumberForm());
     if (node->hasArithRoundingMode())
         out.print(comma, "Rounding:"_s, node->arithRoundingMode());
     if (node->hasScopeOffset())

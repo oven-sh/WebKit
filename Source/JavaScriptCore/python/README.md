@@ -978,7 +978,7 @@ while any thread has a function. The side tables are only changed with the GIL, 
   One exception: `+` with a string of JS on either side. There only the class of the object of Python's is asked (`__add__`,
   `__radd__`), and if it says nothing JS concatenates, as with any object: `"total: " + decimal`. (Decisions that can still be changed.)
   `a == b` asks `__eq__`, and goes on as JS does if there is no answer; `a == null` is false without asking. Unary `+` and `>>>` are JS's.
-  The parser does not make `+a` of `a * 1`, which it did.
+  The parser makes `+a` of `a * 1`, as it always did, and the `op_to_number` says what was written (`ToNumberForm`): its slow paths ask `__mul__`.
   `===`, `Object.is`, `switch`, `includes`, `indexOf` and the keys of a `Map` or `Set` go by identity.
   To the DFG and FTL a Python object has a type of its own, `SpecPyObject`. An arithmetic operator returns a primitive unless an
   operand may be of that type. `==` on two objects is a comparison of pointers behind a check that neither is of that type
@@ -1196,7 +1196,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | `==`, `<`, `+`, `-`... in the slow paths | the same test, put where JS is about to convert an object to a primitive. `==`: for an operand that is an object, and for `a == a` before the answer. `a - b`, `*`, `/`, `%`, `**`, `<<`, `>>`, `&`, `\|`, `^`, `~`, `++` and `--`: inside `JSValue::toNumeric()` and `toBigIntOrInt32()`, for an operand that is an object or a symbol; numbers, BigInts, strings, booleans, `undefined` and `null` never get to it. `+`, `<`, `<=`: for each operand that is a cell, behind the cases of two numbers and of two strings. `-a`: for an operand that is a cell. (`>>>` is not overloaded, nor an `a++` whose value is used: that converts first.) |
 | `Bun.deepEquals()`, `expect().toEqual()` | the same test for each pair of values compared |
 | Untyped arithmetic, DFG and FTL | the result is known to be a primitive only if the operands are known not to be Python objects |
-| `x * 1`, `1 * x` | a multiplication: the parser no longer makes it `+x` |
+| `+x`, `x * 1`, `1 * x` | one byte more in each `op_to_number` (2 and 4 in the wide forms): what it was written as. A number: nothing. Anything else: in the slow paths a load and a compare, and for `x * 1` the test of the type. The result of `x * 1` is not known to be a number while bytecode is generated, so `x * 1 + y` checks that in Baseline; to the DFG and FTL it is one unless `x` may be a Python object |
 | A class definition with `extends` | a move, and a test of the type of the superclass; unless that is a `JSFunction` (so for `Map`, `Error`, `Promise`, a proxy, `null`), a call of a function that finds it is not Python's (175 instructions, once for each time the definition is evaluated). 29 bytes of bytecode, the metadata of an `op_call` and two constants |
 | A `catch` clause | 16 bytes in the rare data of the unlinked code block, in a `FixedVector`: where the clause begins and ends, which the table of handlers does not say (`PythonMark::CatchOfJS`) |
 | A metadata table, unlinked or linked | 8 bytes: five more kinds of instruction have metadata (16 where the offsets are of 32 bits). A cached code block with rare data: 8 bytes |

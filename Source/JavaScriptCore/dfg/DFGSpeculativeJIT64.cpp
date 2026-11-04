@@ -4464,19 +4464,21 @@ void SpeculativeJIT::compile(Node* node)
 
             argument.use();
 
+            auto operation = operationToNumberFor(node->toNumberForm());
+
             // We have several attempts to remove ToNumber. But ToNumber still exists.
             // It means that converting non-numbers to numbers by this ToNumber is not rare.
             // Instead of the slow path generator, we emit callOperation here.
             if (!(m_state.forNode(node->child1()).m_type & SpecBytecodeNumber)) {
                 flushRegisters();
-                callOperation(operationToNumber, resultGPR, LinkableConstant::globalObject(*this, node), argumentGPR);
+                callOperation(operation, resultGPR, LinkableConstant::globalObject(*this, node), argumentGPR);
             } else {
                 Jump notNumber = branchIfNotNumber(argumentGPR);
                 move(argumentGPR, resultGPR);
                 Jump done = jump();
 
                 notNumber.link(this);
-                callOperationWithSilentSpill(operationToNumber, resultGPR, LinkableConstant::globalObject(*this, node), argumentGPR);
+                callOperationWithSilentSpill(operation, resultGPR, LinkableConstant::globalObject(*this, node), argumentGPR);
 
                 done.link(this);
             }
