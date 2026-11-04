@@ -170,6 +170,11 @@ generators there are keep the body they were made with.
 **Exceptions** are JSC exceptions whose value is a `PyException`. The unwinder tells the runtime about each Python frame it
 passes (`addTracebackEntry`), which is how tracebacks are built. A frame that has not got as far as the program's own code
 (`PythonMark::Start`) is not in the traceback: arguments that do not fit, the first iterable of a generator expression.
+An entry holds the code block and the place in the bytecode, like a `StackFrame` of JS; `tb_lineno` and `tb_lasti` are found when something asks (`PyTraceback::findPlace()`). So for
+`f_lineno` and `f_lasti` of a frame object whose call has ended (`PyFrame::callIsEnding()`).
+An exception that goes on past a `finally`, a `with` or `except` clauses that do not match is thrown twice on the way: into the handler, and out of it by one instruction that also puts back
+what was being handled before (`RuntimeFunction::ReraiseOutOfHandler`). It stands outside the range of the handler's own clean-up, which is there for what the clauses themselves raise.
+CPython raises it inside that range, catches it, and raises it a third time: tools are told of those two steps all the same (`Monitoring::exceptionLeavesHandler()`).
 
 **Printing them.** As in CPython, `sys.excepthook`, `sys.unraisablehook` and `threading.excepthook` have `Lib/traceback.py` do it
 (`traceback._print_exception_bltin`, called by `printException` in `PyFrame.cpp`): carets, suggestions, colours, groups and notes are its
@@ -751,12 +756,14 @@ whatever comes next, which costs nothing; only where that can be reached from el
 A function or a module that falls off its end returns on the line of whatever ran last. CPython gets there by copying the implicit `return` for each block that leads to it; here a compound statement
 that is the last of the function is told so (`Last`), bodies and handlers of `try` statements included, and each of its ways out returns for itself (`Unit::leaveStatement()`) or marks the line it
 leaves on (`Unit::lineOfImplicitReturn()`). A test written over several lines returns from the line it fails on. A `return` that runs a `finally` clause returns on the line of the clause that ran last.
+So does the end of a `finally` clause that an exception led to: each way to it raises the exception again for itself (`Last::exception`), and that is the line the frame is left on.
 The same goes for the jump at the end of the body of a loop, which CPython's compiler has every jump to it replaced by: the last statement of the body is told so, and each of its ways out jumps back for itself, on its own line.
 A test that fails there would be a branch backwards, which CPython does not have: the branch is turned round and jumps over a jump (`Unit::jumpIfOrLeave()`), so left and right are as in CPython.
 So all that goes back in a loop is a jump, and that jump, `op_py_jmp_back`, is where the loop looks for signals and for the calls the runtime owes, as `JUMP_BACKWARD` does: a handler, and the traceback of Ctrl-C, find the frame on the line it goes back from.
 Where the ways out of a compound statement meet, what comes next, if it is not a statement, is of no line (`Unit::endOfStatement()`). What no way leads to is not emitted (`Unit::cannotGetHere()`).
 A line is news if the frame was on another line before. For nearly every mark that is plain from the code (`CodeMonitor::findPoints`), which leaves out what cannot be reached.
-The first line of an exception handler is news unless the exception was raised on that line (`with a: b()`): the runtime remembers the line of the last `raise`.
+The first line of an exception handler is news unless the exception was raised on that line (`with a: b()`): the runtime remembers the line of the last `raise`, while the code is told of lines.
+The handler of a comprehension compiled in place begins, in CPython, with instructions of no line, so its line is news in any case (`afterNoLineMark`).
 Code written on the line of its `def`, `lambda` or `class` is on that line from the start. A trace function is told of the line all the same, and tools are if one of them is told of `PY_START` there: that is what CPython does.
 Where the frame may come from the same line or from another, the jumps and branches that lead there say which: those from other lines tell of the line
 (the head of a `for` loop), or those from the same line say that it is not news (`return (a and` over `b)`). In what is left, one code object in 200 of the

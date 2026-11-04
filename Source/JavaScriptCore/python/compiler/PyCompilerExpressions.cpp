@@ -2110,11 +2110,6 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         // The first iterable is evaluated where the comprehension is.
         Reg iterator = newTemporary();
         expr(outermost->iter, iterator.get());
-        loc(outermost->iter->range);
-        if (outermost->isAsync)
-            callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterator.get() });
-        else
-            g.emitPyGetIter(iterator.get(), iterator.get());
 
         VariableMap& variables = *m_variables.get(scope);
         auto resetVariables = [&] {
@@ -2132,6 +2127,11 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         std::optional<Try> guard;
         if (!variables.isEmpty())
             guard = beginTry();
+        loc(outermost->iter->range);
+        if (outermost->isAsync)
+            callRuntime(iterator.get(), RuntimeFunction::GetAIterOfLoop, { iterator.get() });
+        else
+            g.emitPyGetIter(iterator.get(), iterator.get());
         m_overlays.append(scope);
         pushBlock({ .kind = BlockKind::InlinedComprehension, .tryDepth = guard ? guard->depthBefore : g.tryDepth(), .comprehension = scope });
         emitContainer(*this, result.get());
@@ -2144,8 +2144,12 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
             resetVariables();
             Ref<Label> end = g.newLabel();
             hiddenJump(end.get());
+            // In CPython the handler drops the result so far, which is of no line, and puts back what the variables were before, on the line
+            // of the comprehension.
             Reg thrown = beginHandler(*guard);
             resetVariables();
+            g.addPythonMark(PythonMark::NoLine, afterNoLineMark);
+            line(range);
             reraise(thrown.get());
             g.emitLabel(end.get());
             silentLine(range);

@@ -492,12 +492,16 @@ bool Unit::cannotGetHere()
 }
 
 // The statement may be in the body or in a handler of a `try` statement that is itself the last.
-void Unit::emitImplicitReturn(const Range& range)
+void Unit::emitImplicitReturn(Last isLast, const Range& range)
 {
-    SetForScope leavingAs(m_leavingAs, Last { Last::OfFunction });
+    ASSERT(isLast.kind == Last::OfFunction);
+    SetForScope leavingAs(m_leavingAs, isLast);
     Vector<TryContext> suspended;
-    unwindBlocks(range, 0, suspended);
-    if (m_valueToReturn)
+    unwindBlocks(range, isLast.blockCount, suspended);
+    if (isLast.exception) {
+        suspendTry(isLast.tryDepth, suspended);
+        reraiseOutOfHandler(isLast.exception, isLast.previous);
+    } else if (m_valueToReturn)
         g.emitReturn(m_valueToReturn);
     else
         emitReturnNone();
@@ -530,7 +534,7 @@ void Unit::leave(Last isLast, const Range& range)
     case Last::No:
         RELEASE_ASSERT_NOT_REACHED();
     case Last::OfFunction:
-        return emitImplicitReturn(range);
+        return emitImplicitReturn(isLast, range);
     case Last::OfLoopBody:
         return emitImplicitContinue(isLast.loop, range);
     case Last::BeforeJump:
@@ -580,12 +584,12 @@ void Unit::jumpIfOrLeave(Expr* test, Label& target, Last isLast, ReturnsByLine& 
     jumpIf(test, target, false);
 }
 
-void Unit::emitReturnsByLine(ReturnsByLine& returns)
+void Unit::emitReturnsByLine(ReturnsByLine& returns, Last isLast)
 {
     for (auto& [lineno, label] : returns) {
         g.emitLabel(label.get());
         line(lineno);
-        emitImplicitReturn();
+        emitImplicitReturn(isLast);
     }
 }
 
@@ -1190,6 +1194,19 @@ void Unit::reraise(RegisterID* exception)
     callRuntimeForEffect(RuntimeFunction::Reraise, { exception });
 }
 
+// What the compiler itself does at the end of a handler when the exception is to go on. It stands outside the range of the handler's
+// cleanup, which would do no more than this: catch it, put back what was being handled, and raise it a third time.
+void Unit::reraiseOutOfHandler(RegisterID* exception, RegisterID* previous)
+{
+    // beginExceptionHandler() made them one after the other.
+    if (previous->index() == exception->index() - 1) {
+        Reg ignored = newTemporary();
+        g.emitPyRuntime(ignored.get(), RuntimeFunction::ReraiseOutOfHandler, exception, 2);
+        return;
+    }
+    callRuntimeForEffect(RuntimeFunction::ReraiseOutOfHandler, { exception, previous });
+}
+
 void Unit::suspendTry(size_t depth, Vector<TryContext>& suspended)
 {
     Vector<TryContext> more = g.suspendTryContexts(depth);
@@ -1705,9 +1722,9 @@ void Unit::ifStatement(If* node, Last isLast)
         else {
             statements(node->body, 0, isLast);
             if (isLast.kind == Last::OfFunction && !cannotGetHere())
-                emitImplicitReturn();
+                emitImplicitReturn(isLast);
         }
-        emitReturnsByLine(returns);
+        emitReturnsByLine(returns, isLast);
         endOfStatement(end.get());
         lineOfImplicitReturn(node->test->range.endLineno, isLast.onlyIf(isLast.kind == Last::OfFunction));
         return;
@@ -1749,7 +1766,7 @@ void Unit::whileLoop(While* node, Last isLast)
     if (!cannotGetHere())
         jump(loop.get());
     popBlock();
-    emitReturnsByLine(returns);
+    emitReturnsByLine(returns, isLast);
 
     g.emitLabel(anchor.get());
     lineOfImplicitReturn(node->test->range.endLineno, isLast.onlyIf(node->orelse.isEmpty() && isLast.kind == Last::OfFunction));
@@ -1874,10 +1891,10 @@ void Unit::asyncForHandler(Try& whole, RegisterID* iterator)
     Reg exception = beginExceptionHandler(whole, previous);
     Try cleanup = beginTry();
     leaveAsyncFor(iterator, exception.get());
+    endTry(cleanup);
     // It goes on as if from where it was raised.
     noLine();
-    reraise(exception.get());
-    endTry(cleanup);
+    reraiseOutOfHandler(exception.get(), previous.get());
 
     Reg thrown = beginHandler(cleanup);
     restoreHandledException(previous.get());
@@ -1992,12 +2009,14 @@ void Unit::tryFinally(AST::Try* node, Last isLast)
     Reg exception = beginExceptionHandler(body, previous);
     Try cleanup = beginTry();
     pushBlock({ .kind = BlockKind::FinallyEnd, .tryDepth = cleanup.depthBefore, .saved = previous.get() });
-    statements(node->finalbody);
+    // It does so on the line that was run last. CPython's compiler copies what raises it again for each way that leads there.
+    statements(node->finalbody, 0, { Last::OfFunction, 0, nullptr, static_cast<unsigned>(m_blocks.size()), static_cast<unsigned>(cleanup.depthBefore), exception.get(), previous.get() });
     popBlock();
-    reraise(exception.get());
     endTry(cleanup);
+    if (!cannotGetHere())
+        reraiseOutOfHandler(exception.get(), previous.get());
 
-    // That, or an exception in the clause itself.
+    // An exception in the clause itself.
     Reg thrown = beginHandler(cleanup);
     restoreHandledException(previous.get());
     reraise(thrown.get());
@@ -2070,7 +2089,9 @@ void Unit::tryExcept(AST::Try* node, Last isLast)
             SameLine sameLine(*this);
             storeName(handler->name, constant(jsUndefined()), handler->range);
             deleteName(handler->name, handler->range);
-            reraise(thrown.get());
+            outsideTry(cleanup.depthBefore, [&] {
+                reraiseOutOfHandler(thrown.get(), previous.get());
+            });
         } else {
             pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get() });
             statements(handler->body, 0, isLast.onlyIf(isLast.kind != Last::BeforeJump));
@@ -2087,12 +2108,12 @@ void Unit::tryExcept(AST::Try* node, Last isLast)
     popBlock();
 
     // No clause caught it.
+    endTry(cleanup);
     if (count)
         line(node->handlers[count - 1]->range);
-    reraise(exception.get());
-    endTry(cleanup);
+    reraiseOutOfHandler(exception.get(), previous.get());
 
-    // That, or an exception in a clause.
+    // An exception in a clause.
     Reg thrown = beginHandler(cleanup);
     restoreHandledException(previous.get());
     reraise(thrown.get());
@@ -2183,7 +2204,7 @@ void Unit::tryStarExcept(AST::Try* node, Last isLast)
         g.emitPyIsNone(isNone.get(), toRaise.get());
         g.emitPyJumpIfTrue(isNone.get(), end.get());
     }
-    reraise(toRaise.get());
+    callRuntimeForEffect(RuntimeFunction::ReraiseGroup, { toRaise.get() });
 
     Reg thrown = beginHandler(cleanup);
     restoreHandledException(previous.get());
@@ -2255,10 +2276,10 @@ void Unit::withStatement(With* node, unsigned index, Last isLast)
         emitAwait(result.get(), result.get(), 2);
     Ref<Label> suppress = g.newLabel();
     g.emitPyJumpIfTrue(result.get(), suppress.get());
+    endTry(cleanup);
     // It goes on as if from where it was raised.
     noLine();
-    reraise(exception.get());
-    endTry(cleanup);
+    reraiseOutOfHandler(exception.get(), previous.get());
 
     g.emitLabel(suppress.get());
     line(range);

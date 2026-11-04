@@ -1301,9 +1301,20 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         raiseStatement(globalObject, args[0], args[1]);
         return { };
     case RuntimeFunction::Reraise:
+    case RuntimeFunction::ReraiseGroup:
         rt.reraisingFrame = callFrame;
         throwPythonException(globalObject, scope, args[0]);
         return { };
+    case RuntimeFunction::ReraiseOutOfHandler: {
+        JSValue exception = args[0];
+        if (rt.monitoring().wantsExceptions()) [[unlikely]]
+            exception = rt.monitoring().exceptionLeavesHandler(globalObject, callFrame, exception);
+        rt.setHandledExceptionInTopSlot(args[1]);
+        RETURN_IF_EXCEPTION(scope, { });
+        rt.reraisingFrame = callFrame;
+        throwPythonException(globalObject, scope, exception);
+        return { };
+    }
     case RuntimeFunction::CatchException:
         RELEASE_AND_RETURN(scope, exceptionFromThrownValue(globalObject, args[0]));
     case RuntimeFunction::SetHandledException:

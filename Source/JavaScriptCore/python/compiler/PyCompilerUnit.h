@@ -19,6 +19,10 @@ struct Last {
     Label* target { nullptr };
     unsigned blockCount { 0 };
     unsigned tryDepth { 0 };
+    // OfFunction: it is not the function that ends there but a `finally` clause that an exception has led to, and the exception goes on.
+    // These are for Unit::reraiseOutOfHandler(), the two above as for BeforeJump.
+    RegisterID* exception { nullptr };
+    RegisterID* previous { nullptr };
     explicit operator bool() const { return kind != No; }
     Last onlyIf(bool condition) const { return condition ? *this : Last { }; }
 };
@@ -207,7 +211,7 @@ private:
     void leaveStatement(Label& end, Last, JumpIs);
     void endOfStatement(Label& end);
     bool cannotGetHere();
-    void emitImplicitReturn(const Range& = { });
+    void emitImplicitReturn(Last, const Range& = { });
     void emitImplicitContinue(unsigned loop, const Range& = { });
     void emitImplicitJump(Last, const Range& = { });
     void leave(Last, const Range& = { });
@@ -215,7 +219,7 @@ private:
     bool canBranchTo(Last);
     using ReturnsByLine = Vector<std::pair<int, Ref<Label>>, 4>;
     void jumpIfOrLeave(Expr* test, Label& target, Last, ReturnsByLine&);
-    void emitReturnsByLine(ReturnsByLine&);
+    void emitReturnsByLine(ReturnsByLine&, Last);
     // What jumpIf() does about the branches that go to the label.
     struct BranchTarget {
         Label* label { nullptr };
@@ -385,6 +389,7 @@ private:
     Reg beginExceptionHandler(Try&, Reg& previous);
     void restoreHandledException(RegisterID* previous);
     void reraise(RegisterID* exception);
+    void reraiseOutOfHandler(RegisterID* exception, RegisterID* previous);
 
     // ---- Expressions ----
 

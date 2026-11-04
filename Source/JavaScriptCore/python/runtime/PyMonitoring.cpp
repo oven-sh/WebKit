@@ -433,6 +433,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
         bool beginsStatement { false };
         unsigned lastJumpForwardFrom { 0 }; // The offset of the last of the jumps and branches before it that go to it.
         bool firstLineFollowsCatch { false };
+        bool comesAfterNoLine { false };
         bool fallsThrough { true };
         unsigned sharedLineStart { noLineStart };
 
@@ -455,7 +456,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
             item.fallsThrough = fallsThrough(item.opcode);
             if (item.opcode == op_py_runtime) {
                 auto function = static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function);
-                item.fallsThrough = function != RuntimeFunction::Raise && function != RuntimeFunction::Reraise && function != RuntimeFunction::ThrowIntoGenerator;
+                item.fallsThrough = function != RuntimeFunction::Raise && function != RuntimeFunction::Reraise && function != RuntimeFunction::ReraiseOutOfHandler && function != RuntimeFunction::ReraiseGroup && function != RuntimeFunction::ThrowIntoGenerator;
             }
             unsigned lineMarkCount = 0;
             for (; nextMark < marks.size() && marks[nextMark].offset <= item.offset; ++nextMark) {
@@ -463,6 +464,8 @@ void CodeMonitor::findPoints(bool everyInstruction)
                 if (mark.kind() == PythonMark::NoLine && mark.value()) {
                     if (mark.value() == hiddenJumpMark)
                         item.isHiddenJump = true;
+                    else if (mark.value() == afterNoLineMark)
+                        item.comesAfterNoLine = true;
                     else
                         item.asyncForMark = mark.value();
                     continue;
@@ -589,7 +592,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
         }
         while (next < items.size() && !items[next].lineCount && items[next].fallsThrough)
             ++next;
-        if (next < items.size() && items[next].entryLine >= 0)
+        if (next < items.size() && items[next].entryLine >= 0 && !items[next].comesAfterNoLine)
             items[next].firstLineFollowsCatch = true;
     }
     // CPython's compiler has a branch to a jump go where the jump goes.
@@ -1344,10 +1347,9 @@ static Monitoring::Shown whatToShow(CallFrame* callFrame, CodeMonitor& monitor, 
         return { monitor.lineBeforeStart(), 0 };
     case Event::PyUnwind:
     case Event::Reraise:
-        // What raises an exception again on behalf of the program does so as if from where it was raised.
-        if (monitor.lineAt(offset) < 0) {
-            if (PyFrame* frame = frameObjectIfAny(callFrame))
-                return { frame->raisedOnLine, frame->raisedAtOffset };
+        if (monitor.lineAt(offset) < 0 && raisesAgainAsIfFromWhereItWasRaised(callFrame->codeBlock(), BytecodeIndex(offset))) {
+            if (PyFrame* frame = frameObjectIfAny(callFrame); frame && frame->raisedAt >= 0 && monitor.lineAt(frame->raisedAt) >= 0)
+                return { monitor.lineAt(frame->raisedAt), static_cast<int>(visibleOffset(monitor.code()->pythonMarks(), frame->raisedAt)) };
         }
         return { };
     case Event::Instruction:
@@ -2056,6 +2058,23 @@ bool Monitoring::exceptionEvent(JSGlobalObject* globalObject, CallFrame* callFra
     return fire(globalObject, callFrame, *monitor, offset, event, tools, exception);
 }
 
+// In CPython these are three steps: the exception is raised again; a handler around the handler catches it, and puts back what was being
+// handled; that raises it once more. Tools hear of them all, and of the last from the unwinder.
+JSValue Monitoring::exceptionLeavesHandler(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue exception)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_runtime.vm());
+    unsigned offset = callFrame->bytecodeIndex().offset();
+    for (unsigned event : { Event::Reraise, Event::ExceptionHandled }) {
+        if (failed(scope, exceptionEvent(globalObject, callFrame, offset, event, exception))) {
+            if (m_runtime.vm().isTerminationException(scope.exception()))
+                return { };
+            exception = scope.exception()->value();
+            scope.clearException();
+        }
+    }
+    return exception;
+}
+
 bool Monitoring::lineOfSendIsToldOfAgain(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned offset)
 {
     auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
@@ -2149,22 +2168,28 @@ static JSValue tellOfException(JSGlobalObject* globalObject, JSValue thrown, Cal
 
 JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallFrame* callFrame, BytecodeIndex index, bool isRaisedAgain)
 {
-    // What raises it again on behalf of the program, from no line, does so as if from here: see PyFrame::bytecodeOffset().
-    bool isWanted = runtime(globalObject).monitoring().wantsExceptions();
+    Monitoring& monitoring = runtime(globalObject).monitoring();
+    bool isWanted = monitoring.wantsExceptions();
+    CodeMonitor* monitor = codeInfoOf(callFrame).monitor.get();
+    bool isAwake = monitor && monitor->isAwake();
     auto marks = callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks();
-    int line = lineOfMarks(marks, index.offset());
+    // What raises it again on behalf of the program, from no line, does so as if from here: see PyFrame::findPlace().
+    if (PyFrame* frame = isWanted ? PyFrame::of(globalObject, callFrame) : frameObjectIfAny(callFrame)) {
+        if (!isRaisedAgain || lineOfMarks(marks, index.offset()) >= 0)
+            frame->raisedAt = index.offset();
+    }
+    // Only whoever is told of lines asks for the line.
+    if (!isAwake) [[likely]] {
+        monitoring.noteWhereItIsRaised(nullptr, -1);
+        if (!isWanted) [[likely]]
+            return exception;
+        return tellOfException(globalObject, exception, callFrame, index.offset(), isRaisedAgain ? Event::Reraise : Event::Raise);
+    }
     // What throw() raises comes from outside: a handler on the line of the `yield` is told of as a line that begins.
     auto* instruction = callFrame->codeBlock()->instructionAt(index);
     bool isThrownIn = instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ThrowIntoGenerator;
-    runtime(globalObject).monitoring().noteWhereItIsRaised(callFrame, isThrownIn ? -1 : line);
-    if (line >= 0) {
-        if (PyFrame* frame = isWanted ? PyFrame::of(globalObject, callFrame) : frameObjectIfAny(callFrame)) {
-            frame->raisedOnLine = line;
-            frame->raisedAtOffset = visibleOffset(marks, index.offset());
-        }
-    }
-    CodeMonitor* monitor = codeInfoOf(callFrame).monitor.get();
-    if (!monitor || !monitor->isAwake() || isRaisedAgain || !isSendThatThrows(callFrame, instruction)) [[likely]] {
+    monitoring.noteWhereItIsRaised(callFrame, isThrownIn ? -1 : lineOfMarks(marks, index.offset()));
+    if (isRaisedAgain || !isSendThatThrows(callFrame, instruction)) [[likely]] {
         if (!isWanted) [[likely]]
             return exception;
         return tellOfException(globalObject, exception, callFrame, index.offset(), isRaisedAgain ? Event::Reraise : Event::Raise);

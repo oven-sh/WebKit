@@ -134,9 +134,8 @@ public:
     // The line the call was last found to be on, and where that begins (as f_lasti has it). -1: none yet.
     int lastLine { -1 };
     int lastLineOffset { -1 };
-    // The line of the program that last raised an exception in the call, and the instruction.
-    int raisedOnLine { -1 };
-    int raisedAtOffset { -1 };
+    // The instruction of the program that last raised an exception in the call: its offset in the bytecode. -1: none has.
+    int raisedAt { -1 };
     // Where a trace function has said to go on (f_lineno = line): the offset of an instruction. Then, where it has just gone.
     std::optional<unsigned> jumpTarget;
     std::optional<unsigned> jumpedTo;
@@ -151,9 +150,12 @@ public:
 private:
     PyFrame(VM&, Structure*, PyType*);
     static PyFrame* create(JSGlobalObject*, PyFunction*, FunctionExecutable*);
+    void findPlace(CodeBlock*, BytecodeIndex);
 
     WriteBarrier<PyFunction> m_function;
     WriteBarrier<FunctionExecutable> m_executable;
+    // Once the call has ended, until something asks where it was: m_bytecodeOffset is as the bytecode has it.
+    WriteBarrier<CodeBlock> m_codeBlockAtEnd;
     WriteBarrier<PyObject> m_generator;
     WriteBarrier<Unknown> m_back;
     WriteBarrier<PyTuple> m_values;
@@ -173,6 +175,8 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     static PyTraceback* create(JSGlobalObject*, JSValue next, PyFrame*, int lineNumber, int lastI);
+    // For a call in progress. The line is found when something asks for it, as for a StackFrame of JS.
+    static PyTraceback* create(JSGlobalObject*, JSValue next, PyFrame*, CodeBlock*, BytecodeIndex);
     // For a call of a function of JS. What Python sees of that, a frame and a line, is made when something asks for it: finding the
     // line takes the source map of the file.
     static PyTraceback* createForJS(JSGlobalObject*, JSValue next, CodeBlock*, BytecodeIndex);
@@ -188,20 +192,27 @@ public:
     }
     int lineNumber()
     {
-        if (!m_frame) [[unlikely]]
-            makeFrameOfJS();
+        if (m_codeBlock)
+            findPlace();
         return m_lineNumber;
     }
-    int lastI() const { return m_lastI; } // tb_lasti: see shownOffset(). -1: no instruction of Python's.
+    // tb_lasti: see shownOffset(). -1: no instruction of Python's.
+    int lastI()
+    {
+        if (m_codeBlock)
+            findPlace();
+        return m_lastI;
+    }
 
 private:
     PyTraceback(VM&, Structure*, PyType*);
+    void findPlace();
     void makeFrameOfJS();
 
     WriteBarrier<Unknown> m_next;
     WriteBarrier<PyFrame> m_frame;
-    WriteBarrier<CodeBlock> m_codeBlockOfJS; // Until there is a frame.
-    BytecodeIndex m_indexOfJS;
+    WriteBarrier<CodeBlock> m_codeBlock; // Until the line is known, and for JS the frame.
+    BytecodeIndex m_index;
     int m_lineNumber { 0 };
     int m_lastI { 0 };
     bool m_isOfJS { false };
@@ -221,6 +232,9 @@ PyException* exceptionOfThrownValueIfKnown(JSGlobalObject*, JSValue thrown);
 
 // The line of the code an instruction comes from.
 int lineNumberForBytecodeIndex(CodeBlock*, BytecodeIndex);
+// The instruction is on no line and raises an exception again on behalf of the program, as if from where the program raised it. (In CPython
+// RERAISE puts f_lasti back.)
+bool raisesAgainAsIfFromWhereItWasRaised(CodeBlock*, BytecodeIndex);
 
 // Prints the exception and its traceback on sys.stderr, as the interpreter does for one nothing caught: nothing if that is None.
 // As in CPython it is Lib/traceback.py that does it, which underlines what raised, colours what goes to a terminal and has hints

@@ -74,13 +74,15 @@ enum class CompareOperator : uint8_t {
 // Line: `value` is lineMarkValue().
 // NoLine: with `value` 0, what follows was not written by the program. With another, this says nothing about lines. hiddenJumpMark: the
 //     jump that comes next is not one the program makes. asyncForGoesOnMark, asyncForEndsMark: what comes next does nothing, and is where
-//     an `async for` loop has an item, or an exception in place of one: the two ways of a branch.
+//     an `async for` loop has an item, or an exception in place of one: the two ways of a branch. afterNoLineMark: in a handler, CPython has
+//     instructions of no line before what comes next, so that the line which begins there is told of even if the exception comes from it.
 // Start: where the program's own code begins, after the frame has been set up.
 // BlockBegin, BlockEnd: `value` numbers the block, `bits` is a TracedBlock.
 
 constexpr unsigned hiddenJumpMark = 1;
 constexpr unsigned asyncForGoesOnMark = 2;
 constexpr unsigned asyncForEndsMark = 3;
+constexpr unsigned afterNoLineMark = 4;
 
 // A statement begins: nothing is in a temporary register but what belongs to the blocks it is in.
 constexpr unsigned lineMarkValue(int line, bool isStatementStart, bool isSilent = false) { return static_cast<unsigned>(line) << 2 | isSilent << 1 | isStatementStart; }
@@ -217,6 +219,8 @@ constexpr unsigned makeFunctionIndexShift = 3;
     /* Exceptions */ \
     v(Raise, 2) /* exception or empty, cause or empty */ \
     v(Reraise, 1) \
+    v(ReraiseOutOfHandler, 2) /* exception, what was being handled before: that is put back first */ \
+    v(ReraiseGroup, 1) /* at the end of `except*`: the frame is not shown where the exception was first raised */ \
     v(CatchException, 1) /* What was thrown, as a Python exception. */ \
     v(SetHandledException, 1) /* exception or empty: the one handled before, or empty */ \
     v(MatchExceptionGroup, 2) /* exception, type: the match or None; the rest is set aside */ \

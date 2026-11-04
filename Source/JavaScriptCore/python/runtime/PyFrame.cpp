@@ -724,6 +724,7 @@ void PyFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_function);
     visitor.append(thisObject->m_executable);
+    visitor.append(thisObject->m_codeBlockAtEnd);
     visitor.append(thisObject->m_generator);
     visitor.append(thisObject->m_back);
     visitor.append(thisObject->m_values);
@@ -776,31 +777,45 @@ unsigned PyFrame::bytecodeOffset()
             m_isOnNoLine = false;
             return m_bytecodeOffset;
         }
-        BytecodeIndex index = callFrame->bytecodeIndex();
-        auto marks = callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks();
-        m_bytecodeOffset = visibleOffset(marks, index.offset());
-        if (int line = lineOfMarks(marks, index.offset()); line >= 0) [[likely]] {
-            m_lineNumber = line + codeInfo().lineDelta;
-            m_isOnNoLine = false;
-            return m_bytecodeOffset;
-        }
-        m_lineNumber = lineNumberForBytecodeIndex(callFrame->codeBlock(), index);
-        m_isOnNoLine = isPastStart(marks, index.offset());
-        // The end of a cleanup the compiler added: it raises the exception again as if from where the program raised it. (In CPython
-        // RERAISE puts f_lasti back.) That is where a frame is found to be that was left that way.
-        if (m_isOnNoLine && raisedOnLine >= 0) {
-            auto instruction = callFrame->codeBlock()->instructionAt(index);
-            if (instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::Reraise) {
-                m_bytecodeOffset = raisedAtOffset;
-                m_lineNumber = raisedOnLine + codeInfo().lineDelta;
-                m_isOnNoLine = false;
-            }
-        }
+        findPlace(callFrame->codeBlock(), callFrame->bytecodeIndex());
+    } else if (m_codeBlockAtEnd) {
+        findPlace(m_codeBlockAtEnd.get(), BytecodeIndex(m_bytecodeOffset));
+        m_codeBlockAtEnd.clear();
     } else if (PyGenerator* generator = this->generator()) {
         if (bytecodeOffsetOfState(generator->body(), generator->state(), m_bytecodeOffset))
             m_lineNumber = lineNumberForBytecodeIndex(generator->body()->functionExecutable()->codeBlockForCall(), BytecodeIndex(m_bytecodeOffset));
     }
     return m_bytecodeOffset;
+}
+
+bool raisesAgainAsIfFromWhereItWasRaised(CodeBlock* codeBlock, BytecodeIndex index)
+{
+    auto instruction = codeBlock->instructionAt(index);
+    if (instruction->opcodeID() != op_py_runtime)
+        return false;
+    auto function = static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function);
+    return function == RuntimeFunction::Reraise || function == RuntimeFunction::ReraiseOutOfHandler;
+}
+
+void PyFrame::findPlace(CodeBlock* codeBlock, BytecodeIndex index)
+{
+    auto marks = codeBlock->unlinkedCodeBlock()->pythonMarks();
+    m_bytecodeOffset = visibleOffset(marks, index.offset());
+    if (int line = lineOfMarks(marks, index.offset()); line >= 0) [[likely]] {
+        m_lineNumber = line + codeInfo().lineDelta;
+        m_isOnNoLine = false;
+        return;
+    }
+    m_lineNumber = lineNumberForBytecodeIndex(codeBlock, index);
+    m_isOnNoLine = isPastStart(marks, index.offset());
+    // That is where a frame is found to be that was left that way.
+    if (!m_isOnNoLine || raisedAt < 0 || !raisesAgainAsIfFromWhereItWasRaised(codeBlock, index))
+        return;
+    if (int line = lineOfMarks(marks, raisedAt); line >= 0) {
+        m_bytecodeOffset = visibleOffset(marks, raisedAt);
+        m_lineNumber = line + codeInfo().lineDelta;
+        m_isOnNoLine = false;
+    }
 }
 
 int PyFrame::lineNumber()
@@ -814,7 +829,12 @@ void PyFrame::callIsEnding(JSGlobalObject* globalObject, CallFrame* callFrame)
     VM& vm = getVM(globalObject);
     DeferGC deferGC(vm);
     m_callFrame = callFrame;
-    bytecodeOffset();
+    if (shownLine >= 0 || runtime(globalObject).tracedCallFrame == callFrame) [[unlikely]]
+        bytecodeOffset();
+    else {
+        m_codeBlockAtEnd.set(vm, this, callFrame->codeBlock());
+        m_bytecodeOffset = callFrame->bytecodeIndex().offset();
+    }
 
     if (hasVariables(callFrame)) {
         const CodeInfo& info = codeInfo();
@@ -1512,8 +1532,8 @@ PyTraceback* PyTraceback::createForJS(JSGlobalObject* globalObject, JSValue next
     auto* traceback = new (NotNull, allocateCell<PyTraceback>(vm)) PyTraceback(vm, rt.structure<PyTraceback>(), rt.tracebackType());
     traceback->finishCreation(vm);
     traceback->m_next.set(vm, traceback, next);
-    traceback->m_codeBlockOfJS.set(vm, traceback, codeBlock);
-    traceback->m_indexOfJS = index;
+    traceback->m_codeBlock.set(vm, traceback, codeBlock);
+    traceback->m_index = index;
     traceback->m_lastI = -1;
     traceback->m_isOfJS = true;
     return traceback;
@@ -1522,13 +1542,13 @@ PyTraceback* PyTraceback::createForJS(JSGlobalObject* globalObject, JSValue next
 // The frame is one of code of Python's that does nothing, and says that it is from that file and has that name.
 void PyTraceback::makeFrameOfJS()
 {
-    CodeBlock* codeBlock = m_codeBlockOfJS.get();
+    CodeBlock* codeBlock = m_codeBlock.get();
     JSGlobalObject* globalObject = codeBlock->globalObject();
     VM& vm = getVM(globalObject);
     // An exception may be on its way.
     SuspendExceptionScope suspended(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    PositionInJS position = positionInJS(vm, codeBlock, m_indexOfJS);
+    PositionInJS position = positionInJS(vm, codeBlock, m_index);
     PyCode* code = PyCode::tryFrom(compileSource(globalObject, { }, position.filename, "exec"_s, 0, -1));
     scope.assertNoException();
     RELEASE_ASSERT(code);
@@ -1542,7 +1562,29 @@ void PyTraceback::makeFrameOfJS()
     frame->setLineNumber(position.line);
     m_lineNumber = position.line;
     m_frame.set(vm, this, frame);
-    m_codeBlockOfJS.clear();
+    m_codeBlock.clear();
+}
+
+void PyTraceback::findPlace()
+{
+    if (m_isOfJS)
+        return makeFrameOfJS();
+    m_lineNumber = lineNumberForBytecodeIndex(m_codeBlock.get(), m_index);
+    m_lastI = shownOffset(visibleOffset(m_codeBlock->unlinkedCodeBlock()->pythonMarks(), m_index.offset()));
+    m_codeBlock.clear();
+}
+
+PyTraceback* PyTraceback::create(JSGlobalObject* globalObject, JSValue next, PyFrame* frame, CodeBlock* codeBlock, BytecodeIndex index)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto* traceback = new (NotNull, allocateCell<PyTraceback>(vm)) PyTraceback(vm, rt.structure<PyTraceback>(), rt.tracebackType());
+    traceback->finishCreation(vm);
+    traceback->m_next.set(vm, traceback, next);
+    traceback->m_frame.set(vm, traceback, frame);
+    traceback->m_codeBlock.set(vm, traceback, codeBlock);
+    traceback->m_index = index;
+    return traceback;
 }
 
 PyTraceback* PyTraceback::create(JSGlobalObject* globalObject, JSValue next, PyFrame* frame, int lineNumber, int lastI)
@@ -1565,7 +1607,7 @@ void PyTraceback::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_next);
     visitor.append(thisObject->m_frame);
-    visitor.append(thisObject->m_codeBlockOfJS);
+    visitor.append(thisObject->m_codeBlock);
 }
 
 DEFINE_VISIT_CHILDREN(PyTraceback);
@@ -1636,7 +1678,7 @@ JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, 
     if (!isRaisedAgain) {
         DeferGC deferGC(vm);
         auto makeEntry = [&](JSValue next) -> JSValue {
-            return PyTraceback::create(globalObject, next, PyFrame::of(globalObject, callFrame), lineNumberForBytecodeIndex(codeBlock, index), shownOffset(visibleOffset(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset())));
+            return PyTraceback::create(globalObject, next, PyFrame::of(globalObject, callFrame), codeBlock, index);
         };
         // What JS threw has a JSError once Python has caught it: making one runs code. Until then the object keeps the traceback.
         if (auto* exception = exceptionOfThrownValueIfKnown(globalObject, exceptionValue))
