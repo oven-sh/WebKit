@@ -7,6 +7,7 @@
 
 #include "CallFrame.h"
 #include "InternalFunction.h"
+#include "PyNames.h"
 #include "PyTuple.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -304,10 +305,11 @@ public:
     static constexpr int arityOf(VariadicWithSelf) { return -2; }
 
     template<typename Function>
-    constexpr NativeDef(NativeKind kind, ASCIILiteral name, Function function, ASCIILiteral signature, uint8_t flags = 0)
+    consteval NativeDef(NativeKind kind, ASCIILiteral name, Function function, ASCIILiteral signature, uint8_t flags = 0)
         : name(name)
         , signatureText(signature)
         , pointer(function)
+        , knownOfName(name)
         , signature(parseNativeSignature(signature.characters(), signature.length()))
         , kind(kind)
         , flags(flags | (kind == NativeKind::SlotWrapper && name.length() == 7 && name[2] == 'g' && name[3] == 'e' && name[4] == 't' ? DescriptorGet : 0))
@@ -322,6 +324,7 @@ public:
     ASCIILiteral name;
     ASCIILiteral signatureText;
     Pointer pointer;
+    KnownOfName knownOfName;
     NativeSignature signature;
     NativeKind kind;
     uint8_t flags;
@@ -349,13 +352,32 @@ struct NativeGetSet {
     // An empty value deletes. What throws says so through the VM.
     using Setter = void (*)(JSGlobalObject*, JSValue self, JSValue value);
 
+    consteval NativeGetSet(ASCIILiteral name, Getter getter, Setter setter = nullptr, bool isMember = false, ASCIILiteral doc = { })
+        : name(name)
+        , getter(getter)
+        , setter(setter)
+        , doc(doc)
+        , knownOfName(name)
+        , isMember(isMember)
+    {
+    }
+    NativeGetSet(ASCIILiteral name, Getter getter, KnownOfName knownOfName)
+        : name(name)
+        , getter(getter)
+        , setter(nullptr)
+        , knownOfName(knownOfName)
+        , isMember(true)
+    {
+    }
+
     ASCIILiteral name;
     Getter getter;
-    Setter setter { nullptr };
+    Setter setter;
+    ASCIILiteral doc;
+    KnownOfName knownOfName;
     // What CPython has as a field of the object's struct (a PyMemberDef) shows: it is a member_descriptor, and without a
     // setter it is a "readonly attribute".
-    bool isMember { false };
-    ASCIILiteral doc { };
+    bool isMember;
 };
 
 #define PY_MEMBER(name, getter) { name ""_s, getter, nullptr, true }
@@ -382,8 +404,8 @@ public:
     }
 
     // `kind` is that of the definition, or Function for one bound to `self`. `owner`: the type it is a method of, or the
-    // name of the module it is a function of, or empty.
-    static PyNativeFunction* create(JSGlobalObject*, const NativeDef&, NativeKind, JSValue self, JSValue owner);
+    // name of the module it is a function of, or empty. `name`: Runtime::nameIn() of the definition, for who has it.
+    static PyNativeFunction* create(JSGlobalObject*, const NativeDef&, NativeKind, JSValue self, JSValue owner, JSString* name = nullptr);
     // The method bound to `self`.
     static PyNativeFunction* createBound(JSGlobalObject*, PyNativeFunction* method, JSValue self);
 

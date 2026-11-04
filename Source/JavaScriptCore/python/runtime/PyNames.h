@@ -6,6 +6,8 @@
 #pragma once
 
 #include <stdint.h>
+#include <wtf/text/ASCIILiteral.h>
+#include <wtf/text/StringHasherInlines.h>
 
 namespace JSC {
 namespace Python {
@@ -162,6 +164,7 @@ static constexpr unsigned numberOfSpecials = 0 FOR_EACH_PY_SPECIAL_METHOD(PY_COU
     v(dImport, "__import__") \
     v(dIsAbstractMethod, "__isabstractmethod__") \
     v(dKwDefaults, "__kwdefaults__") \
+    v(dLazyModules, "__lazy_modules__") \
     v(dLoader, "__loader__") \
     v(dMain, "__main__") \
     v(dMatchArgs, "__match_args__") \
@@ -188,6 +191,8 @@ static constexpr unsigned numberOfSpecials = 0 FOR_EACH_PY_SPECIAL_METHOD(PY_COU
     v(dTypeParams, "__type_params__") \
     v(dWeakref, "__weakref__") \
     v(dWrapped, "__wrapped__") \
+    v(uFrozenImportlib, "_frozen_importlib") \
+    v(uInitializing, "_initializing") \
     v(empty, "") \
     v(args, "args") \
     v(builtins, "builtins") \
@@ -232,6 +237,42 @@ enum class NameID : uint16_t {
 };
 
 static constexpr unsigned numberOfNames = static_cast<unsigned>(NameID::Count);
+
+inline constexpr ASCIILiteral textsOfNames[] = {
+#define PY_NAME_TEXT(id, text) text ""_s,
+    FOR_EACH_PY_SPECIAL_METHOD(PY_NAME_TEXT)
+    FOR_EACH_PY_NAME(PY_NAME_TEXT)
+#undef PY_NAME_TEXT
+};
+static_assert(std::size(textsOfNames) == numberOfNames);
+
+// What is known of a name in a static table when Bun is built: which of the names above it is, and the hash of its text, with
+// which the table of atoms is asked for any other. See Runtime::nameIn().
+struct KnownOfName {
+    consteval KnownOfName(ASCIILiteral text)
+        : hash(StringHasher::computeLiteralHashAndMaskTop8Bits(text))
+    {
+        for (unsigned i = 0; i < numberOfNames && id == NameID::Count; ++i) {
+            if (textsOfNames[i].length() != text.length())
+                continue;
+            size_t same = 0;
+            while (same < text.length() && textsOfNames[i][same] == text[same])
+                ++same;
+            if (same == text.length())
+                id = static_cast<NameID>(i);
+        }
+    }
+
+    // For a table that is made while the program runs, where to go through the names above would cost more than it saves.
+    enum HashOnlyTag { HashOnly };
+    KnownOfName(ASCIILiteral text, HashOnlyTag)
+        : hash(StringHasher::computeLiteralHashAndMaskTop8Bits(text))
+    {
+    }
+
+    unsigned hash;
+    NameID id { NameID::Count };
+};
 
 } // namespace Python
 } // namespace JSC

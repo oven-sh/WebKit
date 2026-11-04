@@ -1448,7 +1448,7 @@ void initializeMathModule(JSGlobalObject* globalObject, PyModule* module)
     JSValue integerModule = importModule(globalObject, "_math_integer"_s);
     RETURN_IF_EXCEPTION(scope, void());
     for (auto& def : mathIntegerFunctions) {
-        JSString* name = internString(vm, def.name);
+        JSString* name = rt.nameIn(def);
         JSValue function = getAttr(globalObject, integerModule, name);
         RETURN_IF_EXCEPTION(scope, void());
         module->dict()->set(vm, name, function);

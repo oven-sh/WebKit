@@ -184,15 +184,14 @@ void Runtime::initializeStructures()
 
 void Runtime::initializeNames()
 {
-    static constexpr ASCIILiteral texts[] = {
-#define PY_NAME_TEXT(id, text) text ""_s,
-        FOR_EACH_PY_SPECIAL_METHOD(PY_NAME_TEXT)
-        FOR_EACH_PY_NAME(PY_NAME_TEXT)
-#undef PY_NAME_TEXT
-    };
-    static_assert(std::size(texts) == numberOfNames);
+    static constexpr auto hashes = [] {
+        std::array<unsigned, numberOfNames> result { };
+        for (unsigned i = 0; i < numberOfNames; ++i)
+            result[i] = StringHasher::computeLiteralHashAndMaskTop8Bits(textsOfNames[i]);
+        return result;
+    }();
     for (unsigned i = 0; i < numberOfNames; ++i)
-        m_names[i].set(m_vm, m_globalObject, internString(m_vm, texts[i]));
+        m_names[i].set(m_vm, m_globalObject, internString(m_vm, textsOfNames[i], hashes[i]));
 }
 
 void Runtime::initializeTypes()

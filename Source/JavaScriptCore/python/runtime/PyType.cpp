@@ -175,7 +175,7 @@ void PyType::initializeBuiltin(JSGlobalObject* globalObject, const TypeDef& def,
     if (base) {
         PyDict* ofObject = rt.objectType()->dict();
         for (auto& slot : repeatableSlotsOfObject()) {
-            JSString* name = internString(vm, slot.name);
+            JSString* name = rt.nameIn(slot);
             if (lookup(name) == ofObject->get(name) && hasDocstring(def.name, slot.name))
                 addMethods(globalObject, { &slot, 1 });
         }
@@ -194,36 +194,37 @@ void PyType::addMethods(JSGlobalObject* globalObject, std::span<const NativeDef>
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto add = [&](const NativeDef& def) {
+        JSString* name = rt.nameIn(def);
         JSValue value;
         switch (def.kind) {
         case NativeKind::Method:
         case NativeKind::SlotWrapper:
         case NativeKind::ClassMethod:
         case NativeKind::Function:
-            value = PyNativeFunction::create(globalObject, def, def.kind, { }, this);
+            value = PyNativeFunction::create(globalObject, def, def.kind, { }, this, name);
             break;
         case NativeKind::New:
-            value = PyNativeFunction::create(globalObject, def, NativeKind::New, this, this);
+            value = PyNativeFunction::create(globalObject, def, NativeKind::New, this, this, name);
             break;
         case NativeKind::StaticMethod: {
-            auto* wrapper = PyWrapperObject::create(globalObject, rt.staticmethodType(), PyNativeFunction::create(globalObject, def, NativeKind::Function, { }, this));
+            auto* wrapper = PyWrapperObject::create(globalObject, rt.staticmethodType(), PyNativeFunction::create(globalObject, def, NativeKind::Function, { }, this, name));
             wrapper->setCopiesAttributesLater(true);
             value = wrapper;
             break;
         }
         }
-        m_dict->set(vm, internString(vm, def.name), value);
+        m_dict->set(vm, name, value);
     };
     bool hasComparison = false;
     for (auto& def : methods) {
         add(def);
-        for (auto& comparison : defaultComparisons())
-            hasComparison |= def.name == comparison.name;
+        static_assert(static_cast<unsigned>(NameID::Ge) - static_cast<unsigned>(NameID::Lt) == 5);
+        hasComparison |= def.knownOfName.id >= NameID::Lt && def.knownOfName.id <= NameID::Ge;
     }
     // In CPython one function of a type does all six comparisons, so a type with a method for one has methods for all.
     if (hasComparison) {
         for (auto& comparison : defaultComparisons()) {
-            if (!m_dict->get(internString(vm, comparison.name)))
+            if (!m_dict->get(rt.nameIn(comparison)))
                 add(comparison);
         }
     }
@@ -232,9 +233,10 @@ void PyType::addMethods(JSGlobalObject* globalObject, std::span<const NativeDef>
 
 void PyType::addGetSets(JSGlobalObject* globalObject, std::span<const NativeGetSet> getsets)
 {
-    VM& vm = getVM(globalObject);
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
     for (auto& def : getsets)
-        m_dict->set(vm, internString(vm, def.name), PyGetSetDescriptor::create(globalObject, def, this));
+        m_dict->set(vm, rt.nameIn(def), PyGetSetDescriptor::create(globalObject, def, this));
     didChange(vm);
 }
 

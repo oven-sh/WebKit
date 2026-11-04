@@ -87,7 +87,8 @@ void PyModule::addFunctions(JSGlobalObject* globalObject, std::span<const Native
     JSValue moduleName = dict()->get(rt.names.dName());
     for (auto& def : defs) {
         ASSERT(def.kind == NativeKind::Function);
-        dict()->set(vm, internString(vm, def.name), PyNativeFunction::create(globalObject, def, NativeKind::Function, { }, moduleName));
+        JSString* name = rt.nameIn(def);
+        dict()->set(vm, name, PyNativeFunction::create(globalObject, def, NativeKind::Function, { }, moduleName, name));
     }
 }
 
@@ -171,11 +172,12 @@ static JSValue moduleRepr(JSGlobalObject* globalObject, JSValue self)
 
 bool specIsInitializing(JSGlobalObject* globalObject, JSValue spec)
 {
-    VM& vm = getVM(globalObject);
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!spec || isNone(spec))
         return false;
-    JSValue value = getAttrIfPresent(globalObject, spec, internString(vm, "_initializing"_s));
+    JSValue value = getAttrIfPresent(globalObject, spec, rt.names.uInitializing());
     RETURN_IF_EXCEPTION(scope, false);
     if (!value)
         return false;
@@ -276,7 +278,7 @@ static JSValue raiseModuleHasNoAttribute(JSGlobalObject* globalObject, PyModule*
     if (diagnosis.hidesStandardLibrary)
         return raise(globalObject, scope, rt.AttributeError(), makeString(plain, " (consider renaming '"_s, origin, "' since it has the same name as the standard library module named '"_s, moduleName, "' and prevents importing that standard library module)"_s));
 
-    JSValue isInitializingValue = getAttrIfPresent(globalObject, spec, internString(vm, "_initializing"_s));
+    JSValue isInitializingValue = getAttrIfPresent(globalObject, spec, rt.names.uInitializing());
     RETURN_IF_EXCEPTION(scope, { });
     bool isInitializing = isInitializingValue && isTrue(globalObject, isInitializingValue);
     RETURN_IF_EXCEPTION(scope, { });

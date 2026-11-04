@@ -204,7 +204,7 @@ static JSValue loadNativeModule(JSGlobalObject* globalObject, JSString* name, co
     JSValue module = createNativeModule(globalObject, name, def);
     RETURN_IF_EXCEPTION(scope, { });
     rt.modules()->set(vm, name, module);
-    if (rt.modules()->get(internString(vm, "_frozen_importlib"_s))) {
+    if (rt.modules()->get(rt.names.uFrozenImportlib())) {
         ensureNativeModuleSpec(globalObject, PyModule::from(module));
         RETURN_IF_EXCEPTION(scope, { });
     }
@@ -362,7 +362,7 @@ static void installImportlib(JSGlobalObject* globalObject)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue bootstrap = importModuleOrNone(globalObject, internString(vm, "_frozen_importlib"_s), true);
+    JSValue bootstrap = importModuleOrNone(globalObject, rt.names.uFrozenImportlib(), true);
     RETURN_IF_EXCEPTION(scope, void());
     if (isNone(bootstrap))
         return;
@@ -471,7 +471,7 @@ bool ensureNativeModuleSpec(JSGlobalObject* globalObject, PyModule* module)
     if (!module->isNative() && module != rt.sysModule() && module != rt.builtinsModule())
         return true;
     // Loading it gives one to every module there is. Without the standard library they go without.
-    JSValue bootstrap = importModuleOrNone(globalObject, internString(vm, "_frozen_importlib"_s), true);
+    JSValue bootstrap = importModuleOrNone(globalObject, rt.names.uFrozenImportlib(), true);
     RETURN_IF_EXCEPTION(scope, false);
     if (JSValue spec = dict->get(rt.names.dSpec()); spec && !isNone(spec))
         return true;
@@ -501,13 +501,13 @@ static bool waitUntilModuleIsInitialized(JSGlobalObject* globalObject, JSValue m
     RETURN_IF_EXCEPTION(scope, false);
     if (!spec || isNone(spec))
         return true;
-    JSValue isInitializing = getAttrIfPresent(globalObject, spec, internString(vm, "_initializing"_s));
+    JSValue isInitializing = getAttrIfPresent(globalObject, spec, rt.names.uInitializing());
     RETURN_IF_EXCEPTION(scope, false);
     if (!isInitializing)
         return true;
     bool waits = isTrue(globalObject, isInitializing);
     RETURN_IF_EXCEPTION(scope, false);
-    JSValue bootstrap = rt.modules()->get(internString(vm, "_frozen_importlib"_s));
+    JSValue bootstrap = rt.modules()->get(rt.names.uFrozenImportlib());
     if (!waits || !bootstrap)
         return true;
     scope.release();
@@ -790,7 +790,7 @@ JSValue importFrom(JSGlobalObject* globalObject, JSValue module, JSString* name)
         if (diagnosis.hidesStandardLibrary)
             message = makeString(start, shownName, " (consider renaming "_s, strRepr(origin), " since it has the same name as the standard library module named "_s, shownName, " and prevents importing that standard library module)"_s);
         else {
-            JSValue isInitializingValue = getAttrIfPresent(globalObject, spec, internString(vm, "_initializing"_s));
+            JSValue isInitializingValue = getAttrIfPresent(globalObject, spec, rt.names.uInitializing());
             RETURN_IF_EXCEPTION(scope, { });
             bool isInitializing = isInitializingValue && isTrue(globalObject, isInitializingValue);
             RETURN_IF_EXCEPTION(scope, { });
@@ -1028,7 +1028,7 @@ static void addToLazyModules(JSGlobalObject* globalObject, JSString* name, JSVal
         // Nothing of the program's is to run here. A spec that does not say in the usual way that it is done is taken not to be.
         if (JSValue spec = object->dict()->get(rt.names.dSpec()); spec && !isNone(spec)) {
             auto* instance = PyInstance::tryFrom(spec);
-            JSValue isInitializing = instance ? instance->getAttribute(rt.vm(), internString(rt.vm(), "_initializing"_s)) : JSValue();
+            JSValue isInitializing = instance ? instance->getAttribute(rt.vm(), rt.names.uInitializing()) : JSValue();
             isLoaded = instance && (!isInitializing || isInitializing == jsBoolean(false));
         }
     }
@@ -1113,9 +1113,10 @@ void didImportLazyModule(JSGlobalObject* globalObject, JSString* name)
 
 bool isInLazyModules(JSGlobalObject* globalObject, JSString* name, PyDict* globals, int level)
 {
-    VM& vm = getVM(globalObject);
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue names = globals->get(internString(vm, "__lazy_modules__"_s));
+    JSValue names = globals->get(rt.names.dLazyModules());
     if (!names)
         return false;
     JSString* absoluteName = absoluteModuleName(globalObject, name, globals, level);

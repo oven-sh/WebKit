@@ -50,6 +50,9 @@ inline String stringOf(JSString* string)
 // The same text, as a string that is the one of its kind: what names are compared by.
 JSString* internString(JSGlobalObject*, JSString*);
 JSString* internString(VM&, const String&);
+JSString* internString(VM&, ASCIILiteral);
+// For who has the text's StringHasher::computeLiteralHashAndMaskTop8Bits() from when Bun was built.
+JSString* internString(VM&, ASCIILiteral, unsigned hash);
 JSString* makeStr(VM&, const String&);
 JSString* makeStr(VM&, String&&);
 JSString* makeStr(VM&, ASCIILiteral);

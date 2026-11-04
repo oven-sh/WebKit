@@ -1301,7 +1301,8 @@ module. It looks for one among the imported modules when a line is to be read fr
 ## Writing a module in C++
 
 Tables of `NativeDef` (`PY_FUNCTION`, `PY_METHOD`, `PY_SLOT`, ...) with signatures in the form of `__text_signature__`; the
-argument parser is generated from the signature at compile time. `TypeDef` describes a type; `Runtime::typeFor(def)` makes it on
+argument parser is generated from the signature at compile time, and so is what it takes to intern the name: which of the names
+in `PyNames.h` it is, or the hash of its text (`KnownOfName`, `Runtime::nameIn()`). `TypeDef` describes a type; `Runtime::typeFor(def)` makes it on
 first use. A module is `void initializeXModule(JSGlobalObject*, PyModule*)` listed in `PyNativeModules.cpp`.
 
 ### Every call that can raise is looked at

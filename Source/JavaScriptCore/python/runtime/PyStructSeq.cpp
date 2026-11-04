@@ -205,11 +205,11 @@ PyType* makeStructSeqType(JSGlobalObject* globalObject, const StructSeqDef& def)
     RELEASE_ASSERT(def.fields.size() <= maxStructSeqFields);
 
     // The descriptors point at these for as long as the type lives, which is as long as the process may.
-    auto* getsets = new NativeGetSet[def.fields.size()];
+    auto* getsets = static_cast<NativeGetSet*>(fastMalloc(def.fields.size() * sizeof(NativeGetSet)));
     unsigned named = 0;
     for (unsigned i = 0; i < def.fields.size(); ++i) {
         if (!def.fields[i].isNull())
-            getsets[named++] = { def.fields[i], getters[i], nullptr, true };
+            new (NotNull, &getsets[named++]) NativeGetSet(def.fields[i], getters[i], KnownOfName(def.fields[i], KnownOfName::HashOnly));
     }
 
     PyType* type = PyType::createBare(vm, rt.typeStructure());

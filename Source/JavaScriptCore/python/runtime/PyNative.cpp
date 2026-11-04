@@ -564,14 +564,14 @@ PyNativeFunction::PyNativeFunction(VM& vm, Structure* structure, const NativeDef
 {
 }
 
-PyNativeFunction* PyNativeFunction::create(JSGlobalObject* globalObject, const NativeDef& def, NativeKind kind, JSValue self, JSValue owner)
+PyNativeFunction* PyNativeFunction::create(JSGlobalObject* globalObject, const NativeDef& def, NativeKind kind, JSValue self, JSValue owner, JSString* name)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto* function = new (NotNull, allocateCell<PyNativeFunction>(vm)) PyNativeFunction(vm, rt.nativeFunctionStructure(), def, kind, owner);
     function->finishCreation(vm);
     // JSC takes every InternalFunction to have one: for stack traces, for Function.prototype.toString().
-    function->m_originalName.set(vm, function, jsString(vm, String(def.name)));
+    function->m_originalName.set(vm, function, name ? name : rt.nameIn(def));
     function->m_self.set(vm, function, self);
     function->m_owner.set(vm, function, owner);
     return function;

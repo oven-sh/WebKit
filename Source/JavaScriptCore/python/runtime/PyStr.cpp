@@ -71,6 +71,22 @@ JSString* internString(VM& vm, const String& string)
     return jsString(vm, AtomString(string).string());
 }
 
+JSString* internString(VM& vm, ASCIILiteral literal)
+{
+    if (literal.isEmpty())
+        return jsEmptyString(vm);
+    return jsString(vm, String(AtomStringImpl::add(literal)));
+}
+
+JSString* internString(VM& vm, ASCIILiteral literal, unsigned hash)
+{
+    if (literal.isEmpty())
+        return jsEmptyString(vm);
+    ASSERT(hash == StringHasher::computeHashAndMaskTop8Bits(literal.span8()));
+    WTF::HashTranslatorCharBuffer<Latin1Character> buffer { literal.span8(), hash };
+    return jsString(vm, String(AtomStringImpl::addWithoutCopying(buffer)));
+}
+
 JSString* makeStr(VM& vm, const String& string)
 {
     if (string.isEmpty())

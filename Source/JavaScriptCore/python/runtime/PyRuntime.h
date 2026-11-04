@@ -26,6 +26,7 @@ namespace Python {
 // every frame of JS has. Until then it holds undefined, which is what op_enter leaves there. op_py_ret looks at it.
 VirtualRegister frameObjectRegister();
 class Monitoring;
+JSString* internString(VM&, ASCIILiteral, unsigned hash);
 
 // The classes of cells whose Structure takes nothing but the global object to make.
 #define FOR_EACH_PY_CELL_CLASS(v) \
@@ -341,6 +342,9 @@ public:
 
     JSString* name(NameID id) const { return m_names[static_cast<unsigned>(id)].get(); }
     JSString* name(Special special) const { return m_names[static_cast<unsigned>(special)].get(); }
+    // The name of an entry of a static table (a NativeDef, a NativeGetSet), interned.
+    template<typename Entry>
+    JSString* nameIn(const Entry& entry) const { return entry.knownOfName.id != NameID::Count ? name(entry.knownOfName.id) : internString(m_vm, entry.name, entry.knownOfName.hash); }
     struct Names {
 #define PY_DEFINE_ACCESSOR(id, text) JSString* id() const { return runtime.name(NameID::id); }
         FOR_EACH_PY_NAME(PY_DEFINE_ACCESSOR)
