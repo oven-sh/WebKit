@@ -16,6 +16,8 @@
 #include "JSArrayBufferView.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
+#include "JSGenericTypedArrayViewInlines.h"
+#include "JSTypedArrays.h"
 #include "PreventCollectionScope.h"
 #include "PyAbstract.h"
 #include "PyBytes.h"
@@ -1252,6 +1254,105 @@ JSValue makeMemoryView(JSGlobalObject* globalObject, JSValue object, unsigned fl
     RETURN_IF_EXCEPTION(scope, { });
     ASSERT_UNUSED(ok, ok);
     RELEASE_AND_RETURN(scope, memoryViewTakingOver(globalObject, buffer));
+}
+
+// ---- For the host ----
+
+bool exportsMemoryToHost(JSValue value)
+{
+    return isPyObject(value) && hasBuffer(value);
+}
+
+JSValue memoryForHost(JSGlobalObject* globalObject, JSValue object)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (PyBytes::is(object) && !getBufferRunsCode(object))
+        return object;
+    if (auto* view = PyMemoryView::tryFrom(object); view && view->isForHost)
+        return view;
+    JSValue made = makeMemoryView(globalObject, object);
+    RETURN_IF_EXCEPTION(scope, { });
+    PyMemoryView* view = PyMemoryView::from(made);
+    auto fail = [&] {
+        SuspendExceptionScope suspended(vm);
+        view->release(globalObject);
+        return JSValue();
+    };
+    if (!view->isCContiguous) {
+        raiseBufferError(globalObject, scope, "memoryview: underlying buffer is not C-contiguous"_s);
+        return fail();
+    }
+    uint8_t* data = view->data(globalObject);
+    if (scope.exception()) [[unlikely]]
+        return fail();
+    JSValue exporter = view->managedBuffer()->object();
+    if (!exporter || isPyObject(exporter)) {
+        view->isForHost = true;
+        return view;
+    }
+
+    JSCell* owner = view->managedBuffer()->owner();
+    ASSERT(bufferIsJSExporter(owner));
+    JSValue result;
+    if (view->isReadOnly) {
+        // JS has no view that cannot be written through.
+        result = PyBytes::create(globalObject, std::span<const uint8_t> { data, static_cast<size_t>(view->length) });
+    } else {
+        RefPtr<ArrayBuffer> memory;
+        size_t offset = view->offset;
+        if (owner->type() == ArrayBufferType)
+            memory = uncheckedDowncast<JSArrayBuffer>(owner)->impl();
+        else {
+            auto* ownerView = uncheckedDowncast<JSArrayBufferView>(owner);
+            memory = ownerView->possiblySharedBuffer();
+            offset += ownerView->byteOffset();
+        }
+        if (!memory)
+            throwOutOfMemoryError(globalObject, scope);
+        else
+            result = JSUint8Array::create(globalObject, globalObject->typedArrayStructure(TypeUint8, false), WTF::move(memory), offset, view->length);
+    }
+    if (scope.exception()) [[unlikely]]
+        return fail();
+    view->release(globalObject);
+    return result;
+}
+
+bool locateMemoryForHost(JSCell* holder, HostMemory& result)
+{
+    result = { };
+    if (holder->type() == PyBytesType) {
+        auto* bytes = uncheckedDowncast<PyBytes>(holder);
+        result = { bytes->mutableData(), bytes->length(), true };
+        return true;
+    }
+    auto* view = PyMemoryView::tryFrom(holder);
+    if (!view || !view->isForHost || view->isReleased())
+        return false;
+    auto memory = bufferMemoryOf(view->managedBuffer()->owner());
+    if (static_cast<uint64_t>(view->managedBuffer()->requiredSize) > memory.size())
+        return false;
+    result = { memory.data() ? memory.data() + view->offset : nullptr, static_cast<size_t>(view->length), view->isReadOnly };
+    return true;
+}
+
+bool pinMemoryForHost(JSCell* holder)
+{
+    auto* view = PyMemoryView::tryFrom(holder);
+    if (!view || !view->isForHost || view->isReleased())
+        return false;
+    memoryViewAddExport(view);
+    return true;
+}
+
+void unpinMemoryForHost(JSCell* holder)
+{
+    // No asking what it is: a cell has no class to ask while the collector sweeps.
+    auto* view = static_cast<PyMemoryView*>(holder);
+    ASSERT(view->exports && view->managedBuffer());
+    --view->exports;
+    --view->managedBuffer()->bufferCount;
 }
 
 // ---- __buffer__ and __release_buffer__ ----

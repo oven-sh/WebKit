@@ -36,6 +36,7 @@
 #include "JSSourceCode.h"
 #include "JSWebAssemblyException.h"
 #include "JSWebAssemblyRuntimeError.h"
+#include "PyBuffer.h"
 #include "WasmAddressType.h"
 #include "WasmFormat.h"
 #include "WasmTypeDefinition.h"
@@ -158,8 +159,17 @@ ALWAYS_INLINE Vector<uint8_t> createSourceBufferFromValue(VM& vm, JSGlobalObject
         provider = static_cast<BaseWebAssemblySourceProvider*>(source->sourceCode().provider());
     SourceProviderBufferGuard bufferGuard(provider);
 
-    auto data = getWasmBufferFromValue(globalObject, value, bufferGuard);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    // What exports its memory in Python (bytes, bytearray, memoryview) is a BufferSource too.
+    Python::BufferHolder holder(globalObject);
+    std::span<const uint8_t> data;
+    if (Python::exportsMemoryToHost(value)) [[unlikely]] {
+        holder.get(value);
+        RETURN_IF_EXCEPTION(throwScope, { });
+        data = holder.buffer.span();
+    } else {
+        data = getWasmBufferFromValue(globalObject, value, bufferGuard);
+        RETURN_IF_EXCEPTION(throwScope, { });
+    }
 
     Vector<uint8_t> result;
     if (!result.tryReserveInitialCapacity(data.size())) {

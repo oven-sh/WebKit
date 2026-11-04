@@ -87,7 +87,7 @@ struct Buffer {
 // Whether the object exports its memory at all.
 bool hasBuffer(JSValue);
 // Whether getting a buffer from it, or releasing that, calls a method written in Python.
-bool getBufferRunsCode(JSValue);
+JS_EXPORT_PRIVATE bool getBufferRunsCode(JSValue);
 // False: a TypeError ("a bytes-like object is required, not 'x'"), a BufferError, or whatever __buffer__() raised.
 // With BufferSimple, the memory is `length` bytes from `data`. Until the buffer is released, a bytearray, an array and the like
 // cannot be resized, whatever runs.
@@ -119,6 +119,39 @@ public:
 private:
     JSGlobalObject* m_globalObject;
 };
+
+// ---- For the host ----
+//
+// Code of the host that takes a typed array or an ArrayBuffer of JS takes what exports its memory in Python as well: bytes, a
+// bytearray, a memoryview, an array, an mmap, an instance of a class with __buffer__(). Such code keeps no Buffer on its stack.
+// It has a value, which it roots for as long as it uses the memory, and that may be long after the call has returned.
+//
+// memoryForHost() makes that value, the holder, of the object:
+// - Of a bytes, the bytes itself: what it holds neither changes nor moves.
+// - Of a view of what JS exported (memoryview(uint8Array)), a Uint8Array of JS on the same memory. The host has its ways with those.
+// - Of anything else, a memoryview that the program cannot get at. Like any view, it is an export for as long as it can be
+//   reached from a root that has a name: the bytearray cannot be resized, the mmap cannot be closed (BufferError). One that only
+//   the stack of the host refers to lasts until code of the program runs, as the memory of a typed array does that JS may detach.
+//   To hold on to it across that, or with no root, the host pins it.
+struct HostMemory {
+    uint8_t* data { nullptr };
+    size_t length { 0 }; // In bytes.
+    bool isReadOnly { true }; // It must not be written to: it is a bytes, or a page that cannot be.
+};
+// An object of Python's that has a buffer to give. (False for the buffers of JS.)
+JS_EXPORT_PRIVATE bool exportsMemoryToHost(JSValue);
+// Empty: an exception, as where Python itself asks for bytes that follow one another (a view that was released, or has gaps).
+// Runs code of the program if __buffer__() is written in Python (getBufferRunsCode()). So the host calls this where it converts its
+// arguments, as it would call toString() there. Where it has begun its work and merely asks a value for its bytes, an object
+// like that is no buffer.
+JS_EXPORT_PRIVATE JSValue memoryForHost(JSGlobalObject*, JSValue object);
+// Where the memory of a holder that is an object of Python's is now. False: it is no holder, or there is no memory any more.
+// Raises nothing, runs nothing, allocates nothing.
+JS_EXPORT_PRIVATE bool locateMemoryForHost(JSCell* holder, HostMemory&);
+// False: there is nothing to pin, and nothing to unpin, because nothing can take the memory away.
+JS_EXPORT_PRIVATE bool pinMemoryForHost(JSCell* holder);
+// Of a holder for which pinMemoryForHost() returned true, once for each time it did. May be called while the collector sweeps.
+JS_EXPORT_PRIVATE void unpinMemoryForHost(JSCell* holder);
 
 // ---- For an exporter that cannot be resized while it has exports ----
 //
@@ -263,6 +296,7 @@ public:
     bool hasHash { false };
     bool isReadOnly { true };
     bool isRestricted { false }; // Lent to __release_buffer__(): nothing may hold on to the memory.
+    bool isForHost { false }; // Made by memoryForHost().
     bool isCContiguous { true };
     bool isFContiguous { true };
 

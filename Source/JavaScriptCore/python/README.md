@@ -648,6 +648,21 @@ while any thread has a function. The side tables are only changed with the GIL, 
 - What all objects of Python's inherit in JS (`toString`, `Symbol.toPrimitive`, `Symbol.iterator`, `then`, `toJSON`, what `console.log` asks)
   is about the object of Python's also where `this` is a `Proxy` around it or was made of it with `Object.create()` (`jsViewThis`).
   The operators do not see through those.
+- **Memory.** What exports its memory in Python (`bytes`, `bytearray`, `memoryview`, `array.array`, `mmap`, a class with `__buffer__`) is a
+  buffer to the code of the engine and the host that takes a typed array or an `ArrayBuffer`: `WebAssembly.Module(bytes)`, and in
+  Bun `new Response(bytes)`, `Bun.write()`, `fs.readSync(fd, bytearray)` and so on. ("For the host" in `runtime/PyBuffer.h`.) It is
+  never made a string of there. Such code keeps no `Buffer` on its stack but a value that it roots while it uses the memory, which
+  may be long after the call: `memoryForHost()` gives it that value, the holder. Of a `bytes` it is the object itself; of anything else a
+  `memoryview` that the program cannot get at, which is an export like any other for as long as a root refers to it or the host has
+  pinned it. So while a thread of the host reads or fills a `bytearray`, to resize it is a `BufferError`, as it is while Python's own
+  `readinto()` runs in another thread; afterwards the view is dropped and found to be so when the exporter next asks.
+  Memory that is read-only says so, and what would write to it refuses it (`fs.readSync(fd, bytes)` is a `TypeError`).
+  A view that was released, or whose bytes do not follow one another, raises what it raises in Python (`ValueError`, `BufferError`).
+  An instance of a class whose `__buffer__()` is written in Python gives its memory by running code of the program. The host takes it
+  where it converts its arguments before it does anything else, as it calls `toString()` there (`new Response(o)`, `Buffer.concat([o])`).
+  To code that has looked at its own state already and asks a value for its bytes in passing (`hash.update(o)`, a parameter of an SQL
+  statement, `crypto.randomFillSync(o)`) it is no buffer, and is refused like any other object: `getBufferRunsCode()`.
+  To code written in JS these objects are no typed arrays (`ArrayBuffer.isView()`, `instanceof Uint8Array`): see `DEFERRED.md`.
 - **Operators.** `a + b`, `-a`, `a < b`, `a == b` and so on ask the classes of the Python objects among the operands
   (`__add__`, `__radd__`, ...), in the slow paths that all tiers share (`OperationsInlines.h`, `JSValue::equalSlowCaseInline`). If
   neither class answers, JS does what it does with any object. `a == null` is false without asking.
