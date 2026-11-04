@@ -95,7 +95,7 @@ void Unit::patternSingleton(MatchSingleton* node, RegisterID* subject, PatternCo
         g.emitPyIsNone(result.get(), subject);
     else
         g.emitPyCompare(result.get(), subject, constant(constantValue(node->value)), Python::CompareOperator::Is);
-    g.emitJumpIfFalse(result.get(), *context.fail);
+    g.emitPyJumpIfFalse(result.get(), *context.fail);
 }
 
 void Unit::patternSequence(MatchSequence* node, RegisterID* subject, PatternContext& context)
@@ -124,7 +124,7 @@ void Unit::patternSequence(MatchSequence* node, RegisterID* subject, PatternCont
     Reg scratch = newTemporary();
     loc(node->range);
     callRuntime(scratch.get(), RuntimeFunction::MatchSequence, { subject });
-    g.emitJumpIfFalse(scratch.get(), *context.fail);
+    g.emitPyJumpIfFalse(scratch.get(), *context.fail);
     if (star < 0 || size > 1) {
         callRuntime(scratch.get(), RuntimeFunction::GetLength, { subject });
         if (star < 0)
@@ -184,7 +184,7 @@ void Unit::patternMapping(MatchMapping* node, RegisterID* subject, PatternContex
     Reg scratch = newTemporary();
     loc(node->range);
     callRuntime(scratch.get(), RuntimeFunction::MatchMapping, { subject });
-    g.emitJumpIfFalse(scratch.get(), *context.fail);
+    g.emitPyJumpIfFalse(scratch.get(), *context.fail);
     if (!size && !node->rest)
         return;
     if (size) {
@@ -228,7 +228,7 @@ void Unit::patternMapping(MatchMapping* node, RegisterID* subject, PatternContex
     Reg values = newTemporary();
     callRuntime(values.get(), RuntimeFunction::MatchKeys, { subject, keys.get() });
     g.emitPyIsNone(scratch.get(), values.get());
-    g.emitJumpIfTrue(scratch.get(), *context.fail);
+    g.emitPyJumpIfTrue(scratch.get(), *context.fail);
 
     if (size) {
         Arguments items(*this, size);
@@ -278,7 +278,7 @@ void Unit::patternClass(MatchClass* node, RegisterID* subject, PatternContext& c
     {
         Reg isNone = newTemporary();
         g.emitPyIsNone(isNone.get(), attributes.get());
-        g.emitJumpIfTrue(isNone.get(), *context.fail);
+        g.emitPyJumpIfTrue(isNone.get(), *context.fail);
     }
 
     unsigned total = positionalCount + keywordCount;
@@ -373,9 +373,10 @@ void Unit::pattern(Pattern* node, RegisterID* subject, PatternContext& context)
     }
 }
 
-void Unit::matchStatement(Match* node, bool isLast)
+void Unit::matchStatement(Match* node, Last isLast)
 {
     Reg subject = newTemporary();
+    line(node->subject->range.lineno);
     expr(node->subject, subject.get());
     Ref<Label> end = g.newLabel();
 
@@ -400,9 +401,9 @@ void Unit::matchStatement(Match* node, bool isLast)
         statements(matchCase->body, 0, isLast);
         leaveStatement(end.get(), isLast, JumpIs::OfTheProgram);
         g.emitLabel(next.get());
-        lineOfImplicitReturn(matchCase->pattern->range.lineno, isLast && i + 1 == count);
+        lineOfImplicitReturn(matchCase->pattern->range.lineno, isLast.onlyIf(i + 1 == count));
     }
-    g.emitLabel(end.get());
+    endOfStatement(end.get());
 }
 
 } // namespace Python

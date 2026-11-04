@@ -1096,7 +1096,7 @@ Vector<TryContext> BytecodeGenerator::suspendTryContexts(size_t depth)
     if (m_tryContextStack.size() <= depth)
         return suspended;
     m_usesExceptions = true;
-    Ref<Label> here = newEmittedLabel();
+    Ref<Label> here = newEmittedPythonRangeLabel();
     // Innermost first, which is the order handlers are looked up in.
     for (size_t i = m_tryContextStack.size(); i-- > depth;) {
         TryContext& context = m_tryContextStack[i];
@@ -1112,22 +1112,42 @@ void BytecodeGenerator::resumeTryContexts(Vector<TryContext>&& suspended)
 {
     if (suspended.isEmpty())
         return;
-    Ref<Label> here = newEmittedLabel();
+    Ref<Label> here = newEmittedPythonRangeLabel();
     for (auto& context : suspended)
         m_tryContextStack.append(TryContext { here.copyRef(), context.tryData });
+}
+
+Ref<Label> BytecodeGenerator::newEmittedPythonRangeLabel()
+{
+    unsigned position = m_positionOfLastPythonLabel;
+    Ref<Label> label = newEmittedLabel();
+    m_positionOfLastPythonLabel = position;
+    return label;
 }
 
 void BytecodeGenerator::addPythonMark(PythonMark::Kind kind, unsigned value, uint64_t bits)
 {
     if (m_pythonLineMarkPosition != m_writer.position())
         m_pythonLineMarkCount = 0;
+    // A mark that only says what line the code after it is of says nothing if there is no code before the next.
+    if (kind == PythonMark::Line || (kind == PythonMark::NoLine && !value)) {
+        while (auto* last = m_codeBlock->lastPythonMark()) {
+            if (last->offset != m_writer.position())
+                break;
+            bool isSilentLine = last->kind() == PythonMark::Line && Python::isSilentLine(last->value());
+            if (!isSilentLine && !(last->kind() == PythonMark::NoLine && !last->value()))
+                break;
+            m_codeBlock->removeLastPythonMark();
+        }
+    }
     // Each line has a byte of the instruction to itself, which is where f_lasti and co_lines() say it is. Whatever comes next has two.
-    if (kind == PythonMark::Line && m_pythonLineMarkCount == 2)
+    bool beginsLine = kind == PythonMark::Line && !Python::isSilentLine(value);
+    if (beginsLine && m_pythonLineMarkCount == 2)
         giveFirstPythonLineMarkAnInstruction();
     m_codeBlock->addPythonMark(PythonMark(m_writer.position(), kind, value, bits));
-    if (kind == PythonMark::Line || kind == PythonMark::Start)
+    if (beginsLine || kind == PythonMark::Start)
         m_pythonLineMarkPosition = m_writer.position();
-    m_pythonLineMarkCount += kind == PythonMark::Line;
+    m_pythonLineMarkCount += beginsLine;
 }
 
 void BytecodeGenerator::giveFirstPythonLineMarkAnInstruction()
@@ -1147,6 +1167,12 @@ void BytecodeGenerator::settlePythonLineMark()
         giveFirstPythonLineMarkAnInstruction();
 }
 
+void BytecodeGenerator::emitPyAsyncForMark(unsigned mark)
+{
+    addPythonMark(PythonMark::NoLine, mark);
+    OpNop::emit(this);
+}
+
 void BytecodeGenerator::notePathToLabel(Label& label)
 {
     ASSERT(label.isForward());
@@ -1163,6 +1189,7 @@ BoundLabel BytecodeGenerator::bindLabel(Label& label)
 
 void BytecodeGenerator::didEmitLabel(Label& label, bool hasJumps)
 {
+    m_positionOfLastPythonLabel = m_writer.position();
     // What comes before the label counts as a path to it even if it ends in a jump: that can only make the set smaller.
     auto it = m_pythonVariablesBoundAtLabels.find(&label);
     if (it != m_pythonVariablesBoundAtLabels.end()) {

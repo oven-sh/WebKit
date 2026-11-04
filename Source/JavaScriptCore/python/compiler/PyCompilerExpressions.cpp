@@ -27,6 +27,8 @@ using namespace AST;
 
 // More items than this in a display or a call are added one at a time, rather than held in as many registers.
 static constexpr unsigned maxItemsInRegisters = 64;
+// CPython's compiler builds a longer display item by item, and then makes no constant of it.
+static constexpr unsigned maxItemsCPythonHasOnItsStack = 30;
 
 // ---- Constants ----
 
@@ -166,12 +168,62 @@ bool Unit::tryConstantValue(Expr* node, JSValue& result)
     }
 }
 
+// To CPython's compiler.
+bool Unit::areConstants(Seq<Expr*> nodes)
+{
+    if (!isSafeToRecurse())
+        return false;
+    for (Expr* node : nodes) {
+        JSValue value;
+        if (tryConstantValue(node, value) || valueCPythonsCompilerWorksOut(node))
+            continue;
+        auto* tuple = node->tryAs<Tuple>();
+        if (!tuple || tuple->elts.size() > maxItemsCPythonHasOnItsStack || !areConstants(tuple->elts))
+            return false;
+    }
+    return true;
+}
+
+// CPython's compiler makes one constant of a list or a set of constants that is only iterated over or searched, however short.
+RegisterID* Unit::exprToIterateOverOrSearch(Expr* node, RegisterID* dst)
+{
+    Seq<Expr*> items;
+    if (auto* list = node->tryAs<List>())
+        items = list->elts;
+    else if (auto* set = node->tryAs<Set>())
+        items = set->elts;
+    if (node->range.lineno == node->range.endLineno || m_sameLineDepth || items.isEmpty() || items.size() > maxItemsCPythonHasOnItsStack || !areConstants(items))
+        return expr(node, dst);
+    line(node->range.lineno);
+    SameLine sameLine(*this);
+    return expr(node, dst);
+}
+
 std::optional<bool> Unit::constantTruth(Expr* node)
 {
     if (auto* name = node->tryAs<NameExpr>()) {
         if (name->id->impl() == names().debug->impl())
             return !c.m_options.optimize;
         return std::nullopt;
+    }
+    if (auto* unary = node->tryAs<UnaryOp>(); unary && unary->op == AST::UnaryKind::Not) {
+        if (!isSafeToRecurse())
+            return std::nullopt;
+        auto truth = constantTruth(unary->operand);
+        return truth ? std::optional(!*truth) : std::nullopt;
+    }
+    if (auto* boolOp = node->tryAs<BoolOp>()) {
+        if (!isSafeToRecurse())
+            return std::nullopt;
+        bool decides = boolOp->op == BoolOperator::Or;
+        for (Expr* value : boolOp->values) {
+            auto truth = constantTruth(value);
+            if (!truth)
+                return std::nullopt;
+            if (*truth == decides)
+                return decides;
+        }
+        return !decides;
     }
     auto* constant = node->tryAs<Constant>();
     if (!constant)
@@ -382,6 +434,7 @@ RegisterID* Unit::expr(Expr* node, RegisterID* dst)
     case ExprKind::Tuple: {
         JSValue value;
         if (tryConstantValue(node, value)) {
+            line(node->range.lineno);
             noteFoldedConstant(node, value);
             return load(dst, value);
         }
@@ -468,8 +521,10 @@ RegisterID* Unit::chain(Expr* node, RegisterID* dst)
         chain.append(node);
         node = first;
     }
-    if (node->is<BinOp>())
+    if (node->is<BinOp>()) {
+        line(node->range.lineno);
         noteFoldedConstant(node, constant);
+    }
     if (chain.isEmpty())
         return load(dst, constant);
 
@@ -515,6 +570,7 @@ RegisterID* Unit::unaryOp(UnaryOp* node, RegisterID* dst)
 {
     JSValue value;
     if (tryConstantValue(node, value)) {
+        line(node->range.lineno);
         noteFoldedConstant(node, value);
         return load(dst, value);
     }
@@ -665,7 +721,7 @@ RegisterID* Unit::compare(Compare* node, RegisterID* dst)
     unsigned last = node->ops.size() - 1;
     Reg left = expr(node->left);
     if (!last) {
-        Reg right = isNoneLiteral(node->comparators[0]) ? Reg(constant(jsUndefined())) : Reg(expr(node->comparators[0]));
+        Reg right = isNoneLiteral(node->comparators[0]) ? Reg(constant(jsUndefined())) : Reg(exprToIterateOverOrSearch(node->comparators[0]));
         loc(node->range);
         return emitCompare(g.finalDestination(dst, left.get()), left.get(), right.get(), node->ops[0], node->comparators[0]);
     }
@@ -686,6 +742,40 @@ RegisterID* Unit::compare(Compare* node, RegisterID* dst)
 }
 
 void Unit::jumpIf(Expr* node, Label& target, bool condition)
+{
+    if (&target != m_branchTarget.label) [[likely]]
+        return jumpIfTo(node, target, condition);
+    if (node->is<BoolOp>() || node->is<IfExp>() || (node->is<UnaryOp>() && node->as<UnaryOp>()->op == AST::UnaryKind::Not) || constantTruth(node))
+        return jumpIfTo(node, target, condition);
+    BranchTarget branchTarget = std::exchange(m_branchTarget, { });
+    if (branchTarget.loop) {
+        Ref<Label> goesOn = g.newLabel();
+        jumpIfTo(node, goesOn.get(), !condition);
+        emitImplicitContinue(*branchTarget.loop);
+        g.emitLabel(goesOn.get());
+    } else if (branchTarget.loopOfComprehension) {
+        Ref<Label> goesOn = g.newLabel();
+        jumpIfTo(node, goesOn.get(), !condition);
+        line(branchTarget.lineOfJumpThere);
+        g.emitJump(*branchTarget.loopOfComprehension);
+        g.emitLabel(goesOn.get());
+        line(branchTarget.lineOfJumpThere);
+    } else if (branchTarget.returns) {
+        int lineno = node->range.lineno;
+        size_t index = branchTarget.returns->findIf([&](auto& entry) { return entry.first == lineno; });
+        if (index == notFound) {
+            index = branchTarget.returns->size();
+            branchTarget.returns->append({ lineno, g.newLabel() });
+        }
+        jumpIfTo(node, branchTarget.returns->at(index).second.get(), condition);
+    } else {
+        jumpIfTo(node, target, condition);
+        line(branchTarget.lineOfJumpThere);
+    }
+    m_branchTarget = branchTarget;
+}
+
+void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
 {
     if (!isSafeToRecurse())
         return;
@@ -747,9 +837,9 @@ void Unit::jumpIf(Expr* node, Label& target, bool condition)
             if (isNoneLiteral(rightExpr) && (op == AST::CompareKind::Is || op == AST::CompareKind::IsNot)) {
                 g.emitPyIsNone(result.get(), left.get());
                 if ((op == AST::CompareKind::Is) == jumpOn)
-                    g.emitJumpIfTrue(result.get(), destination);
+                    g.emitPyJumpIfTrue(result.get(), destination);
                 else
-                    g.emitJumpIfFalse(result.get(), destination);
+                    g.emitPyJumpIfFalse(result.get(), destination);
                 left = constant(jsUndefined());
                 continue;
             }
@@ -758,9 +848,9 @@ void Unit::jumpIf(Expr* node, Label& target, bool condition)
             if (yieldsBoolean(op)) {
                 g.emitPyCompare(result.get(), left.get(), right.get(), static_cast<Python::CompareOperator>(op));
                 if (jumpOn)
-                    g.emitJumpIfTrue(result.get(), destination);
+                    g.emitPyJumpIfTrue(result.get(), destination);
                 else
-                    g.emitJumpIfFalse(result.get(), destination);
+                    g.emitPyJumpIfFalse(result.get(), destination);
             } else
                 g.emitPyCompareAndJump(left.get(), right.get(), static_cast<Python::CompareOperator>(op), jumpOn, destination);
             left = WTF::move(right);
@@ -1003,14 +1093,29 @@ RegisterID* Unit::sequence(SequenceKind kind, Seq<Expr*> items, RegisterID* dst,
         hasStar |= item->is<Starred>();
     unsigned total = pushed.size() + count + (injected ? 1 : 0);
 
+    // CPython's compiler makes one constant of three constants or more, and the list or the set from that, all on the first line.
+    // It makes constants of more tuples than tryConstantValue() does.
+    std::optional<SameLine> sameLine;
+    if ((kind == SequenceKind::Tuple || count >= 3) && count <= maxItemsCPythonHasOnItsStack && total == count && range.lineno != range.endLineno && !m_sameLineDepth && areConstants(items)) {
+        line(range.lineno);
+        sameLine.emplace(*this);
+    }
+
     Reg result = g.tempDestination(dst);
     if (!hasStar && total <= maxItemsInRegisters) {
         Arguments values(*this, total);
         unsigned next = 0;
         for (RegisterID* value : pushed)
             g.move(values[next++], value);
-        for (Expr* item : items)
+        // CPython adds the items of a long display one by one, which is of the line the display begins on.
+        bool isLong = total > maxItemsCPythonHasOnItsStack;
+        if (isLong)
+            line(range.lineno);
+        for (Expr* item : items) {
             expr(item, values[next++]);
+            if (isLong)
+                line(range.lineno);
+        }
         if (injected)
             loadName(injected, values[next++], range);
         loc(range);
@@ -1838,12 +1943,13 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
     Ref<Label> start = g.newLabel();
     Ref<Label> next = g.newLabel();
     Ref<Label> end = g.newLabel();
+    Label* loop = start.ptr();
 
     auto emitInner = [&] {
         for (Expr* condition : generator->ifs) {
+            // CPython's compiler has the branches go where the jump at `next` goes, and then they are of the line of that jump.
+            SetForScope branchTarget(m_branchTarget, BranchTarget { next.ptr(), element->range.lineno, nullptr, { }, loop });
             jumpIf(condition, next.get(), false);
-            // CPython's compiler has the branch go where the jump at `next` goes, and then it is of the line of that jump.
-            line(element->range.lineno);
         }
         if (index + 1 < generators.size()) {
             comprehensionGenerator(kind, generators, index + 1, element, value, result, nullptr, range);
@@ -1905,6 +2011,7 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
             Reg item = expr(single[0]);
             store(generator->target, item.get());
             item = nullptr;
+            loop = nullptr;
             emitInner();
             g.emitLabel(next.get());
             return;
@@ -1914,7 +2021,7 @@ void Unit::comprehensionGenerator(ComprehensionKind kind, Seq<Comprehension*> ge
     Reg iterator = firstIterator;
     if (!iterator) {
         iterator = newTemporary();
-        expr(generator->iter, iterator.get());
+        exprToIterateOverOrSearch(generator->iter, iterator.get());
         loc(generator->iter->range);
         g.emitPyGetIter(iterator.get(), iterator.get());
     }
@@ -2015,6 +2122,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
             resetVariables();
             reraise(thrown.get());
             g.emitLabel(end.get());
+            silentLine(range.lineno);
         }
         return dst ? g.move(dst, result.get()) : result.get();
     }

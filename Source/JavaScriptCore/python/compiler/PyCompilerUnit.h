@@ -10,6 +10,15 @@
 namespace JSC {
 namespace Python {
 
+// What comes after a statement: something else, the end of the function, or the end of the body of a loop. See Unit::leaveStatement().
+struct Last {
+    enum Kind : uint8_t { No, OfFunction, OfLoopBody };
+    Kind kind { No };
+    unsigned loop { 0 }; // OfLoopBody: which of Unit::m_blocks.
+    explicit operator bool() const { return kind != No; }
+    Last onlyIf(bool condition) const { return condition ? *this : Last { }; }
+};
+
 // The compilation of one code object.
 //
 // An error does not stop it: the first is kept, the code that comes out is thrown away, and what is emitted after one only
@@ -52,8 +61,7 @@ public:
     void compileModule(AST::Mod*);
     void compileFunctionBody(Seq<Stmt*>);
     void compileClassBody(AST::ClassDef*, int firstLineNumber);
-    // `isLast`: after them the function ends. See leaveStatement().
-    void statements(Seq<Stmt*>, unsigned first = 0, bool isLast = false);
+    void statements(Seq<Stmt*>, unsigned first = 0, Last = { });
     void statement(Stmt*);
 
     // ---- Expressions ----
@@ -63,6 +71,7 @@ public:
     RegisterID* expr(Expr*, RegisterID* dst = nullptr);
     void exprForEffect(Expr*);
     void jumpIf(Expr*, Label& target, bool condition);
+    void jumpIfTo(Expr*, Label& target, bool condition);
     void store(Expr* target, RegisterID* value);
     void deleteTarget(Expr*);
 
@@ -134,7 +143,7 @@ private:
         Range range { }; // With
         Scope* comprehension { nullptr }; // InlinedComprehension
         unsigned number { 0 }; // For PythonMark.
-        bool isLast { false }; // A loop: after it the function ends.
+        Last isLast { }; // A loop: what comes after it.
         bool ownsIterator { false }; // ForLoop: it goes through the value of a call. See beginTemporary().
     };
 
@@ -186,8 +195,28 @@ private:
     static Range rangeOfAttributeName(AST::Attribute*);
     void hiddenJump(Label&);
     enum class JumpIs : uint8_t { OfTheProgram, Hidden };
-    void leaveStatement(Label& end, bool isLast, JumpIs);
-    void lineOfImplicitReturn(int lineno, bool isLast);
+    void leaveStatement(Label& end, Last, JumpIs);
+    void endOfStatement(Label& end);
+    bool cannotGetHere();
+    void emitImplicitReturn(const Range& = { });
+    void emitImplicitContinue(unsigned loop, const Range& = { });
+    void leave(Last, const Range& = { });
+    using ReturnsByLine = Vector<std::pair<int, Ref<Label>>, 4>;
+    void jumpIfOrLeave(Expr* test, Label& target, Last, ReturnsByLine&);
+    void emitReturnsByLine(ReturnsByLine&);
+    // What jumpIf() does about the branches that go to the label.
+    struct BranchTarget {
+        Label* label { nullptr };
+        int lineOfJumpThere { 0 }; // They are of this line: see comprehensionGenerator().
+        ReturnsByLine* returns { nullptr }; // Each goes to one of these instead, by the line it is of.
+        // Each is turned round, to jump over a jump
+        std::optional<unsigned> loop { }; // to where this loop, one of m_blocks, goes on,
+        Label* loopOfComprehension { nullptr }; // or here.
+    };
+    BranchTarget m_branchTarget;
+    Last m_leavingAs { }; // Blocks are being left by a `return` or a `continue`, or as if by one. OfFunction:
+    RegisterID* m_valueToReturn { nullptr }; // with this. Null: None.
+    void lineOfImplicitReturn(int lineno, Last);
     // Whatever follows it is never run.
     bool neverGetsPast(Stmt*);
     bool neverGetsPast(Seq<Stmt*>);
@@ -224,6 +253,10 @@ private:
     Vector<CodeInfo::Constant> m_foldedConstants;
     bool tryConstantValue(Expr*, JSValue&);
     JSValue valueCPythonsCompilerWorksOut(Expr*);
+    bool areConstants(Seq<Expr*>);
+    RegisterID* exprToIterateOverOrSearch(Expr*, RegisterID* dst = nullptr);
+    // They cannot be reached: see statements().
+    void deadStatements(Seq<Stmt*>);
     std::optional<bool> constantTruth(Expr*);
 
     RegisterID* callRuntime(RegisterID* dst, RuntimeFunction, Arguments&);
@@ -263,8 +296,9 @@ private:
         Reg annotate;
     };
     // Makes a function of the code. Its free variables are found in this unit.
+    RegisterID* emitMakeFunction(RegisterID* dst, unsigned index, Scope*, const FunctionParts&); // Of the functions of the code block.
     RegisterID* emitMakeFunction(RegisterID* dst, UnlinkedFunctionExecutable*, Scope*, const FunctionParts&);
-    void emitDefaults(AST::Arguments*, FunctionParts&);
+    void emitDefaults(AST::Arguments*, FunctionParts&, const Range&);
     void emitFunctionAnnotations(AST::Arguments*, Expr* returns, const Range&, FunctionParts&);
     void emitAnnotationsPrologue(const Range&);
     void functionDefinition(AST::FunctionDef*);
@@ -290,25 +324,24 @@ private:
     void augmentedAssign(AST::AugAssign*);
     void annotatedAssign(AST::AnnAssign*);
     void checkAnnotationTarget(Expr*);
-    void ifStatement(AST::If*, bool isLast);
-    void whileLoop(AST::While*, bool isLast);
-    void forLoop(AST::For*, bool isLast);
-    void asyncForLoop(AST::For*, bool isLast);
+    void ifStatement(AST::If*, Last);
+    void whileLoop(AST::While*, Last);
+    void forLoop(AST::For*, Last);
+    void asyncForLoop(AST::For*, Last);
     // The loop is left before its end. `exception`: by that, or null.
     void leaveAsyncFor(RegisterID* iterator, RegisterID* exception);
-    RegisterID* emitMakeFunction(RegisterID* dst, unsigned index, Scope*, const FunctionParts&); // Of the functions of the code block.
     void returnStatement(AST::Return*);
     void breakOrContinue(Stmt*, bool isBreak);
     void raiseStatement(AST::Raise*);
-    void tryStatement(AST::Try*, bool isLast);
-    void tryFinally(AST::Try*, bool isLast);
-    void tryExcept(AST::Try*, bool isLast);
-    void tryStarExcept(AST::Try*, bool isLast);
-    void withStatement(AST::With*, unsigned index, bool isLast);
+    void tryStatement(AST::Try*, Last);
+    void tryFinally(AST::Try*, Last);
+    void tryExcept(AST::Try*, Last);
+    void tryStarExcept(AST::Try*, Last);
+    void withStatement(AST::With*, unsigned index, Last);
     void assertStatement(AST::Assert*);
     void importStatement(AST::Import*);
     void importFrom(AST::ImportFrom*);
-    void matchStatement(AST::Match*, bool isLast);
+    void matchStatement(AST::Match*, Last);
     ImportMode importMode(bool isLazy, bool isStar);
 
     // ---- Blocks ----
@@ -318,7 +351,7 @@ private:
     void markBlock(const Block&, bool begins);
     // Leaves the blocks down to the innermost loop, or, without `stopAtLoop`, all of them. The code emitted from then on is
     // outside their try ranges, until `suspended` is given to resumeTry(). Returns the loop.
-    std::optional<Block> unwindBlocks(const Range&, bool stopAtLoop, Vector<TryContext>& suspended);
+    void unwindBlocks(const Range&, size_t count, Vector<TryContext>& suspended);
     void unwindBlock(const Block&, Vector<TryContext>& suspended);
     void suspendTry(size_t depth, Vector<TryContext>& suspended);
     void resumeTry(Vector<TryContext>&& suspended) { g.resumeTryContexts(WTF::move(suspended)); }
@@ -352,6 +385,14 @@ private:
     RegisterID* emitCompare(RegisterID* dst, RegisterID* left, RegisterID* right, AST::CompareKind, Expr* rightExpr);
     void checkCompare(AST::Compare*);
     RegisterID* call(AST::Call*, RegisterID* dst);
+    enum class GoesThrough : uint8_t { All, Any, Tuple, List, Set };
+    RegisterID* callOnGeneratorExpression(AST::Call*, RegisterID* callee, JSValue builtin, GoesThrough, RegisterID* dst, unsigned temporary);
+    // It makes the generator in two places, from the same code: which of the functions of the code block that is.
+    struct MadeTwice {
+        Expr* node { nullptr };
+        std::optional<unsigned> index { };
+    };
+    MadeTwice m_generatorExpressionMadeTwice;
     // callee(pushed..., *args, **keywords). `injected`: a variable to pass after the positional arguments.
     RegisterID* emitCall(RegisterID* dst, RegisterID* callee, std::span<RegisterID* const> pushed, Seq<Expr*> args, Seq<AST::Keyword*> keywords, Name injected, const Range&, unsigned temporary = 0);
 
@@ -385,14 +426,6 @@ private:
     RegisterID* sequence(SequenceKind, Seq<Expr*>, RegisterID* dst, const Range&, std::span<RegisterID* const> pushed = { }, Name injected = nullptr);
     RegisterID* dict(AST::Dict*, RegisterID* dst);
     RegisterID* joinedStr(AST::JoinedStr*, RegisterID* dst);
-    enum class GoesThrough : uint8_t { All, Any, Tuple, List, Set };
-    RegisterID* callOnGeneratorExpression(AST::Call*, RegisterID* callee, JSValue builtin, GoesThrough, RegisterID* dst, unsigned temporary);
-    // It makes the generator in two places, from the same code: which of the functions of the code block that is.
-    struct MadeTwice {
-        Expr* node { nullptr };
-        std::optional<unsigned> index { };
-    };
-    MadeTwice m_generatorExpressionMadeTwice;
     bool checkConversion(int conversion);
     RegisterID* formattedValue(AST::FormattedValue*, RegisterID* dst);
     RegisterID* templateStr(AST::TemplateStr*, RegisterID* dst);
@@ -452,7 +485,7 @@ private:
     size_t m_markedPosition { 0 };
     unsigned m_sameLineDepth { 0 };
     size_t m_statementStart { std::numeric_limits<size_t>::max() }; // Where in the instructions the last statement begins.
-    bool m_statementIsLast { false }; // For statement(): after the statement the function ends.
+    Last m_statementIsLast { }; // For statement().
     unsigned m_blockCount { 0 };
 
     Vector<Block, 8> m_blocks;

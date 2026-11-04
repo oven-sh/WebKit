@@ -307,7 +307,7 @@ void Unit::line(int lineno)
         return;
     // What follows a label may be reached from another line than the one before it.
     size_t position = g.instructions().size();
-    if (lineno == m_markedLine && (position == m_markedPosition || g.lastOpcodeID() != op_debug))
+    if (lineno == m_markedLine && (position == m_markedPosition || g.positionOfLastPythonLabel() <= m_markedPosition))
         return;
     m_markedLine = lineno;
     m_markedPosition = position;
@@ -337,19 +337,106 @@ void Unit::hiddenJump(Label& target)
 
 // A function that comes to its end returns None, and that is of the line that was run last (f_lineno of the frame afterwards, what a
 // 'return' event shows). CPython's compiler gets there by copying the return for each way that leads to it. So here: whatever would
-// jump to the end of the last statement of a function returns there and then.
-void Unit::leaveStatement(Label& end, bool isLast, JumpIs jumpIs)
+// jump to the end of the last statement of a function returns there and then. Likewise for the jump at the end of the body of a loop:
+// CPython's compiler has what would jump to it go where it goes, so that each such jump is of the line that was run last.
+void Unit::leaveStatement(Label& end, Last isLast, JumpIs jumpIs)
 {
+    if (cannotGetHere())
+        return;
     if (isLast)
-        emitReturnNone();
+        leave(isLast);
     else if (jumpIs == JumpIs::Hidden)
         hiddenJump(end);
     else
         g.emitJump(end);
 }
 
+// Several ways meet there. What comes next, if it is not a statement, is of none of their lines.
+void Unit::endOfStatement(Label& end)
+{
+    if (!end.isBound())
+        return;
+    g.emitLabel(end);
+    if (!m_sameLineDepth && m_markedLine != -1 && m_markedPosition != g.instructions().size())
+        noLine();
+}
+
+// All the ways through what was just compiled have left it. (False may mean that it is not known.)
+bool Unit::cannotGetHere()
+{
+    if (g.positionOfLastPythonLabel() == g.instructions().size())
+        return false;
+    switch (g.opcodeOfLastInstruction()) {
+    case op_jmp:
+    case op_ret:
+    case op_py_ret:
+    case op_py_generator_return:
+    case op_throw:
+    case op_unreachable:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// The statement may be in the body or in a handler of a `try` statement that is itself the last.
+void Unit::emitImplicitReturn(const Range& range)
+{
+    SetForScope leavingAs(m_leavingAs, Last { Last::OfFunction });
+    Vector<TryContext> suspended;
+    unwindBlocks(range, 0, suspended);
+    if (m_valueToReturn)
+        g.emitReturn(m_valueToReturn);
+    else
+        emitReturnNone();
+    resumeTry(WTF::move(suspended));
+}
+
+void Unit::emitImplicitContinue(unsigned loop, const Range& range)
+{
+    SetForScope leavingAs(m_leavingAs, Last { Last::OfLoopBody, loop });
+    Vector<TryContext> suspended;
+    unwindBlocks(range, loop + 1, suspended);
+    suspendTry(m_blocks[loop].tryDepth, suspended);
+    g.emitJump(*m_blocks[loop].continueTarget);
+    resumeTry(WTF::move(suspended));
+}
+
+void Unit::leave(Last isLast, const Range& range)
+{
+    ASSERT(isLast);
+    if (isLast.kind == Last::OfFunction)
+        emitImplicitReturn(range);
+    else
+        emitImplicitContinue(isLast.loop, range);
+}
+
+// jumpIf(test, target, false), for a statement after which, if the test fails and the statement is the last, the function ends. A test
+// written over several lines fails on one of them, and that is the line the function returns on. In the body of a loop, CPython has no
+// branches that go backwards: what would be one jumps over a jump.
+void Unit::jumpIfOrLeave(Expr* test, Label& target, Last isLast, ReturnsByLine& returns)
+{
+    if (isLast.kind == Last::OfLoopBody) {
+        SetForScope branchTarget(m_branchTarget, BranchTarget { &target, 0, nullptr, isLast.loop, nullptr });
+        return jumpIf(test, target, false);
+    }
+    if (!isLast || test->range.lineno == test->range.endLineno)
+        return jumpIf(test, target, false);
+    SetForScope branchTarget(m_branchTarget, BranchTarget { &target, 0, &returns, { }, nullptr });
+    jumpIf(test, target, false);
+}
+
+void Unit::emitReturnsByLine(ReturnsByLine& returns)
+{
+    for (auto& [lineno, label] : returns) {
+        g.emitLabel(label.get());
+        line(lineno);
+        emitImplicitReturn();
+    }
+}
+
 // After the label that a branch goes to when it leaves the last statement of a function: it was on that line.
-void Unit::lineOfImplicitReturn(int lineno, bool isLast)
+void Unit::lineOfImplicitReturn(int lineno, Last isLast)
 {
     if (isLast)
         line(lineno);
@@ -904,14 +991,14 @@ Unit::Try Unit::beginTry()
 {
     size_t depth = g.tryDepth();
     Ref<Label> handler = g.newLabel();
-    Ref<Label> start = g.newEmittedLabel();
+    Ref<Label> start = g.newEmittedPythonRangeLabel();
     TryData* data = g.pushTry(start.get(), handler.get(), HandlerType::Catch);
     return { data, WTF::move(handler), depth };
 }
 
 void Unit::endTry(Try& tryRange)
 {
-    Ref<Label> end = g.newEmittedLabel();
+    Ref<Label> end = g.newEmittedPythonRangeLabel();
     g.popTry(tryRange.data, end.get());
 }
 
@@ -1035,7 +1122,8 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
     case BlockKind::MatchSubject:
         return;
     case BlockKind::FinallyTry:
-        statements(block.finalBody);
+        // A `return` that runs the clause returns on the line that ran last, like a function that comes to its end.
+        statements(block.finalBody, 0, m_leavingAs);
         return;
     case BlockKind::FinallyEnd:
         restoreHandledException(block.saved);
@@ -1060,25 +1148,23 @@ void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)
     }
 }
 
-std::optional<Unit::Block> Unit::unwindBlocks(const Range& range, bool stopAtLoop, Vector<TryContext>& suspended)
+// Leaves all but the first `count` blocks.
+void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& suspended)
 {
-    if (m_blocks.isEmpty())
-        return std::nullopt;
+    if (m_blocks.size() <= count)
+        return;
     Block top = m_blocks.last();
     if (top.kind == BlockKind::ExceptionGroupHandler) {
         fail(range, "'break', 'continue' and 'return' cannot appear in an except* block"_s);
-        return std::nullopt;
+        return;
     }
-    if (stopAtLoop && (top.kind == BlockKind::WhileLoop || top.kind == BlockKind::ForLoop || top.kind == BlockKind::AsyncForLoop))
-        return top;
     // What the block runs on the way out is outside the block.
     markBlock(top, false);
     m_blocks.removeLast();
     unwindBlock(top, suspended);
-    auto result = unwindBlocks(range, stopAtLoop, suspended);
+    unwindBlocks(range, count, suspended);
     markBlock(top, true);
     m_blocks.append(top);
-    return result;
 }
 
 // ---- Statements ----
@@ -1171,10 +1257,10 @@ bool Unit::neverGetsPast(Stmt* node)
     }
 }
 
-void Unit::statements(Seq<Stmt*> body, unsigned first, bool isLast)
+void Unit::statements(Seq<Stmt*> body, unsigned first, Last isLast)
 {
     for (unsigned i = first; i < body.size(); ++i) {
-        m_statementIsLast = isLast && i + 1 == body.size();
+        m_statementIsLast = isLast.onlyIf(i + 1 == body.size());
         statement(body[i]);
         // CPython's compiler drops what cannot be reached, so that the code has no such lines: nobody can jump to them or find that
         // they were never run. Here it stays, and is of no line.
@@ -1187,12 +1273,22 @@ void Unit::statements(Seq<Stmt*> body, unsigned first, bool isLast)
     }
 }
 
+void Unit::deadStatements(Seq<Stmt*> body)
+{
+    if (body.isEmpty())
+        return;
+    if (!m_sameLineDepth)
+        noLine();
+    SameLine sameLine(*this);
+    statements(body);
+}
+
 void Unit::statement(Stmt* node)
 {
     if (!isSafeToRecurse())
         return;
 
-    bool isLast = std::exchange(m_statementIsLast, false);
+    Last isLast = std::exchange(m_statementIsLast, { });
     m_statementStart = g.instructions().size();
     switch (node->kind) {
     case StmtKind::FunctionDef:
@@ -1436,28 +1532,42 @@ void Unit::annotatedAssign(AnnAssign* node)
     }
 }
 
-void Unit::ifStatement(If* node, bool isLast)
+void Unit::ifStatement(If* node, Last isLast)
 {
     Ref<Label> end = g.newLabel();
+    auto truth = constantTruth(node->test);
     if (node->orelse.isEmpty()) {
-        jumpIf(node->test, end.get(), false);
-        statements(node->body, 0, isLast);
-        if (isLast && !neverGetsPast(node->body))
-            emitReturnNone();
-        g.emitLabel(end.get());
-        lineOfImplicitReturn(node->test->range.endLineno, isLast);
+        ReturnsByLine returns;
+        jumpIfOrLeave(node->test, end.get(), isLast, returns);
+        if (truth && !*truth)
+            deadStatements(node->body);
+        else {
+            statements(node->body, 0, isLast);
+            if (isLast.kind == Last::OfFunction && !cannotGetHere())
+                emitImplicitReturn();
+        }
+        emitReturnsByLine(returns);
+        endOfStatement(end.get());
+        lineOfImplicitReturn(node->test->range.endLineno, isLast.onlyIf(isLast.kind == Last::OfFunction));
         return;
     }
     Ref<Label> orelse = g.newLabel();
     jumpIf(node->test, orelse.get(), false);
-    statements(node->body, 0, isLast);
-    leaveStatement(end.get(), isLast, JumpIs::OfTheProgram);
+    if (truth && !*truth)
+        deadStatements(node->body);
+    else {
+        statements(node->body, 0, isLast);
+        leaveStatement(end.get(), isLast, JumpIs::OfTheProgram);
+    }
     g.emitLabel(orelse.get());
-    statements(node->orelse, 0, isLast);
-    g.emitLabel(end.get());
+    if (truth && *truth)
+        deadStatements(node->orelse);
+    else
+        statements(node->orelse, 0, isLast);
+    endOfStatement(end.get());
 }
 
-void Unit::whileLoop(While* node, bool isLast)
+void Unit::whileLoop(While* node, Last isLast)
 {
     Ref<Label> loop = g.newLabel();
     Ref<Label> anchor = g.newLabel();
@@ -1471,19 +1581,29 @@ void Unit::whileLoop(While* node, bool isLast)
     g.emitLoopHint();
     pushBlock({ .kind = BlockKind::WhileLoop, .tryDepth = g.tryDepth(), .continueTarget = loop.ptr(), .breakTarget = end.ptr(), .isLast = isLast });
     m_finallyContexts.append({ false, true });
-    jumpIf(node->test, anchor.get(), false);
-    statements(node->body);
-    g.emitJump(loop.get());
+    auto truth = constantTruth(node->test);
+    ReturnsByLine returns;
+    jumpIfOrLeave(node->test, anchor.get(), isLast.onlyIf(node->orelse.isEmpty()), returns);
+    if (truth && !*truth)
+        deadStatements(node->body);
+    else
+        statements(node->body, 0, { Last::OfLoopBody, static_cast<unsigned>(m_blocks.size() - 1) });
+    if (!cannotGetHere())
+        g.emitJump(loop.get());
     m_finallyContexts.removeLast();
     popBlock();
+    emitReturnsByLine(returns);
 
     g.emitLabel(anchor.get());
-    lineOfImplicitReturn(node->test->range.endLineno, isLast && node->orelse.isEmpty());
-    statements(node->orelse, 0, isLast);
-    g.emitLabel(end.get());
+    lineOfImplicitReturn(node->test->range.endLineno, isLast.onlyIf(node->orelse.isEmpty() && isLast.kind == Last::OfFunction));
+    if (truth && *truth)
+        deadStatements(node->orelse);
+    else
+        statements(node->orelse, 0, isLast);
+    endOfStatement(end.get());
 }
 
-void Unit::forLoop(For* node, bool isLast)
+void Unit::forLoop(For* node, Last isLast)
 {
     Ref<Label> start = g.newLabel();
     Ref<Label> cleanup = g.newLabel();
@@ -1493,7 +1613,7 @@ void Unit::forLoop(For* node, bool isLast)
     // Nothing but a call: in `for x in (g := f()):` there is a variable as well.
     unsigned temporary = node->iter->is<Call>() ? beginTemporary(node->iter) : 0;
     {
-        Reg iterable = expr(node->iter);
+        Reg iterable = exprToIterateOverOrSearch(node->iter);
         loc(node->iter->range);
         markTemporaryUsed(temporary, TemporaryUse::ForHeader, nullptr, true);
         g.emitPyGetIter(iterator.get(), iterable.get());
@@ -1520,18 +1640,20 @@ void Unit::forLoop(For* node, bool isLast)
         store(node->target, item.get());
     } else
         line(node->target->range.lineno);
-    statements(node->body);
-    g.emitJump(start.get());
+    statements(node->body, 0, { Last::OfLoopBody, static_cast<unsigned>(m_blocks.size() - 1) });
+    if (!cannotGetHere())
+        g.emitJump(start.get());
     m_finallyContexts.removeLast();
     popBlock();
 
+    // Where CPython drops the iterator.
     g.emitLabel(cleanup.get());
-    lineOfImplicitReturn(node->iter->range.lineno, isLast && node->orelse.isEmpty());
+    silentLine(node->iter->range.lineno);
     statements(node->orelse, 0, isLast);
-    g.emitLabel(end.get());
+    endOfStatement(end.get());
 }
 
-void Unit::asyncForLoop(For* node, bool isLast)
+void Unit::asyncForLoop(For* node, Last isLast)
 {
     Ref<Label> start = g.newLabel();
     Ref<Label> end = g.newLabel();
@@ -1557,17 +1679,20 @@ void Unit::asyncForLoop(For* node, bool isLast)
     callRuntime(item.get(), RuntimeFunction::GetANext, { iterator.get() });
     emitDelegate(item.get(), item.get());
     endTry(guard);
+    g.emitPyAsyncForMark(asyncForGoesOnMark);
 
     store(node->target, item.get());
     item = nullptr;
-    statements(node->body);
-    g.emitJump(start.get());
+    statements(node->body, 0, { Last::OfLoopBody, static_cast<unsigned>(m_blocks.size() - 1) });
+    if (!cannotGetHere())
+        g.emitJump(start.get());
     m_finallyContexts.removeLast();
     popBlock();
 
     Reg thrown = beginHandler(guard);
     // The end of the loop is not told of as a line.
     silentLine(node->iter->range.lineno);
+    g.emitPyAsyncForMark(asyncForEndsMark);
     loc(node->iter->range);
     callRuntimeForEffect(RuntimeFunction::EndAsyncFor, { thrown.get(), iterator.get() });
     thrown = nullptr;
@@ -1576,7 +1701,7 @@ void Unit::asyncForLoop(For* node, bool isLast)
     leaveStatement(end.get(), isLast, JumpIs::Hidden);
 
     asyncForHandler(whole, iterator.get());
-    g.emitLabel(end.get());
+    endOfStatement(end.get());
 }
 
 // See getAIterOfLoop(). For all but an iterator of JS's there is nothing to await, and nothing is.
@@ -1631,8 +1756,12 @@ void Unit::returnStatement(Return* node)
         value = constant(jsUndefined());
     line(node->range.lineno);
 
+    SetForScope leavingAs(m_leavingAs, Last { Last::OfFunction });
+    SetForScope valueToReturn(m_valueToReturn, value.get());
     Vector<TryContext> suspended;
-    unwindBlocks(node->range, false, suspended);
+    // As in CPython, where what is on the way out comes from the constant that is returned.
+    bool comesFromValue = node->value && node->value->is<Constant>() && node->value->range.lineno == node->range.lineno;
+    unwindBlocks(comesFromValue ? node->value->range : node->range, 0, suspended);
     g.emitReturn(value.get());
     resumeTry(WTF::move(suspended));
 }
@@ -1643,21 +1772,27 @@ void Unit::breakOrContinue(Stmt* node, bool isBreak)
         warn(node->range, isBreak ? "'break' in a 'finally' block"_s : "'continue' in a 'finally' block"_s);
 
     line(node->range.lineno);
-    Vector<TryContext> suspended;
-    auto loop = unwindBlocks(node->range, true, suspended);
-    if (!loop)
+    size_t loop = m_blocks.reverseFindIf([](auto& block) {
+        return block.kind == BlockKind::WhileLoop || block.kind == BlockKind::ForLoop || block.kind == BlockKind::AsyncForLoop;
+    });
+    if (loop == notFound) {
+        // (What is in the way is looked at first.)
+        Vector<TryContext> suspended;
+        SetForScope leavingAs(m_leavingAs, Last { });
+        unwindBlocks(node->range, 0, suspended);
+        resumeTry(WTF::move(suspended));
         fail(node->range, isBreak ? "'break' outside loop"_s : "'continue' not properly in loop"_s);
-    else {
-        suspendTry(loop->tryDepth, suspended);
-        if (isBreak && loop->ownsIterator)
-            callRuntimeForEffect(RuntimeFunction::ReleaseIterator, { loop->saved });
-        if (isBreak && loop->kind == BlockKind::AsyncForLoop)
-            leaveAsyncFor(loop->saved, nullptr);
-        if (isBreak)
-            leaveStatement(*loop->breakTarget, loop->isLast, JumpIs::OfTheProgram);
-        else
-            g.emitJump(*loop->continueTarget);
+        return;
     }
+    if (!isBreak)
+        return emitImplicitContinue(loop, node->range);
+    // To leave a loop that is the last statement of the function is to return, and so on.
+    if (m_blocks[loop].isLast)
+        return leave(m_blocks[loop].isLast, node->range);
+    SetForScope leavingAs(m_leavingAs, Last { });
+    Vector<TryContext> suspended;
+    unwindBlocks(node->range, loop, suspended);
+    g.emitJump(*m_blocks[loop].breakTarget);
     resumeTry(WTF::move(suspended));
 }
 
@@ -1676,7 +1811,7 @@ void Unit::raiseStatement(Raise* node)
     callRuntime(arguments[0], RuntimeFunction::Raise, arguments);
 }
 
-void Unit::tryStatement(AST::Try* node, bool isLast)
+void Unit::tryStatement(AST::Try* node, Last isLast)
 {
     line(node->range.lineno);
     if (!node->finalbody.isEmpty())
@@ -1686,7 +1821,7 @@ void Unit::tryStatement(AST::Try* node, bool isLast)
     tryExcept(node, isLast);
 }
 
-void Unit::tryFinally(AST::Try* node, bool isLast)
+void Unit::tryFinally(AST::Try* node, Last isLast)
 {
     Ref<Label> exit = g.newLabel();
 
@@ -1695,9 +1830,9 @@ void Unit::tryFinally(AST::Try* node, bool isLast)
     if (node->handlers.isEmpty())
         statements(node->body);
     else if (node->isStar())
-        tryStarExcept(node, false);
+        tryStarExcept(node, { });
     else
-        tryExcept(node, false);
+        tryExcept(node, { });
     popBlock();
     endTry(body);
 
@@ -1721,19 +1856,22 @@ void Unit::tryFinally(AST::Try* node, bool isLast)
     restoreHandledException(previous.get());
     reraise(thrown.get());
 
-    g.emitLabel(exit.get());
+    endOfStatement(exit.get());
 }
 
-void Unit::tryExcept(AST::Try* node, bool isLast)
+void Unit::tryExcept(AST::Try* node, Last isLast)
 {
     Ref<Label> end = g.newLabel();
 
     Try body = beginTry();
     pushBlock({ .kind = BlockKind::TryExcept, .tryDepth = body.depthBefore });
-    statements(node->body);
+    statements(node->body, 0, isLast.onlyIf(node->orelse.isEmpty()));
     popBlock();
     endTry(body);
-    statements(node->orelse, 0, isLast);
+    if (neverGetsPast(node->body))
+        deadStatements(node->orelse);
+    else
+        statements(node->orelse, 0, isLast);
     leaveStatement(end.get(), isLast, JumpIs::Hidden);
 
     Reg previous;
@@ -1767,10 +1905,12 @@ void Unit::tryExcept(AST::Try* node, bool isLast)
             storeName(handler->name, exception.get(), handler->range);
             Try nameCleanup = beginTry();
             pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get(), .name = handler->name, .range = handler->range });
-            statements(handler->body);
+            statements(handler->body, 0, isLast);
             popBlock();
             endTry(nameCleanup);
             outsideTry(cleanup.depthBefore, [&] {
+                if (cannotGetHere())
+                    return;
                 SameLine sameLine(*this);
                 restoreHandledException(previous.get());
                 storeName(handler->name, constant(jsUndefined()), handler->range);
@@ -1785,9 +1925,11 @@ void Unit::tryExcept(AST::Try* node, bool isLast)
             reraise(thrown.get());
         } else {
             pushBlock({ .kind = BlockKind::HandlerCleanup, .tryDepth = cleanup.depthBefore, .saved = previous.get() });
-            statements(handler->body);
+            statements(handler->body, 0, isLast);
             popBlock();
             outsideTry(cleanup.depthBefore, [&] {
+                if (cannotGetHere())
+                    return;
                 restoreHandledException(previous.get());
                 leaveStatement(end.get(), isLast, JumpIs::Hidden);
             });
@@ -1807,20 +1949,20 @@ void Unit::tryExcept(AST::Try* node, bool isLast)
     restoreHandledException(previous.get());
     reraise(thrown.get());
 
-    g.emitLabel(end.get());
+    endOfStatement(end.get());
 }
 
-void Unit::tryStarExcept(AST::Try* node, bool isLast)
+void Unit::tryStarExcept(AST::Try* node, Last isLast)
 {
     Ref<Label> orelse = g.newLabel();
     Ref<Label> end = g.newLabel();
 
     Try body = beginTry();
     pushBlock({ .kind = BlockKind::TryExcept, .tryDepth = body.depthBefore });
-    statements(node->body);
+    statements(node->body, 0, isLast.onlyIf(node->orelse.isEmpty()));
     popBlock();
     endTry(body);
-    hiddenJump(orelse.get());
+    leaveStatement(orelse.get(), isLast.onlyIf(node->orelse.isEmpty()), JumpIs::Hidden);
 
     Reg previous;
     Reg original = beginExceptionHandler(body, previous);
@@ -1846,7 +1988,7 @@ void Unit::tryStarExcept(AST::Try* node, bool isLast)
             callRuntime(rest.get(), RuntimeFunction::TakeExceptionGroupRest);
             Reg isNone = newTemporary();
             g.emitPyIsNone(isNone.get(), match.get());
-            g.emitJumpIfTrue(isNone.get(), next.get());
+            g.emitPyJumpIfTrue(isNone.get(), next.get());
         } else
             g.move(match.get(), rest.get());
 
@@ -1891,7 +2033,7 @@ void Unit::tryStarExcept(AST::Try* node, bool isLast)
     {
         Reg isNone = newTemporary();
         g.emitPyIsNone(isNone.get(), toRaise.get());
-        g.emitJumpIfTrue(isNone.get(), end.get());
+        g.emitPyJumpIfTrue(isNone.get(), end.get());
     }
     reraise(toRaise.get());
 
@@ -1900,11 +2042,14 @@ void Unit::tryStarExcept(AST::Try* node, bool isLast)
     reraise(thrown.get());
 
     g.emitLabel(orelse.get());
-    statements(node->orelse, 0, isLast);
-    g.emitLabel(end.get());
+    if (neverGetsPast(node->body))
+        deadStatements(node->orelse);
+    else
+        statements(node->orelse, 0, isLast);
+    endOfStatement(end.get());
 }
 
-void Unit::withStatement(With* node, unsigned index, bool isLast)
+void Unit::withStatement(With* node, unsigned index, Last isLast)
 {
     bool isAsync = node->isAsync();
     WithItem* item = node->items[index];
@@ -1937,11 +2082,12 @@ void Unit::withStatement(With* node, unsigned index, bool isLast)
     if (index + 1 == node->items.size())
         statements(node->body);
     else
-        withStatement(node, index + 1, false);
+        withStatement(node, index + 1, { });
     popBlock();
     endTry(body);
 
     {
+        line(range.lineno);
         Reg result = newTemporary();
         RegisterID* none = constant(jsUndefined());
         emitMethodCall(result.get(), exit.get(), exitSelf.get(), { none, none, none }, range);
@@ -1975,7 +2121,7 @@ void Unit::withStatement(With* node, unsigned index, bool isLast)
     restoreHandledException(previous.get());
     reraise(thrown.get());
 
-    g.emitLabel(end.get());
+    endOfStatement(end.get());
 }
 
 void Unit::assertStatement(Assert* node)
@@ -1987,6 +2133,7 @@ void Unit::assertStatement(Assert* node)
     Ref<Label> end = g.newLabel();
     jumpIf(node->test, end.get(), true);
     Arguments arguments(*this, 2);
+    line(node->range.lineno);
     g.move(arguments[0], constant(runtime().AssertionError()));
     if (node->msg) {
         Reg message = expr(node->msg);
@@ -2239,10 +2386,11 @@ void Unit::emitDeferredAnnotations(const Range& range)
                 else
                     g.emitPyLoadGlobal(set.get(), unit.nameConstant(name));
                 g.emitPyCompare(set.get(), unit.constant(jsNumber(deferred.conditionalIndex)), set.get(), CompareOperator::In);
-                g.emitJumpIfFalse(set.get(), notSet.get());
+                g.emitPyJumpIfFalse(set.get(), notSet.get());
             }
             Reg value = unit.expr(statement->annotation);
-            unit.loc(statement->range);
+            unit.line(statement->range.lineno);
+            unit.loc(range);
             g.emitPySetItem(annotations.get(), unit.nameConstant(unit.mangle(statement->target->as<NameExpr>()->id)), value.get());
             g.emitLabel(notSet.get());
         }
@@ -2288,7 +2436,7 @@ void Unit::compileModule(Mod* module)
             storeName(c.name("__doc__"_s), stringConstant(docstring), body[0]->range);
         }
     }
-    statements(body, first);
+    statements(body, first, { Last::OfFunction });
     // All of a module with nothing in it is of line 0, which whoever traces it is told of: a debugger stops there.
     if (body.isEmpty())
         g.addPythonMark(PythonMark::Line, lineMarkValue(0, true));
@@ -2297,7 +2445,11 @@ void Unit::compileModule(Mod* module)
 
 void Unit::compileFunctionBody(Seq<Stmt*> body)
 {
-    statements(body, m_scope->hasDocstring ? 1 : 0, true);
+    unsigned first = m_scope->hasDocstring ? 1 : 0;
+    statements(body, first, { Last::OfFunction });
+    // A function with nothing in it returns on the line it begins on.
+    if (first == body.size())
+        line(m_info.firstLineNumber);
     emitReturnNone();
 }
 

@@ -627,16 +627,28 @@ of no line; here the program's own code starts; here a block begins or ends that
 compiler location by location, artificial code included: operations on constants that it works out are of one line, statements that cannot be reached are of none. A line of which no instruction came (`pass`, `try:`, `x = (` over `1)`) has a mark on
 whatever comes next, which costs nothing; only where that can be reached from elsewhere is there an `op_nop`, as in CPython.
 `f_lineno`, tracebacks, `co_lines()` and `LINE` events all go by the marks.
-A function that falls off its end returns on the line of whatever ran last. CPython gets there by copying the implicit `return` for each block that leads to it; here a compound statement
-that is the last of the function is told so (`isLast`), and each of its ways out returns for itself (`Unit::leaveStatement()`) or marks the line it leaves on (`Unit::lineOfImplicitReturn()`).
-A line is news if the frame was on another line before. For nearly every mark that is plain from the code (`CodeMonitor::findPoints`).
+A function or a module that falls off its end returns on the line of whatever ran last. CPython gets there by copying the implicit `return` for each block that leads to it; here a compound statement
+that is the last of the function is told so (`Last`), bodies and handlers of `try` statements included, and each of its ways out returns for itself (`Unit::leaveStatement()`) or marks the line it
+leaves on (`Unit::lineOfImplicitReturn()`). A test written over several lines returns from the line it fails on. A `return` that runs a `finally` clause returns on the line of the clause that ran last.
+The same goes for the jump at the end of the body of a loop, which CPython's compiler has every jump to it replaced by: the last statement of the body is told so, and each of its ways out jumps back for itself, on its own line.
+A test that fails there would be a branch backwards, which CPython does not have: the branch is turned round and jumps over a jump (`Unit::jumpIfOrLeave()`), so left and right are as in CPython.
+Where the ways out of a compound statement meet, what comes next, if it is not a statement, is of no line (`Unit::endOfStatement()`). What no way leads to is not emitted (`Unit::cannotGetHere()`).
+A line is news if the frame was on another line before. For nearly every mark that is plain from the code (`CodeMonitor::findPoints`), which leaves out what cannot be reached.
+The first line of an exception handler is news unless the exception was raised on that line (`with a: b()`): the runtime remembers the line of the last `raise`.
+Code written on the line of its `def`, `lambda` or `class` is on that line from the start. A trace function is told of the line all the same, and tools are if one of them is told of `PY_START` there: that is what CPython does.
 Where the frame may come from the same line or from another, the jumps and branches that lead there say which: those from other lines tell of the line
 (the head of a `for` loop), or those from the same line say that it is not news (`return (a and` over `b)`). In what is left, one code object in 200 of the
 standard library, the frame object remembers the line it was last on, and all places where lines begin stay changed while a tool wants any of them.
 
 **Jumps and branches.** The layout is not CPython's, so some of the jumps here are none there, and are not told of (`Unit::hiddenJump()`): over
-an exception handler, which CPython moves out of the way; between the two ways a method call is compiled. A jump to a jump is told of as one. A `for` loop that goes on, and an
+an exception handler, which CPython moves out of the way; between the two ways a method call is compiled. A jump to a jump is told of as one, and a branch to a jump that has no line of its own
+is said to go where the jump goes, in events and in `co_branches()`. A `for` loop that goes on, and an
 `except E:` that matches, go on "in their own last byte", which is of their line, where CPython has an instruction to store the item or drop the exception.
+Every test of the program's is a branch of Python's (`op_py_jtrue` and the like), also where the value is known to be a bool (`x is None`, `x in y`, patterns). The branches of JS are those the compiler
+adds for itself. An `async for` loop has no instruction that branches: two `op_nop`, marked, stand for the two ways. Code that cannot be reached has no branches.
+
+**Generator expressions.** `all()`, `any()`, `tuple()`, `list()` and `set()` of a generator expression are compiled as in CPython: if the name is bound to the builtin, the code goes through the generator itself
+(`Unit::callOnGeneratorExpression()`). No call is told of, the loop is, and `all()` and `any()` close the generator they leave early, there and then.
 
 **Offsets.** What a program is given for a place in the code (`f_lasti`, `tb_lasti`, `co_lines()`, `co_positions()`, `co_branches()`, the arguments of callbacks) is twice the offset
 in JSC's instructions (`shownOffset()`): in CPython code is made of units of two bytes, and `traceback.py` and `dis` count on it. `co_code` is an outline in those

@@ -32,6 +32,7 @@
 #include "PyThreads.h"
 #include "PyTuple.h"
 #include <map>
+#include <wtf/BitVector.h>
 #include <wtf/HexNumber.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SetForScope.h>
@@ -410,6 +411,8 @@ void CodeMonitor::findPoints(bool everyInstruction)
         bool isJumpedTo { false }; // By anything but a `for` loop that ends.
         bool isResumedAt { false };
         bool isHiddenJump { false };
+        uint8_t asyncForMark { 0 };
+        bool firstLineFollowsCatch { false };
         bool fallsThrough { true };
         unsigned sharedLineStart { noLineStart };
 
@@ -437,17 +440,21 @@ void CodeMonitor::findPoints(bool everyInstruction)
             unsigned lineMarkCount = 0;
             for (; nextMark < marks.size() && marks[nextMark].offset <= item.offset; ++nextMark) {
                 auto& mark = marks[nextMark];
-                if (mark.kind() == PythonMark::NoLine && mark.value() == hiddenJumpMark) {
-                    item.isHiddenJump = true;
+                if (mark.kind() == PythonMark::NoLine && mark.value()) {
+                    if (mark.value() == hiddenJumpMark)
+                        item.isHiddenJump = true;
+                    else
+                        item.asyncForMark = mark.value();
                     continue;
                 }
                 if (mark.kind() != PythonMark::Line && mark.kind() != PythonMark::NoLine && mark.kind() != PythonMark::Start)
                     continue;
                 int before = item.exitLine;
-                bool isFirst = !std::exchange(item.isMarked, true);
+                item.isMarked = true;
                 item.exitLine = mark.kind() == PythonMark::Line ? lineOfMarkValue(mark.value()) : -1;
                 if (mark.kind() != PythonMark::Line)
                     continue;
+                bool isFirst = !lineMarkCount;
                 unsigned offset = item.offset + lineMarkCount++;
                 if (isSilentLine(mark.value()) || (!isFirst && item.exitLine == before))
                     continue;
@@ -486,7 +493,32 @@ void CodeMonitor::findPoints(bool everyInstruction)
         if (maybeFromSameLine && (!byJump || maybeFromOtherLine))
             item.isReachedFromSameLineOnlyByJumps = false;
     };
+    // Nothing comes from what cannot be reached (`if 0:`).
+    BitVector isReachable(items.size());
+    {
+        Vector<unsigned, 16> toVisit;
+        auto visit = [&](unsigned index) {
+            if (index < items.size() && !isReachable.set(index))
+                toVisit.append(index);
+        };
+        visit(0);
+        for (unsigned i = 0; i < items.size(); ++i) {
+            if (items[i].opcode == op_catch)
+                visit(i);
+        }
+        while (!toVisit.isEmpty()) {
+            unsigned i = toVisit.takeLast();
+            if (items[i].fallsThrough)
+                visit(i + 1);
+            extractStoredJumpTargetsForInstruction(code, instructions.at(items[i].offset), [&](int32_t relative) {
+                if (auto it = indexOfOffset.find(items[i].offset + relative); it != indexOfOffset.end())
+                    visit(it->value);
+            });
+        }
+    }
     for (unsigned i = 0; i < items.size(); ++i) {
+        if (!isReachable.get(i))
+            continue;
         if (items[i].offset == start) {
             items[i].linesBefore.append(-1);
             items[i].isReachedFromOtherLineOnlyByJumps = false;
@@ -522,6 +554,41 @@ void CodeMonitor::findPoints(bool everyInstruction)
             item.linesBefore.append(item.entryLine);
         }
     }
+    for (unsigned i = 0; i + 1 < items.size(); ++i) {
+        if (items[i].opcode != op_catch)
+            continue;
+        unsigned next = i + 1;
+        if (items[next].isHiddenJump) {
+            auto it = indexOfOffset.find(items[next].offset + jumpTargetForInstruction<OpJmp>(code, instructions.at(items[next].offset)));
+            if (it == indexOfOffset.end())
+                continue;
+            next = it->value;
+        }
+        while (next < items.size() && !items[next].lineCount && items[next].fallsThrough)
+            ++next;
+        if (next < items.size() && items[next].entryLine >= 0)
+            items[next].firstLineFollowsCatch = true;
+    }
+    // CPython's compiler has a branch to a jump go where the jump goes.
+    auto whereItEndsUp = [&](unsigned offset) {
+        for (unsigned count = 0; count < 8; ++count) {
+            auto it = indexOfOffset.find(offset);
+            if (it == indexOfOffset.end() || items[it->value].opcode != op_jmp || (!items[it->value].isHiddenJump && items[it->value].isMarked && items[it->value].exitLine >= 0))
+                break;
+            offset += jumpTargetForInstruction<OpJmp>(code, instructions.at(offset));
+        }
+        return offset;
+    };
+    // Code written on the line of its `def`, `lambda` or `class` is on that line from the start. As in CPython, a trace function is told
+    // of the line all the same, and so are the tools if one of them is told that the code starts.
+    unsigned indexOfLineOfDefinition = std::numeric_limits<unsigned>::max();
+    if (auto it = indexOfOffset.find(start); it != indexOfOffset.end()) {
+        unsigned index = it->value;
+        while (index < items.size() && !items[index].lineCount && items[index].fallsThrough && (index == it->value || !items[index].isMarked))
+            ++index;
+        if (index < items.size() && items[index].entryLine == m_lineBeforeStart)
+            indexOfLineOfDefinition = index;
+    }
     // Being at an instruction is news of the first of its lines if the frame was on another. For some, it may or may not have been.
     // Such is the head of a `for` loop: it is on the line of what comes before it, and is jumped to from the end of the body. If
     // all that comes from other lines is jumps, the jumps tell of the line. If all that comes from the same line is jumps, they tell
@@ -553,9 +620,10 @@ void CodeMonitor::findPoints(bool everyInstruction)
 
     bool isBeingResumed = false;
     bool isExceptionMatch = false;
+    Vector<unsigned, 4> asyncForLoops;
     for (auto& item : items) {
         isBeingResumed |= item.isResumedAt;
-        if (item.offset < start)
+        if (item.offset < start || !isReachable.get(&item - items.begin()))
             continue;
 
         Point point;
@@ -609,10 +677,24 @@ void CodeMonitor::findPoints(bool everyInstruction)
                     point.kinds |= Point::goesOnInItself;
                 extractStoredJumpTargetsForInstruction(code, instructions.at(item.offset), [&](int32_t relative) {
                     point.target = item.offset + relative;
+                    point.shownTarget = whereItEndsUp(point.target);
                     noteTarget(point, item, point.target);
                 });
             }
             break;
+        }
+        if (item.asyncForMark == asyncForGoesOnMark) {
+            point.kinds |= bit(Event::BranchLeft);
+            point.shownTarget = point.next;
+            asyncForLoops.append(item.offset);
+        } else if (item.asyncForMark == asyncForEndsMark && !asyncForLoops.isEmpty()) {
+            point.kinds |= bit(Event::BranchRight);
+            point.source = asyncForLoops.takeLast();
+            // After RuntimeFunction::EndAsyncFor.
+            unsigned index = &item - items.begin();
+            while (index + 1 < items.size() && items[index].opcode != op_py_runtime)
+                ++index;
+            point.shownTarget = whereItEndsUp(items[index].offset + instructions.at(items[index].offset)->size());
         }
 
         // While the registers are being put back nothing is told of.
@@ -620,6 +702,9 @@ void CodeMonitor::findPoints(bool everyInstruction)
             point.firstLineStart = m_lineStarts.size();
             if (item.entryLine >= 0 && item.sharedLineStart == noLineStart && isReachedFromOtherLine(item)) {
                 m_lineStarts.append({ item.entryLine, lines[item.firstLine].offset, 0, item.isNewsUnlessToldOtherwise });
+                if (static_cast<unsigned>(&item - items.begin()) == indexOfLineOfDefinition)
+                    m_lineStarts.last().isOnLineOfDefinition = true;
+                point.firstLineFollowsCatch = item.firstLineFollowsCatch;
                 if (isReachedFromSameLine(item) && !item.isNewsUnlessToldOtherwise) {
                     point.firstLineIsInDoubt = true;
                     m_needsLastLine = true;
@@ -1260,8 +1345,11 @@ bool Monitoring::legacyEvent(JSGlobalObject* globalObject, CallFrame* callFrame,
         return callTraceFunction(globalObject, frame, event, shown, What::Call, jsUndefined());
     case Event::PyReturn:
     case Event::PyYield:
-        // What the compiler adds at the end goes with the line before it, whichever that was.
-        return callTraceFunction(globalObject, frame, event, { frame->lastLine, frame->lastLineOffset }, What::Return, third);
+        // What ends the body of a module or a class goes with the line before it, whichever that was. A function has a return of its
+        // own for each way that leads to its end.
+        if (functionOf(callFrame)->codeInfo().takesNamespace)
+            shown = { frame->lastLine, frame->lastLineOffset };
+        return callTraceFunction(globalObject, frame, event, shown, What::Return, third);
     case Event::PyUnwind:
         return callTraceFunction(globalObject, frame, event, shown, What::Return, jsUndefined());
     case Event::Raise:
@@ -1312,7 +1400,7 @@ static constexpr ASCIILiteral eventNames[Event::count] = {
     "RAISE"_s, "EXCEPTION_HANDLED"_s, "PY_UNWIND"_s, "PY_THROW"_s, "RERAISE"_s, "C_RETURN"_s, "C_RAISE"_s, "BRANCH"_s,
 };
 
-bool Monitoring::fire(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMonitor& monitor, unsigned offset, unsigned event, uint8_t tools, JSValue third, JSValue fourth)
+bool Monitoring::fire(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMonitor& monitor, unsigned offset, unsigned event, uint8_t tools, JSValue third, JSValue fourth, std::optional<unsigned> shownOffsetOfPlace)
 {
     if (!tools)
         return true;
@@ -1321,7 +1409,7 @@ bool Monitoring::fire(JSGlobalObject* globalObject, CallFrame* callFrame, CodeMo
     unsigned count = fourth ? 4 : third ? 3 : 2;
     if (tools & ((1 << numberOfFreeMonitoringTools) - 1)) {
         arguments[0] = codeOf(globalObject, functionOf(callFrame));
-        arguments[1] = jsNumber(shownOffset(visibleOffset(monitor.code()->pythonMarks(), offset)));
+        arguments[1] = jsNumber(shownOffset(visibleOffset(monitor.code()->pythonMarks(), shownOffsetOfPlace.value_or(offset))));
     }
     while (tools) {
         unsigned tool = 31 - std::countl_zero(static_cast<uint32_t>(tools));
@@ -1365,6 +1453,8 @@ bool Monitoring::fireLineStart(JSGlobalObject* globalObject, CallFrame* callFram
     int line = monitor.m_lineStarts[index].line;
     Shown shown { line, static_cast<int>(monitor.m_lineStarts[index].offset) };
     uint8_t tools = monitor.tools(Event::Line) & ~monitor.m_lineStarts[index].disabledTools;
+    if (monitor.m_lineStarts[index].isOnLineOfDefinition && std::exchange(m_startIsToldOfIn, nullptr) != callFrame)
+        tools &= 1 << traceTool;
     if (!tools)
         return true;
     if (tools >> traceTool & 1) {
@@ -1402,6 +1492,9 @@ bool Monitoring::fireLine(JSGlobalObject* globalObject, CallFrame* callFrame, Co
     unsigned first = point.firstLineStart;
     unsigned count = point.lineStartCount;
     bool firstLineIsInDoubt = point.firstLineIsInDoubt;
+    // A handler on the line of what raised the exception: `with a: b()`.
+    if (point.firstLineFollowsCatch && m_raisedIn == callFrame && m_raisedOnLine == monitor.m_lineStarts[first].line)
+        comesFromSameLine = true;
     PyFrame* frame = monitor.m_needsLastLine || monitor.tools(Event::Line) >> traceTool ? frameObjectOf(globalObject, callFrame) : frameObjectIfThereIsOne(callFrame);
     // It got here because a trace function said so.
     if (frame && frame->jumpedTo) {
@@ -1513,6 +1606,8 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
     uint16_t kinds = point->kinds;
     unsigned offsetOfNext = point->next;
     unsigned target = point->target;
+    unsigned shownTarget = point->shownTarget;
+    unsigned source = point->source;
     Outcome runIt { pc, opcode };
     static constexpr Outcome threw { nullptr, 0 };
 
@@ -1566,6 +1661,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
     };
 
     if (kinds & bit(Event::PyStart)) {
+        m_startIsToldOfIn = wanted(Event::PyStart) ? callFrame : nullptr;
         PyFrame* frame = frameObjectIfAny(callFrame);
         if (frame && frame->jumpedTo && std::exchange(frame->jumpsToStart, false))
             frame->jumpedTo = std::nullopt;
@@ -1705,6 +1801,16 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         return { next(), goOn };
     }
 
+    // asyncForGoesOnMark, asyncForEndsMark
+    case op_nop: {
+        if (!(kinds & (bit(Event::BranchLeft) | bit(Event::BranchRight))))
+            return runIt;
+        unsigned event = kinds & bit(Event::BranchLeft) ? Event::BranchLeft : Event::BranchRight;
+        if (!fire(globalObject, callFrame, monitor, offset, event, wanted(event), jsNumber(shownOffset(shownTarget)), { }, event == Event::BranchRight ? source : offset))
+            return threw;
+        return runIt;
+    }
+
     case op_jmp: {
         // A jump to a jump is told of as one jump: CPython's compiler makes the first go where the second goes.
         auto jumpAt = [&](unsigned where) {
@@ -1797,13 +1903,18 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             destination = static_cast<const JSInstruction*>(result);
         }
         unsigned event = destination == next() ? Event::BranchLeft : Event::BranchRight;
-        unsigned shownDestination = event == Event::BranchLeft ? offsetOfNext : target;
+        unsigned shownDestination = event == Event::BranchLeft ? offsetOfNext : shownTarget;
         if (event == Event::BranchLeft && kinds & CodeMonitor::Point::goesOnInItself)
             shownDestination = whereItGoesOnInItself(shownDestination);
         if (!fire(globalObject, callFrame, monitor, offset, event, wanted(event), jsNumber(shownOffset(shownDestination))))
             return threw;
-        if (event == Event::BranchRight && !tellOfLineAt(target, elsewhere))
-            return elsewhere;
+        if (event == Event::BranchRight) {
+            if (!tellOfLineAt(target, elsewhere))
+                return elsewhere;
+            // So that jump is not told of.
+            if (auto* other = shownTarget != target ? monitor.pointAt(target) : nullptr; other && other->isPatched)
+                m_jumpGoesOn = { callFrame, target };
+        }
         if (item)
             callFrame->uncheckedR(pc->as<OpPyForIter>().m_dst) = item; // Last: see op_call above.
         return { destination, goOn };
@@ -1856,7 +1967,9 @@ JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallF
     // What raises it again on behalf of the program, from no line, does so as if from here: see PyFrame::bytecodeOffset().
     bool isWanted = runtime(globalObject).monitoring().wantsExceptions();
     auto marks = callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks();
-    if (int line = lineOfMarks(marks, index.offset()); line >= 0) {
+    int line = lineOfMarks(marks, index.offset());
+    runtime(globalObject).monitoring().noteWhereItIsRaised(callFrame, line);
+    if (line >= 0) {
         if (PyFrame* frame = isWanted ? PyFrame::of(globalObject, callFrame) : frameObjectIfAny(callFrame)) {
             frame->raisedOnLine = line;
             frame->raisedAtOffset = visibleOffset(marks, index.offset());
@@ -2362,16 +2475,16 @@ JSArray* Monitoring::branches(JSGlobalObject* globalObject, PyCode* code)
         monitor->update();
     }
     const JSInstructionStream& instructions = monitor->code()->instructions();
+    auto marks = monitor->code()->pythonMarks();
     for (auto& point : monitor->m_points) {
-        if (!(point.kinds & bit(Event::BranchLeft)))
+        if (!(point.kinds & bit(Event::BranchRight)))
             continue;
-        auto instruction = instructions.at(point.offset);
-        extractStoredJumpTargetsForInstruction(monitor->code(), instruction, [&](int32_t relative) {
-            unsigned left = point.offset + instruction->size();
-            if (point.kinds & CodeMonitor::Point::goesOnInItself)
-                left = whereItGoesOnInItself(left);
-            listAppend(globalObject, result, PyTuple::create(globalObject, { jsNumber(shownOffset(visibleOffset(monitor->code()->pythonMarks(), point.offset))), jsNumber(shownOffset(left)), jsNumber(shownOffset(point.offset + relative)) }));
-        });
+        // asyncForEndsMark
+        unsigned source = point.kinds & bit(Event::BranchLeft) ? point.offset : point.source;
+        unsigned left = source + instructions.at(source)->size();
+        if (point.kinds & CodeMonitor::Point::goesOnInItself)
+            left = whereItGoesOnInItself(left);
+        listAppend(globalObject, result, PyTuple::create(globalObject, { jsNumber(shownOffset(visibleOffset(marks, source))), jsNumber(shownOffset(left)), jsNumber(shownOffset(point.shownTarget)) }));
     }
     return result;
 }

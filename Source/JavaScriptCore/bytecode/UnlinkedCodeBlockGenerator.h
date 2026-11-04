@@ -84,6 +84,8 @@ public:
     }
     void addPythonMark(const PythonMark& mark) { m_pythonMarks.append(mark); }
     std::span<const PythonMark> pythonMarks() const { return m_pythonMarks.span(); }
+    const PythonMark* lastPythonMark() const { return m_pythonMarks.isEmpty() ? nullptr : &m_pythonMarks.last(); }
+    void removeLastPythonMark() { m_pythonMarks.removeLast(); }
     void movePythonMarksAfterFirstLine(unsigned from, unsigned to)
     {
         size_t first = m_pythonMarks.size();

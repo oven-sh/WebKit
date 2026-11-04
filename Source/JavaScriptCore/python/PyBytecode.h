@@ -71,12 +71,15 @@ enum class CompareOperator : uint8_t {
 // ---- What the compiler tells whoever traces the program: PythonMark, in UnlinkedCodeBlock.h ----
 //
 // Line: `value` is lineMarkValue().
-// NoLine: with `value` 0, what follows was not written by the program. With hiddenJumpMark, this says nothing about lines: the jump that
-//     comes next is not one the program makes.
+// NoLine: with `value` 0, what follows was not written by the program. With another, this says nothing about lines. hiddenJumpMark: the
+//     jump that comes next is not one the program makes. asyncForGoesOnMark, asyncForEndsMark: what comes next does nothing, and is where
+//     an `async for` loop has an item, or an exception in place of one: the two ways of a branch.
 // Start: where the program's own code begins, after the frame has been set up.
 // BlockBegin, BlockEnd: `value` numbers the block, `bits` is a TracedBlock.
 
 constexpr unsigned hiddenJumpMark = 1;
+constexpr unsigned asyncForGoesOnMark = 2;
+constexpr unsigned asyncForEndsMark = 3;
 
 // A statement begins: nothing is in a temporary register but what belongs to the blocks it is in.
 constexpr unsigned lineMarkValue(int line, bool isStatementStart, bool isSilent = false) { return static_cast<unsigned>(line) << 2 | isSilent << 1 | isStatementStart; }
@@ -210,10 +213,10 @@ constexpr int firstSendOfAwait = 8;
     v(GetYieldFromIter, 1) \
     v(GetAIterOfLoop, 1) \
     v(LeaveAsyncFor, 2) /* iterator, exception or empty: what to await, or None */ \
+    v(DropGenerator, 1) /* See generatorIsDropped(). */ \
     v(GetANext, 1) \
     v(EndAsyncFor, 2) /* exception, iterator: swallows StopAsyncIteration, throws anything else */ \
     v(AsyncGenWrap, 1) \
-    v(DropGenerator, 1) /* See generatorIsDropped(). */ \
     v(ThrowIntoGenerator, 1) \
     /* match */ \
     v(MatchSequence, 1) \

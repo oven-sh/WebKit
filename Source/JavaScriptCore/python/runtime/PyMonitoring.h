@@ -88,6 +88,7 @@ public:
         unsigned offset; // As co_lines() has it.
         uint8_t disabledTools { 0 };
         bool isShared { false }; // By several places: see Point::lineStartOfTarget.
+        bool isOnLineOfDefinition { false }; // See findPoints().
     };
     static constexpr unsigned noLineStart = std::numeric_limits<unsigned>::max();
 
@@ -105,8 +106,11 @@ public:
         bool isPatched { false };
         unsigned next { 0 }; // The offset of the instruction that follows.
         unsigned target { 0 }; // A jump, or a branch: where it goes.
+        unsigned shownTarget { 0 }; // A branch: where it is said to go.
+        unsigned source { 0 }; // asyncForEndsMark: where the branch is said to be.
         // Whether the first of the lines is news depends on where the frame comes from: see findPoints().
         bool firstLineIsInDoubt { false };
+        bool firstLineFollowsCatch { false }; // It is news unless the exception was raised on that line.
         unsigned firstLineStart { 0 };
         unsigned lineStartCount { 0 };
         // A jump, or a branch: the line that begins where it goes, if it has something to say about that: see findPoints().
@@ -278,6 +282,11 @@ public:
     Outcome handle(JSGlobalObject*, CallFrame*, const JSInstruction*);
     // True: it is worth calling these two.
     bool wantsExceptions() const { return m_wantsExceptions; }
+    void noteWhereItIsRaised(CallFrame* callFrame, int line)
+    {
+        m_raisedIn = callFrame;
+        m_raisedOnLine = line;
+    }
     // With no exception pending. False: one is now.
     bool exceptionEvent(JSGlobalObject*, CallFrame*, unsigned offset, unsigned event, JSValue exception);
 
@@ -308,7 +317,7 @@ private:
     // 0: go on. 1: DISABLE. -1: an exception.
     int callTool(JSGlobalObject*, CallFrame*, unsigned tool, unsigned event, Shown, std::span<const JSValue> arguments);
     // Tells the tools (bits) of an event at a place. False: an exception.
-    bool fire(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset, unsigned event, uint8_t tools, JSValue third = { }, JSValue fourth = { });
+    bool fire(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset, unsigned event, uint8_t tools, JSValue third = { }, JSValue fourth = { }, std::optional<unsigned> shownOffsetOfPlace = { });
     bool fireLine(JSGlobalObject*, CallFrame*, CodeMonitor&, const CodeMonitor::Point&, bool comesFromSameLine);
     bool fireLineStart(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned offset, unsigned lineStart);
     bool legacyEvent(JSGlobalObject*, CallFrame*, CodeMonitor&, unsigned tool, unsigned event, unsigned offset, JSValue third, JSValue fourth, bool& disable);
@@ -322,6 +331,9 @@ private:
     std::array<uint8_t, Event::ungroupedCount> m_globalTools { };
     bool m_globalToolsWantPlaces { false };
     bool m_wantsExceptions { false };
+    CallFrame* m_startIsToldOfIn { nullptr };
+    CallFrame* m_raisedIn { nullptr };
+    int m_raisedOnLine { -1 };
     // All code that has a CodeBlock has a monitor: so it is from the first time that something is wanted everywhere.
     bool m_knowsAllCode { false };
     unsigned m_monitorsWithLocalTools { 0 };

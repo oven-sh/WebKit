@@ -56,11 +56,17 @@ RegisterID* Unit::applyDecorators(Seq<Expr*> decorators, Vector<Reg, 4>& registe
     return value;
 }
 
-void Unit::emitDefaults(AST::Arguments* arguments, FunctionParts& parts)
+void Unit::emitDefaults(AST::Arguments* arguments, FunctionParts& parts, const Range& range)
 {
     if (!arguments->defaults.isEmpty()) {
         parts.defaults = newTemporary();
-        sequence(SequenceKind::Tuple, arguments->defaults, parts.defaults.get(), arguments->defaults[0]->range);
+        // The tuple is of the line the definition begins on: all there is, if it is a constant.
+        std::optional<SameLine> sameLine;
+        if (!m_sameLineDepth && areConstants(arguments->defaults)) {
+            line(range.lineno);
+            sameLine.emplace(*this);
+        }
+        sequence(SequenceKind::Tuple, arguments->defaults, parts.defaults.get(), range);
     }
     unsigned count = 0;
     for (Expr* value : arguments->kwDefaults)
@@ -73,6 +79,7 @@ void Unit::emitDefaults(AST::Arguments* arguments, FunctionParts& parts)
     for (unsigned i = 0; i < arguments->kwonlyargs.size(); ++i) {
         if (!arguments->kwDefaults[i])
             continue;
+        line(range.lineno);
         g.move(items[next++], nameConstant(mangle(arguments->kwonlyargs[i]->arg)));
         expr(arguments->kwDefaults[i], items[next++]);
     }
@@ -112,11 +119,13 @@ void Unit::emitFunctionAnnotations(AST::Arguments* arguments, Expr* returns, con
         Arguments items(unit, annotations.size() * 2);
         unsigned next = 0;
         for (auto& annotation : annotations) {
+            unit.line(range.lineno);
             unit.g.move(items[next++], unit.nameConstant(unit.mangle(annotation.name)));
             RegisterID* value = items[next++];
-            if (c.m_future.annotations)
+            if (c.m_future.annotations) {
+                unit.line(annotation.value->range.lineno);
                 unit.g.move(value, unit.stringConstant(annotationText(annotation.value)));
-            else if (auto* starred = annotation.value->tryAs<Starred>()) {
+            } else if (auto* starred = annotation.value->tryAs<Starred>()) {
                 // *args: *Ts
                 unit.expr(starred->value, value);
                 unit.loc(range);
@@ -124,6 +133,7 @@ void Unit::emitFunctionAnnotations(AST::Arguments* arguments, Expr* returns, con
             } else
                 unit.expr(annotation.value, value);
         }
+        unit.line(range.lineno);
         Reg result = unit.newTemporary();
         unit.callRuntime(result.get(), RuntimeFunction::BuildMap, items);
         unit.g.emitReturn(result.get());
@@ -155,7 +165,7 @@ void Unit::functionDefinition(FunctionDef* node)
     int firstLineNumber = node->decoratorList.isEmpty() ? node->range.lineno : node->decoratorList[0]->range.lineno;
 
     FunctionParts parts;
-    emitDefaults(node->args, parts);
+    emitDefaults(node->args, parts, node->range);
 
     Reg function = newTemporary();
     if (node->typeParams.isEmpty()) {
@@ -197,7 +207,7 @@ void Unit::functionDefinition(FunctionDef* node)
 RegisterID* Unit::lambda(Lambda* node, RegisterID* dst)
 {
     FunctionParts parts;
-    emitDefaults(node->args, parts);
+    emitDefaults(node->args, parts, node->range);
     Scope* scope = c.m_symbols->scopeFor(node);
     CodeSpec spec { UnitKind::Lambda, scope, names().lambda, node->range, node->range.lineno };
     spec.arguments = node->args;
