@@ -595,13 +595,12 @@ static bool structureTellsAttributes(Runtime& rt, JSCell* cell, PyType* type, St
     return cell->type() == PyInstanceType && !uncheckedDowncast<PyInstance>(cell)->dict() && !isValidOffset(structure->get(rt.vm(), rt.instanceHasDictKey()));
 }
 
-bool describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name, bool forCall, AttributeCache& cache)
+// All but the versions. `type`: whose version is to be remembered, if any.
+static bool describeAttributeOfObject(JSGlobalObject* globalObject, JSCell* cell, JSString* name, bool forCall, AttributeCache& cache, PyType*& type)
 {
-    if (!object.isCell())
-        return false;
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    JSCell* cell = object.asCell();
+    JSValue object = cell;
     JSType jsType = cell->type();
 
     // As in moduleGetAttr().
@@ -626,10 +625,10 @@ bool describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* n
     bool isPython = isPyObjectType(jsType);
     if (!isPython && jsType != StringType && jsType != ArrayType)
         return false;
-    PyType* type = rt.typeOf(object);
-    if (!isNative(type->lookup(Special::GetAttribute), objectGetAttribute))
+    PyType* typeOfObject = rt.typeOf(object);
+    if (!isNative(typeOfObject->lookup(Special::GetAttribute), objectGetAttribute))
         return false;
-    JSValue descriptor = type->lookup(name);
+    JSValue descriptor = typeOfObject->lookup(name);
     if (mayBecomeAnotherKindOfDescriptor(rt, descriptor))
         return false;
 
@@ -641,9 +640,9 @@ bool describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* n
         return true;
     }
 
+    type = typeOfObject;
     Structure* structure = cell->structure();
     cache.structureID = cell->structureID();
-    cache.typeVersion = type->version();
 
     // One of the __slots__.
     if (descriptor && descriptor.isCell() && descriptor.asCell()->type() == PyObjectType && descriptor.asCell()->classInfo() == PyMemberDescriptor::info()) {
@@ -682,6 +681,21 @@ bool describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* n
     return true;
 }
 
+bool describeAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name, bool forCall, AttributeCache& cache)
+{
+    if (!object.isCell())
+        return false;
+    // A type is asked for its version last: it has only so many to give.
+    JSCell* cell = object.asCell();
+    PyType* type = nullptr;
+    if (!describeAttributeOfObject(globalObject, cell, name, forCall, cache, type))
+        return false;
+    if (!type)
+        return true;
+    cache.typeVersion = type->version();
+    return !!cache.typeVersion;
+}
+
 bool describeSpecialMethod(JSGlobalObject* globalObject, JSValue object, Special special, AttributeCache& cache)
 {
     if (!object.isCell() || !isPyObjectType(object.asCell()->type()))
@@ -695,7 +709,7 @@ bool describeSpecialMethod(JSGlobalObject* globalObject, JSValue object, Special
     cache.typeVersion = type->version();
     cache.payload = JSValue::encode(descriptor);
     cache.offset = AttributeCache::classValue;
-    return true;
+    return !!cache.typeVersion;
 }
 
 bool describeSetAttribute(JSGlobalObject* globalObject, JSValue object, JSString* name, Structure* oldStructure, SetAttributeCache& cache)
@@ -730,14 +744,14 @@ bool describeSetAttribute(JSGlobalObject* globalObject, JSValue object, JSString
     if (!isValidOffset(cache.offset))
         return false;
     cache.oldStructureID = oldStructure->id();
+    if (structure != oldStructure) {
+        // The instruction does not allocate.
+        if (structure->previousID() != oldStructure || structure->outOfLineCapacity() != oldStructure->outOfLineCapacity())
+            return false;
+        cache.newStructureID = structure->id();
+    }
     cache.typeVersion = type->version();
-    if (structure == oldStructure)
-        return true;
-    // The instruction does not allocate.
-    if (structure->previousID() != oldStructure || structure->outOfLineCapacity() != oldStructure->outOfLineCapacity())
-        return false;
-    cache.newStructureID = structure->id();
-    return true;
+    return !!cache.typeVersion;
 }
 
 JSValue lookupSpecial(JSGlobalObject* globalObject, JSValue object, Special special)

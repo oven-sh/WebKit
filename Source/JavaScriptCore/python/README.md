@@ -109,6 +109,8 @@ unpacking, cells, the binding of arguments when they are simply the parameters.
   has and where. A type has a number too, new whenever it or one of its bases changes (`PyType::version`). An instruction
   remembers Structure, version and offset, or the value found in the class, or the method to call. `obj.__dict__` moves the
   attributes into a real dict, for good, and gives the object a Structure that says so.
+  The numbers are finite, so a type takes one only when something is to be remembered about it, and at most 1000, as in CPython:
+  about a class that keeps changing (`C.count += 1`) nothing is remembered after that.
 - _Calls_ are JSC's.
 
 `object.name(...)` makes no bound method: `op_py_get_method` gives the function and the object, which is passed as the first argument.

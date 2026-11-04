@@ -19,7 +19,7 @@
 #include "PyRuntime.h"
 #include "PyStr.h"
 #include "PyWeakRef.h"
-#include <wtf/Scope.h>
+#include <wtf/SetForScope.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -61,7 +61,6 @@ bool PyType::customHasInstance(JSObject* object, JSGlobalObject*, JSValue value)
 
 PyType::PyType(VM& vm, Structure* structure)
     : Base(vm, structure, callType, constructType)
-    , m_version(nextVersion())
 {
 }
 
@@ -258,7 +257,7 @@ JSValue PyType::lookupSlow(JSString* name)
     if (!mro)
         return { };
     VM& vm = this->vm();
-    uint32_t version = m_version;
+    uint32_t numberOfChanges = m_numberOfChanges;
     JSValue value;
     for (unsigned i = 0; !value && i < mro->length(); ++i) {
         PyDict* dict = uncheckedDowncast<PyType>(mro->at(i).asCell())->dict();
@@ -276,7 +275,7 @@ JSValue PyType::lookupSlow(JSString* name)
             takePendingException(globalObject);
     }
     // And it may have changed the type, or its bases.
-    if (m_version != version) [[unlikely]]
+    if (m_numberOfChanges != numberOfChanges) [[unlikely]]
         return value;
     StringImpl* impl = name->tryGetValueImpl();
     LookupCacheEntry& entry = lookupCacheEntry(impl);
@@ -289,9 +288,9 @@ JSValue PyType::lookupSlow(JSString* name)
 JSValue PyType::lookupSpecialSlow(Special special)
 {
     Runtime& rt = Runtime::from(realm());
-    uint32_t version = m_version;
+    uint32_t numberOfChanges = m_numberOfChanges;
     JSValue value = lookup(rt.name(special));
-    if (m_version != version) [[unlikely]]
+    if (m_numberOfChanges != numberOfChanges) [[unlikely]]
         return value;
     unsigned index = static_cast<unsigned>(special);
     m_specials[index].set(rt.vm(), this, value);
@@ -310,12 +309,19 @@ static PyType* subclassInEntry(JSValue entry)
     return cell ? uncheckedDowncast<PyType>(cell) : nullptr;
 }
 
-uint32_t PyType::nextVersion()
+uint32_t PyType::takeVersion()
 {
     static std::atomic<uint32_t> last;
-    uint32_t version = ++last;
-    RELEASE_ASSERT(version);
-    return version;
+    if (!m_versionsLeft || m_isBeingToldOfChange)
+        return 0;
+    uint32_t version = last.load(std::memory_order_relaxed);
+    do {
+        if (version == std::numeric_limits<uint32_t>::max()) [[unlikely]]
+            return 0;
+    } while (!last.compare_exchange_weak(version, version + 1, std::memory_order_relaxed));
+    --m_versionsLeft;
+    m_version = version + 1;
+    return m_version;
 }
 
 Structure* createStructureOfInstances(VM&, JSGlobalObject*, Runtime&, unsigned inlineCapacity); // PyObject.cpp
@@ -338,13 +344,12 @@ Structure* PyType::createInstanceStructure(VM& vm)
 
 void PyType::didChange(VM& vm)
 {
-    // No version: it is being told already. (Two types may each have the other in an MRO of their own making.)
-    if (!m_version)
+    // Two types may each have the other in an MRO of their own making.
+    if (m_isBeingToldOfChange)
         return;
+    SetForScope isBeingTold(m_isBeingToldOfChange, true);
     m_version = 0;
-    auto setVersion = makeScopeExit([&] {
-        m_version = nextVersion();
-    });
+    ++m_numberOfChanges;
     // What the caches held must not be kept alive by them: it may be what was just taken out of the class.
     m_specialIsCached.fill(false);
     for (auto& special : m_specials)

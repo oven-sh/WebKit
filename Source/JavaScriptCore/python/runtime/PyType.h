@@ -158,8 +158,14 @@ public:
     // After a change to the dict of the type, or to its bases.
     void didChange(VM&);
     // A number that no other type has or had, nor this one before it last changed: what was found by looking a name up in the
-    // type holds for as long as the type has the number.
-    uint32_t version() const { return m_version; }
+    // type holds for as long as the type has the number. 0: it has none, and nothing is to be remembered about it. A type gets
+    // a number when it is asked for one, and a type that keeps changing gets no more of them after a while: they are finite.
+    uint32_t version()
+    {
+        if (m_version) [[likely]]
+            return m_version;
+        return takeVersion();
+    }
     static constexpr ptrdiff_t offsetOfVersion() { return OBJECT_OFFSETOF(PyType, m_version); }
 
     // Of an instance without attributes, for a type whose instances are PyInstances.
@@ -210,7 +216,7 @@ private:
     JSValue lookupSlow(JSString* name);
     JSValue lookupSpecialSlow(Special);
     Structure* createInstanceStructure(VM&);
-    static uint32_t nextVersion();
+    uint32_t takeVersion();
 
     WriteBarrier<PyType> m_type;
     WriteBarrier<JSString> m_name;
@@ -226,7 +232,10 @@ private:
     WriteBarrier<Structure> m_instanceStructure;
     WriteBarrier<JSObject> m_jsPrototype;
     OptionSet<TypeFlag> m_flags;
-    uint32_t m_version;
+    uint32_t m_version { 0 };
+    uint32_t m_numberOfChanges { 0 };
+    uint16_t m_versionsLeft { 1000 };
+    bool m_isBeingToldOfChange { false };
     std::array<bool, numberOfSpecials> m_specialIsCached { };
     std::array<WriteBarrier<Unknown>, numberOfSpecials> m_specials;
     std::array<LookupCacheEntry, lookupCacheSize> m_lookupCache;
