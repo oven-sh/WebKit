@@ -587,7 +587,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
             continue;
         unsigned next = i + 1;
         if (items[next].isHiddenJump) {
-            auto it = indexOfOffset.find(items[next].offset + jumpTargetForInstruction<OpJmp>(code, instructions.at(items[next].offset)));
+            auto it = indexOfOffset.find(targetOfJump(code, items[next].offset));
             if (it == indexOfOffset.end())
                 continue;
             next = it->value;
@@ -695,7 +695,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
                     break;
                 const Item& next = items[it->value];
                 if (next.isHiddenJump && next.offset > item.offset) {
-                    point.shownTarget = next.offset + jumpTargetForInstruction<OpJmp>(code, instructions.at(next.offset));
+                    point.shownTarget = targetOfJump(code, next.offset);
                     continue;
                 }
                 // What ends a `with` or a handler is on the line where that begins.
@@ -1615,6 +1615,24 @@ static SlowPathFunction slowPathOfBranch(OpcodeID opcode)
     }
 }
 
+static ALWAYS_INLINE PyGenerator* generatorOf(CallFrame* callFrame)
+{
+    return uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell());
+}
+
+static ALWAYS_INLINE bool isResumedToThrow(CallFrame* callFrame)
+{
+    return callFrame->uncheckedArgument(static_cast<int>(JSGenerator::Argument::ResumeMode) - 1).asInt32() != static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode);
+}
+
+static bool isSendThatThrows(CallFrame* callFrame, const JSInstruction* instruction)
+{
+    if (instruction->opcodeID() != op_py_send)
+        return false;
+    int mode = callFrame->r(instruction->as<OpPySend>().m_mode).jsValue().asInt32();
+    return mode != static_cast<int>(JSGenerator::ResumeMode::NormalMode) && mode < firstSendOfAwait;
+}
+
 // iterNext(), for a `for` loop. If the iterator ends by raising StopIteration, that is told of as raised in the loop. A generator that
 // returns something raises it as far as anybody can tell.
 static JSValue nextOfLoop(JSGlobalObject* globalObject, JSValue iterator, JSValue& stopIteration)
@@ -1763,10 +1781,10 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             frame->lastLine = monitor.lineAt(offset);
             frame->lastLineOffset = offset;
         }
-        bool isThrow = callFrame->uncheckedArgument(static_cast<int>(JSGenerator::Argument::ResumeMode) - 1).asInt32() != static_cast<int32_t>(JSGenerator::ResumeMode::NormalMode);
+        bool isThrow = isResumedToThrow(callFrame);
         if (isThrow) {
             JSValue exception = callFrame->uncheckedArgument(static_cast<int>(JSGenerator::Argument::Value) - 1);
-            if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::PyThrow, monitor.tools(Event::PyThrow), exception)))
+            if (!generatorOf(callFrame)->throwIsWithDelegate && failed(scope, fire(globalObject, callFrame, monitor, offset, Event::PyThrow, monitor.tools(Event::PyThrow), exception)))
                 return threw;
         } else if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::PyResume, wanted(Event::PyResume))))
             return threw;
@@ -1799,6 +1817,8 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
     case op_py_generator_return: {
         unsigned event = opcode == op_py_generator_suspend ? Event::PyYield : Event::PyReturn;
         VirtualRegister value = opcode == op_py_generator_suspend ? pc->as<OpPyGeneratorSuspend>().m_value : pc->as<OpPyGeneratorReturn>().m_value;
+        if (isResumedToThrow(callFrame) && generatorOf(callFrame)->throwIsWithDelegate)
+            return runIt;
         if (failed(scope, fire(globalObject, callFrame, monitor, offset, event, wanted(event), callFrame->r(value).jsValue())))
             return threw;
         if (jumped(elsewhere))
@@ -1952,6 +1972,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         if (!tools)
             return runIt;
         auto bytecode = pc->as<OpPySend>();
+        bool throws = isSendThatThrows(callFrame, pc);
         const void* target;
         const void* signal;
         decodeResult(slow_path_py_send(callFrame, pc), target, signal);
@@ -1959,7 +1980,8 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             return threw;
         setCurrentOffset(offset);
         auto* destination = static_cast<const JSInstruction*>(target);
-        if (destination == next() || !PyGenerator::is(callFrame->uncheckedR(bytecode.m_iterator).jsValue()))
+        // (delegateReturnedWhenThrownInto() has told of that.)
+        if (destination == next() || throws || !PyGenerator::is(callFrame->uncheckedR(bytecode.m_iterator).jsValue()))
             return { destination, goOn };
         JSValue value = callFrame->uncheckedR(bytecode.m_dst).jsValue();
         PyException* exception;
@@ -2039,8 +2061,65 @@ bool Monitoring::exceptionEvent(JSGlobalObject* globalObject, CallFrame* callFra
     return fire(globalObject, callFrame, *monitor, offset, event, tools, exception);
 }
 
-// `thrown` is being thrown, and the unwinder is at the frame.
-static JSValue tellOfException(JSGlobalObject* globalObject, JSValue thrown, CallFrame* callFrame, unsigned offset, unsigned event)
+bool Monitoring::lineOfSendIsToldOfAgain(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned offset)
+{
+    auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
+    CodeMonitor* monitor = functionOf(callFrame)->codeInfo().monitor.get();
+    if (m_runtime.tracingDepth || !monitor || !monitor->isAwake())
+        return true;
+    auto* point = monitor->pointAt(offset);
+    int line = monitor->lineAt(offset);
+    if (!point || line < 0)
+        return true;
+    // The handler is a place of its own, which a tool can disable.
+    uint8_t tools = monitor->tools(Event::Line) & ~point->disabledTools[Event::Line];
+    if (!tools)
+        return true;
+    Shown shown { line, static_cast<int>(offset) };
+    if (tools >> traceTool & 1) {
+        PyFrame* frame = frameObjectOf(globalObject, callFrame);
+        frame->lastLine = line;
+        frame->lastLineOffset = offset;
+        if (frame->trace() && failed(scope, traceLine(globalObject, frame, shown)))
+            return false;
+    }
+    JSValue arguments[2] = { codeOf(globalObject, functionOf(callFrame)), jsNumber(line) };
+    for (unsigned tool = numberOfFreeMonitoringTools; tool--;) {
+        if (!(tools >> tool & 1))
+            continue;
+        int result = callTool(globalObject, callFrame, tool, Event::Line, shown, arguments);
+        if (failed(scope, result >= 0))
+            return false;
+        if (!result)
+            continue;
+        if ((point = monitor->pointAt(offset))) {
+            point->disabledTools[Event::Line] |= 1 << tool;
+            monitor->m_hasSomethingDisabled = true;
+        }
+    }
+    return true;
+}
+
+void Monitoring::delegateReturnedWhenThrownInto(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned offset, JSValue result)
+{
+    auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
+    CodeMonitor* monitor = functionOf(callFrame)->codeInfo().monitor.get();
+    if (m_runtime.tracingDepth || !monitor || !monitor->isAwake())
+        return;
+    PyException* exception = isNone(result) ? newException(globalObject, m_runtime.StopIteration(), std::span<const JSValue> { }) : newException(globalObject, m_runtime.StopIteration(), std::span<const JSValue> { &result, 1 });
+    if (failed(scope, exception))
+        return;
+    for (unsigned event : { Event::PyThrow, Event::Raise, Event::ExceptionHandled }) {
+        if (failed(scope, exceptionEvent(globalObject, callFrame, offset, event, exception)))
+            return;
+    }
+    scope.release();
+    lineOfSendIsToldOfAgain(globalObject, callFrame, offset);
+}
+
+// `thrown` is being thrown, and the unwinder is at the frame. `tell` is given the exception. False: it has raised another.
+template<typename Function>
+static JSValue tellWhileUnwinding(JSGlobalObject* globalObject, JSValue thrown, CallFrame* callFrame, const Function& tell)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -2056,7 +2135,7 @@ static JSValue tellOfException(JSGlobalObject* globalObject, JSValue thrown, Cal
         rt.framesToldOfException.removeLast(callFrame);
     });
     JSValue exception = exceptionFromThrownValue(globalObject, thrown);
-    if (failed(scope, exception) || failed(scope, rt.monitoring().exceptionEvent(globalObject, callFrame, offset, event, exception)))
+    if (failed(scope, exception) || failed(scope, tell(exception)))
         return scope.exception()->value();
     {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -2066,22 +2145,42 @@ static JSValue tellOfException(JSGlobalObject* globalObject, JSValue thrown, Cal
     return thrown;
 }
 
+static JSValue tellOfException(JSGlobalObject* globalObject, JSValue thrown, CallFrame* callFrame, unsigned offset, unsigned event)
+{
+    return tellWhileUnwinding(globalObject, thrown, callFrame, [&](JSValue exception) {
+        return runtime(globalObject).monitoring().exceptionEvent(globalObject, callFrame, offset, event, exception);
+    });
+}
+
 JSValue exceptionIsRaised(JSGlobalObject* globalObject, JSValue exception, CallFrame* callFrame, BytecodeIndex index, bool isRaisedAgain)
 {
     // What raises it again on behalf of the program, from no line, does so as if from here: see PyFrame::bytecodeOffset().
     bool isWanted = runtime(globalObject).monitoring().wantsExceptions();
     auto marks = callFrame->codeBlock()->unlinkedCodeBlock()->pythonMarks();
     int line = lineOfMarks(marks, index.offset());
-    runtime(globalObject).monitoring().noteWhereItIsRaised(callFrame, line);
+    // What throw() raises comes from outside: a handler on the line of the `yield` is told of as a line that begins.
+    auto* instruction = callFrame->codeBlock()->instructionAt(index);
+    bool isThrownIn = instruction->opcodeID() == op_py_runtime && static_cast<RuntimeFunction>(instruction->as<OpPyRuntime>().m_function) == RuntimeFunction::ThrowIntoGenerator;
+    runtime(globalObject).monitoring().noteWhereItIsRaised(callFrame, isThrownIn ? -1 : line);
     if (line >= 0) {
         if (PyFrame* frame = isWanted ? PyFrame::of(globalObject, callFrame) : frameObjectIfAny(callFrame)) {
             frame->raisedOnLine = line;
             frame->raisedAtOffset = visibleOffset(marks, index.offset());
         }
     }
-    if (!isWanted) [[likely]]
-        return exception;
-    return tellOfException(globalObject, exception, callFrame, index.offset(), isRaisedAgain ? Event::Reraise : Event::Raise);
+    CodeMonitor* monitor = functionOf(callFrame)->codeInfo().monitor.get();
+    if (!monitor || !monitor->isAwake() || isRaisedAgain || !isSendThatThrows(callFrame, instruction)) [[likely]] {
+        if (!isWanted) [[likely]]
+            return exception;
+        return tellOfException(globalObject, exception, callFrame, index.offset(), isRaisedAgain ? Event::Reraise : Event::Raise);
+    }
+    // See Monitoring::lineOfSendIsToldOfAgain().
+    for (unsigned event : { Event::PyThrow, Event::Raise, Event::ExceptionHandled })
+        exception = tellOfException(globalObject, exception, callFrame, index.offset(), event);
+    exception = tellWhileUnwinding(globalObject, exception, callFrame, [&](JSValue) {
+        return runtime(globalObject).monitoring().lineOfSendIsToldOfAgain(globalObject, callFrame, index.offset());
+    });
+    return tellOfException(globalObject, exception, callFrame, index.offset(), Event::Reraise);
 }
 
 JSValue exceptionStaysOrLeaves(JSGlobalObject* globalObject, JSValue exception, CallFrame* callFrame, BytecodeIndex index, bool isCaught)

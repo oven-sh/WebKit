@@ -295,6 +295,11 @@ public:
     }
     // With no exception pending. False: one is now.
     bool exceptionEvent(JSGlobalObject*, CallFrame*, unsigned offset, unsigned event, JSValue exception);
+    // throw() or close() of a generator that delegates. What was thrown has gone to the delegate, by the op_py_send at the offset. In
+    // CPython the generator is resumed only when the delegate has raised or returned, with the exception or the
+    // StopIteration, in a handler on the line of the `yield from`, which raises all but a StopIteration again.
+    bool lineOfSendIsToldOfAgain(JSGlobalObject*, CallFrame*, unsigned offset);
+    void delegateReturnedWhenThrownInto(JSGlobalObject*, CallFrame*, unsigned offset, JSValue result);
 
     // frame.f_lineno = line. With an exception if it cannot be.
     void jump(JSGlobalObject*, PyFrame*, int line);

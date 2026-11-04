@@ -602,8 +602,15 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_send)
         mode = static_cast<int>(JSGenerator::ResumeMode::NormalMode);
     }
     JSValue yielded = sendToDelegate(globalObject, GET(bytecode.m_iterator).jsValue(), GET(bytecode.m_value).jsValue(), static_cast<JSGenerator::ResumeMode>(mode));
+    if (!yielded)
+        uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell())->throwIsWithDelegate = false;
     CHECK_EXCEPTION();
-    GET(bytecode.m_dst) = yielded ? yielded : runtime(globalObject).takeSendResult();
+    JSValue result = yielded ? yielded : runtime(globalObject).takeSendResult();
+    if (!yielded && mode != static_cast<int>(JSGenerator::ResumeMode::NormalMode)) [[unlikely]] {
+        runtime(globalObject).monitoring().delegateReturnedWhenThrownInto(globalObject, callFrame, codeBlock->bytecodeOffset(pc), result);
+        CHECK_EXCEPTION();
+    }
+    GET(bytecode.m_dst) = result;
     JUMP_IF(!yielded);
 }
 

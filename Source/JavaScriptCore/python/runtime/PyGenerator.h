@@ -57,6 +57,11 @@ public:
     JSValue delegate() const { return m_delegate.get(); }
     void setDelegate(VM& vm, JSValue value) { m_delegate.set(vm, this, value); }
 
+    // It has been resumed to raise something, which goes to what it delegates to first, and that has neither raised nor returned
+    // yet. (It means nothing once the generator has been resumed to go on.) CPython does not resume the generator for
+    // that, so nobody is told that it is resumed, or that it yields again: Monitoring::handle().
+    bool throwIsWithDelegate { false };
+
     // The exception being handled in the generator, which stays with it while it is suspended.
     JSValue handledException() const { return m_handledException.get(); }
     void setHandledException(VM& vm, JSValue value) { m_handledException.set(vm, this, value); }

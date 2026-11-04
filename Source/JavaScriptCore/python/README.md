@@ -648,6 +648,10 @@ coverage tools are CPython's own code on top. It is all in `runtime/PyMonitoring
   something that is not a Python function (`C_RETURN`, `C_RAISE`), the end of a `yield from` (`STOP_ITERATION`). `Name(...)` is an ordinary call while calls are told of.
 - _Events to do with exceptions_ (`RAISE`, `RERAISE`, `EXCEPTION_HANDLED`, `PY_UNWIND`) come from the unwinder, which looks at one flag for each
   Python frame an exception passes.
+- `throw()` and `close()` of a generator that delegates go to the innermost one first in CPython, and the outer ones are resumed only if something
+  comes back. Here every one on the way is resumed, from the outside in, to hand on what was thrown (`op_py_send`), so it says nothing while
+  it does (`PyGenerator::throwIsWithDelegate`): no `PY_THROW` as it is resumed, no `PY_YIELD` if the inner one yields again. What CPython
+  tells of when the exception comes back (`PY_THROW`, `RAISE`, the handler that drops the delegate, the line once more, `RERAISE`), or when the inner one returns, is told of then.
 - What a tool, a trace function or an audit hook (without `__cantrace__`) does is not told of (`Runtime::tracingDepth`).
 
 **Lines.** The compiler leaves marks (`PythonMark`, in the rare data of the `UnlinkedCodeBlock`; what they say is in `PyBytecode.h`): here begins line _n_; what follows is

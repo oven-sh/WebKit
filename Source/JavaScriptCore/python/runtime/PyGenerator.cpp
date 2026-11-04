@@ -216,6 +216,7 @@ PyGenerator::Outcome PyGenerator::resume(JSGlobalObject* globalObject, JSValue v
     ASSERT(state() >= 0);
     ASSERT(state() || mode == ResumeMode::NormalMode);
 
+    throwIsWithDelegate = mode != ResumeMode::NormalMode && m_delegate;
     JSValue arguments[] = { this, m_state.get(), value, jsNumber(static_cast<int32_t>(mode)), jsUndefined() };
     JSValue returned = callBodyOfGenerator(globalObject, body(), arguments);
     if (scope.exception()) [[unlikely]] {
