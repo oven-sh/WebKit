@@ -581,6 +581,14 @@ FinalizationOrder finalizationOrder(JSC::Heap&, SlotVisitor&, std::span<JSCell* 
 // function(generator, value) for what is in the variables of the generators, coroutines and async generators that are running, in
 // whatever thread: while one runs they are in the frame of its body, not in the generator.
 void forEachVariableOfRunningGenerators(VM&, const ScopedLambda<void(PyGenerator*, JSValue)>&);
+// What the frames of the threads that do not hold the GIL refer to: what they call, its arguments, and in a frame of Python the
+// variables and the temporaries in use. Some of the values are empty.
+void forEachValueInFramesOfParkedThreads(VM&, const ScopedLambda<void(JSValue)>&);
+// When the interpreter exits: the threads that are still there never run again, and what they kept in instances of threading.local
+// goes, as it does when a thread ends.
+void forgetThreadLocalsOfOtherThreads(JSGlobalObject*);
+// The cells that those given lead to, themselves included, by way of cells of which `isEntered` says so. No cell is allocated.
+UncheckedKeyHashSet<JSCell*> cellsReachedFrom(VM&, std::span<JSCell* const>, const ScopedLambda<bool(JSCell*)>& isEntered);
 
 // Which of the locals of a frame of the LLInt or the Baseline JIT hold values that the code may still read. `isCalling`: there is a
 // frame that this one called. False: there is no telling.

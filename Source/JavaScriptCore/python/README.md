@@ -293,6 +293,14 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   collections find and order what only the modules held. What is then still held (by JS, by a frame on the stack) is finalized in
   the order it was made. A program that leaves nothing to finalize exits without a collection; a generator that has not begun is
   nothing to finalize.
+- **What a daemon thread still holds at exit is never finalized**, as in CPython, where the frames of a thread that never runs again
+  never let go: its variables and temporaries, the arguments of the built-in functions it is in, and by way of its functions their
+  globals, with all that those lead to (`whatOtherThreadsHold`). A file among that is not closed, and what was written to it and
+  not flushed is lost. A finalizer would see what no code was meant to see: a thread stopped half way through `close()` has
+  closed the descriptor and not yet said so. The frames are walked, not scanned: Python code runs in the LLInt, where every value
+  of a frame is in a register that the code block knows of. As CPython empties the modules that are still referred to once
+  `sys.modules` is gone, and `sys` and `builtins` at the very end, the walk does not go into a module object that it meets, nor into its
+  dict. What belongs to the thread and not to its frames goes too: what it kept in a `threading.local`, the exception it is handling.
 - **`gc.collect()`** collects, serves the queue, and repeats until nothing is left to do, so `del x; gc.collect()` does what it does in
   CPython. For that to be true the stack scan must not see stale values: before it, the temporaries of Python frames that liveness
   analysis says are dead are emptied (`clearDeadTemporaries`). Variables are not: an object lives while a variable names it.

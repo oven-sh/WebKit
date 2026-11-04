@@ -570,7 +570,8 @@ public:
     ALWAYS_INLINE bool mayHavePendingOutput() const { return m_mayHavePendingOutput; }
     void setMayHavePendingOutput(bool value) { m_mayHavePendingOutput = value; }
     void didQueueCalls();
-    // When the interpreter exits: whatever is still registered is finalized, reachable or not.
+    // When the interpreter exits: whatever is still registered is finalized, reachable or not, but for what the threads hold that
+    // are still there.
     void finalizeAllAtExit();
     // See the function of that name in PyBuffer.h.
     void releaseUnreachableBuffers(bool thorough);
@@ -942,6 +943,7 @@ private:
     MonotonicTime m_collectionBegan;
     Vector<PyWeakRef*> weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor&);
     void didMarkAll(SlotVisitor&) WTF_REQUIRES_LOCK(m_finalizationLock);
+    UncheckedKeyHashSet<JSCell*> whatOtherThreadsHold();
     bool m_hasPendingCalls { false };
     bool m_isRunningPendingCalls { false };
     bool m_shouldCollectAfterPendingCalls { false };

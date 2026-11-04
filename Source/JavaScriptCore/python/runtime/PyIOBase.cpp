@@ -160,10 +160,6 @@ static void ioReportWhileFinalizing(JSGlobalObject* globalObject, JSValue self)
     JSValue exception = takePendingException(globalObject);
     if (!exception)
         return;
-    // At exit: a daemon thread, which never runs again, is in a call on the stream and holds its lock. CPython leaves such a stream
-    // alone, as the frame of the thread refers to it.
-    if (typeOf(globalObject, exception) == runtime(globalObject).PythonFinalizationError())
-        return;
     String text = reprForMessage(globalObject, self);
     ioRestoreException(globalObject, exception);
     EXCEPTION_ASSERT_UNUSED(scope, scope.exception());

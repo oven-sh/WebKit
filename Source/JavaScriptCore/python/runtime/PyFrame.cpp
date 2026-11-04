@@ -128,13 +128,9 @@ static ALWAYS_INLINE bool isPythonFrame(CallFrame* callFrame)
     return !callFrame->isNativeCalleeFrame() && isPythonCodeBlock(callFrame->codeBlock()) && !callFrame->isZombieFrame();
 }
 
-// `callee`: the frame of what this one is calling, if that is known.
-static void clearDeadTemporariesOf(CallFrame* callFrame, CodeBlock* codeBlock, CallFrame* callee)
+// Where the registers of a frame of Python end that are its own. `callee`: the frame of what it is calling, if that is known.
+static Register* endOfFrameOfCallee(CallFrame* callFrame, CodeBlock* codeBlock, CallFrame* callee)
 {
-    FastBitVector live;
-    if (!liveLocalsOfFrame(callFrame, codeBlock, callee, live))
-        return;
-
     // The frame of the callee lies in the registers of the caller. It has room for all the parameters, given or not.
     // A frame that is at a call has one there even if no callee is known: while an exception unwinds the stack, whoever traces
     // the program is told with this frame as the topmost (tellOfException() in PyMonitoring.cpp), and the frames that the
@@ -147,6 +143,16 @@ static void clearDeadTemporariesOf(CallFrame* callFrame, CodeBlock* codeBlock, C
             argumentCount = std::max(argumentCount, callee->codeBlock()->numParameters());
         endOfCallee = std::max(endOfCallee, callee->registers() + CallFrame::headerSizeInRegisters + argumentCount);
     }
+    return endOfCallee;
+}
+
+static void clearDeadTemporariesOf(CallFrame* callFrame, CodeBlock* codeBlock, CallFrame* callee)
+{
+    FastBitVector live;
+    if (!liveLocalsOfFrame(callFrame, codeBlock, callee, live))
+        return;
+
+    Register* endOfCallee = endOfFrameOfCallee(callFrame, codeBlock, callee);
     for (unsigned local = codeBlock->numVars(); local < codeBlock->numCalleeLocals(); ++local) {
         Register* slot = &callFrame->r(virtualRegisterForLocal(local));
         if (slot < endOfCallee)
@@ -351,6 +357,48 @@ PyFunction* currentFunction(JSGlobalObject* globalObject)
 static bool hasVariables(CallFrame* callFrame)
 {
     return !functionOf(callFrame)->codeInfo().isGeneratorLike() || isGeneratorBody(callFrame);
+}
+
+void forEachValueInFramesOfParkedThreads(VM& vm, const ScopedLambda<void(JSValue)>& function)
+{
+    if (!vm.apiLock().hasParkedThreads())
+        return;
+    vm.apiLock().forEachParkedThread([&](JSLock::ParkedThread& parked) {
+        EntryFrame* entryFrame = parked.topEntryFrame();
+        CallFrame* callee = nullptr;
+        for (CallFrame* callFrame = parked.topCallFrame(); callFrame;) {
+            if (!callFrame->isNativeCalleeFrame() && !callFrame->isZombieFrame()) {
+                function(callFrame->jsCallee());
+                for (unsigned i = 0; i < callFrame->argumentCountIncludingThis(); ++i)
+                    function(callFrame->r(virtualRegisterForArgumentIncludingThis(i)).jsValue());
+            }
+            if (isPythonFrame(callFrame)) {
+                CodeBlock* codeBlock = callFrame->codeBlock();
+                // A variable is held until the frame goes, read again or not.
+                if (hasVariables(callFrame)) {
+                    for (auto& variable : functionOf(callFrame)->codeInfo().variables)
+                        function(callFrame->r(variable.reg).jsValue());
+                }
+                // In a register that the code does not read again may be what is left of the frame of an earlier call.
+                FastBitVector live;
+                if (liveLocalsOfFrame(callFrame, codeBlock, callee, live)) {
+                    Register* endOfCallee = endOfFrameOfCallee(callFrame, codeBlock, callee);
+                    for (unsigned local = CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters(); local < codeBlock->numCalleeLocals(); ++local) {
+                        Register* slot = &callFrame->r(virtualRegisterForLocal(local));
+                        if (slot < endOfCallee)
+                            break;
+                        if (live[local])
+                            function(slot->jsValue());
+                    }
+                }
+            }
+            EntryFrame* entryFrameOfCallee = entryFrame;
+            callee = callFrame;
+            callFrame = callFrame->callerFrame(entryFrame);
+            if (entryFrame != entryFrameOfCallee)
+                callee = nullptr;
+        }
+    });
 }
 
 namespace {

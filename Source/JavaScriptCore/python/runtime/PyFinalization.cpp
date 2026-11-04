@@ -584,6 +584,62 @@ void Runtime::runPendingCalls(bool mayPutOff)
     }
 }
 
+// The threads that are still there when the interpreter exits never run again. So their frames never let go of what they refer to,
+// and in CPython none of that, nor what it leads to, is ever finalized: the locals of the thread, and by way of the functions that it
+// is in their globals, with all that hangs on those. A finalizer would find things as no code was meant to see them: the thread
+// may be half way through close(). But CPython empties the modules that are still referred to when sys.modules is gone, and in the end
+// sys and builtins. What is only held by one of those goes. So does what belongs to the thread and not to its frames: the values
+// of its threading.local(), the exception it is handling.
+UncheckedKeyHashSet<JSCell*> Runtime::whatOtherThreadsHold()
+{
+    Vector<JSCell*> roots;
+    forEachValueInFramesOfParkedThreads(m_vm, [&](JSValue value) {
+        if (value && value.isCell())
+            roots.append(value.asCell());
+    });
+    if (roots.isEmpty())
+        return { };
+
+    // Every cell leads to its structure, that to the global object, and that to everything.
+    auto isOfTheProgram = [](JSCell* cell) {
+        switch (cell->type()) {
+        case StructureType:
+        case GlobalObjectType:
+        case GlobalLexicalEnvironmentType:
+        case GlobalProxyType:
+        case NativeExecutableType:
+        case ProgramExecutableType:
+        case ModuleProgramExecutableType:
+        case EvalExecutableType:
+        case FunctionExecutableType:
+        case UnlinkedFunctionExecutableType:
+        case UnlinkedProgramCodeBlockType:
+        case UnlinkedModuleProgramCodeBlockType:
+        case UnlinkedEvalCodeBlockType:
+        case UnlinkedFunctionCodeBlockType:
+        case CodeBlockType:
+        case StringType:
+        case HeapBigIntType:
+        case SymbolType:
+            return false;
+        default:
+            return true;
+        }
+    };
+    DeferGC deferGC(m_vm);
+    UncheckedKeyHashSet<JSCell*> emptied { sysDict(), builtins() };
+    for (JSCell* cell : cellsReachedFrom(m_vm, roots.span(), isOfTheProgram)) {
+        if (auto* module = PyModule::tryFrom(cell)) {
+            emptied.add(module);
+            if (PyDict* dict = module->dict())
+                emptied.add(dict);
+        }
+    }
+    return cellsReachedFrom(m_vm, roots.span(), [&](JSCell* cell) {
+        return isOfTheProgram(cell) && !emptied.contains(cell);
+    });
+}
+
 void Runtime::finalizeAllAtExit()
 {
     {
@@ -625,12 +681,14 @@ void Runtime::finalizeAllAtExit()
     collect();
     if (m_vm.hasPendingTerminationException()) [[unlikely]]
         return;
-    // Then what something else holds on to: JS, a frame that is still on the stack. In the order it was made.
+    // Then what something else holds on to: JS, a frame of this thread that is still on the stack. In the order it was made.
     {
+        forgetThreadLocalsOfOtherThreads(m_globalObject);
+        auto heldByOtherThreads = whatOtherThreadsHold();
         Locker locker { m_finalizationLock };
         for (JSCell* cell : m_finalizable) {
             // A generator someone still holds is not closed, nor is a coroutine complained about.
-            if (cell->type() != PyGeneratorType)
+            if (cell->type() != PyGeneratorType && !heldByOtherThreads.contains(cell))
                 m_pendingFinalization.append(cell);
         }
         m_finalizable.clear();

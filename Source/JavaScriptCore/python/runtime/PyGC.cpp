@@ -701,6 +701,26 @@ private:
     ConcurrentPtrHashSet m_opaqueRootStorage;
 };
 
+UncheckedKeyHashSet<JSCell*> cellsReachedFrom(VM& vm, std::span<JSCell* const> roots, const ScopedLambda<bool(JSCell*)>& isEntered)
+{
+    UncheckedKeyHashSet<JSCell*> reached;
+    Vector<JSCell*> toVisit;
+    auto reach = [&](JSCell* cell) {
+        if (isEntered(cell) && reached.add(cell).isNewEntry)
+            toVisit.append(cell);
+    };
+    for (JSCell* cell : roots)
+        reach(cell);
+    ReferentCollector collector(vm);
+    while (!toVisit.isEmpty()) {
+        collector.cells.shrink(0);
+        collector.visit(toVisit.takeLast());
+        for (JSCell* cell : collector.cells)
+            reach(cell);
+    }
+    return reached;
+}
+
 // Allocates no cell.
 static void appendReferents(JSGlobalObject* globalObject, JSCell* object, MarkedArgumentBuffer& result, unsigned depth = 0)
 {

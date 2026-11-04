@@ -401,25 +401,44 @@ static bool localSwitchToCurrentThread(JSGlobalObject* globalObject, JSValue sel
     RELEASE_AND_RETURN(scope, localSwitchToCurrentThread(globalObject, selfValue));
 }
 
-// The thread is about to end. Its weak map goes with it; the dicts that are in place must not stay there.
-static void localForgetThisThread(JSGlobalObject* globalObject)
+// The weak map of a thread goes with it. Those of its dicts that are in place must not stay there.
+static void localTakeDictsOutOfPlace(JSGlobalObject* globalObject, JSValue map, const ThreadState& thread)
 {
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    JSValue map = rt.threadLocals();
     if (!map || !map.isCell())
         return;
-    JSValue thisThread = localThisThread(globalObject);
+    JSValue serial = jsNumber(static_cast<double>(thread.serial));
     MarkedArgumentBuffer keysAndValues;
     uncheckedDowncast<JSWeakMap>(map.asCell())->takeSnapshot(keysAndValues);
     for (unsigned i = 0; i < keysAndValues.size(); i += 2) {
         auto* self = PyInstance::tryFrom(keysAndValues.at(i));
-        if (!self || hiddenField(globalObject, self, LocalCurrentThread) != thisThread)
+        if (!self || hiddenField(globalObject, self, LocalCurrentThread) != serial)
             continue;
-        self->replaceDict(vm, nullptr);
+        self->replaceDict(getVM(globalObject), nullptr);
         setHiddenField(globalObject, self, LocalCurrentThread, jsNumber(0));
     }
+}
+
+// The thread is about to end.
+static void localForgetThisThread(JSGlobalObject* globalObject)
+{
+    Runtime& rt = runtime(globalObject);
+    localTakeDictsOutOfPlace(globalObject, rt.threadLocals(), threadsOf(globalObject).current());
     rt.setThreadLocals(jsUndefined());
+}
+
+void forgetThreadLocalsOfOtherThreads(JSGlobalObject* globalObject)
+{
+    Runtime& rt = runtime(globalObject);
+    rt.threads().forEachThread([&](ThreadState& thread) {
+        if (!thread.saved)
+            return;
+        for (auto& entry : thread.saved->entries) {
+            if (entry.runtime != &rt)
+                continue;
+            localTakeDictsOutOfPlace(globalObject, entry.state.threadLocals, thread);
+            entry.state.threadLocals = jsUndefined();
+        }
+    });
 }
 
 static JSValue localNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& args)
