@@ -174,10 +174,14 @@ JSValue allocateInstance(JSGlobalObject* globalObject, PyType* type, PyType* lay
     if (type == rt.objectType())
         return PyObject::create(vm, rt.structure<PyObject>(), type);
     ASSERT_UNUSED(layout, layoutBase(type) == (layout ? layout : rt.objectType()));
-    PyInstance* instance = PyInstance::create(vm, type);
-    if (type->lookup(Special::Del)) [[unlikely]]
-        rt.registerFinalizable(instance);
-    return instance;
+    return PyInstance::create(vm, type);
+}
+
+void didMakeObject(JSGlobalObject* globalObject, PyType* type, JSValue object)
+{
+    // What is of another class was not made for this call, as far as anybody can tell: str(x) gives what x.__str__() returned.
+    if (type->lookup(Special::Del) && object.isCell() && typeOf(globalObject, object) == type) [[unlikely]]
+        runtime(globalObject).registerFinalizable(object.asCell());
 }
 
 // ---- object ----
@@ -468,11 +472,7 @@ static void registerInstancesForFinalization(JSGlobalObject* globalObject, PyTyp
             return IterationStatus::Continue;
         });
     }
-    for (unsigned i = 0; i < instances.size(); ++i) {
-        // A finalizer is called once.
-        if (!rt.hasBeenFinalized(instances.at(i).asCell()))
-            rt.registerFinalizable(instances.at(i).asCell());
-    }
+    rt.registerFinalizableLate(instances);
 }
 
 static bool sameSlots(PyType* a, PyType* b)
@@ -540,8 +540,11 @@ static void objectSetClass(JSGlobalObject* globalObject, JSValue self, JSValue v
         uncheckedDowncast<PyListObject>(cell)->setType(vm, newType);
     else
         PyType::from(self)->setType(vm, newType);
-    if (newType->lookup(Special::Del) && !oldType->lookup(Special::Del) && !rt.hasBeenFinalized(cell)) [[unlikely]]
-        rt.registerFinalizable(cell);
+    if (newType->lookup(Special::Del) && !oldType->lookup(Special::Del)) [[unlikely]] {
+        MarkedArgumentBuffer objects;
+        objects.append(cell);
+        rt.registerFinalizableLate(objects);
+    }
     // See mayBecomeAnotherKindOfDescriptor().
     if (oldType->hasInstancesAmongAttributes()) [[unlikely]]
         oldType->didChange(vm);
@@ -852,8 +855,6 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& all
         PyType* objectType = rt.typeOf(object);
         if (!objectType->isSubtypeOf(cls))
             return object;
-        if (objectType->lookup(Special::Del) && object.isCell()) [[unlikely]]
-            rt.registerFinalizable(object.asCell());
         // A class written in JS that has an __init__ besides its constructor calls those of its bases from there.
         if (afterType && !constructorInitializes(type))
             return object;
@@ -916,9 +917,11 @@ JSValue typeCall(JSGlobalObject* globalObject, PyType* type, const CallArgs& all
         else
             isChecked = true;
     }
-    if (native && !isChecked)
+    if (native && !isChecked) {
         object = native->invokeWithSelf(globalObject, cls, args);
-    else {
+        RETURN_IF_EXCEPTION(scope, { });
+        didMakeObject(globalObject, cls, object);
+    } else {
         JSValue function;
         if (auto* wrapper = dynamicDowncast<PyWrapperObject>(newMethod); wrapper && wrapper->type() == rt.staticmethodType())
             function = wrapper->wrapped();
@@ -953,6 +956,7 @@ JSValue prepareConstruct(JSGlobalObject* globalObject, JSValue callee, JSValue& 
     if (!PyFunction::is(init) || !isNativeNew(type->lookup(Special::New), objectNew) || !isNativeNew(type->type()->lookup(Special::Call), typeCallMethod) || layoutBase(type) != runtime(globalObject).objectType())
         return { };
     self = allocateInstance(globalObject, type);
+    didMakeObject(globalObject, type, self);
     return init;
 }
 

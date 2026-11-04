@@ -66,6 +66,9 @@ JSValue typeCall(JSGlobalObject*, PyType*, const CallArgs&, PyType* derived = nu
 // An instance of the type with nothing set: what object.__new__ makes, given how the type's instances are laid out.
 // `layout`: the built-in type that decides the layout, if not object. (One whose instances differ from object's in CPython only.)
 JSValue allocateInstance(JSGlobalObject*, PyType*, PyType* layout = nullptr);
+// For whoever has called the __new__ of a built-in type, or done what it does, to make an instance of the type: if the type has a
+// __del__, the runtime is told of the object. Once for an object.
+void didMakeObject(JSGlobalObject*, PyType*, JSValue object);
 // For PyGenerator::resume().
 JSValue callBodyOfGenerator(JSGlobalObject*, PyFunction* body, std::span<const JSValue> arguments);
 // What gc.collect() does: collects, runs the finalizers of what was found, and so on until there is nothing left to do. Not from

@@ -370,7 +370,6 @@ PyManagedBuffer* PyManagedBuffer::create(JSGlobalObject* globalObject, Buffer& b
     result->requiredSize = buffer.requiredSize;
     // The class of the exporter may be given a __release_buffer__() later.
     if (result->m_release || (isPyObject(object) && uncheckedDowncast<PyObject>(object.asCell())->type()->has(TypeFlag::Heap))) {
-        result->m_isRegistered = true;
         rt.registerFinalizable(result);
     }
     return result;
@@ -412,8 +411,7 @@ void PyManagedBuffer::release(JSGlobalObject* globalObject)
     if (m_isReleased)
         return;
     m_isReleased = true;
-    if (std::exchange(m_isRegistered, false))
-        runtime(globalObject).unregisterFinalizable(this);
+    runtime(globalObject).unregisterFinalizable(this);
     Buffer buffer;
     if (m_master)
         memoryViewFillBuffer(m_master.get(), buffer);
@@ -659,10 +657,8 @@ void Runtime::releaseUnreachableBuffers(bool thorough)
         for (JSCell* cell : m_pendingFinalization)
             add(cell);
         pendingCount = buffers.size();
-        if (isPrecise) {
-            for (JSCell* cell : m_finalizable)
-                add(cell);
-        }
+        if (isPrecise)
+            forEachFinalizable(add);
     }
     // What holds a buffer on a view has to go before the view can.
     bool didQueue = false;
@@ -685,7 +681,7 @@ void Runtime::releaseUnreachableBuffers(bool thorough)
                 }
                 else if (!isPending) {
                     // At the next safe point.
-                    m_finalizable.remove(buffer);
+                    unregisterFinalizable(buffer);
                     m_pendingFinalization.append(buffer);
                     didQueue = true;
                 }

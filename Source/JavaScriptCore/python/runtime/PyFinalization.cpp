@@ -33,34 +33,110 @@ namespace Python {
 
 // Finalizers, the callbacks of weak references, and the module gc. See the comment in PyRuntime.h.
 
+static FinalizerState* finalizerStateOf(JSCell* cell)
+{
+    if (cell->type() != PyObjectType)
+        return nullptr;
+    const ClassInfo* info = cell->classInfo();
+    if (info == PyRecord::info())
+        return &uncheckedDowncast<PyRecord>(cell)->finalizerState();
+    if (info == PyManagedBuffer::info())
+        return &uncheckedDowncast<PyManagedBuffer>(cell)->finalizerState();
+    return nullptr;
+}
+
+// These say for themselves whether they are in the list, or are put there once by whoever makes them.
+static bool isListedOnceByItself(JSCell* cell)
+{
+    return cell->type() == PyInstanceType || cell->type() == PyGeneratorType || cell->classInfo() == PyAsyncGenAwaitable::info();
+}
+
 void Runtime::registerFinalizable(JSCell* cell)
 {
+    if (FinalizerState* state = finalizerStateOf(cell)) {
+        state->isWanted = true;
+        if (std::exchange(state->isListed, true))
+            return;
+    } else if (!isListedOnceByItself(cell) && !m_otherFinalizable.add(cell).isNewEntry)
+        return;
+    m_youngFinalizable.append(cell);
+    if (allocationTracebackLimit) [[unlikely]]
+        didRegisterWhileTracingAllocations(cell);
+}
+
+void Runtime::didRegisterWhileTracingAllocations(JSCell* cell)
+{
+    noteWhereObjectWasMade(m_globalObject, cell);
+}
+
+void Runtime::unregisterFinalizable(PyRecord* record)
+{
+    record->finalizerState().isWanted = false;
+}
+
+void Runtime::unregisterFinalizable(PyManagedBuffer* buffer)
+{
+    buffer->finalizerState().isWanted = false;
+}
+
+void Runtime::registerFinalizableLate(const MarkedArgumentBuffer& objects)
+{
+    UncheckedKeyHashSet<JSCell*> known;
+    forEachFinalizable([&](JSCell* cell) {
+        known.add(cell);
+    });
     {
         Locker locker { m_finalizationLock };
-        // The list is in the order in which the objects were made, which is the order of finalizers where nothing else decides.
-        registerNotedGenerators();
-        m_finalizable.add(cell);
+        // A finalizer is called once.
+        for (JSCell* cell : m_finalized)
+            known.add(cell);
+        for (JSCell* cell : m_justFinalized)
+            known.add(cell);
+        for (JSCell* cell : m_pendingFinalization)
+            known.add(cell);
     }
-    if (allocationTracebackLimit) [[unlikely]]
-        noteWhereObjectWasMade(m_globalObject, cell);
+    for (unsigned i = 0; i < objects.size(); ++i) {
+        if (JSCell* cell = objects.at(i).asCell(); known.add(cell).isNewEntry)
+            registerFinalizable(cell);
+    }
 }
 
-void Runtime::unregisterFinalizable(JSCell* cell)
+// Whether it is in the list for nothing: whatever it had to finalize has been seen to.
+static bool isNoLongerWanted(JSCell* cell)
 {
-    Locker locker { m_finalizationLock };
-    m_finalizable.remove(cell);
+    if (cell->type() == PyInstanceType)
+        return false;
+    if (cell->type() == PyGeneratorType)
+        return uncheckedDowncast<PyGenerator>(cell)->finalization() == PyGenerator::Finalization::None;
+    if (FinalizerState* state = finalizerStateOf(cell))
+        return !state->isWanted;
+    if (auto* awaitable = PyAsyncGenAwaitable::tryFrom(cell))
+        return awaitable->state() != PyAsyncGenAwaitable::State::Initial;
+    return false;
 }
 
-void Runtime::registerNotedGenerators()
+// Dead or alive.
+void Runtime::didTakeOffList(JSCell* cell)
 {
-    for (PyGenerator* generator : m_newFinalizableGenerators) {
-        ASSERT(generator->JSCell::type() == PyGeneratorType);
-        if (generator->finalization() != PyGenerator::Finalization::Noted)
-            continue;
-        generator->setFinalization(PyGenerator::Finalization::Registered);
-        m_finalizable.add(generator);
+    if (cell->type() == PyInstanceType)
+        return;
+    if (cell->type() == PyGeneratorType)
+        uncheckedDowncast<PyGenerator>(cell)->setFinalization(PyGenerator::Finalization::None);
+    else if (FinalizerState* state = finalizerStateOf(cell))
+        *state = { };
+    else if (!isListedOnceByItself(cell))
+        m_otherFinalizable.remove(cell);
+}
+
+// Those that still have something to finalize, as far as they know, in the order in which they were registered.
+void Runtime::forEachFinalizable(const ScopedLambda<void(JSCell*)>& function)
+{
+    for (auto* list : { &m_oldFinalizable, &m_youngFinalizable }) {
+        for (JSCell* cell : *list) {
+            if (!isNoLongerWanted(cell))
+                function(cell);
+        }
     }
-    m_newFinalizableGenerators.shrink(0);
 }
 
 // A generator that has not begun has nothing to end. (A coroutine that has not begun is complained about.)
@@ -82,17 +158,30 @@ static bool hasFinalizerOfProgram(Runtime& rt, JSCell* cell)
 bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
 {
     Locker locker { m_finalizationLock };
-    registerNotedGenerators();
     // All of them are found before any is marked.
     Vector<JSCell*> candidates;
+    Vector<JSCell**> places;
     unsigned finalizersOfProgram = 0;
-    for (JSCell* cell : m_finalizable) {
-        // What has nothing to finalize is left to die, unless one of the others reaches it: see didMarkAll().
-        if (visitor.isMarked(cell) || hasNothingToFinalize(cell))
-            continue;
-        candidates.append(cell);
-        finalizersOfProgram += hasFinalizerOfProgram(*this, cell);
-    }
+    auto look = [&](Vector<JSCell*>& list) {
+        for (JSCell*& cell : list) {
+            if (!cell)
+                continue;
+            if (isNoLongerWanted(cell)) {
+                didTakeOffList(cell);
+                cell = nullptr;
+                continue;
+            }
+            // What has nothing to finalize is left to die, unless one of the others reaches it: see didMarkAll().
+            if (visitor.isMarked(cell) || hasNothingToFinalize(cell))
+                continue;
+            candidates.append(cell);
+            places.append(&cell);
+            finalizersOfProgram += hasFinalizerOfProgram(*this, cell);
+        }
+    };
+    if (m_vm.heap.collectionScope() == CollectionScope::Full)
+        look(m_oldFinalizable);
+    look(m_youngFinalizable);
     auto finish = [&]() WTF_REQUIRES_LOCK(m_finalizationLock) {
         if (m_markingObserver && m_markingObserver->didFinishMarking(visitor))
             return true;
@@ -139,12 +228,13 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
         if (m_leavesCyclicGarbageForLater && n >= order.freedByReferenceCounts)
             continue;
         m_pendingFinalization.append(cell);
-        m_finalizable.remove(cell);
+        *places[order.now[n]] = nullptr;
+        didTakeOffList(cell);
     }
     // The others are kept alive by those. They come up again, in this order, in the collection that finds those gone.
     for (unsigned i : order.later) {
-        m_finalizable.remove(candidates[i]);
-        m_finalizable.add(candidates[i]);
+        *places[i] = nullptr;
+        m_finalizableToComeLast.append(candidates[i]);
     }
     if (!candidates.isEmpty())
         didQueueCalls();
@@ -190,25 +280,42 @@ Vector<PyWeakRef*> Runtime::weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor& 
 // The collection will mark no more.
 void Runtime::didMarkAll(SlotVisitor& visitor)
 {
-    // What had nothing to finalize was not kept.
-    Vector<JSCell*> gone;
-    for (JSCell* cell : m_finalizable) {
-        if (!visitor.isMarked(cell) && hasNothingToFinalize(cell))
-            gone.append(cell);
+    bool isFull = m_vm.heap.collectionScope() == CollectionScope::Full;
+    auto stays = [&](JSCell* cell) {
+        if (!cell)
+            return false;
+        if (visitor.isMarked(cell))
+            return true;
+        // What had nothing to finalize was not kept. Anything else would be freed now and never be finalized.
+        ASSERT(hasNothingToFinalize(cell));
+        didTakeOffList(cell);
+        return false;
+    };
+    if (isFull) {
+        m_oldFinalizable.removeAllMatching([&](JSCell* cell) {
+            return !stays(cell);
+        });
     }
-    for (JSCell* cell : gone)
-        m_finalizable.remove(cell);
+    for (JSCell* cell : m_youngFinalizable) {
+        if (stays(cell))
+            m_oldFinalizable.append(cell);
+    }
+    m_youngFinalizable.shrink(0);
+    m_oldFinalizable.appendVector(m_finalizableToComeLast);
+    m_finalizableToComeLast.shrink(0);
+    if (isFull && m_oldFinalizable.size() < m_oldFinalizable.capacity() / 4)
+        m_oldFinalizable.shrinkToFit();
 
 #if ASSERT_ENABLED
-    // What is registered and was not reachable has been kept. Anything else would be freed now and still be in the list.
-    for (JSCell* cell : m_finalizable) {
-        if (!visitor.isMarked(cell)) [[unlikely]] {
-            dataLogLn("A registered object of type ", typeOf(cell)->nameInMessages(), " is about to be freed");
-            RELEASE_ASSERT_NOT_REACHED();
+    if (isFull) {
+        UncheckedKeyHashSet<JSCell*> seen;
+        for (JSCell* cell : m_oldFinalizable) {
+            if (!visitor.isMarked(cell) || !seen.add(cell).isNewEntry) [[unlikely]] {
+                dataLogLn("A registered object of type ", typeOf(cell)->nameInMessages(), visitor.isMarked(cell) ? " is in the list twice" : " is about to be freed");
+                RELEASE_ASSERT_NOT_REACHED();
+            }
         }
     }
-    // No collection ends, and so nothing is freed, while a generator is only noted.
-    ASSERT(m_newFinalizableGenerators.isEmpty());
     // A generator that is running is referred to by the frame of its body, in whatever thread.
     auto assertAreMarked = [&](PyGenerator* running) {
         for (PyGenerator* generator = running; generator; generator = generator->resumedBy())
@@ -224,9 +331,22 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
         }
     });
 #endif
-    m_finalized.removeIf([&](JSCell* cell) {
-        return !visitor.isMarked(cell);
-    });
+    // What a collection has seen alive is old.
+    if (isFull) {
+        m_finalized.removeIf([&](JSCell* cell) {
+            return !visitor.isMarked(cell);
+        });
+        for (JSCell* cell : m_justFinalized) {
+            if (visitor.isMarked(cell))
+                m_finalized.add(cell);
+        }
+        m_justFinalized.clear();
+    } else {
+        m_justFinalized.removeAllMatching([&](JSCell* cell) {
+            return !visitor.isMarked(cell);
+        }, m_justFinalizedAndOld);
+    }
+    m_justFinalizedAndOld = m_justFinalized.size();
     forgetDeadTemporaries(visitor);
 
     double duration = m_collectionBegan ? (MonotonicTime::now() - m_collectionBegan).seconds() : 0;
@@ -265,7 +385,7 @@ void Runtime::reconcileWeakReferencesAtGCEnd()
 bool Runtime::hasBeenFinalized(JSCell* cell)
 {
     Locker locker { m_finalizationLock };
-    return m_finalized.contains(cell);
+    return m_finalized.contains(cell) || m_justFinalized.contains(cell);
 }
 
 void Runtime::queueWeakRefCallback(PyWeakRef* weakRef)
@@ -408,8 +528,6 @@ static void finalizeGenerator(JSGlobalObject* globalObject, PyGenerator* generat
 void finalizeGeneratorNow(JSGlobalObject* globalObject, PyGenerator* generator)
 {
     // Once. If it does not let itself be closed, the collector is not to try again.
-    if (generator->finalization() == PyGenerator::Finalization::Registered)
-        runtime(globalObject).unregisterFinalizable(generator);
     generator->setFinalization(PyGenerator::Finalization::None);
     finalizeGenerator(globalObject, generator);
 }
@@ -555,7 +673,7 @@ void Runtime::runPendingCalls(bool mayPutOff)
                 weakRef = m_pendingWeakRefCallbacks.takeFirst();
             } else if (!m_pendingFinalization.isEmpty()) {
                 object = m_pendingFinalization.takeFirst();
-                m_finalized.add(object);
+                m_justFinalized.append(object);
             } else if (collection)
                 collectionIsOver = true;
             else {
@@ -652,13 +770,12 @@ UncheckedKeyHashSet<JSCell*> Runtime::whatOtherThreadsHold()
 
 void Runtime::finalizeAllAtExit()
 {
-    {
-        Locker locker { m_finalizationLock };
-        registerNotedGenerators();
-    }
     auto isDone = [&] {
-        Locker locker { m_finalizationLock };
-        return m_pendingFinalization.isEmpty() && m_pendingWeakRefCallbacks.isEmpty() && std::ranges::all_of(m_finalizable, hasNothingToFinalize);
+        bool hasSomethingToFinalize = hasPendingFinalizers();
+        forEachFinalizable([&](JSCell* cell) {
+            hasSomethingToFinalize |= !hasNothingToFinalize(cell);
+        });
+        return !hasSomethingToFinalize;
     };
     // (The stack is wiped before every call on the way to a collection, because what was called before, the last collection for
     // one, has left what it dealt with where the frames of the next come to lie. See wipeStackBelow().)
@@ -695,13 +812,20 @@ void Runtime::finalizeAllAtExit()
     {
         forgetThreadLocalsOfOtherThreads(m_globalObject);
         auto heldByOtherThreads = whatOtherThreadsHold();
-        Locker locker { m_finalizationLock };
-        for (JSCell* cell : m_finalizable) {
+        Vector<JSCell*> rest;
+        forEachFinalizable([&](JSCell* cell) {
             // A generator someone still holds is not closed, nor is a coroutine complained about.
             if (cell->type() != PyGeneratorType && !heldByOtherThreads.contains(cell))
-                m_pendingFinalization.append(cell);
+                rest.append(cell);
+        });
+        for (auto* list : { &m_oldFinalizable, &m_youngFinalizable }) {
+            for (JSCell* cell : *list)
+                didTakeOffList(cell);
+            list->clear();
         }
-        m_finalizable.clear();
+        Locker locker { m_finalizationLock };
+        for (JSCell* cell : rest)
+            m_pendingFinalization.append(cell);
         didQueueCalls();
     }
     m_vm.writeBarrier(m_globalObject);
@@ -755,15 +879,12 @@ void Runtime::collectAsAskedFor(CollectionScope collectionScope, bool leavesCycl
 void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
 {
     for (unsigned round = 0; round < 64; ++round) {
-        {
-            Locker locker { m_finalizationLock };
-            registerNotedGenerators();
-            bool hasSomethingToDo = !m_pendingFinalization.isEmpty() || !m_pendingWeakRefCallbacks.isEmpty() || std::ranges::any_of(m_finalizable, [&](JSCell* cell) {
-                return hasFinalizerOfProgram(*this, cell) && !hasNothingToFinalize(cell);
-            });
-            if (!hasSomethingToDo)
-                return;
-        }
+        bool hasSomethingToDo = hasPendingFinalizers();
+        forEachFinalizable([&](JSCell* cell) {
+            hasSomethingToDo |= hasFinalizerOfProgram(*this, cell) && !hasNothingToFinalize(cell);
+        });
+        if (!hasSomethingToDo)
+            return;
         wipeStackBelow(m_globalObject);
         collectAsAskedFor(CollectionScope::Full, true);
         if (!hasPendingCalls())

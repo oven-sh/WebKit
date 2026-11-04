@@ -331,7 +331,7 @@ void disarmDescriptorGuard(JSGlobalObject* globalObject, JSValue guard)
     if (!guard)
         return;
     PyRecord::from(guard)->number = -1;
-    runtime(globalObject).unregisterFinalizable(guard.asCell());
+    runtime(globalObject).unregisterFinalizable(PyRecord::from(guard));
 }
 
 // ---- Arguments ----

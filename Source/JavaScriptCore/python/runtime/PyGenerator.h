@@ -125,8 +125,7 @@ public:
     // One that is dropped before it is done may have something to clean up (a `finally`, a `with`), or to complain of.
     enum class Finalization : uint8_t {
         None, // It has not, or it is done.
-        Noted, // Runtime::noteFinalizableGenerator() has been told.
-        Registered, // Runtime::registerFinalizable() has.
+        Registered, // Runtime::registerFinalizable() has been told, when it was made.
     };
     Finalization finalization() const { return m_finalization; }
     void setFinalization(Finalization finalization) { m_finalization = finalization; }

@@ -236,6 +236,7 @@ public:
 
     bool isReleased() const { return m_isReleased; }
     void release(JSGlobalObject*);
+    FinalizerState& finalizerState() { return m_finalizerState; }
     // Whether that calls a __release_buffer__() written in Python.
     bool releaseRunsCode() const;
 
@@ -251,7 +252,7 @@ private:
     WriteBarrier<PyMemoryView> m_master;
     Buffer::Release m_release { nullptr };
     bool m_isReleased { false };
-    bool m_isRegistered { false };
+    FinalizerState m_finalizerState;
 };
 
 class PyMemoryView final : public PyObject {

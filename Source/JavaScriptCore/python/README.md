@@ -191,8 +191,8 @@ function is called in this way once it has been called in the ordinary way, whic
   variables may hold the remains of a callee's frame, which the collector must never see in the heap. For Python code the pass
   gives such registers a value where they lose theirs (`findRegistersWithoutValue()`).
 - One that may have something to do when it is dropped (a `finally`, a `with`, a coroutine never awaited) is registered for
-  finalization, but not when it is made: most are done long before the next collection. It is written down
-  (`noteFinalizableGenerator`), and those still unfinished when a collection comes are registered then.
+  finalization when it is made, which is no more than writing it down. Most are done long before the next collection, which
+  asks each whether it is (`PyGenerator::finalization()`).
 
 **Code objects.** The code is a `FunctionExecutable`; a code object (`PyCode`) is made for it when something asks (`f.__code__`, `frame.f_code`,
 `co_consts`), and from then on the executable holds it, so it is one object for as long as the code is there: programs keep weak
@@ -305,6 +305,16 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
 - **An object registers when it is made**, if its class has a `__del__` then. A class that gets one later, by assignment to the
   attribute or to `__bases__`, has the heap searched for its instances (`registerInstancesForFinalization`), once; an object
   that is given such a class by assignment to `__class__` registers then.
+- **To register is to be written down, and nothing is looked up.** There are two vectors, in the order of registration: the objects
+  that a collection has seen, and those registered since. What a collection has seen and left there is old, so a collection of the
+  young generation goes through the second only, and moves what lives to the first. Nothing is taken out in between: whether an object
+  still has something to finalize is asked of the object, when a collection comes by. A generator knows, and an open file, a
+  socket, a future with an exception nobody has looked at have two bits for it (`FinalizerState`: wanted, listed), so closing
+  and opening again are a store each. An object must be in the list once. An instance is written down by whoever called the `__new__` of
+  a built-in type to make it (`didMakeObject()`), not by whoever got it from a `__new__` written in Python, which may hand out the
+  same object every time; the few kinds that are neither plain instances nor have the bits (an instance of a class derived from
+  `dict` that has a `__del__`) are kept in a set as well. What has been finalized waits in a vector for the next full collection, which
+  finds nearly all of it dead; the rest, which somebody took hold of, goes to a set (`gc.is_finalized()`).
 - **Finalizers run in the order of reference counts.** A `__del__` that writes to `self.file` finds the file open, and the items of
   a list that is dropped go from the last to the first. When marking has converged, the dead cells are taken for a graph and let go
   of as reference counts would have let go of them (`PyFinalizationOrder.cpp`): first those that nothing dead refers to, each of

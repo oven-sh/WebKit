@@ -66,14 +66,8 @@ PyGenerator* PyGenerator::create(JSGlobalObject* globalObject, PyFunction* funct
 
     bool hasHandlers = body->functionExecutable()->unlinkedExecutable()->pythonCodeHasExceptionHandlers();
     if (hasHandlers || kind != Kind::Generator) {
-        if (rt.allocationTracebackLimit) [[unlikely]] {
-            // Where it was made is known now only.
-            generator->m_finalization = Finalization::Registered;
-            rt.registerFinalizable(generator);
-        } else {
-            generator->m_finalization = Finalization::Noted;
-            rt.noteFinalizableGenerator(generator);
-        }
+        generator->m_finalization = Finalization::Registered;
+        rt.registerNewGenerator(generator);
     }
     return generator;
 }
@@ -106,8 +100,7 @@ void PyGenerator::complete()
     m_delegate.clear();
     m_handledException.clear();
     m_frameObject.clear();
-    if (std::exchange(m_finalization, Finalization::None) == Finalization::Registered)
-        structure()->realm()->pythonRuntime()->unregisterFinalizable(this);
+    m_finalization = Finalization::None;
 }
 
 static ASCIILiteral describe(PyGenerator::Kind kind)
@@ -1002,8 +995,6 @@ PyAsyncGenAwaitable* PyAsyncGenAwaitable::create(JSGlobalObject* globalObject, K
 
 void PyAsyncGenAwaitable::setState(State state)
 {
-    if (m_state == State::Initial && state != State::Initial)
-        structure()->realm()->pythonRuntime()->unregisterFinalizable(this);
     m_state = state;
 }
 

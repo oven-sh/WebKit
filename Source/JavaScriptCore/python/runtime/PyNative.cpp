@@ -644,8 +644,8 @@ JSValue PyNativeFunction::invokeNew(JSGlobalObject* globalObject, const CallArgs
     JSValue object = invokeNativeImpl(globalObject, *m_def, this, subtype, args.withoutFirst());
     RETURN_IF_EXCEPTION(scope, { });
     // typeCall() sees to this for what is made by calling the class. copy and pickle make objects this way.
-    if (subtype->isHeapType() && subtype->lookup(Special::Del) && object.isCell() && typeOf(globalObject, object) == subtype) [[unlikely]]
-        runtime(globalObject).registerFinalizable(object.asCell());
+    if (subtype->isHeapType())
+        didMakeObject(globalObject, subtype, object);
     return object;
 }
 

@@ -168,6 +168,13 @@ private:
     WriteBarrier<PyDict> m_dict;
 };
 
+// For the classes whose objects have something to finalize at times only (a file while it is open): what
+// Runtime::registerFinalizable() and unregisterFinalizable() keep in the object itself.
+struct FinalizerState {
+    bool isWanted { false }; // There is something to finalize.
+    bool isListed { false }; // The runtime has it in its list. It stays there until a collection finds that it is not wanted.
+};
+
 // An instance of a type written in C++ that needs no more than a few values: what each field holds is up to the type.
 // (A __dict__, for a type whose instances have one, is kept as for any object without a field for it.)
 class PyRecord final : public PyObject {
@@ -199,6 +206,8 @@ public:
     // For what is not a value.
     int64_t number { 0 };
 
+    FinalizerState& finalizerState() { return m_finalizerState; }
+
 private:
     PyRecord(VM&, Structure*, PyType*, unsigned fieldCount);
 
@@ -206,6 +215,7 @@ private:
     const WriteBarrier<Unknown>* fields() const { return storageBehind<const WriteBarrier<Unknown>>(this); }
 
     unsigned m_fieldCount;
+    FinalizerState m_finalizerState;
 };
 
 inline bool isPyObject(JSCell* cell) { return isPyObjectType(cell->type()); }

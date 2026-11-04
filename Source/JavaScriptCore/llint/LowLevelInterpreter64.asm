@@ -4453,7 +4453,6 @@ end)
 llintOp(op_py_generator_return, OpPyGeneratorReturn, macro (size, get, dispatch)
     loadq FirstArgumentOffset[cfr], t3
     btpnz (constexpr (Python::PyGenerator::offsetOfFrameObject()))[t3], .slow
-    bbeq (constexpr (Python::PyGenerator::offsetOfFinalization()))[t3], constexpr Python::PyGenerator::Finalization::Registered, .slow
     # Python::PyGenerator::complete(). Its slots are empty while it runs, and it waits for nothing.
     move constexpr Python::PyGenerator::Finalization::None, t0
     storeb t0, (constexpr (Python::PyGenerator::offsetOfFinalization()))[t3]

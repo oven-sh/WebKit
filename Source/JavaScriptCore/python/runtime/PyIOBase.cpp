@@ -629,8 +629,9 @@ void ioDidClose(JSGlobalObject* globalObject, PyRecord* stream)
 
 void ioDidWrap(JSGlobalObject* globalObject, JSValue stream)
 {
-    if (isPyObject(stream) && !ioHasOwnFinalizer(typeOf(globalObject, stream)))
-        runtime(globalObject).unregisterFinalizable(stream.asCell());
+    // (An instance of a class written in Python has its turn after what wraps it, and finds itself closed.)
+    if (PyRecord::is(stream) && !ioHasOwnFinalizer(typeOf(globalObject, stream)))
+        runtime(globalObject).unregisterFinalizable(PyRecord::from(stream));
 }
 
 // The standard streams that can be written to, each followed by its buffer.
@@ -684,7 +685,7 @@ void writeOutPendingOutputSlow(JSGlobalObject* globalObject)
 
 void ioDidUnwrap(JSGlobalObject* globalObject, JSValue stream)
 {
-    if (!isPyObject(stream) || ioHasOwnFinalizer(typeOf(globalObject, stream)))
+    if (!PyRecord::is(stream) || ioHasOwnFinalizer(typeOf(globalObject, stream)))
         return;
     // See flushAllOpenFiles().
     JSArray* standardStreams = ioStandardStreams(globalObject);
@@ -1162,7 +1163,7 @@ JSValue makeStandardStream(JSGlobalObject* globalObject, int fd, bool writable, 
     RETURN_IF_EXCEPTION(scope, { });
     setAttr(globalObject, stream, ioName(globalObject, IOName::mode), makeStr(vm, writable ? "w"_s : "r"_s));
     RETURN_IF_EXCEPTION(scope, { });
-    rt.unregisterFinalizable(stream.asCell());
+    rt.unregisterFinalizable(PyRecord::from(stream));
     if (writable) {
         listAppend(globalObject, ioStandardStreams(globalObject), stream);
         RETURN_IF_EXCEPTION(scope, { });

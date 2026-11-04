@@ -12,7 +12,7 @@
 #include "WeakGCMap.h"
 #include <wtf/Deque.h>
 #include <wtf/HashMap.h>
-#include <wtf/ListHashSet.h>
+#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -545,11 +545,26 @@ public:
     // it reaches, and queues it; the finalizer is called, once, at the next safe point: between two instructions of Python
     // code, where any code may run. If nothing has taken hold of the object by then, the next collection frees it.
 
+    //
+    // Registering is writing the object down. Most such objects are done, or dead, long before the next collection, so nothing
+    // else is done until then, and nothing is ever looked up: whether an object still has something to finalize is asked of
+    // the object when a collection goes through the list. An object is written down once: when it is made, by whatever calls
+    // the __new__ of a built-in type for a class with a __del__ (didMakeObject()). For an object with a FinalizerState it makes no
+    // difference how often.
     void registerFinalizable(JSCell*);
-    void unregisterFinalizable(JSCell*);
-    // Most generators and coroutines are done long before the next collection. So they are only written down when they are made,
-    // and those that still have PyGenerator::Finalization::Noted when a collection comes are registered then.
-    void noteFinalizableGenerator(PyGenerator* generator) { m_newFinalizableGenerators.append(generator); }
+    // The same for a generator, of which there are many, when it is made.
+    ALWAYS_INLINE void registerNewGenerator(JSCell* generator)
+    {
+        m_youngFinalizable.append(generator);
+        if (allocationTracebackLimit) [[unlikely]]
+            didRegisterWhileTracingAllocations(generator);
+    }
+    // For an object with a FinalizerState: for the time being it has nothing to finalize.
+    void unregisterFinalizable(PyRecord*);
+    void unregisterFinalizable(PyManagedBuffer*);
+    // For objects that were made long ago and whose class has a __del__ only now. Those that are written down or have been finalized are
+    // left alone. It goes through the whole list.
+    void registerFinalizableLate(const MarkedArgumentBuffer&);
     // For the collector, with the world stopped, once all that is reachable is marked. True: it marked something.
     bool keepUnreachableObjectsToFinalize(SlotVisitor&);
     // For a weak reference whose referent has just died.
@@ -889,10 +904,19 @@ private:
     std::unique_ptr<Monitoring> m_monitoring;
 
     Lock m_finalizationLock;
-    ListHashSet<JSCell*> m_finalizable WTF_GUARDED_BY_LOCK(m_finalizationLock); // Not visited.
-    // Not visited. All were made since the last collection looked at this, so none has been freed. The thread that runs Python
-    // code adds to it, and the collector takes from it while that thread is stopped.
-    Vector<PyGenerator*> m_newFinalizableGenerators;
+    // The objects that are registered, in the order in which they were: first those that a collection has seen, then the others. Not
+    // visited: a collection takes out what it finds dead. What it has seen and left in is old, so a collection of the young
+    // only looks at the others. The thread that runs Python code uses these, and the collector while that thread is stopped.
+    Vector<JSCell*> m_oldFinalizable;
+    Vector<JSCell*> m_youngFinalizable;
+    // During a collection: those that are to go to the end of the list.
+    Vector<JSCell*> m_finalizableToComeLast;
+    // Those in the list that are neither instances of a class of the program's that derives from object alone, which are made in one
+    // place, nor have a FinalizerState: an instance of a class derived from dict, say. So that they are in it once.
+    UncheckedKeyHashSet<JSCell*> m_otherFinalizable;
+    void forEachFinalizable(const ScopedLambda<void(JSCell*)>&);
+    void didTakeOffList(JSCell*);
+    void didRegisterWhileTracingAllocations(JSCell*);
 
     // Nobody visits these. A collection forgets those of objects that it has found dead.
     struct OwnedTemporary {
@@ -929,11 +953,14 @@ private:
     };
     std::array<UseOfCall, 16> m_usesOfCalls;
     void findUseOfCall(UseOfCall&, CallFrame*);
-    void registerNotedGenerators() WTF_REQUIRES_LOCK(m_finalizationLock);
     Deque<JSCell*> m_pendingFinalization WTF_GUARDED_BY_LOCK(m_finalizationLock);
     Deque<PyWeakRef*> m_pendingWeakRefCallbacks WTF_GUARDED_BY_LOCK(m_finalizationLock);
     bool m_pendingWeakRefCallbacksAreInOrder WTF_GUARDED_BY_LOCK(m_finalizationLock) { true };
-    UncheckedKeyHashSet<JSCell*> m_finalized WTF_GUARDED_BY_LOCK(m_finalizationLock); // Not visited. A collection takes out what it finds dead.
+    // Those whose finalizer has been called: those that a full collection has found alive since, and the others. Not visited. They were
+    // kept by the collection that queued them, so they are old, and a full collection takes out what it finds dead.
+    UncheckedKeyHashSet<JSCell*> m_finalized WTF_GUARDED_BY_LOCK(m_finalizationLock);
+    Vector<JSCell*> m_justFinalized WTF_GUARDED_BY_LOCK(m_finalizationLock);
+    size_t m_justFinalizedAndOld WTF_GUARDED_BY_LOCK(m_finalizationLock) { 0 }; // So many of the first.
     struct CollectionNotice {
         int generation;
         double duration;
