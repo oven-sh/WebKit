@@ -382,7 +382,7 @@ static JSValue iteratorNext(JSGlobalObject* globalObject, JSValue self)
     auto* iterator = uncheckedDowncast<PyRecord>(self.asCell());
     Tokenizer* tokenizer = tokenizerOf(iterator);
     if (!tokenizer)
-        return raiseStopIteration(globalObject, scope, makeStr(vm, "EOF"_s));
+        return raise(globalObject, scope, runtime(globalObject).StopIteration(), "EOF"_s);
     if (tokenizer->isRunning())
         return raiseValueError(globalObject, scope, "tokenizer already executing"_s);
     bool isLast = false;

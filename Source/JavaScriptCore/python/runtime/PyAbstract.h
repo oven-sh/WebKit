@@ -182,6 +182,7 @@ JSValue reprObject(JSGlobalObject*, JSValue);
 JSValue strObject(JSGlobalObject*, JSValue);
 JSString* str(JSGlobalObject*, JSValue);
 JSString* ascii(JSGlobalObject*, JSValue);
+JSValue asciiObject(JSGlobalObject*, JSValue); // What __repr__ returned, if there is nothing to escape in it.
 JSString* format(JSGlobalObject*, JSValue, JSString* spec); // A null spec is an empty one.
 JSValue formatObject(JSGlobalObject*, JSValue, JSString* spec); // The same, as the object __format__() returned: it may be of a class derived from str.
 // For messages: the text, or "<?>" and no exception if that throws... never throws.

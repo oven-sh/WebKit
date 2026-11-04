@@ -2091,8 +2091,7 @@ private:
         if (failed(scope, result))
             return false;
         JSArray* list = listFromIterable(m_globalObject, result);
-        if (!list)
-            return false;
+        RETURN_IF_EXCEPTION(scope, false);
         Vector<String> all;
         appendNames(all, list);
         std::ranges::sort(all, [](const String& a, const String& b) { return codePointCompareLessThan(a, b); });

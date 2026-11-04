@@ -795,23 +795,26 @@ static JSValue buildString(JSGlobalObject* globalObject, const RuntimeArguments&
     return result;
 }
 
+static JSValue convertValue(JSGlobalObject* globalObject, JSValue value, JSValue conversion)
+{
+    // (What comes of it may be an instance of a class derived from str, with a __format__ of its own.)
+    switch (conversion.asInt32()) {
+    case 's':
+        return strObject(globalObject, value);
+    case 'r':
+        return reprObject(globalObject, value);
+    case 'a':
+        return asciiObject(globalObject, value);
+    default:
+        return value;
+    }
+}
+
 static JSValue formatValue(JSGlobalObject* globalObject, JSValue value, JSValue conversion, JSValue spec)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    switch (conversion.asInt32()) {
-    case 's':
-        value = str(globalObject, value);
-        break;
-    case 'r':
-        value = repr(globalObject, value);
-        break;
-    case 'a':
-        value = ascii(globalObject, value);
-        break;
-    default:
-        break;
-    }
+    value = convertValue(globalObject, value, conversion);
     RETURN_IF_EXCEPTION(scope, { });
     if (!spec && value.isString())
         return value;
@@ -1182,6 +1185,8 @@ static JSValue runRuntimeFunction(JSGlobalObject* globalObject, CallFrame* callF
         return jsUndefined();
     case RuntimeFunction::FormatValue:
         RELEASE_AND_RETURN(scope, formatValue(globalObject, args[0], args[1], args[2]));
+    case RuntimeFunction::ConvertValue:
+        RELEASE_AND_RETURN(scope, convertValue(globalObject, args[0], args[1]));
     case RuntimeFunction::BuildInterpolation: {
         JSValue conversion = jsUndefined();
         if (int32_t character = args[2].asInt32())

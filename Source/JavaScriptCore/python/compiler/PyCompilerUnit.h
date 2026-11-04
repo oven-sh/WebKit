@@ -148,6 +148,7 @@ private:
         Scope* comprehension { nullptr }; // InlinedComprehension
         unsigned number { 0 }; // For PythonMark.
         Last isLast { }; // A loop: what comes after it.
+        RegisterID* valueToReturn { nullptr }; // A loop: m_valueToReturn where it stands. (It may stand in a `finally` that a `return` is running.)
         bool ownsIterator { false }; // ForLoop: it goes through the value of a call. See beginTemporary().
     };
 

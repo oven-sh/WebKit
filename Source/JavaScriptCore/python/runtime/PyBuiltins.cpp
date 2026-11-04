@@ -58,19 +58,7 @@ bool parseKeywordArguments(JSGlobalObject* globalObject, ASCIILiteral function, 
 // ---- Objects ----
 
 static JSValue builtinAbs(JSGlobalObject* globalObject, JSValue value) { return absolute(globalObject, value); }
-static JSValue builtinAscii(JSGlobalObject* globalObject, JSValue value)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // What __repr__ returned, if there is nothing to escape in it: it may be an instance of a class derived from str.
-    JSValue result = reprObject(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, { });
-    auto view = strValue(result)->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (view->containsOnlyASCII())
-        return result;
-    RELEASE_AND_RETURN(scope, makeStrUnlessTooLong(globalObject, asciiEscape(view)));
-}
+static JSValue builtinAscii(JSGlobalObject* globalObject, JSValue value) { return asciiObject(globalObject, value); }
 static JSValue builtinRepr(JSGlobalObject* globalObject, JSValue value) { return reprObject(globalObject, value); }
 static JSValue builtinCallable(JSGlobalObject* globalObject, JSValue value) { return jsBoolean(isCallable(globalObject, value)); }
 static JSValue builtinDivmod(JSGlobalObject* globalObject, JSValue a, JSValue b) { return divmod(globalObject, a, b); }

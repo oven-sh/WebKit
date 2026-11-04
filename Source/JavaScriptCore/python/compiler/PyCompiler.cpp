@@ -1737,7 +1737,7 @@ void Unit::whileLoop(While* node, Last isLast)
     g.emitLabel(loop.get());
     m_statementStart = g.instructions().size();
     loc(node->test->range);
-    pushBlock({ .kind = BlockKind::WhileLoop, .tryDepth = g.tryDepth(), .continueTarget = loop.ptr(), .breakTarget = end.ptr(), .isLast = isLast });
+    pushBlock({ .kind = BlockKind::WhileLoop, .tryDepth = g.tryDepth(), .continueTarget = loop.ptr(), .breakTarget = end.ptr(), .isLast = isLast, .valueToReturn = m_valueToReturn });
     auto truth = constantTruth(node->test);
     ReturnsByLine returns;
     jumpIfOrLeave(node->test, anchor.get(), isLast.onlyIf(node->orelse.isEmpty()), returns);
@@ -1775,7 +1775,7 @@ void Unit::forLoop(For* node, Last isLast)
         g.emitPyGetIter(iterator.get(), iterable.get());
     }
 
-    pushBlock({ .kind = BlockKind::ForLoop, .tryDepth = g.tryDepth(), .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast, .ownsIterator = !!temporary });
+    pushBlock({ .kind = BlockKind::ForLoop, .tryDepth = g.tryDepth(), .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast, .valueToReturn = m_valueToReturn, .ownsIterator = !!temporary });
     g.emitLabel(start.get());
     line(node->iter->range);
     loc(node->iter->range);
@@ -1821,7 +1821,7 @@ void Unit::asyncForLoop(For* node, Last isLast)
     Try whole = beginTry();
     g.emitLabel(start.get());
     line(node->iter->range);
-    pushBlock({ .kind = BlockKind::AsyncForLoop, .tryDepth = whole.depthBefore, .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast });
+    pushBlock({ .kind = BlockKind::AsyncForLoop, .tryDepth = whole.depthBefore, .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast, .valueToReturn = m_valueToReturn });
 
     // StopAsyncIteration from __anext__ ends the loop.
     Try guard = beginTry();
@@ -1930,9 +1930,12 @@ void Unit::breakOrContinue(Stmt* node, bool isBreak)
     }
     if (!isBreak)
         return emitImplicitContinue(loop, node->range);
-    // To leave a loop that is the last statement of the function is to return, and so on.
-    if (m_blocks[loop].isLast)
+    // To leave a loop that is the last statement of the function is to return, and so on. A `return` in the loop that has got as far as a
+    // `finally` with this `break` in it comes to nothing.
+    if (m_blocks[loop].isLast) {
+        SetForScope valueToReturn(m_valueToReturn, m_blocks[loop].valueToReturn);
         return leave(m_blocks[loop].isLast, node->range);
+    }
     SetForScope leavingAs(m_leavingAs, Last { });
     Vector<TryContext> suspended;
     unwindBlocks(node->range, loop, suspended);

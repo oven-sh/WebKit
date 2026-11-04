@@ -1197,6 +1197,19 @@ JSString* ascii(JSGlobalObject* globalObject, JSValue value)
     RELEASE_AND_RETURN(scope, makeStrUnlessTooLong(globalObject, asciiEscape(view)));
 }
 
+JSValue asciiObject(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = reprObject(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto view = strValue(result)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (view->containsOnlyASCII())
+        return result;
+    RELEASE_AND_RETURN(scope, makeStrUnlessTooLong(globalObject, asciiEscape(view)));
+}
+
 JSString* format(JSGlobalObject* globalObject, JSValue value, JSString* spec)
 {
     JSValue result = formatObject(globalObject, value, spec);

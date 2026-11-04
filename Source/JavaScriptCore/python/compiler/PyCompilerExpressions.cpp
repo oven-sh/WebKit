@@ -1223,7 +1223,20 @@ RegisterID* Unit::formattedValue(FormattedValue* node, RegisterID* dst)
     Reg result = g.finalDestination(dst);
     Arguments arguments(*this, 3);
     expr(node->value, arguments[0]);
-    load(arguments[1], jsNumber(node->conversion < 0 ? 0 : node->conversion));
+    int conversion = node->conversion < 0 ? 0 : node->conversion;
+    load(arguments[1], jsNumber(conversion));
+    // The value is converted before what is in the format spec is looked at: f'{x!r:{width}}'.
+    auto* spec = node->formatSpec ? node->formatSpec->tryAs<JoinedStr>() : nullptr;
+    bool specRunsCode = node->formatSpec && !spec;
+    if (spec) {
+        for (Expr* part : spec->values)
+            specRunsCode |= !part->is<Constant>();
+    }
+    if (conversion && specRunsCode) {
+        loc(node->range);
+        g.emitPyRuntime(arguments[0], RuntimeFunction::ConvertValue, arguments[0], 2);
+        load(arguments[1], jsNumber(0));
+    }
     if (node->formatSpec)
         expr(node->formatSpec, arguments[2]);
     else

@@ -329,9 +329,9 @@ PyFunction* PyFunction::generatorBody(JSGlobalObject* globalObject, CodeBlock* o
 static String qualnameForMessage(JSGlobalObject* globalObject, PyFunction* function)
 {
     JSValue qualname = function->qualname();
-    if (qualname.isString()) {
+    if (isStr(qualname)) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
-        String text = asString(qualname)->value(globalObject);
+        String text = strValue(qualname)->value(globalObject);
         if (!scope.exception()) [[likely]]
             return text;
         scope.clearException();
@@ -830,7 +830,7 @@ static void functionSetCode(JSGlobalObject* globalObject, JSValue self, JSValue 
     size_t freeCount = code->codeInfo().freeVariables.size();
     size_t closureCount = function->closure() ? function->closure()->length() : 0;
     if (freeCount != closureCount) {
-        String name = function->name().isString() ? String(asString(function->name())->value(globalObject)) : String();
+        String name = isStr(function->name()) ? String(strValue(function->name())->value(globalObject)) : String();
         RETURN_IF_EXCEPTION(scope, void());
         raiseValueError(globalObject, scope, name, "() requires a code object with "_s, closureCount, " free vars, not "_s, freeCount);
         return;

@@ -1102,12 +1102,7 @@ static JSValue futureIterNext(JSGlobalObject* globalObject, JSValue self)
     JSValue yielded = stepFutureIter(globalObject, self, result);
     if (!result)
         RELEASE_AND_RETURN(scope, yielded);
-    // StopIteration(result), also for None.
-    Runtime& rt = runtime(globalObject);
-    PyException* stop = PyException::create(vm, rt.structure<PyException>(), rt.StopIteration());
-    stop->setArgs(vm, PyTuple::create(globalObject, { result }));
-    stop->setField(vm, ExceptionField::stopIterationValue, result);
-    return raiseException(globalObject, scope, stop);
+    return raiseStopIterationWithValue(globalObject, scope, result);
 }
 
 bool isNextOfFutureIter(JSValue next)

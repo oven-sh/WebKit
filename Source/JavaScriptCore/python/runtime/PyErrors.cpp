@@ -144,13 +144,25 @@ JSValue raiseAttributeError(JSGlobalObject* globalObject, ThrowScope& scope, JSV
 JSValue raiseStopIteration(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
 {
     // What StopIteration(value) makes, without the call: every iterator and every coroutine ends with one of these.
+    if (value && !isNone(value))
+        return raiseStopIterationWithValue(globalObject, scope, value);
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    bool hasValue = value && !isNone(value);
     PyException* exception = PyException::create(vm, rt.structure<PyException>(), rt.StopIteration());
-    exception->setArgs(vm, hasValue ? PyTuple::create(globalObject, { value }) : rt.emptyTuple());
-    exception->setField(vm, ExceptionField::stopIterationValue, hasValue ? value : jsUndefined());
+    exception->setArgs(vm, rt.emptyTuple());
+    exception->setField(vm, ExceptionField::stopIterationValue, jsUndefined());
     return raiseException(globalObject, scope, exception);
+}
+
+JSValue raiseStopIterationWithValue(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    PyException* exception = PyException::create(vm, rt.structure<PyException>(), rt.StopIteration());
+    exception->setArgs(vm, PyTuple::create(globalObject, { value }));
+    exception->setField(vm, ExceptionField::stopIterationValue, value);
+    throwPythonException(globalObject, scope, exception);
+    return { };
 }
 
 JSValue raiseOSError(JSGlobalObject* globalObject, ThrowScope& scope, int errorNumber, JSValue filename, JSValue filename2)

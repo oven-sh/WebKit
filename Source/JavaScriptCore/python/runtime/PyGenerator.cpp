@@ -420,13 +420,24 @@ JSValue sendToDelegate(JSGlobalObject* globalObject, JSValue iterator, JSValue v
     PyGenerator* waiting = rt.runningGenerator();
     ASSERT(waiting);
 
+    // What has no throw() is not asked: the exception is raised where the generator waits. There a StopIteration is taken for the end of what it
+    // waits for, wherever it comes from.
+    auto raiseWhereItWaits = [&]() -> JSValue {
+        auto* exception = PyException::tryFrom(value);
+        if (!exception || !exception->type()->isSubtypeOf(rt.StopIteration()))
+            return raiseExceptionThrownIntoGenerator(globalObject, scope, value);
+        JSValue result = exception->field(ExceptionField::stopIterationValue);
+        rt.setSendResult(result ? result : jsUndefined());
+        return { };
+    };
+
     JSValue yielded;
     JSValue result;
     JSValue visible = iterator;
     if (auto* delegate = asSequenceDelegate(globalObject, iterator)) {
         visible = delegate->get(0);
         if (mode != ResumeMode::NormalMode)
-            return raiseExceptionThrownIntoGenerator(globalObject, scope, value);
+            return raiseWhereItWaits();
         if (!isNone(value)) {
             scope.release();
             callMethod(globalObject, visible, rt.names.send(), value);
@@ -458,7 +469,7 @@ JSValue sendToDelegate(JSGlobalObject* globalObject, JSValue iterator, JSValue v
             JSValue method = getAttrIfPresent(globalObject, iterator, rt.names.throw_());
             RETURN_IF_EXCEPTION(scope, { });
             if (!method)
-                return raiseExceptionThrownIntoGenerator(globalObject, scope, value);
+                return raiseWhereItWaits();
             // It is given what throw() was given, which need not be an exception made already.
             if (auto* given = PyTuple::tryFrom(rt.slot(Runtime::Slot::ThrowArguments)); given && rt.slot(Runtime::Slot::ThrownException) == value)
                 yielded = call(globalObject, method, CallArgs(given->span()));
@@ -572,7 +583,7 @@ static JSValue anextAwaitableFinish(JSGlobalObject* globalObject, PyRecord* self
         return result;
     if (!clearPendingExceptionIfMatches(globalObject, rt.StopAsyncIteration()))
         return { };
-    return raiseStopIteration(globalObject, scope, self->get(1));
+    return raiseStopIterationWithValue(globalObject, scope, self->get(1));
 }
 
 static JSValue anextAwaitableSelf(JSGlobalObject*, JSValue self) { return self; }
@@ -1063,7 +1074,7 @@ static JSValue unwrapResult(JSGlobalObject* globalObject, PyGenerator* generator
     }
     if (isWrappedValue(globalObject, result)) {
         generator->isRunningAsync = false;
-        return raiseStopIteration(globalObject, scope, PyWrapperObject::from(result)->wrapped());
+        return raiseStopIterationWithValue(globalObject, scope, PyWrapperObject::from(result)->wrapped());
     }
     return result;
 }
