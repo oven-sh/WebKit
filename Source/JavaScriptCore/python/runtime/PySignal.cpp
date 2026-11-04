@@ -360,6 +360,20 @@ static NEVER_INLINE bool signalRunHandlers(JSGlobalObject* globalObject)
 bool checkSignals(JSGlobalObject* globalObject)
 {
     // What interrupted the thread may have been the end of the VM.
+    Runtime& rt = runtime(globalObject);
+    if (rt.threads().throwIfStopping()) [[unlikely]]
+        return false;
+    // Or that it owes calls: see Threads::wakeToMakeCalls(). (In CPython this is a place where the collector runs.)
+    if (rt.hasPendingCalls() && !rt.isRunningPendingCalls()) [[unlikely]] {
+        rt.runPendingCalls(true);
+        if (rt.vm().exceptionForInspection()) [[unlikely]]
+            return false;
+    }
+    return checkOnlySignals(globalObject);
+}
+
+bool checkOnlySignals(JSGlobalObject* globalObject)
+{
     if (runtime(globalObject).threads().throwIfStopping()) [[unlikely]]
         return false;
     if (!s_signalState.isTripped.load(std::memory_order_relaxed)) [[likely]]
@@ -655,7 +669,7 @@ static JSValue signalSignal(JSGlobalObject* globalObject, JSValue numberValue, J
         return raiseTypeError(globalObject, scope, "signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object"_s);
 
     // What has arrived is for the handler there was.
-    if (failed(scope, checkSignals(globalObject)))
+    if (failed(scope, checkOnlySignals(globalObject)))
         return { };
 
     int error = EINVAL;
@@ -716,7 +730,7 @@ static JSValue signalRaiseSignal(JSGlobalObject* globalObject, JSValue numberVal
     RETURN_IF_EXCEPTION(scope, { });
     if (::raise(number))
         return raiseOSError(globalObject, scope, errno);
-    if (failed(scope, checkSignals(globalObject)))
+    if (failed(scope, checkOnlySignals(globalObject)))
         return { };
     return jsUndefined();
 }
@@ -948,7 +962,7 @@ static JSValue signalPthreadSigmask(JSGlobalObject* globalObject, JSValue howVal
     }
 
     // What was pending and has been unblocked has arrived.
-    if (failed(scope, checkSignals(globalObject)))
+    if (failed(scope, checkOnlySignals(globalObject)))
         return { };
     RELEASE_AND_RETURN(scope, signalFromSet(globalObject, previous));
 }
@@ -1142,7 +1156,7 @@ static JSValue signalPthreadKill(JSGlobalObject* globalObject, JSValue threadVal
         return raiseOSError(globalObject, scope, ESRCH);
     if (int error = pthread_kill(static_cast<pthread_t>(*thread), number))
         return raiseOSError(globalObject, scope, error);
-    if (failed(scope, checkSignals(globalObject)))
+    if (failed(scope, checkOnlySignals(globalObject)))
         return { };
     return jsUndefined();
 }
@@ -1287,6 +1301,7 @@ void initializeSignalModule(JSGlobalObject* globalObject, PyModule* module)
 
 // FIXME: Signals on Windows.
 bool checkSignals(JSGlobalObject*) { return true; }
+bool checkOnlySignals(JSGlobalObject*) { return true; }
 bool signalMayBeHandled(JSGlobalObject*) { return false; }
 bool simulateSignal(JSGlobalObject*, int number) { return number >= 1 && number < 23; }
 void installSignalHandlers(JSGlobalObject*) { }

@@ -466,7 +466,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionWithFrame, static NEV
     }
     // CPython looks for signals after every call. Code counts on it: os.kill(os.getpid(), n), and the handler has run.
     // (Only signals. A finalizer between next(counter) and queue.put() in queue.put(next(counter)) is more than code is used to.)
-    if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkSignals(globalObject)) [[unlikely]]
+    if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkOnlySignals(globalObject)) [[unlikely]]
         return { };
     return JSValue::encode(resultForCaller(globalObject, callFrame, result));
 }
@@ -512,7 +512,7 @@ static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES callNativeFunctionInOrder(JSGloba
     }(std::make_index_sequence<arity>());
 
     // As in callNativeFunctionWithFrame().
-    if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkSignals(globalObject)) [[unlikely]]
+    if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkOnlySignals(globalObject)) [[unlikely]]
         return { };
     if (!result || !result.isCell()) [[likely]]
         return JSValue::encode(result);

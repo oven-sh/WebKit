@@ -76,7 +76,7 @@ JSValue callBodyOfGenerator(JSGlobalObject*, PyFunction* body, std::span<const J
 // Of the young generation only (what has been allocated since the last collection, whoever made that): once. What is kept for its
 // finalizer is old afterwards, so that it takes a full collection to find that it is still dead, to clear the weak references
 // to it and to free it.
-void collectAndFinalize(JSGlobalObject*, Runtime::MarkingObserver* = nullptr, CollectionScope = CollectionScope::Full, bool leavesCyclicGarbageForLater = false);
+void collectAndFinalize(JSGlobalObject*, Runtime::MarkingObserver* = nullptr, CollectionScope = CollectionScope::Full, bool leavesCyclicGarbageForLater = false, Runtime::CallsOf = Runtime::CallsOf::AllThreads);
 // In CPython a file that is dropped is closed at once, and programs count on it: open(path, "w").write(text), and whoever opens the
 // file next finds the text. Here it would be closed after some collection. So the streams over files that hold output are kept in
 // a list, and what they hold is written before the program, or anyone it starts, can look at a file, and before it does anything
@@ -320,7 +320,10 @@ bool systemRandomBytes(JSGlobalObject*, std::span<uint8_t>, SystemRandomBytes);
 // ---- Signals, the thread (PySignal.cpp, PyThread.cpp) ----
 
 // Calls the handlers of the signals that have arrived. False: one of them raised. (PyErr_CheckSignals)
-// For a function that waits in a system call, when that fails with EINTR: if this returns true, it tries again (PEP 475).
+bool checkOnlySignals(JSGlobalObject*);
+// For a function that waits, in a system call say, when that fails with EINTR: if this returns true, it tries again (PEP 475).
+// Before the handlers it makes the calls that the thread owes, which may be what it was woken for. They are code of the
+// program: whoever calls this holds nothing that only a variable of C++ refers to. See Runtime::releaseUnreachableBuffers().
 bool checkSignals(JSGlobalObject*);
 // Whether the program has given a function for any signal. (Not counting the one SIGINT has to begin with.)
 bool signalMayBeHandled(JSGlobalObject*);
@@ -593,6 +596,7 @@ struct FinalizationQuestions {
     bool looksAtAllThatDied { false }; // Only in a full collection.
     bool wantsGarbage { false };
     bool wantsToKnowWhatReferenceCountsWouldFree { false };
+    bool wantsPieces { false }; // See oldestOfPiece.
 };
 struct FinalizationOrder {
     // Which of the candidates to finalize now, and which when those are gone. Each in the order in which to take them.
@@ -600,6 +604,16 @@ struct FinalizationOrder {
     Vector<unsigned> later;
     // So many of the first are what reference counts would have freed. The others are in cycles, or hang off them.
     unsigned freedByReferenceCounts { 0 };
+    // Among those are objects together with what they alone refer to.
+    bool takesAllLevels { false };
+    static constexpr unsigned none = std::numeric_limits<unsigned>::max();
+    // For each candidate: the candidate whose going would free it, by reference counts. None: nothing dead holds it, or a cycle does.
+    Vector<unsigned> letGoBy;
+    // If asked for. For each candidate that reference counts would not have freed: the oldest candidate among all that has to do
+    // with it, by whatever references, in either direction. (A number that is not a candidate's: no candidate has.) The same for the cells
+    // asked about that are such garbage.
+    Vector<unsigned> oldestOfPiece;
+    Vector<unsigned> oldestOfPieceOfCellAskedAbout;
     // For each of the cells asked about: it is one of those others, or one of them reaches it.
     Vector<bool> isCyclicGarbageToFinalize;
     // False: it was not asked to, or that was too much.

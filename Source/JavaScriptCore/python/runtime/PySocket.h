@@ -20,6 +20,7 @@ enum SocketField : unsigned {
     SocketKind,
     SocketProtocol,
     SocketTimeout, // In nanoseconds. Negative: it blocks. 0: it does not. Otherwise the descriptor does not, and is polled.
+    SocketHasTimeLimitOfKernel, // setsockopt() has set SO_RCVTIMEO or SO_SNDTIMEO.
     SocketFieldCount
 };
 

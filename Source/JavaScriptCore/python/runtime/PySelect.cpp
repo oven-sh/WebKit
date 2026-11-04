@@ -95,7 +95,7 @@ static int waitWithTimeout(WaitRequest& request, int64_t timeout)
 
 int blockingWait(JSGlobalObject* globalObject, WaitRequest& request)
 {
-    AllowThreads allow(globalObject);
+    AllowThreads allow(globalObject, AllowThreads::LosesNothing);
     return waitWithTimeout(request, request.timeout);
 }
 

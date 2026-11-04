@@ -667,7 +667,7 @@ bool posixFreeDescriptors(JSGlobalObject* globalObject)
         return false;
     writeOutPendingOutput(globalObject); // Until then they are not to be collected.
     vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
-    rt.runPendingCalls();
+    rt.runPendingCalls(false, Runtime::CallsOf::AllThreads);
     errno = error;
     return !scope.exception();
 }

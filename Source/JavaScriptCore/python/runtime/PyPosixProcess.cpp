@@ -1393,7 +1393,7 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
         int status = 0;
         pid_t result;
         do {
-            AllowThreads allow(globalObject);
+            AllowThreads allow(globalObject, AllowThreads::LosesNothing);
             result = waitpid(pid, &status, 0);
         } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
         RETURN_IF_EXCEPTION(scope, { });
@@ -1440,7 +1440,7 @@ static JSValue posixWait(JSGlobalObject* globalObject)
     int status = 0;
     pid_t pid;
     do {
-        AllowThreads allow(globalObject);
+        AllowThreads allow(globalObject, AllowThreads::LosesNothing);
         pid = wait(&status);
     } while (pid < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (pid < 0)
@@ -1473,7 +1473,7 @@ static JSValue posixWaitpid(JSGlobalObject* globalObject, JSValue pidValue, JSVa
     }
 #endif
     do {
-        AllowThreads allow(globalObject);
+        AllowThreads allow(globalObject, AllowThreads::LosesNothing);
         result = waitpid(pid, &status, options);
     } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result < 0)
@@ -1500,7 +1500,7 @@ static JSValue posixWait3(JSGlobalObject* globalObject, JSValue optionsValue)
     struct rusage usage;
     pid_t pid;
     do {
-        AllowThreads allow(globalObject);
+        AllowThreads allow(globalObject, AllowThreads::LosesNothing);
         pid = wait4(-1, &status, options, &usage);
     } while (pid < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (pid < 0)
@@ -1520,7 +1520,7 @@ static JSValue posixWait4(JSGlobalObject* globalObject, JSValue pidValue, JSValu
     struct rusage usage;
     pid_t result;
     do {
-        AllowThreads allow(globalObject);
+        AllowThreads allow(globalObject, AllowThreads::LosesNothing);
         result = wait4(pid, &status, options, &usage);
     } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result < 0)
@@ -1544,7 +1544,7 @@ static JSValue posixWaitid(JSGlobalObject* globalObject, JSValue typeValue, JSVa
     info.si_pid = 0;
     int result;
     do {
-        AllowThreads allow(globalObject);
+        AllowThreads allow(globalObject, AllowThreads::LosesNothing);
         result = waitid(static_cast<idtype_t>(type), static_cast<id_t>(id), &info, options);
     } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result < 0)

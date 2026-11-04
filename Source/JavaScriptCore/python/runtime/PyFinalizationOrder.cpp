@@ -434,6 +434,9 @@ FinalizationOrder DeadGraph::order()
     rank.fill(0, count);
     Vector<unsigned> released; // The candidates among it.
     unsigned deepest = 0;
+    // The candidate whose going frees a cell: the nearest on the way by which the last reference to it is dropped.
+    Vector<unsigned> letGoBy;
+    letGoBy.fill(none, count);
     {
         struct Frame {
             unsigned node;
@@ -458,11 +461,15 @@ FinalizationOrder DeadGraph::order()
                 }
                 unsigned target = m_edges[frame.next++];
                 rank[target] = std::max(rank[target], rank[frame.node] + isCandidate(frame.node));
-                if (!--m_references[target])
+                if (!--m_references[target]) {
+                    letGoBy[target] = isCandidate(frame.node) ? frame.node : letGoBy[frame.node];
                     release(target);
+                }
             }
         }
     }
+    static_assert(none == FinalizationOrder::none);
+    result.letGoBy = Vector<unsigned>(letGoBy.span().first(m_candidateCount));
 
     // What another candidate reaches waits: it is kept alive by that one now, and comes up again in the collection that finds
     // that one gone, unless its finalizer found it a home. That takes a collection per level. A structure that is deeper than a
@@ -476,6 +483,7 @@ FinalizationOrder DeadGraph::order()
             result.later.append(node);
     }
     result.freedByReferenceCounts = result.now.size();
+    result.takesAllLevels = takesAll;
 
     // The rest is for CPython's collector, which comes later, and calls the finalizers of all that it finds in one go, in the
     // order in which the objects were made.
@@ -498,6 +506,28 @@ FinalizationOrder DeadGraph::order()
             result.now.append(i);
     }
 
+    // What is left falls into pieces that have nothing to do with one another.
+    Vector<unsigned> piece;
+    auto pieceOf = [&](unsigned node) {
+        while (piece[node] != node)
+            node = piece[node] = piece[piece[node]];
+        return node;
+    };
+    if (m_questions.wantsPieces) {
+        piece = Vector<unsigned>(count, [](size_t i) {
+            return static_cast<unsigned>(i);
+        });
+        for (unsigned node = 0; node < count; ++node) {
+            if (m_flags[node] & Released)
+                continue;
+            for (unsigned successor : successors(node)) {
+                // The lower number stands for the piece: that of its oldest candidate.
+                if (unsigned a = pieceOf(node), b = pieceOf(successor); !(m_flags[successor] & Released) && a != b)
+                    piece[std::max(a, b)] = std::min(a, b);
+            }
+        }
+    }
+
     if (m_hasAllThatDied) {
         Vector<unsigned> worklist;
         for (unsigned i = 0; i < m_candidateCount; ++i) {
@@ -514,6 +544,12 @@ FinalizationOrder DeadGraph::order()
         unsigned* slot = slotFor(cell, false);
         bool isGarbage = slot && *slot != none && (m_flags[*slot] & (Released | Waits | IsKept)) == IsKept;
         result.isCyclicGarbageToFinalize.append(isGarbage);
+        if (m_questions.wantsPieces)
+            result.oldestOfPieceOfCellAskedAbout.append(isGarbage ? pieceOf(*slot) : none);
+    }
+    if (m_questions.wantsPieces) {
+        for (unsigned i = 0; i < m_candidateCount; ++i)
+            result.oldestOfPiece.append(m_flags[i] & Released ? none : pieceOf(i));
     }
 
     if (!m_questions.wantsGarbage || !m_hasAllThatDied)

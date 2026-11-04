@@ -93,7 +93,7 @@ static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState&
 #endif
     ssize_t result;
     do {
-        AllowThreads allow(globalObject);
+        AllowThreads allow(globalObject, AllowThreads::LosesNothing);
         result = read(fd, buffer, std::min(count, fileIOMaxTransfer));
     } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result >= 0)
@@ -224,7 +224,7 @@ static int fileIOSystemOpen(JSGlobalObject* globalObject, const char* name, int 
             if (isVirtual)
                 fd = openFile(name, flags, 0666);
             else {
-                AllowThreads allow(globalObject);
+                AllowThreads allow(globalObject, AllowThreads::LosesNothing);
                 fd = open(name, flags, 0666);
             }
         } while (fd < 0 && errno == EINTR && checkSignals(globalObject));

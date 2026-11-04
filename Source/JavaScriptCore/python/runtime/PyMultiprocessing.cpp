@@ -231,11 +231,11 @@ static JSValue semLockAcquire(JSGlobalObject* globalObject, JSValue self, JSValu
     if (result < 0 && errno == EAGAIN && blocks) {
         do {
             if (!hasDeadline) {
-                AllowThreads allow(globalObject);
+                AllowThreads allow(globalObject, AllowThreads::LosesNothing);
                 result = sem_wait(handle);
             } else {
 #if PY_HAVE_SEM_TIMEDWAIT
-                AllowThreads allow(globalObject);
+                AllowThreads allow(globalObject, AllowThreads::LosesNothing);
                 result = sem_timedwait(handle, &deadline);
 #else
                 result = semLockTimedWait(globalObject, handle, deadline);

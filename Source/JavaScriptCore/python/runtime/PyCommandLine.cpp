@@ -1625,7 +1625,7 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
 
     // Flushing looks for signals, and drops what is raised.
     if (!scope.exception())
-        checkSignals(globalObject);
+        checkOnlySignals(globalObject);
     return finish();
 }
 

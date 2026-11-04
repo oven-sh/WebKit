@@ -380,6 +380,38 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   way round, and so it is here: the weak references *with callbacks* are cleared before the finalizers run, and stay dead
   if a finalizer brings the object back; those without are cleared afterwards. A callback is called only if the weak reference
   is itself reachable.
+- **Which thread runs a finalizer.** With reference counts it is the thread that drops the last reference, at once. Nobody knows here
+  who that was, but programs count on it: a `__del__` that calls JS, closes an event loop or a connection of sqlite3 has to run in the thread that
+  made the object. So every call that is owed is owed by one thread, and only that thread makes it (`Runtime::CallsOwed`, one queue
+  for each thread that owes):
+  - An object is its maker's: the thread that registered it. The callback of a weak reference belongs to the thread that made the
+    weak reference. (Under CPython, in 18 suites of packages with other threads alive, the maker was the one to finalize in 84 of 100 cases,
+    93 of 100 for `__del__`. The free-threaded build of 3.15 hands an object whose last reference another thread drops to its maker, too.)
+  - What dies because something else died follows that: an object that waits for another (see the order above) goes to the
+    thread that finalizes the other, as the thread that frees the parent frees the child.
+  - What has to happen in one order is not split: a round that takes parents and children at once goes to the maker of the oldest, and
+    so does each piece of cyclic garbage that hangs together, with the callbacks of the weak references to it. CPython's collector
+    calls those finalizers one after the other, in whichever thread it happens to run.
+  - **A collection that the program waits for** (`gc.collect()`, the retry after `EMFILE`, a wait that nothing else can end) is served by
+    the caller: all that it finds, and all that any thread owes and has not begun, before it returns. A collection of the engine's
+    own only hands out. A thread that collects because it is idle makes the calls that are its own.
+  - **No such thread any more**: the main thread. A thread makes the calls it owes before it ends. At exit everything is the main thread's.
+  - **A thread that waits is woken** (`Threads::wakeToMakeCalls`: what it sleeps on, the host's event loop, or the signal that gets it out of
+    a system call), makes its calls where it would look at signals (`checkSignals()`, as `PyErr_CheckSignals()` runs the collector in CPython), and
+    goes on waiting for the time it has left. One that only waits for the GIL finds out when it has it: the flag that the safe points
+    look at is the running thread's. In foreign code: when it comes back. A wake can be lost, if the signal comes just before the system call;
+    every later collection wakes again.
+  - **The signal is sent only where it loses nothing** (`AllowThreads::LosesNothing`, which the call site says): a call that transfers nothing
+    before it returns and is made again when it was interrupted: `read`, `readv`, `recv` and its kin, `accept`, `poll`/`select`/`epoll`, the
+    `wait` family, `flock`, `lockf`, `open` (of a FIFO), a semaphore, a sleep. CPython sends a thread no signal at all, and one that comes in the
+    middle of `write`, `send`, `sendmsg`, `sendfile` or `recv(MSG_WAITALL)` makes the call return the part it has done, which a program that
+    trusts a blocking call never looks at; a time limit that the kernel keeps (`SO_RCVTIMEO`) begins anew; `signal.pause()` returns. There, and
+    in `connect`, `close`, `tcdrain`, `sigwait` and foreign functions, the calls are made when the system call returns.
+  - The price: **a thread that waits runs Python code, and it may wait holding a lock.** W makes an object, hands it on, takes a lock and sleeps; another
+    thread drops the object; its `__del__` wants the lock. In CPython the other thread waits until W lets go. Here the finalizer
+    runs in W, on top of the sleep, and never gets a lock that is not re-entrant. It takes four things at once: the maker is not
+    the one who drops, the maker waits, holding a plain lock, which the finalizer takes without a timeout. The data model warns of
+    locks in `__del__` for the like reason ("may deadlock"), and none was found in the standard library or in 262 distributions.
 - **At exit**, when the threads are joined and before `atexit`'s callbacks, what is unreachable by then and reference counts would
   have freed is finalized: in CPython it would have been long ago. (Only if an object is registered whose finalizer is code of the
   program.) After the callbacks, if there is anything left to finalize, `sys.modules` is emptied as CPython empties it, and

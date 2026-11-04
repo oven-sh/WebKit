@@ -403,7 +403,7 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
         int error;
         int64_t piece = idle.nextPiece(timeout);
         {
-            AllowThreads allow(globalObject);
+            AllowThreads allow(globalObject, AllowThreads::LosesNothing);
 #if OS(LINUX)
             struct timespec until = timeToTimespec(piece == timeout ? deadline : now + piece);
             error = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &until, nullptr);

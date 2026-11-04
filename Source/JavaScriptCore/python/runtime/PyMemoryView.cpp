@@ -654,8 +654,10 @@ void Runtime::releaseUnreachableBuffers(bool thorough)
             if (auto* buffer = PyManagedBuffer::tryFrom(cell))
                 buffers.append(buffer);
         };
-        for (JSCell* cell : m_pendingFinalization)
-            add(cell);
+        for (auto& owed : m_callsOwed) {
+            for (JSCell* cell : owed->finalizers)
+                add(cell);
+        }
         pendingCount = buffers.size();
         if (isPrecise)
             forEachFinalizable(add);
@@ -676,13 +678,14 @@ void Runtime::releaseUnreachableBuffers(bool thorough)
             {
                 Locker locker { m_finalizationLock };
                 if (!runsCode) {
-                    if (auto it = m_pendingFinalization.findIf([&](JSCell* cell) { return cell == buffer; }); it != m_pendingFinalization.end())
-                        m_pendingFinalization.remove(it);
-                }
-                else if (!isPending) {
+                    for (auto& owed : m_callsOwed) {
+                        if (auto it = owed->finalizers.findIf([&](JSCell* cell) { return cell == buffer; }); it != owed->finalizers.end())
+                            owed->finalizers.remove(it);
+                    }
+                } else if (!isPending) {
                     // At the next safe point.
                     unregisterFinalizable(buffer);
-                    m_pendingFinalization.append(buffer);
+                    callsOwedBy(m_currentThread).finalizers.append(buffer);
                     didQueue = true;
                 }
             }
@@ -692,10 +695,8 @@ void Runtime::releaseUnreachableBuffers(bool thorough)
             madeProgress = true;
         }
     }
-    if (didQueue) {
-        didQueueCalls();
-        m_vm.writeBarrier(m_globalObject);
-    }
+    if (didQueue)
+        didQueueCallsFor(m_currentThread);
 }
 
 bool isHeldByFrames(JSGlobalObject* globalObject, JSValue exporter)

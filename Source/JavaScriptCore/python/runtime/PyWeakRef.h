@@ -38,6 +38,8 @@ public:
 
     // Later ones have greater numbers.
     uint64_t serial() const { return m_serial; }
+    // That made it (Runtime::currentThread()), which is the one to call the callback.
+    uint32_t thread() const { return m_thread; }
     // Not one that a program made: see newWeakRef().
     bool isInternal() const { return m_isInternal; }
     void setIsInternal() { m_isInternal = true; }
@@ -52,6 +54,7 @@ private:
     WriteBarrier<Unknown> m_callback;
     int64_t m_hash { 0 };
     uint64_t m_serial;
+    uint32_t m_thread { 0 };
     bool m_hasHash { false };
     bool m_isInternal { false };
 };

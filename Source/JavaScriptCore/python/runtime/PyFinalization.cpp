@@ -65,7 +65,7 @@ void Runtime::registerFinalizable(JSCell* cell)
             return;
         cell->setPerCellBit(true);
     }
-    m_youngFinalizable.append(cell);
+    m_youngFinalizable.append({ cell, m_currentThread });
     if (allocationTracebackLimit) [[unlikely]]
         didRegisterWhileTracingAllocations(cell);
 }
@@ -125,12 +125,65 @@ void Runtime::didTakeOffList(JSCell* cell, bool isToBeFinalized)
 void Runtime::forEachFinalizable(const ScopedLambda<void(JSCell*)>& function)
 {
     for (auto* list : { &m_oldFinalizable, &m_youngFinalizable }) {
-        for (JSCell* cell : *list) {
-            ASSERT(cell);
-            if (!isNoLongerWanted(cell))
-                function(cell);
+        for (auto& entry : *list) {
+            ASSERT(entry.cell);
+            if (!isNoLongerWanted(entry.cell))
+                function(entry.cell);
         }
     }
+}
+
+// ---- Who owes what ----
+
+Runtime::CallsOwed& Runtime::callsOwedBy(uint32_t thread)
+{
+    for (auto& owed : m_callsOwed) {
+        if (owed->thread == thread)
+            return *owed;
+    }
+    // The main thread's comes first.
+    if (thread && m_callsOwed.isEmpty())
+        m_callsOwed.append(makeUnique<CallsOwed>());
+    m_callsOwed.append(makeUnique<CallsOwed>());
+    m_callsOwed.last()->thread = thread;
+    return *m_callsOwed.last();
+}
+
+// With the GIL, or for the collector while whoever holds it is stopped.
+uint32_t Runtime::threadToMakeCallsOf(uint32_t thread)
+{
+    if (!thread || threads().isFinalized())
+        return 0;
+    bool isThere = false;
+    threads().forEachThread([&](ThreadState& other) {
+        isThere |= other.number() == thread;
+    });
+    return isThere ? thread : 0;
+}
+
+void Runtime::threadDidEnd(uint32_t thread)
+{
+    ASSERT(thread);
+    Locker locker { m_finalizationLock };
+    size_t index = m_callsOwed.findIf([&](auto& owed) {
+        return owed->thread == thread;
+    });
+    if (index == notFound)
+        return;
+    std::unique_ptr<CallsOwed> owed = WTF::move(m_callsOwed[index]);
+    m_callsOwed.removeAt(index);
+    CallsOwed& heir = callsOwedBy(0);
+    bool leavesSomething = owed->hasFinalizers() || owed->collectionBeingToldOf;
+    while (!owed->finalizers.isEmpty())
+        heir.finalizers.append(owed->finalizers.takeFirst());
+    while (!owed->weakRefCallbacks.isEmpty()) {
+        heir.weakRefCallbacks.append(owed->weakRefCallbacks.takeFirst());
+        heir.weakRefCallbacksAreInOrder = false;
+    }
+    if (owed->collectionBeingToldOf && !heir.collectionBeingToldOf)
+        heir.collectionBeingToldOf = owed->collectionBeingToldOf;
+    if (leavesSomething)
+        didQueueCallsFor(0);
 }
 
 // A generator that has not begun has nothing to end. (A coroutine that has not begun is complained about.)
@@ -155,19 +208,38 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
     // This is called again and again until it finds no more, and in a collection that the engine began by itself the program may
     // run in between, while what this has kept is marked. So each time the lists are left as the program may find them: whatever is
     // registered and not queued is in one of them, and there is no hole.
+    // What is queued is kept, whoever queued it and whenever: the program does too, and need not tell the collector.
+    {
+        bool keptSomething = false;
+        auto keep = [&](JSCell* cell) {
+            if (visitor.isMarked(cell))
+                return;
+            visitor.appendUnbarriered(cell);
+            keptSomething = true;
+        };
+        for (auto& owed : m_callsOwed) {
+            for (JSCell* cell : owed->finalizers)
+                keep(cell);
+            for (PyWeakRef* weakRef : owed->weakRefCallbacks)
+                keep(weakRef);
+        }
+        if (keptSomething)
+            return true;
+    }
     // All of them are found before any is marked.
     Vector<JSCell*> candidates;
-    Vector<JSCell**> places;
+    Vector<Finalizable*> places;
     unsigned finalizersOfProgram = 0;
-    auto look = [&](Vector<JSCell*>& list) {
+    auto look = [&](Vector<Finalizable>& list) {
         size_t kept = 0;
-        for (JSCell* cell : list) {
+        for (auto entry : list) {
+            JSCell* cell = entry.cell;
             if (isNoLongerWanted(cell)) {
                 didTakeOffList(cell);
                 continue;
             }
-            JSCell*& place = list[kept++];
-            place = cell;
+            Finalizable& place = list[kept++];
+            place = entry;
             // What has nothing to finalize is left to die, unless one of the others reaches it: see didMarkAll().
             if (visitor.isMarked(cell) || hasNothingToFinalize(cell))
                 continue;
@@ -202,48 +274,89 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
     Vector<JSCell*> referents = weakRefs.map([](PyWeakRef* weakRef) {
         return weakRef->referent();
     });
-    FinalizationOrder order = finalizationOrder(m_vm.heap, visitor, candidates.span(), { referents.span(), looksAtAllThatDied, wantsGarbage, m_leavesCyclicGarbageForLater });
+    bool askerMakesAllCalls = wasAskedFor && m_askerMakesAllCalls;
+    bool areOfSeveralThreads = !askerMakesAllCalls && std::ranges::any_of(places, [&](Finalizable* entry) {
+        return entry->thread != places[0]->thread;
+    });
+    FinalizationOrder order = finalizationOrder(m_vm.heap, visitor, candidates.span(), { referents.span(), looksAtAllThatDied, wantsGarbage, m_leavesCyclicGarbageForLater, areOfSeveralThreads });
 
     // All that the candidates reach is about to be marked, so the weak references to it stay as they are until the finalizers have
     // run and another collection finds it dead: first __del__, then the weak references, as with reference counts. But what is
     // in a cycle, or hangs off one, is not freed by reference counts, and CPython's collector does it the other way round for
     // the weak references that have callbacks: it clears them, calls the callbacks of those that are not garbage
     // themselves, and then calls the finalizers. (So such a reference stays dead if a finalizer brings its referent back.)
+    //
+    // Which thread: whoever waits for this collection takes all. Otherwise each object is its maker's. But what has to happen in a
+    // certain order is not split among threads: a round that takes parents and children at once goes to the maker of the oldest; and
+    // of what CPython's collector would have found, which calls all the finalizers itself, one after the other, each piece that
+    // hangs together goes to the maker of its oldest, with the callbacks of the weak references to it.
+    auto freedByReferenceCounts = order.now.span().first(order.freedByReferenceCounts);
+    auto cyclicGarbage = order.now.span().subspan(order.freedByReferenceCounts);
+    auto makerOf = [&](unsigned candidate) {
+        return askerMakesAllCalls ? m_currentThread : threadToMakeCallsOf(places[candidate]->thread);
+    };
+    auto takerOfPieceWithOldest = [&](unsigned oldest) {
+        return makerOf(oldest < candidates.size() ? oldest : cyclicGarbage.empty() ? 0 : cyclicGarbage[0]);
+    };
+    uint32_t takerOfAllLevels = order.takesAllLevels ? makerOf(*std::ranges::min_element(freedByReferenceCounts)) : 0;
+
     for (unsigned i = 0; i < weakRefs.size(); ++i) {
         if (!order.isCyclicGarbageToFinalize[i])
             continue;
         PyWeakRef* weakRef = weakRefs[i];
         weakRef->setReferent(nullptr);
         if (visitor.isMarked(weakRef)) {
-            m_pendingWeakRefCallbacks.append(weakRef);
-            m_pendingWeakRefCallbacksAreInOrder = false;
+            CallsOwed& owed = callsOwedBy(takerOfPieceWithOldest(areOfSeveralThreads ? order.oldestOfPieceOfCellAskedAbout[i] : FinalizationOrder::none));
+            owed.weakRefCallbacks.append(weakRef);
+            owed.weakRefCallbacksAreInOrder = false;
+            ++m_numberOfCallsQueued;
         } else
             weakRef->clearCallback();
     }
 
+    Vector<uint32_t> takers;
+    takers.fill(noThread, candidates.size());
+    CallsOwed* owed = nullptr;
     for (unsigned n = 0; n < order.now.size(); ++n) {
-        JSCell* cell = candidates[order.now[n]];
+        unsigned candidate = order.now[n];
+        Finalizable& entry = *places[candidate];
+        JSCell* cell = entry.cell;
         visitor.appendUnbarriered(cell);
-        if (m_leavesCyclicGarbageForLater && n >= order.freedByReferenceCounts)
+        bool isCyclicGarbage = n >= order.freedByReferenceCounts;
+        if (m_leavesCyclicGarbageForLater && isCyclicGarbage)
             continue;
-        m_pendingFinalization.append(cell);
-        *places[order.now[n]] = nullptr;
+        uint32_t taker = isCyclicGarbage ? takerOfPieceWithOldest(areOfSeveralThreads ? order.oldestOfPiece[candidate] : FinalizationOrder::none)
+            : order.takesAllLevels ? takerOfAllLevels : makerOf(candidate);
+        takers[candidate] = taker;
+        if (!owed || owed->thread != taker)
+            owed = &callsOwedBy(taker);
+        owed->finalizers.append(cell);
+        ++m_numberOfCallsQueued;
+        entry.cell = nullptr;
         didTakeOffList(cell, true);
     }
     // The others are kept alive by those. They come up again, in this order, in the collection that finds those gone: they go to the
-    // end of the list.
-    for (unsigned i : order.later)
-        *places[i] = nullptr;
+    // end of the list. With reference counts the thread that finalizes an object frees what it alone refers to: what waits for
+    // another goes to the thread of that one.
+    Vector<Finalizable> toComeLast;
+    for (unsigned candidate : order.later) {
+        Finalizable entry = *places[candidate];
+        unsigned first = candidate;
+        while (order.letGoBy[first] != FinalizationOrder::none)
+            first = order.letGoBy[first];
+        if (takers[first] != noThread)
+            entry.thread = takers[first];
+        toComeLast.append(entry);
+        places[candidate]->cell = nullptr;
+    }
     if (!candidates.isEmpty()) {
-        auto isHole = [](JSCell* cell) {
-            return !cell;
+        auto isHole = [](auto& entry) {
+            return !entry.cell;
         };
         if (isFull)
             m_oldFinalizable.removeAllMatching(isHole);
         m_youngFinalizable.removeAllMatching(isHole);
-        for (unsigned i : order.later)
-            m_youngFinalizable.append(candidates[i]);
-        didQueueCalls();
+        m_youngFinalizable.appendVector(toComeLast);
     }
 
     Vector<JSCell*> toKeep;
@@ -297,13 +410,13 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
         return false;
     };
     if (isFull) {
-        m_oldFinalizable.removeAllMatching([&](JSCell* cell) {
-            return !stays(cell);
+        m_oldFinalizable.removeAllMatching([&](auto& entry) {
+            return !stays(entry.cell);
         });
     }
-    for (JSCell* cell : m_youngFinalizable) {
-        if (stays(cell))
-            m_oldFinalizable.append(cell);
+    for (auto& entry : m_youngFinalizable) {
+        if (stays(entry.cell))
+            m_oldFinalizable.append(entry);
     }
     m_youngFinalizable.shrink(0);
     if (isFull && m_oldFinalizable.size() < m_oldFinalizable.capacity() / 4)
@@ -312,7 +425,7 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
 #if ASSERT_ENABLED
     if (isFull) {
         UncheckedKeyHashSet<JSCell*> seen;
-        for (JSCell* cell : m_oldFinalizable) {
+        for (auto [cell, thread] : m_oldFinalizable) {
             if (!visitor.isMarked(cell) || !seen.add(cell).isNewEntry) [[unlikely]] {
                 dataLogLn("A registered object of type ", typeOf(cell)->nameInMessages(), visitor.isMarked(cell) ? " is in the list twice" : " is about to be freed");
                 RELEASE_ASSERT_NOT_REACHED();
@@ -352,6 +465,12 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
     m_justFinalizedAndOld = m_justFinalized.size();
     forgetDeadTemporaries(visitor);
 
+    // Those that owe since an earlier collection are told again: a thread may have been about to wait when it was told.
+    for (auto& owed : m_callsOwed) {
+        if (owed->hasFinalizers())
+            didQueueCallsFor(owed->thread);
+    }
+
     double duration = m_collectionBegan ? (MonotonicTime::now() - m_collectionBegan).seconds() : 0;
     m_collectionBegan = { };
     // gc.collect() does its own accounting. See gcDisable().
@@ -362,7 +481,7 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
     gc.stats[generation].duration += duration;
     if (hasCollectionCallbacks()) {
         m_collectionsToTellOf.append({ generation, duration });
-        didQueueCalls();
+        didQueueCallsFor(m_currentThread);
     }
 }
 
@@ -394,19 +513,23 @@ bool Runtime::hasBeenFinalized(JSCell* cell)
 void Runtime::queueWeakRefCallback(PyWeakRef* weakRef)
 {
     Locker locker { m_finalizationLock };
-    m_pendingWeakRefCallbacks.append(weakRef);
-    m_pendingWeakRefCallbacksAreInOrder = false;
-    didQueueCalls();
+    CallsOwed& owed = callsOwedBy(m_scopeAskedFor && m_askerMakesAllCalls ? m_currentThread : threadToMakeCallsOf(weakRef->thread()));
+    owed.weakRefCallbacks.append(weakRef);
+    owed.weakRefCallbacksAreInOrder = false;
+    ++m_numberOfCallsQueued;
+    didQueueCallsFor(owed.thread);
 }
 
 template<typename Visitor>
 void Runtime::visitPendingCalls(Visitor& visitor)
 {
     Locker locker { m_finalizationLock };
-    for (JSCell* cell : m_pendingFinalization)
-        visitor.appendUnbarriered(cell);
-    for (PyWeakRef* weakRef : m_pendingWeakRefCallbacks)
-        visitor.appendUnbarriered(weakRef);
+    for (auto& owed : m_callsOwed) {
+        for (JSCell* cell : owed->finalizers)
+            visitor.appendUnbarriered(cell);
+        for (PyWeakRef* weakRef : owed->weakRefCallbacks)
+            visitor.appendUnbarriered(weakRef);
+    }
 }
 
 template void Runtime::visitPendingCalls(AbstractSlotVisitor&);
@@ -552,11 +675,22 @@ static void finalizeObject(JSGlobalObject* globalObject, JSCell* cell)
         reportUnraisable(globalObject, makeString("Exception ignored while calling deallocator "_s, reprForMessage(globalObject, method)), { });
 }
 
-// The collector's thread may be the one that calls this.
-void Runtime::didQueueCalls()
+// The collector's thread may be the one that calls this, while the thread that holds the GIL is stopped.
+void Runtime::didQueueCallsFor(uint32_t thread)
 {
-    m_hasPendingCalls = true;
-    noteCallsOwed(m_vm);
+    if (thread == m_currentThread) {
+        m_hasPendingCalls = true;
+        noteCallsOwed(m_vm);
+    } else
+        threads().wakeToMakeCalls(thread);
+}
+
+bool Runtime::owesCalls(CallsOf callsOf)
+{
+    Locker locker { m_finalizationLock };
+    return !m_collectionsToTellOf.isEmpty() || std::ranges::any_of(m_callsOwed, [&](auto& owed) {
+        return owed->thread == m_currentThread ? owed->hasFinalizers() || owed->collectionBeingToldOf : callsOf == CallsOf::AllThreads && owed->hasFinalizers();
+    });
 }
 
 static std::atomic<void (*)(VM&)> s_callsOwedFunction;
@@ -611,7 +745,7 @@ static NEVER_INLINE bool makeCallsOwedToProgram(VM& vm)
         if (!vm.heap.pythonRuntimes().contains(runtime))
             continue;
         // What the handler of a signal raises is thrown. The trap is set again then: the rest is for the next safe point.
-        if (failed(scope, checkSignals(runtime->globalObject())))
+        if (failed(scope, checkOnlySignals(runtime->globalObject())))
             return hasFinalized;
         if (runtime->hasPendingCalls()) {
             hasFinalized = true;
@@ -622,7 +756,7 @@ static NEVER_INLINE bool makeCallsOwedToProgram(VM& vm)
     return hasFinalized;
 }
 
-void Runtime::runPendingCalls(bool mayPutOff)
+void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
 {
     // What is queued while these run is run by the loop below, not within one of the calls.
     if (m_isRunningPendingCalls)
@@ -651,12 +785,18 @@ void Runtime::runPendingCalls(bool mayPutOff)
     SetForScope savedFrame(reraisingFrame, nullptr);
     // For finalizers that make new garbage with such finalizers for ever.
     unsigned collectionsLeft = 8;
-    auto& collection = m_collectionBeingToldOf;
+    // It stays where it is until this thread ends.
+    CallsOwed* own;
+    {
+        Locker locker { m_finalizationLock };
+        own = &callsOwedBy(m_currentThread);
+    }
+    auto& collection = own->collectionBeingToldOf;
 
     while (true) {
         // A long queue does not hold up Ctrl-C, and a handler is called with the frame of the program, not with that of a finalizer
         // that happens to come next.
-        if (!isFinalized && failed(scope, checkSignals(globalObject))) [[unlikely]] {
+        if (!isFinalized && failed(scope, checkOnlySignals(globalObject))) [[unlikely]] {
             m_vm.traps().fireTrap(VMTraps::NeedPythonCalls);
             return;
         }
@@ -668,24 +808,34 @@ void Runtime::runPendingCalls(bool mayPutOff)
         bool collectionIsOver = false;
         {
             Locker locker { m_finalizationLock };
+            // What others owe was found earlier than what this thread has just been given.
+            CallsOwed* owed = own;
+            if (callsOf == CallsOf::AllThreads) {
+                for (auto& other : m_callsOwed) {
+                    if (other.get() != own && other->hasFinalizers()) {
+                        owed = other.get();
+                        break;
+                    }
+                }
+            }
             if (!collection && !m_collectionsToTellOf.isEmpty()) {
                 collection = m_collectionsToTellOf.takeFirst();
                 collectionStarts = true;
-            } else if (!m_pendingWeakRefCallbacks.isEmpty()) {
+            } else if (!owed->weakRefCallbacks.isEmpty()) {
                 // The references to an object are told of its death latest first. The collector finds them in no order.
-                if (!std::exchange(m_pendingWeakRefCallbacksAreInOrder, true)) {
-                    Vector<PyWeakRef*> all(m_pendingWeakRefCallbacks.size(), [&](size_t) {
-                        return m_pendingWeakRefCallbacks.takeFirst();
+                if (!std::exchange(owed->weakRefCallbacksAreInOrder, true)) {
+                    Vector<PyWeakRef*> all(owed->weakRefCallbacks.size(), [&](size_t) {
+                        return owed->weakRefCallbacks.takeFirst();
                     });
                     std::ranges::sort(all, [](PyWeakRef* a, PyWeakRef* b) {
                         return a->serial() > b->serial();
                     });
                     for (PyWeakRef* each : all)
-                        m_pendingWeakRefCallbacks.append(each);
+                        owed->weakRefCallbacks.append(each);
                 }
-                weakRef = m_pendingWeakRefCallbacks.takeFirst();
-            } else if (!m_pendingFinalization.isEmpty()) {
-                object = m_pendingFinalization.takeFirst();
+                weakRef = owed->weakRefCallbacks.takeFirst();
+            } else if (!owed->finalizers.isEmpty()) {
+                object = owed->finalizers.takeFirst();
                 m_justFinalized.append(object);
             } else if (collection)
                 collectionIsOver = true;
@@ -718,8 +868,7 @@ void Runtime::runPendingCalls(bool mayPutOff)
         ensureStillAliveHere(weakRef);
         // The host is ending what runs here, and that cannot be reported and forgotten. The rest is for another time.
         if (m_vm.hasPendingTerminationException()) [[unlikely]] {
-            Locker locker { m_finalizationLock };
-            didQueueCalls();
+            didQueueCallsFor(m_currentThread);
             return;
         }
     }
@@ -796,10 +945,10 @@ void Runtime::finalizeAllAtExit()
         for (unsigned round = 0; round < 64 && !isDone(); ++round) {
             wipeStackBelow(m_globalObject);
             collectAsAskedFor();
-            if (!hasPendingCalls())
+            if (!owesCalls(CallsOf::AllThreads))
                 break;
             bool mayFindMore = hasPendingFinalizers();
-            runPendingCalls();
+            runPendingCalls(false, CallsOf::AllThreads);
             if (!mayFindMore || m_vm.hasPendingTerminationException())
                 break;
         }
@@ -832,17 +981,17 @@ void Runtime::finalizeAllAtExit()
                 rest.append(cell);
         });
         for (auto* list : { &m_oldFinalizable, &m_youngFinalizable }) {
-            for (JSCell* cell : *list)
-                didTakeOffList(cell);
+            for (auto& entry : *list)
+                didTakeOffList(entry.cell);
             list->clear();
         }
         Locker locker { m_finalizationLock };
+        CallsOwed& owed = callsOwedBy(m_currentThread);
         for (JSCell* cell : rest)
-            m_pendingFinalization.append(cell);
-        didQueueCalls();
+            owed.finalizers.append(cell);
+        didQueueCallsFor(m_currentThread);
     }
-    m_vm.writeBarrier(m_globalObject);
-    runPendingCalls();
+    runPendingCalls(false, CallsOf::AllThreads);
 }
 
 // ---- Collections that are asked for ----
@@ -868,13 +1017,15 @@ NEVER_INLINE void wipeStackBelow(JSGlobalObject* globalObject, size_t size)
 }
 #endif
 
-bool Runtime::hasPendingFinalizers()
+bool Runtime::hasPendingFinalizers(CallsOf callsOf)
 {
     Locker locker { m_finalizationLock };
-    return !m_pendingFinalization.isEmpty() || !m_pendingWeakRefCallbacks.isEmpty();
+    return std::ranges::any_of(m_callsOwed, [&](auto& owed) {
+        return owed->hasFinalizers() && (callsOf == CallsOf::AllThreads || owed->thread == m_currentThread);
+    });
 }
 
-void Runtime::collectAsAskedFor(CollectionScope collectionScope, bool leavesCyclicGarbageForLater)
+void Runtime::collectAsAskedFor(CollectionScope collectionScope, bool leavesCyclicGarbageForLater, CallsOf callsOf)
 {
     // The VM remembers the last exception thrown, for the debugger, long after it has been handled, and with it the
     // traceback and all that the frames in it refer to.
@@ -882,6 +1033,7 @@ void Runtime::collectAsAskedFor(CollectionScope collectionScope, bool leavesCycl
     forgetCatchesInJSThatAreOver();
     SetForScope scopeAskedFor(m_scopeAskedFor, collectionScope);
     SetForScope leavesCyclicGarbage(m_leavesCyclicGarbageForLater, leavesCyclicGarbageForLater);
+    SetForScope askerMakesAllCalls(m_askerMakesAllCalls, callsOf == CallsOf::AllThreads);
     // The one is asked for to get rid of things, the other to be quick: what it frees is swept when the memory is wanted.
     if (collectionScope == CollectionScope::Full)
         m_vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
@@ -900,16 +1052,16 @@ void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
             return;
         wipeStackBelow(m_globalObject);
         collectAsAskedFor(CollectionScope::Full, true);
-        if (!hasPendingCalls())
+        if (!owesCalls(CallsOf::AllThreads))
             return;
         bool mayFindMore = hasPendingFinalizers();
-        runPendingCalls();
+        runPendingCalls(false, CallsOf::AllThreads);
         if (!mayFindMore || m_vm.hasPendingTerminationException())
             return;
     }
 }
 
-void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* observer, CollectionScope collectionScope, bool leavesCyclicGarbageForLater)
+void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* observer, CollectionScope collectionScope, bool leavesCyclicGarbageForLater, Runtime::CallsOf callsOf)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -923,17 +1075,17 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
             observer->willCollect();
             rt.setMarkingObserver(observer);
         }
-        rt.collectAsAskedFor(collectionScope, leavesCyclicGarbageForLater);
+        rt.collectAsAskedFor(collectionScope, leavesCyclicGarbageForLater, callsOf);
         if (observer) {
             rt.setMarkingObserver(nullptr);
             observer->didCollect();
         }
-        if (!rt.hasPendingCalls())
+        if (!rt.owesCalls(callsOf))
             break;
-        bool mayFindMore = rt.hasPendingFinalizers();
+        bool mayFindMore = rt.hasPendingFinalizers(callsOf);
         // What the handler of a signal that came meanwhile raises is for whoever waits for this. The calls that are left are made
         // at the next safe point then.
-        rt.runPendingCalls();
+        rt.runPendingCalls(false, callsOf);
         if (!mayFindMore || collectionScope == CollectionScope::Eden || vm.exceptionForInspection())
             break;
     }

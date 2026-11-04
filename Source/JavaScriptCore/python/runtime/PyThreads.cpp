@@ -177,6 +177,29 @@ ThreadState& Threads::current()
     return *t_currentThread;
 }
 
+#if !OS(WINDOWS)
+// What gets a thread out of a system call. To ignore it is the default, so that one which arrives where nobody expects it does no harm,
+// and it may arrive for no reason anyway.
+static constexpr int signalThatInterrupts = SIGURG;
+
+int signalThatInterruptsThreads() { return signalThatInterrupts; }
+
+static void makeSignalInterrupt()
+{
+    struct sigaction current;
+    if (sigaction(signalThatInterrupts, nullptr, &current))
+        return;
+    // Any handler will do, the program's own too. A signal that is ignored interrupts nothing.
+    if ((current.sa_flags & SA_SIGINFO) || (current.sa_handler != SIG_DFL && current.sa_handler != SIG_IGN))
+        return;
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = [](int) { };
+    sigemptyset(&action.sa_mask);
+    sigaction(signalThatInterrupts, &action, nullptr);
+}
+#endif
+
 // The first thread is about to be started, by the only one there is, which holds the GIL from now on.
 void Threads::enable()
 {
@@ -185,6 +208,9 @@ void Threads::enable()
     m_gilIsHeld = true;
     m_lastHolder = &thread;
     m_isEnabled = true;
+#if !OS(WINDOWS)
+    makeSignalInterrupt();
+#endif
 }
 
 // ---- The GIL ----
@@ -302,6 +328,24 @@ void Threads::wakeMainThread()
     noteCallsOwed(m_vm);
 }
 
+void Threads::wakeToMakeCalls(uint32_t number)
+{
+    for (auto& thread : m_threads) {
+        if (thread->number() != number)
+            continue;
+        thread->sleeper.wake();
+        if (thread->isMain)
+            noteCallsOwed(m_vm); // The host's event loop.
+#if !OS(WINDOWS)
+        // Out of a system call too, where that does no harm. Elsewhere the calls are made when the system call returns.
+        // (The thread cannot have gone on to another call meanwhile: for that it has to come back to the VM, which makes it wait
+        // while a collection hands out calls. It takes itself out of the list, with the GIL, before it ends.)
+        if (thread->parked && thread->losesNothingIfInterrupted)
+            pthread_kill(reinterpret_cast<pthread_t>(reinterpret_cast<void*>(static_cast<uintptr_t>(thread->ident))), signalThatInterrupts);
+#endif
+    }
+}
+
 void mainThreadHasTrapsToHandle(VM& vm)
 {
     if (!vm.heap.pythonRuntimes().isEmpty())
@@ -316,10 +360,11 @@ void Threads::tellMainThreadOfFinalizers()
     wakeMainThread();
 }
 
-void AllowThreads::release(Threads& threads)
+void AllowThreads::release(Threads& threads, WhenInterrupted whenInterrupted)
 {
     m_threads = &threads;
     m_thread = &threads.current();
+    m_thread->losesNothingIfInterrupted = whenInterrupted == LosesNothing;
     auto* luggage = new (NotNull, m_luggage) Luggage;
     threads.release(*m_thread, luggage->parked, luggage->saved);
     threads.dropGIL(*m_thread, false);
@@ -330,6 +375,7 @@ void AllowThreads::acquire()
     int savedErrno = errno;
     auto* luggage = std::launder(reinterpret_cast<Luggage*>(m_luggage));
     m_threads->takeGIL(*m_thread);
+    m_thread->losesNothingIfInterrupted = false;
     m_threads->acquire(*m_thread, luggage->parked, luggage->saved);
     luggage->~Luggage();
     errno = savedErrno;
@@ -352,29 +398,6 @@ void Threads::didFinalize()
     Locker locker { m_gilLock };
     m_gilCondition.notifyAll();
 }
-
-#if !OS(WINDOWS)
-// What gets a thread out of a system call. To ignore it is the default, so that one which arrives where nobody expects it does no harm,
-// and it may arrive for no reason anyway.
-static constexpr int signalThatInterrupts = SIGURG;
-
-int signalThatInterruptsThreads() { return signalThatInterrupts; }
-
-static void makeSignalInterrupt()
-{
-    struct sigaction current;
-    if (sigaction(signalThatInterrupts, nullptr, &current))
-        return;
-    // Any handler will do, the program's own too. A signal that is ignored interrupts nothing.
-    if ((current.sa_flags & SA_SIGINFO) || (current.sa_handler != SIG_DFL && current.sa_handler != SIG_IGN))
-        return;
-    struct sigaction action;
-    memset(&action, 0, sizeof(action));
-    action.sa_handler = [](int) { };
-    sigemptyset(&action.sa_mask);
-    sigaction(signalThatInterrupts, &action, nullptr);
-}
-#endif
 
 void Threads::stopAll()
 {
@@ -482,9 +505,16 @@ void Threads::runThread(ThreadState& thread, Function<void()>&& body)
         // The thread that gave up the GIL left the VM and the runtimes as they are when nothing runs.
         JSLockHolder locker(m_vm);
         didTakeGIL(thread);
+        for (Runtime* runtime : m_vm.heap.pythonRuntimes())
+            runtime->setCurrentThread(thread.number());
         body();
         body = nullptr;
 
+        // What it owes, it pays before it goes.
+        for (Runtime* runtime : Vector<Runtime*, 1>(m_vm.heap.pythonRuntimes())) {
+            if (m_vm.heap.pythonRuntimes().contains(runtime) && runtime->hasPendingCalls())
+                runtime->runPendingCalls();
+        }
         for (Runtime* runtime : m_vm.heap.pythonRuntimes()) {
             Runtime::ThreadLocalState state;
             runtime->takeThreadLocalState(state);
@@ -495,6 +525,8 @@ void Threads::runThread(ThreadState& thread, Function<void()>&& body)
         m_threads.removeFirstMatching([&](auto& other) {
             return other.ptr() == &thread;
         });
+        for (Runtime* runtime : m_vm.heap.pythonRuntimes())
+            runtime->threadDidEnd(thread.number());
         if (m_vm.heap.hasPostponedEmbedderFinalizers() && !m_didTellMainThreadOfFinalizers) [[unlikely]]
             tellMainThreadOfFinalizers();
         if (m_isStopping.load()) [[unlikely]]
@@ -562,23 +594,30 @@ bool Threads::shouldCollectWhileIdle(JSGlobalObject* globalObject, bool isLastRe
         return false;
     // Such a collection stops every thread, and any number of threads may be idle while one works: all of them together spend
     // at most a twentieth of the time on it. If nothing has been allocated since the last time, there is little to find, but
-    // the count moves in steps, and to drop something takes no allocation at all: then a fiftieth.
+    // the count moves in steps, and to drop something takes no allocation at all: then a fiftieth. If the last one found something
+    // to finalize, what only that referred to is there to be found as soon as its thread has finalized it: then half.
     int64_t earliest = m_timeForIdleCollectionWithoutCause;
-    if (m_vm.heap.totalBytesAllocated() != m_bytesAllocatedAtIdleCollection)
+    if (m_lastIdleCollectionFoundCalls)
+        earliest -= 49 * m_durationOfLastIdleCollection;
+    else if (m_vm.heap.totalBytesAllocated() != m_bytesAllocatedAtIdleCollection)
         earliest -= 30 * m_durationOfLastIdleCollection;
     return isLastResort || monotonicNanoseconds() >= earliest;
 }
 
-void Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
+bool Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
 {
     int64_t start = monotonicNanoseconds();
+    uint64_t callsQueuedBefore = runtime(globalObject).numberOfCallsQueued();
     // What reference counts would have freed would have been finalized by now. Cyclic garbage would not: CPython's collector does not
     // run in a thread that waits, which may well hold a lock that a finalizer wants.
-    collectAndFinalize(globalObject, nullptr, CollectionScope::Full, !isLastResort);
+    // It makes the calls that are its own. If nothing else can bring about what it waits for, all.
+    collectAndFinalize(globalObject, nullptr, CollectionScope::Full, !isLastResort, isLastResort ? Runtime::CallsOf::AllThreads : Runtime::CallsOf::ThisThread);
     m_bytesAllocatedAtIdleCollection = m_vm.heap.totalBytesAllocated();
     int64_t end = monotonicNanoseconds();
     m_durationOfLastIdleCollection = end - start;
     m_timeForIdleCollectionWithoutCause = end + 50 * (end - start);
+    m_lastIdleCollectionFoundCalls = runtime(globalObject).numberOfCallsQueued() != callsQueuedBefore;
+    return m_lastIdleCollectionFoundCalls;
 }
 
 static bool isOfFunctionThatMayWait(CallFrame* call)
@@ -632,7 +671,8 @@ NEVER_INLINE bool Threads::collectBeforeCallBeginsAgain(JSGlobalObject* globalOb
     auto begun = thread.waitBegunAgain;
     thread.waitBegunAgain.call = nullptr;
     thread.callThatMayBeginAgain = nullptr;
-    collectWhileIdle(globalObject, begun.isLastResort);
+    if (collectWhileIdle(globalObject, begun.isLastResort))
+        begun.idleInterval = IdleWait::firstInterval;
     if (scope.exception()) [[unlikely]]
         return false;
     thread.waitBegunAgain = begun;
@@ -685,12 +725,30 @@ bool IdleWait::collect(bool isLastResort)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
     Threads& threads = runtime(m_globalObject).threads();
-    if (!threads.shouldCollectWhileIdle(m_globalObject, isLastResort))
+    if (!threads.shouldCollectWhileIdle(m_globalObject, isLastResort)) {
+        // Another thread has looked a moment ago, for all that wait.
+        if (threads.m_lastIdleCollectionFoundCalls)
+            m_interval = firstInterval;
         return true;
+    }
     if (failed(scope, !beginsCallAgain(true, isLastResort)))
         return false;
-    threads.collectWhileIdle(m_globalObject, isLastResort);
+    if (threads.collectWhileIdle(m_globalObject, isLastResort))
+        m_interval = firstInterval;
     return !scope.exception();
+}
+
+bool IdleWait::checkSignals()
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
+    bool owesCalls = runtime(m_globalObject).hasPendingCalls();
+    if (failed(scope, Python::checkSignals(m_globalObject)))
+        return false;
+    if (owesCalls) {
+        m_interval = firstInterval;
+        m_timeToCollect = std::min(m_timeToCollect, monotonicNanoseconds() + m_interval);
+    }
+    return true;
 }
 
 bool IdleWait::collectAsLastResort()
@@ -714,7 +772,8 @@ bool IdleWait::collectIfDue(int64_t remaining)
         m_timeToCollect = std::numeric_limits<int64_t>::max();
         return true;
     }
-    // Less and less often: nothing happens while this waits, unless other threads run, and they collect as they allocate.
+    // Less and less often: nothing happens while this waits, unless other threads run, and they collect as they allocate. But as long
+    // as collections find something to finalize, there may be more: what only that referred to, once its thread has finalized it.
     m_interval *= 4;
     if (failed(scope, collect(false)))
         return false;
@@ -727,7 +786,7 @@ bool IdleWait::didWait(int64_t remaining)
     VM& vm = getVM(m_globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     // A signal that came between two pieces has interrupted neither.
-    if (failed(scope, checkSignals(m_globalObject)))
+    if (failed(scope, checkSignals()))
         return false;
     if (monotonicNanoseconds() < m_timeToCollect)
         return true;
@@ -808,15 +867,12 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
                     return false;
                 }
             }
-            bool canGoOn = checkSignals(globalObject);
-            EXCEPTION_ASSERT(!scope.exception() == canGoOn);
-            if (!canGoOn) {
-                // This thread may have been woken for what it now leaves to others.
-                wakeOne(address);
-                return false;
-            }
-        } else if (throwIfStopping()) [[unlikely]] {
-            scope.release();
+        }
+        bool canGoOn = idle.checkSignals();
+        EXCEPTION_ASSERT(!scope.exception() == canGoOn);
+        if (!canGoOn) {
+            // This thread may have been woken for what it now leaves to others.
+            wakeOne(address);
             return false;
         }
         if (isOver())

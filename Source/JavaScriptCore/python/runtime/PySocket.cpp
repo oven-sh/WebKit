@@ -43,6 +43,12 @@ static constexpr int64_t socketNanosecondsPerSecond = 1000000000;
 
 static int socketFamilyOf(PyRecord* socket) { return socket->get(SocketFamily).asInt32(); }
 
+// A call that waits for all of it returns the part that has come. A time limit of the kernel's begins anew when the call is made again.
+static AllowThreads::WhenInterrupted socketWhenReceiveIsInterrupted(PyRecord* socket, int flags)
+{
+    return (flags & MSG_WAITALL) || socket->get(SocketHasTimeLimitOfKernel).isTrue() ? AllowThreads::MayLoseSomething : AllowThreads::LosesNothing;
+}
+
 // ---- Errors ----
 
 static constexpr TypeDef socketHostErrorTypeDef { "socket.herror"_s, { TypeFlag::Base, TypeFlag::Mutable, TypeFlag::HasWeakref }, { }, { }, { } };
@@ -853,6 +859,7 @@ static PyRecord* socketAllocate(JSGlobalObject* globalObject, PyType* type)
     socket->set(vm, SocketKind, jsNumber(0));
     socket->set(vm, SocketProtocol, jsNumber(0));
     socket->set(vm, SocketTimeout, jsNumber(-1));
+    socket->set(vm, SocketHasTimeLimitOfKernel, jsBoolean(false));
     return socket;
 }
 
@@ -1096,6 +1103,8 @@ static JSValue socketSetOption(JSGlobalObject* globalObject, JSValue self, const
         return raiseTypeError(globalObject, scope, "socket option should be int, bytes-like object or None (got "_s, typeNameForMessage(globalObject, typeOf(globalObject, value)), ')');
     if (result < 0)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
+    if (level == SOL_SOCKET && (option == SO_RCVTIMEO || option == SO_SNDTIMEO))
+        PyRecord::from(self)->set(vm, SocketHasTimeLimitOfKernel, jsBoolean(true));
     return jsUndefined();
 }
 
@@ -1168,7 +1177,7 @@ static JSValue socketAccept(JSGlobalObject* globalObject, JSValue self)
         for (bool isSecondTry : { false, true }) {
             address.length = capacity;
             {
-                AllowThreads allow(globalObject);
+                AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, 0));
 #if defined(SOCK_CLOEXEC) && !OS(DARWIN)
                 fd = accept4(socketDescriptor(socket), &address.generic, &address.length, SOCK_CLOEXEC);
 #else
@@ -1356,7 +1365,7 @@ static JSValue socketRecv(JSGlobalObject* globalObject, JSValue self, const Call
     ssize_t count = 0;
     if (size) {
         bool succeeded = socketCall(globalObject, socket, false, socketTimeoutOf(socket), [&] {
-            AllowThreads allow(globalObject);
+            AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, flags));
             count = recv(socketDescriptor(socket), scratch.mutableSpan().data(), size, flags);
             return count >= 0;
         }, socketOptionsForFlags(flags));
@@ -1382,7 +1391,7 @@ static JSValue socketRecvFrom(JSGlobalObject* globalObject, JSValue self, const 
     bool succeeded = socketCall(globalObject, socket, false, socketTimeoutOf(socket), [&] {
         memset(&address.storage, 0, sizeof(address.storage));
         address.length = capacity;
-        AllowThreads allow(globalObject);
+        AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, flags));
         count = recvfrom(socketDescriptor(socket), scratch.mutableSpan().data(), size, flags, &address.generic, &address.length);
         return count >= 0;
     }, socketOptionsForFlags(flags));
@@ -1432,7 +1441,7 @@ static JSValue socketRecvInto(JSGlobalObject* globalObject, JSValue self, JSValu
         bool succeeded = socketCall(globalObject, socket, false, socketTimeoutOf(socket), [&] {
             if (failed(scope, refreshBuffer(globalObject, holder.buffer)))
                 return false;
-            AllowThreads allow(globalObject);
+            AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, flags));
             count = recv(socketDescriptor(socket), holder.buffer.data, size, flags);
             return count >= 0;
         }, socketOptionsForFlags(flags));
@@ -1461,7 +1470,7 @@ static JSValue socketRecvFromInto(JSGlobalObject* globalObject, JSValue self, JS
             return false;
         memset(&address.storage, 0, sizeof(address.storage));
         address.length = capacity;
-        AllowThreads allow(globalObject);
+        AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, flags));
         count = recvfrom(socketDescriptor(socket), holder.buffer.data, size, flags, &address.generic, &address.length);
         return count >= 0;
     }, socketOptionsForFlags(flags));
@@ -1552,7 +1561,7 @@ static JSValue socketReceiveMessage(JSGlobalObject* globalObject, PyRecord* sock
         message.msg_control = controlSize ? control.mutableSpan().data() : nullptr;
         message.msg_controllen = controlSize;
         message.msg_flags = 0;
-        AllowThreads allow(globalObject);
+        AllowThreads allow(globalObject, socketWhenReceiveIsInterrupted(socket, flags));
         count = recvmsg(socketDescriptor(socket), &message, flags);
         return count >= 0;
     }, socketOptionsForFlags(flags));

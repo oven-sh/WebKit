@@ -758,7 +758,7 @@ bool BufferedStream::flushWrites()
             s.writePosition += count;
             s.rawPosition = s.writePosition;
             // A write that a signal cuts short succeeds. The handler has to run before the next one blocks, for who knows how long.
-            if (failed(scope, checkSignals(globalObject)))
+            if (failed(scope, checkOnlySignals(globalObject)))
                 return false;
         }
     }
@@ -1313,7 +1313,7 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
         written += count;
         remaining -= count;
         // As in flushWrites().
-        if (failed(scope, checkSignals(globalObject)) || failed(scope, data.refresh()))
+        if (failed(scope, checkOnlySignals(globalObject)) || failed(scope, data.refresh()))
             return { };
         source = data.data();
     }

@@ -48,6 +48,7 @@ PyWeakRef* PyWeakRef::create(VM& vm, Structure* structure, PyType* type, JSCell*
     auto* weakRef = new (NotNull, allocateCell<PyWeakRef>(vm)) PyWeakRef(vm, structure, type, referent);
     weakRef->finishCreation(vm);
     weakRef->m_callback.set(vm, weakRef, callback);
+    weakRef->m_thread = structure->realm()->pythonRuntime()->currentThread();
     return weakRef;
 }
 

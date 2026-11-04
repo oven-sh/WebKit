@@ -77,6 +77,8 @@ Runtime::Runtime(JSGlobalObject* globalObject)
     , m_instanceKeys { PrivateName(PrivateName::PrivateSymbol, "type"_s), PrivateName(PrivateName::PrivateSymbol, "dict"_s), PrivateName(PrivateName::PrivateSymbol, "hasDict"_s) }
 {
     m_threads = Threads::sharedFor(m_vm);
+    if (m_threads->isEnabled())
+        m_currentThread = m_threads->current().number();
     m_monitoring = makeUnique<Monitoring>(*this);
     m_vm.heap.addPythonRuntime(this);
 }
@@ -722,6 +724,8 @@ void Runtime::takeThreadLocalState(ThreadLocalState& state)
     state.buffersThatKeepGIL = std::exchange(buffersThatKeepGIL, 0);
     state.isRunningPendingCalls = std::exchange(m_isRunningPendingCalls, false);
     state.stackWhereUnaskedCallsBegan = std::exchange(m_stackWhereUnaskedCallsBegan, nullptr);
+    state.thread = std::exchange(m_currentThread, noThread);
+    m_hasPendingCalls = false;
 }
 
 void Runtime::putThreadLocalState(ThreadLocalState& state)
@@ -758,6 +762,8 @@ void Runtime::putThreadLocalState(ThreadLocalState& state)
     buffersThatKeepGIL = state.buffersThatKeepGIL;
     m_isRunningPendingCalls = state.isRunningPendingCalls;
     m_stackWhereUnaskedCallsBegan = state.stackWhereUnaskedCallsBegan;
+    m_currentThread = state.thread;
+    m_hasPendingCalls = owesCalls(CallsOf::ThisThread);
 }
 
 } // namespace Python

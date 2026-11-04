@@ -231,7 +231,7 @@ static JSValue fcntlFlock(JSGlobalObject* globalObject, JSValue fdValue, JSValue
         return { };
     int result;
     do {
-        AllowThreads allow(globalObject);
+        AllowThreads allow(globalObject, AllowThreads::LosesNothing);
         result = flock(fd, operation);
     } while (result == -1 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     RELEASE_AND_RETURN(scope, fcntlNoneUnlessFailed(globalObject, result));
@@ -263,7 +263,7 @@ static JSValue fcntlLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     lock.l_whence = static_cast<short>(whence);
     int result;
     do {
-        AllowThreads allow(globalObject);
+        AllowThreads allow(globalObject, AllowThreads::LosesNothing);
         result = fcntl(fd, command & LOCK_NB ? F_SETLK : F_SETLKW, &lock);
     } while (result == -1 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     RELEASE_AND_RETURN(scope, fcntlNoneUnlessFailed(globalObject, result));

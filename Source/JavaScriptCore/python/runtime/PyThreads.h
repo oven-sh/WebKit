@@ -63,12 +63,15 @@ public:
     uint64_t ident { 0 }; // threading.get_ident(). The system gives it to another thread once this one has ended.
     const uint64_t serial; // This is never used again. Not 0.
     bool isMain { false };
+    // For Runtime::currentThread().
+    uint32_t number() const { return isMain ? 0 : static_cast<uint32_t>(serial); }
     Sleeper sleeper;
 
     // The rest is for whoever holds the GIL.
 
     // While the thread does not hold the GIL: where it left its frames, and what it took out of the runtimes.
     JSLock::ParkedThread* parked { nullptr };
+    bool losesNothingIfInterrupted { false }; // While it is parked. See AllowThreads::WhenInterrupted.
     struct SavedStates* saved { nullptr };
     // Whether it is in a queue of Threads::waitUntil().
     bool isQueued { false };
@@ -202,6 +205,11 @@ public:
     bool collectBeforeCallBeginsAgain(JSGlobalObject*, CallFrame*);
     void wakeOne(const void* address);
     void wakeAll(const void* address);
+    // The thread of that number (ThreadState::number()), which does not hold the GIL, owes calls: finalizers, callbacks of weak
+    // references. Wherever it waits, it is woken, makes them (checkSignals()) and goes on waiting for the time it has left. If it only waits
+    // for the GIL, it finds out when it has it. With the GIL, or for the collector while whoever holds it is stopped.
+    // A wake can be lost: the thread may be about to make the system call that the signal was to interrupt.
+    void wakeToMakeCalls(uint32_t number);
 
     // _imp.acquire_lock()
     ThreadLock importLock;
@@ -252,7 +260,8 @@ private:
     void release(ThreadState&, JSLock::ParkedThread&, SavedStates&);
     void acquire(ThreadState&, JSLock::ParkedThread&, SavedStates&);
     bool shouldCollectWhileIdle(JSGlobalObject*, bool isLastResort);
-    void collectWhileIdle(JSGlobalObject*, bool isLastResort);
+    // True: it found something to finalize, for whichever thread. Then the next may find what only that referred to.
+    bool collectWhileIdle(JSGlobalObject*, bool isLastResort);
     void takeGIL(ThreadState&);
     void dropGIL(ThreadState&, bool isYielding);
     JS_EXPORT_PRIVATE bool throwIfStoppingSlow();
@@ -270,6 +279,7 @@ private:
     uint64_t m_bytesAllocatedAtIdleCollection { 0 };
     int64_t m_timeForIdleCollectionWithoutCause { 0 };
     int64_t m_durationOfLastIdleCollection { 0 };
+    bool m_lastIdleCollectionFoundCalls { false };
     bool m_didTellMainThreadOfFinalizers { false };
     bool m_mainThreadTellsHostOfDirectory { false };
     Vector<Vector<char>> m_variablesToTellHostOf;
@@ -296,13 +306,20 @@ class AllowThreads {
     WTF_MAKE_NONCOPYABLE(AllowThreads);
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    ALWAYS_INLINE explicit AllowThreads(JSGlobalObject* globalObject)
+    // What a signal of ours would do to what the thread is about to do (Threads::wakeToMakeCalls() sends one, to a thread that owes
+    // calls). A system call that has transferred a part returns that part: write, send, sendfile, recv with MSG_WAITALL come back
+    // short, where a program that trusts a blocking call never looks. A time limit that the kernel keeps begins anew. pause() returns.
+    // A foreign function does who knows what. So none is sent unless whoever gives up the GIL says that nothing is lost: the call
+    // transfers nothing before it returns, and what follows it makes it again when it was interrupted.
+    enum WhenInterrupted : bool { MayLoseSomething, LosesNothing };
+
+    ALWAYS_INLINE explicit AllowThreads(JSGlobalObject* globalObject, WhenInterrupted whenInterrupted = MayLoseSomething)
     {
         Runtime& rt = runtime(globalObject);
         Threads& threads = rt.threads();
         // With no other thread there is nobody to let in, and nobody to start one.
         if (threads.runningCount() && !rt.buffersThatKeepGIL) [[unlikely]]
-            release(threads);
+            release(threads, whenInterrupted);
     }
 
     ALWAYS_INLINE ~AllowThreads()
@@ -312,7 +329,7 @@ public:
     }
 
 private:
-    JS_EXPORT_PRIVATE void release(Threads&);
+    JS_EXPORT_PRIVATE void release(Threads&, WhenInterrupted);
     JS_EXPORT_PRIVATE void acquire();
 
     struct Luggage {
@@ -356,7 +373,9 @@ public:
     // That is over, what was waited for has not come, and so many nanoseconds are left to wait (negative: there is no end).
     // False, here and below: there is an exception.
     bool didWait(int64_t remaining);
-    // The same without a look at signals.
+    // The two halves of that. Signals, if this is the main thread; the calls that the thread owes; the end of the VM. What the
+    // thread has finalized may have been all that referred to something else, so it looks again soon.
+    bool checkSignals();
     bool collectIfDue(int64_t remaining);
     // Nothing can end the wait but a finalizer. Once for each time that this is so: a call that has been begun again for it does not ask again.
     bool collectAsLastResort();

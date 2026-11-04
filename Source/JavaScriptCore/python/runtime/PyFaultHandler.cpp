@@ -332,7 +332,7 @@ static JSValue faultDumpTracebackFunction(JSGlobalObject* globalObject, JSValue 
     if (failed(scope, fd >= 0))
         return { };
     faultDumpTraceback(globalObject, fd, allThreads ? FaultHeader::CurrentThread : FaultHeader::Stack, maxThreadCount);
-    if (failed(scope, checkSignals(globalObject)))
+    if (failed(scope, checkOnlySignals(globalObject)))
         return { };
     return jsUndefined();
 }
@@ -344,7 +344,7 @@ static JSValue faultDumpCStack(JSGlobalObject* globalObject, JSValue file)
     if (failed(scope, fd >= 0))
         return { };
     faultWrite(fd, "Current thread's C stack trace (most recent call first):\n  <cannot get C stack on this system>\n"_span);
-    if (failed(scope, checkSignals(globalObject)))
+    if (failed(scope, checkOnlySignals(globalObject)))
         return { };
     return jsUndefined();
 }

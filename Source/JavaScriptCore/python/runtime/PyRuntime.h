@@ -512,10 +512,16 @@ public:
         unsigned buffersThatKeepGIL { 0 };
         bool isRunningPendingCalls { false };
         void* stackWhereUnaskedCallsBegan { nullptr };
+        uint32_t thread { 0 };
     };
     // Leaves the runtime as a thread that has just started finds it.
     void takeThreadLocalState(ThreadLocalState&);
     void putThreadLocalState(ThreadLocalState&);
+    // The thread that runs: 0 for the main one, for any other a number that no other thread of the process ever has (ThreadState::number()).
+    // While no thread holds the GIL: noThread.
+    static constexpr uint32_t noThread = std::numeric_limits<uint32_t>::max();
+    uint32_t currentThread() const { return m_currentThread; }
+    void setCurrentThread(uint32_t thread) { m_currentThread = thread; }
     // A JSWeakMap: for each _thread._local object this thread has used, the dict that holds the thread's attributes of it.
     JSValue threadLocals() const { return m_threadLocals.get(); }
     void setThreadLocals(JSValue value) { set(m_threadLocals, value); }
@@ -545,6 +551,9 @@ public:
     // to clean up) is registered when it is made. When a collection finds one that nothing reaches, it keeps it, with all that
     // it reaches, and queues it; the finalizer is called, once, at the next safe point: between two instructions of Python
     // code, where any code may run. If nothing has taken hold of the object by then, the next collection frees it.
+    //
+    // Every call that is owed is owed by one thread, and only that thread makes it: the best guess at the thread that would have dropped
+    // the last reference. That is the one that made the object, or the weak reference. See README, "Which thread runs a finalizer".
 
     //
     // Registering is writing the object down. Most such objects are done, or dead, long before the next collection, so nothing
@@ -556,7 +565,7 @@ public:
     // The same for a generator, of which there are many, when it is made.
     ALWAYS_INLINE void registerNewGenerator(JSCell* generator)
     {
-        m_youngFinalizable.append(generator);
+        m_youngFinalizable.append({ generator, m_currentThread });
         if (allocationTracebackLimit) [[unlikely]]
             didRegisterWhileTracingAllocations(generator);
     }
@@ -570,13 +579,22 @@ public:
     // For a weak reference whose referent has just died.
     void queueWeakRefCallback(PyWeakRef*);
 
+    // This thread owes calls.
     ALWAYS_INLINE bool hasPendingCalls() const { return m_hasPendingCalls; }
+    // Those that this thread owes, or those that any thread owes and has not begun: whoever waits for a collection (gc.collect()) makes
+    // all the calls that come of it, and all that are owed already, before it goes on.
+    enum class CallsOf : bool { ThisThread, AllThreads };
     // Some of them are finalizers or callbacks of weak references: the next collection may find more than the last.
-    bool hasPendingFinalizers();
+    bool hasPendingFinalizers(CallsOf = CallsOf::AllThreads);
+    bool owesCalls(CallsOf);
+    // Finalizers and callbacks of weak references, ever, for whichever thread.
+    uint64_t numberOfCallsQueued() const { return m_numberOfCallsQueued; }
     // At a safe point. What the calls raise is reported and goes no further. But signals are looked at between the calls, and what
     // a handler raises is thrown: what is left in the queue then is left for the next safe point.
     // `mayPutOff`: nobody asked for it or waits for it. Then it is put off if the stack is nearly used up.
-    void runPendingCalls(bool mayPutOff = false);
+    void runPendingCalls(bool mayPutOff = false, CallsOf = CallsOf::ThisThread);
+    // It has made the calls it owed, and will run no more code. What it comes to owe from now on is the main thread's.
+    void threadDidEnd(uint32_t thread);
     // One of those calls is running, in this thread. What it queues waits for it to return.
     bool isRunningPendingCalls() const { return m_isRunningPendingCalls; }
     // Nobody asked for those calls, and the frame is of the code that happened to run when their time came. It has not called them,
@@ -588,7 +606,7 @@ public:
     // See writeOutPendingOutput().
     ALWAYS_INLINE bool mayHavePendingOutput() const { return m_mayHavePendingOutput; }
     void setMayHavePendingOutput(bool value) { m_mayHavePendingOutput = value; }
-    void didQueueCalls();
+    void didQueueCallsFor(uint32_t thread);
     // When the interpreter exits: whatever is still registered is finalized, reachable or not, but for what the threads hold that
     // are still there.
     void finalizeAllAtExit();
@@ -612,7 +630,8 @@ public:
     // A collection for which the program waits. It takes the time to look at all that has died: see PyFinalizationOrder.cpp.
     // `leavesCyclicGarbageForLater`: only what reference counts would have freed is finalized. What has a finalizer and is in a
     // cycle, or hangs off one, is kept, and comes up again in the next collection.
-    void collectAsAskedFor(CollectionScope = CollectionScope::Full, bool leavesCyclicGarbageForLater = false);
+    // CallsOf::AllThreads: this thread will make the calls that come of it. Otherwise each is left to the thread that owes it.
+    void collectAsAskedFor(CollectionScope = CollectionScope::Full, bool leavesCyclicGarbageForLater = false, CallsOf = CallsOf::AllThreads);
     // For when the interpreter exits, before the program is told (atexit): what is unreachable by then and reference
     // counts would have freed would have been finalized long ago.
     void finalizeWhatReferenceCountsWouldHaveFreed();
@@ -918,8 +937,12 @@ private:
     // visited: a collection takes out what it finds dead. What it has seen and left in is old, so a collection of the young
     // only looks at the others. The thread that runs Python code uses these, and the collector while that thread is stopped, which
     // may be several times in one collection: see keepUnreachableObjectsToFinalize().
-    Vector<JSCell*> m_oldFinalizable;
-    Vector<JSCell*> m_youngFinalizable;
+    struct Finalizable {
+        JSCell* cell;
+        uint32_t thread; // That registered it.
+    };
+    Vector<Finalizable> m_oldFinalizable;
+    Vector<Finalizable> m_youngFinalizable;
     void forEachFinalizable(const ScopedLambda<void(JSCell*)>&);
     void didTakeOffList(JSCell*, bool isToBeFinalized = false);
     void didRegisterWhileTracingAllocations(JSCell*);
@@ -962,21 +985,35 @@ private:
     };
     std::array<UseOfCall, 16> m_usesOfCalls;
     void findUseOfCall(UseOfCall&, CallFrame*);
-    Deque<JSCell*> m_pendingFinalization WTF_GUARDED_BY_LOCK(m_finalizationLock);
-    Deque<PyWeakRef*> m_pendingWeakRefCallbacks WTF_GUARDED_BY_LOCK(m_finalizationLock);
-    bool m_pendingWeakRefCallbacksAreInOrder WTF_GUARDED_BY_LOCK(m_finalizationLock) { true };
+    struct CollectionNotice {
+        int generation;
+        double duration;
+    };
+    // What a thread owes. The cells are kept by every collection: see keepUnreachableObjectsToFinalize().
+    struct CallsOwed {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(CallsOwed);
+        uint32_t thread { 0 };
+        Deque<JSCell*> finalizers;
+        Deque<PyWeakRef*> weakRefCallbacks;
+        bool weakRefCallbacksAreInOrder { true };
+        // gc.callbacks have been told the start of it, by this thread. They hear of the end when it has made its calls.
+        std::optional<CollectionNotice> collectionBeingToldOf;
+        bool hasFinalizers() const { return !finalizers.isEmpty() || !weakRefCallbacks.isEmpty(); }
+    };
+    // The first is the main thread's. A thread has one from the first time it owes something, or looks, until it ends.
+    Vector<std::unique_ptr<CallsOwed>, 1> m_callsOwed WTF_GUARDED_BY_LOCK(m_finalizationLock);
+    CallsOwed& callsOwedBy(uint32_t thread) WTF_REQUIRES_LOCK(m_finalizationLock);
+    // The thread if it can still make calls, else the main one.
+    uint32_t threadToMakeCallsOf(uint32_t thread);
+    uint32_t m_currentThread { 0 };
+    uint64_t m_numberOfCallsQueued { 0 };
     // Those whose finalizer has been called: those that a full collection has found alive since, and the others. Not visited. They were
     // kept by the collection that queued them, so they are old, and a full collection takes out what it finds dead.
     UncheckedKeyHashSet<JSCell*> m_finalized WTF_GUARDED_BY_LOCK(m_finalizationLock);
     Vector<JSCell*> m_justFinalized WTF_GUARDED_BY_LOCK(m_finalizationLock);
     size_t m_justFinalizedAndOld WTF_GUARDED_BY_LOCK(m_finalizationLock) { 0 }; // So many of the first.
-    struct CollectionNotice {
-        int generation;
-        double duration;
-    };
+    // Whoever comes first tells.
     Deque<CollectionNotice> m_collectionsToTellOf WTF_GUARDED_BY_LOCK(m_finalizationLock);
-    // gc.callbacks have been told the start of it. They hear of the end when what it found has been dealt with.
-    std::optional<CollectionNotice> m_collectionBeingToldOf;
     MonotonicTime m_collectionBegan;
     Vector<PyWeakRef*> weakRefsWithCallbacksToUnmarkedObjects(SlotVisitor&);
     void didMarkAll(SlotVisitor&) WTF_REQUIRES_LOCK(m_finalizationLock);
@@ -989,6 +1026,7 @@ private:
     MarkingObserver* m_markingObserver { nullptr };
     std::optional<CollectionScope> m_scopeAskedFor;
     bool m_leavesCyclicGarbageForLater { false };
+    bool m_askerMakesAllCalls { false };
 
     Lock m_moduleTypesLock;
     UncheckedKeyHashMap<const TypeDef*, WriteBarrier<PyType>> m_moduleTypes WTF_GUARDED_BY_LOCK(m_moduleTypesLock);
