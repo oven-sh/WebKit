@@ -334,13 +334,24 @@ ALWAYS_INLINE bool bigIntCompare(JSGlobalObject* globalObject, JSValue v1, JSVal
     return bigIntCompareResult(invertBigIntCompareResult(comparisonResult), comparisonMode);
 }
 
-ALWAYS_INLINE bool toPrimitiveNumeric(JSGlobalObject* globalObject, JSValue v, JSValue& p, double& n)
+// isDone() is asked before an object or a symbol is converted. After true nothing is converted.
+template<typename Functor>
+ALWAYS_INLINE bool toPrimitiveNumeric(JSGlobalObject* globalObject, JSValue v, JSValue& p, double& n, NOESCAPE const Functor& isDone)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    p = v.toPrimitive(globalObject, PreferNumber);
-    RETURN_IF_EXCEPTION(scope, false);
+    p = v;
+    if (v.isCell() && v.asCell()->type() > LastValueCompareCellType) {
+        if (isDone()) [[unlikely]] {
+            scope.release();
+            return false;
+        }
+        if (v.isObject()) {
+            p = asObject(v)->toPrimitive(globalObject, PreferNumber);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+    }
     if (p.isBigInt())
         return true;
 
@@ -372,13 +383,15 @@ ALWAYS_INLINE bool jsLess(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
         return codePointCompareLessThan(s1, s2);
     }
 
-    if (mayOverloadOperators(v1) || mayOverloadOperators(v2)) [[unlikely]] {
+    bool isOverloaded = false;
+    bool overloaded = false;
+    auto isDone = [&] {
+        if (!mayOverloadOperators(v1) && !mayOverloadOperators(v2)) [[likely]]
+            return false;
         // Without leftFirst, this is v2 > v1.
-        auto result = leftFirst ? Python::compareForJS(globalObject, Python::JSOperator::Less, v1, v2) : Python::compareForJS(globalObject, Python::JSOperator::Greater, v2, v1);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (result)
-            return *result;
-    }
+        overloaded = (leftFirst ? Python::compareForJS(globalObject, Python::JSOperator::Less, v1, v2) : Python::compareForJS(globalObject, Python::JSOperator::Greater, v2, v1)).value_or(false);
+        return isOverloaded = true;
+    };
 
     double n1;
     double n2;
@@ -387,14 +400,20 @@ ALWAYS_INLINE bool jsLess(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
     bool wasNotString1;
     bool wasNotString2;
     if (leftFirst) {
-        wasNotString1 = toPrimitiveNumeric(globalObject, v1, p1, n1);
+        wasNotString1 = toPrimitiveNumeric(globalObject, v1, p1, n1, isDone);
+        if (isOverloaded) [[unlikely]]
+            RELEASE_AND_RETURN(scope, overloaded);
         RETURN_IF_EXCEPTION(scope, false);
-        wasNotString2 = toPrimitiveNumeric(globalObject, v2, p2, n2);
+        wasNotString2 = toPrimitiveNumeric(globalObject, v2, p2, n2, isDone);
     } else {
-        wasNotString2 = toPrimitiveNumeric(globalObject, v2, p2, n2);
+        wasNotString2 = toPrimitiveNumeric(globalObject, v2, p2, n2, isDone);
+        if (isOverloaded) [[unlikely]]
+            RELEASE_AND_RETURN(scope, overloaded);
         RETURN_IF_EXCEPTION(scope, false);
-        wasNotString1 = toPrimitiveNumeric(globalObject, v1, p1, n1);
+        wasNotString1 = toPrimitiveNumeric(globalObject, v1, p1, n1, isDone);
     }
+    if (isOverloaded) [[unlikely]]
+        RELEASE_AND_RETURN(scope, overloaded);
     RETURN_IF_EXCEPTION(scope, false);
 
     if (wasNotString1 || wasNotString2) {
@@ -430,13 +449,15 @@ ALWAYS_INLINE bool jsLessEq(JSGlobalObject* globalObject, JSValue v1, JSValue v2
         return !codePointCompareLessThan(s2, s1);
     }
 
-    if (mayOverloadOperators(v1) || mayOverloadOperators(v2)) [[unlikely]] {
+    bool isOverloaded = false;
+    bool overloaded = false;
+    auto isDone = [&] {
+        if (!mayOverloadOperators(v1) && !mayOverloadOperators(v2)) [[likely]]
+            return false;
         // Without leftFirst, this is v2 >= v1.
-        auto result = leftFirst ? Python::compareForJS(globalObject, Python::JSOperator::LessEq, v1, v2) : Python::compareForJS(globalObject, Python::JSOperator::GreaterEq, v2, v1);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (result)
-            return *result;
-    }
+        overloaded = (leftFirst ? Python::compareForJS(globalObject, Python::JSOperator::LessEq, v1, v2) : Python::compareForJS(globalObject, Python::JSOperator::GreaterEq, v2, v1)).value_or(false);
+        return isOverloaded = true;
+    };
 
     double n1;
     double n2;
@@ -445,14 +466,20 @@ ALWAYS_INLINE bool jsLessEq(JSGlobalObject* globalObject, JSValue v1, JSValue v2
     bool wasNotString1;
     bool wasNotString2;
     if (leftFirst) {
-        wasNotString1 = toPrimitiveNumeric(globalObject, v1, p1, n1);
+        wasNotString1 = toPrimitiveNumeric(globalObject, v1, p1, n1, isDone);
+        if (isOverloaded) [[unlikely]]
+            RELEASE_AND_RETURN(scope, overloaded);
         RETURN_IF_EXCEPTION(scope, false);
-        wasNotString2 = toPrimitiveNumeric(globalObject, v2, p2, n2);
+        wasNotString2 = toPrimitiveNumeric(globalObject, v2, p2, n2, isDone);
     } else {
-        wasNotString2 = toPrimitiveNumeric(globalObject, v2, p2, n2);
+        wasNotString2 = toPrimitiveNumeric(globalObject, v2, p2, n2, isDone);
+        if (isOverloaded) [[unlikely]]
+            RELEASE_AND_RETURN(scope, overloaded);
         RETURN_IF_EXCEPTION(scope, false);
-        wasNotString1 = toPrimitiveNumeric(globalObject, v1, p1, n1);
+        wasNotString1 = toPrimitiveNumeric(globalObject, v1, p1, n1, isDone);
     }
+    if (isOverloaded) [[unlikely]]
+        RELEASE_AND_RETURN(scope, overloaded);
     RETURN_IF_EXCEPTION(scope, false);
 
     if (wasNotString1 || wasNotString2) {
@@ -518,6 +545,24 @@ ALWAYS_INLINE bool tryOverloadedOperator(JSGlobalObject* globalObject, Python::J
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     result = Python::unaryOperatorForJS(globalObject, op, v);
     return scope.exception() || result;
+}
+
+// The first step of unary minus. After true there is no second: the class of the operand has answered with `result`, or there is an exception.
+ALWAYS_INLINE bool toPrimitiveForNegate(JSGlobalObject* globalObject, JSValue operand, JSValue& primValue, JSValue& result)
+{
+    primValue = operand;
+    if (!operand.isObject())
+        return false;
+
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (tryOverloadedOperator(globalObject, Python::JSOperator::Negate, operand, result)) [[unlikely]] {
+        scope.release();
+        return true;
+    }
+    primValue = asObject(operand)->toPrimitive(globalObject, PreferNumber);
+    RETURN_IF_EXCEPTION(scope, true);
+    return false;
 }
 
 // op_to_number

@@ -440,15 +440,14 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_negate)
     auto bytecode = pc->as<OpNegate>();
     JSValue operand = GET_C(bytecode.m_operand).jsValue();
     auto& profile = codeBlock->unlinkedCodeBlock()->unaryArithProfile(bytecode.m_profileIndex);
-    if (JSValue result; tryOverloadedOperator(globalObject, Python::JSOperator::Negate, operand, result)) [[unlikely]] {
+    JSValue primValue;
+    if (JSValue result; toPrimitiveForNegate(globalObject, operand, primValue, result)) [[unlikely]] {
         CHECK_EXCEPTION();
         RETURN_WITH_PROFILING(result, {
             profile.observeArg(operand);
             profile.observeResult(result);
         });
     }
-    JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
-    CHECK_EXCEPTION();
 
     if (primValue.isHeapBigInt()) {
         JSValue result = JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt());
