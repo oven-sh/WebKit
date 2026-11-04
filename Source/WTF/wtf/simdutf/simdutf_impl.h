@@ -3803,7 +3803,10 @@ inline simdutf_warn_unused result rewind_and_validate_with_errors(
   }
   size_t extra_len{0};
   // A leading byte cannot be further than 4 bytes away
-  for (int i = 0; i < 5; i++) {
+  // The walk also stops at start. The check above saw a leading byte there, but
+  // another thread or process can write the input between that read and this one
+  // (a SharedArrayBuffer, a file mapping), and the walk then left the input.
+  for (int i = 0; i < 5 && buf > start; i++) {
     unsigned char byte = *buf;
     if ((byte & 0b11000000) != 0b10000000) {
       break;
