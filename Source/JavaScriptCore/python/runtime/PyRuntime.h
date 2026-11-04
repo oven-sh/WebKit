@@ -396,6 +396,7 @@ public:
         IntactPycFile, // See readPycFile() in PyCodeCache.cpp.
         GCGarbage, // gc.garbage and gc.callbacks, lists. The program has them too.
         GCCallbacks,
+        BoundMethodsOfJS, // A JSWeakMap: see bindIfFunction() in PyInterop.cpp.
         Count
     };
     JSValue slot(Slot which) const { return m_slots[static_cast<unsigned>(which)].get(); }
