@@ -152,15 +152,16 @@ static void faultAppendFrames(JSGlobalObject* globalObject, StringBuilder& build
         builder.append("  <no Python frame>\n"_s);
     auto text = [&](JSValue object, ASCIILiteral name) -> String {
         JSValue value = getAttr(globalObject, object, internString(vm, name));
-        if (!value || !isStr(value))
+        if (failed(scope, value) || !isStr(value))
             return { };
         return strValue(value)->value(globalObject);
     };
     for (unsigned depth = 0; frame && !isNone(frame) && depth < faultMaxFrames; ++depth) {
         JSValue code = getAttr(globalObject, frame, internString(vm, "f_code"_s));
-        JSValue line = code ? getAttr(globalObject, frame, internString(vm, "f_lineno"_s)) : JSValue();
+        JSValue line = !failed(scope, code) ? getAttr(globalObject, frame, internString(vm, "f_lineno"_s)) : JSValue();
+        EXCEPTION_ASSERT(!!scope.exception() == !line);
         String fileName = line ? text(code, "co_filename"_s) : String();
-        String name = line ? text(code, "co_name"_s) : String();
+        String name = line && !fileName.isNull() ? text(code, "co_name"_s) : String();
         if (scope.exception() || fileName.isNull() || name.isNull()) {
             builder.append("  <invalid frame>\n"_s);
             break;
@@ -176,6 +177,7 @@ static void faultAppendFrames(JSGlobalObject* globalObject, StringBuilder& build
         faultAppendEscaped(builder, name);
         builder.append('\n');
         frame = getAttr(globalObject, frame, internString(vm, "f_back"_s));
+        EXCEPTION_ASSERT(!!scope.exception() == !frame);
     }
     if (scope.exception())
         takePendingException(globalObject);
