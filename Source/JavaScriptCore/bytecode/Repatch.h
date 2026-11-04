@@ -40,6 +40,7 @@ enum class GetByKind {
     ByVal,
     ByIdWithThis,
     ByIdDirect,
+    ByIdThrowIfNotFound,
     ByValWithThis,
     PrivateName,
     PrivateNameById,

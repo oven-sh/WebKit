@@ -7484,7 +7484,7 @@ void ByteCodeParser::handleGetById(
         getById = getByStatus.makesCalls() ? GetByIdFlush : GetById;
     else
         getById = getByStatus.makesCalls() ? GetByIdDirectFlush : GetByIdDirect;
-    auto* data = m_graph.m_getByIdData.add(GetByIdData { identifier, getByStatus.preferredCacheType() });
+    auto* data = m_graph.m_getByIdData.add(GetByIdData { identifier, getByStatus.preferredCacheType(), DoNotThrowIfNotFound });
 
     if (getByStatus.isModuleNamespace()) {
         if (handleModuleNamespaceLoad(destination, prediction, base, getByStatus)) {
@@ -7708,7 +7708,7 @@ void ByteCodeParser::handleGetPrivateNameById(
     ASSERT(!getByStatus.isCustomAccessor());
     ASSERT(!getByStatus.makesCalls());
     if (!getByStatus.isSimple() || !getByStatus.numVariants() || !Options::useAccessInlining()) {
-        auto* data = m_graph.m_getByIdData.add(GetByIdData { identifier, CacheType::GetByIdSelf });
+        auto* data = m_graph.m_getByIdData.add(GetByIdData { identifier, CacheType::GetByIdSelf, DoNotThrowIfNotFound });
         set(destination, addToGraph(GetPrivateNameById, OpInfo(data), OpInfo(prediction), base, nullptr));
         return;
     }
@@ -7717,7 +7717,7 @@ void ByteCodeParser::handleGetPrivateNameById(
         if (!m_graph.m_plan.isFTL()
             || !Options::usePolymorphicAccessInlining()
             || getByStatus.numVariants() > Options::maxPolymorphicAccessInliningListSize()) {
-            auto* data = m_graph.m_getByIdData.add(GetByIdData { identifier, CacheType::GetByIdSelf });
+            auto* data = m_graph.m_getByIdData.add(GetByIdData { identifier, CacheType::GetByIdSelf, DoNotThrowIfNotFound });
             set(destination, addToGraph(GetPrivateNameById, OpInfo(data), OpInfo(prediction), base, nullptr));
             return;
         }
@@ -7756,7 +7756,7 @@ void ByteCodeParser::handleGetPrivateNameById(
 
     Node* loadedValue = load(prediction, base, unwrapped, identifierNumber, variant);
     if (!loadedValue) {
-        auto* data = m_graph.m_getByIdData.add(GetByIdData { identifier, CacheType::GetByIdSelf });
+        auto* data = m_graph.m_getByIdData.add(GetByIdData { identifier, CacheType::GetByIdSelf, DoNotThrowIfNotFound });
         set(destination, addToGraph(GetPrivateNameById, OpInfo(data), OpInfo(prediction), base, nullptr));
         return;
     }
@@ -9797,7 +9797,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
             GetByStatus getByStatus = GetByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_inlineStackTop->m_baselineMap, m_icContextStack, currentCodeOrigin());
 
-            auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid), CacheType::GetByIdSelf });
+            auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid), CacheType::GetByIdSelf, DoNotThrowIfNotFound });
             set(bytecode.m_dst, addToGraph(getByStatus.isMegamorphic() && canUseMegamorphicGetById(*m_vm, uid) ? GetByIdWithThisMegamorphic : GetByIdWithThis, OpInfo(data), OpInfo(prediction), base, thisValue));
 
             NEXT_OPCODE(op_get_by_id_with_this);
@@ -10828,7 +10828,9 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 if (status.state() != GetByStatus::Simple
                     || status.numVariants() != 1
                     || status[0].structureSet().size() != 1) {
-                    auto* data = m_graph.m_getByIdData.add(GetByIdData { identifier, CacheType::GetByIdSelf });
+                    // Nothing here proves that the property is there. With ThrowIfNotFound the inline cache has to throw
+                    // when it finds none, as the lower tiers do. A plain get by id gives undefined.
+                    auto* data = m_graph.m_getByIdData.add(GetByIdData { identifier, CacheType::GetByIdSelf, getPutInfo.resolveMode() });
                     set(bytecode.m_dst, addToGraph(GetByIdFlush, OpInfo(data), OpInfo(prediction), get(bytecode.m_scope)));
                     break;
                 }
@@ -12931,7 +12933,7 @@ void ByteCodeParser::handleIteratorNext(const JSInstruction* currentInstruction,
             Node* iteratedObject = getIteratedObject();
             Node* length = nullptr;
             if (arrayMode.type() == Array::Generic) {
-                auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromImmortalIdentifier(m_vm->propertyNames->length.impl()), CacheType::GetByIdSelf });
+                auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromImmortalIdentifier(m_vm->propertyNames->length.impl()), CacheType::GetByIdSelf, DoNotThrowIfNotFound });
                 length = addToGraph(GetById, OpInfo(data), OpInfo(SpecInt32Only), iteratedObject);
             } else {
                 Node* butterfly = addToGraph(GetButterfly, iteratedObject);
@@ -13591,7 +13593,7 @@ void ByteCodeParser::handleAsyncIteratorOpen(const JSInstruction* currentInstruc
         // harmless deopt to op_async_iterator_next's generic call path. m_iterator is live (set at symbolCall,
         // flushed by progressToNextCheckpoint), so the checkpoint has what it needs.
         BytecodeIndex getNextIndex = m_currentIndex;
-        auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromImmortalIdentifier(nextImpl), getByStatus.preferredCacheType() });
+        auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromImmortalIdentifier(nextImpl), getByStatus.preferredCacheType(), DoNotThrowIfNotFound });
         NodeType getByIdOp = getByStatus.makesCalls() ? GetByIdFlush : GetById;
         Node* fetched = addToGraph(getByIdOp, OpInfo(data), OpInfo(predict()), get(bytecode.m_iterator));
         emitExitOK();

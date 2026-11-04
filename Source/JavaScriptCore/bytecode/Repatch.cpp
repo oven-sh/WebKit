@@ -450,6 +450,8 @@ inline CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriateGetByOptimizeFunction
         return operationGetByIdWithThisOptimize;
     case GetByKind::ByIdDirect:
         return operationGetByIdDirectOptimize;
+    case GetByKind::ByIdThrowIfNotFound:
+        return operationGetByIdThrowIfNotFoundOptimize;
     case GetByKind::ByVal:
         return operationGetByValOptimize;
     case GetByKind::ByValWithThis:
@@ -471,6 +473,8 @@ inline CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriateGetByGaveUpFunction(G
         return operationGetByIdWithThisGaveUp;
     case GetByKind::ByIdDirect:
         return operationGetByIdDirectGaveUp;
+    case GetByKind::ByIdThrowIfNotFound:
+        return operationGetByIdThrowIfNotFoundGaveUp;
     case GetByKind::ByVal:
         return operationGetByValGaveUp;
     case GetByKind::ByValWithThis:
@@ -493,6 +497,13 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
 
         if (forceICFailure(globalObject))
             return GiveUpOnCache;
+
+        // For GetByKind::ByIdThrowIfNotFound finding no property is an error, so there is no miss to cache. Its
+        // operations throw and do not come here.
+        if (kind == GetByKind::ByIdThrowIfNotFound && slot.isUnset()) [[unlikely]] {
+            ASSERT_NOT_REACHED();
+            return GiveUpOnCache;
+        }
         
         // FIXME: Cache property access for immediates.
         if (!baseValue.isCell())
@@ -792,6 +803,14 @@ void repatchGetBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
         break;
     }
     case GiveUpOnCache:
+        // The base of a ByIdThrowIfNotFound access is one global object. That is a dictionary from its start, so it
+        // never has a structure again that it had before: the cases here are dead, or will be at its next
+        // transition. Without them the access goes straight to its call, as a ById access does after its
+        // megamorphic case.
+        if (kind == GetByKind::ByIdThrowIfNotFound) {
+            repatchGetBySlowPathCall(codeBlock, propertyCache, kind);
+            break;
+        }
         repatchSlowPathCall(codeBlock, propertyCache, appropriateGetByGaveUpFunction(kind));
         break;
     case RetryCacheLater:
