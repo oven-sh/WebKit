@@ -139,7 +139,9 @@ static ALWAYS_INLINE bool tryBindNativeArguments(const NativeDef& def, const Cal
         } parameters[NativeDef::maxArity];
     };
     static constexpr unsigned cacheSize = 64;
-    static thread_local std::array<Entry, cacheSize> cache;
+    // Every thread of the process has room for what is thread_local, whether or not it ever runs Python. So only for a pointer.
+    using Cache = std::array<Entry, cacheSize>;
+    static thread_local std::unique_ptr<Cache> cacheOfThread;
 
     auto& signature = def.signature;
     unsigned total = signature.parameterCount;
@@ -149,7 +151,9 @@ static ALWAYS_INLINE bool tryBindNativeArguments(const NativeDef& def, const Cal
         return false;
 
     auto text = def.signatureText.span8();
-    Entry& entry = cache[(reinterpret_cast<uintptr_t>(&def) / sizeof(NativeDef)) % cacheSize];
+    if (!cacheOfThread) [[unlikely]]
+        cacheOfThread = makeUniqueWithoutFastMallocCheck<Cache>();
+    Entry& entry = (*cacheOfThread)[(reinterpret_cast<uintptr_t>(&def) / sizeof(NativeDef)) % cacheSize];
     if (entry.def != &def) [[unlikely]] {
         Vector<NativeParameter, NativeDef::maxArity> parameters;
         parseParameters(def, parameters);
