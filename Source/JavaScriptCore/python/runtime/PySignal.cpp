@@ -75,7 +75,7 @@ struct SignalState {
     bool isWatched[signalLimit] { };
     bool watchChains[signalLimit] { };
     struct sigaction actionBeforeWatch[signalLimit] { };
-    // What the host does about a fault, if it does something: see signalIsHandledByHostAsByDefault().
+    // What the host does about a signal before the process dies of it, if it does something: see signalIsHandledByHostAsByDefault().
     bool hasHostAction[signalLimit] { };
     struct sigaction hostAction[signalLimit] { };
     // Sent to the thread to get it out of a system call. 0: not set up.
@@ -183,11 +183,14 @@ static bool signalIsOnMainThreadOfProcess()
 }
 
 // A host may have a handler of its own for the signals that tell of a fault, which reports the crash and lets the process die of
-// the signal. To a program that is what the signal does by default: getsignal() says SIG_DFL, so that what signal() returns can be
-// given back to it, and SIG_DFL puts the handler of the host back.
+// the signal, and for those that end a program, which puts the terminal in order first. To a program that is what the signal does by
+// default: getsignal() says SIG_DFL, so that what signal() returns can be given back to it, SIG_DFL puts the handler of the host
+// back, and SIGINT raises KeyboardInterrupt.
 static bool signalIsHandledByHostAsByDefault(int number, const struct sigaction& action)
 {
     switch (number) {
+    case SIGINT:
+    case SIGTERM:
     case SIGILL:
     case SIGTRAP:
     case SIGABRT:
