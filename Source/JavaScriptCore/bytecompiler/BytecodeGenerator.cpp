@@ -1490,6 +1490,7 @@ RegisterID* BytecodeGenerator::emitPyRuntime(RegisterID* dst, Python::RuntimeFun
     case Python::RuntimeFunction::Raise:
     case Python::RuntimeFunction::Reraise:
     case Python::RuntimeFunction::ReraiseOutOfHandler:
+    case Python::RuntimeFunction::ReraiseUnseen:
     case Python::RuntimeFunction::ReraiseGroup:
     case Python::RuntimeFunction::ThrowIntoGenerator:
         // They never return. The analysis of what is live need not think that whatever comes next in the code is reached from here.

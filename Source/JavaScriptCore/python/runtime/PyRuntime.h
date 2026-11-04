@@ -949,6 +949,9 @@ private:
     PyGenerator** m_whereToLeaveGeneratorArgument { nullptr };
     // What the marks say of the value of a call, for didMakeGenerator(), which asks about the same few calls over and over. A code
     // block is only compared with, and a collection forgets them all: until then there is no other at its address.
+    // The question cannot wait for the use. In `f(g())` the generator is only out of the program's reach if f is known to keep nothing when
+    // g() returns: an f written in Python keeps it and runs no code of ours, the note of it would stay, and the next time round the
+    // same g() may return the same generator to an f that closes what it is given.
     struct UseOfCall {
         enum Kind : uint8_t { Other, ForHeader, Argument };
         CodeBlock* codeBlock { nullptr };
