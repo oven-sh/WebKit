@@ -136,6 +136,10 @@ public:
     std::optional<unsigned> jumpTarget;
     std::optional<unsigned> jumpedTo;
     bool jumpsToStart { false }; // To the line of `def`, which is before the first line of the body.
+    // Monitoring::Shown, while something is told of an event in the call. The runtime has it too, for the thread that is told. It is
+    // another thread that asks a frame which a debugger has stopped.
+    int shownLine { -1 };
+    int shownOffset { -1 };
     // The offset of a call in progress after which an instruction is to be told of: see CodeMonitor::Point::isLastOfStatement.
     std::optional<unsigned> callWithResultToTake;
 

@@ -614,6 +614,10 @@ PyFrame* PyFrame::of(JSGlobalObject* globalObject, CallFrame* callFrame)
     PyFrame* frame = isGeneratorBody(callFrame) ? of(globalObject, uncheckedDowncast<PyGenerator>(callFrame->uncheckedArgument(0).asCell())) : create(globalObject, functionOf(callFrame));
     frame->m_callFrame = callFrame;
     callFrame->r(frameObjectRegister()) = JSValue(frame);
+    if (Runtime& rt = runtime(globalObject); rt.tracedCallFrame == callFrame) {
+        frame->shownLine = rt.tracedLine;
+        frame->shownOffset = rt.tracedOffset;
+    }
     return frame;
 }
 
@@ -693,9 +697,13 @@ unsigned PyFrame::bytecodeOffset()
 {
     if (CallFrame* callFrame = this->callFrame()) {
         Runtime& rt = runtime(globalObject());
-        if (rt.tracedCallFrame == callFrame && rt.tracedLine >= 0) {
-            m_bytecodeOffset = rt.tracedOffset;
-            m_lineNumber = rt.tracedLine;
+        if (rt.tracedCallFrame == callFrame) {
+            shownLine = rt.tracedLine;
+            shownOffset = rt.tracedOffset;
+        }
+        if (shownLine >= 0) {
+            m_bytecodeOffset = shownOffset;
+            m_lineNumber = shownLine;
             m_isOnNoLine = false;
             return m_bytecodeOffset;
         }

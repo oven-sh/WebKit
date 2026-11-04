@@ -1251,10 +1251,18 @@ JSValue Monitoring::callWhileTracing(JSGlobalObject* globalObject, CallFrame* ca
         m_codeLeftAlone = monitor;
     } else
         monitor = nullptr;
+    if (shown.line >= 0) {
+        if (PyFrame* frame = frameObjectIfThereIsOne(callFrame)) {
+            frame->shownLine = shown.line;
+            frame->shownOffset = shown.offset;
+        }
+    }
     ++m_runtime.tracingDepth;
     JSValue result = call(globalObject, function, arguments);
     EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == !result);
     --m_runtime.tracingDepth;
+    if (PyFrame* frame = frameObjectIfThereIsOne(callFrame))
+        frame->shownLine = frame->shownOffset = -1;
     if (monitor) {
         m_codeLeftAlone = nullptr;
         if (!monitor->isAwake())
@@ -1770,6 +1778,9 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             return threw;
         if (jumped(elsewhere))
             return elsewhere;
+        // The trace function may have asked for opcodes: pdb's `stepi`.
+        if (auto* point = currentPoint())
+            kinds |= point->kinds & bit(Event::Instruction);
         if (kinds == bit(Event::Line))
             return runIt;
     }
@@ -2289,8 +2300,8 @@ void Monitoring::jump(JSGlobalObject* globalObject, PyFrame* frame, int requeste
     frame->jumpsToStart = best->isStart;
     frame->lastLine = line;
     frame->lastLineOffset = best->visibleOffset;
-    m_runtime.tracedLine = line;
-    m_runtime.tracedOffset = best->visibleOffset;
+    m_runtime.tracedLine = frame->shownLine = line;
+    m_runtime.tracedOffset = frame->shownOffset = best->visibleOffset;
 }
 
 // ---- The module sys.monitoring ----

@@ -667,6 +667,10 @@ CPython, where a call is followed by something that drops or stores its result. 
 opcodes in the frame of its caller and stops at the first, which is on the line it was written on. So a call after which another statement begins, or the end of a `with` or of a handler (`Point::isLastOfStatement`),
 owes an event: whoever is told of instructions when the call is over, or asks for them while it is under way, is told of one more at the call, on its line, before anything else (`PyFrame::callWithResultToTake`).
 
+**Where a frame is said to be.** Some events are told of from an instruction that is not where CPython has them: the line at the head of a loop from the jump that goes there, the start of a call from its first
+instruction. While the tool runs, `f_lineno` and `f_lasti` are what they would be in CPython (`Monitoring::Shown`). The frame object holds them too: a debugger stops the thread in the callback, and
+it is another thread of the debugger's that asks the frame (`pydevd`).
+
 **Offsets.** What a program is given for a place in the code (`f_lasti`, `tb_lasti`, `co_lines()`, `co_positions()`, `co_branches()`, the arguments of callbacks) is twice the offset
 in JSC's instructions (`shownOffset()`): in CPython code is made of units of two bytes, and `traceback.py` and `dis` count on it. `co_code` is an outline in those
 units: a `NOP` for each byte, `RESUME` before the program's own code, which is how `pdb` finds the first line of a function, and CPython's instructions for what decides where the code goes on,
