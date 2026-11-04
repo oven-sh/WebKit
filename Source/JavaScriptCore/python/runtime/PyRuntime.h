@@ -406,6 +406,7 @@ public:
         AllocationTracebacks, // A JSWeakMap: see PyProfilers.cpp.
         Warnings, // See warningsState() in PyWarnings.cpp.
         SignalHandlers, // list
+        RaisedBySignalHandler, // While one of the calls that are owed was running. See runPendingCalls().
         ThrownException, // What generator.throw() is throwing,
         ThrowArguments, // and the tuple of arguments it was made from. Null: it is raised where the generator waits, whomever it waits for.
         RecentBufferOwners, // See getBytesLike().
@@ -590,13 +591,18 @@ public:
     // Finalizers and callbacks of weak references, ever, for whichever thread.
     uint64_t numberOfCallsQueued() const { return m_numberOfCallsQueued; }
     // At a safe point. What the calls raise is reported and goes no further. But signals are looked at between the calls, and what
-    // a handler raises is thrown: what is left in the queue then is left for the next safe point.
+    // a handler raises is thrown: what is left in the queue then is left for the next safe point. So is what a handler raises in the
+    // middle of a call, which it ends, unless the program asked for the calls (gc.collect()): it did not make the call, it may be
+    // asleep, and its Ctrl-C is not to end up as "Exception ignored in __del__".
     // `mayPutOff`: nobody asked for it or waits for it. Then it is put off if the stack is nearly used up.
     void runPendingCalls(bool mayPutOff = false, CallsOf = CallsOf::ThisThread);
     // It has made the calls it owed, and will run no more code. What it comes to owe from now on is the main thread's.
     void threadDidEnd(uint32_t thread);
     // One of those calls is running, in this thread. What it queues waits for it to return.
     bool isRunningPendingCalls() const { return m_isRunningPendingCalls; }
+    void didRaiseInSignalHandler(JSValue exception);
+    // For reportUnraisable(): true if the exception is not to be reported, because runPendingCalls() is going to throw it.
+    bool keepIfRaisedBySignalHandler(JSValue exception);
     // Nobody asked for those calls, and the frame is of the code that happened to run when their time came. It has not called them,
     // and what they do is not laid at its door (PyWarnings.cpp).
     bool wasInterruptedByPendingCalls(CallFrame* callFrame) const { return m_stackWhereUnaskedCallsBegan && static_cast<void*>(callFrame) > m_stackWhereUnaskedCallsBegan; }
@@ -688,7 +694,8 @@ public:
     };
     struct {
         bool isEnabled { true };
-        bool isCollecting { false }; // gc.collect() is at work.
+        bool isCollecting { false }; // gc.collect() is at work,
+        uint32_t collectingThread { noThread }; // in this thread.
         int debugFlags { 0 };
         std::array<int, 3> thresholds { 2000, 10, 10 };
         std::array<CollectionStats, 3> stats;
@@ -1021,6 +1028,8 @@ private:
     bool m_hasPendingCalls { false };
     bool m_isRunningPendingCalls { false };
     void* m_stackWhereUnaskedCallsBegan { nullptr };
+    uint32_t m_threadWhereSignalHandlerRaised { noThread }; // In one of the calls it owed, which has not returned yet.
+    bool m_hasKeptWhatSignalHandlerRaised { false };
     bool m_shouldCollectAfterPendingCalls { false };
     bool m_mayHavePendingOutput { false };
     MarkingObserver* m_markingObserver { nullptr };

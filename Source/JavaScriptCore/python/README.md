@@ -333,6 +333,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   come, and it is not to fail for that. So what is called from the queue has 200 frames to itself even at the recursion limit
   (the depth is lowered meanwhile; `sys.getrecursionlimit()` says what the program set), and near the end of the stack itself the
   queue waits for a safe point with more room. Signals are looked at first and between the calls: a long queue does not hold up Ctrl-C.
+  What a handler raises in the middle of one of the calls ends that call, as it would in CPython, but is not reported as "Exception ignored":
+  it is thrown where the queue is being run. The program did not make the call. It may be in `time.sleep()`, where CPython runs nothing, and the
+  `KeyboardInterrupt` has to come out of that. Only what a handler raised, and only there: where CPython runs the finalizer at the same place
+  (`gc.collect()`, a temporary that is finalized at once, exit), it is ignored and reported as in CPython, and so is whatever the finalizer itself raises.
   Nor is the code that happens to run there to suffer for it. A warning looks for the code to blame among the callers, and makes a
   `__warningregistry__` in its globals even if it is ignored, as the `ResourceWarning` about an unclosed file is: that code may be
   going through those globals, as `enum._convert_()` does when `socket` is imported. So the search ends where the calls from the queue

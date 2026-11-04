@@ -431,6 +431,7 @@ static JSValue gcCollect(JSGlobalObject* globalObject, JSValue generationValue)
     if (rt.gc.isCollecting)
         return jsNumber(0);
     SetForScope isCollecting(rt.gc.isCollecting, true);
+    SetForScope collectingThread(rt.gc.collectingThread, rt.currentThread());
 
     Runtime::CollectionStats stats;
     callCollectionCallbacks(globalObject, "start"_s, generation, stats);

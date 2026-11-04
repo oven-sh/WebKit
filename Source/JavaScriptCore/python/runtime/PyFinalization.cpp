@@ -24,6 +24,7 @@
 #include "PyWeakRef.h"
 #include "SubspaceInlines.h"
 #include "TopExceptionScope.h"
+#include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 
 namespace JSC {
@@ -546,7 +547,7 @@ void reportUnraisable(JSGlobalObject* globalObject, const String& message, JSVal
     VM& vm = rt.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue exception = takePendingException(globalObject);
-    if (!exception)
+    if (!exception || rt.keepIfRaisedBySignalHandler(exception))
         return;
 
     JSString* typeKey = internString(vm, "__unraisable_hook_args_type__"_s);
@@ -756,6 +757,25 @@ static NEVER_INLINE bool makeCallsOwedToProgram(VM& vm)
     return hasFinalized;
 }
 
+void Runtime::didRaiseInSignalHandler(JSValue exception)
+{
+    // Where CPython would be running the finalizer too, it is as in CPython: in gc.collect(), and at exit. (What is finalized at once, a
+    // temporary say, is not called from the queue.)
+    if (!m_isRunningPendingCalls || isFinalized || gc.collectingThread == m_currentThread)
+        return;
+    setSlot(Slot::RaisedBySignalHandler, exception);
+    m_threadWhereSignalHandlerRaised = m_currentThread;
+    m_hasKeptWhatSignalHandlerRaised = false;
+}
+
+bool Runtime::keepIfRaisedBySignalHandler(JSValue exception)
+{
+    if (m_threadWhereSignalHandlerRaised != m_currentThread || exception != slot(Slot::RaisedBySignalHandler))
+        return false;
+    m_hasKeptWhatSignalHandlerRaised = true;
+    return true;
+}
+
 void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
 {
     // What is queued while these run is run by the loop below, not within one of the calls.
@@ -779,6 +799,13 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
     SetForScope loweredDepth(frameDepth, std::min(frameDepth, std::max(recursionLimit - framesForPendingCalls, 0)));
 
     SetForScope isRunning(m_isRunningPendingCalls, true);
+    // What a handler raises between two calls is thrown from here as it is.
+    auto forgetWhatSignalHandlerRaised = makeScopeExit([&] {
+        if (m_threadWhereSignalHandlerRaised != m_currentThread) [[likely]]
+            return;
+        setSlot(Slot::RaisedBySignalHandler, { });
+        m_threadWhereSignalHandlerRaised = noThread;
+    });
     SetForScope stackWhereTheyBegan(m_stackWhereUnaskedCallsBegan, mayPutOff ? currentStackPointer() : nullptr);
     JSGlobalObject* globalObject = m_globalObject;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
@@ -866,6 +893,21 @@ void Runtime::runPendingCalls(bool mayPutOff, CallsOf callsOf)
             finalizeObject(globalObject, object);
         ensureStillAliveHere(object);
         ensureStillAliveHere(weakRef);
+        if (m_threadWhereSignalHandlerRaised == m_currentThread) [[unlikely]] {
+            // The call has caught it, or it has come as far as where it would be reported.
+            JSValue raised = slot(Slot::RaisedBySignalHandler);
+            setSlot(Slot::RaisedBySignalHandler, { });
+            m_threadWhereSignalHandlerRaised = noThread;
+            if (std::exchange(m_hasKeptWhatSignalHandlerRaised, false)) {
+                {
+                    auto throwScope = DECLARE_THROW_SCOPE(m_vm);
+                    throwPythonException(globalObject, throwScope, raised);
+                }
+                EXCEPTION_ASSERT(scope.exception());
+                m_vm.traps().fireTrap(VMTraps::NeedPythonCalls);
+                return;
+            }
+        }
         // The host is ending what runs here, and that cannot be reported and forgotten. The rest is for another time.
         if (m_vm.hasPendingTerminationException()) [[unlikely]] {
             didQueueCallsFor(m_currentThread);

@@ -351,6 +351,7 @@ static NEVER_INLINE bool signalRunHandlers(JSGlobalObject* globalObject)
             // The rest is for the next time.
             s_signalState.isTripped.store(true);
             noteCallsOwed(vm);
+            rt.didRaiseInSignalHandler(pendingException(globalObject));
             return false;
         }
     }
