@@ -82,8 +82,16 @@
 #include <wtf/Language.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/TimeZone.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/unicode/CharacterNames.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
+
+#if USE(BUN_JSC_ADDITIONS) && OS(UNIX)
+#include <limits.h>
+#include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
+#endif
 
 #ifdef U_HIDE_DRAFT_API
 #undef U_HIDE_DRAFT_API
@@ -511,6 +519,215 @@ struct CachedHostTimeZone {
     uint64_t timeZoneID { 0 };
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// ICU reports the host's time zone as an ID, and upstream resolves that ID by name: an ID with no name is UTC. The host
+// is on some zone all the same. This makes that zone: one at a fixed offset, from ICU for an override and from the C
+// library for the host, or the zone that TZ names when ICU does not hand the name back.
+
+static std::optional<TimeZone> namedTimeZone(StringView id)
+{
+    if (id.isEmpty())
+        return std::nullopt;
+    // Upstream's lookup: a link collapses onto its IANA primary identifier, and a name for UTC onto the UTC TimeZoneID.
+    String primary = toPrimaryIanaTimeZoneIdentifier(id);
+    if (auto resolved = intlResolveTimeZoneID(primary))
+        return TimeZone::fromID(resolved.value());
+    return std::nullopt;
+}
+
+// ECMA-262 knows a zone at a fixed offset by a name or as an offset identifier with minute precision. So this is UTC
+// for zero, the IANA zone for whole hours ("Etc/GMT-3" is three hours east: its sign counts west, as POSIX does), and
+// an offset zone ("+05:30") for the rest.
+static TimeZone fixedOffsetTimeZone(int64_t secondsEast)
+{
+    int64_t minutesEast = secondsEast / 60;
+    // ICU has no zone that is a day or more from UTC.
+    if (!minutesEast || std::abs(minutesEast) >= 24 * 60)
+        return TimeZone();
+    int64_t hoursEast = minutesEast / 60;
+    if (!(minutesEast % 60) && hoursEast >= -12 && hoursEast <= 14) {
+        if (auto id = intlResolveTimeZoneID(makeString("Etc/GMT"_s, hoursEast > 0 ? '-' : '+', static_cast<unsigned>(std::abs(hoursEast)))))
+            return TimeZone::fromID(id.value());
+    }
+    return TimeZone::fromUTCOffset(minutesEast * 60 * 1'000'000'000LL);
+}
+
+// WTF::setTimeZoneOverride admits every ID that ICU has a zone for. Some have no IANA name: a custom ID such as
+// "GMT+05:30", "SystemV/EST5", "Etc/Unknown". ICU's zone for one of those is at a fixed offset.
+static TimeZone timeZoneFromOverride(std::span<const char16_t> overrideID)
+{
+    if (auto zone = namedTimeZone(StringView { overrideID }))
+        return zone.value();
+    UErrorCode status = U_ZERO_ERROR;
+    auto calendar = std::unique_ptr<UCalendar, ICUDeleter<ucal_close>>(ucal_open(overrideID.data(), overrideID.size(), "", UCAL_DEFAULT, &status));
+    int32_t milliseconds = ucal_get(calendar.get(), UCAL_ZONE_OFFSET, &status);
+    if (U_FAILURE(status))
+        return TimeZone();
+    return fixedOffsetTimeZone(milliseconds / 1000);
+}
+
+#if OS(UNIX)
+// The middle of January and of July of this year. A zone with daylight saving time has it at one of them and not at
+// the other, whichever hemisphere it is in.
+using ProbeTimes = std::array<time_t, 2>;
+
+static ProbeTimes probeTimes()
+{
+    int year = msToYear(WallTime::now().secondsSinceEpoch().milliseconds());
+    return { static_cast<time_t>(dateToDaysFrom1970(year, 0, 15) * secondsPerDay), static_cast<time_t>(dateToDaysFrom1970(year, 6, 15) * secondsPerDay) };
+}
+
+// Seconds east of UTC.
+struct HostOffsets {
+    std::array<int64_t, 2> atProbeTimes;
+    int64_t standard;
+};
+
+// The C library reads every form that TZ and /etc/localtime can have: a POSIX value such as "MSK-3", a tzfile at any
+// path. ucal_getHostTimeZone has just run tzset(), so what the C library has is current.
+static std::optional<HostOffsets> hostOffsetsFromCLibrary(const ProbeTimes& times)
+{
+    HostOffsets offsets { };
+    bool hasStandard = false;
+    for (size_t index = 0; index < times.size(); ++index) {
+        struct tm local;
+        if (!localtime_r(&times[index], &local))
+            return std::nullopt;
+        offsets.atProbeTimes[index] = local.tm_gmtoff;
+        if (local.tm_isdst <= 0 && !hasStandard) {
+            offsets.standard = local.tm_gmtoff;
+            hasStandard = true;
+        }
+    }
+    if (!hasStandard)
+        offsets.standard = std::min(offsets.atProbeTimes[0], offsets.atProbeTimes[1]);
+    return offsets;
+}
+
+static std::optional<std::array<int64_t, 2>> offsetsFromICU(TimeZone zone, const ProbeTimes& times)
+{
+    if (zone == TimeZone())
+        return std::array<int64_t, 2> { 0, 0 };
+    String icuID = zone.toICUString();
+    StringView view { icuID };
+    UErrorCode status = U_ZERO_ERROR;
+    auto calendar = std::unique_ptr<UCalendar, ICUDeleter<ucal_close>>(ucal_open(view.upconvertedCharacters(), view.length(), "", UCAL_DEFAULT, &status));
+    std::array<int64_t, 2> offsets { };
+    for (size_t index = 0; index < times.size() && U_SUCCESS(status); ++index) {
+        ucal_setMillis(calendar.get(), times[index] * 1000.0, &status);
+        offsets[index] = (ucal_get(calendar.get(), UCAL_ZONE_OFFSET, &status) + ucal_get(calendar.get(), UCAL_DST_OFFSET, &status)) / 1000;
+    }
+    if (U_FAILURE(status))
+        return std::nullopt;
+    return offsets;
+}
+
+// A tzfile's path names its zone in what follows "/zoneinfo/". ICU names /etc/localtime the same way.
+static String zoneNameInTZFilePath(StringView path)
+{
+    constexpr auto marker = "/zoneinfo/"_s;
+    size_t position = path.reverseFind(marker);
+    if (position == notFound)
+        return { };
+    StringView name = path.substring(position + marker.length());
+    // The same zones again, without and with leap seconds.
+    if (name.startsWith("posix/"_s) || name.startsWith("right/"_s))
+        name = name.substring(6);
+    return name.toString();
+}
+
+// The names that a link to a tzfile can have: in the path of the file it resolves to, and in the link itself (macOS
+// keeps the files in /usr/share/zoneinfo.default/, and only the links to them have a "/zoneinfo/").
+static Vector<String, 2> zoneNamesOfTZFileLink(const char* path)
+{
+    Vector<String, 2> names;
+    auto add = [&](StringView target) {
+        if (String name = zoneNameInTZFilePath(target); !name.isEmpty())
+            names.append(WTF::move(name));
+    };
+    char buffer[PATH_MAX];
+    if (realpath(path, buffer))
+        add(String::fromUTF8(buffer));
+    ssize_t length = readlink(path, buffer, sizeof(buffer));
+    if (length > 0)
+        add(String::fromUTF8(std::span<const char> { buffer, static_cast<size_t>(length) }));
+    return names;
+}
+#endif
+
+// `hostID` is what ucal_getHostTimeZone returned. The zone object ICU made for it, which has the host's offset even
+// when the ID names nothing, is not available: the C library's offset stands in for it.
+static TimeZone timeZoneFromHostID(StringView hostID)
+{
+#if OS(UNIX)
+    // TZ, as the C library reads it. ICU reads it too and hands a name in it back as the host ID, but not on every
+    // platform (Android), and not for every value: before ICU 80 a path comes back whole (ICU-13694), and a value
+    // with a digit that is not at its end does not come back at all.
+    const char* tz = getenv("TZ");
+    if (tz && *tz == ':')
+        ++tz;
+    bool hasTZ = tz && *tz;
+    bool tzIsPath = hasTZ && *tz == '/';
+    if (tzIsPath) {
+        if (auto zone = namedTimeZone(zoneNameInTZFilePath(String::fromUTF8(tz))))
+            return zone.value();
+    } else if (hasTZ) {
+        StringView name = StringView::fromLatin1(tz);
+        if (name.startsWith("posix/"_s) || name.startsWith("right/"_s))
+            name = name.substring(6);
+        if (auto zone = namedTimeZone(name))
+            return zone.value();
+    }
+
+    // With no TZ, ICU reads a name out of the path /etc/localtime links to, or out of the path of the zoneinfo file
+    // with the same content: that name is the host's zone. With neither it guesses one from the zone's abbreviation,
+    // which has three or four characters (TimeZone::detectHostTimeZone has the same test). With a TZ that names no
+    // zone, ICU names /etc/localtime all the same, or hands TZ back.
+    auto zone = namedTimeZone(hostID);
+    bool isGuess = hasTZ || (hostID.length() >= 3 && hostID.length() <= 4);
+    if (zone && !isGuess)
+        return zone.value();
+
+    // A guess is not what the host is set to: "CST" is America/Chicago to ICU on a host in China, and "CET" has
+    // daylight saving time on a host in Algeria. What the C library has read is the reference. ICU itself drops a
+    // guess whose offset is not the C library's, and keeps only that offset. Here the test is the time of day at both
+    // probe times.
+    auto times = probeTimes();
+    auto host = hostOffsetsFromCLibrary(times);
+    auto tellsHostTime = [&](TimeZone candidate) {
+        return !host || host->atProbeTimes == offsetsFromICU(candidate, times);
+    };
+
+    // A link such as ":/etc/localtime" names the zone it points to. The file at that path can still be another zone:
+    // a container with the host's /etc/localtime mounted over the target of the link.
+    if (tzIsPath) {
+        for (auto& name : zoneNamesOfTZFileLink(tz)) {
+            if (auto linked = namedTimeZone(name); linked && tellsHostTime(linked.value()))
+                return linked.value();
+        }
+    }
+    if (zone && tellsHostTime(zone.value()))
+        return zone.value();
+
+    // A zone the C library knows and nothing names: a POSIX value such as "MSK-3", or a tzfile outside a zoneinfo
+    // directory. Its offset is known. Its daylight saving rule, if it has one, is not.
+    if (host)
+        return fixedOffsetTimeZone(host->standard);
+    return TimeZone();
+#else
+    if (auto zone = namedTimeZone(hostID))
+        return zone.value();
+    // ICU takes the host's zone from the Windows time zone and never from TZ, so the zone ICU keeps is the source.
+    UErrorCode status = U_ZERO_ERROR;
+    auto calendar = std::unique_ptr<UCalendar, ICUDeleter<ucal_close>>(ucal_open(nullptr, 0, "", UCAL_DEFAULT, &status));
+    int32_t milliseconds = ucal_get(calendar.get(), UCAL_ZONE_OFFSET, &status);
+    if (U_FAILURE(status))
+        return TimeZone();
+    return fixedOffsetTimeZone(milliseconds / 1000);
+#endif
+}
+#endif // USE(BUN_JSC_ADDITIONS)
+
 static TimeZone retrieveTimeZoneInformation()
 {
     Locker locker { timeZoneCacheLock };
@@ -527,6 +744,15 @@ static TimeZone retrieveTimeZoneInformation()
         getTimeZoneOverride(timeZoneID);
         TimeZone canonical;
         UErrorCode status = U_ZERO_ERROR;
+#if USE(BUN_JSC_ADDITIONS)
+        if (!timeZoneID.isEmpty())
+            canonical = timeZoneFromOverride(timeZoneID.span());
+        else {
+            status = callBufferProducingFunction(ucal_getHostTimeZone, timeZoneID);
+            ASSERT_UNUSED(status, U_SUCCESS(status));
+            canonical = timeZoneFromHostID(U_SUCCESS(status) ? StringView(timeZoneID.span()) : StringView());
+        }
+#else
         if (timeZoneID.isEmpty()) {
             status = callBufferProducingFunction(ucal_getHostTimeZone, timeZoneID);
             ASSERT_UNUSED(status, U_SUCCESS(status));
@@ -539,6 +765,7 @@ static TimeZone retrieveTimeZoneInformation()
             if (auto id = intlResolveTimeZoneID(primary))
                 canonical = TimeZone::fromID(id.value());
         }
+#endif
 
         globalCache.get() = CachedHostTimeZone { canonical, currentID };
     }

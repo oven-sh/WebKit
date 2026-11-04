@@ -101,7 +101,7 @@ Rules for an edit to an upstream test:
 ### A7. A host time-zone change is seen when the VM is next entered
 
 - `$vm.setHostTimeZone()` bumps `WTF::lastTimeZoneID()`; the VM drops its date and Intl caches on the next entry
-  (`runtime/JSDateMath.cpp:519`), not in the middle of the current task. Bun calls `timeZoneDidChange()` itself.
+  (`runtime/JSDateMath.cpp:731`), not in the middle of the current task. Bun calls `timeZoneDidChange()` itself.
 - File: `stress/intl-datetimeformat-default-timezone-change.js`: each check runs in its own `setTimeout`, as the other
   `setHostTimeZone` tests already do. The values expected are unchanged.
 
