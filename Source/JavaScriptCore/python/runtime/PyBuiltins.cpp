@@ -687,6 +687,43 @@ static JSValue builtinPrint(JSGlobalObject* globalObject, const CallArgs& args)
     return jsUndefined();
 }
 
+JSValue readLineWithEditor(JSGlobalObject* globalObject, JSString* prompt)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue module = rt.modules()->get(internString(vm, "readline"_s));
+    if (!module)
+        return { };
+    JSValue function = getAttrIfPresent(globalObject, module, internString(vm, "_read_line"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!function)
+        return { };
+    JSValue line = call(globalObject, function, prompt);
+    if (scope.exception()) {
+        // Ctrl-C, Ctrl-D: it happened in input(), as far as the program is concerned.
+        if (auto* exception = PyException::tryFrom(pendingException(globalObject)))
+            exception->setTraceback(vm, JSValue());
+        return { };
+    }
+    if (line == rt.notImplemented())
+        return { };
+    if (!isStr(line))
+        return raiseTypeError(globalObject, scope, "readline._read_line() returned non-string"_s);
+    return line;
+}
+
+// file.fileno() == descriptor, and that is a terminal.
+static bool isTerminal(JSGlobalObject* globalObject, JSValue file, int descriptor)
+{
+    JSValue number = callMethod(globalObject, file, internString(getVM(globalObject), "fileno"_s));
+    if (!number) {
+        takePendingException(globalObject);
+        return false;
+    }
+    return number.isInt32() && number.asInt32() == descriptor && isatty(descriptor);
+}
+
 static JSValue builtinInput(JSGlobalObject* globalObject, JSValue prompt)
 {
     Runtime& rt = runtime(globalObject);
@@ -710,6 +747,20 @@ static JSValue builtinInput(JSGlobalObject* globalObject, JSValue prompt)
     callMethod(globalObject, errors, rt.names.flush());
     if (scope.exception())
         takePendingException(globalObject);
+    if (rt.modules()->get(internString(vm, "readline"_s)) && isTerminal(globalObject, input, STDIN_FILENO) && isTerminal(globalObject, output, STDOUT_FILENO)) {
+        callMethod(globalObject, output, rt.names.flush());
+        if (scope.exception())
+            takePendingException(globalObject);
+        JSString* text = prompt ? str(globalObject, prompt) : jsEmptyString(vm);
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue line = readLineWithEditor(globalObject, text);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (line) {
+            if (failed(scope, audit(globalObject, "builtins.input/result"_s, line)))
+                return { };
+            return line;
+        }
+    }
     if (prompt) {
         JSString* text = str(globalObject, prompt);
         RETURN_IF_EXCEPTION(scope, { });

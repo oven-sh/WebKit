@@ -585,8 +585,8 @@ can changing `_objects`, whose docstring says not to.
 **`py_object`.** There is no `PyObject*`. The eight bytes are the bits of the `JSValue`, which for most objects is what `id()`
 returns, and 0 is NULL. The object is kept alive by `_objects`. Bits read from memory are handed out as an object if they are those of
 what `_objects` holds for that place; otherwise only after the heap has confirmed that they are those of a live cell of a kind that programs
-see (`objectFromBits()`). `Py_INCREF` and `Py_DECREF` keep a table of objects that are to stay alive. `ctypes.pythonapi` is the
-program itself, which has no C API: its functions are missing (`AttributeError`).
+see (`objectFromBits()`). `Py_INCREF` and `Py_DECREF` keep a table of objects that are to stay alive. `ctypes.pythonapi` would be the
+program itself, which has no C API. Bun takes the name away when `ctypes` is imported, as it is absent on PyPy: that is how programs find out.
 
 **`cast`, `string_at`, `wstring_at`, `memoryview_at`, `memmove`, `memset`** are, in `Lib/ctypes`, function pointers made from addresses
 that `_ctypes` exports. The addresses are real and distinct, and a call to one of them runs the C++ function directly.
@@ -988,6 +988,10 @@ For `bun main.py` it is a link named `python3` that Bun makes in a directory of 
 
 On a terminal the interactive interpreter is `_pyrepl`, otherwise a loop in C++ that behaves as CPython's basic one. `await` works
 at the top level of both, as in scripts, `-c` and standard input.
+
+Importing `readline` is what gives `input()` and the basic loop line editing and a history, as in CPython. The runtime has no such
+module. It looks for one among the imported modules when a line is to be read from the terminal, and calls its `_read_line(prompt)`
+(`readLineWithEditor()`): a str, `NotImplemented` for "read it yourself", `EOFError`, `KeyboardInterrupt`. The host brings the module.
 
 ## Writing a module in C++
 

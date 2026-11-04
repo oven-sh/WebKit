@@ -1198,9 +1198,25 @@ static Vector<uint8_t> readAllOfStdin()
 // ---- The interactive interpreter ----
 
 // One line from standard input, with its end. Empty: there is no more. Nothing: the handler of a signal has raised an exception.
-static std::optional<Vector<uint8_t>> readLineFromStdin(VM& vm, const String& prompt)
+static std::optional<Vector<uint8_t>> readLineFromStdin(JSGlobalObject* globalObject, const String& prompt)
 {
+    VM& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
+        JSValue edited = readLineWithEditor(globalObject, makeStr(vm, prompt));
+        if (clearPendingExceptionIfMatches(globalObject, runtime(globalObject).EOFError()))
+            return Vector<uint8_t> { };
+        if (scope.exception()) {
+            printToStderr("\n"_s);
+            return std::nullopt;
+        }
+        if (edited) {
+            String text = strValue(edited)->value(globalObject);
+            Vector<uint8_t> line = *tryEncodeUTF8(text, true);
+            line.append('\n');
+            return line;
+        }
+    }
     printToStderr(prompt);
     fflush(stderr);
     Vector<uint8_t> line;
@@ -1300,7 +1316,7 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
     int compileFlags = CompileAllowTopLevelAwait | CompileSourceIsShown;
     bool wasInterrupted = false;
     while (true) {
-        auto line = readLineFromStdin(vm, promptText(globalObject, pending.isEmpty() ? "ps1"_s : "ps2"_s));
+        auto line = readLineFromStdin(globalObject, promptText(globalObject, pending.isEmpty() ? "ps1"_s : "ps2"_s));
         bool isAtEnd = false;
         if (!line)
             pending.clear();

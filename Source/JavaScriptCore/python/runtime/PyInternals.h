@@ -669,6 +669,10 @@ void runCodeInMain(JSGlobalObject*, JSValue code, JSValue* unfinished);
 void registerSourceWithLinecache(JSGlobalObject*, JSValue code, std::span<const uint8_t> source, const String& filename);
 // The same for a file that is the program: __main__ gets its __file__ and __loader__. (PyCommandLine.cpp)
 void runFileInMain(JSGlobalObject*, const String& path, std::span<const uint8_t> source, JSValue* unfinished);
+// A line from the terminal, without its end, as the module `readline` reads one: its function _read_line(prompt), which edits the line
+// and keeps a history. Importing that module is what turns this on, so it is looked for among the modules there are. Empty without an
+// exception: it has not been imported, or is somebody else's, or cannot do it on this terminal. (PyBuiltins.cpp)
+JSValue readLineWithEditor(JSGlobalObject*, JSString* prompt);
 // sys._baserepl(). The exit status, if the program asked to exit. (PyCommandLine.cpp)
 std::optional<int> runBasicInteractiveLoop(JSGlobalObject*);
 // As os.path.abspath(): no symbolic link is followed.
