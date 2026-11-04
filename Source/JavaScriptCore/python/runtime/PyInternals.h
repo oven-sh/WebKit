@@ -708,7 +708,6 @@ enum CompileFlag : int {
     // Nor this: tracebacks show the lines of the source although its name is not that of a file (-c, the interactive interpreter).
     CompileSourceIsShown = 0x20000000,
 };
-void showSourceInTracebacks(SourceProvider&); // PyFrame.cpp
 // compile(source, filename, mode): a code object. `mode` is "exec", "eval" or "single". A negative `optimize`: as the interpreter.
 // `module`, here and below: the name of the module the code is for, by which the filters of warnings select. Empty or None: go by the file name.
 JSValue compileSource(JSGlobalObject*, std::span<const uint8_t> source, const String& filename, ASCIILiteral mode, int flags, int optimize, JSValue module = { });

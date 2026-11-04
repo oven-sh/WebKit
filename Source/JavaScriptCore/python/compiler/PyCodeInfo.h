@@ -99,6 +99,9 @@ public:
     // which writes one text for all the code, cannot write this.
     bool hasFunctionsFromElsewhere { false };
 
+    // Its name is no file's ("<string>"), and a traceback shows the lines all the same, from the text it was compiled from: what follows -c.
+    bool sourceIsShown { false };
+
     // A generator function only binds its arguments. The body is another function, this index among those of the code block.
     static constexpr unsigned generatorBodyIndex = 0;
 

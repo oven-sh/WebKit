@@ -312,8 +312,7 @@ ParserError BytecodeGenerator::generate(unsigned& size)
 
         OpCatch::emit(this, handler.exceptionRegister, handler.thrownValueRegister);
         realCatchTarget->setLocation(*this, m_lastInstruction.offset());
-        // The optimizer moves code and knows nothing of marks.
-        if (tryData->catchClauseEnd && !shouldRunBytecodeOptimizer()) {
+        if (tryData->catchClauseEnd) {
             unsigned start = tryData->target->location();
             unsigned end = tryData->catchClauseEnd->location();
             unsigned firstYieldPoint = std::ranges::lower_bound(m_yieldPointOffsets, start) - m_yieldPointOffsets.begin();

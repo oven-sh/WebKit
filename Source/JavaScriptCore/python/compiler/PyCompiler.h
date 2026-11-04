@@ -24,6 +24,8 @@ struct CompilerOptions {
     // What the code calling compile() has in effect itself.
     bool futureAnnotations { false };
     bool futureBarryAsBDFL { false };
+    // See CodeInfo::sourceIsShown.
+    bool sourceIsShown { false };
 };
 
 // From a syntax tree to bytecode. (Python/codegen.c and Python/compile.c in CPython are the reference for what the code must do.)

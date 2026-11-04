@@ -2106,6 +2106,18 @@ void BytecodeOptimizerAccess::emit()
         m_codeBlock->m_exceptionHandlers = WTF::move(handlers);
     }
 
+    // Where the `catch` clauses of the program are, for Python: see PythonMark::CatchOfJS.
+    m_codeBlock->m_pythonMarks.removeAllMatching([&](PythonMark& mark) {
+        RELEASE_ASSERT(mark.kind() == PythonMark::CatchOfJS);
+        auto& insn = m_insns[m_offsetToIndex[mark.offset]];
+        RELEASE_ASSERT(insn.opcode == op_catch);
+        if (!insn.live)
+            return true;
+        mark.offset = insn.newOffset;
+        mark.bits = static_cast<uint64_t>(newOffsetForOld(static_cast<unsigned>(mark.bits >> 32))) << 32 | newOffsetForOld(static_cast<unsigned>(mark.bits));
+        return false;
+    });
+
     // Switch jump tables: same walk (and order) as extractStoredJumpTargetsForInstruction() used in decode().
     for (auto& insn : m_insns) {
         if (!insn.live || insn.kind != Insn::Original)

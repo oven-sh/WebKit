@@ -293,10 +293,9 @@ JSValue compileTree(JSGlobalObject* globalObject, ParseTree& tree, ParserHost& h
     if (text.isEmpty())
         text = "\n"_s;
     SourceCode sourceCode(StringSourceProvider::create(text, SourceOrigin(), filename, SourceTaintedOrigin::Untainted));
-    if (flags & CompileSourceIsShown)
-        showSourceInTracebacks(*sourceCode.provider());
 
     CompilerOptions options;
+    options.sourceIsShown = flags & CompileSourceIsShown;
     options.optimize = optimize < 0 ? rt.optimizationLevel : optimize;
     options.allowTopLevelAwait = flags & CompileAllowTopLevelAwait;
     options.futureAnnotations = flags & static_cast<int>(CodeFlag::FutureAnnotations);

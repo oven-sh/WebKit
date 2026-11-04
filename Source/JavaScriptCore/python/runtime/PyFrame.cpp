@@ -1817,17 +1817,6 @@ void initializeFrameTypes(JSGlobalObject* globalObject)
 
 // ---- Showing an exception ----
 
-static UncheckedKeyHashSet<RefPtr<SourceProvider>>& shownSources()
-{
-    static NeverDestroyed<UncheckedKeyHashSet<RefPtr<SourceProvider>>> sources;
-    return sources.get();
-}
-
-void showSourceInTracebacks(SourceProvider& provider)
-{
-    shownSources().add(&provider);
-}
-
 namespace {
 
 class ExceptionPrinter {
@@ -1980,7 +1969,7 @@ private:
         if (lineNumber < 1)
             return { };
         SourceProvider* provider = frame->executable()->source().provider();
-        if (frame->codeInfo().filename.startsWith('<') && !shownSources().contains(provider))
+        if (frame->codeInfo().filename.startsWith('<') && !frame->codeInfo().sourceIsShown)
             return { };
         StringView source = provider->source();
         unsigned start = 0;
