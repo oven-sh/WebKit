@@ -48,7 +48,12 @@ down to which JIT tier ran. So the encoding cannot carry Python's distinction be
 on history is: a number that is whole is an `int`. A `float` that is whole is therefore kept in a cell, `PyFloat`. Where a value is
 handed to JS (the result of a call, an argument, an attribute, an operator's result) it is the plain number again
 (`valueForJS`), so that floatness is lost in JS and nothing else is. Inside a list, which is shared storage, JS can see the cell;
-it behaves as a `Number` object does.
+it behaves as a `Number` object does. `-0` is whole too, so it is the int `0`: JS makes one of `-i` and of `0 * -1`, and `range(-i)` is to
+work. Python's own `-0.0` is a cell, like `0.0`. It goes out as `-0` and comes back as `0`; `float(-0)` of `bun:python` is `-0.0`. What
+takes the value of a number that may be an int takes it without the sign of a zero (`numberValue`). No fast path of the
+interpreter stores a result that is whole, so none can make a `-0.0` that is a number. Nothing converts what JS passes in, so a
+`-0` that Python only keeps or passes on is `-0` when JS sees it again; `round()`, `abs()` and `int()` give `0`.
+(A decision that can still be changed.)
 
 **str.** A `JSString`, so UTF-16 where it is not Latin-1, while Python counts code points. A text without surrogate pairs is indexed
 directly. C++ borrows the text of a str while it works on it (`StrView`, `JSString::view()`) instead of retaining it: the reference
@@ -517,6 +522,11 @@ lock (`runtime/PyThreads.h`). To hold it is to hold the VM's `JSLock`, with what
 - Until a program starts its first thread none of this happens, and while there is no other thread blocking calls keep the lock.
 - **JavaScript stays on the main thread.** Only that thread turns the host's event loop; using a JS object or function from another thread
   raises `RuntimeError`. While the event loop idles, the lock is free.
+  Another thread may look, since it has the lock: to read an attribute of an object of JS gives a property that is a value, or says that there is
+  none, if that can be seen without running any code of JS's or the host's (`inquireProperty` in `PyInterop.cpp`). So what goes through `sys.modules` and
+  asks every module for `__warningregistry__` or `__file__` (`unittest`, `warnings`, `inspect`) works in a thread. A getter, a proxy, an export of a
+  module, a property that the engine or the host makes when it is first asked for (`js.WeakRef`) and an object of a class with a way of its own
+  to look properties up are a `RuntimeError` as before, and so are calls, writes, items and iteration. `type()` and `repr()` work; `repr()` does without the name of the class.
 - **So does everything else that is the host's.** `Heap::mayRunEmbedderFinalizers()` is false while another thread has the VM. Then
   cells with destructors of the host's, or with dead weak handles whose finalizers are not known to run anywhere
   (`Heap::addFinalizerForAnyThread()`), are not swept: the allocator passes over their blocks, `gc.collect()` does not sweep. The main
@@ -711,8 +721,13 @@ while any thread has a function. The side tables are only changed with the GIL, 
   classes. Too few arguments are a `TypeError` for every caller.
 - In Python, to call a class is to make an instance, so Python calling a class of JS is `new`: what `class` declares, and the
   constructors of the engine and the host (`js.Map()`, `js.Date()`, `js.Response("body")`). The constructors of
-  primitive values (`String`, `Number`, `Boolean`, `Symbol`, `BigInt`) make one, as they do when JS calls them. A plain `function` is called; `f.new(...)` is `new f(...)` for anything.
+  primitive values (`String`, `Number`, `Boolean`, `Symbol`, `BigInt`) make one, as they do when JS calls them.
   A function of the host that can be constructed but has no `prototype` for instances (a mock function of `bun:test`) is called.
+  A `function` is a class if somebody has given its instances something to inherit, as was done before there was `class`
+  (`EventEmitter`, `stream.Readable`): its `prototype` has a property of its own besides `constructor`, or inherits from something else than
+  `Object.prototype` (`isClassWrittenInJS`; it looks at the two objects and runs no code). Any other `function` is called. A host with classes that are
+  meant to be called says which (`setClassIsCalledFunction`): in Bun those whose binding says what a call does, so `expect(x)`.
+  `f.new(...)` is `new f(...)` for anything. (A decision that can still be changed.)
 - Keyword arguments for a JS function are a trailing object, and JS passes keyword arguments as `kwargs({ name: value })`, last. The two
   are the same thing: a plain object with a mark that JS cannot see (a property whose key is a private name: `isKeywordMarker`).
   As the last argument of a call that JS makes of something of Python's, an object with the mark is keyword arguments. So
@@ -720,6 +735,15 @@ while any thread has a function. The side tables are only changed with the GIL, 
   when it is Python that passes the object it is an object like any other. (Who calls is told as the callee starts, by
   `isBeingCalledByPython`: the frame it returns to does not tell, since `return f(...)` in strict JS code is a tail call.)
 - A dict iterates in JS as a `Map` does, by `[key, value]`.
+- `JSON.stringify()` makes of a `datetime.date`, `time` or `datetime` what it makes of a `Date`: the text by ISO 8601, which is what `isoformat()` gives
+  (`toJSON`, `jsViewIsDateOrTime`). No other type of the standard library has a `toJSON` of its own: a `Decimal`, a `UUID` or a `Path` would lose
+  what it is without a word. (A decision that can still be changed.)
+- A context manager is no disposable: `using` would skip `__enter__`. In Bun, `bun:python` has the statement as a function, `with(manager, body)` and
+  `asyncWith(manager, body)`, and for `using` there is `enter(manager)`: it calls `__enter__` and gives `{ value, [Symbol.dispose]() }`, which calls
+  `__exit__(None, None, None)`, once. `await enterAsync(manager)` is the same with `__aenter__`, `__aexit__` and `Symbol.asyncDispose`, for `await using`.
+  JS tells a disposable nothing of the exception that leaves the block, so the manager does not hear of it and cannot swallow it: a
+  transaction commits, `suppress()` suppresses nothing. Where that matters, `with()` is the full form. `__aenter__` and `__aexit__` are two tasks, and the
+  block is in neither: `asyncio.timeout()` and `TaskGroup` need `asyncWith()`. (A decision that can still be changed.)
 - What all objects of Python's inherit in JS (`toString`, `Symbol.toPrimitive`, `Symbol.iterator`, `then`, `toJSON`, what `console.log` asks)
   is about the object of Python's also where `this` is a `Proxy` around it or was made of it with `Object.create()` (`jsViewThis`).
   The operators do not see through those.
@@ -738,9 +762,14 @@ while any thread has a function. The side tables are only changed with the GIL, 
   To code that has looked at its own state already and asks a value for its bytes in passing (`hash.update(o)`, a parameter of an SQL
   statement, `crypto.randomFillSync(o)`) it is no buffer, and is refused like any other object: `getBufferRunsCode()`.
   To code written in JS these objects are no typed arrays (`ArrayBuffer.isView()`, `instanceof Uint8Array`): see `DEFERRED.md`.
-- **Operators.** `a + b`, `-a`, `a < b`, `a == b` and so on ask the classes of the Python objects among the operands
-  (`__add__`, `__radd__`, ...), in the slow paths that all tiers share (`OperationsInlines.h`, `JSValue::equalSlowCaseInline`). If
-  neither class answers, JS does what it does with any object. `a == null` is false without asking.
+- **Operators.** Where an operand is an object of Python's, `a + b`, `-a`, `~a`, `a < b` and so on are what they are in Python
+  (`binaryOperatorForJS` and the like in `PyHooks.h`), in the slow paths that all tiers share (`OperationsInlines.h`,
+  `JSValue::equalSlowCaseInline`). The type of the other operand is asked too, whatever it is: `"%s: %d" % pair`, `[0] * index`,
+  `2 * fraction`, `10n + fraction`. What neither has an answer to is Python's `TypeError`: `timedelta(1) + 1`, `-object()`, `a < null`.
+  An object that has `__float__` or `__index__` and no `__mul__` is not made a number of for `a * 2`, no more than in Python: `+a * 2`.
+  One exception: `+` with a string of JS on either side. There only the class of the object of Python's is asked (`__add__`,
+  `__radd__`), and if it says nothing JS concatenates, as with any object: `"total: " + decimal`. (Decisions that can still be changed.)
+  `a == b` asks `__eq__`, and goes on as JS does if there is no answer; `a == null` is false without asking. Unary `+` and `>>>` are JS's.
   The parser does not make `+a` of `a * 1`, which it did.
   `===`, `Object.is`, `switch`, `includes`, `indexOf` and the keys of a `Map` or `Set` go by identity.
   To the DFG and FTL a Python object has a type of its own, `SpecPyObject`. An arithmetic operator returns a primitive unless an
@@ -760,6 +789,23 @@ while any thread has a function. The side tables are only changed with the GIL, 
   (`NativeModuleDef::execute`), so what `importlib` writes into a new module (`__spec__`, `__loader__`) does not end up in the global object.
   Code of the host's that is not to be seen importing it has `_js.globalThis`.
 
+- A name that is a keyword of Python cannot stand behind a dot, so it is written with an underscore behind it: `js.Array.from_(x)`,
+  `promise.finally_(f)`, `o.class_ = 1`, `del o.in_`. Only for the keywords (`keyword.kwlist`, not `match` or `type`), and only if the object has no
+  property of the name with the underscore (`propertyKeyForAttribute`). (A decision that can still be changed.)
+- **`js.null`** is `null`. `None` goes out as `undefined`, and some functions tell the two apart: `stream.push(js.null)`,
+  `js.Object.create(js.null)`. It is no object of a type of its own but the value `null` itself, which to Python is `None` wherever it comes
+  from (`js.null is None`, its `repr()` is `None`) and stays `null` for as long as it is only passed on. A list, a dict or an attribute is shared with JS,
+  which reads what is in it without Python having a say, so only `null` itself is `null` there too. `pickle` makes `None` of it.
+  (A decision that can still be changed.)
+- **What a `JSError` has not is asked of what was thrown**, if that is an object: `e.code`, `e.message`, `e.cause`, `e.errors` are
+  `e.value.code` and so on (`JSError.__getattr__`). Only its properties, and only to read. Only for Python: JS, which has `error.value`, sees the
+  exception as it sees any other (`attributeOfExceptionForJS`). (A decision that can still be changed.)
+- **A `TypeError` is a `TypeError` in both languages.** What stands for a thrown object that is an `instanceof TypeError` is a
+  `JSTypeError`, a class derived from `JSError` and `TypeError`: `except TypeError` catches a call of what is `undefined` or an
+  `ERR_INVALID_ARG_TYPE` of Node, and so does `except JSError` (`exceptionFromThrownValue`). To JS an instance of Python's `TypeError`, or of
+  a class derived from it, is an `instanceof TypeError`: behind it comes `TypeError.prototype` where the other exceptions have
+  `Error.prototype`. All exceptions have one `Structure`, and an object can change its class, so the prototype is asked for
+  (`PyException::getPrototype`). No other class of errors is linked. (A decision that can still be changed.)
 - `len()` is `length`, or `size`, or the number of own properties. Of what can be iterated over and has neither it is a `TypeError`.
 - **`async for` is `for await`**, also where it is left before the end: by `break`, `return` or an exception (a cancellation too), in a
   statement or a comprehension. Then the iterator's `return()` is called and awaited, which is what an object of JS counts on to
@@ -768,11 +814,32 @@ while any thread has a function. The side tables are only changed with the GIL, 
   `return()` after the `next()` that it still owes. Only for the iterator that the loop itself has made of an object of JS: one that the program made with `aiter()`
   is the program's, and has `aclose()`. For everything of Python's the loop does what it does in CPython, which is nothing.
 - **Truth.** What is a container to Python is false when it is empty: what JS iterates over and has a `length` or `size` (a `Map`, a `Set`,
-  a typed array), and a plain object. Everything else is true, as an instance of a class in Python is: a function, a class, a
+  a typed array), a mapping by its methods, and a plain object. Everything else is true, as an instance of a class in Python is: a function, a class, a
   promise, an `Error`, a `Date`, a `Response`, an iterator. So `if error:` and `if callback:` do what they say.
 - An object that JS does not iterate over is a mapping of its own enumerable properties: `keys()`, `values()`, `items()`, `get()`, `pop()`,
   `popitem()`, `setdefault()`, `update()`, `clear()` (those of `collections.abc.MutableMapping`), unless it has properties of these
   names; so `dict(object)`. What JS iterates over has none of them: `dict(map.entries())` takes the pairs.
+- **A plain object**, one whose prototype is `Object.prototype` or `null`, has a type of its own, `_js.JSPlainObject`, which derives from `JSObject` and adds
+  nothing to it but what it says to others: it is registered as a `collections.abc.MutableMapping` (when the interpreter starts, `registerInteropTypes`: the
+  type has instances before any module is imported that could do it), a mapping pattern of `match` takes it (`TypeFlag::Mapping`), and
+  `json.dumps()` writes it as it writes a dict, wherever it is found. It is no `dict`: `isinstance(o, dict)` is false, and `o == {...}` goes by identity.
+  So `json.dump()` and `JSONEncoder.iterencode()`, whose encoder is the library's own in Python and asks `isinstance(o, dict)`, take it only with
+  `default=dict`. `typeOf()` tells by the type of the cell and one comparison of its prototype. (A decision that can still be changed.)
+- **A mapping by its methods.** An object that is not plain, that JS iterates over and that has `get()`, `has()` and `keys()` is a mapping by those, as a `Map`
+  is: `Headers`, `URLSearchParams`, `FormData`, `CookieMap`, a cache from a package (`isMappingByMethods`, asked at each use). `o[k]` is `get(k)`, or a
+  `KeyError` if not `has(k)`; `k in o` is `has(k)`; `o[k] = v` is `set(k, v)`; `del o[k]` is `delete(k)`; iteration is over `keys()`; `len()` is
+  `length`, `size` or the number of keys; an empty one is false. So `dict(o)` and `**o`. `items()`, `pop()`, `popitem()`, `setdefault()` and `update()` are
+  those of a mapping, made of the above. What the object has itself comes first as ever: `o.get(k)` is JS's, which knows no default, and
+  `o.keys()`, `o.values()` and `o.entries()` give iterators of JS. Its properties are attributes only. A key that is there twice
+  (`URLSearchParams`) is iterated over twice, and `[]` gives what `get()` gives, the first. A `Map` is as it was: it iterates by pairs, as in JS, and has no `items()`.
+  (A decision that can still be changed.)
+- **What can be disposed of is a context manager.** `with o:` is `using`: it gives `o`, and calls `o[Symbol.dispose]()` at the end. `async with o:` is
+  `await using`: it awaits `o[Symbol.asyncDispose]()`, or calls `o[Symbol.dispose]()` if there is no such method. JS tells a disposable nothing of the
+  exception that leaves the block, and whatever the method returns the exception goes on.
+  An object without these methods is a `TypeError`. It is the statement that finds them (`contextManagerMethodOfJS`), and `with()` of `bun:python`: the class of an
+  object of JS cannot say whether the object can be disposed of, and what has an `__exit__` in its class is a context manager to all who ask
+  (`ExitStack.push(f)` takes a function without one for a callback). So `hasattr(o, "__enter__")` is false, and `ExitStack.enter_context(o)`, which looks in
+  the class, does not take it: `stack.callback(o[js.Symbol.dispose].bind(o))`. (A decision that can still be changed.)
   `vars(object)` and `object.__dict__` are the object itself, so `functools.wraps(f)` takes a function of JS for the wrapper.
 - A function that is read off an object is bound to it, so `f = o.method; f()` works as it does in Python. It is one bound function for
   each object and function, remembered weakly (`bindIfFunction`): `o.method is o.method`, and `emitter.off(name, o.method)` finds what
@@ -813,6 +880,16 @@ while any thread has a function. The side tables are only changed with the GIL, 
 - A function has `__name__` and `__qualname__`, which decorators copy. `copy.copy()` and `copy.deepcopy()` give the function itself.
 - The working directory is one: `os.chdir()` and `os.fchdir()` tell the host (`setDidChangeDirectoryFunction`), which keeps its own
   copy of it for `process.cwd()` and for resolving modules.
+- The environment is one. `os.environ` begins as what the host has (`HostEnvironment::read`; in Bun `process.env`, with what the program
+  wrote there before Python started and with the variables of `.env` files), and from then on each hears of what changes in the other.
+  `os.putenv()` and `os.unsetenv()`, which `os.environ` calls, tell the host (`didChange`; for another thread the main one does it, as soon as it
+  has the VM again). A write to `process.env`, or a `delete`, changes the dict in which `os.environ` keeps the variables
+  (`hostDidChangeEnvironment`), and on the main thread the environment of the process too, which Bun itself leaves as it found it: that is what the
+  children of Python inherit. To JS names and values are text, with U+FFFD for what is not UTF-8. Such bytes stay what they are in
+  `os.environb` until JS writes another text. A name that no environment can hold (`A=B`) stays in `process.env` alone.
+  In a worker `process.env` is a copy, or what `new Worker(file, { env })` gave it, and `os.environ` is the same as that. What JS writes there
+  goes no further; what Python writes there also changes the environment of the process, as in a subinterpreter of CPython, and no other
+  thread is told. (A decision that can still be changed.)
 
 ## JavaScript without Python
 
