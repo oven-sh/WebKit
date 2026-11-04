@@ -1257,7 +1257,7 @@ What every program pays, with the sizes of a release build for x86-64:
 | A block or large allocation is swept | one load and branch (`mayRunEmbedderFinalizers()`) |
 | The incremental sweeper runs | one load and branch (`hasParkedThreads()`) |
 | A call is linked, or is virtual and not to compiled JS | is the caller Python code: three loads and a branch |
-| An exception is thrown | whether there is a Python in the VM is asked once for an unwind (`UnwindFunctor::m_tellsPython`: a load and a compare), and the answer looked at twice for each frame the exception passes. All that is done on Python's account is out of line behind it. `throw` and `catch`: has the realm a Python, a load and a branch each |
+| An exception is thrown | whether there is a Python in the VM is asked once for an unwind (`UnwindFunctor::m_tellsPython`: a load and a compare) and the frame it starts in is noted (`m_frameToldOfLast`: a store), and the answer is looked at twice for each frame the exception passes. All that is done on Python's account is out of line behind it. `throw` and `catch`: has the realm a Python, a load and a branch each |
 | Bytecode is generated, a code block is linked or asks to be compiled | a look at `isPython()`: for each loop and jump, each call site, each code block |
 | `Instruction::opcodeID()`, `size()` in C++ | nothing: `op_wide16`, `op_wide32`, `op_py_instrumented` and `op_page2` are the last four ids of one byte, and a narrow instruction is known by one compare, where upstream has two. The interpreter itself does not look |
 | The interpreter's three tables of handlers | 578 entries each for 338 ids, so that the byte behind `op_page2` is its own bound, as an opcode is; in the 16 KB that are set aside and protected for them anyway |
