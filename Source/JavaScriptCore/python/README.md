@@ -350,9 +350,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     of an outer loop; for an exception the unwinder does it, from the marks that tracing has for loops, before anybody is
     told that the exception is caught or leaves the frame, as CPython pops the stack of a frame first. A generator that the
     collector would leave alone (no handler in it, nothing in its frame to close) is left alone here too.
-  - The unwinder reads the iterator from its register, and no instruction shows that use. So whoever asks which registers are live adds
-    the iterators of the loops that are open (`OwnedLoop`): the collector, before it empties dead temporaries, and what decides
-    which registers a generator saves at a `yield`.
+  - The unwinder reads the iterator from its register, and no instruction shows that use. Nor does any show that a trace function may send the frame
+    back to the head of a loop from where the code only leaves it (`frame.f_lineno = line`). So whoever asks which registers are live adds
+    what the blocks that are open hold (`BlockPiece`): the collector, before it empties dead temporaries, and what decides
+    which registers a generator saves at a `yield`. In CPython those values are on the stack of the frame for as long.
   - A program can get at an object that it has no reference to through `gc.get_objects()`, `get_referrers()`, `get_referents()` and
     `DEBUG_SAVEALL`, and at a generator through `frame.f_generator`: those end all such ownership
     (`temporariesMayHaveEscaped()`). What traces the program is shown arguments of calls and can assign to variables: that forgets the

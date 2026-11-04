@@ -64,9 +64,12 @@ bool liveLocalsOfFrame(CallFrame* callFrame, CodeBlock* codeBlock, bool isCallin
     }
 
     live = codeBlock->livenessAnalysis().getLivenessInfoAtInstruction(codeBlock, index);
-    for (auto& loop : ownedLoopsOf(codeBlock)) {
-        if (loop.contains(index.offset()))
-            live[VirtualRegister(loop.iterator).toLocal()] = true;
+    for (auto& piece : blockPiecesOf(codeBlock)) {
+        if (!piece.contains(index.offset()))
+            continue;
+        piece.forEachRegister([&](VirtualRegister held) {
+            live[held.toLocal()] = true;
+        });
     }
     // That is what is live before the instruction, which may be half done: one that unpacks an iterable has set some of its
     // targets. A call sets its result when the callee returns, and until then the register has what some earlier expression left.

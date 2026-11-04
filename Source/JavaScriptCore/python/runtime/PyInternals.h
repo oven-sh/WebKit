@@ -572,7 +572,7 @@ void forEachVariableOfRunningGenerators(VM&, const ScopedLambda<void(PyGenerator
 // Which of the locals of a frame of the LLInt or the Baseline JIT hold values that the code may still read. `isCalling`: there is a
 // frame that this one called. False: there is no telling.
 bool liveLocalsOfFrame(CallFrame*, CodeBlock*, bool isCalling, FastBitVector& live);
-std::span<const OwnedLoop> ownedLoopsOf(CodeBlock*);
+std::span<const BlockPiece> blockPiecesOf(CodeBlock*, bool onlyIfALoopOwnsItsIterator = false);
 
 // A function of the host's event loop module (setEventLoopModule). Empty without an exception: the host has none.
 JSValue eventLoopFunction(JSGlobalObject*, ASCIILiteral name);

@@ -75,9 +75,10 @@ public:
 
     // A module, a class body, or anything given to exec(): the one parameter is the namespace the names live in.
     bool takesNamespace { false };
-    // Once somebody has looked: ownedLoopsOf() in PyTemporaries.cpp.
-    bool knowsOwnedLoops { false };
-    FixedVector<OwnedLoop> ownedLoops;
+    // Once somebody has looked: blockPiecesOf() in PyTemporaries.cpp.
+    bool knowsBlockPieces { false };
+    bool hasLoopThatOwnsItsIterator { false };
+    FixedVector<BlockPiece> blockPieces;
     VirtualRegister namespaceRegister; // Where the running code keeps it.
 
     Vector<Variable> variables;

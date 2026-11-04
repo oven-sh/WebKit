@@ -391,13 +391,16 @@ void BytecodeGeneratorification::run()
         };
         for (unsigned i = 0; i < m_pythonParameterCount; ++i)
             allot(m_firstPythonParameter.toLocal() + i);
-        auto ownedLoops = Python::ownedLoopsIn(m_codeBlock->pythonMarks());
+        auto blockPieces = Python::blockPiecesIn(m_codeBlock->pythonMarks());
         for (YieldData& data : m_yields) {
             if (!data.found)
                 continue;
-            for (auto& loop : ownedLoops) {
-                if (loop.contains(data.point))
-                    data.liveness[VirtualRegister(loop.iterator).toLocal()] = true;
+            for (auto& piece : blockPieces) {
+                if (!piece.contains(data.point))
+                    continue;
+                piece.forEachRegister([&](VirtualRegister held) {
+                    data.liveness[held.toLocal()] = true;
+                });
             }
             // All the variables are kept, needed or not: gi_frame.f_locals shows them. And a generator that is resumed
             // counts on it (llint_python_generator_resume).

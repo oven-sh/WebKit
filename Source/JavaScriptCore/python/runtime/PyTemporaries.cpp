@@ -309,7 +309,7 @@ void Runtime::claimIteratorOfLoop(CallFrame* callFrame, unsigned offset)
     }
 }
 
-std::span<const OwnedLoop> ownedLoopsOf(CodeBlock* codeBlock)
+std::span<const BlockPiece> blockPiecesOf(CodeBlock* codeBlock, bool onlyIfALoopOwnsItsIterator)
 {
     auto* executable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable());
     CodeInfo* info = executable ? executable->unlinkedExecutable()->pythonCodeInfo() : nullptr;
@@ -318,11 +318,14 @@ std::span<const OwnedLoop> ownedLoopsOf(CodeBlock* codeBlock)
     // A generator function has it in common with the body of the generator. It only binds its arguments.
     if (info->isGeneratorLike() && codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode)
         return { };
-    if (!info->knowsOwnedLoops) [[unlikely]] {
-        info->ownedLoops = FixedVector<OwnedLoop>(ownedLoopsIn(codeBlock->unlinkedCodeBlock()->pythonMarks()));
-        info->knowsOwnedLoops = true;
+    if (!info->knowsBlockPieces) [[unlikely]] {
+        info->blockPieces = FixedVector<BlockPiece>(blockPiecesIn(codeBlock->unlinkedCodeBlock()->pythonMarks()));
+        info->hasLoopThatOwnsItsIterator = std::ranges::any_of(info->blockPieces, &BlockPiece::ownsIterator);
+        info->knowsBlockPieces = true;
     }
-    return info->ownedLoops.span();
+    if (onlyIfALoopOwnsItsIterator && !info->hasLoopThatOwnsItsIterator)
+        return { };
+    return info->blockPieces.span();
 }
 
 // The collector leaves such a generator alone: there is no handler in it that a GeneratorExit would get to. It must not hold anything
@@ -352,13 +355,13 @@ void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset,
     if (callFrame->isZombieFrame())
         return;
     CodeBlock* codeBlock = callFrame->codeBlock();
-    auto loops = ownedLoopsOf(codeBlock);
+    auto loops = blockPiecesOf(codeBlock, true);
     if (loops.empty()) [[likely]]
         return;
-    auto generatorOf = [&](const OwnedLoop& loop) -> PyGenerator* {
-        if (!loop.contains(offset))
+    auto generatorOf = [&](const BlockPiece& loop) -> PyGenerator* {
+        if (!loop.ownsIterator || !loop.contains(offset))
             return nullptr;
-        auto* generator = PyGenerator::tryFrom(callFrame->r(VirtualRegister(loop.iterator)).jsValue());
+        auto* generator = PyGenerator::tryFrom(callFrame->r(VirtualRegister(loop.held)).jsValue());
         return generator && generator->loopOwnership ? generator : nullptr;
     };
     if (std::ranges::none_of(loops, generatorOf))
@@ -382,7 +385,7 @@ void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset,
         PyGenerator* generator = generatorOf(loop);
         if (!generator)
             continue;
-        bool goesOn = landing && std::ranges::any_of(loops, [&](const OwnedLoop& piece) {
+        bool goesOn = landing && std::ranges::any_of(loops, [&](const BlockPiece& piece) {
             return piece.number == loop.number && piece.contains(*landing);
         });
         if (goesOn)

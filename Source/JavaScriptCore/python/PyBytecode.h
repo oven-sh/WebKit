@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "VirtualRegister.h"
 #include <stdint.h>
 #include <wtf/Vector.h>
 
@@ -97,45 +98,55 @@ struct TracedBlock {
         ExceptionHandlerWithMore, // The same, and there is more in other registers: `except*`, `finally` on the way of an exception.
         Other,
     };
-    // `ownsIterator`: see OwnedLoop.
+    // `ownsIterator`: see BlockPiece.
     static constexpr uint64_t encode(Kind kind, int registerOffset, bool ownsIterator) { return kind | ownsIterator << 7 | static_cast<uint64_t>(static_cast<uint32_t>(registerOffset)) << 8; }
     static constexpr Kind kindOf(uint64_t bits) { return static_cast<Kind>(bits & 0x7f); }
     static constexpr bool ownsIterator(uint64_t bits) { return bits & 0x80; }
     static constexpr int registerOffsetOf(uint64_t bits) { return static_cast<int32_t>(static_cast<uint32_t>(bits >> 8)); }
 };
 
-// A piece of the code of a `for` loop that goes through the value of a call. If an exception leaves the loop, the unwinder reads the
-// iterator from its register (Runtime::releaseIteratorsOfLoopsLeft()). No instruction shows that use, so whoever asks which
-// registers are live has to add the register wherever the loop is open.
-struct OwnedLoop {
+// A piece of the code of such a block. What the block holds is in use wherever the block is open, even where no instruction that
+// reads the register can be reached any more. A trace function may send the frame back to where one can (Monitoring::jump()). And
+// if an exception leaves a `for` loop that goes through the value of a call (`ownsIterator`), the unwinder reads the iterator
+// (Runtime::releaseIteratorsOfLoopsLeft()). So whoever asks which registers are live has to add these.
+struct BlockPiece {
     unsigned begin; // Offsets of instructions.
     unsigned end;
-    unsigned number; // The same for all the pieces of a loop.
-    int iterator; // VirtualRegister::offset()
+    unsigned number; // The same for all the pieces of a block.
+    int held; // VirtualRegister::offset()
+    bool holdsNextToo; // TracedBlock::With
+    bool ownsIterator;
     bool contains(unsigned offset) const { return begin <= offset && offset < end; }
+    template<typename Function>
+    void forEachRegister(const Function& function) const
+    {
+        function(VirtualRegister(held));
+        if (holdsNextToo)
+            function(VirtualRegister(held - 1));
+    }
 };
 
-// In the order of the code: of two that contain the same instruction, the inner loop comes later.
+// In the order of the code: of two that contain the same instruction, that of the inner block comes later.
 template<typename Marks>
-Vector<OwnedLoop, 4> ownedLoopsIn(const Marks& marks)
+Vector<BlockPiece, 4> blockPiecesIn(const Marks& marks)
 {
     using Mark = std::remove_cvref_t<decltype(marks[0])>;
-    Vector<OwnedLoop, 4> loops;
+    Vector<BlockPiece, 4> pieces;
     for (auto& mark : marks) {
-        if ((mark.kind() != Mark::BlockBegin && mark.kind() != Mark::BlockEnd) || !TracedBlock::ownsIterator(mark.bits))
+        if ((mark.kind() != Mark::BlockBegin && mark.kind() != Mark::BlockEnd) || !VirtualRegister(TracedBlock::registerOffsetOf(mark.bits)).isValid())
             continue;
         if (mark.kind() == Mark::BlockBegin) {
-            loops.append({ mark.offset, std::numeric_limits<unsigned>::max(), mark.value(), TracedBlock::registerOffsetOf(mark.bits) });
+            pieces.append({ mark.offset, std::numeric_limits<unsigned>::max(), mark.value(), TracedBlock::registerOffsetOf(mark.bits), TracedBlock::kindOf(mark.bits) == TracedBlock::With, TracedBlock::ownsIterator(mark.bits) });
             continue;
         }
-        for (size_t i = loops.size(); i--;) {
-            if (loops[i].number == mark.value()) {
-                loops[i].end = mark.offset;
+        for (size_t i = pieces.size(); i--;) {
+            if (pieces[i].number == mark.value()) {
+                pieces[i].end = mark.offset;
                 break;
             }
         }
     }
-    return loops;
+    return pieces;
 }
 
 // PythonMark::TemporaryMade, TemporaryUsed: see runtime/PyTemporaries.cpp. The value of a call or a subscript that is in no variable,
