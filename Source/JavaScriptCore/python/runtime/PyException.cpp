@@ -95,6 +95,13 @@ static constexpr unsigned jsErrorHiddenField = 1;
 // The frames of Python it has passed through before there was a JSError to have the traceback.
 static constexpr unsigned jsErrorTracebackHiddenField = 2;
 
+// An object of JS keeps its exception. (Not one of Python's: the hidden fields of those belong to their types.)
+static bool keepsItsException(Runtime& rt, JSValue thrown)
+{
+    PyType* type = rt.typeOf(thrown);
+    return type == rt.jsObjectType() || type == rt.jsPlainObjectType() || type == rt.jsFunctionType();
+}
+
 // `thrown instanceof TypeError`, without running code.
 static bool isTypeErrorOfJS(JSObject* thrown)
 {
@@ -134,9 +141,7 @@ JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    // An object of JS keeps its exception. (Not one of Python's: the hidden fields of those belong to their types.)
-    PyType* thrownType = rt.typeOf(thrown);
-    bool remembers = thrownType == rt.jsObjectType() || thrownType == rt.jsFunctionType();
+    bool remembers = keepsItsException(rt, thrown);
     if (remembers) {
         if (JSValue existing = hiddenField(globalObject, thrown, jsErrorHiddenField))
             return existing;
@@ -171,8 +176,7 @@ bool addTracebackEntryToThrownObject(JSGlobalObject* globalObject, JSValue throw
     if (!thrown.isObject())
         return false;
     Runtime& rt = runtime(globalObject);
-    PyType* thrownType = rt.typeOf(thrown);
-    if (thrownType != rt.jsObjectType() && thrownType != rt.jsFunctionType())
+    if (!keepsItsException(rt, thrown))
         return false;
     if (JSValue entry = makeEntry(hiddenField(globalObject, thrown, jsErrorTracebackHiddenField)))
         setHiddenField(globalObject, thrown, jsErrorTracebackHiddenField, entry);
@@ -186,8 +190,7 @@ PyException* exceptionOfThrownValueIfKnown(JSGlobalObject* globalObject, JSValue
     if (!thrown.isObject())
         return nullptr;
     Runtime& rt = runtime(globalObject);
-    PyType* thrownType = rt.typeOf(thrown);
-    if (thrownType != rt.jsObjectType() && thrownType != rt.jsFunctionType())
+    if (!keepsItsException(rt, thrown))
         return nullptr;
     return PyException::tryFrom(hiddenField(globalObject, thrown, jsErrorHiddenField));
 }
@@ -1190,6 +1193,39 @@ static constexpr NativeGetSet jsErrorGetSets[] = {
     PY_EXCEPTION_FIELD("value", jsErrorValue),
 };
 
+// What the exception has not, the object that was thrown may have: error.code, error.message, error.cause.
+static JSValue jsErrorGetAttr(JSGlobalObject* globalObject, JSValue object, JSValue nameValue)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* name = attributeName(globalObject, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue thrown = self(object)->field(ExceptionField::jsErrorValue);
+    if (thrown && thrown.isObject() && typeOf(globalObject, thrown)->isSubtypeOf(runtime(globalObject).jsObjectType())) {
+        JSValue property = attributeFromPropertyOfJS(globalObject, asObject(thrown), name);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (property)
+            return property;
+    }
+    return raiseAttributeError(globalObject, scope, object, name, makeString('\'', typeName(globalObject, object), "' object has no attribute '"_s, stringOf(name), '\''));
+}
+
+// That is for Python. JS has what was thrown itself, error.value, and is shown the exception as any other: its class, its message.
+JSValue attributeOfExceptionForJS(JSGlobalObject* globalObject, PyException* exception, JSString* name)
+{
+    auto isNative = [&](Special special, NativeDef::F2 function) {
+        auto* native = PyNativeFunction::tryFrom(exception->type()->lookup(special));
+        return native && native->def().pointer.f2 == function;
+    };
+    if (isNative(Special::GetAttr, jsErrorGetAttr) && isNative(Special::GetAttribute, objectGetAttribute))
+        return genericGetAttr(globalObject, exception, name, true);
+    return getAttrIfPresent(globalObject, exception, name);
+}
+
+static constexpr NativeDef jsErrorMethods[] = {
+    PY_SLOT("__getattr__", jsErrorGetAttr, "($self, name, /)"),
+};
+
 // ---- The types ----
 
 // In CPython every type whose instances are laid out as those of BaseException has a __new__ of its own.
@@ -1255,6 +1291,7 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
             def.getsets = unicodeErrorGetSets;
         } else if (type == rt.JSError()) {
             def.name = "_js.JSError"_s;
+            def.methods = jsErrorMethods;
             def.getsets = jsErrorGetSets;
         } else if (type == rt.IncompleteInputError())
             def.name = "_IncompleteInputError"_s;

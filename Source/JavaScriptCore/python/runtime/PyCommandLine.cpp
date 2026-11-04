@@ -932,6 +932,9 @@ void startMainInterpreter(JSGlobalObject* globalObject)
 
     ensureMainModule(globalObject);
 
+    registerInteropTypes(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+
     // It reads sys.warnoptions when it is imported.
     if (!configuration.warnOptions.isEmpty()) {
         importModule(globalObject, "warnings"_s);

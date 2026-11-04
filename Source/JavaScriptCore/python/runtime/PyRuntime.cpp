@@ -332,6 +332,15 @@ PyType* Runtime::typeOf(JSValue value) const
             if (PyListObject::is(cell))
                 return uncheckedDowncast<PyListObject>(cell)->type();
             return listType();
+        case FinalObjectType: {
+            // What { } makes, and Object.create(null).
+            JSValue prototype = asObject(cell)->getPrototypeDirect();
+            if (prototype.isNull() || prototype == JSValue(cell->structure()->realm()->objectPrototype()))
+                return jsPlainObjectType();
+            if (PyType* derived = typeByPrototype(asObject(cell))) [[unlikely]]
+                return derived;
+            return jsObjectType();
+        }
         default:
             if (!cell->isObject())
                 return jsObjectType();

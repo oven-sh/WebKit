@@ -296,7 +296,7 @@ bool JSView::getOwnPropertySlot(JSObject* object, PropertyName propertyName, Pro
     // All of JS takes the name of an error to say what kind it is, which AttributeError.name and the like do not.
     bool isNameOfError = object->type() == PyExceptionType && (propertyName == vm.propertyNames->name || propertyName == vm.propertyNames->stack);
     if (!isNameOfError) {
-        JSValue value = getAttrIfPresent(globalObject, object, name);
+        JSValue value = object->type() == PyExceptionType ? attributeOfExceptionForJS(globalObject, uncheckedDowncast<PyException>(object), name) : getAttrIfPresent(globalObject, object, name);
         RETURN_IF_EXCEPTION(scope, false);
         // So with the name of a class. What ImportError has under `name` is how its instances find theirs.
         if (value && propertyName == vm.propertyNames->name && PyType::is(object) && rt.typeOf(value)->lookup(Special::Get))

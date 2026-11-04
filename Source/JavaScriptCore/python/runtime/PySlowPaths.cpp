@@ -943,6 +943,10 @@ static JSValue loadSpecialForWith(JSGlobalObject* globalObject, JSValue object, 
             cache = { };
         return method;
     }
+    method = contextManagerMethodOfJS(globalObject, object, which);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (method)
+        return method;
 
     PyType* type = rt.typeOf(object);
     bool isAsync = which == SpecialMethodForWith::AEnter || which == SpecialMethodForWith::AExit;

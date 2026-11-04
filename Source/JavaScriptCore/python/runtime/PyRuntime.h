@@ -161,6 +161,7 @@ class Monitoring;
     v(weakProxy) \
     v(weakCallableProxy) \
     v(jsObject) \
+    v(jsPlainObject) \
     v(jsFunction) \
     v(jsPromise)
 

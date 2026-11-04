@@ -83,6 +83,11 @@ JS_EXPORT_PRIVATE void setHostEnvironment(const HostEnvironment&);
 // The host's has changed: os.environ follows, if there is one yet, and with `ofProcess` the environment of the process. A null value: the
 // variable is gone. A name that no environment can hold is passed over. It may throw.
 JS_EXPORT_PRIVATE void hostDidChangeEnvironment(JSGlobalObject*, const String& name, const String& value, bool ofProcess);
+
+// Python has no `new`: to call a class of the host's is to construct it. For a host with classes that are meant to be called, as
+// expect() of a test runner is: whether the constructor is one of those. The function throws nothing and runs no code.
+JS_EXPORT_PRIVATE void setClassIsCalledFunction(bool (*)(JSObject*));
+
 // `import` of a file, for code that is not Python: the module, or an exception. `source`, if it is not null, is taken for what
 // is in the file. If the host's module for the import system (setImportSystemModule) has a function import_file(path, source),
 // that decides what module the file is.

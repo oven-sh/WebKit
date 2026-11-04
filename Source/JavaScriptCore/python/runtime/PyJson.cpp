@@ -762,7 +762,10 @@ public:
         if (isList(object) || PyTuple::is(object))
             RELEASE_AND_RETURN(scope, encodeSequence(object, level));
         if (auto* dict = PyDict::tryFrom(object))
-            RELEASE_AND_RETURN(scope, encodeDict(dict, level));
+            RELEASE_AND_RETURN(scope, encodeDict(dict, dict, level));
+        // The object of JSON is an object of JS.
+        if (typeOf(m_globalObject, object) == runtime(m_globalObject).jsPlainObjectType())
+            RELEASE_AND_RETURN(scope, encodeDict(object, nullptr, level));
 
         JSValue identity;
         if (!enter(object, identity))
@@ -902,7 +905,7 @@ private:
         return write(m_encoder->get(JsonEncoderItemSeparator));
     }
 
-    bool encodeKeyAndValue(PyDict* dict, JSValue key, JSValue value, unsigned level, bool& isFirst)
+    bool encodeKeyAndValue(JSValue mapping, JSValue key, JSValue value, unsigned level, bool& isFirst)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         JSValue keyString;
@@ -945,23 +948,29 @@ private:
                 auto noteScope = DECLARE_THROW_SCOPE(m_vm);
                 JSString* keyRepr = repr(m_globalObject, key);
                 RETURN_IF_EXCEPTION(noteScope, String());
-                return makeString("when serializing "_s, typeNameForMessage(m_globalObject, dict->type()), " item "_s, StringView(keyRepr->value(m_globalObject)));
+                return makeString("when serializing "_s, typeNameForMessage(m_globalObject, typeOf(m_globalObject, mapping)), " item "_s, StringView(keyRepr->value(m_globalObject)));
             });
             return false;
         }
         return true;
     }
 
-    bool encodeDict(PyDict* dict, unsigned level)
+    // The mapping is the dict, or, without one, a plain object of JS.
+    bool encodeDict(JSValue mapping, PyDict* dict, unsigned level)
     {
         Runtime& rt = runtime(m_globalObject);
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (dict->isEmpty()) {
+        JSArray* items = nullptr;
+        if (!dict) {
+            items = itemsOfObjectOfJS(m_globalObject, asObject(mapping));
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        if (dict ? dict->isEmpty() : !listLength(items)) {
             m_out.append("{}"_s);
             return true;
         }
         JSValue identity;
-        if (!enter(dict, identity))
+        if (!enter(mapping, identity))
             return false;
         m_out.append('{');
         if (m_hasIndent) {
@@ -971,10 +980,12 @@ private:
         }
 
         bool isFirst = true;
-        bool isExact = dict->type() == rt.dictType() || dict->type() == rt.frozendictType();
+        bool isExact = dict && (dict->type() == rt.dictType() || dict->type() == rt.frozendictType());
         if ((m_flags & JsonEncoderSortKeys) || !isExact) {
-            JSArray* items = itemsOf(dict, isExact);
-            RETURN_IF_EXCEPTION(scope, false);
+            if (dict) {
+                items = itemsOf(dict, isExact);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
             if (m_flags & JsonEncoderSortKeys) {
                 listSort(m_globalObject, items, { }, false);
                 RETURN_IF_EXCEPTION(scope, false);
@@ -985,13 +996,13 @@ private:
                     raiseValueError(m_globalObject, scope, "items must return 2-tuples"_s);
                     return false;
                 }
-                encodeKeyAndValue(dict, item->at(0), item->at(1), level, isFirst);
+                encodeKeyAndValue(mapping, item->at(0), item->at(1), level, isFirst);
                 RETURN_IF_EXCEPTION(scope, false);
             }
         } else {
             JSValue key, value;
             for (unsigned position = 0; dict->next(position, key, value);) {
-                encodeKeyAndValue(dict, key, value, level, isFirst);
+                encodeKeyAndValue(mapping, key, value, level, isFirst);
                 RETURN_IF_EXCEPTION(scope, false);
             }
         }

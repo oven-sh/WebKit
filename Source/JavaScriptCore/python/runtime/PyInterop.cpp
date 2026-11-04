@@ -11,7 +11,9 @@
 #include "IteratorOperations.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
+#include "JSGlobalProxy.h"
 #include "JSMapInlines.h"
+#include "JSModuleNamespaceObject.h"
 #include "JSPromise.h"
 #include "JSSetInlines.h"
 #include "JSWeakMapInlines.h"
@@ -51,6 +53,96 @@ static Identifier propertyKeyFor(JSGlobalObject* globalObject, JSString* name)
     return name->toIdentifier(globalObject);
 }
 
+static bool isKeywordOfPython(StringView word)
+{
+    static constexpr ASCIILiteral keywords[] = {
+        "False"_s, "None"_s, "True"_s, "and"_s, "as"_s, "assert"_s, "async"_s, "await"_s, "break"_s, "class"_s, "continue"_s, "def"_s, "del"_s, "elif"_s, "else"_s,
+        "except"_s, "finally"_s, "for"_s, "from"_s, "global"_s, "if"_s, "import"_s, "in"_s, "is"_s, "lambda"_s, "nonlocal"_s, "not"_s, "or"_s, "pass"_s, "raise"_s,
+        "return"_s, "try"_s, "while"_s, "with"_s, "yield"_s,
+    };
+    return std::ranges::any_of(keywords, [&](ASCIILiteral keyword) { return word == keyword; });
+}
+
+// ---- Looking at an object from a thread that may not run JS ----
+//
+// A thread other than the main one has the lock of the VM while it runs, so it may look at an object of JS, as whoever goes through
+// sys.modules does (unittest: getattr(module, "__warningregistry__", None)). It may run no code of JS's or of the host's. So it gets
+// what is there to be seen: a property that is a value, or that there is none. A getter, a proxy, a property that is made when it is
+// first asked for, and a class with a way of its own to look properties up take the main thread.
+enum class Inquiry : uint8_t { Absent, Value, NeedsCode };
+
+static Inquiry inquireOwnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue& value)
+{
+    VM& vm = getVM(globalObject);
+    Structure* structure = object->structure();
+    unsigned attributes;
+    bool isStored = isValidOffset(structure->get(vm, name, attributes));
+    if (!isStored && structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(name))
+        return Inquiry::NeedsCode;
+    auto lookUp = object->methodTable()->getOwnPropertySlot;
+    bool isNamespace = lookUp == JSModuleNamespaceObject::getOwnPropertySlot;
+    if (lookUp == JSFunction::info()->methodTable.getOwnPropertySlot) {
+        // The name and length of a bound function are asked of its target.
+        if (!isStored && object->inherits<JSBoundFunction>() && (name == vm.propertyNames->name || name == vm.propertyNames->length))
+            return Inquiry::NeedsCode;
+    } else if (lookUp != JSObject::getOwnPropertySlot && lookUp != JSGlobalObject::getOwnPropertySlot && !isNamespace)
+        return Inquiry::NeedsCode;
+    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool found = lookUp(object, globalObject, name, slot);
+    // A namespace does not show what it exports to who is only looking, but for what it does not export it leaves the slot as it was.
+    if (!found)
+        return (isNamespace ? slot.isUnset() : !slot.isTaintedByOpaqueObject()) ? Inquiry::Absent : Inquiry::NeedsCode;
+    if (!slot.isValue() || slot.isTaintedByOpaqueObject())
+        return Inquiry::NeedsCode;
+    value = slot.getValue(globalObject, name);
+    return Inquiry::Value;
+}
+
+static Inquiry inquireProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue& value)
+{
+    while (true) {
+        if (auto* proxy = dynamicDowncast<JSGlobalProxy>(object))
+            object = proxy->target();
+        Inquiry result = inquireOwnProperty(globalObject, object, name, value);
+        if (result != Inquiry::Absent)
+            return result;
+        if (object->structure()->typeInfo().overridesGetPrototype())
+            return Inquiry::NeedsCode;
+        JSValue prototype = object->getPrototypeDirect();
+        if (!prototype.isObject())
+            return Inquiry::Absent;
+        object = asObject(prototype);
+    }
+}
+
+// The property that an attribute of the object is. A name that is a keyword of Python cannot be written behind a dot, so it is written
+// with an underscore behind it, as PEP 8 has it: Array.from_(), promise.finally_(). Unless the object has a property of that
+// very name. False: an exception.
+static bool propertyKeyForAttribute(JSGlobalObject* globalObject, JSObject* object, JSString* name, Identifier& key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    key = propertyKeyFor(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, false);
+    StringView text = key.string();
+    if (text.length() < 3 || text[text.length() - 1] != '_' || !isKeywordOfPython(text.left(text.length() - 1))) [[likely]]
+        return true;
+    bool hasIt;
+    if (runtime(globalObject).threads().isMainThread()) [[likely]] {
+        hasIt = object->hasProperty(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+    } else {
+        JSValue value;
+        Inquiry result = inquireProperty(globalObject, object, key, value);
+        if (result == Inquiry::NeedsCode)
+            RELEASE_AND_RETURN(scope, ensureMainThreadForJS(globalObject));
+        hasIt = result == Inquiry::Value;
+    }
+    if (!hasIt)
+        key = Identifier::fromString(vm, text.left(text.length() - 1).toString());
+    return true;
+}
+
 // Whether the object is the `prototype` of a constructor. What is read off one is JS's spelling of an unbound method:
 // String.prototype.toUpperCase.call("abc").
 static bool isPrototypeOfConstructor(JSGlobalObject* globalObject, JSObject* object)
@@ -61,6 +153,8 @@ static bool isPrototypeOfConstructor(JSGlobalObject* globalObject, JSObject* obj
         return false;
     return asObject(constructor)->getDirect(vm, vm.propertyNames->prototype) == JSValue(object);
 }
+
+static bool isClassWrittenInJS(JSFunction*);
 
 // A function that is a property is a method: it is called with the object as `this`, as in object.method(). The method of an object is
 // one thing, however often it is read: object.method is object.method, and emitter.off(name, object.method) finds what on() was given.
@@ -74,7 +168,7 @@ static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JS
     if (!function->isCallable() || function->inherits<JSBoundFunction>())
         return value;
     // A class is not a method of what holds it: js.Promise is Promise itself.
-    if (auto* jsFunction = dynamicDowncast<JSFunction>(function); jsFunction && !jsFunction->isHostFunction() && jsFunction->jsExecutable()->isClassConstructorFunction())
+    if (auto* jsFunction = dynamicDowncast<JSFunction>(function); jsFunction && !jsFunction->isHostFunction() && isClassWrittenInJS(jsFunction))
         return value;
     // Nor is what a module exports a method of its namespace.
     if (function->inherits<InternalFunction>() || object->type() == ModuleNamespaceObjectType || isPrototypeOfConstructor(globalObject, object))
@@ -98,6 +192,8 @@ static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JS
     return bound;
 }
 
+static bool isMappingByMethods(JSGlobalObject*, JSObject*);
+
 static constexpr ASCIILiteral namesOfMappingMethods[] = { "keys"_s, "values"_s, "items"_s, "get"_s, "pop"_s, "popitem"_s, "setdefault"_s, "update"_s, "clear"_s };
 static bool isNameOfMappingMethod(Runtime&, JSString* name)
 {
@@ -109,19 +205,27 @@ static bool isNameOfMappingMethod(Runtime&, JSString* name)
     return false;
 }
 
-static JSValue jsObjectGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
+JSValue attributeFromPropertyOfJS(JSGlobalObject* globalObject, JSObject* object, JSString* name)
 {
-    if (!ensureMainThreadForJS(globalObject))
-        return { };
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
+    VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSString* name = attributeName(globalObject, nameValue);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSObject* object = asObject(self);
-    Identifier key = propertyKeyFor(globalObject, name);
-    RETURN_IF_EXCEPTION(scope, { });
-
+    Identifier key;
+    if (failed(scope, propertyKeyForAttribute(globalObject, object, name, key)))
+        return { };
+    if (!runtime(globalObject).threads().isMainThread()) [[unlikely]] {
+        JSValue value;
+        Inquiry result = inquireProperty(globalObject, object, key, value);
+        // To bind a function asks it for its prototype.
+        if (result == Inquiry::NeedsCode || (result == Inquiry::Value && value.isCallable() && !value.inherits<JSFunction>() && !value.inherits<InternalFunction>())) {
+            ensureMainThreadForJS(globalObject);
+            return { };
+        }
+        if (result == Inquiry::Value)
+            RELEASE_AND_RETURN(scope, bindIfFunction(globalObject, object, value));
+        if (auto* bound = dynamicDowncast<JSBoundFunction>(object))
+            RELEASE_AND_RETURN(scope, attributeFromPropertyOfJS(globalObject, bound->targetFunction(), name));
+        return { };
+    }
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
     bool found = object->getPropertySlot(globalObject, key, slot);
     RETURN_IF_EXCEPTION(scope, { });
@@ -131,18 +235,36 @@ static JSValue jsObjectGetAttribute(JSGlobalObject* globalObject, JSValue self, 
         RELEASE_AND_RETURN(scope, bindIfFunction(globalObject, object, value));
     }
     // A function with properties of its own is still that when it has been taken from an object as a method.
-    if (auto* bound = dynamicDowncast<JSBoundFunction>(object)) {
-        bool targetHasIt = bound->targetFunction()->hasProperty(globalObject, key);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (targetHasIt)
-            RELEASE_AND_RETURN(scope, jsObjectGetAttribute(globalObject, bound->targetFunction(), nameValue));
-    }
-    // keys(), get(), update() and the like are for an object that is a mapping of its properties. What JS iterates over otherwise is not:
-    // dict(iterator) takes pairs from it.
+    if (auto* bound = dynamicDowncast<JSBoundFunction>(object))
+        RELEASE_AND_RETURN(scope, attributeFromPropertyOfJS(globalObject, bound->targetFunction(), name));
+    return { };
+}
+
+static JSValue jsObjectGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* name = attributeName(globalObject, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSObject* object = asObject(self);
+    JSValue property = attributeFromPropertyOfJS(globalObject, object, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (property)
+        return property;
+    // js.null. None is undefined, and null has no name in JS that is a property of anything.
+    if (object == globalObject->globalThis() && stringOf(name) == "null"_s)
+        return jsNull();
+    // keys(), get(), update() and the like are for an object that is a mapping, of its properties or by its methods. What else JS
+    // iterates over is not: dict(iterator) takes pairs from it.
     if (isNameOfMappingMethod(rt, name)) {
+        if (!ensureMainThreadForJS(globalObject))
+            return { };
         bool isIterable = hasIteratorMethod(globalObject, object);
         RETURN_IF_EXCEPTION(scope, { });
-        if (isIterable)
+        bool byMethods = isIterable && isMappingByMethods(globalObject, object);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (isIterable && !byMethods)
             return raiseAttributeError(globalObject, scope, self, name, makeString('\'', typeName(globalObject, self), "' object has no attribute '"_s, stringOf(name), '\''));
     }
     // vars(object), function.__dict__.update(): its attributes are its properties, and it is the mapping of those itself. (Not a
@@ -159,8 +281,9 @@ JSValue attributeFromPrototypeOfJS(JSGlobalObject* globalObject, JSObject* proto
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Identifier key = propertyKeyFor(globalObject, name);
-    RETURN_IF_EXCEPTION(scope, { });
+    Identifier key;
+    if (failed(scope, propertyKeyForAttribute(globalObject, prototype, name, key)))
+        return { };
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
     bool found = prototype->getPropertySlot(globalObject, key, slot);
     RETURN_IF_EXCEPTION(scope, { });
@@ -179,8 +302,9 @@ static JSValue jsObjectSetAttr(JSGlobalObject* globalObject, JSValue self, JSVal
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
-    Identifier key = propertyKeyFor(globalObject, name);
-    RETURN_IF_EXCEPTION(scope, { });
+    Identifier key;
+    if (failed(scope, propertyKeyForAttribute(globalObject, asObject(self), name, key)))
+        return { };
     PutPropertySlot slot(self, true);
     asObject(self)->methodTable()->put(asObject(self), globalObject, key, value, slot);
     RETURN_IF_EXCEPTION(scope, { });
@@ -195,9 +319,10 @@ static JSValue jsObjectDelAttr(JSGlobalObject* globalObject, JSValue self, JSVal
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
-    Identifier key = propertyKeyFor(globalObject, name);
-    RETURN_IF_EXCEPTION(scope, { });
     JSObject* object = asObject(self);
+    Identifier key;
+    if (failed(scope, propertyKeyForAttribute(globalObject, object, name, key)))
+        return { };
     bool had = object->hasProperty(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
     if (!had)
@@ -235,7 +360,70 @@ static bool propertyKeyForItem(JSGlobalObject* globalObject, JSValue key, Identi
     return false;
 }
 
+// Whether the object is a mapping by its methods, as a Map is: Headers, URLSearchParams, FormData. That is an object with a class that JS
+// iterates over and that has get(), has() and keys(). (A Map itself is dealt with before this is asked.)
+static bool isMappingByMethods(JSGlobalObject* globalObject, JSObject* object)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (object->inherits<JSMap>() || typeOf(globalObject, object) == runtime(globalObject).jsPlainObjectType())
+        return false;
+    bool isIterable = hasIteratorMethod(globalObject, object);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isIterable)
+        return false;
+    for (auto& name : { vm.propertyNames->get, vm.propertyNames->has, vm.propertyNames->keys }) {
+        JSValue method = object->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!method.isCallable())
+            return false;
+    }
+    return true;
+}
+
+// object.name(...arguments)
+static JSValue callMethodOfJS(JSGlobalObject* globalObject, JSObject* object, const Identifier& name, std::initializer_list<JSValue> arguments = { })
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue method = object->get(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto callData = JSC::getCallData(method);
+    if (callData.type == CallData::Type::None)
+        return raiseTypeError(globalObject, scope, "this JavaScript object has no method "_s, name.string(), "()"_s);
+    MarkedArgumentBuffer list;
+    for (JSValue argument : arguments)
+        list.append(valueForJS(argument));
+    JSValue result = JSC::call(globalObject, method, callData, object, list);
+    RETURN_IF_EXCEPTION(scope, { });
+    return result;
+}
+
+// False: it has not, which is a KeyError, or another exception.
+static bool hasKeyByMethod(JSGlobalObject* globalObject, JSObject* object, JSValue key)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue has = callMethodOfJS(globalObject, object, vm.propertyNames->has, { key });
+    RETURN_IF_EXCEPTION(scope, false);
+    if (has.toBoolean(globalObject))
+        return true;
+    raiseKeyError(globalObject, scope, key);
+    return false;
+}
+
+// [...object.keys()]. Null: an exception.
+static JSArray* keysByMethod(JSGlobalObject* globalObject, JSObject* object)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue keys = callMethodOfJS(globalObject, object, vm.propertyNames->keys);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, listFromIterable(globalObject, keys));
+}
+
 // The items of an object are its properties. Those of a Map are its entries: that is the mapping of JS whose keys can be anything.
+// Those of what is a mapping by its methods are what the methods say.
 static JSValue jsObjectGetItem(JSGlobalObject* globalObject, JSValue self, JSValue key)
 {
     if (!ensureMainThreadForJS(globalObject))
@@ -248,6 +436,13 @@ static JSValue jsObjectGetItem(JSGlobalObject* globalObject, JSValue self, JSVal
         if (!found)
             return raiseKeyError(globalObject, scope, key);
         RELEASE_AND_RETURN(scope, map->get(globalObject, valueForJS(key)));
+    }
+    bool byMethods = isMappingByMethods(globalObject, asObject(self));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (byMethods) {
+        if (failed(scope, hasKeyByMethod(globalObject, asObject(self), key)))
+            return { };
+        RELEASE_AND_RETURN(scope, callMethodOfJS(globalObject, asObject(self), vm.propertyNames->get, { key }));
     }
     Identifier name;
     if (failed(scope, propertyKeyForItem(globalObject, key, name)))
@@ -272,6 +467,13 @@ static JSValue jsObjectSetItem(JSGlobalObject* globalObject, JSValue self, JSVal
         RETURN_IF_EXCEPTION(scope, { });
         return jsUndefined();
     }
+    bool byMethods = isMappingByMethods(globalObject, asObject(self));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (byMethods) {
+        callMethodOfJS(globalObject, asObject(self), vm.propertyNames->set, { key, value });
+        RETURN_IF_EXCEPTION(scope, { });
+        return jsUndefined();
+    }
     Identifier name;
     if (failed(scope, propertyKeyForItem(globalObject, key, name)))
         return { };
@@ -292,6 +494,15 @@ static JSValue jsObjectDelItem(JSGlobalObject* globalObject, JSValue self, JSVal
         RETURN_IF_EXCEPTION(scope, { });
         if (!had)
             return raiseKeyError(globalObject, scope, key);
+        return jsUndefined();
+    }
+    bool byMethods = isMappingByMethods(globalObject, asObject(self));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (byMethods) {
+        if (failed(scope, hasKeyByMethod(globalObject, asObject(self), key)))
+            return { };
+        callMethodOfJS(globalObject, asObject(self), vm.propertyNames->deleteKeyword, { key });
+        RETURN_IF_EXCEPTION(scope, { });
         return jsUndefined();
     }
     Identifier name;
@@ -321,6 +532,13 @@ static JSValue jsObjectContains(JSGlobalObject* globalObject, JSValue self, JSVa
         RELEASE_AND_RETURN(scope, jsBoolean(map->has(globalObject, valueForJS(key))));
     if (auto* set = dynamicDowncast<JSSet>(self))
         RELEASE_AND_RETURN(scope, jsBoolean(set->has(globalObject, valueForJS(key))));
+    bool byMethods = isMappingByMethods(globalObject, asObject(self));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (byMethods) {
+        JSValue has = callMethodOfJS(globalObject, asObject(self), vm.propertyNames->has, { key });
+        RETURN_IF_EXCEPTION(scope, { });
+        return jsBoolean(has.toBoolean(globalObject));
+    }
     Identifier name;
     if (failed(scope, propertyKeyForItem(globalObject, key, name))) {
         takePendingException(globalObject);
@@ -446,7 +664,8 @@ static constexpr NativeDef jsAsyncIteratorMethods[] = {
 };
 static constexpr TypeDef jsAsyncIteratorTypeDef { "_js.async_iterator"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation }, jsAsyncIteratorMethods, { }, { } };
 
-// What JS iterates, if the object is iterable there; otherwise the names of its properties, as for a dict.
+// What JS iterates, if the object is iterable there; otherwise the names of its properties, as for a dict. The keys too of what is a
+// mapping by its methods.
 static JSValue jsObjectIter(JSGlobalObject* globalObject, JSValue self)
 {
     if (!ensureMainThreadForJS(globalObject))
@@ -454,6 +673,13 @@ static JSValue jsObjectIter(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = asObject(self);
+    bool byMethods = isMappingByMethods(globalObject, object);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (byMethods) {
+        JSValue keys = callMethodOfJS(globalObject, object, vm.propertyNames->keys);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, getIter(globalObject, keys));
+    }
     bool isIterable = hasIteratorMethod(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
     if (!isIterable) {
@@ -525,7 +751,9 @@ static JSValue jsObjectParts(JSGlobalObject* globalObject, JSValue self, JSObjec
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSArray* names = ownPropertyNames(globalObject, asObject(self), DontEnumPropertiesMode::Exclude);
+    bool byMethods = isMappingByMethods(globalObject, asObject(self));
+    RETURN_IF_EXCEPTION(scope, { });
+    JSArray* names = byMethods ? keysByMethod(globalObject, asObject(self)) : ownPropertyNames(globalObject, asObject(self), DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, { });
     if (part == JSObjectPart::Keys)
         return names;
@@ -544,6 +772,12 @@ static JSValue jsObjectKeys(JSGlobalObject* globalObject, JSValue self) { return
 static JSValue jsObjectValues(JSGlobalObject* globalObject, JSValue self) { return jsObjectParts(globalObject, self, JSObjectPart::Values); }
 static JSValue jsObjectItems(JSGlobalObject* globalObject, JSValue self) { return jsObjectParts(globalObject, self, JSObjectPart::Items); }
 
+JSArray* itemsOfObjectOfJS(JSGlobalObject* globalObject, JSObject* object)
+{
+    JSValue items = jsObjectItems(globalObject, object);
+    return items ? asArray(items) : nullptr;
+}
+
 static JSValue jsObjectLen(JSGlobalObject* globalObject, JSValue self)
 {
     if (!ensureMainThreadForJS(globalObject))
@@ -559,18 +793,20 @@ static JSValue jsObjectLen(JSGlobalObject* globalObject, JSValue self)
     }
     // As in jsObjectIter(): it is the object's properties that are counted only if it is they that are iterated over. A generator
     // has no length, and code that asks for one to see whether there is one must be told so.
+    bool byMethods = isMappingByMethods(globalObject, object);
+    RETURN_IF_EXCEPTION(scope, { });
     bool isIterable = hasIteratorMethod(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
-    if (isIterable)
+    if (isIterable && !byMethods)
         return raiseTypeError(globalObject, scope, "object of type '"_s, typeName(globalObject, self), "' has no len()"_s);
-    JSArray* names = ownPropertyNames(globalObject, object, DontEnumPropertiesMode::Exclude);
+    JSArray* names = byMethods ? keysByMethod(globalObject, object) : ownPropertyNames(globalObject, object, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, { });
     return jsNumber(listLength(names));
 }
 
 // Every object is true to JS. To Python a container is false when it is empty, so that goes for what is a container to it: what JS
-// iterates over and has a length or size, and a plain object, which is a mapping of its properties. Anything else is true, as an
-// instance of a class in Python is: a function, a promise, an Error, a Date, a Response.
+// iterates over and has a length or size, what is a mapping by its methods, and a plain object, which is one of its properties.
+// Anything else is true, as an instance of a class in Python is: a function, a promise, an Error, a Date, a Response.
 static JSValue jsObjectBool(JSGlobalObject* globalObject, JSValue self)
 {
     if (!ensureMainThreadForJS(globalObject))
@@ -589,10 +825,11 @@ static JSValue jsObjectBool(JSGlobalObject* globalObject, JSValue self)
             if (isSmallInt(value) && smallIntValue(value) >= 0)
                 return jsBoolean(!!smallIntValue(value));
         }
-        return jsBoolean(true);
-    }
-    JSValue prototype = object->getPrototypeDirect();
-    if (object->type() != FinalObjectType || !(prototype.isNull() || prototype == JSValue(object->realm()->objectPrototype())))
+        bool byMethods = isMappingByMethods(globalObject, object);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!byMethods)
+            return jsBoolean(true);
+    } else if (typeOf(globalObject, self) != runtime(globalObject).jsPlainObjectType())
         return jsBoolean(true);
     JSValue size = jsObjectLen(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -635,6 +872,116 @@ static JSValue jsObjectPop(JSGlobalObject* globalObject, JSValue self, JSValue k
     }
     scope.release();
     return jsObjectDelItem(globalObject, self, key) ? value : JSValue();
+}
+
+// ---- `with object:` is `using`, and `async with object:` is `await using` ----
+
+// object[Symbol.dispose], or for `await using` object[Symbol.asyncDispose] before that. Empty: a TypeError, or another exception.
+static JSValue disposeMethod(JSGlobalObject* globalObject, JSValue self, bool isAsync)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue other;
+    for (bool wantsAsync : { true, false }) {
+        JSValue method = asObject(self)->get(globalObject, wantsAsync ? vm.propertyNames->asyncDisposeSymbol : vm.propertyNames->disposeSymbol);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!method.isCallable())
+            continue;
+        if (isAsync || !wantsAsync)
+            return method;
+        other = method;
+    }
+    return raiseTypeError(globalObject, scope, '\'', typeName(globalObject, self), "' object does not support the "_s, isAsync ? "asynchronous "_s : ""_s, "context manager protocol: it has no [Symbol."_s,
+        isAsync ? "asyncDispose]() or [Symbol.dispose]()"_s : "dispose]()"_s, other ? " but it has [Symbol.asyncDispose](). Did you mean to use 'async with'?"_s : ""_s);
+}
+
+static JSValue dispose(JSGlobalObject* globalObject, JSValue self, bool isAsync)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue method = disposeMethod(globalObject, self, isAsync);
+    RETURN_IF_EXCEPTION(scope, { });
+    MarkedArgumentBuffer noArguments;
+    JSValue result = JSC::call(globalObject, method, JSC::getCallData(method), self, noArguments);
+    RETURN_IF_EXCEPTION(scope, { });
+    return result;
+}
+
+static JSValue jsObjectEnter(JSGlobalObject* globalObject, JSValue self)
+{
+    return disposeMethod(globalObject, self, false) ? self : JSValue();
+}
+
+// JS tells a disposable nothing of the exception that leaves the block, and it goes on.
+static JSValue jsObjectExit(JSGlobalObject* globalObject, JSValue self, const CallArgs&)
+{
+    return dispose(globalObject, self, false) ? jsUndefined() : JSValue();
+}
+
+// An awaitable that has its result already. (A promise would ask the result whether it is a thenable.)
+static JSValue jsReadyNext(JSGlobalObject* globalObject, JSValue self)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return raiseStopIteration(globalObject, scope, uncheckedDowncast<PyRecord>(self.asCell())->get(0));
+}
+
+static constexpr NativeDef jsReadyMethods[] = {
+    PY_SLOT("__await__", jsIteratorSelf, "($self, /)"),
+    PY_SLOT("__iter__", jsIteratorSelf, "($self, /)"),
+    PY_SLOT("__next__", jsReadyNext, "($self, /)"),
+};
+static constexpr TypeDef jsReadyTypeDef { "_js.ready"_s, { TypeFlag::OwnLayout, TypeFlag::DisallowInstantiation }, jsReadyMethods, { }, { } };
+
+static JSValue jsObjectAsyncEnter(JSGlobalObject* globalObject, JSValue self)
+{
+    if (!disposeMethod(globalObject, self, true))
+        return { };
+    PyRecord* record = PyRecord::create(globalObject, runtime(globalObject).typeFor(jsReadyTypeDef), 1);
+    record->set(getVM(globalObject), 0, self);
+    return record;
+}
+
+static JSC_DECLARE_HOST_FUNCTION(jsGiveUndefined);
+JSC_DEFINE_HOST_FUNCTION(jsGiveUndefined, (JSGlobalObject*, CallFrame*))
+{
+    return JSValue::encode(jsUndefined());
+}
+
+// A promise for None, whatever the method gives: what is true would swallow the exception.
+static JSValue jsObjectAsyncExit(JSGlobalObject* globalObject, JSValue self, const CallArgs&)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = dispose(globalObject, self, true);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSPromise* promise = JSPromise::resolvedPromise(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue then = promise->get(globalObject, vm.propertyNames->then);
+    RETURN_IF_EXCEPTION(scope, { });
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSFunction::create(vm, globalObject, 0, String(), jsGiveUndefined, ImplementationVisibility::Private));
+    RELEASE_AND_RETURN(scope, JSC::call(globalObject, then, JSC::getCallData(then), promise, arguments));
+}
+
+// The class of an object of JS cannot say whether the object can be disposed of, and what has an __exit__ in its class is a context
+// manager to all who ask (contextlib.ExitStack.push(f) takes a function without one for a callback). So no class has these methods:
+// it is the statement that finds them.
+JSValue contextManagerMethodOfJS(JSGlobalObject* globalObject, JSValue object, SpecialMethodForWith which)
+{
+    static constexpr NativeDef methods[] = {
+        PY_METHOD("__enter__", jsObjectEnter, "($self, /)"),
+        PY_METHOD("__exit__", jsObjectExit, "($self, /, *args)"),
+        PY_METHOD("__aenter__", jsObjectAsyncEnter, "($self, /)"),
+        PY_METHOD("__aexit__", jsObjectAsyncExit, "($self, /, *args)"),
+    };
+    Runtime& rt = runtime(globalObject);
+    if (!object.isObject() || isPyObject(object) || !rt.typeOf(object)->isSubtypeOf(rt.jsObjectType()))
+        return { };
+    if (!disposeMethod(globalObject, object, which == SpecialMethodForWith::AEnter || which == SpecialMethodForWith::AExit))
+        return { };
+    return PyNativeFunction::create(globalObject, methods[static_cast<unsigned>(which)], NativeKind::Function, object, rt.jsObjectType());
 }
 
 static JSValue jsObjectDir(JSGlobalObject* globalObject, JSValue self)
@@ -687,14 +1034,13 @@ static JSValue jsObjectStr(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue jsObjectRepr(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!ensureMainThreadForJS(globalObject))
-        return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     // An instance of a class written in Python.
     if (typeOf(globalObject, self)->isHeapType())
         RELEASE_AND_RETURN(scope, objectRepr(globalObject, self));
-    String className = JSObject::calculatedClassName(asObject(self));
+    // Another thread than the main one does without the name, which takes asking.
+    String className = runtime(globalObject).threads().isMainThread() ? JSObject::calculatedClassName(asObject(self)) : String();
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, makeStr(vm, makeString("<JavaScript "_s, className.isEmpty() ? "object"_str : className, " at "_s, addressForRepr(globalObject, self), '>')));
 }
@@ -723,12 +1069,14 @@ PyType* jsSymbolType(Runtime& rt) { return rt.typeFor(jsSymbolTypeDef); }
 
 static JSValue jsFunctionRepr(JSGlobalObject* globalObject, JSValue self)
 {
-    if (!ensureMainThreadForJS(globalObject))
-        return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue name = asObject(self)->get(globalObject, vm.propertyNames->name);
-    RETURN_IF_EXCEPTION(scope, { });
+    JSValue name;
+    if (runtime(globalObject).threads().isMainThread()) [[likely]] {
+        name = asObject(self)->get(globalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(scope, { });
+    } else if (inquireProperty(globalObject, asObject(self), vm.propertyNames->name, name) != Inquiry::Value)
+        name = jsUndefined();
     String text = name.isString() ? asString(name)->value(globalObject).data : String();
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, makeStr(vm, makeString("<JavaScript function "_s, text, " at "_s, addressForRepr(globalObject, self), '>')));
@@ -777,14 +1125,53 @@ static JSObject* objectOfKeywordArguments(JSGlobalObject* globalObject, unsigned
     return object;
 }
 
-// To call a class is to make an instance, in Python. The classes of JS are what `class` declares and the constructors that the
-// engine and the host implement: Map, Date, Response. Those have a prototype for their instances; what can merely be constructed as
-// well as called, as a mock function of a test runner can, is called. Not a plain function, which may be meant either way
-// (for `new`: f.new()), and not the constructors of primitive values, which make one when they are called.
+// To call a class is to make an instance, in Python. The classes of JS are what `class` declares, the functions that were written
+// for `new` before there was `class`, and the constructors that the engine and the host implement: Map, Date, Response. Those have a
+// prototype for their instances; what can merely be constructed as well as called, as a mock function of a test runner can, is called.
+// So are the constructors of primitive values, which make one when they are called, and what the host says is meant to be called.
+// (For `new` whatever this says: f.new().)
 static bool hasPrototypeForInstances(JSObject* function)
 {
     JSValue prototype = function->getDirect(function->vm(), function->vm().propertyNames->prototype);
     return (prototype && prototype.isObject()) || function->inherits<ProxyConstructor>();
+}
+
+static bool (*s_classIsCalled)(JSObject*);
+
+void setClassIsCalledFunction(bool (*function)(JSObject*))
+{
+    s_classIsCalled = function;
+}
+
+static bool isClassOfHost(JSObject* function, TaggedNativeFunction constructor)
+{
+    return constructor != callHostFunctionAsConstructor && hasPrototypeForInstances(function) && !(s_classIsCalled && s_classIsCalled(function));
+}
+
+// Whether somebody has given the instances of the function something to inherit: methods in function.prototype, or a prototype for that
+// (util.inherits()). Nobody does that to a function that is only ever called. Runs no code.
+static bool hasSomethingForInstancesToInherit(JSFunction* function)
+{
+    VM& vm = function->vm();
+    // It is made when it is first asked for.
+    JSValue value = function->getDirect(vm, vm.propertyNames->prototype);
+    if (!value || !value.isObject())
+        return false;
+    JSObject* prototype = asObject(value);
+    if (prototype->getPrototypeDirect() != JSValue(function->realm()->objectPrototype()))
+        return true;
+    bool result = false;
+    prototype->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+        result = entry.key() != vm.propertyNames->constructor.impl();
+        return !result;
+    });
+    return result;
+}
+
+static bool isClassWrittenInJS(JSFunction* function)
+{
+    FunctionExecutable* executable = function->jsExecutable();
+    return executable->isClassConstructorFunction() || (executable->constructAbility() == ConstructAbility::CanConstruct && hasSomethingForInstancesToInherit(function));
 }
 
 static bool isClassOfJS(JSCell* callee)
@@ -794,13 +1181,10 @@ static bool isClassOfJS(JSCell* callee)
     if (callee->inherits<StringConstructor>() || callee->inherits<NumberConstructor>() || callee->inherits<BooleanConstructor>()
         || callee->inherits<SymbolConstructor>() || callee->inherits<BigIntConstructor>())
         return false;
-    if (auto* function = dynamicDowncast<JSFunction>(callee)) {
-        if (function->isHostFunction())
-            return function->nativeConstructor() != callHostFunctionAsConstructor && hasPrototypeForInstances(function);
-        return function->jsExecutable()->isClassConstructorFunction();
-    }
+    if (auto* function = dynamicDowncast<JSFunction>(callee))
+        return function->isHostFunction() ? isClassOfHost(function, function->nativeConstructor()) : isClassWrittenInJS(function);
     auto* function = dynamicDowncast<InternalFunction>(callee);
-    return function && function->nativeFunctionFor(CodeSpecializationKind::CodeForConstruct) != callHostFunctionAsConstructor && hasPrototypeForInstances(function);
+    return function && isClassOfHost(function, function->nativeFunctionFor(CodeSpecializationKind::CodeForConstruct));
 }
 
 bool prepareForeignCall(JSGlobalObject* globalObject, CallFrame* calleeFrame)
@@ -888,10 +1272,9 @@ ForeignMethodKind foreignMethodKind(JSCell* cell)
     auto* function = dynamicDowncast<JSFunction>(cell);
     if (!function || PyFunction::is(cell) || function->isHostFunction())
         return ForeignMethodKind::NotAMethod;
-    FunctionExecutable* executable = function->jsExecutable();
-    if (executable->isClassConstructorFunction())
+    if (isClassWrittenInJS(function))
         return ForeignMethodKind::NotAMethod;
-    return isArrowFunctionParseMode(executable->parseMode()) ? ForeignMethodKind::TakesFirstArgument : ForeignMethodKind::TakesThis;
+    return isArrowFunctionParseMode(function->jsExecutable()->parseMode()) ? ForeignMethodKind::TakesFirstArgument : ForeignMethodKind::TakesThis;
 }
 
 JSValue callForeignMethod(JSGlobalObject* globalObject, JSValue function, JSValue self, const CallArgs& args)
@@ -1045,11 +1428,6 @@ static JSValue jsFunctionTextSignature(JSGlobalObject* globalObject, JSValue sel
 
     auto isNameStart = [](char16_t c) { return isASCIIAlpha(c) || c == '_'; };
     auto isNamePart = [](char16_t c) { return isASCIIAlphanumeric(c) || c == '_'; };
-    static constexpr ASCIILiteral keywords[] = {
-        "False"_s, "None"_s, "True"_s, "and"_s, "as"_s, "assert"_s, "async"_s, "await"_s, "break"_s, "class"_s, "continue"_s, "def"_s, "del"_s, "elif"_s, "else"_s,
-        "except"_s, "finally"_s, "for"_s, "from"_s, "global"_s, "if"_s, "import"_s, "in"_s, "is"_s, "lambda"_s, "nonlocal"_s, "not"_s, "or"_s, "pass"_s, "raise"_s,
-        "return"_s, "try"_s, "while"_s, "with"_s, "yield"_s,
-    };
     StringBuilder positional;
     String rest;
     unsigned index = 0;
@@ -1121,8 +1499,7 @@ static JSValue jsFunctionTextSignature(JSGlobalObject* globalObject, JSValue sel
             if (depth && !hasDefault)
                 isPlainName = false;
         }
-        for (ASCIILiteral keyword : keywords)
-            isPlainName = isPlainName && name != keyword;
+        isPlainName = isPlainName && !isKeywordOfPython(name);
         if (!isPlainName)
             name = makeString("arg"_s, index);
         if (isRest)
@@ -1359,10 +1736,17 @@ static JSValue jsSpecialMethod(JSGlobalObject* globalObject, JSValue object, JSV
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
     PyType* type = rt.typeOf(object);
-    JSValue found = type->lookup(name);
-    if (!found)
-        return jsUndefined();
-    RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, found, object, type));
+    if (JSValue found = type->lookup(name))
+        RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, found, object, type));
+    for (auto [special, which] : { std::pair { Special::Enter, SpecialMethodForWith::Enter }, std::pair { Special::Exit, SpecialMethodForWith::Exit }, std::pair { Special::AEnter, SpecialMethodForWith::AEnter }, std::pair { Special::AExit, SpecialMethodForWith::AExit } }) {
+        if (!isIdentical(name, rt.name(special)))
+            continue;
+        JSValue method = contextManagerMethodOfJS(globalObject, object, which);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (method)
+            return method;
+    }
+    return jsUndefined();
 }
 
 static constexpr NativeDef jsModuleFunctions[] = {
@@ -1392,6 +1776,7 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
     module->add(globalObject, "JSError"_s, rt.JSError());
     module->add(globalObject, "JSTypeError"_s, jsTypeErrorType(globalObject));
     module->add(globalObject, "JSObject"_s, rt.jsObjectType());
+    module->add(globalObject, "JSPlainObject"_s, rt.jsPlainObjectType());
     module->add(globalObject, "JSFunction"_s, rt.jsFunctionType());
     module->add(globalObject, "JSPromise"_s, rt.jsPromiseType());
     module->add(globalObject, "JSIterator"_s, jsIteratorObjectType(rt));
@@ -1401,10 +1786,26 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
     module->addFunctions(globalObject, jsModuleFunctions);
 }
 
+// collections.abc.MutableMapping.register(JSPlainObject). The module of a type does that for it (`array` does), but this type
+// has instances before anything is imported that knows of it.
+void registerInteropTypes(JSGlobalObject* globalObject)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue module = importModule(globalObject, "_collections_abc"_s);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSValue mutableMapping = getAttr(globalObject, module, internString(vm, "MutableMapping"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    scope.release();
+    callMethod(globalObject, mutableMapping, internString(vm, "register"_s), rt.jsPlainObjectType());
+}
+
 void initializeInteropTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
     rt.jsObjectType()->initializeBuiltin(globalObject, { "JSObject"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Base, TypeFlag::OwnLayout }, jsObjectMethods, { }, { } }, rt.typeType(), rt.objectType());
+    rt.jsPlainObjectType()->initializeBuiltin(globalObject, { "JSPlainObject"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Mapping }, { }, { }, { } }, rt.typeType(), rt.jsObjectType());
     rt.jsFunctionType()->initializeBuiltin(globalObject, { "JSFunction"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref }, jsFunctionMethods, jsFunctionGetSets, { } }, rt.typeType(), rt.jsObjectType());
     rt.jsPromiseType()->initializeBuiltin(globalObject, { "JSPromise"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Base, TypeFlag::OwnLayout }, jsPromiseMethods, { }, { } }, rt.typeType(), rt.jsObjectType());
 }
