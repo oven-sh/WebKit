@@ -688,6 +688,7 @@ bool Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
     m_durationOfLastIdleCollection = end - start;
     m_timeForIdleCollectionWithoutCause = end + 50 * (end - start);
     --thread.idleWaits;
+    thread.waits.total = 0;
     // What only the objects that it found referred to is there to be found as soon as their threads have finalized them. So the
     // threads that wait look again soon. Not for what a thread that works has left: that one leaves something to finalize all the
     // time, has to stop for every collection, and collects itself as it allocates.
@@ -758,6 +759,8 @@ NEVER_INLINE bool Threads::collectBeforeCallBeginsAgain(JSGlobalObject* globalOb
 IdleWait::IdleWait(JSGlobalObject* globalObject, int64_t& deadline, bool isWaitOfCall)
     : m_globalObject(globalObject)
     , m_thread(runtime(globalObject).threads().current())
+    , m_start(monotonicNanoseconds())
+    , m_startOfWhatCounts(m_start)
 {
     ++m_thread.idleWaits;
     if (isWaitOfCall) {
@@ -778,12 +781,24 @@ IdleWait::IdleWait(JSGlobalObject* globalObject, int64_t& deadline, bool isWaitO
         begun.call = nullptr;
     }
     m_deadline = deadline;
-    m_timeToCollect = monotonicNanoseconds() + m_interval;
+    auto& waits = m_thread.waits;
+    if (!m_continuesWait && m_start - waits.endOfLast > waits.lengthOfLast)
+        waits.total = 0;
+    m_wasDueAtStart = waits.total >= m_interval;
+    m_timeToCollect = m_start + std::max<int64_t>(m_interval - waits.total, 0);
 }
 
 IdleWait::~IdleWait()
 {
     --m_thread.idleWaits;
+    auto& waits = m_thread.waits;
+    int64_t now = monotonicNanoseconds();
+    waits.total += now - m_startOfWhatCounts;
+    // (The wait goes on.)
+    if (m_beginsCallAgain)
+        return;
+    waits.endOfLast = now;
+    waits.lengthOfLast = now - m_start;
 }
 
 bool IdleWait::beginsCallAgain(bool collects, bool isLastResort)
@@ -793,7 +808,8 @@ bool IdleWait::beginsCallAgain(bool collects, bool isLastResort)
     VM& vm = getVM(m_globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(m_call == vm.topCallFrame);
-    runtime(m_globalObject).threads().current().waitBegunAgain = { m_call, m_deadline, m_interval, true, collects, isLastResort };
+    m_thread.waitBegunAgain = { m_call, m_deadline, m_interval, true, collects, isLastResort };
+    m_beginsCallAgain = true;
     throwException(m_globalObject, scope, Exception::create(vm, jsNull(), Exception::StackCaptureAction::DoNotCaptureStack));
     return true;
 }
@@ -817,6 +833,7 @@ bool IdleWait::collect(bool isLastResort)
         return false;
     if (threads.collectWhileIdle(m_globalObject, isLastResort))
         m_interval = firstInterval;
+    m_startOfWhatCounts = monotonicNanoseconds();
     return !scope.exception();
 }
 
@@ -849,8 +866,9 @@ bool IdleWait::collectIfDue(int64_t remaining)
     auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
     if (monotonicNanoseconds() < m_timeToCollect)
         return true;
-    // A wait that is nearly over is not made longer by a collection.
-    if (remaining >= 0 && remaining < 2 * runtime(m_globalObject).threads().m_durationOfLastIdleCollection) {
+    // A wait that is nearly over is not made longer by a collection. The next one begins with it, however short it is: if all are
+    // short, none would ever be long enough.
+    if (remaining >= 0 && remaining < 2 * runtime(m_globalObject).threads().m_durationOfLastIdleCollection && !std::exchange(m_wasDueAtStart, false)) {
         m_timeToCollect = std::numeric_limits<int64_t>::max();
         return true;
     }

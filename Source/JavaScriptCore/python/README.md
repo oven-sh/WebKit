@@ -501,8 +501,9 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   generation as generation 0, a full one as generation 2. Not while the collector is "disabled".
 - **A thread that waits collects.** A program may wait for what only a finalizer brings about: it has dropped a response without
   closing it, and waits for a server in another thread that waits for the end of the connection. A thread that has waited for
-  50 ms collects and finalizes (`Threads::collectWhileIdle`), then less and less often; so does one that would otherwise be told
-  that it waits for ever. What it finalizes is what reference counts would have freed, which in CPython would have been finalized
+  50 ms collects and finalizes (`Threads::collectWhileIdle`), then less and less often; so does, at once, one whose wait nothing
+  else can end (no time limit, no other thread). One short wait after another counts as a long one (`while ref() is not None:
+  time.sleep(0.01)`), as long as the thread runs for no longer between two waits than the first of them lasted. What it finalizes is what reference counts would have freed, which in CPython would have been finalized
   long ago. What is in a cycle or hangs off one is kept for a collection that the program asks for or brings about by allocating:
   CPython's collector does not run in a thread that waits either, and such a thread may hold the very lock that a finalizer
   wants (`with lock: time.sleep(1)`). Only the one that would otherwise wait for ever finalizes everything. Such a collection stops every thread, and any number of threads may be idle beside one that works: all of
@@ -510,7 +511,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   one (to drop something takes no allocation). While such collections find something to finalize, whose thread finalizes it and so
   uncovers more, the threads that wait look again after 50 ms and may spend half the time, but only if that thread waits too: one
   that works leaves something to finalize all the time, and has to stop for every collection. And a wait with less left than twice what the last such collection took is not
-  made longer by one. That goes for waiting for another thread
+  made longer by one: the next wait begins with it. That goes for waiting for another thread
   (`Threads::waitUntil`) and for waiting for the kernel, which is done piece by piece (`IdleWait`): `time.sleep`, everything in
   `select` and every socket call that goes through `waitForEvents` (with a timeout, or on the main thread of a host with an event
   loop), `os.read` and `FileIO` (so `input()` too), `os.waitpid` for one process on Linux.

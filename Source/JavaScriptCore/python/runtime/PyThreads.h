@@ -93,6 +93,12 @@ public:
         bool collects { false };
         bool isLastResort { false };
     } waitBegunAgain;
+    // For how long it has waited since it last collected while idle, in waits between which it did little. See IdleWait.
+    struct {
+        int64_t total { 0 };
+        int64_t endOfLast { 0 };
+        int64_t lengthOfLast { 0 };
+    } waits;
 
 private:
     ThreadState();
@@ -367,6 +373,8 @@ private:
 
 // A thread that waits collects (Threads::collectWhileIdle()), whether it waits for another thread (Threads::waitUntil()) or for the
 // kernel. So a system call that may take long is made piece by piece: sleep, wait until a descriptor is ready. With the GIL.
+// One short wait after another is a long one (`while ref() is not None: time.sleep(0.01)`): the time adds up, as long as the thread
+// runs for no longer between two waits than the first of them lasted.
 class IdleWait {
     WTF_MAKE_NONCOPYABLE(IdleWait);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -415,7 +423,11 @@ private:
     CallFrame* m_call { nullptr };
     int64_t m_deadline;
     int64_t m_interval { firstInterval };
+    int64_t m_start;
+    int64_t m_startOfWhatCounts; // What it has waited since then is not in ThreadState::waits yet.
     int64_t m_timeToCollect;
+    bool m_wasDueAtStart;
+    bool m_beginsCallAgain { false };
     bool m_continuesWait { false };
     bool m_hasCollectedAsLastResort { false };
 };
