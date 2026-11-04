@@ -312,7 +312,6 @@ void PySet::clear(VM&)
     m_storage.clear();
     m_fill = 0;
     m_used = 0;
-    m_finger = 0;
     m_hasHash = false;
 }
 
@@ -412,7 +411,6 @@ void PySet::swapContents(VM& vm, PySet* other)
     other->m_storage.setMayBeNull(vm, other, storage);
     std::swap(m_fill, other->m_fill);
     std::swap(m_used, other->m_used);
-    std::swap(m_finger, other->m_finger);
     m_hasHash = false;
     other->m_hasHash = false;
 }

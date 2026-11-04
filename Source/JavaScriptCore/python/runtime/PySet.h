@@ -110,7 +110,7 @@ private:
     WriteBarrier<PySetStorage> m_storage;
     size_t m_fill { 0 }; // Used and deleted.
     size_t m_used { 0 };
-    size_t m_finger { 0 }; // Where pop() looks next.
+    size_t m_finger { 0 }; // Where pop() looks next. Nothing else sets it, not even clear(): the order in which elements are popped shows.
     int64_t m_hash { 0 };
     bool m_hasHash { false };
 };
