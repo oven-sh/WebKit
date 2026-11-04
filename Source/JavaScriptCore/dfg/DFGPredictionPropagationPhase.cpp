@@ -201,7 +201,8 @@ private:
         case ValueBitNot:
         case ValueNegate:
         case Inc:
-        case Dec: {
+        case Dec:
+        case ToNumeric: {
             // An overloaded operator most often returns another object of the kind it was given.
             SpeculatedType operands = node->child1()->prediction();
             if (node->child2())

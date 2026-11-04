@@ -2771,8 +2771,13 @@ static RegisterID* emitIncOrDec(BytecodeGenerator& generator, RegisterID* srcDst
 
 static RegisterID* emitPostIncOrDec(BytecodeGenerator& generator, RegisterID* dst, RegisterID* srcDst, Operator oper)
 {
-    if (dst == srcDst)
-        return generator.emitToNumeric(generator.finalDestination(dst), srcDst);
+    if (dst == srcDst) {
+        // `a = a++` leaves in a what it was. What it would have become is computed all the same: a class that overloads `+` is asked.
+        RefPtr<RegisterID> oldValue = generator.emitToNumeric(generator.finalDestination(dst), srcDst);
+        RefPtr<RegisterID> newValue = generator.move(generator.newTemporary(), oldValue.get());
+        emitIncOrDec(generator, newValue.get(), oper);
+        return oldValue.unsafeGet();
+    }
     RefPtr<RegisterID> tmp = generator.emitToNumeric(generator.newTemporary(), srcDst);
     RefPtr<RegisterID> result = generator.tempDestination(srcDst);
     generator.move(result.get(), tmp.get());

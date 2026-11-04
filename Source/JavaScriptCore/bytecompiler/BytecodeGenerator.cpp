@@ -2509,6 +2509,7 @@ RegisterID* BytecodeGenerator::emitToNumber(RegisterID* dst, RegisterID* src, To
     return dst;
 }
 
+// The first half of a postfix update, and good for nothing else: see jsToNumericBeforeUpdate().
 RegisterID* BytecodeGenerator::emitToNumeric(RegisterID* dst, RegisterID* src)
 {
     OpToNumeric::emit(this, dst, src, m_codeBlock->addUnaryArithProfile());

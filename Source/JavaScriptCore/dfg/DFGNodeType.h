@@ -512,6 +512,7 @@ namespace JSC { namespace DFG {
     macro(ToPropertyKeyOrNumber, NodeResultJS | NodeMustGenerate) \
     macro(ToString, NodeResultJS | NodeMustGenerate) \
     macro(ToNumber, NodeResultJS | NodeMustGenerate) \
+    /* As op_to_numeric: an object whose class may overload `+` is its own result. */\
     macro(ToNumeric, NodeResultJS | NodeMustGenerate) \
     macro(ToObject, NodeResultJS | NodeMustGenerate) \
     macro(ToIntegerOrInfinity, NodeResultJS | NodeMustGenerate) \

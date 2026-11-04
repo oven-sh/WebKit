@@ -514,7 +514,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_numeric)
     auto bytecode = pc->as<OpToNumeric>();
     auto& profile = codeBlock->unlinkedCodeBlock()->unaryArithProfile(bytecode.m_profileIndex);
     JSValue argument = GET_C(bytecode.m_operand).jsValue();
-    JSValue result = argument.toNumeric(globalObject);
+    JSValue result = jsToNumericBeforeUpdate(globalObject, argument);
     CHECK_EXCEPTION();
     RETURN_WITH_PROFILING(result, {
         profile.argSawNonNumber();

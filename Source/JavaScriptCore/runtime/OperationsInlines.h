@@ -531,6 +531,14 @@ ALWAYS_INLINE JSValue jsToNumberAsWritten(JSGlobalObject* globalObject, JSValue 
     return jsNumber(v.toNumber(globalObject));
 }
 
+// op_to_numeric, the first half of `x++` where the old value is wanted. An object whose class may overload `+` is that old value.
+ALWAYS_INLINE JSValue jsToNumericBeforeUpdate(JSGlobalObject* globalObject, JSValue v)
+{
+    bool staysAsItIs = false;
+    JSValue result = v.toNumeric(globalObject, [&] { return staysAsItIs = mayOverloadOperators(v); });
+    return staysAsItIs ? v : result;
+}
+
 template<typename DoubleOperation, typename BigIntOp>
 ALWAYS_INLINE JSValue arithmeticBinaryOp(JSGlobalObject* globalObject, JSValue v1, JSValue v2, NOESCAPE const DoubleOperation& doubleOp, NOESCAPE const BigIntOp& bigIntOp, ASCIILiteral errorMessage)
 {

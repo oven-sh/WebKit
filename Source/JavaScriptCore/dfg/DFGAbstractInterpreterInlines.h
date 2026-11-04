@@ -3563,8 +3563,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             break;
         }
 
+        // A Python object stays as it is.
+        SpeculatedType type = SpecBytecodeNumber | SpecBigInt | (forNode(node->child1()).m_type & SpecPyObject);
         clobberWorld();
-        setTypeForNode(node, SpecBytecodeNumber | SpecBigInt);
+        setTypeForNode(node, type);
         break;
     }
 
