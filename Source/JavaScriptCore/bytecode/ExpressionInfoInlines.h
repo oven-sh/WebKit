@@ -106,15 +106,20 @@ void ExpressionInfo::Encoder::remap(Vector<unsigned>&& adjustmentLabelPoints, Re
     //    the previous Entry, adjustments are picked up for free. There is one exception:
     //    AbsInstPC. AbsInstPC does not build on cummulative deltas. So, whenever we see an
     //    AbsInstPC, we must also remap it.
+    //
+    //    A remap looks at every insertion below the InstPC, and Chapters are many. So an AbsInstPC
+    //    that (a) and (b) do not ask a remap for moves as far as the Entry before it did, which is
+    //    what (a) and (b) say of every Entry that is neither at a LabelPoint nor right after one.
 
     unsigned adjustmentIndex = 0;
     InstPC currentLabel = adjustmentLabelPoints[adjustmentIndex];
     bool needToAdjustLabelAfter = false;
-    unsigned cummulativeDelta = 0;
+    unsigned cummulativeDelta = 0; // How far the last Entry moved: its remapped InstPC less its InstPC.
+    unsigned chapterIndex = 0;
 
     while (decoder.decode() != IterationStatus::Done) {
         bool isAbsInstPC = decoder.currentInfo()->isAbsInstPC();
-        bool needRemap = isAbsInstPC;
+        bool needRemap = false;
 
         InstPC instPC = decoder.instPC();
         if (instPC >= currentLabel) {
@@ -127,28 +132,30 @@ void ExpressionInfo::Encoder::remap(Vector<unsigned>&& adjustmentLabelPoints, Re
             needRemap = true;
         }
 
-        unsigned instPCDelta;
-        if (needRemap) {
-            if (isAbsInstPC)
-                cummulativeDelta = 0;
-            instPCDelta = remapFunc(instPC) - instPC - cummulativeDelta;
-            if (instPCDelta || isAbsInstPC) {
+        if (needRemap || isAbsInstPC) {
+            unsigned previousCummulativeDelta = cummulativeDelta;
+            if (needRemap)
+                cummulativeDelta = remapFunc(instPC) - instPC;
+
+            // An AbsInstPC does not build on the Entries before it, so it takes all of the delta.
+            unsigned instPCDelta = isAbsInstPC ? cummulativeDelta : cummulativeDelta - previousCummulativeDelta;
+            if (instPCDelta) {
                 unsigned infoIndex = static_cast<unsigned>(decoder.currentInfo() - m_expressionInfoEncodedInfo.begin());
                 adjustInstPC(infoIndex, instPCDelta);
 
                 // adjustInstPC() may have resized and reallocated m_expressionInfoEncodedInfo.
                 // So, we need to re-compute endInfo. info will be re-computed at the top of the loop.
                 decoder.recacheInfo(m_expressionInfoEncodedInfo);
-                cummulativeDelta += instPCDelta;
             }
+
+            // The Entry that starts with an AbsInstPC starts a Chapter. The Chapter's startEncodedInfoIndex
+            // does not change because this remap algorithm does in place remapping.
+            if (isAbsInstPC)
+                m_expressionInfoChapters[chapterIndex++].startInstPC = instPC + cummulativeDelta;
         }
     }
+    ASSERT(chapterIndex == m_expressionInfoChapters.size());
     m_numberOfEncodedInfoExtensions = m_expressionInfoEncodedInfo.size() - numEncodedInfo;
-
-    // Now, let's remap the Chapter startInstPCs. Their startEncodedInfoIndex will not change because
-    // the above remap algorithm does in place remapping.
-    for (auto& chapter : m_expressionInfoChapters)
-        chapter.startInstPC = remapFunc(chapter.startInstPC);
 }
 
 } // namespace JSC

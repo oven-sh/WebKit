@@ -156,6 +156,16 @@ public:
         Entry entry() const { return m_entry; }
         void setEntry(Entry entry) { m_entry = entry; } // For debugging use only.
 
+        // Continues a walk that a decode(targetInstPC) loop ended: instPC and divot are those of the entry it ended
+        // on, and info is where it stopped (currentInfo()). startOffset and endOffset are not carried over.
+        void resume(InstPC instPC, unsigned divot, EncodedInfo* info)
+        {
+            m_entry.instPC = instPC;
+            m_entry.divot = divot;
+            m_nextInfo = info;
+            m_hasDecodedFirstEntry = true;
+        }
+
         InstPC instPC() const { return m_entry.instPC; }
         unsigned divot() const { return m_entry.divot; }
         unsigned startOffset() const { return m_entry.startOffset; }
@@ -198,10 +208,22 @@ public:
     // equal (a precompiled program is for the source it was compiled from), and everyone who asks it for global code
     // gives it all of a source. So the text and sourceOffset, and with them the answer, are the same for every source
     // that shares this. Where a source says its text starts is not in the answer.
-    // Not for a thread that runs beside the mutator: nothing guards the map.
+    // With chapters it also keeps where its last decoding ended (the cursor), and decodes an instruction at or after
+    // that one in the same chapter from there: the call sites of a function are asked for in the order of its source.
+    // Not for a thread that runs beside the mutator: nothing guards the map or the cursor.
     LineColumn lineColumnInTextForInstPC(InstPC, SourceProvider&, unsigned sourceOffset);
 
     bool isEmpty() const { return !m_numberOfEncodedInfo; };
+    // For tests ($vm.expressionInfoStats). The cursor is the index of the EncodedInfo where the last decoding of
+    // lineColumnInTextForInstPC() ended: 0 before the first one, nothing without chapters.
+    unsigned numberOfEncodedInfo() const { return m_numberOfEncodedInfo; }
+    unsigned numberOfChapters() const { return m_numberOfChapters; }
+    std::optional<unsigned> cursorForTesting() const
+    {
+        if (auto* cursor = this->cursor())
+            return cursor->nextIndex;
+        return std::nullopt;
+    }
     size_t LEGACY_NODELETE byteSize() const; // owned by this object
     size_t LEGACY_NODELETE byteSizeForGCPacing() const; // what a generated (non-borrowed) one this size would own
 
@@ -224,10 +246,32 @@ private:
         return roundUpToMultipleOf<sizeof(unsigned)>(size);
     }
 
+    // Where the last decoding of lineColumnInTextForInstPC() ended: the entry it answered with, and the index of the
+    // EncodedInfo behind that entry (0: nothing decoded yet). Only an ExpressionInfo with chapters has one, between
+    // its header and its payload, so that one without pays nothing for it. A borrowed payload is elsewhere: then the
+    // cursor is all that follows the header.
+    struct Cursor {
+        InstPC instPC { 0 };
+        unsigned divot { 0 };
+        unsigned nextIndex { 0 };
+    };
+
+    static size_t headerSizeInBytes(size_t numChapters)
+    {
+        return sizeof(ExpressionInfo) + (numChapters ? sizeof(Cursor) : 0);
+    }
+
     static size_t totalSizeInBytes(size_t numChapters, size_t numberOfEncodedInfo, size_t numberOfEncodedInfoExtensions)
     {
-        return sizeof(ExpressionInfo) + payloadSizeInBytes(numChapters, numberOfEncodedInfo, numberOfEncodedInfoExtensions);
+        return headerSizeInBytes(numChapters) + payloadSizeInBytes(numChapters, numberOfEncodedInfo, numberOfEncodedInfoExtensions);
     }
+
+    Cursor* cursor() const
+    {
+        return m_numberOfChapters ? std::bit_cast<Cursor*>(this + 1) : nullptr;
+    }
+
+    unsigned LEGACY_NODELETE divotForInstPCFromCursor(InstPC, Cursor&);
 
     EncodedInfo* LEGACY_NODELETE findChapterEncodedInfoJustBelow(InstPC) const;
 
@@ -260,7 +304,7 @@ private:
     {
         if (m_borrowedPayload) [[unlikely]]
             return m_borrowedPayload;
-        return std::bit_cast<unsigned*>(this + 1);
+        return std::bit_cast<unsigned*>(std::bit_cast<uint8_t*>(this) + headerSizeInBytes(m_numberOfChapters));
     }
 
     static std::unique_ptr<ExpressionInfo> createUninitialized(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions);
@@ -328,7 +372,7 @@ private:
     static constexpr unsigned multiSizeShift = firstFieldIDShift - multiSizeBits;
     static constexpr unsigned multiFirstFieldShift = multiSizeShift - fieldIDBits;
 
-    static constexpr unsigned numberOfWordsBetweenChapters = 10000;
+    static constexpr unsigned numberOfWordsBetweenChapters = 256;
 
     using LineColumnMap = UncheckedKeyHashMap<InstPC, LineColumn, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
 
@@ -347,6 +391,9 @@ private:
 };
 
 static_assert(roundUpToMultipleOf<sizeof(unsigned)>(sizeof(ExpressionInfo)) == sizeof(ExpressionInfo), "CachedExpressionInfo relies on this invariant");
+#if CPU(ADDRESS64) && !CHECK_HASHTABLE_ITERATORS
+static_assert(sizeof(ExpressionInfo) == 40, "every code block has one");
+#endif
 
 } // namespace JSC
 

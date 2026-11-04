@@ -2203,6 +2203,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockForFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockFor);
 static JSC_DECLARE_HOST_FUNCTION(functionHasDecodedExpressionInfo);
+static JSC_DECLARE_HOST_FUNCTION(functionExpressionInfoStats);
+static JSC_DECLARE_HOST_FUNCTION(functionLineAndColumnForBytecodeOffset);
 static JSC_DECLARE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos);
 static JSC_DECLARE_HOST_FUNCTION(functionHasValueProfilePredictions);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSourceFor);
@@ -2985,6 +2987,45 @@ JSC_DEFINE_HOST_FUNCTION(functionHasDecodedExpressionInfo, (JSGlobalObject* glob
     if (!codeBlock)
         return JSValue::encode(jsUndefined());
     return JSValue::encode(jsBoolean(!!codeBlock->unlinkedCodeBlock()->expressionInfoIfDecoded()));
+}
+
+// Usage: $vm.expressionInfoStats(functionObj) or $vm.expressionInfoStats(codeBlockToken)
+// { words, chapters, cursor } of the source positions of the function's code: how many words encode them, how many chapters
+// those are in besides the first, and the index of the word where the last decoding for a line and column ended (0 before
+// the first one, -1 where there is no cursor). Decodes them from a bytecode cache payload. Undefined if it has no code block.
+JSC_DEFINE_HOST_FUNCTION(functionExpressionInfoStats, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    ExpressionInfo& info = codeBlock->unlinkedCodeBlock()->expressionInfo();
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "words"_s), jsNumber(info.numberOfEncodedInfo()));
+    result->putDirect(vm, Identifier::fromString(vm, "chapters"_s), jsNumber(info.numberOfChapters()));
+    auto cursor = info.cursorForTesting();
+    result->putDirect(vm, Identifier::fromString(vm, "cursor"_s), cursor ? jsNumber(*cursor) : jsNumber(-1));
+    return JSValue::encode(result);
+}
+
+// Usage: $vm.lineAndColumnForBytecodeOffset(functionObj or codeBlockToken, offset, concurrently = false)
+// "line:column" of the instruction at the offset, which need not be the start of one, as a stack trace finds it or as a
+// compiler thread does. The two decode the source positions of the code on their own. Undefined for an offset behind the
+// last instruction, or without a code block.
+JSC_DEFINE_HOST_FUNCTION(functionLineAndColumnForBytecodeOffset, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    JSValue offset = callFrame->argument(1);
+    if (!codeBlock || !offset.isUInt32() || offset.asUInt32() >= codeBlock->instructions().size())
+        return JSValue::encode(jsUndefined());
+    BytecodeIndex bytecodeIndex(offset.asUInt32());
+    LineColumn lineColumn = callFrame->argument(2).toBoolean(globalObject)
+        ? codeBlock->lineColumnForBytecodeIndexConcurrently(bytecodeIndex)
+        : codeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
+    return JSValue::encode(jsString(vm, makeString(lineColumn.line, ':', lineColumn.column)));
 }
 
 // Usage: $vm.numberOfOwnCallLinkInfos(functionObj)
@@ -6137,6 +6178,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "callFrame"_s, functionCallFrame, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockFor"_s, functionCodeBlockFor, 1);
     addFunction(vm, allowIfNotFuzz, "hasDecodedExpressionInfo"_s, functionHasDecodedExpressionInfo, 1);
+    addFunction(vm, allowIfNotFuzz, "expressionInfoStats"_s, functionExpressionInfoStats, 1);
+    addFunction(vm, allowIfNotFuzz, "lineAndColumnForBytecodeOffset"_s, functionLineAndColumnForBytecodeOffset, 3);
     addFunction(vm, allowIfNotFuzz, "numberOfOwnCallLinkInfos"_s, functionNumberOfOwnCallLinkInfos, 1);
     addFunction(vm, allowIfNotFuzz, "hasValueProfilePredictions"_s, functionHasValueProfilePredictions, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockForFrame"_s, functionCodeBlockForFrame, 1);

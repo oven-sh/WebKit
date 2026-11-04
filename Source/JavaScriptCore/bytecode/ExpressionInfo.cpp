@@ -51,7 +51,8 @@ namespace JSC {
           from the EncodedInfo.
 
        c. A LineColumnMap cache.
-          This is to speed up look up of LineColumn values we have looked up before.
+          This is to speed up look up of LineColumn values we have looked up before. With
+          Chapters it comes with a cursor, see Chapters and the Cursor below.
 
        d. A cache of decoded entries, keyed by InstPC, filled by entryForInstPC().
 
@@ -151,7 +152,7 @@ namespace JSC {
     EncodedInfo vector is large.
 
     To mitigate against this, we break the EncodedInfo regions into Chapters every
-    numberOfWordsBetweenChapters (currently 10000) words or so. A Chapter is always started
+    numberOfWordsBetweenChapters (currently 256) words or so. A Chapter is always started
     with an AbsInstPC (Absolute Instruction PC) word. Unlike other EncodedInfo words with defines
     delta values for fields to add, AbsInstPC defines an absolute value (currently 26 bits) for
     the InstPC to mark the start of the Chapter. If 26-bits isn't enough, we can always add
@@ -174,6 +175,24 @@ namespace JSC {
     a Chapter entry for the 1st Chapter. Hence, for most small functions that do not have
     more than numberOfWordsBetweenChapters EncodedInfo, there is no Chapter info in the
     ExpressionInfo.
+
+    Chapters and the Cursor
+    =======================
+    A Chapter costs about 16 bytes: its Chapter info, its AbsInstPC word, and usually a Wide
+    word for the Divot, whose delta starts over from 0. That is paid for every function with
+    more EncodedInfo than one Chapter holds, whether or not anything is ever looked up in it,
+    so a Chapter is not short: a look up that starts at the start of its Chapter decodes 128
+    words on average.
+
+    The look ups that come in numbers are for the LineColumn of one call site after the other
+    in the order of the source: a stack trace of each, or a test runner that asks where each
+    test is. So lineColumnInTextForInstPC() keeps where its last decoding ended in a cursor:
+    the InstPC and the Divot of the Entry that it found, and the index of the EncodedInfo
+    behind that Entry. The next decoding starts there if its InstPC is not below the cursor's.
+    All the Entries in between are at or below its InstPC then, so decoding from the start of
+    the Chapter would commit each of them and arrive at the same state. If its Chapter starts
+    behind the cursor, that start is nearer, and it starts there as every other look up does.
+    Only an ExpressionInfo with Chapters has a cursor.
 
     Additional Compression Details (of Basic word fields)
     =====================================================
@@ -212,6 +231,8 @@ namespace JSC {
                             [ m_numberOfChapters              ]
                             [ m_numberOfEncodedInfo           ]
                             [ m_numberOfEncodedInfoExtensions ]
+                            [ m_borrowedPayload               ]
+                    Cursor: [ *cursor()                       ] (only with Chapters)
             Chapters Start: [ chapters()[0]                      ]
                             ...
                             [ chapters()[m_numberOfChapters - 1] ]
@@ -832,7 +853,7 @@ std::unique_ptr<ExpressionInfo> ExpressionInfo::createUninitialized(unsigned num
 
 std::unique_ptr<ExpressionInfo> ExpressionInfo::createBorrowed(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions, const unsigned* payload)
 {
-    void* allocation = FastMalloc::malloc(sizeof(ExpressionInfo));
+    void* allocation = FastMalloc::malloc(headerSizeInBytes(numberOfChapters));
     auto info = std::unique_ptr<ExpressionInfo>(new (allocation) ExpressionInfo(numberOfChapters, numberOfEncodedInfo, numberOfEncodedInfoExtensions));
     info->m_borrowedPayload = const_cast<unsigned*>(payload);
     return info;
@@ -843,6 +864,8 @@ ExpressionInfo::ExpressionInfo(unsigned numberOfChapters, unsigned numberOfEncod
     , m_numberOfEncodedInfo(numberOfEncodedInfo)
     , m_numberOfEncodedInfoExtensions(numberOfEncodedInfoExtensions)
 {
+    if (auto* cursor = this->cursor())
+        new (NotNull, cursor) Cursor;
 }
 
 ExpressionInfo::ExpressionInfo(Vector<Chapter>&& chapters, Vector<EncodedInfo>&& encodedInfo, unsigned numberOfEncodedInfoExtensions)
@@ -855,7 +878,7 @@ ExpressionInfo::ExpressionInfo(Vector<Chapter>&& chapters, Vector<EncodedInfo>&&
 size_t ExpressionInfo::byteSize() const
 {
     if (m_borrowedPayload) [[unlikely]]
-        return sizeof(ExpressionInfo); // the payload belongs to the cache mapping, not to this object
+        return headerSizeInBytes(m_numberOfChapters); // the payload belongs to the cache mapping, not to this object
     return totalSizeInBytes(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions);
 }
 
@@ -908,10 +931,30 @@ auto ExpressionInfo::decodeEntryForInstPC(InstPC instPC) -> Entry
     return decoder.entry();
 }
 
+// The divot that decodeEntryForInstPC() finds, decoded from the cursor where that gives the same.
+unsigned ExpressionInfo::divotForInstPCFromCursor(InstPC instPC, Cursor& cursor)
+{
+    Decoder decoder(*this);
+
+    auto* chapterStart = findChapterEncodedInfoJustBelow(instPC);
+    auto* cursorNext = &encodedInfo()[cursor.nextIndex];
+    if (cursor.nextIndex && cursor.instPC <= instPC && chapterStart <= cursorNext)
+        decoder.resume(cursor.instPC, cursor.divot, cursorNext);
+    else
+        decoder.setNextInfo(chapterStart);
+    while (decoder.decode(instPC) != IterationStatus::Done) { }
+
+    // Done leaves currentInfo() at the first EncodedInfo of the entry that it did not commit, or at the end.
+    cursor = { decoder.instPC(), decoder.divot(), static_cast<unsigned>(decoder.currentInfo() - encodedInfo()) };
+    return decoder.divot();
+}
+
 LineColumn ExpressionInfo::lineColumnInTextForInstPC(InstPC instPC, SourceProvider& provider, unsigned sourceOffset)
 {
     return m_cachedLineColumns.ensure(instPC, [&] {
-        return provider.lineColumnInTextForOffset(sourceOffset + decodeEntryForInstPC(instPC).divot);
+        auto* cursor = this->cursor();
+        unsigned divot = cursor ? divotForInstPCFromCursor(instPC, *cursor) : decodeEntryForInstPC(instPC).divot;
+        return provider.lineColumnInTextForOffset(sourceOffset + divot);
     }).iterator->value;
 }
 
