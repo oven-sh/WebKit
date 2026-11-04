@@ -362,8 +362,8 @@ void listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* tuple = PyTuple::tryFrom(iterable); tuple && tuple->type() == runtime(globalObject).tupleType())
         RELEASE_AND_RETURN(scope, listAppendSpan(globalObject, list, tuple->span()));
-    if (isExactList(iterable)) {
-        // It may be the list itself.
+    // It may be the list itself, and then its class is not asked for an iterator either.
+    if (isExactList(iterable) || (iterable.isCell() && iterable.asCell() == list)) {
         JSArray* other = asList(iterable);
         unsigned count = other->length();
         if (ListStorage storage { vm, list }; storage && hasContiguous(other->indexingType())) [[likely]] {
@@ -1526,7 +1526,11 @@ static void listAssignSubscript(JSGlobalObject* globalObject, JSArray* list, JSV
 
     // The items are collected before the length of the list is looked at: working them out may change the list, and they may be the list.
     MarkedArgumentBuffer items;
-    if (value) {
+    if (value && value.isCell() && value.asCell() == list) {
+        // Whatever its class.
+        for (unsigned i = 0; i < list->length(); ++i)
+            items.append(listGet(list, i));
+    } else if (value) {
         // Whatever TypeError asking for the iterator ends in. (A list or a tuple is not asked.)
         JSValue iterator = isExactList(value) || typeOf(globalObject, value) == runtime(globalObject).tupleType() ? value : getIter(globalObject, value);
         if (failed(scope, iterator)) {
