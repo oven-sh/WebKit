@@ -12,7 +12,9 @@
 #include "CodeBlock.h"
 #include "FunctionCodeBlock.h"
 #include "JSCInlines.h"
+#include "MaxFrameExtentForSlowPathCall.h"
 #include "PyAbstract.h"
+#include "PyBytecode.h"
 #include "PyCommandLine.h"
 #include "PyDescriptors.h"
 #include "PyErrors.h"
@@ -84,6 +86,12 @@ bool liveLocalsOfFrame(CallFrame* callFrame, CodeBlock* codeBlock, bool isCallin
     case op_py_for_iter:
     case op_py_send:
         return true;
+#define CASE(opcode, registerCount) case opcode:
+    FOR_EACH_PYTHON_OPCODE_THAT_CALLS_METHODS(CASE)
+#undef CASE
+        if (isCalling)
+            return true;
+        break;
     default:
         break;
     }
@@ -92,6 +100,38 @@ bool liveLocalsOfFrame(CallFrame* callFrame, CodeBlock* codeBlock, bool isCallin
             live[defined.toLocal()] = true;
     });
     return true;
+}
+
+Register* endOfFrameMadeByInstruction(CallFrame* callFrame, CodeBlock* codeBlock)
+{
+    // Where the stack pointer is between two instructions.
+    return callFrame->registers() - codeBlock->numCalleeLocals() - maxFrameExtentForSlowPathCallInRegisters;
+}
+
+// If an exception has come out of what the instruction called: it would have emptied the frame it made for that before giving it up.
+static void clearFrameMadeByInstruction(CallFrame* callFrame, CodeBlock* codeBlock, BytecodeIndex index, CallFrame* frameBefore)
+{
+    unsigned registerCount;
+    switch (codeBlock->instructions().at(index)->opcodeID()) {
+#define CASE(opcode, count) \
+    case opcode: \
+        registerCount = count; \
+        break;
+    FOR_EACH_PYTHON_OPCODE_THAT_CALLS_METHODS(CASE)
+#undef CASE
+    default:
+        return;
+    }
+    static_assert(CallFrame::headerSizeInRegisters == 5, "sizeOfFrameMadeByInstruction()");
+    Register* end = endOfFrameMadeByInstruction(callFrame, codeBlock);
+    Register* frame = end - sizeOfFrameMadeByInstruction(registerCount);
+    // Otherwise the instruction has called nothing, or C++ has for it: that is where the stack of C++ begins.
+    if (frameBefore->registers() != frame)
+        return;
+    ASSERT(frameBefore->callerFrame() == callFrame);
+    // All but the head: if the exception was thrown in that frame, the machine code that goes on to the handler asks its callee for the VM.
+    for (Register* slot = frame + static_cast<int>(CallFrameSlot::firstArgument); slot < end; ++slot)
+        *slot = JSValue();
 }
 
 // Where the frame ends that the instruction makes for what it calls: it lies in the registers of the caller, at a place that the
@@ -1664,7 +1704,7 @@ void addTracebackEntryForJS(JSGlobalObject* globalObject, JSValue thrown, CallFr
         caught = { callFrame, codeBlock, JSValue::encode(thrown) };
 }
 
-JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, CallFrame* callFrame, BytecodeIndex index)
+JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, CallFrame* callFrame, BytecodeIndex index, CallFrame* frameBefore)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -1675,6 +1715,7 @@ JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, 
     CodeBlock* codeBlock = callFrame->codeBlock();
     if (!isPastStart(codeBlock->unlinkedCodeBlock()->pythonMarks(), index.offset()))
         return exceptionValue;
+    clearFrameMadeByInstruction(callFrame, codeBlock, index, frameBefore);
     if (!isRaisedAgain) {
         DeferGC deferGC(vm);
         auto makeEntry = [&](JSValue next) -> JSValue {

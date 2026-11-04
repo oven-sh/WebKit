@@ -628,6 +628,7 @@ const JSFunctionType = constexpr JSFunctionType
 const InternalFunctionType = constexpr InternalFunctionType
 const ArrayType = constexpr ArrayType
 const PyObjectType = constexpr PyObjectType
+const PyInstanceType = constexpr PyInstanceType
 const PyTupleType = constexpr PyTupleType
 const PyKwNamesType = constexpr PyKwNamesType
 const PyFloatType = constexpr PyFloatType

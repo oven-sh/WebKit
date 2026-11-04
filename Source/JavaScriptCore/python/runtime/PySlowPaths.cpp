@@ -12,6 +12,7 @@
 #include "JSCInlines.h"
 #include "LLIntData.h"
 #include "LLIntExceptions.h"
+#include "MaxFrameExtentForSlowPathCall.h"
 #include "PyAbstract.h"
 #include "PyBytecode.h"
 #include "PyErrors.h"
@@ -476,21 +477,99 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_set_item)
     END();
 }
 
-JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_binary)
+// ---- Calls that instructions make ----
+
+// An operator may come to a call of a function written in Python. If C++ made that call, its frames would be on the stack for as long
+// as the function runs: that costs an entry into the interpreter, and what those frames do not write is taken for references by the
+// collector. So the slow path only finds out what is to be called, and returns that in place of where to go on, with how far the
+// operator will have got in place of the frame. The interpreter makes the call, looks at what comes back, and if that does not settle
+// it asks a second slow path, which may come up with another function (pyOperatorSlowPath in LowLevelInterpreter64.asm).
+
+bool Python::canBeCalledByOperator(PyFunction* function)
 {
-    BEGIN();
-    auto bytecode = pc->as<OpPyBinary>();
-    RETURN(binaryOperation(globalObject, static_cast<BinaryOperator>(bytecode.m_operation), GET_C(bytecode.m_lhs).jsValue(), GET_C(bytecode.m_rhs).jsValue()));
+#if !ENABLE(C_LOOP) && !CPU(ARM64E)
+    CodeBlock* codeBlock = function->functionExecutable()->codeBlockForCall();
+    return codeBlock && codeBlock->numParameters() <= 1 + 2 + parametersOperatorMethodMayHaveBeyondOperands;
+#else
+    UNUSED_PARAM(function);
+    return false;
+#endif
 }
 
+// The frame of the method that has returned, from the first argument on. It is still there for the second slow path, and for any other
+// that the interpreter calls before it has given the frame up: right below the registers of the caller, where the stack of C++ begins
+// otherwise.
+static ALWAYS_INLINE Register* registersOfOperator(CallFrame* callFrame, CodeBlock* codeBlock)
+{
+    return endOfFrameMadeByInstruction(callFrame, codeBlock) - sizeOfFrameMadeByInstruction(RegisterOfOperator::End) + static_cast<int>(CallFrameSlot::firstArgument);
+}
+
+// As pyGiveUpFrameOfOperator: all that is left for the interpreter to do is to move the stack pointer.
+static_assert(sizeOfFrameMadeByInstruction(RegisterOfOperator::End) - CallerFrameAndPC::sizeInRegisters == 12, "pyGiveUpFrameOfOperator");
+static ALWAYS_INLINE void clearFrameOfOperator(CallFrame* callFrame, CodeBlock* codeBlock)
+{
+    Register* end = endOfFrameMadeByInstruction(callFrame, codeBlock);
+    for (Register* slot = end - sizeOfFrameMadeByInstruction(RegisterOfOperator::End) + CallerFrameAndPC::sizeInRegisters; slot < end; ++slot)
+        *slot = JSValue();
+}
+
+enum class ResultOfOperator { IsStored, JumpsIfTrue, JumpsIfFalse };
+
+// `isGoingOn`: a method has returned NotImplemented. `operate(lhs, rhs, progress, method)`: begin...() or continue...().
+template<typename Op, bool isGoingOn, ResultOfOperator whatBecomesOfResult, typename Operate>
+static ALWAYS_INLINE UGPRPair operatorSlowPath(CallFrame* callFrame, const JSInstruction* pc, const Operate& operate)
+{
+    BEGIN();
+    auto bytecode = pc->as<Op>();
+    Register* registers = isGoingOn ? registersOfOperator(callFrame, codeBlock) : nullptr;
+    MethodToCall method { isGoingOn ? registers[RegisterOfOperator::Left] : GET_C(bytecode.m_lhs), isGoingOn ? registers[RegisterOfOperator::Right] : GET_C(bytecode.m_rhs) };
+    unsigned progress = isGoingOn ? registers[RegisterOfOperator::Progress].jsValue().asInt32() : 0;
+    JSValue lhs = method.left.jsValue();
+    JSValue rhs = method.right.jsValue();
+    JSValue result = operate(globalObject, bytecode, lhs, rhs, progress, method);
+    if (isGoingOn && !method.function)
+        clearFrameOfOperator(callFrame, codeBlock);
+    CHECK_EXCEPTION();
+    if (method.function) [[unlikely]] {
+        ASSERT(canBeCalledByOperator(method.function) && method.willFindOperands(lhs, rhs));
+        return encodeResult(method.function, std::bit_cast<void*>(static_cast<uintptr_t>(method.progress)));
+    }
+    if constexpr (whatBecomesOfResult == ResultOfOperator::IsStored) {
+        GET(bytecode.m_dst) = result;
+        END_IMPL();
+    } else
+        JUMP_IF(isTrue(globalObject, result) == (whatBecomesOfResult == ResultOfOperator::JumpsIfTrue));
+}
+
+template<typename Op, bool isGoingOn>
+static ALWAYS_INLINE UGPRPair binaryOperatorSlowPath(CallFrame* callFrame, const JSInstruction* pc)
+{
+    return operatorSlowPath<Op, isGoingOn, ResultOfOperator::IsStored>(callFrame, pc, [](JSGlobalObject* globalObject, const Op& bytecode, JSValue lhs, JSValue rhs, unsigned progress, MethodToCall& method) ALWAYS_INLINE_LAMBDA {
+        auto binaryOperator = static_cast<BinaryOperator>(bytecode.m_operation);
+        return isGoingOn ? continueBinaryOperation(globalObject, binaryOperator, lhs, rhs, progress, method) : beginBinaryOperation(globalObject, binaryOperator, lhs, rhs, method);
+    });
+}
+
+template<typename Op, CompareOperator compareOperator, bool isGoingOn, ResultOfOperator whatBecomesOfResult>
+static ALWAYS_INLINE UGPRPair comparisonSlowPath(CallFrame* callFrame, const JSInstruction* pc)
+{
+    return operatorSlowPath<Op, isGoingOn, whatBecomesOfResult>(callFrame, pc, [](JSGlobalObject* globalObject, const Op&, JSValue lhs, JSValue rhs, unsigned progress, MethodToCall& method) ALWAYS_INLINE_LAMBDA {
+        return isGoingOn ? continueComparison(globalObject, lhs, rhs, compareOperator, progress, method) : beginComparison(globalObject, lhs, rhs, compareOperator, method);
+    });
+}
+
+// The second of each pair: a method has returned NotImplemented.
 #define DEFINE_ARITHMETIC_SLOW_PATH(name, Op) \
     JSC_DEFINE_COMMON_SLOW_PATH(name) \
     { \
-        BEGIN(); \
-        auto bytecode = pc->as<Op>(); \
-        RETURN(binaryOperation(globalObject, static_cast<BinaryOperator>(bytecode.m_operation), GET_C(bytecode.m_lhs).jsValue(), GET_C(bytecode.m_rhs).jsValue())); \
+        return binaryOperatorSlowPath<Op, false>(callFrame, pc); \
+    } \
+    JSC_DEFINE_COMMON_SLOW_PATH(name##_again) \
+    { \
+        return binaryOperatorSlowPath<Op, true>(callFrame, pc); \
     }
 
+DEFINE_ARITHMETIC_SLOW_PATH(slow_path_py_binary, OpPyBinary)
 DEFINE_ARITHMETIC_SLOW_PATH(slow_path_py_add, OpPyAdd)
 DEFINE_ARITHMETIC_SLOW_PATH(slow_path_py_sub, OpPySub)
 DEFINE_ARITHMETIC_SLOW_PATH(slow_path_py_mul, OpPyMul)
@@ -514,14 +593,45 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_compare)
     RETURN(compare(globalObject, GET_C(bytecode.m_lhs).jsValue(), GET_C(bytecode.m_rhs).jsValue(), static_cast<CompareOperator>(bytecode.m_operation)));
 }
 
+// The interpreter has put the result of the comparison where the instruction keeps how far it has got.
+template<typename Op, bool jumpsIfTrue>
+static ALWAYS_INLINE UGPRPair jumpOnResultOfComparisonSlowPath(CallFrame* callFrame, const JSInstruction* pc)
+{
+    BEGIN();
+    auto bytecode = pc->as<Op>();
+    JSValue result = registersOfOperator(callFrame, codeBlock)[RegisterOfOperator::Progress].jsValue();
+    clearFrameOfOperator(callFrame, codeBlock);
+    JUMP_IF(isTrue(globalObject, result) == jumpsIfTrue);
+}
+
+#define DEFINE_COMPARISON_AND_JUMP_SLOW_PATHS(name, Op, compareOperator, jumpsIfTrue) \
+    JSC_DEFINE_COMMON_SLOW_PATH(name##_begin) \
+    { \
+        return comparisonSlowPath<Op, CompareOperator::compareOperator, false, jumpsIfTrue ? ResultOfOperator::JumpsIfTrue : ResultOfOperator::JumpsIfFalse>(callFrame, pc); \
+    } \
+    JSC_DEFINE_COMMON_SLOW_PATH(name##_again) \
+    { \
+        return comparisonSlowPath<Op, CompareOperator::compareOperator, true, jumpsIfTrue ? ResultOfOperator::JumpsIfTrue : ResultOfOperator::JumpsIfFalse>(callFrame, pc); \
+    } \
+    JSC_DEFINE_COMMON_SLOW_PATH(name##_finish) \
+    { \
+        return jumpOnResultOfComparisonSlowPath<Op, jumpsIfTrue>(callFrame, pc); \
+    }
+
 // The comparison; the comparison and a jump if what it gives is true; and a jump if that is false.
+// The jumps come in two ways. The interpreter goes by _begin, _again and _finish. The one without a suffix does it all and calls
+// whatever there is to call: that is for C++ (slowPathOfBranch() in PyMonitoring.cpp).
 #define DEFINE_COMPARISON_SLOW_PATHS(name, Name, compareOperator) \
     JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_##name) \
     { \
-        BEGIN(); \
-        auto bytecode = pc->as<OpPy##Name>(); \
-        RETURN(compare(globalObject, GET_C(bytecode.m_lhs).jsValue(), GET_C(bytecode.m_rhs).jsValue(), CompareOperator::compareOperator)); \
+        return comparisonSlowPath<OpPy##Name, CompareOperator::compareOperator, false, ResultOfOperator::IsStored>(callFrame, pc); \
     } \
+    JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_##name##_again) \
+    { \
+        return comparisonSlowPath<OpPy##Name, CompareOperator::compareOperator, true, ResultOfOperator::IsStored>(callFrame, pc); \
+    } \
+    DEFINE_COMPARISON_AND_JUMP_SLOW_PATHS(slow_path_py_j##name, OpPyJ##name, compareOperator, true) \
+    DEFINE_COMPARISON_AND_JUMP_SLOW_PATHS(slow_path_py_jn##name, OpPyJn##name, compareOperator, false) \
     JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_j##name) \
     { \
         BEGIN(); \
@@ -547,6 +657,7 @@ DEFINE_COMPARISON_SLOW_PATHS(gt, Gt, Gt)
 DEFINE_COMPARISON_SLOW_PATHS(ge, Ge, GtE)
 
 #undef DEFINE_COMPARISON_SLOW_PATHS
+#undef DEFINE_COMPARISON_AND_JUMP_SLOW_PATHS
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_jtrue)
 {

@@ -614,6 +614,8 @@ UncheckedKeyHashSet<JSCell*> cellsReachedFrom(VM&, std::span<JSCell* const>, con
 // Which of the locals of a frame of the LLInt or the Baseline JIT hold values that the code may still read. `isCalling`: there is a
 // frame that this one called. False: there is no telling.
 bool liveLocalsOfFrame(CallFrame*, CodeBlock*, bool isCalling, FastBitVector& live);
+// Where the frames end that the instructions of a frame of Python make below its registers (PyBytecode.h).
+Register* endOfFrameMadeByInstruction(CallFrame*, CodeBlock*);
 std::span<const BlockPiece> blockPiecesOf(CodeBlock*, bool onlyIfALoopOwnsItsIterator = false);
 // For a built-in function that goes through what it is given, may stop before the end, and keeps nothing: any(g()), next(g()). If the
 // generator was made for this call and only the temporary register refers to it, it is closed when the function is done or

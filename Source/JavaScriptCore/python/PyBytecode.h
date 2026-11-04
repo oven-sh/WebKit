@@ -20,6 +20,74 @@ enum class UnboundKind : uint8_t {
     Free, // NameError: cannot access free variable 'x' where it is not associated with a value in enclosing scope
 };
 
+// An instruction that comes to call a function written in Python (__add__, __lt__) makes the frame and calls it itself, so that no
+// frame of C++ is on the stack meanwhile. The frame goes below the registers of the caller: the stack grows for the call and shrinks
+// after it, as for the getters that JSC's inline caches call (InlineCacheCompiler.cpp, "we temporarily grow the stack"). Only the
+// interpreter makes such a frame (LowLevelInterpreter64.asm, "Calls that instructions make").
+// How large it is, in registers, with the header, if it has so many registers from the first argument on. Even: the stack stays aligned.
+constexpr unsigned sizeOfFrameMadeByInstruction(unsigned registerCount) { return (5 + 1 + registerCount + 1) & ~1u; }
+// An operator may take several calls (__iadd__, __add__, __radd__), and what it goes by it keeps behind the arguments: how far it has
+// got, and its operands, for a method can give the variables they came from other values. A frame has room for all the parameters,
+// given or not: this one for two more than the operator passes (def __add__(self, other, context=None)).
+constexpr unsigned parametersOperatorMethodMayHaveBeyondOperands = 2;
+// Counted from the first argument.
+namespace RegisterOfOperator {
+enum : unsigned {
+    Progress = 2 + parametersOperatorMethodMayHaveBeyondOperands,
+    Left,
+    Right,
+    End,
+};
+}
+// How far: what has been asked so far, for a + b, a += b
+namespace OperatorProgress {
+enum : unsigned {
+    Nothing,
+    InPlace, // __iadd__
+    ReflectedFirst, // __radd__, and __add__ is still to be asked.
+    Left, // __add__, and __radd__ is still to be asked.
+    Everything,
+    IsReflected = 8, // Added to these for whoever makes the call: the method is one of the right operand, method(b, a).
+};
+}
+// and for a < b.
+namespace ComparisonProgress {
+enum : unsigned {
+    Nothing,
+    ReflectedFirst, // __gt__ of b, before __lt__ of a
+    Left, // __lt__ of a
+    Everything,
+    IsReflected = OperatorProgress::IsReflected,
+};
+}
+// Those instructions, with the number of registers of the frame from the first argument on.
+#define FOR_EACH_PYTHON_OPCODE_THAT_CALLS_METHODS(macro) \
+    macro(op_py_binary, RegisterOfOperator::End) \
+    macro(op_py_add, RegisterOfOperator::End) \
+    macro(op_py_sub, RegisterOfOperator::End) \
+    macro(op_py_mul, RegisterOfOperator::End) \
+    macro(op_py_div, RegisterOfOperator::End) \
+    macro(op_py_floor_div, RegisterOfOperator::End) \
+    macro(op_py_mod, RegisterOfOperator::End) \
+    macro(op_py_eq, RegisterOfOperator::End) \
+    macro(op_py_ne, RegisterOfOperator::End) \
+    macro(op_py_lt, RegisterOfOperator::End) \
+    macro(op_py_le, RegisterOfOperator::End) \
+    macro(op_py_gt, RegisterOfOperator::End) \
+    macro(op_py_ge, RegisterOfOperator::End) \
+    macro(op_py_jeq, RegisterOfOperator::End) \
+    macro(op_py_jne, RegisterOfOperator::End) \
+    macro(op_py_jlt, RegisterOfOperator::End) \
+    macro(op_py_jle, RegisterOfOperator::End) \
+    macro(op_py_jgt, RegisterOfOperator::End) \
+    macro(op_py_jge, RegisterOfOperator::End) \
+    macro(op_py_jneq, RegisterOfOperator::End) \
+    macro(op_py_jnne, RegisterOfOperator::End) \
+    macro(op_py_jnlt, RegisterOfOperator::End) \
+    macro(op_py_jnle, RegisterOfOperator::End) \
+    macro(op_py_jngt, RegisterOfOperator::End) \
+    macro(op_py_jnge, RegisterOfOperator::End)
+
 // op_py_binary. In the order of ast.operator; the in-place forms follow.
 enum class BinaryOperator : uint8_t {
     Add,

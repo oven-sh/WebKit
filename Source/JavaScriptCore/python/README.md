@@ -136,6 +136,37 @@ finds is a C++ function of its own that takes just the operands (`PyType::isNati
 that function. These are the slots of CPython's types, found out on first use and forgotten when the type changes. What calling a
 built-in type comes to is remembered in the same way (`PyType::Construction`).
 
+**Methods written in Python that the language itself calls** (`__add__`, `__lt__`) are called by the instruction,
+not by C++: an entry into the interpreter from C++ costs more than the call, and the frames of C++ would lie on the stack for as
+long as the method runs. The frame of the callee goes below the registers of the caller: the stack grows for the call and shrinks
+after it, as for the getters that JSC's inline caches call (`InlineCacheCompiler.cpp`), so it costs code that never comes to such a
+call nothing: no operand, no register. Only the interpreter makes such a frame, and only when it makes the call
+(`LowLevelInterpreter64.asm`, "Calls that instructions make"; `PyBytecode.h` has the layout and the list of the instructions). A
+function is called in this way once it has been called in the ordinary way, which makes its code.
+
+- _Which method_ is read out of the type: `PyType::m_specials` is what `lookup(Special)` has found, and its state says whether that
+  is a function written in Python. For an operator the interpreter decides by itself when it takes no more than a look: the left
+  operand is a `PyInstance` and the right one is of the same class or no cell, or the left one is a number and the right one a
+  `PyInstance` (`pyFindBinaryOperatorMethod`, `pyFindComparisonMethod`). No cache, nothing to invalidate.
+- _Everything else about operators_ goes to the slow path, which goes through the protocol a step at a time (`askMethods()` in
+  `PyOperators.cpp`, `askComparisonMethods()` in `PyAbstract.cpp`). What is not a function written in Python it calls itself. When it
+  comes to one, it returns the function in place of where to go on, and how far the operator will have got in place of the frame
+  (`operatorSlowPath()`), and the interpreter makes the call.
+- _What the method of an operator returns_ is the result, unless it is `NotImplemented`. Then a second slow path (`..._again`) goes
+  on, and may come up with another method. What it goes by is in registers behind the arguments (`RegisterOfOperator`): how far
+  the instruction has got (`OperatorProgress`, `ComparisonProgress`) and the two operands, since the method may have given the
+  variables they came from other values. The classes it looks up anew, as CPython does: the method that ran may have changed them,
+  or the class of an operand. A comparison fused with a jump jumps on `True` and `False` by itself and leaves other results to a
+  third slow path (`..._finish`). Between the arguments and those registers is room for two more parameters
+  (`def __add__(self, other, context=None)`); a method with more is called by C++.
+- _Nothing is left behind._ Where the frame was, the frames of others will be, and C++ does not write every word of its own: what
+  shows through is a reference as far as the collector can tell. So every word of the frame is written when it is made and zeroed
+  before it is given up: by the interpreter, by a slow path that finds the frame there and settles the matter, or, if an exception
+  comes out of the callee, by the unwinder, which says which frame the exception has just left (`clearFrameMadeByInstruction()`:
+  all but the function and its code block, which the machine code still reads, and which stay until the next call from there).
+- _While the method runs_ the caller holds the operands, as any instruction does that has not finished, but not what was in the
+  register for the result (`liveLocalsOfFrame()`).
+
 **Generators, coroutines, async generators** are made as JSC makes generators: a function that makes the generator object
 (`PyGenerator`), and a body, a function of its own, that the generatorification pass turns into a state machine.
 

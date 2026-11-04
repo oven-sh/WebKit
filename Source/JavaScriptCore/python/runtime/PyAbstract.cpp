@@ -1438,25 +1438,6 @@ static ALWAYS_INLINE bool compareOrdered(T a, T b, CompareOperator op)
 
 static JSValue richCompareOrNotImplemented(JSGlobalObject*, JSValue, JSValue, CompareOperator);
 
-JSValue richCompare(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
-{
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result = richCompareOrNotImplemented(globalObject, a, b, op);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (result != rt.notImplemented()) [[likely]]
-        return result;
-    switch (op) {
-    case CompareOperator::Eq:
-        return jsBoolean(isIdentical(a, b));
-    case CompareOperator::NotEq:
-        return jsBoolean(!isIdentical(a, b));
-    default:
-        return raiseTypeError(globalObject, scope, '\'', operatorSymbols[static_cast<unsigned>(op)], "' not supported between instances of '"_s, rt.typeOf(a)->nameInMessages(), "' and '"_s, rt.typeOf(b)->nameInMessages(), '\'');
-    }
-}
-
 std::optional<bool> compareForJS(JSGlobalObject*, JSOperator op, JSValue a, JSValue b)
 {
     JSGlobalObject* globalObject = realmOfOperands(a, b);
@@ -1481,54 +1462,137 @@ std::optional<bool> equalForJS(JSGlobalObject*, JSValue a, JSValue b)
     RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
 }
 
-static JSValue richCompareOrNotImplemented(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
+// a < b asks up to two methods, until one of them returns something else than NotImplemented. As with a + b there are two who go through
+// them, C++ and the interpreter: see askMethods() in PyOperators.cpp, and ComparisonProgress in PyBytecode.h.
+
+// The result, or NotImplemented, or, if the caller wants it so, nothing and a function for it to call.
+static ALWAYS_INLINE JSValue askComparisonMethods(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, unsigned progress, MethodToCall* forCaller)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue notImplemented = rt.notImplemented();
+    Special special = comparisonMethods[static_cast<unsigned>(op)];
+    Special reflected = comparisonMethods[static_cast<unsigned>(swappedOperators[static_cast<unsigned>(op)])];
+
+    while (progress != ComparisonProgress::Everything) {
+        // A method that has run may have given an operand a new class.
+        PyType* typeA = rt.typeOf(a);
+        PyType* typeB = rt.typeOf(b);
+        JSValue method;
+        bool isReflected = false;
+        switch (progress) {
+        case ComparisonProgress::Nothing:
+            if (typeA != typeB && typeB->isSubtypeOf(typeA)) {
+                method = typeB->lookup(reflected);
+                if (method) {
+                    isReflected = true;
+                    progress = ComparisonProgress::ReflectedFirst;
+                    break;
+                }
+            }
+            method = typeA->lookup(special);
+            progress = ComparisonProgress::Left;
+            break;
+        case ComparisonProgress::ReflectedFirst:
+            method = typeA->lookup(special);
+            progress = ComparisonProgress::Everything;
+            break;
+        default:
+            method = typeB->lookup(reflected);
+            isReflected = true;
+            progress = ComparisonProgress::Everything;
+            break;
+        }
+        if (!method)
+            continue;
+        if (forCaller) {
+            if (PyFunction* function = PyFunction::tryFrom(method); function && canBeCalledByOperator(function)) {
+                forCaller->function = function;
+                forCaller->progress = progress | (isReflected ? ComparisonProgress::IsReflected : 0);
+                return { };
+            }
+        }
+        JSValue result = callOperatorMethod(globalObject, isReflected ? typeB : typeA, isReflected ? reflected : special, method, isReflected ? b : a, isReflected ? a : b);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result != notImplemented)
+            return result;
+        if (forCaller && !forCaller->willFindOperands(a, b)) [[unlikely]]
+            forCaller = nullptr;
+    }
+    return notImplemented;
+}
+
+static ALWAYS_INLINE JSValue goOnWithComparison(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, unsigned progress, MethodToCall* forCaller)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = askComparisonMethods(globalObject, a, b, op, progress, forCaller);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result != rt.notImplemented()) [[likely]]
+        return result;
+    switch (op) {
+    case CompareOperator::Eq:
+        return jsBoolean(isIdentical(a, b));
+    case CompareOperator::NotEq:
+        return jsBoolean(!isIdentical(a, b));
+    default:
+        return raiseTypeError(globalObject, scope, '\'', operatorSymbols[static_cast<unsigned>(op)], "' not supported between instances of '"_s, rt.typeOf(a)->nameInMessages(), "' and '"_s, rt.typeOf(b)->nameInMessages(), '\'');
+    }
+}
+
+// What needs no method. Empty: it does. An exception: the stack is at its end.
+static ALWAYS_INLINE JSValue tryCompareWithoutMethods(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
 {
     // Numbers that are not boxed compare as JS numbers do, whether they are ints or floats.
     if (a.isNumber() && b.isNumber())
         return jsBoolean(compareOrdered(a.asNumber(), b.asNumber(), op));
     if (a.isString() && b.isString())
         return strCompare(globalObject, asString(a), asString(b), op);
-
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+    VM& vm = getVM(globalObject);
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
         return raiseRecursionError(globalObject, scope, "maximum recursion depth exceeded in comparison"_s);
+    }
+    return { };
+}
 
-    unsigned index = static_cast<unsigned>(op);
-    PyType* typeA = rt.typeOf(a);
-    PyType* typeB = rt.typeOf(b);
-    JSValue notImplemented = rt.notImplemented();
-    Special reflected = comparisonMethods[static_cast<unsigned>(swappedOperators[index])];
+static ALWAYS_INLINE JSValue richCompareImpl(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, MethodToCall* forCaller)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = tryCompareWithoutMethods(globalObject, a, b, op);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result)
+        return result;
+    RELEASE_AND_RETURN(scope, goOnWithComparison(globalObject, a, b, op, ComparisonProgress::Nothing, forCaller));
+}
 
-    bool checkedReflected = false;
-    if (typeA != typeB && typeB->isSubtypeOf(typeA)) {
-        if (JSValue method = typeB->lookup(reflected)) {
-            checkedReflected = true;
-            JSValue result = callOperatorMethod(globalObject, typeB, reflected, method, b, a);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (result != notImplemented)
-                return result;
-            // It may have given the other a new class.
-            typeA = rt.typeOf(a);
-        }
-    }
-    if (JSValue method = typeA->lookup(comparisonMethods[index])) {
-        JSValue result = callOperatorMethod(globalObject, typeA, comparisonMethods[index], method, a, b);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (result != notImplemented)
-            return result;
-        typeB = rt.typeOf(b);
-    }
-    if (!checkedReflected) {
-        if (JSValue method = typeB->lookup(reflected)) {
-            JSValue result = callOperatorMethod(globalObject, typeB, reflected, method, b, a);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (result != notImplemented)
-                return result;
-        }
-    }
-    return notImplemented;
+JSValue richCompare(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
+{
+    return richCompareImpl(globalObject, a, b, op, nullptr);
+}
+
+JSValue beginComparison(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, MethodToCall& method)
+{
+    return richCompareImpl(globalObject, a, b, op, &method);
+}
+
+JSValue continueComparison(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op, unsigned progress, MethodToCall& method)
+{
+    return goOnWithComparison(globalObject, a, b, op, progress & ~ComparisonProgress::IsReflected, &method);
+}
+
+static JSValue richCompareOrNotImplemented(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = tryCompareWithoutMethods(globalObject, a, b, op);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result)
+        return result;
+    RELEASE_AND_RETURN(scope, askComparisonMethods(globalObject, a, b, op, ComparisonProgress::Nothing, nullptr));
 }
 
 bool richCompareBool(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareOperator op)

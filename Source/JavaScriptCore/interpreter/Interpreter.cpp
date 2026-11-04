@@ -1392,14 +1392,14 @@ public:
 
     // What is done about a frame that has a code block where there is a Python to tell: the same, and the telling. True: it is caught here.
     template<typename Visitor>
-    NEVER_INLINE bool findHandlerAndTellPython(Visitor& visitor, bool reachesMachineFrame) const
+    NEVER_INLINE bool findHandlerAndTellPython(Visitor& visitor, bool reachesMachineFrame, CallFrame* frameBefore) const
     {
         JSGlobalObject* globalObject = m_codeBlock->globalObject();
         bool isPython = m_codeBlock->unlinkedCodeBlock()->isPython();
         if (!m_isTermination) {
             BytecodeIndex index = visitor->bytecodeIndex();
             if (isPython) {
-                m_thrownValue = Python::addTracebackEntry(globalObject, m_thrownValue, m_callFrame, index);
+                m_thrownValue = Python::addTracebackEntry(globalObject, m_thrownValue, m_callFrame, index, frameBefore);
                 m_thrownValueHasNoTraceback = false;
             }
             HandlerInfo* handler = findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler);
@@ -1441,6 +1441,7 @@ public:
             reachesMachineFrame = addTracebackEntriesForInlinedCalls(visitor);
 #endif
         visitor.unwindToMachineCodeBlockFrame();
+        CallFrame* frameBefore = m_callFrame;
         m_callFrame = visitor->callFrame();
 #if ENABLE(AOT)
         if constexpr (Visitor::visitsCompiledFrames) {
@@ -1453,7 +1454,7 @@ public:
         m_handler.m_valid = false;
         if (m_codeBlock) {
             if (m_tellsPython) [[unlikely]] {
-                if (findHandlerAndTellPython(visitor, reachesMachineFrame))
+                if (findHandlerAndTellPython(visitor, reachesMachineFrame, frameBefore))
                     return IterationStatus::Done;
             } else if (!m_isTermination) {
                 m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };

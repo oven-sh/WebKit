@@ -8,6 +8,7 @@
 
 #include "JSCInlines.h"
 #include "PyErrors.h"
+#include "PyFunction.h"
 #include "PyHooks.h"
 #include "PyInternals.h"
 #include "PyList.h"
@@ -42,14 +43,22 @@ static ALWAYS_INLINE bool isSequenceOperation(JSValue method)
 // JSConcatenation: `+` in code of JS with a string on one side. Only the class of the other operand, an object of Python's, has a say.
 enum class OperatorOf : bool { Python, JSConcatenation };
 
-// The result, or NotImplemented.
-static JSValue numberOperation(JSGlobalObject* globalObject, Special method, Special reflected, JSValue a, JSValue b, OperatorOf language = OperatorOf::Python)
-{
-    Runtime& rt = runtime(globalObject);
-    VM& vm = rt.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue notImplemented = rt.notImplemented();
+// a + b asks up to two methods and a += b up to three, until one of them returns something else than NotImplemented. Which comes next is
+// found out a step at a time, for there are two who go through them: C++, and the interpreter, which calls the
+// methods that are written in Python itself, so that no frame of C++ is on the stack meanwhile (beginBinaryOperation()).
+// A method that has run may have changed the classes, or the class of an operand: what is asked next is what they have then.
+// How far they have got: OperatorProgress in PyBytecode.h.
 
+struct OperatorMethodToAsk {
+    JSValue method; // Empty: there is none left.
+    PyType* type { nullptr }; // What type->lookup(special) has given.
+    Special special { };
+    bool isReflected { false }; // method(b, a)
+    unsigned progress { OperatorProgress::Everything }; // Once it has been asked.
+};
+
+static ALWAYS_INLINE OperatorMethodToAsk nextMethodToAsk(Runtime& rt, Special method, Special reflected, std::optional<Special> inPlace, JSValue a, JSValue b, OperatorOf language, unsigned progress)
+{
     PyType* typeA = rt.typeOf(a);
     PyType* typeB = rt.typeOf(b);
     auto lookUp = [&](PyType* type, Special special, JSValue operand) {
@@ -58,37 +67,81 @@ static JSValue numberOperation(JSGlobalObject* globalObject, Special method, Spe
             return JSValue();
         return found;
     };
-    JSValue left = lookUp(typeA, method, a);
-    JSValue right;
-    if (typeB != typeA)
-        right = lookUp(typeB, reflected, b);
-
-    // A subclass that has its own idea of the reflected operation goes first.
-    // A method that has run may have changed the classes: what is called next is what they have then.
-    if (right && typeB->isSubtypeOf(typeA) && right != typeA->lookup(reflected)) {
-        JSValue result = callOperatorMethod(globalObject, typeB, reflected, right, b, a);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (result != notImplemented)
-            return result;
-        right = JSValue();
-        if (left)
-            left = lookUp(typeA, method, a);
-    }
-    if (left) {
-        JSValue result = callOperatorMethod(globalObject, typeA, method, left, a, b);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (result != notImplemented)
-            return result;
-        if (right)
+    switch (progress) {
+    case OperatorProgress::Nothing:
+        if (inPlace) {
+            if (JSValue found = typeA->lookup(*inPlace); found && !isSequenceOperation(found))
+                return { found, typeA, *inPlace, false, OperatorProgress::InPlace };
+        }
+        [[fallthrough]];
+    case OperatorProgress::InPlace: {
+        JSValue left = lookUp(typeA, method, a);
+        bool asksLeft = left || lookUp(typeA, reflected, a);
+        JSValue right;
+        bool asksRight = false;
+        if (typeB != typeA) {
             right = lookUp(typeB, reflected, b);
+            asksRight = right || lookUp(typeB, method, b);
+        }
+        // A subclass that has its own idea of the reflected operation goes first.
+        if (right && typeB->isSubtypeOf(typeA) && right != typeA->lookup(reflected))
+            return { right, typeB, reflected, true, asksLeft ? OperatorProgress::ReflectedFirst : OperatorProgress::Everything };
+        if (left)
+            return { left, typeA, method, false, asksRight ? OperatorProgress::Left : OperatorProgress::Everything };
+        if (right)
+            return { right, typeB, reflected, true, OperatorProgress::Everything };
+        return { };
     }
-    if (right) {
-        JSValue result = callOperatorMethod(globalObject, typeB, reflected, right, b, a);
+    case OperatorProgress::ReflectedFirst:
+        if (JSValue left = lookUp(typeA, method, a))
+            return { left, typeA, method, false, OperatorProgress::Everything };
+        return { };
+    case OperatorProgress::Left:
+        if (typeB != typeA) {
+            if (JSValue right = lookUp(typeB, reflected, b))
+                return { right, typeB, reflected, true, OperatorProgress::Everything };
+        }
+        return { };
+    default:
+        return { };
+    }
+}
+
+// The result, or NotImplemented, or, if the caller wants it so, nothing and a function for it to call.
+static ALWAYS_INLINE JSValue askMethods(JSGlobalObject* globalObject, Special method, Special reflected, std::optional<Special> inPlace, JSValue a, JSValue b, OperatorOf language, unsigned progress, MethodToCall* forCaller)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue notImplemented = rt.notImplemented();
+    for (;;) {
+        OperatorMethodToAsk next = nextMethodToAsk(rt, method, reflected, inPlace, a, b, language, progress);
+        if (!next.method)
+            return notImplemented;
+        if (forCaller) {
+            if (PyFunction* function = PyFunction::tryFrom(next.method); function && canBeCalledByOperator(function)) {
+                forCaller->function = function;
+                forCaller->progress = next.progress | (next.isReflected ? OperatorProgress::IsReflected : 0);
+                return { };
+            }
+        }
+        JSValue self = next.isReflected ? b : a;
+        JSValue other = next.isReflected ? a : b;
+        // (An AttributeError out of a descriptor says that there is no such method, but not for the methods that work in place.)
+        JSValue result = next.progress == OperatorProgress::InPlace ? callSpecial(globalObject, next.method, self, other) : callOperatorMethod(globalObject, next.type, next.special, next.method, self, other);
         RETURN_IF_EXCEPTION(scope, { });
         if (result != notImplemented)
             return result;
+        progress = next.progress;
+        if (forCaller && !forCaller->willFindOperands(a, b)) [[unlikely]]
+            forCaller = nullptr;
     }
-    return notImplemented;
+}
+
+// The result, or NotImplemented.
+static JSValue numberOperation(JSGlobalObject* globalObject, Special method, Special reflected, JSValue a, JSValue b, OperatorOf language = OperatorOf::Python)
+{
+    return askMethods(globalObject, method, reflected, std::nullopt, a, b, language, OperatorProgress::Nothing, nullptr);
 }
 
 static NEVER_INLINE JSValue raiseUnsupportedOperands(JSGlobalObject* globalObject, ASCIILiteral symbol, JSValue a, JSValue b)
@@ -98,17 +151,13 @@ static NEVER_INLINE JSValue raiseUnsupportedOperands(JSGlobalObject* globalObjec
     return raiseTypeError(globalObject, scope, "unsupported operand type(s) for "_s, symbol, ": '"_s, typeName(globalObject, a), "' and '"_s, typeName(globalObject, b), '\'');
 }
 
-// The result, or NotImplemented.
-static JSValue binaryOperationOrNotImplemented(JSGlobalObject* globalObject, unsigned op, JSValue a, JSValue b, bool inPlace, OperatorOf language)
+// What is left when the methods of numbers have all said NotImplemented. The result, or NotImplemented.
+static JSValue sequenceOperation(JSGlobalObject* globalObject, unsigned op, JSValue a, JSValue b, bool inPlace, OperatorOf language)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue result = numberOperation(globalObject, methodFor(op), reflectedMethodFor(op), a, b, language);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (result != rt.notImplemented())
-        return result;
     bool asksA = language == OperatorOf::Python || isPyObject(a);
     bool asksB = language == OperatorOf::Python || isPyObject(b);
 
@@ -145,15 +194,21 @@ static JSValue binaryOperationOrNotImplemented(JSGlobalObject* globalObject, uns
     return rt.notImplemented();
 }
 
-static JSValue binaryOperationSlow(JSGlobalObject* globalObject, unsigned op, JSValue a, JSValue b, ASCIILiteral symbol, bool inPlace)
+// `op`: not one of those in place.
+static ALWAYS_INLINE JSValue goOnWithBinaryOperation(JSGlobalObject* globalObject, unsigned op, bool inPlace, JSValue a, JSValue b, unsigned progress, MethodToCall* forCaller)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result = binaryOperationOrNotImplemented(globalObject, op, a, b, inPlace, OperatorOf::Python);
+    JSValue result = askMethods(globalObject, methodFor(op), reflectedMethodFor(op), inPlace ? std::optional(inPlaceMethodFor(op)) : std::nullopt, a, b, OperatorOf::Python, progress, forCaller);
     RETURN_IF_EXCEPTION(scope, { });
-    if (result != runtime(globalObject).notImplemented())
+    JSValue notImplemented = runtime(globalObject).notImplemented();
+    if (result != notImplemented)
         return result;
-    RELEASE_AND_RETURN(scope, raiseUnsupportedOperands(globalObject, symbol, a, b));
+    result = sequenceOperation(globalObject, op, a, b, inPlace, OperatorOf::Python);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result != notImplemented)
+        return result;
+    RELEASE_AND_RETURN(scope, raiseUnsupportedOperands(globalObject, inPlace ? inPlaceSymbols[op] : binarySymbols[op], a, b));
 }
 
 // ---- The operators of JS (PyHooks.h) ----
@@ -171,8 +226,13 @@ JSValue binaryOperatorForJS(JSGlobalObject*, JSOperator op, JSValue a, JSValue b
     unsigned index = static_cast<unsigned>(operators[static_cast<unsigned>(op)]);
     // "total: " + x is what it is everywhere in JS, unless the class of x has an idea of its own.
     bool concatenates = op == JSOperator::Add && (a.isString() || b.isString());
-    JSValue result = binaryOperationOrNotImplemented(globalObject, index, a, b, false, concatenates ? OperatorOf::JSConcatenation : OperatorOf::Python);
+    OperatorOf language = concatenates ? OperatorOf::JSConcatenation : OperatorOf::Python;
+    JSValue result = numberOperation(globalObject, methodFor(index), reflectedMethodFor(index), a, b, language);
     RETURN_IF_EXCEPTION(scope, { });
+    if (result == runtime(globalObject).notImplemented()) {
+        result = sequenceOperation(globalObject, index, a, b, false, language);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     if (result != runtime(globalObject).notImplemented())
         return valueForJS(result);
     if (concatenates)
@@ -191,7 +251,7 @@ JSValue unaryOperatorForJS(JSGlobalObject*, JSOperator op, JSValue operand)
     return valueForJS(result);
 }
 
-JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator binaryOperator, JSValue a, JSValue b)
+static ALWAYS_INLINE JSValue binaryOperationImpl(JSGlobalObject* globalObject, BinaryOperator binaryOperator, JSValue a, JSValue b, MethodToCall* forCaller)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -207,17 +267,24 @@ JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator binaryOpera
         return fast;
     if (op == static_cast<unsigned>(BinaryOperator::Add) && a.isString() && b.isString())
         RELEASE_AND_RETURN(scope, jsString(globalObject, asString(a), asString(b)));
+    RELEASE_AND_RETURN(scope, goOnWithBinaryOperation(globalObject, op, inPlace, a, b, OperatorProgress::Nothing, forCaller));
+}
 
-    if (inPlace) {
-        Runtime& rt = runtime(globalObject);
-        if (JSValue method = rt.typeOf(a)->lookup(inPlaceMethodFor(op)); method && !isSequenceOperation(method)) {
-            JSValue result = callSpecial(globalObject, method, a, b);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (result != rt.notImplemented())
-                return result;
-        }
-    }
-    RELEASE_AND_RETURN(scope, binaryOperationSlow(globalObject, op, a, b, inPlace ? inPlaceSymbols[op] : binarySymbols[op], inPlace));
+JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator binaryOperator, JSValue a, JSValue b)
+{
+    return binaryOperationImpl(globalObject, binaryOperator, a, b, nullptr);
+}
+
+JSValue beginBinaryOperation(JSGlobalObject* globalObject, BinaryOperator binaryOperator, JSValue a, JSValue b, MethodToCall& method)
+{
+    return binaryOperationImpl(globalObject, binaryOperator, a, b, &method);
+}
+
+JSValue continueBinaryOperation(JSGlobalObject* globalObject, BinaryOperator binaryOperator, JSValue a, JSValue b, unsigned progress, MethodToCall& method)
+{
+    unsigned op = static_cast<unsigned>(binaryOperator);
+    bool inPlace = op >= numberOfBinaryOperators;
+    return goOnWithBinaryOperation(globalObject, inPlace ? op - numberOfBinaryOperators : op, inPlace, a, b, progress & ~OperatorProgress::IsReflected, &method);
 }
 
 // pow(base, exponent, modulus) as Decimal does it. NotImplemented: the modulus is no Decimal, or another operand is not for it. (PyDecimalType.cpp)

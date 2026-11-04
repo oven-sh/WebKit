@@ -11,6 +11,7 @@
 #include "PyAbstract.h"
 #include "PyDescriptors.h"
 #include "PyErrors.h"
+#include "PyFunction.h"
 #include "PyHooks.h"
 #include "PyInternals.h"
 #include "PyJSClass.h"
@@ -298,7 +299,7 @@ JSValue PyType::lookupSpecialSlow(Special special)
         return value;
     unsigned index = static_cast<unsigned>(special);
     m_specials[index].set(rt.vm(), this, value);
-    m_specialStates[index] = SpecialState::Known;
+    m_specialStates[index] = PyFunction::is(value) ? SpecialState::Function : SpecialState::Known;
     if (auto* native = PyNativeFunction::tryFrom(value); native && (native->kind() == NativeKind::Method || native->kind() == NativeKind::SlotWrapper)) {
         auto& signature = native->def().signature;
         bool takesAllOrNothing = signature.hasSelf && !signature.isVariadic && signature.minPositional == signature.parameterCount && signature.maxPositional == signature.parameterCount;

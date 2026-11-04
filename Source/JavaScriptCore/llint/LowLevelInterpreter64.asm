@@ -2818,6 +2818,282 @@ macro loadPythonRuntime(dst)
     loadp JSGlobalObject::m_pythonRuntime[dst], dst
 end
 
+# ---- Calls that instructions make: see PyBytecode.h ----
+
+# The frame of the callee goes below the registers of the caller: sp goes down by as much as the frame takes, but for the two words that
+# the call and the prologue of the callee push, and up again when the instruction has no more use for it. Every word of that is written
+# when the frame is made, and zeroed before it is given up: that part of the stack will be the frames of others, which do not write
+# all of their words. (If an exception comes out of the callee: clearFrameMadeByInstruction() in PyFrame.cpp.)
+const PyRoomForFrameOfOperator = (constexpr (Python::sizeOfFrameMadeByInstruction(Python::RegisterOfOperator::End))) * 8 - CallerFrameAndPCSize
+const PyFirstArgumentOfCallee = FirstArgumentOffset - CallerFrameAndPCSize
+
+# t1: the code block of the function in t2, or null.
+macro pyLoadCodeBlockOfCallee()
+    loadp JSFunction::m_executableOrRareData[t2], t1
+    btpz t1, (constexpr JSFunction::rareDataTag), .pyIsExecutable
+    loadp (FunctionRareData::m_executable - (constexpr JSFunction::rareDataTag))[t1], t1
+.pyIsExecutable:
+    loadp FunctionExecutable::m_codeBlockForCall[t1], t1
+end
+
+# Goes to `slow` unless the function has its code, and no more than so many parameters. Clobbers t5.
+macro pyCheckCodeBlockOfCallee(maxParameterCount, slow)
+    btpz t1, slow
+    loadi CodeBlock::m_numParameters[t1], t5
+    bia t5, 1 + maxParameterCount, slow
+end
+
+# There is room for the frame. t2: the function, t1: its code block.
+macro pyStoreHeaderOfCallee(argumentCount)
+    storeq 1 + argumentCount, ArgumentCountIncludingThis - CallerFrameAndPCSize[sp]
+    storeq t2, Callee - CallerFrameAndPCSize[sp]
+    storep t1, CodeBlock - CallerFrameAndPCSize[sp]
+    storeq ValueUndefined, ThisArgumentOffset - CallerFrameAndPCSize[sp]
+end
+
+# The frame is complete, and its function is one of Python's that has its code: that never leaves the interpreter, so this is where
+# a call of it goes (LLInt::setFunctionEntrypoint()). What the function returns is in r0. The room is still there afterwards.
+macro pyCallFrame()
+    storePC()
+    if RETURN_ADDRESS_SIGNING
+        call _jsTrampolineFunctionForCallPrologue
+    else
+        call _llint_function_for_call_prologue
+    end
+    loadPC()
+end
+
+# Leaves r0 alone.
+macro pyGiveUpFrame(room, clear)
+    if X86_64
+        movdz ft0
+    else
+        move 0, t6
+    end
+    clear(macro (offset)
+        if X86_64
+            storev ft0, offset[sp]
+        elsif ARM64 or ARM64E
+            storepairq t6, t6, offset[sp]
+        else
+            storep t6, offset[sp]
+            storep t6, offset + 8[sp]
+        end
+    end)
+    addp room, sp
+end
+
+# So many bytes: see the static_assert in PySlowPaths.cpp.
+macro pyGiveUpFrameOfOperator()
+    pyGiveUpFrame(PyRoomForFrameOfOperator, macro (clear16Bytes)
+        clear16Bytes(0)
+        clear16Bytes(16)
+        clear16Bytes(32)
+        clear16Bytes(48)
+        clear16Bytes(64)
+        clear16Bytes(80)
+    end)
+end
+
+# An operator with two operands. If it takes no more than a look to tell which method is asked first, and that is a function written in
+# Python, the interpreter finds it by itself. That is so if
+# - the left operand is an instance of a class of the program's, and the right one is of the same class, or no cell: no such thing is of
+#   a class derived from that of the left;
+# - the left one is a number, and the right one such an instance: all that the number has to say to it is NotImplemented.
+# The macros below end with the left operand in t3, the right one in t0, the function in t2, and in t6 how far the instruction will
+# have got, with IsReflected if the method is that of the right operand.
+
+# Most of what comes here has nothing to do with instances (strs, lists, large ints), and the left operand tells. If it is such an
+# instance, t1 is its class.
+macro pyLoadLeftOperand(size, get, isNoCell, generic)
+    get(m_lhs, t1)
+    loadConstantOrVariable(size, t1, t3)
+    btqnz t3, notCellMask, isNoCell
+    bbneq JSCell::m_type[t3], PyInstanceType, generic
+    loadp (constexpr (Python::PyObject::offsetOfType()))[t3], t1
+end
+
+macro pyLoadRightOperand(size, get)
+    get(m_rhs, t6)
+    loadConstantOrVariable(size, t6, t0)
+end
+
+# The left operand is such an instance, and t1 its class. `afterLeft`: how far the instruction has got once that has been asked,
+# if the right operand is of another class.
+macro pyCheckOperandRightOfInstance(size, get, afterLeft, everything, generic)
+    pyLoadRightOperand(size, get)
+    move afterLeft, t6
+    btqnz t0, notCellMask, .pyRightIsFine
+    bbneq JSCell::m_type[t0], PyInstanceType, generic
+    bpneq t1, (constexpr (Python::PyObject::offsetOfType()))[t0], generic
+    move everything, t6
+.pyRightIsFine:
+end
+
+# The left operand is no cell. Then t1 is the class of the right one.
+macro pyCheckNumberAndInstance(size, get, generic)
+    btqz t3, numberTag, generic
+    pyLoadRightOperand(size, get)
+    btqnz t0, notCellMask, generic
+    bbneq JSCell::m_type[t0], PyInstanceType, generic
+    loadp (constexpr (Python::PyObject::offsetOfType()))[t0], t1
+end
+
+# t7: which method (Python::Special) of the class in t1.
+macro pyLoadOperatorMethod(generic)
+    bbneq (constexpr (Python::PyType::offsetOfSpecialStates()))[t1, t7, 1], constexpr Python::PyType::specialIsFunction, generic
+    loadq (constexpr (Python::PyType::offsetOfSpecials()))[t1, t7, 8], t2
+end
+
+# For an instruction with m_operation, a Python::BinaryOperator.
+macro pyFindBinaryOperatorMethod(size, opcodeStruct, get, generic)
+    pyLoadLeftOperand(size, get, .pyLeftIsNoCell, generic)
+    getu(size, opcodeStruct, m_operation, t7)
+    bib t7, constexpr Python::BinaryOperator::FirstInPlace, .pyNotInPlace
+    # a += b
+    addi (constexpr Python::Special::IAdd) - (constexpr Python::BinaryOperator::FirstInPlace), t7
+    loadb (constexpr (Python::PyType::offsetOfSpecialStates()))[t1, t7, 1], t2
+    bbeq t2, constexpr Python::PyType::specialIsFunction, .pyInPlace
+    bbneq t2, constexpr Python::PyType::specialIsOfNoParticularKind, generic
+    loadq (constexpr (Python::PyType::offsetOfSpecials()))[t1, t7, 8], t2
+    btqnz t2, generic
+    # The class has no such method.
+    subi constexpr Python::Special::IAdd, t7
+.pyNotInPlace:
+    addi constexpr Python::Special::Add, t7
+    pyCheckOperandRightOfInstance(size, get, constexpr Python::OperatorProgress::Left, constexpr Python::OperatorProgress::Everything, generic)
+    jmp .pyLoad
+.pyLeftIsNoCell:
+    pyCheckNumberAndInstance(size, get, generic)
+    getu(size, opcodeStruct, m_operation, t7)
+    bib t7, constexpr Python::BinaryOperator::FirstInPlace, .pyReflected
+    subi constexpr Python::BinaryOperator::FirstInPlace, t7
+.pyReflected:
+    addi constexpr Python::Special::RAdd, t7
+    move (constexpr Python::OperatorProgress::Everything) + (constexpr Python::OperatorProgress::IsReflected), t6
+    jmp .pyLoad
+.pyInPlace:
+    pyLoadRightOperand(size, get)
+    move constexpr Python::OperatorProgress::InPlace, t6
+.pyLoad:
+    pyLoadOperatorMethod(generic)
+end
+
+macro pyFindComparisonMethod(size, get, special, reflected, generic)
+    pyLoadLeftOperand(size, get, .pyLeftIsNoCell, generic)
+    pyCheckOperandRightOfInstance(size, get, constexpr Python::ComparisonProgress::Left, constexpr Python::ComparisonProgress::Left, generic)
+    move special, t7
+    jmp .pyLoad
+.pyLeftIsNoCell:
+    pyCheckNumberAndInstance(size, get, generic)
+    move reflected, t7
+    move (constexpr Python::ComparisonProgress::Everything) + (constexpr Python::ComparisonProgress::IsReflected), t6
+.pyLoad:
+    pyLoadOperatorMethod(generic)
+end
+
+const PyOperatorProgress = PyFirstArgumentOfCallee + (constexpr Python::RegisterOfOperator::Progress) * 8
+const PyOperatorLeft = PyFirstArgumentOfCallee + (constexpr Python::RegisterOfOperator::Left) * 8
+const PyOperatorRight = PyFirstArgumentOfCallee + (constexpr Python::RegisterOfOperator::Right) * 8
+
+# A slow path of an operator that finds that the next thing to do is to call a function written in Python does not call it. It returns
+# it, with how far the operator will have got in place of cfr (operatorSlowPath() in PySlowPaths.cpp): then this goes to `callsFunction`.
+macro pyCallSlowPathThatLeavesCalls(slowPath, callsFunction)
+    prepareStateForCCall()
+    move cfr, a0
+    move PC, a1
+    cCall2(slowPath)
+    bpb r1, 2 * (constexpr Python::OperatorProgress::IsReflected), callsFunction
+    restoreStateAfterCCall()
+end
+
+# Puts these where the macros above do.
+macro pyTakeMethodFromSlowPath()
+    move r1, t6
+    move r0, t2
+    # As every slow path, it has stored it.
+    loadPC()
+end
+
+# What an operator with two operands does when they are not what the interpreter deals with itself. `findMethod(generic)`: one of the
+# above. `returned(again)` deals with what a method has returned, in r0, unless that is NotImplemented: then it goes to `again`,
+# where `slowPathAgain` finds out what comes next, which may be another method. It ends with pyGiveUpFrameOfOperator(), unless it
+# has called a slow path: a slow path that finds the frame there empties it, if it does not come up with another function.
+# `settled()`: a slow path has done all there was to do.
+macro pyOperatorSlowPath(size, get, findMethod, slowPath, slowPathAgain, returned, settled)
+    if ARM64E
+        jmp .pyOperatorGeneric
+    end
+    findMethod(.pyOperatorGeneric)
+    pyLoadCodeBlockOfCallee()
+    # As canBeCalledByOperator().
+    pyCheckCodeBlockOfCallee(constexpr Python::RegisterOfOperator::Progress, .pyOperatorGeneric)
+.pyOperatorCall:
+    subp PyRoomForFrameOfOperator, sp
+    pyStoreHeaderOfCallee(2)
+    storeq t3, PyOperatorLeft[sp]
+    storeq t0, PyOperatorRight[sp]
+    storeq ValueUndefined, PyOperatorRight + 8[sp]
+    btiz t6, constexpr Python::OperatorProgress::IsReflected, .pyOperatorStoreArguments
+    move t3, t1
+    move t0, t3
+    move t1, t0
+.pyOperatorStoreArguments:
+    storeq t3, PyFirstArgumentOfCallee[sp]
+    storeq t0, PyFirstArgumentOfCallee + 8[sp]
+    # As when the engine finds fewer arguments than parameters.
+    storeq ValueUndefined, PyFirstArgumentOfCallee + 16[sp]
+    storeq ValueUndefined, PyFirstArgumentOfCallee + 24[sp]
+    orq numberTag, t6
+    storeq t6, PyOperatorProgress[sp]
+    pyCallFrame()
+    returned(.pyOperatorAgain)
+
+.pyOperatorGeneric:
+    pyCallSlowPathThatLeavesCalls(slowPath, .pyOperatorCallForSlowPath)
+    settled()
+
+.pyOperatorCallForSlowPath:
+    pyTakeMethodFromSlowPath()
+    get(m_rhs, t1)
+    loadConstantOrVariable(size, t1, t0)
+    get(m_lhs, t1)
+    loadConstantOrVariable(size, t1, t3)
+.pyOperatorCallWhatSlowPathFound:
+    pyLoadCodeBlockOfCallee()
+    jmp .pyOperatorCall
+
+.pyOperatorAgain:
+    pyCallSlowPathThatLeavesCalls(slowPathAgain, .pyOperatorCallAgain)
+    addp PyRoomForFrameOfOperator, sp
+    settled()
+
+.pyOperatorCallAgain:
+    pyTakeMethodFromSlowPath()
+    loadq PyOperatorLeft[sp], t3
+    loadq PyOperatorRight[sp], t0
+    addp PyRoomForFrameOfOperator, sp
+    jmp .pyOperatorCallWhatSlowPathFound
+end
+
+# For those with m_dst.
+macro pyBinaryOperatorSlowPath(size, get, dispatch, findMethod, slowPath, slowPathAgain)
+    pyOperatorSlowPath(size, get, findMethod, slowPath, slowPathAgain, macro (again)
+        loadPythonRuntime(t1)
+        bqeq r0, (constexpr (Python::Runtime::offsetOfNotImplemented()))[t1], again
+        pyGiveUpFrameOfOperator()
+        get(m_dst, t2)
+        storeq r0, [cfr, t2, 8]
+        dispatch()
+    end, dispatch)
+end
+
+macro pyArithmeticSlowPath(size, opcodeName, opcodeStruct, get, dispatch)
+    pyBinaryOperatorSlowPath(size, get, dispatch, macro (generic)
+        pyFindBinaryOperatorMethod(size, opcodeStruct, get, generic)
+    end, _slow_path_%opcodeName%, _slow_path_%opcodeName%_again)
+end
+
 # After `value` has been stored in `owner`. As Heap::writeBarrier(): unlike writeBarrierOnCellWithReload, without a fence unless
 # the collector is running. Clobbers `value`, and every temporary if the barrier fires.
 macro pythonWriteBarrier(owner, value, scratch)
@@ -3295,8 +3571,7 @@ macro pyArithmeticOp(opcodeName, opcodeStruct, integerOperation, doubleOperation
         storeResult(t0)
 
     .slow:
-        callSlowPath(_slow_path_%opcodeName%)
-        dispatch()
+        pyArithmeticSlowPath(size, opcodeName, opcodeStruct, get, dispatch)
     end)
 end
 
@@ -3343,8 +3618,7 @@ llintOpWithReturn(op_py_div, OpPyDiv, macro (size, get, dispatch, return)
     return(t0)
 
 .slow:
-    callSlowPath(_slow_path_py_div)
-    dispatch()
+    pyArithmeticSlowPath(size, py_div, OpPyDiv, get, dispatch)
 end)
 
 
@@ -3367,8 +3641,7 @@ macro pyFloorDivisionOp(opcodeName, opcodeStruct, finish)
         return(t2)
 
     .slow:
-        callSlowPath(_slow_path_%opcodeName%)
-        dispatch()
+        pyArithmeticSlowPath(size, opcodeName, opcodeStruct, get, dispatch)
     end)
 end
 
@@ -3430,8 +3703,7 @@ llintOpWithReturn(op_py_binary, OpPyBinary, macro (size, get, dispatch, return)
     return(t0)
 
 .slow:
-    callSlowPath(_slow_path_py_binary)
-    dispatch()
+    pyArithmeticSlowPath(size, py_binary, OpPyBinary, get, dispatch)
 end)
 
 
@@ -3467,7 +3739,8 @@ end)
 
 
 # Ints that are numbers are exact as doubles, so numbers compare as JS compares them.
-macro pyCompareOp(opcodeName, opcodeStruct, integerCompareAndSet, doubleCompareAndSet)
+# `special`, `reflected`: Python::Special, the method of the left operand and that of the right.
+macro pyCompareOp(opcodeName, opcodeStruct, special, reflected, integerCompareAndSet, doubleCompareAndSet)
     llintOpWithReturn(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch, return)
         get(m_lhs, t2)
         get(m_rhs, t0)
@@ -3507,32 +3780,33 @@ macro pyCompareOp(opcodeName, opcodeStruct, integerCompareAndSet, doubleCompareA
         return(t0)
 
     .slow:
-        callSlowPath(_slow_path_%opcodeName%)
-        dispatch()
+        pyBinaryOperatorSlowPath(size, get, dispatch, macro (generic)
+            pyFindComparisonMethod(size, get, special, reflected, generic)
+        end, _slow_path_%opcodeName%, _slow_path_%opcodeName%_again)
     end)
 end
 
-pyCompareOp(py_eq, OpPyEq,
+pyCompareOp(py_eq, OpPyEq, constexpr Python::Special::Eq, constexpr Python::Special::Eq,
     macro (left, right, result) cieq left, right, result end,
     macro (left, right, result) cdeq left, right, result end)
 
-pyCompareOp(py_ne, OpPyNe,
+pyCompareOp(py_ne, OpPyNe, constexpr Python::Special::Ne, constexpr Python::Special::Ne,
     macro (left, right, result) cineq left, right, result end,
     macro (left, right, result) cdnequn left, right, result end)
 
-pyCompareOp(py_lt, OpPyLt,
+pyCompareOp(py_lt, OpPyLt, constexpr Python::Special::Lt, constexpr Python::Special::Gt,
     macro (left, right, result) cilt left, right, result end,
     macro (left, right, result) cdlt left, right, result end)
 
-pyCompareOp(py_le, OpPyLe,
+pyCompareOp(py_le, OpPyLe, constexpr Python::Special::Le, constexpr Python::Special::Ge,
     macro (left, right, result) cilteq left, right, result end,
     macro (left, right, result) cdlteq left, right, result end)
 
-pyCompareOp(py_gt, OpPyGt,
+pyCompareOp(py_gt, OpPyGt, constexpr Python::Special::Gt, constexpr Python::Special::Lt,
     macro (left, right, result) cigt left, right, result end,
     macro (left, right, result) cdgt left, right, result end)
 
-pyCompareOp(py_ge, OpPyGe,
+pyCompareOp(py_ge, OpPyGe, constexpr Python::Special::Ge, constexpr Python::Special::Le,
     macro (left, right, result) cigteq left, right, result end,
     macro (left, right, result) cdgteq left, right, result end)
 
@@ -3574,7 +3848,8 @@ llintOpWithReturn(op_py_compare, OpPyCompare, macro (size, get, dispatch, return
 end)
 
 
-macro pyCompareJumpOp(opcodeName, opcodeStruct, integerCompare, doubleCompare)
+# `jumpsOn`, `goesOnOn`: ValueTrue and ValueFalse, or the other way round.
+macro pyCompareJumpOp(opcodeName, opcodeStruct, special, reflected, jumpsOn, goesOnOn, integerCompare, doubleCompare)
     llintOpWithJump(op_%opcodeName%, opcodeStruct, macro (size, get, jump, dispatch)
         get(m_lhs, t2)
         get(m_rhs, t3)
@@ -3613,58 +3888,76 @@ macro pyCompareJumpOp(opcodeName, opcodeStruct, integerCompare, doubleCompare)
     .jumpTarget:
         jump(m_targetLabel)
 
+    # What a method has returned that is neither True nor False goes where the instruction keeps how far it has got, for the slow
+    # path that finds out whether it is true.
     .slow:
-        callSlowPath(_slow_path_%opcodeName%)
-        nextInstruction()
+        pyOperatorSlowPath(size, get, macro (generic)
+            pyFindComparisonMethod(size, get, special, reflected, generic)
+        end, _slow_path_%opcodeName%_begin, _slow_path_%opcodeName%_again, macro (again)
+            bqeq r0, jumpsOn, .jump
+            bqeq r0, goesOnOn, .noJump
+            loadPythonRuntime(t1)
+            bqeq r0, (constexpr (Python::Runtime::offsetOfNotImplemented()))[t1], again
+            storeq r0, PyOperatorProgress[sp]
+            callSlowPath(_slow_path_%opcodeName%_finish)
+            addp PyRoomForFrameOfOperator, sp
+            nextInstruction()
+        end, nextInstruction)
+    .jump:
+        pyGiveUpFrameOfOperator()
+        jump(m_targetLabel)
+    .noJump:
+        pyGiveUpFrameOfOperator()
+        dispatch()
     end)
 end
 
-pyCompareJumpOp(py_jeq, OpPyJeq,
+pyCompareJumpOp(py_jeq, OpPyJeq, constexpr Python::Special::Eq, constexpr Python::Special::Eq, ValueTrue, ValueFalse,
     macro (left, right, target) bieq left, right, target end,
     macro (left, right, target) bdeq left, right, target end)
 
-pyCompareJumpOp(py_jne, OpPyJne,
+pyCompareJumpOp(py_jne, OpPyJne, constexpr Python::Special::Ne, constexpr Python::Special::Ne, ValueTrue, ValueFalse,
     macro (left, right, target) bineq left, right, target end,
     macro (left, right, target) bdnequn left, right, target end)
 
-pyCompareJumpOp(py_jlt, OpPyJlt,
+pyCompareJumpOp(py_jlt, OpPyJlt, constexpr Python::Special::Lt, constexpr Python::Special::Gt, ValueTrue, ValueFalse,
     macro (left, right, target) bilt left, right, target end,
     macro (left, right, target) bdlt left, right, target end)
 
-pyCompareJumpOp(py_jle, OpPyJle,
+pyCompareJumpOp(py_jle, OpPyJle, constexpr Python::Special::Le, constexpr Python::Special::Ge, ValueTrue, ValueFalse,
     macro (left, right, target) bilteq left, right, target end,
     macro (left, right, target) bdlteq left, right, target end)
 
-pyCompareJumpOp(py_jgt, OpPyJgt,
+pyCompareJumpOp(py_jgt, OpPyJgt, constexpr Python::Special::Gt, constexpr Python::Special::Lt, ValueTrue, ValueFalse,
     macro (left, right, target) bigt left, right, target end,
     macro (left, right, target) bdgt left, right, target end)
 
-pyCompareJumpOp(py_jge, OpPyJge,
+pyCompareJumpOp(py_jge, OpPyJge, constexpr Python::Special::Ge, constexpr Python::Special::Le, ValueTrue, ValueFalse,
     macro (left, right, target) bigteq left, right, target end,
     macro (left, right, target) bdgteq left, right, target end)
 
 # These jump if the comparison is false, as it is for all but != when an operand is a NaN.
-pyCompareJumpOp(py_jneq, OpPyJneq,
+pyCompareJumpOp(py_jneq, OpPyJneq, constexpr Python::Special::Eq, constexpr Python::Special::Eq, ValueFalse, ValueTrue,
     macro (left, right, target) bineq left, right, target end,
     macro (left, right, target) bdnequn left, right, target end)
 
-pyCompareJumpOp(py_jnne, OpPyJnne,
+pyCompareJumpOp(py_jnne, OpPyJnne, constexpr Python::Special::Ne, constexpr Python::Special::Ne, ValueFalse, ValueTrue,
     macro (left, right, target) bieq left, right, target end,
     macro (left, right, target) bdeq left, right, target end)
 
-pyCompareJumpOp(py_jnlt, OpPyJnlt,
+pyCompareJumpOp(py_jnlt, OpPyJnlt, constexpr Python::Special::Lt, constexpr Python::Special::Gt, ValueFalse, ValueTrue,
     macro (left, right, target) bigteq left, right, target end,
     macro (left, right, target) bdgtequn left, right, target end)
 
-pyCompareJumpOp(py_jnle, OpPyJnle,
+pyCompareJumpOp(py_jnle, OpPyJnle, constexpr Python::Special::Le, constexpr Python::Special::Ge, ValueFalse, ValueTrue,
     macro (left, right, target) bigt left, right, target end,
     macro (left, right, target) bdgtun left, right, target end)
 
-pyCompareJumpOp(py_jngt, OpPyJngt,
+pyCompareJumpOp(py_jngt, OpPyJngt, constexpr Python::Special::Gt, constexpr Python::Special::Lt, ValueFalse, ValueTrue,
     macro (left, right, target) bilteq left, right, target end,
     macro (left, right, target) bdltequn left, right, target end)
 
-pyCompareJumpOp(py_jnge, OpPyJnge,
+pyCompareJumpOp(py_jnge, OpPyJnge, constexpr Python::Special::Ge, constexpr Python::Special::Le, ValueFalse, ValueTrue,
     macro (left, right, target) bilt left, right, target end,
     macro (left, right, target) bdltun left, right, target end)
 

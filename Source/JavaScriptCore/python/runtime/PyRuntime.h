@@ -470,6 +470,7 @@ public:
     PyGenerator* runningGenerator() const { return m_runningGenerator; }
     void setRunningGenerator(PyGenerator* generator) { m_runningGenerator = generator; }
     static constexpr ptrdiff_t offsetOfRunningGenerator() { return OBJECT_OFFSETOF(Runtime, m_runningGenerator); }
+    static constexpr ptrdiff_t offsetOfNotImplemented() { return OBJECT_OFFSETOF(Runtime, m_notImplemented); }
 
     // ---- Threads (PyThreads.h) ----
 

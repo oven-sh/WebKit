@@ -190,6 +190,11 @@ public:
         return takeVersion();
     }
     static constexpr ptrdiff_t offsetOfVersion() { return OBJECT_OFFSETOF(PyType, m_version); }
+    // For the interpreter: what lookup(special) finds, if the state is not 0, and whether that is a function written in Python.
+    static constexpr ptrdiff_t offsetOfSpecials() { return OBJECT_OFFSETOF(PyType, m_specials); }
+    static constexpr ptrdiff_t offsetOfSpecialStates() { return OBJECT_OFFSETOF(PyType, m_specialStates); }
+    static constexpr uint8_t specialIsOfNoParticularKind = 1;
+    static constexpr uint8_t specialIsFunction = 2;
 
     // Of an instance without attributes, for a type whose instances are PyInstances.
     Structure* instanceStructure(VM& vm)
@@ -261,7 +266,8 @@ private:
     bool m_isBeingToldOfChange { false };
     bool m_hasInstancesAmongAttributes { false };
     Construction m_construction { Construction::Unknown };
-    enum class SpecialState : uint8_t { Unknown, Known, NativeTakingNone, NativeTakingOne, NativeTakingTwo };
+    enum class SpecialState : uint8_t { Unknown, Known, Function, NativeTakingNone, NativeTakingOne, NativeTakingTwo };
+    static_assert(static_cast<uint8_t>(SpecialState::Known) == specialIsOfNoParticularKind && static_cast<uint8_t>(SpecialState::Function) == specialIsFunction);
     std::array<SpecialState, numberOfSpecials> m_specialStates { };
     std::array<WriteBarrier<Unknown>, numberOfSpecials> m_specials;
     std::array<LookupCacheEntry, lookupCacheSize> m_lookupCache;
