@@ -100,11 +100,11 @@ namespace JSC { namespace LLInt {
 #ifndef NDEBUG
 #define LLINT_SET_PC_FOR_STUBS() do { \
         codeBlock->bytecodeOffset(pc); \
-        callFrame->setCurrentVPC(pc); \
+        setCurrentVPC(callFrame, codeBlock, pc); \
     } while (false)
 #else
 #define LLINT_SET_PC_FOR_STUBS() do { \
-        callFrame->setCurrentVPC(pc); \
+        setCurrentVPC(callFrame, codeBlock, pc); \
     } while (false)
 #endif
 
@@ -2589,7 +2589,7 @@ static inline UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* p
 
     calleeFrame->setCallerFrame(callFrame);
     calleeFrame->uncheckedR(VirtualRegister(CallFrameSlot::callee)) = calleeAsValue;
-    callFrame->setCurrentVPC(pc);
+    setCurrentVPC(callFrame, codeBlock, pc);
 
     metadata.m_callLinkInfo.updateMaxArgumentCountIncludingThisForVarargs(argumentCountIncludingThis);
 
@@ -2630,7 +2630,7 @@ static inline UGPRPair commonCallDirectEval(CallFrame* callFrame, const JSInstru
     calleeFrame->uncheckedR(VirtualRegister(CallFrameSlot::callee)) = calleeAsValue;
     calleeFrame->setReturnPC(returnPoint.code().taggedPtr());
     calleeFrame->setCodeBlock(nullptr);
-    callFrame->setCurrentVPC(pc);
+    setCurrentVPC(callFrame, codeBlock, pc);
     
     JSScope* callerScopeChain = uncheckedDowncast<JSScope>(getOperand(callFrame, bytecode.m_scope));
     JSValue thisValue = getOperand(callFrame, bytecode.m_thisValue);

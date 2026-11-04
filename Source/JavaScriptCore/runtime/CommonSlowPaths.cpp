@@ -30,6 +30,7 @@
 #include "ArrayPrototypeInlines.h"
 #include "BytecodeStructs.h"
 #include "ClonedArguments.h"
+#include "CodeBlockInlines.h"
 #include "CommonSlowPathsInlines.h"
 #include "DefinePropertyAttributes.h"
 #include "DirectArguments.h"
@@ -82,11 +83,11 @@ namespace JSC {
 #ifndef NDEBUG
 #define SET_PC_FOR_STUBS() do { \
         codeBlock->bytecodeOffset(pc); \
-        callFrame->setCurrentVPC(pc); \
+        setCurrentVPC(callFrame, codeBlock, pc); \
     } while (false)
 #else
 #define SET_PC_FOR_STUBS() do { \
-        callFrame->setCurrentVPC(pc); \
+        setCurrentVPC(callFrame, codeBlock, pc); \
     } while (false)
 #endif
 

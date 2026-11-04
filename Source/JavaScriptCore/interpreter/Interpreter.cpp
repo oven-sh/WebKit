@@ -1158,12 +1158,14 @@ ALWAYS_INLINE static HandlerInfo* findExceptionHandler(StackVisitor& visitor, Co
     ASSERT(!visitor->isInlinedDFGFrame());
 #endif
 
-    CallFrame* callFrame = visitor->callFrame();
     unsigned exceptionHandlerIndex;
     if (JSC::JITCode::isOptimizingJIT(codeBlock->jitType()))
-        exceptionHandlerIndex = callFrame->callSiteIndex().bits();
-    else
-        exceptionHandlerIndex = callFrame->bytecodeIndex().offset();
+        exceptionHandlerIndex = visitor->callFrame()->callSiteIndex().bits();
+    else {
+        // (The visitor has asked the frame.)
+        ASSERT(visitor->bytecodeIndex() == visitor->callFrame()->bytecodeIndex());
+        exceptionHandlerIndex = visitor->bytecodeIndex().offset();
+    }
 
     return codeBlock->handlerForIndex(exceptionHandlerIndex, requiredHandler);
 }
@@ -1324,10 +1326,7 @@ public:
                 m_catchableFromWasm = error->isCatchableFromWasm();
             else
                 m_catchableFromWasm = true;
-
-            // https://webassembly.github.io/exception-handling/js-api/#create-a-host-function
-            if (!m_wasmTag && !vm.hasCompiledCode())
-                m_wasmTag = &Wasm::Tag::jsExceptionTag();
+            // (Where there is no tag, a frame of Wasm that has handlers takes the one for what JS throws. Most throws meet none.)
         }
     }
 #else

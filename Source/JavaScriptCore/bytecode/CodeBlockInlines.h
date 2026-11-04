@@ -35,6 +35,15 @@ namespace JSC {
 
 #define CODEBLOCK_MAGIC 0xc0deb10c
 
+// CallFrame::setCurrentVPC() for whoever has the frame's code block at hand, as every slow path of the interpreter has. That one is a call, and
+// asks the unlinked code block where the instructions begin; the code block has it, for the interpreter.
+ALWAYS_INLINE void setCurrentVPC(CallFrame* callFrame, CodeBlock* codeBlock, const JSInstruction* pc)
+{
+    ASSERT(callFrame->codeBlock() == codeBlock);
+    callFrame->setCallSiteIndex(CallSiteIndex(BytecodeIndex(static_cast<uint32_t>(std::bit_cast<const uint8_t*>(pc) - static_cast<const uint8_t*>(codeBlock->instructionsRawPointer())))));
+    ASSERT(callFrame->currentVPC() == pc);
+}
+
 template<typename Functor>
 void CodeBlock::forEachValueProfile(NOESCAPE const Functor& func)
 {
