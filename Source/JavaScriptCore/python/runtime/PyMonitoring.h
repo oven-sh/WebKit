@@ -106,11 +106,15 @@ public:
         bool isPatched { false };
         unsigned next { 0 }; // The offset of the instruction that follows.
         unsigned target { 0 }; // A jump, or a branch: where it goes.
-        unsigned shownTarget { 0 }; // A branch: where it is said to go.
+        unsigned shownTarget { 0 }; // A branch: where it is said to go. A call: what comes after it.
         unsigned source { 0 }; // asyncForEndsMark: where the branch is said to be.
         // Whether the first of the lines is news depends on where the frame comes from: see findPoints().
         bool firstLineIsInDoubt { false };
         bool firstLineFollowsCatch { false }; // It is news unless the exception was raised on that line.
+        // A call after which another statement begins. In CPython something is still to be done with the result, on the line of the call: it
+        // is stored or dropped. Here the call has done that. Whoever is told of instructions is told of one more when the call is
+        // over: that is where breakpoint() stops.
+        bool isLastOfStatement { false };
         unsigned firstLineStart { 0 };
         unsigned lineStartCount { 0 };
         // A jump, or a branch: the line that begins where it goes, if it has something to say about that: see findPoints().

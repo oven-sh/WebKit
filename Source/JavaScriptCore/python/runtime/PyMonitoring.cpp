@@ -413,6 +413,8 @@ void CodeMonitor::findPoints(bool everyInstruction)
         bool isResumedAt { false };
         bool isHiddenJump { false };
         uint8_t asyncForMark { 0 };
+        bool beginsStatement { false };
+        unsigned lastJumpForwardFrom { 0 }; // The offset of the last of the jumps and branches before it that go to it.
         bool firstLineFollowsCatch { false };
         bool fallsThrough { true };
         unsigned sharedLineStart { noLineStart };
@@ -455,6 +457,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
                 item.exitLine = mark.kind() == PythonMark::Line ? lineOfMarkValue(mark.value()) : -1;
                 if (mark.kind() != PythonMark::Line)
                     continue;
+                item.beginsStatement |= isStatementStart(mark.value());
                 bool isFirst = !lineMarkCount;
                 unsigned offset = item.offset + lineMarkCount++;
                 if (isSilentLine(mark.value()) || (!isFirst && item.exitLine == before))
@@ -543,6 +546,8 @@ void CodeMonitor::findPoints(bool everyInstruction)
                 return;
             }
             items[it->value].isJumpedTo |= item.opcode != op_py_for_iter;
+            if (relative > 0 && !item.isHiddenJump)
+                items[it->value].lastJumpForwardFrom = std::max(items[it->value].lastJumpForwardFrom, item.offset);
             reach(it->value, item, item.offset >= start && (item.opcode == op_jmp || isPythonBranch(item.opcode)));
         });
     }
@@ -622,8 +627,14 @@ void CodeMonitor::findPoints(bool everyInstruction)
     bool isBeingResumed = false;
     bool isExceptionMatch = false;
     Vector<unsigned, 4> asyncForLoops;
+    unsigned startOfStatement = 0;
+    int lineOfStatement = -1;
     for (auto& item : items) {
         isBeingResumed |= item.isResumedAt;
+        if (item.beginsStatement) {
+            startOfStatement = item.offset;
+            lineOfStatement = item.exitLine;
+        }
         if (item.offset < start || !isReachable.get(&item - items.begin()))
             continue;
 
@@ -633,7 +644,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
         point.next = item.offset + instructions.at(item.offset)->size();
         if (item.offset == start)
             point.kinds |= bit(Event::PyStart);
-        if (everyInstruction)
+        if (everyInstruction && !item.isHiddenJump)
             point.kinds |= bit(Event::Instruction);
 
         // The registers are put back first.
@@ -655,6 +666,22 @@ void CodeMonitor::findPoints(bool everyInstruction)
         case op_call:
         case op_call_varargs:
             point.kinds |= bit(Event::Call);
+            point.shownTarget = point.next;
+            while (true) {
+                auto it = indexOfOffset.find(point.shownTarget);
+                if (it == indexOfOffset.end())
+                    break;
+                const Item& next = items[it->value];
+                if (next.isHiddenJump && next.offset > item.offset) {
+                    point.shownTarget = next.offset + jumpTargetForInstruction<OpJmp>(code, instructions.at(next.offset));
+                    continue;
+                }
+                // What ends a `with` or a handler is on the line where that begins.
+                bool endsBlock = next.lineCount && lines[next.firstLine].line < lineOfStatement;
+                // `a and f()`: what drops the value is where the two ways meet, and is of no line in CPython.
+                point.isLastOfStatement = (next.beginsStatement || endsBlock) && next.lastJumpForwardFrom < startOfStatement;
+                break;
+            }
             break;
         case op_py_prepare_construct:
             point.kinds |= Point::construct;
@@ -1164,6 +1191,11 @@ void Monitoring::setTracesOpcodes(JSGlobalObject* globalObject, PyFrame* frame, 
         return;
     monitor->setLocalEvents(traceTool, wanted);
     monitor->sleepAndWake();
+    // The frame may be that of a caller.
+    if (!enable || !frame->callFrame() || !monitor->isAwake())
+        return;
+    if (auto* point = monitor->pointAt(frame->bytecodeOffset()); point && point->isLastOfStatement)
+        frame->callWithResultToTake = point->offset;
 }
 
 // Something else is about to run than what a tool called: another thread, or what sys.call_tracing() was given.
@@ -1291,6 +1323,11 @@ static Monitoring::Shown whatToShow(CallFrame* callFrame, CodeMonitor& monitor, 
             if (PyFrame* frame = frameObjectIfAny(callFrame))
                 return { frame->raisedOnLine, frame->raisedAtOffset };
         }
+        return { };
+    case Event::Instruction:
+        // Point::isLastOfStatement: the frame has gone on.
+        if (callFrame->bytecodeIndex().offset() != offset)
+            return { monitor.lineAt(offset), static_cast<int>(offset) };
         return { };
     default:
         return { };
@@ -1611,6 +1648,7 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
     unsigned target = point->target;
     unsigned shownTarget = point->shownTarget;
     unsigned source = point->source;
+    bool isLastOfStatement = point->isLastOfStatement;
     Outcome runIt { pc, opcode };
     static constexpr Outcome threw { nullptr, 0 };
 
@@ -1639,6 +1677,16 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
     Outcome elsewhere;
     bool comesFromSameLine = m_comesFromSameLine.callFrame == callFrame && m_comesFromSameLine.offset == offset;
     m_comesFromSameLine = { };
+    if (kinds & bit(Event::Instruction)) {
+        PyFrame* frame = frameObjectIfThereIsOne(callFrame);
+        if (auto call = frame ? std::exchange(frame->callWithResultToTake, std::nullopt) : std::nullopt) {
+            auto* pointOfCall = monitor.pointAt(*call);
+            if (pointOfCall && pointOfCall->shownTarget == offset) {
+                if (failed(scope, fire(globalObject, callFrame, monitor, *call, Event::Instruction, monitor.tools(Event::Instruction) & ~pointOfCall->disabledTools[Event::Instruction])))
+                    return threw;
+            }
+        }
+    }
     // What a jump, or a branch that is taken, has to say about the line that begins at its target. False: an exception, or the frame
     // has been sent elsewhere.
     auto tellOfLineAt = [&](unsigned target, Outcome& outcome) {
@@ -1668,7 +1716,9 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
         PyFrame* frame = frameObjectIfAny(callFrame);
         if (frame && frame->jumpedTo && std::exchange(frame->jumpsToStart, false))
             frame->jumpedTo = std::nullopt;
-        else if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::PyStart, wanted(Event::PyStart)))) {
+        else if (frame && frame->jumpedTo == offset) {
+            // To the first line of the body: the call does not start again.
+        } else if (failed(scope, fire(globalObject, callFrame, monitor, offset, Event::PyStart, wanted(Event::PyStart)))) {
             // The call has not begun: no `try` of its own catches this. The unwinder takes a frame at offset 0 for one that
             // op_py_bind_args has not counted in yet.
             setCurrentOffset(0);
@@ -1734,6 +1784,8 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
 
     case op_call:
     case op_call_varargs: {
+        if (kinds & bit(Event::Instruction) && isLastOfStatement && wanted(Event::Instruction))
+            frameObjectOf(globalObject, callFrame)->callWithResultToTake = offset;
         uint8_t tools = wanted(Event::Call);
         if (!tools)
             return runIt;

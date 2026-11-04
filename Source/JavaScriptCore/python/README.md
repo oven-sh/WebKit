@@ -660,6 +660,11 @@ adds for itself. An `async for` loop has no instruction that branches: two `op_n
 **Generator expressions.** `all()`, `any()`, `tuple()`, `list()` and `set()` of a generator expression are compiled as in CPython: if the name is bound to the builtin, the code goes through the generator itself
 (`Unit::callOnGeneratorExpression()`). No call is told of, the loop is, and `all()` and `any()` close the generator they leave early, there and then.
 
+**Instructions.** `INSTRUCTION` events, and the `opcode` events of a frame with `f_trace_opcodes`, are told of JSC's instructions, the hidden jumps left out. There are fewer of them than in
+CPython, where a call is followed by something that drops or stores its result. Here the call does that itself, and nothing of the statement is left. `breakpoint()` counts on there being something: it asks for
+opcodes in the frame of its caller and stops at the first, which is on the line it was written on. So a call after which another statement begins, or the end of a `with` or of a handler (`Point::isLastOfStatement`),
+owes an event: whoever is told of instructions when the call is over, or asks for them while it is under way, is told of one more at the call, on its line, before anything else (`PyFrame::callWithResultToTake`).
+
 **Offsets.** What a program is given for a place in the code (`f_lasti`, `tb_lasti`, `co_lines()`, `co_positions()`, `co_branches()`, the arguments of callbacks) is twice the offset
 in JSC's instructions (`shownOffset()`): in CPython code is made of units of two bytes, and `traceback.py` and `dis` count on it. `co_code` is an outline in those
 units: a `NOP` for each byte, `RESUME` before the program's own code, which is how `pdb` finds the first line of a function, and CPython's instructions for what decides where the code goes on,

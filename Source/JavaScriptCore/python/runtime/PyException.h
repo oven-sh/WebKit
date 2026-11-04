@@ -136,6 +136,8 @@ public:
     std::optional<unsigned> jumpTarget;
     std::optional<unsigned> jumpedTo;
     bool jumpsToStart { false }; // To the line of `def`, which is before the first line of the body.
+    // The offset of a call in progress after which an instruction is to be told of: see CodeMonitor::Point::isLastOfStatement.
+    std::optional<unsigned> callWithResultToTake;
 
 private:
     PyFrame(VM&, Structure*, PyType*);
