@@ -171,20 +171,41 @@ bool Unit::tryConstantValue(Expr* node, JSValue& result)
 // To CPython's compiler.
 bool Unit::areConstants(Seq<Expr*> nodes)
 {
-    if (!isSafeToRecurse())
-        return false;
-    for (Expr* node : nodes) {
-        JSValue value;
-        if (tryConstantValue(node, value) || valueCPythonsCompilerWorksOut(node))
-            continue;
-        auto* tuple = node->tryAs<Tuple>();
-        if (!tuple || tuple->elts.size() > maxItemsCPythonHasOnItsStack || !areConstants(tuple->elts))
-            return false;
-    }
-    return true;
+    return !!tupleOfConstants(nodes);
 }
 
-// CPython's compiler makes one constant of a list or a set of constants that is only iterated over or searched, however short.
+// Null: they are not all constants to CPython's compiler.
+PyTuple* Unit::tupleOfConstants(Seq<Expr*> nodes)
+{
+    if (!isSafeToRecurse())
+        return nullptr;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
+    MarkedArgumentBuffer values;
+    for (Expr* node : nodes) {
+        JSValue value;
+        if (!tryConstantValue(node, value))
+            value = valueCPythonsCompilerWorksOut(node);
+        if (!value) {
+            auto* tuple = node->tryAs<Tuple>();
+            if (!tuple || tuple->ctx != ExprContext::Load || tuple->elts.size() > maxItemsCPythonHasOnItsStack)
+                return nullptr;
+            value = tupleOfConstants(tuple->elts);
+            if (!value)
+                return nullptr;
+        }
+        values.append(value);
+    }
+    // As in constantValue().
+    if (scope.exception() || values.hasOverflowed())
+        return runtime().emptyTuple();
+    PyTuple* result = PyTuple::create(globalObject(), values.size());
+    for (unsigned i = 0; i < values.size(); ++i)
+        result->initializeAt(vm(), i, values.at(i));
+    return result;
+}
+
+// A list or a set that is only iterated over or searched. As CPython's compiler does, this makes one constant of constants, a tuple or a
+// frozenset, however few, and a tuple of anything else that would be a list.
 RegisterID* Unit::exprToIterateOverOrSearch(Expr* node, RegisterID* dst)
 {
     Seq<Expr*> items;
@@ -192,10 +213,28 @@ RegisterID* Unit::exprToIterateOverOrSearch(Expr* node, RegisterID* dst)
         items = list->elts;
     else if (auto* set = node->tryAs<Set>())
         items = set->elts;
-    if (node->range.lineno == node->range.endLineno || m_sameLineDepth || items.isEmpty() || items.size() > maxItemsCPythonHasOnItsStack || !areConstants(items))
+    if (items.isEmpty())
         return expr(node, dst);
-    line(node->range);
-    SameLine sameLine(*this);
+    if (PyTuple* tuple = tupleOfConstants(items)) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
+        JSValue value = tuple;
+        if (node->is<Set>()) {
+            PySet* set = PySet::createFrozen(globalObject());
+            for (unsigned i = 0; set && !scope.exception() && i < tuple->length(); ++i)
+                set->add(globalObject(), tuple->at(i));
+            if (scope.exception())
+                return expr(node, dst); // It fails again when the code is run.
+            value = set;
+        }
+        line(node->range);
+        noteFoldedConstant(node, value);
+        return load(dst, value);
+    }
+    bool hasStar = false;
+    for (Expr* item : items)
+        hasStar |= item->is<Starred>();
+    if (node->is<List>() && !hasStar && items.size() <= maxItemsCPythonHasOnItsStack)
+        return sequence(SequenceKind::Tuple, items, dst, node->range);
     return expr(node, dst);
 }
 
@@ -254,16 +293,13 @@ std::optional<bool> Unit::constantTruth(Expr* node)
     return std::nullopt;
 }
 
-// What CPython's compiler makes of operations on constants. It then leaves one instruction, of the line the expression begins on,
-// which is all this is for. Empty: it leaves them alone, because one of them fails or has a large result (fold_const_binop() and
+// What CPython's compiler makes of operations on constants. Empty: it leaves them alone, because one of them fails or has a large result (fold_const_binop() and
 // safe_multiply() and the like, in its flowgraph.c).
 JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
     if (scope.exception()) [[unlikely]]
         return { };
-    static constexpr uint64_t maxIntBits = 128;
-    static constexpr uint64_t maxStrSize = 4096;
 
     Vector<BinOp*, 8> operations;
     while (auto* operation = node->tryAs<BinOp>()) {
@@ -292,6 +328,17 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
         JSValue right = isSafeToRecurse() ? valueCPythonsCompilerWorksOut(operation->right) : JSValue();
         if (!right)
             return { };
+        value = valueCPythonsCompilerWorksOut(operation->op, value, right);
+    }
+    return value;
+}
+
+JSValue Unit::valueCPythonsCompilerWorksOut(Operator op, JSValue value, JSValue right)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
+    static constexpr uint64_t maxIntBits = 128;
+    static constexpr uint64_t maxStrSize = 4096;
+    {
         bool areInts = isInt(value) && isInt(right);
         auto sizeOf = [&](JSValue sequence) -> std::optional<uint64_t> {
             if (isStr(sequence))
@@ -300,7 +347,7 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
                 return bytes->length();
             return std::nullopt;
         };
-        switch (operation->op) {
+        switch (op) {
         case Operator::MatMult:
             return { };
         case Operator::Mult:
@@ -339,7 +386,16 @@ JSValue Unit::valueCPythonsCompilerWorksOut(Expr* node)
         default:
             break;
         }
-        value = finish(binaryOperation(globalObject(), static_cast<BinaryOperator>(operation->op), value, right));
+    }
+    // (A tree that a program made may have tuples for constants, for which CPython has other limits.)
+    if (scope.exception() || PyTuple::is(value) || PyTuple::is(right)) {
+        scope.clearException();
+        return { };
+    }
+    value = binaryOperation(globalObject(), static_cast<BinaryOperator>(op), value, right);
+    if (scope.exception()) {
+        scope.clearException();
+        return { };
     }
     return value;
 }
@@ -521,16 +577,30 @@ RegisterID* Unit::chain(Expr* node, RegisterID* dst)
         chain.append(node);
         node = first;
     }
-    if (node->is<BinOp>()) {
-        line(node->range);
-        noteFoldedConstant(node, constant);
+    // Operations on constants are worked out now, from the left, for as long as they are on constants: 60 * 60 * x.
+    Expr* workedOut = node->is<BinOp>() ? node : nullptr;
+    if (!workedOut)
+        constant = !chain.isEmpty() && chain.last()->is<BinOp>() && (node->is<Constant>() || node->is<UnaryOp>()) ? valueCPythonsCompilerWorksOut(node) : JSValue();
+    while (constant && !chain.isEmpty() && chain.last()->is<BinOp>()) {
+        auto* operation = chain.last()->as<BinOp>();
+        JSValue right = valueCPythonsCompilerWorksOut(operation->right);
+        JSValue value = right ? valueCPythonsCompilerWorksOut(operation->op, constant, right) : JSValue();
+        if (!value)
+            break;
+        constant = value;
+        workedOut = operation;
+        chain.removeLast();
     }
-    if (chain.isEmpty())
-        return load(dst, constant);
+    if (workedOut) {
+        line(workedOut->range);
+        noteFoldedConstant(workedOut, constant);
+        if (chain.isEmpty())
+            return load(dst, constant);
+    }
 
     // The number of what `result` holds, if the next in the chain is its one use and a subscript.
     unsigned temporary = chain.last()->is<Subscript>() ? beginTemporary(node) : 0;
-    Reg result = node->is<BinOp>() ? load(nullptr, constant) : expr(node);
+    Reg result = workedOut ? load(nullptr, constant) : expr(node);
     while (!chain.isEmpty()) {
         node = chain.takeLast();
         RegisterID* finalDst = chain.isEmpty() ? dst : nullptr;
@@ -569,7 +639,9 @@ RegisterID* Unit::chain(Expr* node, RegisterID* dst)
 RegisterID* Unit::unaryOp(UnaryOp* node, RegisterID* dst)
 {
     JSValue value;
-    if (tryConstantValue(node, value)) {
+    if (!tryConstantValue(node, value))
+        value = valueCPythonsCompilerWorksOut(node);
+    if (value) {
         line(node->range);
         noteFoldedConstant(node, value);
         return load(dst, value);
@@ -721,7 +793,10 @@ RegisterID* Unit::compare(Compare* node, RegisterID* dst)
     unsigned last = node->ops.size() - 1;
     Reg left = expr(node->left);
     if (!last) {
-        Reg right = isNoneLiteral(node->comparators[0]) ? Reg(constant(jsUndefined())) : Reg(exprToIterateOverOrSearch(node->comparators[0]));
+        bool searches = node->ops[0] == AST::CompareKind::In || node->ops[0] == AST::CompareKind::NotIn;
+        Reg right = isNoneLiteral(node->comparators[0]) ? Reg(constant(jsUndefined())) : Reg(searches ? exprToIterateOverOrSearch(node->comparators[0]) : expr(node->comparators[0]));
+        if (isNoneLiteral(node->comparators[0]))
+            line(node->comparators[0]->range);
         loc(node->range);
         return emitCompare(g.finalDestination(dst, left.get()), left.get(), right.get(), node->ops[0], node->comparators[0]);
     }
@@ -730,7 +805,9 @@ RegisterID* Unit::compare(Compare* node, RegisterID* dst)
     Reg result = g.tempDestination(dst);
     Ref<Label> end = g.newLabel();
     for (unsigned i = 0; i <= last; ++i) {
-        Reg right = expr(node->comparators[i]);
+        // (What is compared with the next is not only searched.)
+        bool searches = i == last && (node->ops[i] == AST::CompareKind::In || node->ops[i] == AST::CompareKind::NotIn);
+        Reg right = searches ? exprToIterateOverOrSearch(node->comparators[i]) : expr(node->comparators[i]);
         loc(node->range);
         emitCompare(result.get(), left.get(), right.get(), node->ops[i], node->comparators[i]);
         if (i < last)
@@ -835,16 +912,15 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
             Label& destination = isLast ? target : isFalse.get();
             bool jumpOn = isLast ? condition : false;
             if (isNoneLiteral(rightExpr) && (op == AST::CompareKind::Is || op == AST::CompareKind::IsNot)) {
+                // The line `None` is written on is one the frame has been on.
+                line(rightExpr->range);
                 loc(compare->range);
-                g.emitPyIsNone(result.get(), left.get());
-                if ((op == AST::CompareKind::Is) == jumpOn)
-                    g.emitPyJumpIfTrue(result.get(), destination);
-                else
-                    g.emitPyJumpIfFalse(result.get(), destination);
+                g.emitPyJumpIfNone(left.get(), destination, (op == AST::CompareKind::Is) == jumpOn);
                 left = constant(jsUndefined());
                 continue;
             }
-            Reg right = expr(rightExpr);
+            bool searches = isLast && (op == AST::CompareKind::In || op == AST::CompareKind::NotIn);
+            Reg right = searches ? exprToIterateOverOrSearch(rightExpr) : expr(rightExpr);
             loc(compare->range);
             if (yieldsBoolean(op)) {
                 g.emitPyCompare(result.get(), left.get(), right.get(), static_cast<Python::CompareOperator>(op));
@@ -1097,9 +1173,19 @@ RegisterID* Unit::sequence(SequenceKind kind, Seq<Expr*> items, RegisterID* dst,
     // CPython's compiler makes one constant of three constants or more, and the list or the set from that, all on the first line.
     // It makes constants of more tuples than tryConstantValue() does.
     std::optional<SameLine> sameLine;
-    if ((kind == SequenceKind::Tuple || count >= 3) && count <= maxItemsCPythonHasOnItsStack && total == count && range.lineno != range.endLineno && !m_sameLineDepth && areConstants(items)) {
-        line(range);
-        sameLine.emplace(*this);
+    if ((kind == SequenceKind::Tuple || count >= 3) && count <= maxItemsCPythonHasOnItsStack && total == count) {
+        PyTuple* tuple = kind == SequenceKind::Tuple || (range.lineno != range.endLineno && !m_sameLineDepth) ? tupleOfConstants(items) : nullptr;
+        if (tuple && kind == SequenceKind::Tuple) {
+            line(range);
+            for (Expr* item : items)
+                noteWhatConstantIsMadeOf(item);
+            noteConstantMade(tuple);
+            return load(dst, tuple);
+        }
+        if (tuple) {
+            line(range);
+            sameLine.emplace(*this);
+        }
     }
 
     Reg result = g.tempDestination(dst);
@@ -1458,11 +1544,7 @@ RegisterID* Unit::emitMethodCall(RegisterID* dst, RegisterID* callee, RegisterID
 
     Ref<Label> notMethod = g.newLabel();
     Ref<Label> done = g.newLabel();
-    {
-        Reg isEmpty = newTemporary();
-        g.emitIsEmpty(isEmpty.get(), self);
-        g.emitJumpIfTrue(isEmpty.get(), notMethod.get());
-    }
+    g.emitPyJumpIfEmpty(self, notMethod.get());
     loc(range);
     g.emitPyCall(dst, callee, arguments, count + 1);
     hiddenJump(done.get());
@@ -1635,11 +1717,7 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
 
         Ref<Label> notMethod = g.newLabel();
         Ref<Label> done = g.newLabel();
-        {
-            Reg isEmpty = newTemporary();
-            g.emitIsEmpty(isEmpty.get(), arguments.argumentRegister(0));
-            g.emitJumpIfTrue(isEmpty.get(), notMethod.get());
-        }
+        g.emitPyJumpIfEmpty(arguments.argumentRegister(0), notMethod.get());
         loc(range);
         markCall(false);
         g.emitPyCall(result.get(), callee.get(), arguments, count + 1);
@@ -1676,11 +1754,7 @@ RegisterID* Unit::call(Call* node, RegisterID* dst)
         Ref<Label> done = g.newLabel();
         loc(node->range);
         g.emitPyPrepareConstruct(init.get(), self.get(), callee.get());
-        {
-            Reg isEmpty = newTemporary();
-            g.emitIsEmpty(isEmpty.get(), self.get());
-            g.emitJumpIfTrue(isEmpty.get(), notSuchAClass.get());
-        }
+        g.emitPyJumpIfEmpty(self.get(), notSuchAClass.get());
         for (unsigned i = count; i--;)
             g.move(arguments.argumentRegister(i + 1), arguments.argumentRegister(i));
         g.move(arguments.argumentRegister(0), self.get());
@@ -2109,6 +2183,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
         Reg result = g.tempDestination(dst);
         // The first iterable is evaluated where the comprehension is.
         Reg iterator = newTemporary();
+        // (CPython has something between this and the call of iter(), so it is a list if it is written as one.)
         expr(outermost->iter, iterator.get());
 
         VariableMap& variables = *m_variables.get(scope);
@@ -2195,7 +2270,7 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
     Reg function = newTemporary();
     loc(range);
     emitMakeFunction(function.get(), *index, scope, { });
-    Reg iterable = expr(outermost->iter);
+    Reg iterable = outermost->isAsync ? expr(outermost->iter) : exprToIterateOverOrSearch(outermost->iter);
     emitSimpleCall(result.get(), function.get(), { iterable.get() }, range);
     if (scope->isCoroutine && !isGenerator)
         emitAwait(result.get(), result.get(), 0);

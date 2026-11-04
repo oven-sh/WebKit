@@ -1344,7 +1344,7 @@ static JSValue codeGetCellVars(JSGlobalObject* globalObject, JSValue self)
     return namesOfVariables(globalObject, PyCode::from(self)->codeInfo(), [](auto& variable) { return variable.kind == CodeInfo::VariableKind::Cell; });
 }
 
-// The constants, as CPython would have them, or nearly: it works out more from constants than is done here. It leaves out
+// The constants, as CPython would have them, or nearly: it makes a list or a set of three constants or more from one constant. It leaves out
 // those its instructions do not need: what went into making another constant, and what there are instructions to load
 // without one. But never the first, where the docstring would be.
 // The items of co_consts.
@@ -1992,7 +1992,7 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
     static constexpr uint8_t nop = 25;
     static constexpr uint8_t resume = 128;
     static constexpr uint8_t extendedArg = 67;
-    static constexpr uint8_t jumpForward = 76, jumpBackward = 74, jumpBackwardNoInterrupt = 75, popJumpIfTrue = 102, popJumpIfFalse = 99, forIter = 68;
+    static constexpr uint8_t jumpForward = 76, jumpBackward = 74, jumpBackwardNoInterrupt = 75, popJumpIfTrue = 102, popJumpIfFalse = 99, popJumpIfNone = 100, popJumpIfNotNone = 101, forIter = 68;
     static constexpr uint8_t returnValue = 33, yieldValue = 119, raiseVarargs = 103, reraise = 104;
     static constexpr uint8_t loadAttr = 79, loadGlobal = 91, loadName = 92, storeAttr = 109, storeGlobal = 114, storeName = 115;
     static constexpr uint8_t importFrom = 71, importName = 72, loadCommonConstant = 80, loadConst = 81, loadSmallInt = 93;
@@ -2111,6 +2111,10 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
             });
             return result;
         };
+        auto isHidden = [&] {
+            auto [firstMark, lastMark] = std::ranges::equal_range(marks, first, { }, &PythonMark::offset);
+            return std::ranges::any_of(firstMark, lastMark, [](auto& mark) { return mark.kind() == PythonMark::NoLine && mark.value() == hiddenJumpMark; });
+        };
         auto putJump = [&](unsigned offset, unsigned room, auto... rest) {
             if (!putJumpAt(offset, room, rest...) && offset != first)
                 putJumpAt(first, room + offset - first, rest...);
@@ -2119,15 +2123,17 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
         case op_jmp:
             putJump(offset, size, jumpForward, 0, jumpBackwardNoInterrupt, 0, target());
             break;
-        case op_py_jmp_back: {
-            auto [firstMark, lastMark] = std::ranges::equal_range(marks, first, { }, &PythonMark::offset);
-            bool isHidden = std::ranges::any_of(firstMark, lastMark, [](auto& mark) { return mark.kind() == PythonMark::NoLine && mark.value() == hiddenJumpMark; });
-            if (isHidden)
+        case op_py_jmp_back:
+            if (isHidden())
                 putJump(offset, size, jumpForward, 0, jumpBackwardNoInterrupt, 0, target());
             else
                 putJump(offset, size, jumpForward, 0, jumpBackward, 1, target());
             break;
-        }
+        case op_jundefined_or_null:
+        case op_jnundefined_or_null:
+            if (!isHidden())
+                putJump(offset, size, instruction->opcodeID() == op_jundefined_or_null ? popJumpIfNone : popJumpIfNotNone, 1, 0, 0, target());
+            break;
         case op_py_jtrue:
         case op_py_jeq:
         case op_py_jne:

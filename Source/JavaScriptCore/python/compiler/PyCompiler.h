@@ -14,6 +14,7 @@
 namespace JSC {
 namespace Python {
 
+class PyTuple;
 class Runtime;
 class Unit;
 

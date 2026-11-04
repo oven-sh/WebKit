@@ -118,6 +118,12 @@ unpacking, cells, the binding of arguments when they are simply the parameters, 
 
 `object.name(...)` makes no bound method: `op_py_get_method` gives the function and the object, which is passed as the first argument.
 `with` finds `__enter__` and `__exit__` with the same instruction (a number stands for the name: they are looked for in the class alone).
+Whether there is an object to pass is one `op_jeq_ptr` against the empty value.
+
+**Constants.** What CPython's compiler works out, this one does, with the same limits (`Unit::valueCPythonsCompilerWorksOut()`): operations on constants, from the left for as long as they are on
+constants (`60 * 60 * x`); tuples of constants; a list or a set of constants that is only searched or iterated over is a constant tuple or frozenset, and a list of anything else that is only
+searched or iterated over is built as a tuple (`Unit::exprToIterateOverOrSearch()`). `co_consts` shows what CPython's shows, except that a list or set display of three constants or more, which
+CPython makes from one constant, is made from its items here.
 
 `Name(...)`, where the name looks like that of a class, is compiled so that, if it is a class with `object.__new__` and an `__init__`
 in Python, the instance is made and `__init__` called without leaving the interpreter (`op_py_prepare_construct`).
@@ -819,8 +825,8 @@ standard library, the frame object remembers the line it was last on, and all pl
 an exception handler, which CPython moves out of the way; between the two ways a method call is compiled. A jump to a jump is told of as one, and a branch to a jump that has no line of its own
 is said to go where the jump goes, in events and in `co_branches()`. A `for` loop that goes on, and an
 `except E:` that matches, go on "in their own last byte", which is of their line, where CPython has an instruction to store the item or drop the exception.
-Every test of the program's is a branch of Python's (`op_py_jtrue` and the like), also where the value is known to be a bool (`x is None`, `x in y`, patterns). The branches of JS are those the compiler
-adds for itself. An `async for` loop has no instruction that branches: two `op_nop`, marked, stand for the two ways. Code that cannot be reached has no branches.
+Every test of the program's is a branch of Python's (`op_py_jtrue` and the like), also where the value is known to be a bool (`x in y`, patterns). `x is None` is JS's `op_jundefined_or_null`, which counts as one of them.
+The other branches of JS are those the compiler adds for itself, and so is one of these if it is marked (`hiddenJumpMark`). An `async for` loop has no instruction that branches: two `op_nop`, marked, stand for the two ways. Code that cannot be reached has no branches.
 
 **Generator expressions.** `all()`, `any()`, `tuple()`, `list()` and `set()` of a generator expression are compiled as in CPython: if the name is bound to the builtin, the code goes through the generator itself
 (`Unit::callOnGeneratorExpression()`). No call is told of, the loop is, and `all()` and `any()` close the generator they leave early, there and then.

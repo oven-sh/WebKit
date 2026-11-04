@@ -413,6 +413,8 @@ namespace JSC {
         RegisterID* emitPyIsNone(RegisterID* dst, RegisterID* value);
         RegisterID* emitPyBooleanNot(RegisterID* dst, RegisterID* boolean);
         void emitPyJumpIfTrue(RegisterID* condition, Label& target);
+        void emitPyJumpIfNone(RegisterID* value, Label& target, bool jumpIf = true);
+        void emitPyJumpIfEmpty(RegisterID* value, Label& target);
         void emitPyJumpIfFalse(RegisterID* condition, Label& target);
         RegisterID* emitPyGetIter(RegisterID* dst, RegisterID* iterable);
         void emitPyForIter(RegisterID* dst, RegisterID* iterator, Label& exhausted);

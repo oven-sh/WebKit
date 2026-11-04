@@ -331,12 +331,17 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_load_name)
     BEGIN();
     auto bytecode = pc->as<OpPyLoadName>();
     JSString* name = asString(GET_C(bytecode.m_name).jsValue());
-    JSValue value = getOptionalItem(globalObject, GET(bytecode.m_locals).jsValue(), name);
+    JSValue locals = GET(bytecode.m_locals).jsValue();
+    PyFunction* function = calleeOf(callFrame);
+    // In the body of a module the locals are the globals, which are asked once.
+    if (locals == JSValue(function->globals()) && !function->hasUnusualNamespaces())
+        RETURN(loadGlobal(globalObject, function, name, GlobalLookup::Name));
+    JSValue value = getOptionalItem(globalObject, locals, name);
     CHECK_EXCEPTION();
     if (!value)
-        value = loadGlobal(globalObject, calleeOf(callFrame), name, GlobalLookup::Name);
+        value = loadGlobal(globalObject, function, name, GlobalLookup::Name);
     else if (PyRecord* lazy = asLazyImport(globalObject, value)) [[unlikely]]
-        value = reifyLazyImport(globalObject, lazy, name, GET(bytecode.m_locals).jsValue());
+        value = reifyLazyImport(globalObject, lazy, name, locals);
     RETURN(value);
 }
 
@@ -880,7 +885,7 @@ namespace {
 class RuntimeArguments {
 public:
     RuntimeArguments(CallFrame* callFrame, VirtualRegister first, unsigned count)
-        : m_first(count ? &callFrame->uncheckedR(first) : nullptr)
+        : m_first(count ? &callFrame->r(first) : nullptr) // A single one may be a constant.
         , m_count(count)
     {
     }

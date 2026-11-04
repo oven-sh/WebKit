@@ -260,6 +260,8 @@ private:
     // For co_consts.
     void noteConstant(JSValue, bool isUsed = true);
     void noteFoldedConstant(AST::Expr*, JSValue);
+    void noteWhatConstantIsMadeOf(AST::Expr*);
+    void noteConstantMade(JSValue);
     void noteCode(unsigned functionIndex);
     void finishConstants();
     RegisterID* stringConstant(const String&);
@@ -269,6 +271,8 @@ private:
     Vector<CodeInfo::Constant> m_foldedConstants;
     bool tryConstantValue(Expr*, JSValue&);
     JSValue valueCPythonsCompilerWorksOut(Expr*);
+    JSValue valueCPythonsCompilerWorksOut(AST::Operator, JSValue left, JSValue right);
+    PyTuple* tupleOfConstants(Seq<Expr*>);
     bool areConstants(Seq<Expr*>);
     RegisterID* exprToIterateOverOrSearch(Expr*, RegisterID* dst = nullptr);
     // They cannot be reached: see statements().

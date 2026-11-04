@@ -4560,7 +4560,8 @@ llintOpWithReturn(op_py_runtime, OpPyRuntime, macro (size, get, dispatch, return
     getu(size, OpPyRuntime, m_function, t0)
     bineq t0, constexpr Python::RuntimeFunction::LoadClosure, .slow
     get(m_argv, t0)
-    loadi LowWordOffset[cfr, t0, 8], t1
+    loadConstant(size, t0, t1)
+    zxi2q t1, t1
     loadp Callee[cfr], t0
     loadp (constexpr (Python::PyFunction::offsetOfClosure()))[t0], t0
     loadq (constexpr (Python::PyTuple::offsetOfItems()))[t0, t1, 8], t0

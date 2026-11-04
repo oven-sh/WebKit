@@ -90,11 +90,10 @@ void Unit::patternValue(MatchValue* node, RegisterID* subject, PatternContext& c
 
 void Unit::patternSingleton(MatchSingleton* node, RegisterID* subject, PatternContext& context)
 {
-    Reg result = newTemporary();
     if (node->value.kind == ConstantValue::Kind::None)
-        g.emitPyIsNone(result.get(), subject);
-    else
-        g.emitPyCompare(result.get(), subject, constant(constantValue(node->value)), Python::CompareOperator::Is);
+        return g.emitPyJumpIfNone(subject, *context.fail, false);
+    Reg result = newTemporary();
+    g.emitPyCompare(result.get(), subject, constant(constantValue(node->value)), Python::CompareOperator::Is);
     g.emitPyJumpIfFalse(result.get(), *context.fail);
 }
 
@@ -227,8 +226,7 @@ void Unit::patternMapping(MatchMapping* node, RegisterID* subject, PatternContex
 
     Reg values = newTemporary();
     callRuntime(values.get(), RuntimeFunction::MatchKeys, { subject, keys.get() });
-    g.emitPyIsNone(scratch.get(), values.get());
-    g.emitPyJumpIfTrue(scratch.get(), *context.fail);
+    g.emitPyJumpIfNone(values.get(), *context.fail);
 
     if (size) {
         Arguments items(*this, size);
@@ -275,11 +273,7 @@ void Unit::patternClass(MatchClass* node, RegisterID* subject, PatternContext& c
         loc(node->range);
         callRuntime(attributes.get(), RuntimeFunction::MatchClass, arguments);
     }
-    {
-        Reg isNone = newTemporary();
-        g.emitPyIsNone(isNone.get(), attributes.get());
-        g.emitPyJumpIfTrue(isNone.get(), *context.fail);
-    }
+    g.emitPyJumpIfNone(attributes.get(), *context.fail);
 
     unsigned total = positionalCount + keywordCount;
     if (!total)

@@ -1426,6 +1426,22 @@ void BytecodeGenerator::emitPyJumpIfFalse(RegisterID* condition, Label& target)
     OpPyJfalse::emit(this, condition, bindLabel(target));
 }
 
+// `if x is None`, `if x is not None`: a branch of the program's, like those above.
+void BytecodeGenerator::emitPyJumpIfNone(RegisterID* value, Label& target, bool jumpIf)
+{
+    if (jumpIf)
+        OpJundefinedOrNull::emit(this, value, bindLabel(target));
+    else
+        OpJnundefinedOrNull::emit(this, value, bindLabel(target));
+}
+
+// A test the compiler makes for itself: no branch of the program's.
+void BytecodeGenerator::emitPyJumpIfEmpty(RegisterID* value, Label& target)
+{
+    ASSERT(!value->virtualRegister().isConstant());
+    OpJeqPtr::emit(this, value, pythonConstant(JSValue()), bindLabel(target));
+}
+
 RegisterID* BytecodeGenerator::emitPyGetIter(RegisterID* dst, RegisterID* iterable)
 {
     OpPyGetIter::emit(this, dst, iterable);

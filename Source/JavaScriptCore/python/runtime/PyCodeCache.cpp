@@ -141,9 +141,13 @@ JSValue constantFromParts(JSGlobalObject* globalObject, const ConstantParts& par
         return names;
     }
     case Kind::FrozenSet: {
+        // Constants are hashed and compared without running any code.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         PySet* set = PySet::createFrozen(globalObject);
-        for (JSValue item : parts.items)
+        for (JSValue item : parts.items) {
             set->add(globalObject, item);
+            scope.assertNoException();
+        }
         return set;
     }
     case Kind::Slice:

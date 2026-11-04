@@ -642,19 +642,43 @@ void Unit::noteFoldedConstant(Expr* node, JSValue value)
         noteConstant(value);
         return;
     }
-    // What it was made from is not needed any more, and only counts if it is the first constant of all, which stays.
-    while (m_info.constants.isEmpty()) {
-        if (auto* literal = node->tryAs<Constant>())
-            noteConstant(constantValue(literal->value), false);
-        else if (auto* unary = node->tryAs<UnaryOp>())
-            node = unary->operand;
-        else if (auto* binary = node->tryAs<BinOp>())
-            node = binary->left;
-        else if (auto* tuple = node->tryAs<Tuple>(); tuple && !tuple->elts.isEmpty())
-            node = tuple->elts[0];
-        else
-            break;
+    noteWhatConstantIsMadeOf(node);
+    noteConstantMade(value);
+}
+
+// It is not needed any more. It has its place among the constants all the same, which counts if it is the first of all, which stays, or
+// if something turns out to need it.
+void Unit::noteWhatConstantIsMadeOf(Expr* node)
+{
+    if (!isSafeToRecurse())
+        return;
+    Seq<Expr*> items;
+    if (auto* literal = node->tryAs<Constant>())
+        return noteConstant(constantValue(literal->value), false);
+    if (auto* unary = node->tryAs<UnaryOp>())
+        return noteWhatConstantIsMadeOf(unary->operand);
+    if (node->is<BinOp>()) {
+        // 1 + 1 + 1... nests to the left, as deep as it is long.
+        Vector<BinOp*, 8> operations;
+        for (; node->is<BinOp>(); node = node->as<BinOp>()->left)
+            operations.append(node->as<BinOp>());
+        noteWhatConstantIsMadeOf(node);
+        while (!operations.isEmpty())
+            noteWhatConstantIsMadeOf(operations.takeLast()->right);
+        return;
     }
+    if (auto* tuple = node->tryAs<Tuple>())
+        items = tuple->elts;
+    else if (auto* list = node->tryAs<List>())
+        items = list->elts;
+    else if (auto* set = node->tryAs<Set>())
+        items = set->elts;
+    for (Expr* item : items)
+        noteWhatConstantIsMadeOf(item);
+}
+
+void Unit::noteConstantMade(JSValue value)
+{
     m_foldedConstants.append({ constant(value)->virtualRegister(), 0, true });
 }
 
@@ -707,8 +731,8 @@ RegisterID* Unit::callRuntime(RegisterID* dst, RuntimeFunction function)
 
 RegisterID* Unit::callRuntime(RegisterID* dst, RuntimeFunction function, std::initializer_list<RegisterID*> operands)
 {
-    // One operand is a run of registers wherever it is, unless it is a constant.
-    if (operands.size() == 1 && !(*operands.begin())->virtualRegister().isConstant())
+    // One operand is a run of registers wherever it is, among the constants too.
+    if (operands.size() == 1)
         return g.emitPyRuntime(dst, function, *operands.begin(), 1);
     Vector<Reg, 4> held;
     for (RegisterID* operand : operands)
@@ -886,17 +910,15 @@ void Unit::emitPrologue()
         case CodeInfo::VariableKind::Cell:
             if (variable.isHidden)
                 g.move(reg, emptyValue()); // Made each time the comprehension is evaluated.
-            else
-                callRuntime(reg, RuntimeFunction::MakeCell, { emptyValue() });
+            else {
+                size_t parameter = m_cellParameters.findIf([&](auto& parameter) { return *parameter.name == variable.name; });
+                callRuntime(reg, RuntimeFunction::MakeCell, { parameter != notFound ? m_cellParameters[parameter].reg : emptyValue() });
+            }
             break;
         case CodeInfo::VariableKind::Free:
             callRuntime(reg, RuntimeFunction::LoadClosure, { constant(jsNumber(closureIndex++)) });
             break;
         }
-    }
-    for (auto& parameter : m_cellParameters) {
-        Variable& variable = m_variables.get(m_scope)->find(parameter.name->impl())->value;
-        g.emitPyStoreCell(variable.reg, parameter.reg);
     }
 
     // From here on their order is what locals(), f_locals and co_cellvars show. In CPython that is: the parameters; the other
@@ -1878,9 +1900,8 @@ void Unit::leaveAsyncFor(RegisterID* iterator, RegisterID* exception)
     Ref<Label> done = g.newLabel();
     Reg closing = newTemporary();
     callRuntime(closing.get(), RuntimeFunction::LeaveAsyncFor, { iterator, exception ? exception : emptyValue() });
-    Reg isNone = newTemporary();
-    g.emitPyIsNone(isNone.get(), closing.get());
-    g.emitJumpIfTrue(isNone.get(), done.get());
+    g.addPythonMark(PythonMark::NoLine, hiddenJumpMark);
+    g.emitPyJumpIfNone(closing.get(), done.get());
     emitAwait(closing.get(), closing.get(), 0);
     g.emitLabel(done.get());
 }
@@ -2155,9 +2176,7 @@ void Unit::tryStarExcept(AST::Try* node, Last isLast)
             loc(handler->range);
             callRuntime(match.get(), RuntimeFunction::MatchExceptionGroup, { rest.get(), type.get() });
             callRuntime(rest.get(), RuntimeFunction::TakeExceptionGroupRest);
-            Reg isNone = newTemporary();
-            g.emitPyIsNone(isNone.get(), match.get());
-            g.emitPyJumpIfTrue(isNone.get(), next.get());
+            g.emitPyJumpIfNone(match.get(), next.get());
         } else
             g.move(match.get(), rest.get());
 
@@ -2199,11 +2218,7 @@ void Unit::tryStarExcept(AST::Try* node, Last isLast)
     endTry(cleanup);
 
     restoreHandledException(previous.get());
-    {
-        Reg isNone = newTemporary();
-        g.emitPyIsNone(isNone.get(), toRaise.get());
-        g.emitPyJumpIfTrue(isNone.get(), end.get());
-    }
+    g.emitPyJumpIfNone(toRaise.get(), end.get());
     callRuntimeForEffect(RuntimeFunction::ReraiseGroup, { toRaise.get() });
 
     Reg thrown = beginHandler(cleanup);

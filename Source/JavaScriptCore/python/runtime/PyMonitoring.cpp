@@ -365,6 +365,8 @@ static bool isPythonBranch(OpcodeID opcode)
     case op_py_jngt:
     case op_py_jnge:
     case op_py_for_iter:
+    case op_jundefined_or_null: // `is None`, unless the compiler says that it is a test of its own (hiddenJumpMark).
+    case op_jnundefined_or_null:
         return true;
     default:
         return false;
@@ -568,7 +570,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
             items[it->value].isJumpedTo |= item.opcode != op_py_for_iter;
             if (relative > 0 && !item.isHiddenJump)
                 items[it->value].lastJumpForwardFrom = std::max(items[it->value].lastJumpForwardFrom, item.offset);
-            reach(it->value, item, item.offset >= start && (isJump(item.opcode) || isPythonBranch(item.opcode)));
+            reach(it->value, item, item.offset >= start && (isJump(item.opcode) || (isPythonBranch(item.opcode) && !item.isHiddenJump)));
         });
     }
     // In CPython a line begins where the instruction before, as they are laid out, is of another line, or where a jump goes. Where
@@ -718,7 +720,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
             break;
         default:
             // Whether it was resumed to go on, or to raise something, is not a branch of the program's.
-            if (isPythonBranch(item.opcode) && !isResumption) {
+            if (isPythonBranch(item.opcode) && !item.isHiddenJump && !isResumption) {
                 point.kinds |= bit(Event::BranchLeft) | bit(Event::BranchRight);
                 if (item.opcode == op_py_for_iter)
                     point.kinds |= Point::forLoop | Point::goesOnInItself;
@@ -2014,7 +2016,11 @@ NEVER_INLINE Monitoring::Outcome Monitoring::handle(JSGlobalObject* globalObject
             destination = item ? next() : at(target);
             if (stopIteration && failed(scope, fire(globalObject, callFrame, monitor, offset, Event::Raise, monitor.tools(Event::Raise), stopIteration)))
                 return threw;
-        } else {
+        } else if (opcode == op_jundefined_or_null)
+            destination = callFrame->r(pc->as<OpJundefinedOrNull>().m_value).jsValue().isUndefinedOrNull() ? at(target) : next();
+        else if (opcode == op_jnundefined_or_null)
+            destination = callFrame->r(pc->as<OpJnundefinedOrNull>().m_value).jsValue().isUndefinedOrNull() ? next() : at(target);
+        else {
             const void* result;
             const void* signal;
             decodeResult(slowPathOfBranch(opcode)(callFrame, pc), result, signal);
