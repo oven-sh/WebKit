@@ -353,7 +353,47 @@ Structure* PyType::createInstanceStructure(VM& vm)
         if (PyTuple* slots = type->slots())
             slotCount += slots->length();
     }
-    unsigned capacity = has(TypeFlag::HasDict) ? PyInstance::inlineCapacity + slotCount : std::max(PyInstance::inlineCapacity, PyInstance::numberOfFields + slotCount);
+    unsigned capacity = std::max(PyInstance::inlineCapacity, PyInstance::numberOfFields + slotCount);
+    if (has(TypeFlag::HasDict)) {
+        // So has what the methods of the class and of its bases assign to `self`, which the compiler has listed. (An object of JS is given
+        // room for what its constructor assigns to `this`: StaticPropertyAnalyzer, ObjectAllocationProfile.) Not what a slot, a property
+        // or another data descriptor takes. Instances are made where no code of the program may run, so this is not lookup().
+        UncheckedKeyHashSet<StringImpl*> names;
+        Runtime& rt = Runtime::from(globalObject);
+        auto find = [](PyType* type, JSString* name) {
+            JSValue found;
+            PyTuple* mro = type->mro();
+            for (unsigned i = 0; !found && mro && i < mro->length(); ++i)
+                found = uncheckedDowncast<PyType>(mro->at(i).asCell())->dict()->get(name);
+            return found;
+        };
+        auto isTakenByDescriptor = [&](JSString* name) {
+            JSValue found = find(this, name);
+            if (!isPyObject(found))
+                return false;
+            PyType* itsType = uncheckedDowncast<PyObject>(found.asCell())->type();
+            return find(itsType, rt.name(Special::Set)) || find(itsType, rt.name(Special::Delete));
+        };
+        PyTuple* mro = this->mro(); // Null: it is being worked out.
+        for (unsigned i = 0; mro && i < mro->length(); ++i) {
+            PyTuple* listed = PyTuple::tryFrom(uncheckedDowncast<PyType>(mro->at(i).asCell())->dict()->get(rt.names.dStaticAttributes()));
+            for (unsigned j = 0; listed && j < listed->length(); ++j) {
+                JSValue name = listed->at(j);
+                if (name.isString() && !asString(name)->isRope() && !names.contains(asString(name)->tryGetValueImpl()) && !isTakenByDescriptor(asString(name)))
+                    names.add(asString(name)->tryGetValueImpl());
+            }
+        }
+        capacity = PyInstance::numberOfFields + slotCount + std::max<unsigned>(PyInstance::inlineCapacity - PyInstance::numberOfFields, names.size());
+        // Cells come in certain sizes. What is left over in one is room as well, as in ObjectAllocationProfile::initializeProfile(). The
+        // largest size is one that can be used to the full.
+        auto roomInCell = [](unsigned capacity) -> unsigned {
+            return (MarkedSpace::optimalSizeFor(PyInstance::allocationSize(capacity)) - PyInstance::allocationSize(0)) / sizeof(WriteBarrierBase<Unknown>);
+        };
+        capacity = std::min(capacity, JSFinalObject::maxInlineCapacity);
+        while (roomInCell(capacity) > JSFinalObject::maxInlineCapacity)
+            --capacity;
+        capacity = roomInCell(capacity);
+    }
     Structure* structure = createStructureOfInstances(vm, globalObject, Runtime::from(globalObject), std::min(capacity, JSFinalObject::maxInlineCapacity));
     m_instanceStructure.set(vm, this, structure);
     return structure;

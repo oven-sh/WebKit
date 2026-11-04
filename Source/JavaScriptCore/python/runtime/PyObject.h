@@ -137,7 +137,7 @@ public:
 
     static constexpr unsigned numberOfFields = 2;
     static constexpr unsigned inlineCapacity = numberOfFields + 6;
-    static constexpr size_t allocationSize() { return sizeof(JSObjectWithButterfly) + inlineCapacity * sizeof(WriteBarrierBase<Unknown>); }
+    static constexpr size_t allocationSize(unsigned inlineCapacity) { return sizeof(JSObjectWithButterfly) + inlineCapacity * sizeof(WriteBarrierBase<Unknown>); }
     // For PyType::instanceStructure().
     static Structure* createStructure(VM&, JSGlobalObject*, Runtime&);
 

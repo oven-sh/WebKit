@@ -57,7 +57,7 @@ Data costs about what it costs in CPython, and small numbers cost nothing. Code 
 - **`PyFunction`** is 224 bytes (18 fields), CPython's 168. Most fields are empty in most functions.
 - **`a + b`** of short strs is a rope that keeps both halves until somebody looks at the text.
 - **A generator expression** makes two functions and four strs each time it is evaluated.
-- **An object without attributes** has room for six: the room is the same for every class. `object()` itself is a cell of 32 bytes.
+- **An object without attributes** has room for six, which is the least that any class gives. `object()` itself is a cell of 32 bytes.
 - **An asyncio task** is as large as in CPython, but takes nearly twice that in the process: cells of many sizes, each size in blocks of
   its own, none of them full.
 - **`obj.__dict__`**, once asked for, is a dict beside the object for good: 304 bytes against 192. CPython's shares its keys with the class.
@@ -170,6 +170,9 @@ working whatever becomes of the file.
 4. **What `gc.collect()` needs**: 64 bytes for each dead cell. Counting the dead first (the mark bits say how many) and reserving the vectors would
    leave no old buffers behind.
 5. **Ropes**: `a + b` of short strs should be flat.
-6. **Room for attributes**: six in every instance, whatever the class. Learnt per class, an object without attributes would take 32 bytes, not 80.
+6. **Room for attributes**: at least six in every instance, more where the methods of the class assign more to `self` (README, "Inline caches"). The
+   list could also say that there are fewer: an object without attributes would take 32 bytes, not 80. Cells come in sizes: 80 bytes
+   for up to 6 names, 112 for 10, 160 for 16, 224 for 24, 320 for 36, 432 for 50 and more. Names that are assigned only on paths rarely taken
+   count like the others, and an object keeps its size when `obj.__dict__` has moved its attributes out.
 7. **Generator expressions** make their two functions anew each time.
 8. **The compiled standard library** could be in the executable, where all processes would share it and it would need no cache directory.

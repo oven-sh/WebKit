@@ -117,7 +117,11 @@ unpacking, cells, the binding of arguments when they are simply the parameters, 
 - _Globals and builtins._ A dict that code has cached from has a number that no other dict, and no other set of keys of the
   same dict, ever has (`PyDict::watchedVersion`). The instruction remembers the number and the index of the entry.
 - _Attributes_ (`AttributeCache` in `runtime/PyAbstract.h`). The attributes of an instance are properties, so its Structure tells which it
-  has and where. A type has a number too, new whenever it or one of its bases changes (`PyType::version`). An instruction
+  has and where. The object itself has room for six, or for as many as the methods of its class and of the bases assign to `self`
+  (`__static_attributes__`, which the compiler lists; at most 50 with the slots, rounded up to what the cell has anyway): `PyType::createInstanceStructure()`. JSC sizes what `new F()` makes
+  by the assignments to `this` it sees (`StaticPropertyAnalyzer`, `ObjectAllocationProfile`). It is a size, read when the first instance is
+  made, and names that a slot, a property or another data descriptor takes do not count: a wrong one costs memory (room for names that an instance does not set: `MEMORY.md`) or time (storage on the side, which the
+  instruction does not allocate), nothing else. CPython gives every such instance room for 30. A type has a number too, new whenever it or one of its bases changes (`PyType::version`). An instruction
   remembers Structure, version and offset, or the value found in the class, or the method to call. `obj.__dict__` moves the
   attributes into a real dict, for good, and gives the object a Structure that says so: of such an object nothing is remembered that
   depends on what it holds itself, so neither its attributes nor the methods of its class. What only reads the attributes
