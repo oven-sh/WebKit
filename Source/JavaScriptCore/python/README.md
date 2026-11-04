@@ -139,6 +139,8 @@ unpacking, cells, the binding of arguments when they are simply the parameters, 
     call than its 32-bit ID, which the collector does not know.
   - The number of the class is taken after the walk, which is right only because no code has run.
   - What is remembered is checked at each use by the handler; what is not remembered is used at once and dropped.
+  An instance whose Structure has become a dictionary (many attributes deleted) is flattened first, once, as JSC's own slow path does
+  for `get_by_id` (`llint/LLIntSlowPaths.cpp`).
   What is found in the class may also be a `staticmethod` or a `classmethod` (what it wraps is read each time, since `__init__` can
   replace it), the field of a named tuple, or a property (below). The object may be a class itself: then its own number is checked, and that of its class.
   The numbers are finite, so a type takes one only when something is to be remembered about it, and at most 1000, as in CPython:

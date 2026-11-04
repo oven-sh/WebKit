@@ -381,6 +381,12 @@ static ALWAYS_INLINE void remember(Metadata& metadata, const AttributeCache& cac
 template<typename Metadata>
 static ALWAYS_INLINE JSValue findAttribute(JSGlobalObject* globalObject, Metadata& metadata, JSValue base, JSString* name, JSValue* self, PyProperty** property = nullptr)
 {
+    // As JS's own instruction does (llint_slow_path_get_by_id): an object that has lost attributes, or has very many, is given a Structure
+    // that can be gone by again, once.
+    if (base.isCell() && base.asCell()->type() == PyInstanceType) {
+        if (Structure* structure = base.asCell()->structure(); structure->isDictionary() && !structure->hasBeenFlattenedBefore()) [[unlikely]]
+            structure->flattenDictionaryStructure(getVM(globalObject), asObject(base));
+    }
     AttributeCache cache;
     switch (describeAttribute(globalObject, base, name, !!self, cache)) {
     case AttributeDescription::None:
