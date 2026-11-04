@@ -33,9 +33,9 @@ namespace Python {
 // What JS expects of an object that can do a thing is there when, and only when, the Python object can do it and has no
 // attribute of that name itself: [Symbol.iterator] (__iter__, or __getitem__ of what is not a mapping; a dict gives [key, value]
 // pairs, as a Map does), next() and return() (__next__),
-// [Symbol.asyncIterator] (__aiter__), then() (__await__), length (__len__), toJSON() (numbers, str, and what has a length and
-// can be iterated over but is no mapping: an array), constructor (the type), and message and cause of an exception. (Its name
-// and stack are always those of JS: the name of the type, and the traceback.)
+// [Symbol.asyncIterator] (__aiter__), then() (__await__), length (__len__), toJSON() (numbers, str, isoformat() of a date, time or
+// datetime, and what has a length and can be iterated over but is no mapping: an array), constructor (the type), and message and
+// cause of an exception. (Its name and stack are always those of JS: the name of the type, and the traceback.)
 // The prototype all Python objects share has toString() (str), valueOf(), [Symbol.toPrimitive] and, for console.log(),
 // [Symbol.for("nodejs.util.inspect.custom")] (repr); that of exceptions inherits from Error.prototype.
 //

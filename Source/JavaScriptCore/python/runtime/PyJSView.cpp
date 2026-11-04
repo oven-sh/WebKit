@@ -19,6 +19,7 @@
 #include "PropertyNameArray.h"
 #include "ProxyObject.h"
 #include "PyAbstract.h"
+#include "PyDateTime.h"
 #include "PyErrors.h"
 #include "PyException.h"
 #include "PyFunction.h"
@@ -82,6 +83,12 @@ static JSValue jsViewNumberOf(JSValue value)
 static bool jsViewIsArrayLike(JSObject* object, PyType* type)
 {
     return jsViewHas(type, Special::Len) && jsViewIsIterable(object, type) && !jsViewIsMapping(object, type);
+}
+
+// A date, a time or a datetime is to JSON what a Date is: its text by ISO 8601.
+static bool jsViewIsDateOrTime(JSValue object)
+{
+    return DateTime::PyDate::is(object) || DateTime::PyTimeOfDay::is(object);
 }
 
 static ALWAYS_INLINE JSString* jsViewName(VM& vm, PropertyName propertyName)
@@ -200,7 +207,7 @@ static bool jsViewAdaptorProperty(JSGlobalObject* globalObject, JSObject* object
         return jsViewFound(object, slot, jsNumber(static_cast<double>(size)), hidden);
     }
     if (propertyName == names.toJSON) {
-        bool hasOne = jsViewNumberOf(object) || PyStr::is(object) || jsViewIsArrayLike(object, type);
+        bool hasOne = jsViewNumberOf(object) || PyStr::is(object) || jsViewIsDateOrTime(object) || jsViewIsArrayLike(object, type);
         return hasOne && jsViewFound(object, slot, rt.jsViewObject(JSViewObject::ToJSON), hidden);
     }
     if (!isPyObject(object)) {
@@ -626,6 +633,11 @@ JSC_DEFINE_HOST_FUNCTION(jsViewToJSON, (JSGlobalObject* globalObject, CallFrame*
         return JSValue::encode(number);
     if (PyStr::is(self))
         return JSValue::encode(strValue(self));
+    if (jsViewIsDateOrTime(self)) {
+        JSValue text = callMethod(globalObject, self, internString(vm, "isoformat"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(valueForJS(text));
+    }
     JSArray* array = newList(globalObject);
     forEach(globalObject, self, [&](JSValue item) {
         listAppend(globalObject, array, valueForJS(item));
