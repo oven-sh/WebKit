@@ -75,6 +75,10 @@ public:
     // While the thread does not hold the GIL: where it left its frames, and what it took out of the runtimes.
     JSLock::ParkedThread* parked { nullptr };
     bool losesNothingIfInterrupted { false }; // While it is parked. See AllowThreads::WhenInterrupted.
+    // It is in so many of them, one inside the other. See IdleWait.
+    unsigned idleWaits { 0 };
+    // Rather than works. (In any other system call, or in foreign code, it may be hard at work: compressing, hashing.)
+    bool isWaiting() const { return idleWaits || (parked && losesNothingIfInterrupted); }
     struct SavedStates* saved { nullptr };
     // Whether it is in a queue of Threads::waitUntil().
     bool isQueued { false };
@@ -212,6 +216,9 @@ public:
     // references. Wherever it waits, it is woken, makes them (checkSignals()) and goes on waiting for the time it has left. If it only waits
     // for the GIL, it finds out when it has it. With the GIL, or for the collector while whoever holds it is stopped.
     void wakeToMakeCalls(uint32_t number);
+    // The thread of that number, which may be the one that runs, owes finalizers or callbacks of weak references. Under the same
+    // conditions. See collectWhileIdle().
+    void didQueueCallsThatMayUncoverMore(uint32_t number);
 
     // _imp.acquire_lock()
     ThreadLock importLock;
@@ -271,7 +278,7 @@ private:
     void release(ThreadState&, JSLock::ParkedThread&, SavedStates&);
     void acquire(ThreadState&, JSLock::ParkedThread&, SavedStates&);
     bool shouldCollectWhileIdle(JSGlobalObject*, bool isLastResort);
-    // True: it found something to finalize, for whichever thread. Then the next may find what only that referred to.
+    // True: a thread that waits has something to finalize. Then the next may find what only that referred to, and comes soon.
     bool collectWhileIdle(JSGlobalObject*, bool isLastResort);
     void takeGIL(ThreadState&);
     void dropGIL(ThreadState&, bool isYielding);
@@ -290,7 +297,8 @@ private:
     uint64_t m_bytesAllocatedAtIdleCollection { 0 };
     int64_t m_timeForIdleCollectionWithoutCause { 0 };
     int64_t m_durationOfLastIdleCollection { 0 };
-    bool m_lastIdleCollectionFoundCalls { false };
+    bool m_nextIdleCollectionMayFindMore { false };
+    bool m_threadThatWaitsOwesCalls { false };
     bool m_didTellMainThreadOfFinalizers { false };
     bool m_mainThreadTellsHostOfDirectory { false };
     Vector<Vector<char>> m_variablesToTellHostOf;
@@ -360,6 +368,8 @@ private:
 // A thread that waits collects (Threads::collectWhileIdle()), whether it waits for another thread (Threads::waitUntil()) or for the
 // kernel. So a system call that may take long is made piece by piece: sleep, wait until a descriptor is ready. With the GIL.
 class IdleWait {
+    WTF_MAKE_NONCOPYABLE(IdleWait);
+    WTF_FORBID_HEAP_ALLOCATION;
 public:
     static constexpr int64_t firstInterval = 50000000;
 
@@ -371,6 +381,7 @@ public:
     // what runs while it waits: handlers of signals, finalizers, the loop of the host. None of these has a frame that would tell
     // it from the function, if it is written in C++.
     IdleWait(JSGlobalObject*, int64_t& deadline, bool isWaitOfCall);
+    ~IdleWait();
     bool continuesWait() const { return m_continuesWait; }
     // For a caller that knows its deadline only after it has made this.
     void setDeadline(int64_t deadline) { m_deadline = deadline; }
@@ -400,6 +411,7 @@ private:
     bool beginsCallAgain(bool collects, bool isLastResort);
 
     JSGlobalObject* m_globalObject;
+    ThreadState& m_thread;
     CallFrame* m_call { nullptr };
     int64_t m_deadline;
     int64_t m_interval { firstInterval };

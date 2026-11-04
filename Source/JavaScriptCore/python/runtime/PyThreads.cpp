@@ -356,6 +356,14 @@ void Threads::wakeToMakeCalls(uint32_t number)
     }
 }
 
+void Threads::didQueueCallsThatMayUncoverMore(uint32_t number)
+{
+    for (auto& thread : m_threads) {
+        if (thread->number() == number && thread->isWaiting())
+            m_threadThatWaitsOwesCalls = true;
+    }
+}
+
 #if !OS(WINDOWS)
 void Threads::interrupt(ThreadState& thread)
 {
@@ -655,9 +663,9 @@ bool Threads::shouldCollectWhileIdle(JSGlobalObject* globalObject, bool isLastRe
     // Such a collection stops every thread, and any number of threads may be idle while one works: all of them together spend
     // at most a twentieth of the time on it. If nothing has been allocated since the last time, there is little to find, but
     // the count moves in steps, and to drop something takes no allocation at all: then a fiftieth. If the last one found something
-    // to finalize, what only that referred to is there to be found as soon as its thread has finalized it: then half.
+    // to finalize for a thread that waits, there may be more: then half.
     int64_t earliest = m_timeForIdleCollectionWithoutCause;
-    if (m_lastIdleCollectionFoundCalls)
+    if (m_nextIdleCollectionMayFindMore)
         earliest -= 49 * m_durationOfLastIdleCollection;
     else if (m_vm.heap.totalBytesAllocated() != m_bytesAllocatedAtIdleCollection)
         earliest -= 30 * m_durationOfLastIdleCollection;
@@ -667,7 +675,10 @@ bool Threads::shouldCollectWhileIdle(JSGlobalObject* globalObject, bool isLastRe
 bool Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
 {
     int64_t start = monotonicNanoseconds();
-    uint64_t callsQueuedBefore = runtime(globalObject).numberOfCallsQueued();
+    ThreadState& thread = current();
+    // (The call whose wait this is may have been left, to begin again afterwards.)
+    ++thread.idleWaits;
+    m_threadThatWaitsOwesCalls = false;
     // What reference counts would have freed would have been finalized by now. Cyclic garbage would not: CPython's collector does not
     // run in a thread that waits, which may well hold a lock that a finalizer wants.
     // It makes the calls that are its own. If nothing else can bring about what it waits for, all.
@@ -676,8 +687,12 @@ bool Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
     int64_t end = monotonicNanoseconds();
     m_durationOfLastIdleCollection = end - start;
     m_timeForIdleCollectionWithoutCause = end + 50 * (end - start);
-    m_lastIdleCollectionFoundCalls = runtime(globalObject).numberOfCallsQueued() != callsQueuedBefore;
-    return m_lastIdleCollectionFoundCalls;
+    --thread.idleWaits;
+    // What only the objects that it found referred to is there to be found as soon as their threads have finalized them. So the
+    // threads that wait look again soon. Not for what a thread that works has left: that one leaves something to finalize all the
+    // time, has to stop for every collection, and collects itself as it allocates.
+    m_nextIdleCollectionMayFindMore = m_threadThatWaitsOwesCalls;
+    return m_nextIdleCollectionMayFindMore;
 }
 
 static bool isOfFunctionThatMayWait(CallFrame* call)
@@ -742,9 +757,11 @@ NEVER_INLINE bool Threads::collectBeforeCallBeginsAgain(JSGlobalObject* globalOb
 
 IdleWait::IdleWait(JSGlobalObject* globalObject, int64_t& deadline, bool isWaitOfCall)
     : m_globalObject(globalObject)
+    , m_thread(runtime(globalObject).threads().current())
 {
+    ++m_thread.idleWaits;
     if (isWaitOfCall) {
-        ThreadState& thread = runtime(globalObject).threads().current();
+        ThreadState& thread = m_thread;
         // What is noted may be left by a call that had no need to wait in the end, and the frame of any later call may be where that
         // one's was. If that is a call of a function that may wait, willCallFunctionThatMayWait() has seen to it.
         CallFrame* call = std::exchange(thread.callThatMayBeginAgain, nullptr);
@@ -762,6 +779,11 @@ IdleWait::IdleWait(JSGlobalObject* globalObject, int64_t& deadline, bool isWaitO
     }
     m_deadline = deadline;
     m_timeToCollect = monotonicNanoseconds() + m_interval;
+}
+
+IdleWait::~IdleWait()
+{
+    --m_thread.idleWaits;
 }
 
 bool IdleWait::beginsCallAgain(bool collects, bool isLastResort)
@@ -787,7 +809,7 @@ bool IdleWait::collect(bool isLastResort)
     Threads& threads = runtime(m_globalObject).threads();
     if (!threads.shouldCollectWhileIdle(m_globalObject, isLastResort)) {
         // Another thread has looked a moment ago, for all that wait.
-        if (threads.m_lastIdleCollectionFoundCalls)
+        if (threads.m_nextIdleCollectionMayFindMore)
             m_interval = firstInterval;
         return true;
     }

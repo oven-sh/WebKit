@@ -484,7 +484,9 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   CPython's collector does not run in a thread that waits either, and such a thread may hold the very lock that a finalizer
   wants (`with lock: time.sleep(1)`). Only the one that would otherwise wait for ever finalizes everything. Such a collection stops every thread, and any number of threads may be idle beside one that works: all of
   them together spend at most a twentieth of the time on it, a fiftieth if nothing seems to have been allocated since the last
-  one (to drop something takes no allocation). And a wait with less left than twice what the last such collection took is not
+  one (to drop something takes no allocation). While such collections find something to finalize, whose thread finalizes it and so
+  uncovers more, the threads that wait look again after 50 ms and may spend half the time, but only if that thread waits too: one
+  that works leaves something to finalize all the time, and has to stop for every collection. And a wait with less left than twice what the last such collection took is not
   made longer by one. That goes for waiting for another thread
   (`Threads::waitUntil`) and for waiting for the kernel, which is done piece by piece (`IdleWait`): `time.sleep`, everything in
   `select` and every socket call that goes through `waitForEvents` (with a timeout, or on the main thread of a host with an event

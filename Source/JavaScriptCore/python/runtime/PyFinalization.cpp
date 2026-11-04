@@ -335,7 +335,6 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
             CallsOwed& owed = callsOwedBy(takerOfPieceWithOldest(areOfSeveralThreads ? order.oldestOfPieceOfCellAskedAbout[i] : FinalizationOrder::none));
             owed.weakRefCallbacks.append(weakRef);
             owed.weakRefCallbacksAreInOrder = false;
-            ++m_numberOfCallsQueued;
         } else
             weakRef->clearCallback();
     }
@@ -357,7 +356,6 @@ bool Runtime::keepUnreachableObjectsToFinalize(SlotVisitor& visitor)
         if (!owed || owed->thread != taker)
             owed = &callsOwedBy(taker);
         owed->finalizers.append(cell);
-        ++m_numberOfCallsQueued;
         entry.cell = nullptr;
         didTakeOffList(cell, true);
     }
@@ -507,7 +505,7 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
     gc.stats[generation].duration += duration;
     if (hasCollectionCallbacks()) {
         m_collectionsToTellOf.append({ generation, duration });
-        didQueueCallsFor(m_currentThread);
+        didQueueCallsFor(m_currentThread, false);
     }
 }
 
@@ -542,7 +540,6 @@ void Runtime::queueWeakRefCallback(PyWeakRef* weakRef)
     CallsOwed& owed = callsOwedBy(m_scopeAskedFor && m_askerMakesAllCalls ? m_currentThread : threadToMakeCallsOf(weakRef->thread()));
     owed.weakRefCallbacks.append(weakRef);
     owed.weakRefCallbacksAreInOrder = false;
-    ++m_numberOfCallsQueued;
     didQueueCallsFor(owed.thread);
 }
 
@@ -702,13 +699,15 @@ static void finalizeObject(JSGlobalObject* globalObject, JSCell* cell)
 }
 
 // The collector's thread may be the one that calls this, while the thread that holds the GIL is stopped.
-void Runtime::didQueueCallsFor(uint32_t thread)
+void Runtime::didQueueCallsFor(uint32_t thread, bool mayUncoverMore)
 {
     if (thread == m_currentThread) {
         m_hasPendingCalls = true;
         noteCallsOwed(m_vm);
     } else
         threads().wakeToMakeCalls(thread);
+    if (mayUncoverMore)
+        threads().didQueueCallsThatMayUncoverMore(thread);
 }
 
 bool Runtime::owesCalls(CallsOf callsOf)

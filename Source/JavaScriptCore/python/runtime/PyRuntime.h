@@ -592,8 +592,6 @@ public:
     // Some of them are finalizers or callbacks of weak references: the next collection may find more than the last.
     bool hasPendingFinalizers(CallsOf = CallsOf::AllThreads);
     bool owesCalls(CallsOf);
-    // Finalizers and callbacks of weak references, ever, for whichever thread.
-    uint64_t numberOfCallsQueued() const { return m_numberOfCallsQueued; }
     // At a safe point. What the calls raise is reported and goes no further. But signals are looked at between the calls, and what
     // a handler raises is thrown: what is left in the queue then is left for the next safe point. So is what a handler raises in the
     // middle of a call, which it ends, unless the program asked for the calls (gc.collect()): it did not make the call, it may be
@@ -616,7 +614,7 @@ public:
     // See writeOutPendingOutput().
     ALWAYS_INLINE bool mayHavePendingOutput() const { return m_mayHavePendingOutput; }
     void setMayHavePendingOutput(bool value) { m_mayHavePendingOutput = value; }
-    void didQueueCallsFor(uint32_t thread);
+    void didQueueCallsFor(uint32_t thread, bool mayUncoverMore = true);
     // When the interpreter exits: whatever is still registered is finalized, reachable or not, but for what the threads hold that
     // are still there.
     void finalizeAllAtExit();
@@ -1020,7 +1018,6 @@ private:
     // The thread if it can still make calls, else the main one.
     uint32_t threadToMakeCallsOf(uint32_t thread);
     uint32_t m_currentThread { 0 };
-    uint64_t m_numberOfCallsQueued { 0 };
     // Those whose finalizer has been called: those that a full collection has found alive since, and the others. Not visited. They were
     // kept by the collection that queued them, so they are old, and a full collection takes out what it finds dead.
     UncheckedKeyHashSet<JSCell*> m_finalized WTF_GUARDED_BY_LOCK(m_finalizationLock);
