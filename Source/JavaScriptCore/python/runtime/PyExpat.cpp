@@ -1725,7 +1725,9 @@ private:
             auto rest = raw.subspan(start);
             static constexpr uint8_t opening[] = { '<', '?', 'x', 'm', 'l' };
             size_t common = std::min(rest.size(), std::size(opening));
-            if (memcmp(rest.data(), opening, common))
+            // <?xml-stylesheet ...?> is a processing instruction like any other.
+            auto isSpaceByte = [](uint8_t byte) { return byte == ' ' || byte == '\t' || byte == '\r' || byte == '\n'; };
+            if (memcmp(rest.data(), opening, common) || (rest.size() > std::size(opening) && !isSpaceByte(rest[std::size(opening)])))
                 m_mayHaveEncodingDeclaration = false;
             else if (!m_isFinal || common == std::size(opening)) {
                 size_t end = notFound;
