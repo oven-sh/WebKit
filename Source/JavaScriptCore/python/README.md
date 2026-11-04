@@ -359,8 +359,10 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   which lets go of what it refers to in CPython's order, depth first. That gives the order of the objects with finalizers,
   and leaves over what reference counts would not have freed: the cycles and what hangs off them.
   - Only those are queued that no other object with a finalizer reaches. The rest wait for the collection that finds those gone, so
-    a finalizer that resurrects its object also keeps what the object refers to from being finalized. A structure more than a few
-    levels deep is finalized in one round, from the top down, instead of a collection per level.
+    a finalizer that resurrects its object also keeps what the object refers to from being finalized. So it goes level by level, each
+    level in the order of reference counts: of `[N('x', N('x1')), N('y', N('y1'))]`, dropped, `y x y1 x1`, where CPython, which knows at
+    once whether `y` has come back, has `y y1 x x1`. A structure more than a few levels deep is finalized in one round, from the top
+    down and depth first, instead of a collection per level.
   - What is in a cycle or hangs off one comes after the rest and is finalized in one go, in the order in which the objects were
     made, whatever refers to what: that is what CPython's collector does with it.
   - A collection that the program waits for (`gc.collect()`, the exit, a thread that is idle: `Runtime::collectAsAskedFor`) looks at
