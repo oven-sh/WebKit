@@ -219,6 +219,8 @@ static NEVER_INLINE void switchToThread(JSGlobalObject* globalObject, PyRecord* 
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
+    // The keys are numbers and the table is small: nothing here fails but for want of memory for a small cell.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto keyOf = [](uint64_t serial) {
         return jsNumber(static_cast<double>(serial));
     };
@@ -231,8 +233,10 @@ static NEVER_INLINE void switchToThread(JSGlobalObject* globalObject, PyRecord* 
             state->set(vm, StateOtherThreads, others);
         }
         others->set(globalObject, keyOf(state->number), PyTuple::create(globalObject, { orNone(loop), orNone(task) }));
+        scope.assertNoException();
     }
     JSValue mine = others ? others->take(globalObject, keyOf(serial)) : JSValue();
+    scope.assertNoException();
     auto valueAt = [&](unsigned index) {
         JSValue value = mine ? PyTuple::from(mine)->at(index) : JSValue();
         return value && !isNone(value) ? value : JSValue();
@@ -254,8 +258,10 @@ static NEVER_INLINE void switchToThread(JSGlobalObject* globalObject, PyRecord* 
             if (!living.contains(static_cast<uint64_t>(key.asNumber())))
                 dead.append(key);
         }
-        for (unsigned i = 0; i < dead.size(); ++i)
+        for (unsigned i = 0; i < dead.size(); ++i) {
             others->remove(globalObject, dead.at(i));
+            scope.assertNoException();
+        }
     }
 }
 
@@ -325,7 +331,7 @@ static void callExceptionHandler(JSGlobalObject* globalObject, PyRecord* state, 
     if (JSValue source = future->get(FutureSourceTraceback))
         context->set(vm, nameIn(state, StateNameSourceTraceback), source);
     JSValue function = getAttr(globalObject, future->get(FutureLoop), nameIn(state, StateNameCallExceptionHandler));
-    if (!function) {
+    if (failed(scope, function)) {
         takePendingException(globalObject);
         return;
     }
@@ -439,9 +445,11 @@ static JSValue getEventLoop(JSGlobalObject* globalObject, PyRecord* state)
 // loop.call_soon(function[, argument], context=context). False: an exception.
 static bool callSoon(JSGlobalObject* globalObject, PyRecord* state, JSValue loop, JSValue function, JSValue argument, JSValue context)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue values[4];
     JSValue method = getMethod(globalObject, loop, nameIn(state, StateNameCallSoon), values[0]);
-    if (!method)
+    if (failed(scope, method))
         return false;
     unsigned count = 1;
     values[count++] = function;
@@ -450,14 +458,15 @@ static bool callSoon(JSGlobalObject* globalObject, PyRecord* state, JSValue loop
     values[count] = context;
     auto* keywords = uncheckedDowncast<PyTuple>(state->get(StateContextKeyword).asCell());
     if (values[0])
-        return !!call(globalObject, method, CallArgs(values, count, keywords));
-    return !!call(globalObject, method, CallArgs(values + 1, count - 1, keywords));
+        RELEASE_AND_RETURN(scope, !!call(globalObject, method, CallArgs(values, count, keywords)));
+    RELEASE_AND_RETURN(scope, !!call(globalObject, method, CallArgs(values + 1, count - 1, keywords)));
 }
 
 // The future is done. False: an exception.
 static bool scheduleCallbacks(JSGlobalObject* globalObject, PyRecord* state, PyRecord* future)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(futureState(future) != StatePending);
     if (isTaskRecord(future))
         unregisterTask(globalObject, future);
@@ -467,7 +476,7 @@ static bool scheduleCallbacks(JSGlobalObject* globalObject, PyRecord* state, PyR
         JSValue context = future->get(FutureContext0);
         future->set(vm, FutureCallback0, { });
         future->set(vm, FutureContext0, { });
-        if (!callSoon(globalObject, state, future->get(FutureLoop), callback, future, context)) {
+        if (failed(scope, callSoon(globalObject, state, future->get(FutureLoop), callback, future, context))) {
             future->set(vm, FutureCallbacks, { });
             return false;
         }
@@ -479,7 +488,7 @@ static bool scheduleCallbacks(JSGlobalObject* globalObject, PyRecord* state, PyR
     JSArray* list = asList(callbacks);
     for (unsigned i = 0; i < listLength(list); ++i) {
         auto* pair = PyTuple::from(listGet(list, i));
-        if (!callSoon(globalObject, state, future->get(FutureLoop), pair->at(0), future, pair->at(1)))
+        if (failed(scope, callSoon(globalObject, state, future->get(FutureLoop), pair->at(0), future, pair->at(1))))
             return false;
     }
     return true;
@@ -748,7 +757,9 @@ static JSValue futureResult(JSGlobalObject* globalObject, JSValue self)
     if (!isAlive(future))
         return raiseInvalidState(globalObject, scope, state, "Future object is not initialized."_s);
     JSValue result;
-    switch (getFutureResult(globalObject, state, future, result)) {
+    Outcome outcome = getFutureResult(globalObject, state, future, result);
+    EXCEPTION_ASSERT(!!scope.exception() == (outcome == Outcome::Raised));
+    switch (outcome) {
     case Outcome::Result:
         return result;
     case Outcome::Exception:
@@ -1068,7 +1079,9 @@ JSValue stepFutureIter(JSGlobalObject* globalObject, JSValue iterator, JSValue& 
         return raiseRuntimeError(globalObject, scope, "await wasn't used with future"_s);
     }
     JSValue value;
-    switch (getFutureResult(globalObject, stateOf(future), future, value)) {
+    Outcome outcome = getFutureResult(globalObject, stateOf(future), future, value);
+    EXCEPTION_ASSERT(!!scope.exception() == (outcome == Outcome::Raised));
+    switch (outcome) {
     case Outcome::Result:
         result = value;
         return { };
@@ -1598,7 +1611,8 @@ static JSValue stepTask(JSGlobalObject* globalObject, PyRecord* state, PyRecord*
         JSValue raised = takePendingException(globalObject);
         if (!raised)
             return { };
-        leaveTask(globalObject, state, loop, task);
+        bool hasLeft = leaveTask(globalObject, state, loop, task);
+        EXCEPTION_ASSERT_UNUSED(hasLeft, !!scope.exception() == !hasLeft);
         scope.release();
         raiseChained(globalObject, raised);
         return { };
@@ -1636,12 +1650,16 @@ static bool startEagerly(JSGlobalObject* globalObject, PyRecord* state, PyRecord
         if (!raised)
             raised = exception;
     };
-    if (!stepTaskEntered(globalObject, state, task, { }))
+    // (What noteFailure() leaves is the end of the program.)
+    if (failed(scope, stepTaskEntered(globalObject, state, task, { })))
         noteFailure();
-    if (!swapCurrentTask(globalObject, state, loop, previous))
+    RETURN_IF_EXCEPTION(scope, false);
+    if (failed(scope, swapCurrentTask(globalObject, state, loop, previous)))
         noteFailure();
+    RETURN_IF_EXCEPTION(scope, false);
     if (failed(scope, exitContext(globalObject, task->get(TaskContext))))
         noteFailure();
+    RETURN_IF_EXCEPTION(scope, false);
     if (futureState(task) != StatePending)
         task->set(vm, TaskCoroutine, { });
     if (!succeeded && raised)
@@ -1831,7 +1849,9 @@ static JSValue taskWakeup(JSGlobalObject* globalObject, JSValue self, JSValue fu
     }
     if (PyRecord* future = asExactFuture(state, futureValue)) [[likely]] {
         JSValue result;
-        switch (getFutureResult(globalObject, state, future, result)) {
+        Outcome outcome = getFutureResult(globalObject, state, future, result);
+        EXCEPTION_ASSERT(!!scope.exception() == (outcome == Outcome::Raised));
+        switch (outcome) {
         case Outcome::Result:
             RELEASE_AND_RETURN(scope, stepTask(globalObject, state, task, { }));
         case Outcome::Exception:

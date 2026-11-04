@@ -78,10 +78,16 @@ static JSValue cellNew(JSGlobalObject* globalObject, JSValue, const CallArgs& ar
 
 static JSValue cellRepr(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = PyCell::from(self)->value();
+    String address = addressForRepr(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!value)
-        return makeStr(globalObject, makeString("<cell at "_s, addressForRepr(globalObject, self), ": empty>"_s));
-    return makeStr(globalObject, makeString("<cell at "_s, addressForRepr(globalObject, self), ": "_s, typeName(globalObject, value), " object at "_s, addressForRepr(globalObject, value), '>'));
+        RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString("<cell at "_s, address, ": empty>"_s)));
+    String addressOfValue = addressForRepr(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString("<cell at "_s, address, ": "_s, typeName(globalObject, value), " object at "_s, addressOfValue, '>')));
 }
 
 template<CompareOperator op>
@@ -619,9 +625,10 @@ bool bindArguments(JSGlobalObject* globalObject, CallFrame* callFrame, PyFunctio
     } else if (hasKeywordMarker(globalObject, callFrame)) [[unlikely]] {
         // From JS: f(1, kwargs({ a: 2 })).
         MarkedArgumentBuffer values;
-        if (!keywordsOfMarker(globalObject, callFrame->uncheckedArgument(count - 1), keywordNames, values))
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        if (failed(scope, keywordsOfMarker(globalObject, callFrame->uncheckedArgument(count - 1), keywordNames, values)))
             return false;
-        return bindArgumentsSlow(globalObject, callFrame, function, count - 1, keywordNames, valuesOf(values));
+        RELEASE_AND_RETURN(scope, bindArgumentsSlow(globalObject, callFrame, function, count - 1, keywordNames, valuesOf(values)));
     } else if (count == info.argCount && info.parameterCount() == count) [[likely]]
         return true; // Every argument is where its parameter is.
     else if (count < info.argCount && info.parameterCount() == info.argCount) {
@@ -949,9 +956,13 @@ DEFINE_VISIT_CHILDREN(PyMethod);
 // What calls any Python object that JS, or compiled Python code, calls as it would a function.
 JSC_DEFINE_HOST_FUNCTION(callPythonObject, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     CallArgs args(callFrame);
-    if (!args.hasKeywords() && hasKeywordMarker(globalObject, callFrame)) [[unlikely]]
-        return JSValue::encode(resultForCaller(globalObject, callFrame, callWithKeywordMarker(globalObject, callFrame)));
+    if (!args.hasKeywords() && hasKeywordMarker(globalObject, callFrame)) [[unlikely]] {
+        JSValue result = callWithKeywordMarker(globalObject, callFrame);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, JSValue::encode(resultForCaller(globalObject, callFrame, result)));
+    }
     // As in bindArgumentsSlow(): what JS passes a bound method beyond what it takes is dropped.
     if (auto* method = dynamicDowncast<PyMethod>(callFrame->jsCallee()); method && !args.hasKeywords()) {
         if (auto* function = PyFunction::tryFrom(method->function())) {
@@ -960,7 +971,9 @@ JSC_DEFINE_HOST_FUNCTION(callPythonObject, (JSGlobalObject* globalObject, CallFr
                 args = CallArgs(args.positional().first(info.argCount - 1));
         }
     }
-    return JSValue::encode(resultForCaller(globalObject, callFrame, call(globalObject, callFrame->jsCallee(), args)));
+    JSValue result = call(globalObject, callFrame->jsCallee(), args);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(resultForCaller(globalObject, callFrame, result)));
 }
 
 CallData PyMethod::getCallData(JSCell*)
@@ -1908,9 +1921,10 @@ static JSValue codePositions(JSGlobalObject* globalObject, JSValue self)
     JSValue last; // For a byte of which only the line is known.
     for (const auto& instruction : codeBlock->instructions()) {
         if (prologue && instruction.offset() < endOfPrologue) {
-            for (unsigned i = 0; i < instruction->size(); ++i)
+            for (unsigned i = 0; i < instruction->size(); ++i) {
                 listAppend(globalObject, positions, prologue);
-            RETURN_IF_EXCEPTION(scope, { });
+                RETURN_IF_EXCEPTION(scope, { });
+            }
             continue;
         }
         // Only what may raise an exception has a place in the source recorded. What has none is given that of whatever comes before.

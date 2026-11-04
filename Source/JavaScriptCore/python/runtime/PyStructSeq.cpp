@@ -80,7 +80,7 @@ JSValue structSeqNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs& 
     unsigned minimum = structSeqCount(vm, type, "n_sequence_fields"_s);
     unsigned maximum = structSeqCount(vm, type, "n_fields"_s);
     PyTuple* given = tupleFromIterable(globalObject, sequence);
-    if (!given) [[unlikely]] {
+    if (failed(scope, given)) [[unlikely]] {
         if (clearPendingExceptionIfMatches(globalObject, runtime(globalObject).TypeError()))
             raiseTypeError(globalObject, scope, "constructor requires a sequence"_s);
         return { };

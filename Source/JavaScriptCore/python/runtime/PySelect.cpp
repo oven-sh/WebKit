@@ -134,12 +134,14 @@ static void waitClearSets(WaitRequest& request)
 
 int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // See Threads::willCallFunctionThatMayWait().
     if (Threads& threads = runtime(globalObject).threads(); request.timeout && threads.mayBeginCallAgain()) {
         int result = waitWithoutBlocking(request);
         if (result > 0 || (result < 0 && errno != EINTR))
             return result;
-        if (threads.beginsCallAgain(globalObject))
+        if (failed(scope, !threads.beginsCallAgain(globalObject)))
             return waitRaised;
     }
 
@@ -169,6 +171,8 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
             result = function(globalObject, request);
         }
         request.timeout = timeout;
+        // What the host's loop ran has raised.
+        RETURN_IF_EXCEPTION(scope, waitRaised);
         if (!result && piece != timeout) {
             if (request.kind == WaitRequest::Kind::Select) {
                 for (unsigned i = 0; i < 3; ++i) {
@@ -176,7 +180,7 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
                         *sets[i] = saved[i];
                 }
             }
-            if (!idle.didWait(timeout > 0 ? deadline - monotonicNanoseconds() : -1))
+            if (failed(scope, idle.didWait(timeout > 0 ? deadline - monotonicNanoseconds() : -1)))
                 return waitRaised;
             if (timeout > 0)
                 request.timeout = std::max<int64_t>(deadline - monotonicNanoseconds(), 0);
@@ -187,8 +191,6 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
         if (result >= 0 || errno != EINTR)
             return result;
         {
-            VM& vm = getVM(globalObject);
-            auto scope = DECLARE_THROW_SCOPE(vm);
             makeCallsOwed(vm);
             RETURN_IF_EXCEPTION(scope, waitRaised);
             // What that has put off would end the next wait as it ended this one.
@@ -210,12 +212,14 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
 
 bool waitUntilReady(JSGlobalObject* globalObject, int fd)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     struct pollfd descriptor { fd, POLLIN, 0 };
     WaitRequest request { WaitRequest::Kind::Poll };
     request.timeout = -1;
     request.descriptors = &descriptor;
     request.descriptorCount = 1;
-    return waitForEvents(globalObject, request) != waitRaised;
+    RELEASE_AND_RETURN(scope, waitForEvents(globalObject, request) != waitRaised);
 }
 
 // Nothing can be read from it now. Whether read() is sure to wait until something can.
@@ -405,7 +409,7 @@ struct SelectSet {
             if (list)
                 objects.append(listGet(list, i));
             int fd;
-            if (!posixToFileDescriptor(globalObject, objects.at(i), fd))
+            if (failed(scope, posixToFileDescriptor(globalObject, objects.at(i), fd)))
                 return false;
             if (fd < 0 || fd >= FD_SETSIZE) {
                 raiseValueError(globalObject, scope, "filedescriptor out of range in select()"_s);
@@ -424,10 +428,14 @@ struct SelectSet {
 
     JSValue ready(JSGlobalObject* globalObject)
     {
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         JSArray* list = newList(globalObject);
         for (unsigned i = 0; i < descriptors.size(); ++i) {
-            if (FD_ISSET(descriptors[i], &set))
+            if (FD_ISSET(descriptors[i], &set)) {
                 listAppend(globalObject, list, objects.at(i));
+                RETURN_IF_EXCEPTION(scope, { });
+            }
         }
         return list;
     }
@@ -438,7 +446,7 @@ static JSValue selectSelect(JSGlobalObject* globalObject, JSValue readList, JSVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t timeout;
-    if (!selectOptionalTimeout(globalObject, timeoutValue, waitNanosecondsPerSecond, timeout))
+    if (failed(scope, selectOptionalTimeout(globalObject, timeoutValue, waitNanosecondsPerSecond, timeout)))
         return { };
     if (timeoutValue && !isNone(timeoutValue) && timeout < 0)
         return raiseValueError(globalObject, scope, "timeout must be non-negative"_s);
@@ -446,7 +454,7 @@ static JSValue selectSelect(JSGlobalObject* globalObject, JSValue readList, JSVa
     SelectSet readable;
     SelectSet writable;
     SelectSet exceptional;
-    if (!readable.fill(globalObject, readList) || !writable.fill(globalObject, writeList) || !exceptional.fill(globalObject, exceptList))
+    if (failed(scope, readable.fill(globalObject, readList)) || failed(scope, writable.fill(globalObject, writeList)) || failed(scope, exceptional.fill(globalObject, exceptList)))
         return { };
 
     WaitRequest request { WaitRequest::Kind::Select };
@@ -456,13 +464,15 @@ static JSValue selectSelect(JSGlobalObject* globalObject, JSValue readList, JSVa
     request.writable = writable.limit ? &writable.set : nullptr;
     request.exceptional = exceptional.limit ? &exceptional.set : nullptr;
     int result = waitForEvents(globalObject, request);
-    if (result == waitRaised)
+    if (failed(scope, result != waitRaised))
         return { };
     if (result < 0)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
 
     JSValue first = readable.ready(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue second = writable.ready(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue third = exceptional.ready(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { first, second, third }));
@@ -489,11 +499,14 @@ static JSValue pollModify(JSGlobalObject* globalObject, JSValue self, JSValue fd
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     unsigned short mask;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, selectToUnsignedShort(globalObject, maskValue, mask)))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)) || failed(scope, selectToUnsignedShort(globalObject, maskValue, mask)))
         return { };
     PyDict* dict = PyDict::from(PyRecord::from(self)->get(0));
-    if (!dict->contains(globalObject, jsNumber(fd)))
+    bool isRegistered = dict->contains(globalObject, jsNumber(fd));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isRegistered)
         RELEASE_AND_RETURN(scope, posixError(globalObject, ENOENT));
+    scope.release();
     dict->set(globalObject, jsNumber(fd), jsNumber(mask));
     return jsUndefined();
 }
@@ -518,7 +531,7 @@ static JSValue pollPoll(JSGlobalObject* globalObject, JSValue self, JSValue time
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* object = PyRecord::from(self);
     int64_t timeout;
-    if (!selectOptionalTimeout(globalObject, timeoutValue, 1000000, timeout))
+    if (failed(scope, selectOptionalTimeout(globalObject, timeoutValue, 1000000, timeout)))
         return { };
     if (object->number)
         return raiseRuntimeError(globalObject, scope, "concurrent poll() invocation"_s);
@@ -539,7 +552,7 @@ static JSValue pollPoll(JSGlobalObject* globalObject, JSValue self, JSValue time
     object->number = 1;
     int result = waitForEvents(globalObject, request);
     object->number = 0;
-    if (result == waitRaised)
+    if (failed(scope, result != waitRaised))
         return { };
     if (result < 0)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
@@ -654,17 +667,19 @@ static JSValue epollFileno(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue epollControl(JSGlobalObject* globalObject, JSValue self, int operation, JSValue fdValue, JSValue maskValue, unsigned mask)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || (maskValue && !posixToUnsignedMask(globalObject, maskValue, mask)))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)) || (maskValue && failed(scope, posixToUnsignedMask(globalObject, maskValue, mask))))
         return { };
     int64_t queue = PyRecord::from(self)->number;
     if (queue < 0)
-        return epollClosedError(globalObject);
+        RELEASE_AND_RETURN(scope, epollClosedError(globalObject));
     struct epoll_event event { };
     event.events = mask;
     event.data.fd = fd;
     if (epoll_ctl(static_cast<int>(queue), operation, fd, &event) < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 
@@ -703,7 +718,7 @@ static JSValue epollPoll(JSGlobalObject* globalObject, JSValue self, JSValue tim
     request.epollEvents = events.mutableSpan().data();
     request.maxEvents = maxEvents;
     int result = waitForEvents(globalObject, request);
-    if (result == waitRaised)
+    if (failed(scope, result != waitRaised))
         return { };
     if (result < 0)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
@@ -828,7 +843,7 @@ static JSValue keventInit(JSGlobalObject* globalObject, JSValue self, JSValue id
         values[KeventIdent] = index;
     } else {
         int fd;
-        if (!posixToFileDescriptor(globalObject, ident, fd))
+        if (failed(scope, posixToFileDescriptor(globalObject, ident, fd)))
             return { };
         values[KeventIdent] = jsNumber(fd);
     }
@@ -991,7 +1006,7 @@ static JSValue kqueueControl(JSGlobalObject* globalObject, JSValue self, JSValue
     if (maxEvents < 0)
         return raiseValueError(globalObject, scope, "Length of eventlist must be 0 or positive, got "_s, maxEvents);
     int64_t timeout;
-    if (!selectOptionalTimeout(globalObject, timeoutValue, waitNanosecondsPerSecond, timeout))
+    if (failed(scope, selectOptionalTimeout(globalObject, timeoutValue, waitNanosecondsPerSecond, timeout)))
         return { };
     if (timeoutValue && !isNone(timeoutValue) && timeout < 0)
         return raiseValueError(globalObject, scope, "timeout must be positive or None"_s);
@@ -1023,7 +1038,7 @@ static JSValue kqueueControl(JSGlobalObject* globalObject, JSValue self, JSValue
     request.kqueueEvents = events.mutableSpan().data();
     request.maxEvents = maxEvents;
     int result = waitForEvents(globalObject, request);
-    if (result == waitRaised)
+    if (failed(scope, result != waitRaised))
         return { };
     if (result < 0)
         RELEASE_AND_RETURN(scope, posixError(globalObject));

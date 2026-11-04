@@ -184,18 +184,23 @@ static JSValue posixGetlogin(JSGlobalObject* globalObject)
 
 static JSValue posixGetgroups(JSGlobalObject* globalObject)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int count = getgroups(0, nullptr);
     if (count < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     Vector<gid_t, 32> groups(static_cast<size_t>(count));
     if (count) {
         count = getgroups(count, groups.mutableSpan().data());
         if (count < 0)
-            return posixError(globalObject);
+            RELEASE_AND_RETURN(scope, posixError(globalObject));
     }
     JSArray* result = newList(globalObject);
-    for (int i = 0; i < count; ++i)
+    RETURN_IF_EXCEPTION(scope, { });
+    for (int i = 0; i < count; ++i) {
         listAppend(globalObject, result, posixFromGid(globalObject, groups[i]));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return result;
 }
 
@@ -243,6 +248,7 @@ static JSValue posixGetgrouplist(JSGlobalObject* globalObject, JSValue userValue
 #else
         listAppend(globalObject, result, posixFromGid(globalObject, groups[i]));
 #endif
+        RETURN_IF_EXCEPTION(scope, { });
     }
     return result;
 }
@@ -274,7 +280,7 @@ static JSValue posixInitgroups(JSGlobalObject* globalObject, JSValue userValue, 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes user;
-    if (!posixToFSBytes(globalObject, userValue, user))
+    if (failed(scope, posixToFSBytes(globalObject, userValue, user)))
         return { };
 #if OS(DARWIN)
     int group;
@@ -659,7 +665,7 @@ static JSValue posixSetns(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int type = 0;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || (typeValue && failed(scope, posixToInt(globalObject, typeValue, type))))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)) || (typeValue && failed(scope, posixToInt(globalObject, typeValue, type))))
         return { };
     if (setns(fd, type))
         RELEASE_AND_RETURN(scope, posixError(globalObject));
@@ -757,7 +763,7 @@ static JSValue posixSystem(JSGlobalObject* globalObject, JSValue commandValue)
     auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     PosixBytes command;
-    if (!posixToFSBytes(globalObject, commandValue, command))
+    if (failed(scope, posixToFSBytes(globalObject, commandValue, command)))
         return { };
     if (isAudited(globalObject) && failed(scope, audit(globalObject, "os.system"_s, PyBytes::create(globalObject, command.span()))))
         return { };
@@ -834,7 +840,7 @@ static bool posixParseArguments(JSGlobalObject* globalObject, JSValue argv, int6
     for (int64_t i = 0; i < count; ++i) {
         JSValue item = getItem(globalObject, argv, makeInt(globalObject, i));
         RETURN_IF_EXCEPTION(scope, false);
-        if (!posixToFSBytes(globalObject, item, string))
+        if (failed(scope, posixToFSBytes(globalObject, item, string)))
             return false;
         result.append(string);
     }
@@ -863,7 +869,7 @@ static bool posixParseEnvironment(JSGlobalObject* globalObject, JSValue env, Pos
             raiseIndexError(globalObject, scope, "list index out of range"_s);
             return false;
         }
-        if (!posixToFSBytes(globalObject, listGet(keys, static_cast<unsigned>(i)), key) || !posixToFSBytes(globalObject, listGet(values, static_cast<unsigned>(i)), value))
+        if (failed(scope, posixToFSBytes(globalObject, listGet(keys, static_cast<unsigned>(i)), key)) || failed(scope, posixToFSBytes(globalObject, listGet(values, static_cast<unsigned>(i)), value)))
             return false;
         // An '=' may come first in a name, as it does in some that shells keep for themselves.
         if (!key.length() || memchr(key.characters() + 1, '=', key.length() - 1)) {
@@ -886,7 +892,7 @@ static JSValue posixExecv(JSGlobalObject* globalObject, JSValue pathValue, JSVal
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("execv"_s, PosixPath::VirtualUnsupported);
-    if (!path.convert(globalObject, pathValue))
+    if (failed(scope, path.convert(globalObject, pathValue)))
         return { };
     if (!posixIsListOrTuple(argv))
         return raiseTypeError(globalObject, scope, "execv() arg 2 must be a tuple or list"_s);
@@ -895,7 +901,7 @@ static JSValue posixExecv(JSGlobalObject* globalObject, JSValue pathValue, JSVal
     if (count < 1)
         return raiseValueError(globalObject, scope, "execv() arg 2 must not be empty"_s);
     PosixStringArray arguments;
-    if (!posixParseArguments(globalObject, argv, count, arguments))
+    if (failed(scope, posixParseArguments(globalObject, argv, count, arguments)))
         return { };
     if (!arguments.at(0)[0])
         return raiseValueError(globalObject, scope, "execv() arg 2 first element cannot be empty"_s);
@@ -915,7 +921,7 @@ static JSValue posixExecve(JSGlobalObject* globalObject, JSValue pathValue, JSVa
 #else
     PosixPath path("execve"_s, PosixPath::VirtualUnsupported);
 #endif
-    if (!path.convert(globalObject, pathValue))
+    if (failed(scope, path.convert(globalObject, pathValue)))
         return { };
     if (!posixIsListOrTuple(argv))
         return raiseTypeError(globalObject, scope, "execve: argv must be a tuple or list"_s);
@@ -926,12 +932,12 @@ static JSValue posixExecve(JSGlobalObject* globalObject, JSValue pathValue, JSVa
     if (!posixIsMapping(globalObject, env))
         return raiseTypeError(globalObject, scope, "execve: environment must be a mapping object"_s);
     PosixStringArray arguments;
-    if (!posixParseArguments(globalObject, argv, count, arguments))
+    if (failed(scope, posixParseArguments(globalObject, argv, count, arguments)))
         return { };
     if (!arguments.at(0)[0])
         return raiseValueError(globalObject, scope, "execve: argv first element cannot be empty"_s);
     PosixStringArray environment;
-    if (!posixParseEnvironment(globalObject, env, environment))
+    if (failed(scope, posixParseEnvironment(globalObject, env, environment)))
         return { };
     if (failed(scope, audit(globalObject, "os.exec"_s, path.object(), argv, env)))
         return { };
@@ -962,10 +968,10 @@ static bool posixToSignalSet(JSGlobalObject* globalObject, JSValue iterable, sig
         if (sigaddset(&result, static_cast<int>(*number))) {
             if (errno != EINVAL) {
                 posixError(globalObject);
-                return false;
+                return !scope.exception();
             }
             // range(1, NSIG) has long been written, though the system keeps some of the numbers to itself.
-            return warn(globalObject, runtime(globalObject).RuntimeWarning(), makeString("invalid signal number "_s, *number, ", please use valid_signals()"_s));
+            return !failed(scope, warn(globalObject, runtime(globalObject).RuntimeWarning(), makeString("invalid signal number "_s, *number, ", please use valid_signals()"_s)));
         }
         return true;
     });
@@ -1013,13 +1019,14 @@ public:
         PyTuple* sequence = PyTuple::tryFrom(fileActions);
         if (!sequence) {
             sequence = tupleFromIterable(globalObject, fileActions);
-            if (!sequence) {
+            if (failed(scope, sequence)) {
                 if (clearPendingExceptionIfMatches(globalObject, runtime(globalObject).TypeError()))
                     raiseTypeError(globalObject, scope, "file_actions must be a sequence or None"_s);
                 return false;
             }
         }
         if (int error = posix_spawn_file_actions_init(&m_actions)) {
+            scope.release();
             posixError(globalObject, error);
             return false;
         }
@@ -1046,8 +1053,8 @@ public:
                 int flags;
                 unsigned mode;
                 PosixBytes path;
-                if (!hasLength(5, "open"_s) || failed(scope, posixToInt(globalObject, action->at(1), fd)) || !posixToFSBytes(globalObject, action->at(2), path)
-                    || failed(scope, posixToInt(globalObject, action->at(3), flags)) || !posixToUnsignedMask(globalObject, action->at(4), mode))
+                if (!hasLength(5, "open"_s) || failed(scope, posixToInt(globalObject, action->at(1), fd)) || failed(scope, posixToFSBytes(globalObject, action->at(2), path))
+                    || failed(scope, posixToInt(globalObject, action->at(3), flags)) || failed(scope, posixToUnsignedMask(globalObject, action->at(4), mode)))
                     return false;
                 error = posix_spawn_file_actions_addopen(&m_actions, fd, path.characters(), flags, static_cast<mode_t>(mode));
                 break;
@@ -1081,6 +1088,7 @@ public:
                 return false;
             }
             if (error) {
+                scope.release();
                 posixError(globalObject, error);
                 return false;
             }
@@ -1092,18 +1100,20 @@ public:
     {
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        auto failed = [&](int error) {
-            if (error)
+        auto isError = [&](int error) {
+            if (error) {
+                scope.release();
                 posixError(globalObject, error);
+            }
             return !!error;
         };
-        if (failed(posix_spawnattr_init(&m_attributes)))
+        if (isError(posix_spawnattr_init(&m_attributes)))
             return false;
         m_hasAttributes = true;
         int flags = 0;
         if (setpgroup && !isNone(setpgroup)) {
             pid_t group;
-            if (!posixToPid(globalObject, setpgroup, group) || failed(posix_spawnattr_setpgroup(&m_attributes, group)))
+            if (failed(scope, posixToPid(globalObject, setpgroup, group)) || isError(posix_spawnattr_setpgroup(&m_attributes, group)))
                 return false;
             flags |= POSIX_SPAWN_SETPGROUP;
         }
@@ -1120,13 +1130,13 @@ public:
         UNUSED_PARAM(function);
         if (setsigmask) {
             sigset_t set;
-            if (!posixToSignalSet(globalObject, setsigmask, set) || failed(posix_spawnattr_setsigmask(&m_attributes, &set)))
+            if (failed(scope, posixToSignalSet(globalObject, setsigmask, set)) || isError(posix_spawnattr_setsigmask(&m_attributes, &set)))
                 return false;
             flags |= POSIX_SPAWN_SETSIGMASK;
         }
         if (setsigdef) {
             sigset_t set;
-            if (!posixToSignalSet(globalObject, setsigdef, set) || failed(posix_spawnattr_setsigdefault(&m_attributes, &set)))
+            if (failed(scope, posixToSignalSet(globalObject, setsigdef, set)) || isError(posix_spawnattr_setsigdefault(&m_attributes, &set)))
                 return false;
             flags |= POSIX_SPAWN_SETSIGDEF;
         }
@@ -1138,15 +1148,15 @@ public:
                 return false;
             }
             struct sched_param param;
-            if (!posixToSchedParam(globalObject, pair->at(1), param))
+            if (failed(scope, posixToSchedParam(globalObject, pair->at(1), param)))
                 return false;
             if (!isNone(pair->at(0))) {
                 int policy;
-                if (!posixToInt(globalObject, pair->at(0), policy) || failed(posix_spawnattr_setschedpolicy(&m_attributes, policy)))
+                if (failed(scope, posixToInt(globalObject, pair->at(0), policy)) || isError(posix_spawnattr_setschedpolicy(&m_attributes, policy)))
                     return false;
                 flags |= POSIX_SPAWN_SETSCHEDULER;
             }
-            if (failed(posix_spawnattr_setschedparam(&m_attributes, &param)))
+            if (isError(posix_spawnattr_setschedparam(&m_attributes, &param)))
                 return false;
             flags |= POSIX_SPAWN_SETSCHEDPARAM;
 #else
@@ -1154,7 +1164,7 @@ public:
             return false;
 #endif
         }
-        return !failed(posix_spawnattr_setflags(&m_attributes, static_cast<short>(flags)));
+        return !isError(posix_spawnattr_setflags(&m_attributes, static_cast<short>(flags)));
     }
 
 private:
@@ -1180,7 +1190,7 @@ static JSValue posixSpawnNamed(JSGlobalObject* globalObject, ASCIILiteral functi
     PosixPath path(function, PosixPath::VirtualUnsupported);
     bool resetids;
     bool setsid;
-    if (!path.convert(globalObject, args[0]) || failed(scope, posixToBool(globalObject, resetidsValue, false, resetids)) || failed(scope, posixToBool(globalObject, setsidValue, false, setsid)))
+    if (failed(scope, path.convert(globalObject, args[0])) || failed(scope, posixToBool(globalObject, resetidsValue, false, resetids)) || failed(scope, posixToBool(globalObject, setsidValue, false, setsid)))
         return { };
     JSValue argv = args[1];
     JSValue env = args[2];
@@ -1195,7 +1205,7 @@ static JSValue posixSpawnNamed(JSGlobalObject* globalObject, ASCIILiteral functi
     if (scheduler && !isNone(scheduler) && !PyTuple::is(scheduler))
         return raiseTypeError(globalObject, scope, function, ": scheduler must be a tuple or None"_s);
     PosixStringArray arguments;
-    if (!posixParseArguments(globalObject, argv, count, arguments))
+    if (failed(scope, posixParseArguments(globalObject, argv, count, arguments)))
         return { };
     if (!arguments.at(0)[0])
         return raiseValueError(globalObject, scope, function, ": argv first element cannot be empty"_s);
@@ -1208,14 +1218,14 @@ static JSValue posixSpawnNamed(JSGlobalObject* globalObject, ASCIILiteral functi
         environmentPointers = environ;
 #endif
     } else {
-        if (!posixParseEnvironment(globalObject, env, environment))
+        if (failed(scope, posixParseEnvironment(globalObject, env, environment)))
             return { };
         environmentPointers = environment.pointers();
     }
     PosixSpawnSettings settings;
-    if (fileActions && !isNone(fileActions) && !settings.parseFileActions(globalObject, fileActions))
+    if (fileActions && !isNone(fileActions) && failed(scope, settings.parseFileActions(globalObject, fileActions)))
         return { };
-    if (!settings.parseFlags(globalObject, function, setpgroup, resetids, setsid, setsigmask, setsigdef, scheduler))
+    if (failed(scope, settings.parseFlags(globalObject, function, setpgroup, resetids, setsid, setsigmask, setsigdef, scheduler)))
         return { };
     if (failed(scope, audit(globalObject, "os.posix_spawn"_s, path.object(), argv, env)))
         return { };
@@ -1262,8 +1272,8 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
     PosixBytes program;
     PosixStringArray arguments;
     PosixStringArray environment;
-    bool canRun = posixToFSBytes(globalObject, file, program) && posixParseArguments(globalObject, argv, count, arguments)
-        && (!env || (posixIsMapping(globalObject, env) && posixParseEnvironment(globalObject, env, environment)));
+    bool canRun = !failed(scope, posixToFSBytes(globalObject, file, program)) && !failed(scope, posixParseArguments(globalObject, argv, count, arguments))
+        && (!env || (posixIsMapping(globalObject, env) && !failed(scope, posixParseEnvironment(globalObject, env, environment))));
     if (!canRun)
         takePendingException(globalObject);
 
@@ -1314,7 +1324,7 @@ static JSValue posixSpawnFamily(JSGlobalObject* globalObject, JSValue modeValue,
         do {
             AllowThreads allow(globalObject);
             result = waitpid(pid, &status, 0);
-        } while (result < 0 && errno == EINTR && checkSignals(globalObject));
+        } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
         RETURN_IF_EXCEPTION(scope, { });
         if (result < 0)
             RELEASE_AND_RETURN(scope, posixError(globalObject));
@@ -1354,15 +1364,17 @@ static JSValue posixRusage(JSGlobalObject* globalObject, const struct rusage& us
 
 static JSValue posixWait(JSGlobalObject* globalObject)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int status = 0;
     pid_t pid;
     do {
         AllowThreads allow(globalObject);
         pid = wait(&status);
-    } while (pid < 0 && errno == EINTR && checkSignals(globalObject));
+    } while (pid < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (pid < 0)
-        return posixError(globalObject);
-    return PyTuple::create(globalObject, { jsNumber(pid), jsNumber(status) });
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(pid), jsNumber(status) }));
 }
 
 static JSValue posixWaitpid(JSGlobalObject* globalObject, JSValue pidValue, JSValue optionsValue)
@@ -1392,7 +1404,7 @@ static JSValue posixWaitpid(JSGlobalObject* globalObject, JSValue pidValue, JSVa
     do {
         AllowThreads allow(globalObject);
         result = waitpid(pid, &status, options);
-    } while (result < 0 && errno == EINTR && checkSignals(globalObject));
+    } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result < 0)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
     RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(result), jsNumber(status) }));
@@ -1419,7 +1431,7 @@ static JSValue posixWait3(JSGlobalObject* globalObject, JSValue optionsValue)
     do {
         AllowThreads allow(globalObject);
         pid = wait4(-1, &status, options, &usage);
-    } while (pid < 0 && errno == EINTR && checkSignals(globalObject));
+    } while (pid < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (pid < 0)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
     RELEASE_AND_RETURN(scope, posixWaitResult(globalObject, pid, status, usage));
@@ -1439,7 +1451,7 @@ static JSValue posixWait4(JSGlobalObject* globalObject, JSValue pidValue, JSValu
     do {
         AllowThreads allow(globalObject);
         result = wait4(pid, &status, options, &usage);
-    } while (result < 0 && errno == EINTR && checkSignals(globalObject));
+    } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result < 0)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
     RELEASE_AND_RETURN(scope, posixWaitResult(globalObject, result, status, usage));
@@ -1463,11 +1475,12 @@ static JSValue posixWaitid(JSGlobalObject* globalObject, JSValue typeValue, JSVa
     do {
         AllowThreads allow(globalObject);
         result = waitid(static_cast<idtype_t>(type), static_cast<id_t>(id), &info, options);
-    } while (result < 0 && errno == EINTR && checkSignals(globalObject));
+    } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result < 0)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
     if (!info.si_pid)
         return jsUndefined();
+    scope.release();
     return makeStructSeq(globalObject, cachedStructSeqType(globalObject, posixWaitidResultDef), {
         jsNumber(info.si_pid), posixFromUid(globalObject, info.si_uid), jsNumber(info.si_signo), jsNumber(info.si_status), jsNumber(info.si_code) });
 }
@@ -1476,8 +1489,9 @@ static JSValue posixWaitid(JSGlobalObject* globalObject, JSValue typeValue, JSVa
 #define POSIX_DEFINE_STATUS_FUNCTION(name, macro, convert) \
     static JSValue name(JSGlobalObject* globalObject, JSValue statusValue) \
     { \
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject)); \
         int status; \
-        if (!posixToInt(globalObject, statusValue, status)) \
+        if (failed(scope, posixToInt(globalObject, statusValue, status))) \
             return { }; \
         return convert(macro(status)); \
     }
@@ -1708,7 +1722,7 @@ static JSValue resourceSetrlimit(JSGlobalObject* globalObject, JSValue resourceV
     auto scope = DECLARE_THROW_SCOPE(vm);
     int resource;
     struct rlimit limits;
-    if (failed(scope, resourceToResource(globalObject, resourceValue, resource)) || !resourceToLimits(globalObject, limitsValue, limits))
+    if (failed(scope, resourceToResource(globalObject, resourceValue, resource)) || failed(scope, resourceToLimits(globalObject, limitsValue, limits)))
         return { };
     if (failed(scope, audit(globalObject, "resource.setrlimit"_s, jsNumber(resource), limitsValue)))
         return { };
@@ -1736,7 +1750,7 @@ static JSValue resourcePrlimit(JSGlobalObject* globalObject, JSValue pidValue, J
     struct rlimit newLimits;
     struct rlimit oldLimits;
     bool hasLimits = limitsValue && !isNone(limitsValue);
-    if (hasLimits && !resourceToLimits(globalObject, limitsValue, newLimits))
+    if (hasLimits && failed(scope, resourceToLimits(globalObject, limitsValue, newLimits)))
         return { };
     if (prlimit(pid, static_cast<decltype(RLIMIT_CPU)>(resource), hasLimits ? &newLimits : nullptr, &oldLimits) == -1) {
         if (errno == EINVAL)

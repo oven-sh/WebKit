@@ -145,15 +145,14 @@ static JSValue deltaNew(JSGlobalObject* globalObject, JSValue cls, JSValue days,
     State& state = stateOf(globalObject, type);
 
     DeltaSum sum;
-    bool isFine = deltaAccumulate(globalObject, sum, "microseconds"_s, microseconds, 1)
-        && deltaAccumulate(globalObject, sum, "milliseconds"_s, milliseconds, 1000)
-        && deltaAccumulate(globalObject, sum, "seconds"_s, seconds, microsecondsPerSecond)
-        && deltaAccumulate(globalObject, sum, "minutes"_s, minutes, 60ll * microsecondsPerSecond)
-        && deltaAccumulate(globalObject, sum, "hours"_s, hours, 3600ll * microsecondsPerSecond)
-        && deltaAccumulate(globalObject, sum, "days"_s, days, microsecondsPerDay)
-        && deltaAccumulate(globalObject, sum, "weeks"_s, weeks, 7 * microsecondsPerDay);
-    RETURN_IF_EXCEPTION(scope, { });
-    ASSERT_UNUSED(isFine, isFine);
+    if (failed(scope, deltaAccumulate(globalObject, sum, "microseconds"_s, microseconds, 1))
+        || failed(scope, deltaAccumulate(globalObject, sum, "milliseconds"_s, milliseconds, 1000))
+        || failed(scope, deltaAccumulate(globalObject, sum, "seconds"_s, seconds, microsecondsPerSecond))
+        || failed(scope, deltaAccumulate(globalObject, sum, "minutes"_s, minutes, 60ll * microsecondsPerSecond))
+        || failed(scope, deltaAccumulate(globalObject, sum, "hours"_s, hours, 3600ll * microsecondsPerSecond))
+        || failed(scope, deltaAccumulate(globalObject, sum, "days"_s, days, microsecondsPerDay))
+        || failed(scope, deltaAccumulate(globalObject, sum, "weeks"_s, weeks, 7 * microsecondsPerDay)))
+        return { };
 
     if (sum.leftover) {
         double whole = std::round(sum.leftover);

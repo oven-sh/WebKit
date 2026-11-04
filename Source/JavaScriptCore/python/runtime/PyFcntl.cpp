@@ -67,7 +67,7 @@ static JSValue fcntlCallWithBytes(JSGlobalObject* globalObject, JSValue argument
     do {
         AllowThreads allow(globalObject);
         result = call(buffer.mutableSpan().data());
-    } while (result == -1 && errno == EINTR && checkSignals(globalObject));
+    } while (result == -1 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result < 0)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
     if (memcmp(buffer.span().data() + length, fcntlGuard, sizeof(fcntlGuard))) {
@@ -80,13 +80,15 @@ static JSValue fcntlCallWithBytes(JSGlobalObject* globalObject, JSValue argument
 template<typename Function>
 static JSValue fcntlCallWithInt(JSGlobalObject* globalObject, const Function& call)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int result;
     do {
         AllowThreads allow(globalObject);
         result = call();
-    } while (result == -1 && errno == EINTR && checkSignals(globalObject));
+    } while (result == -1 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsNumber(result);
 }
 
@@ -126,7 +128,7 @@ static JSValue fcntlFcntl(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int command;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, commandValue, command)))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, commandValue, command)))
         return { };
     if (failed(scope, audit(globalObject, "fcntl.fcntl"_s, jsNumber(fd), jsNumber(command), argument)))
         return { };
@@ -147,7 +149,7 @@ static JSValue fcntlIoctl(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)))
         return { };
     if (!hasIndex(globalObject, requestValue))
         return raiseTypeError(globalObject, scope, "ioctl() argument 2 must be int, not "_s, posixTypeNameOfArgument(globalObject, requestValue));
@@ -157,7 +159,7 @@ static JSValue fcntlIoctl(JSGlobalObject* globalObject, JSValue fdValue, JSValue
         return { };
     if (failed(scope, audit(globalObject, "fcntl.ioctl"_s, jsNumber(fd), requestValue, argument)))
         return { };
-    if (!fits && !warn(globalObject, runtime(globalObject).DeprecationWarning(), "integer value out of range"_s))
+    if (!fits && failed(scope, warn(globalObject, runtime(globalObject).DeprecationWarning(), "integer value out of range"_s)))
         return { };
     bool mutate;
     if (failed(scope, posixToBool(globalObject, mutateValue, true, mutate)))
@@ -179,7 +181,7 @@ static JSValue fcntlIoctl(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     // What can be written to gets what the system wrote, and the result is the system's.
     if (mutate && !PyBytes::is(argument) && !isStr(argument)) {
         BufferHolder holder(globalObject);
-        if (holder.get(argument, BufferWritable)) {
+        if (!failed(scope, holder.get(argument, BufferWritable))) {
             auto span = holder.buffer.mutableSpan();
             uint8_t copy[fcntlInlineSize + sizeof(fcntlGuard)];
             uint8_t* address = span.data();
@@ -192,7 +194,7 @@ static JSValue fcntlIoctl(JSGlobalObject* globalObject, JSValue fdValue, JSValue
             do {
                 AllowThreads allow(globalObject);
                 result = ioctl(fd, request, address);
-            } while (result == -1 && errno == EINTR && checkSignals(globalObject));
+            } while (result == -1 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
             if (result < 0)
                 RELEASE_AND_RETURN(scope, posixError(globalObject));
             if (address == copy) {
@@ -223,7 +225,7 @@ static JSValue fcntlFlock(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int operation;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, operationValue, operation)))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, operationValue, operation)))
         return { };
     if (failed(scope, audit(globalObject, "fcntl.flock"_s, jsNumber(fd), jsNumber(operation))))
         return { };
@@ -231,7 +233,7 @@ static JSValue fcntlFlock(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     do {
         AllowThreads allow(globalObject);
         result = flock(fd, operation);
-    } while (result == -1 && errno == EINTR && checkSignals(globalObject));
+    } while (result == -1 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     RELEASE_AND_RETURN(scope, fcntlNoneUnlessFailed(globalObject, result));
 }
 
@@ -242,7 +244,7 @@ static JSValue fcntlLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     int fd;
     int command;
     int whence = 0;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, commandValue, command)) || (whenceValue && failed(scope, posixToInt(globalObject, whenceValue, whence))))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, commandValue, command)) || (whenceValue && failed(scope, posixToInt(globalObject, whenceValue, whence))))
         return { };
     if (failed(scope, audit(globalObject, "fcntl.lockf"_s, jsNumber(fd), jsNumber(command), lengthValue, startValue, jsNumber(whence))))
         return { };
@@ -263,7 +265,7 @@ static JSValue fcntlLockf(JSGlobalObject* globalObject, JSValue fdValue, JSValue
     do {
         AllowThreads allow(globalObject);
         result = fcntl(fd, command & LOCK_NB ? F_SETLK : F_SETLKW, &lock);
-    } while (result == -1 && errno == EINTR && checkSignals(globalObject));
+    } while (result == -1 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     RELEASE_AND_RETURN(scope, fcntlNoneUnlessFailed(globalObject, result));
 }
 

@@ -295,7 +295,7 @@ static JSValue binasciiA2BUU(JSGlobalObject* globalObject, JSValue dataValue)
     // The first character says how many bytes the line holds.
     size_t length = (input[0] - ' ') & 077;
     BinasciiWriter writer;
-    if (!writer.allocate(globalObject, length))
+    if (failed(scope, writer.allocate(globalObject, length)))
         return { };
     uint8_t* out = writer.start();
     uint8_t* end = out + length;
@@ -336,13 +336,13 @@ static JSValue binasciiB2AUU(JSGlobalObject* globalObject, JSValue dataValue, JS
     BinasciiSource data;
     bool backtick = false;
     if (failed(scope, data.setBuffer(globalObject, dataValue)) || failed(scope, binasciiBoolArgument(globalObject, backtickValue, backtick))
-        || !data.refresh())
+        || failed(scope, data.refresh()))
         return { };
     auto input = data.bytes();
     if (input.size() > 45)
         RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "At most 45 bytes at once"_s));
     BinasciiWriter writer;
-    if (!writer.allocate(globalObject, 2 + (input.size() + 2) / 3 * 4))
+    if (failed(scope, writer.allocate(globalObject, 2 + (input.size() + 2) / 3 * 4)))
         return { };
     uint8_t* out = writer.start();
     auto encode = [&](unsigned sextet) -> uint8_t {
@@ -376,7 +376,7 @@ static JSValue binasciiA2BBase64(JSGlobalObject* globalObject, JSValue dataValue
         || failed(scope, binasciiAlphabetArgument(globalObject, "a2b_base64"_s, alphabetValue, alphabet))
         || (ignoreValue && failed(scope, ignoreSource.setBuffer(globalObject, ignoreValue)))
         || failed(scope, binasciiBoolArgument(globalObject, canonicalValue, isCanonical))
-        || !data.refresh() || !alphabet.refresh() || !ignoreSource.refresh())
+        || failed(scope, data.refresh()) || failed(scope, alphabet.refresh()) || failed(scope, ignoreSource.refresh()))
         return { };
     // To say what to ignore is to say that nothing else is to be.
     if (!strictValue)
@@ -397,7 +397,7 @@ static JSValue binasciiA2BBase64(JSGlobalObject* globalObject, JSValue dataValue
 
     auto input = data.bytes();
     BinasciiWriter writer;
-    if (!writer.allocate(globalObject, (input.size() + 3) / 4 * 3))
+    if (failed(scope, writer.allocate(globalObject, (input.size() + 3) / 4 * 3)))
         return { };
     uint8_t* out = writer.start();
     const uint8_t* in = input.data();
@@ -466,6 +466,7 @@ static JSValue binasciiA2BBase64(JSGlobalObject* globalObject, JSValue dataValue
     }
 
     if (position == 1) {
+        scope.release();
         return binasciiRaise(globalObject, "Invalid base64-encoded string: number of data characters ("_s, static_cast<size_t>(out - writer.start()) / 3 * 4 + 1,
             ") cannot be 1 more than a multiple of 4"_s);
     }
@@ -490,7 +491,7 @@ static JSValue binasciiB2ABase64(JSGlobalObject* globalObject, JSValue dataValue
         || failed(scope, binasciiSizeArgument(globalObject, wrapValue, width))
         || failed(scope, binasciiBoolArgument(globalObject, newlineValue, hasNewline))
         || (alphabetValue && failed(scope, alphabet.setBuffer(globalObject, alphabetValue)))
-        || !data.refresh() || !alphabet.refresh())
+        || failed(scope, data.refresh()) || failed(scope, alphabet.refresh()))
         return { };
     const uint8_t* table = binasciiBase64Alphabet.characters;
     if (alphabet.isSet()) {
@@ -511,7 +512,7 @@ static JSValue binasciiB2ABase64(JSGlobalObject* globalObject, JSValue dataValue
         length += (length - 1) / width;
     }
     BinasciiWriter writer;
-    if (!writer.allocate(globalObject, length + hasNewline))
+    if (failed(scope, writer.allocate(globalObject, length + hasNewline)))
         return { };
     uint8_t* out = writer.start();
     const uint8_t* in = input.data();
@@ -584,7 +585,7 @@ static JSValue binasciiA2BAscii85(JSGlobalObject* globalObject, JSValue dataValu
         || failed(scope, binasciiBoolArgument(globalObject, adobeValue, isAdobe))
         || (ignoreValue && failed(scope, ignoreSource.setBuffer(globalObject, ignoreValue)))
         || failed(scope, binasciiBoolArgument(globalObject, canonicalValue, isCanonical))
-        || !data.refresh() || !ignoreSource.refresh())
+        || failed(scope, data.refresh()) || failed(scope, ignoreSource.refresh()))
         return { };
     BinasciiIgnored ignored(ignoreSource.bytes());
     auto input = data.bytes();
@@ -601,7 +602,7 @@ static JSValue binasciiA2BAscii85(JSGlobalObject* globalObject, JSValue dataValu
     for (uint8_t character : input)
         shorthands += character == 'y' || character == 'z';
     BinasciiWriter writer;
-    if (!writer.allocate(globalObject, (input.size() - shorthands + 4) / 5 * 4 + shorthands * 4))
+    if (failed(scope, writer.allocate(globalObject, (input.size() - shorthands + 4) / 5 * 4 + shorthands * 4)))
         return { };
     uint8_t* out = writer.start();
 
@@ -632,7 +633,7 @@ static JSValue binasciiA2BAscii85(JSGlobalObject* globalObject, JSValue dataValu
             position = 5;
         } else if (!ignored.contains(character))
             RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Non-Ascii85 digit found: "_s, static_cast<char16_t>(character)));
-        if (position == 5 && !flush(0, isShorthandForZero))
+        if (position == 5 && failed(scope, flush(0, isShorthandForZero)))
             return { };
     }
     if (position) {
@@ -641,7 +642,7 @@ static JSValue binasciiA2BAscii85(JSGlobalObject* globalObject, JSValue dataValu
             if (!binasciiAdd85Digit(group, position, 84))
                 RELEASE_AND_RETURN(scope, binasciiRaise(globalObject, "Ascii85 overflow"_s));
         }
-        if (!flush(missing, false))
+        if (failed(scope, flush(missing, false)))
             return { };
     }
     RELEASE_AND_RETURN(scope, writer.finish(globalObject, out));
@@ -679,7 +680,7 @@ static JSValue binasciiB2AAscii85(JSGlobalObject* globalObject, JSValue dataValu
         || failed(scope, binasciiSizeArgument(globalObject, wrapValue, width))
         || failed(scope, binasciiBoolArgument(globalObject, padValue, pad))
         || failed(scope, binasciiBoolArgument(globalObject, adobeValue, isAdobe))
-        || !data.refresh())
+        || failed(scope, data.refresh()))
         return { };
     auto input = data.bytes();
     if (isAdobe && width == 1)
@@ -691,7 +692,7 @@ static JSValue binasciiB2AAscii85(JSGlobalObject* globalObject, JSValue dataValu
     if (width && length)
         capacity += (length - 1) / width;
     BinasciiWriter writer;
-    if (!writer.allocate(globalObject, capacity))
+    if (failed(scope, writer.allocate(globalObject, capacity)))
         return { };
     uint8_t* out = writer.start();
     if (isAdobe) {
@@ -744,7 +745,7 @@ static JSValue binasciiA2BBase85(JSGlobalObject* globalObject, JSValue dataValue
         || failed(scope, binasciiAlphabetArgument(globalObject, "a2b_base85"_s, alphabetValue, alphabet))
         || (ignoreValue && failed(scope, ignoreSource.setBuffer(globalObject, ignoreValue)))
         || failed(scope, binasciiBoolArgument(globalObject, canonicalValue, isCanonical))
-        || !data.refresh() || !alphabet.refresh() || !ignoreSource.refresh())
+        || failed(scope, data.refresh()) || failed(scope, alphabet.refresh()) || failed(scope, ignoreSource.refresh()))
         return { };
     static constexpr BinasciiTable standardTable = binasciiReverseTable(binasciiBase85Alphabet.span(), -1);
     BinasciiTable customTable;
@@ -758,7 +759,7 @@ static JSValue binasciiA2BBase85(JSGlobalObject* globalObject, JSValue dataValue
     BinasciiIgnored ignored(ignoreSource.bytes());
     auto input = data.bytes();
     BinasciiWriter writer;
-    if (!writer.allocate(globalObject, (input.size() + 4) / 5 * 4))
+    if (failed(scope, writer.allocate(globalObject, (input.size() + 4) / 5 * 4)))
         return { };
     uint8_t* out = writer.start();
 
@@ -796,7 +797,7 @@ static JSValue binasciiB2ABase85(JSGlobalObject* globalObject, JSValue dataValue
         || failed(scope, binasciiBoolArgument(globalObject, padValue, pad))
         || failed(scope, binasciiSizeArgument(globalObject, wrapValue, width))
         || (alphabetValue && failed(scope, alphabet.setBuffer(globalObject, alphabetValue)))
-        || !data.refresh() || !alphabet.refresh())
+        || failed(scope, data.refresh()) || failed(scope, alphabet.refresh()))
         return { };
     const uint8_t* table = binasciiBase85Alphabet.characters;
     if (alphabet.isSet()) {
@@ -814,7 +815,7 @@ static JSValue binasciiB2ABase85(JSGlobalObject* globalObject, JSValue dataValue
         capacity += (length - 1) / width;
     }
     BinasciiWriter writer;
-    if (!writer.allocate(globalObject, capacity))
+    if (failed(scope, writer.allocate(globalObject, capacity)))
         return { };
     uint8_t* out = writer.start();
     const uint8_t* in = input.data();
@@ -844,7 +845,7 @@ static JSValue binasciiA2BBase32(JSGlobalObject* globalObject, JSValue dataValue
         || failed(scope, binasciiAlphabetArgument(globalObject, "a2b_base32"_s, alphabetValue, alphabet))
         || (ignoreValue && failed(scope, ignoreSource.setBuffer(globalObject, ignoreValue)))
         || failed(scope, binasciiBoolArgument(globalObject, canonicalValue, isCanonical))
-        || !data.refresh() || !alphabet.refresh() || !ignoreSource.refresh())
+        || failed(scope, data.refresh()) || failed(scope, alphabet.refresh()) || failed(scope, ignoreSource.refresh()))
         return { };
     static constexpr BinasciiTable standardTable = binasciiReverseTable(binasciiBase32Alphabet.span(), '=');
     BinasciiTable customTable;
@@ -858,7 +859,7 @@ static JSValue binasciiA2BBase32(JSGlobalObject* globalObject, JSValue dataValue
     BinasciiIgnored ignored(ignoreSource.bytes());
     auto input = data.bytes();
     BinasciiWriter writer;
-    if (!writer.allocate(globalObject, (input.size() + 7) / 8 * 5))
+    if (failed(scope, writer.allocate(globalObject, (input.size() + 7) / 8 * 5)))
         return { };
     uint8_t* out = writer.start();
 
@@ -901,6 +902,7 @@ static JSValue binasciiA2BBase32(JSGlobalObject* globalObject, JSValue dataValue
     }
 
     if (cannotEndAt(position)) {
+        scope.release();
         return binasciiRaise(globalObject, "Invalid base32-encoded string: number of data characters ("_s, static_cast<size_t>(out - writer.start()) / 5 * 8 + position,
             ") cannot be 1, 3, or 6 more than a multiple of 8"_s);
     }
@@ -923,7 +925,7 @@ static JSValue binasciiB2ABase32(JSGlobalObject* globalObject, JSValue dataValue
         || failed(scope, binasciiBoolArgument(globalObject, paddedValue, isPadded))
         || failed(scope, binasciiSizeArgument(globalObject, wrapValue, width))
         || (alphabetValue && failed(scope, alphabet.setBuffer(globalObject, alphabetValue)))
-        || !data.refresh() || !alphabet.refresh())
+        || failed(scope, data.refresh()) || failed(scope, alphabet.refresh()))
         return { };
     const uint8_t* table = binasciiBase32Alphabet.characters;
     if (alphabet.isSet()) {
@@ -944,7 +946,7 @@ static JSValue binasciiB2ABase32(JSGlobalObject* globalObject, JSValue dataValue
         capacity += (length - 1) / width;
     }
     BinasciiWriter writer;
-    if (!writer.allocate(globalObject, capacity))
+    if (failed(scope, writer.allocate(globalObject, capacity)))
         return { };
     uint8_t* out = writer.start();
     uint64_t bits = 0;
@@ -1001,8 +1003,8 @@ static JSValue binasciiCRCHqx(JSGlobalObject* globalObject, JSValue dataValue, J
     static constexpr auto table = binasciiMakeCCITTTable();
     BinasciiSource data;
     uint32_t crc;
-    if (failed(scope, data.setBuffer(globalObject, dataValue)) || !binasciiUnsignedArgument(globalObject, crcValue, crc)
-        || !data.refresh())
+    if (failed(scope, data.setBuffer(globalObject, dataValue)) || failed(scope, binasciiUnsignedArgument(globalObject, crcValue, crc))
+        || failed(scope, data.refresh()))
         return { };
     crc &= 0xffff;
     for (uint8_t byte : data.bytes())
@@ -1017,8 +1019,8 @@ static JSValue binasciiCRC32(JSGlobalObject* globalObject, JSValue dataValue, JS
     static constexpr auto table = binasciiMakeCRC32Table();
     BinasciiSource data;
     uint32_t crc = 0;
-    if (failed(scope, data.setBuffer(globalObject, dataValue)) || (crcValue && !binasciiUnsignedArgument(globalObject, crcValue, crc))
-        || !data.refresh())
+    if (failed(scope, data.setBuffer(globalObject, dataValue)) || (crcValue && failed(scope, binasciiUnsignedArgument(globalObject, crcValue, crc)))
+        || failed(scope, data.refresh()))
         return { };
     crc = ~crc;
     for (uint8_t byte : data.bytes())
@@ -1055,7 +1057,7 @@ static JSValue binasciiB2AHex(JSGlobalObject* globalObject, JSValue dataValue, J
             return raiseTypeError(globalObject, scope, "sep must be str or bytes."_s);
     } else
         group = 0;
-    if (!data.refresh())
+    if (failed(scope, data.refresh()))
         return { };
 
     auto input = data.bytes();
@@ -1085,12 +1087,12 @@ static JSValue binasciiA2BHex(JSGlobalObject* globalObject, JSValue dataValue, J
     BinasciiSource data;
     BinasciiSource ignoreSource;
     if (failed(scope, data.setASCII(globalObject, dataValue)) || (ignoreValue && failed(scope, ignoreSource.setBuffer(globalObject, ignoreValue)))
-        || !data.refresh() || !ignoreSource.refresh())
+        || failed(scope, data.refresh()) || failed(scope, ignoreSource.refresh()))
         return { };
     BinasciiIgnored ignored(ignoreSource.bytes());
     auto input = data.bytes();
     BinasciiWriter writer;
-    if (!writer.allocate(globalObject, input.size() / 2))
+    if (failed(scope, writer.allocate(globalObject, input.size() / 2)))
         return { };
     uint8_t* out = writer.start();
     int high = -1;
@@ -1122,12 +1124,12 @@ static JSValue binasciiA2BQP(JSGlobalObject* globalObject, JSValue dataValue, JS
     BinasciiSource data;
     bool isHeader = false;
     if (failed(scope, data.setASCII(globalObject, dataValue)) || failed(scope, binasciiBoolArgument(globalObject, headerValue, isHeader))
-        || !data.refresh())
+        || failed(scope, data.refresh()))
         return { };
     auto input = data.bytes();
     size_t size = input.size();
     BinasciiWriter writer;
-    if (!writer.allocate(globalObject, size))
+    if (failed(scope, writer.allocate(globalObject, size)))
         return { };
     uint8_t* out = writer.start();
     for (size_t i = 0; i < size;) {
@@ -1175,7 +1177,7 @@ static JSValue binasciiB2AQP(JSGlobalObject* globalObject, JSValue dataValue, JS
         || failed(scope, binasciiBoolArgument(globalObject, quoteTabsValue, quoteTabs))
         || failed(scope, binasciiBoolArgument(globalObject, isTextValue, isText))
         || failed(scope, binasciiBoolArgument(globalObject, headerValue, isHeader))
-        || !data.refresh())
+        || failed(scope, data.refresh()))
         return { };
     auto input = data.bytes();
     size_t size = input.size();

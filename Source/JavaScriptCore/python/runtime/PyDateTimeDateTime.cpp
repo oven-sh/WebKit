@@ -61,7 +61,7 @@ static JSValue dateTimeNew(JSGlobalObject* globalObject, JSValue cls, const Call
     JSValue values[9];
     Fields fields;
     JSValue tzinfo = none();
-    if (!bindArguments(globalObject, dateTimeParameters, args, values) || !dateTimeTakeArguments(globalObject, values, fields, tzinfo))
+    if (failed(scope, bindArguments(globalObject, dateTimeParameters, args, values)) || failed(scope, dateTimeTakeArguments(globalObject, values, fields, tzinfo)))
         return { };
     RELEASE_AND_RETURN(scope, newDateTime(globalObject, state, type, fields, tzinfo));
 }
@@ -139,7 +139,7 @@ static JSValue dateTimeFromSeconds(JSGlobalObject* globalObject, State& state, P
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     struct tm tm;
-    if (!(isLocal ? toLocalTime(globalObject, when, tm) : toUniversalTime(globalObject, when, tm)))
+    if (failed(scope, isLocal ? toLocalTime(globalObject, when, tm) : toUniversalTime(globalObject, when, tm)))
         return { };
     int64_t year = static_cast<int64_t>(tm.tm_year) + 1900;
     if (year < minYear || year > maxYear)
@@ -234,10 +234,12 @@ static JSValue dateTimeNow(JSGlobalObject* globalObject, JSValue cls, JSValue tz
 
 static JSValue dateTimeUtcNow(JSGlobalObject* globalObject, JSValue cls)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
-    if (!warn(globalObject, runtime(globalObject).DeprecationWarning(), "datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC)."_s))
+    if (failed(scope, warn(globalObject, runtime(globalObject).DeprecationWarning(), "datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC)."_s)))
         return { };
-    return dateTimeCurrent(globalObject, stateOf(globalObject, type), type, false, none());
+    RELEASE_AND_RETURN(scope, dateTimeCurrent(globalObject, stateOf(globalObject, type), type, false, none()));
 }
 
 static JSValue dateTimeFromTimestamp(JSGlobalObject* globalObject, JSValue cls, JSValue timestamp, JSValue tz)
@@ -264,7 +266,7 @@ static JSValue dateTimeUtcFromTimestamp(JSGlobalObject* globalObject, JSValue cl
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = PyType::from(cls);
-    if (!warn(globalObject, runtime(globalObject).DeprecationWarning(), "datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC)."_s))
+    if (failed(scope, warn(globalObject, runtime(globalObject).DeprecationWarning(), "datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC)."_s)))
         return { };
     time_t seconds;
     int microseconds;
@@ -585,7 +587,7 @@ static JSValue dateTimeIsoFormat(JSGlobalObject* globalObject, JSValue self, JSV
         separator = view.at(0);
     }
     TimeSpec spec;
-    if (!timeSpecArgument(globalObject, timespec, dateTime->microsecond(), spec))
+    if (failed(scope, timeSpecArgument(globalObject, timespec, dateTime->microsecond(), spec)))
         return { };
 
     Text date;
@@ -771,13 +773,15 @@ static JSValue dateTimeGetTimeTz(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue dateTimeReplace(JSGlobalObject* globalObject, JSValue self, const CallArgs& args)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* dateTime = PyDateTime::from(self);
     JSValue values[9];
     Fields fields = dateTime->fields();
     JSValue tzinfo = dateTime->tzinfo();
-    if (!bindArguments(globalObject, dateTimeReplaceParameters, args, values) || !dateTimeTakeArguments(globalObject, values, fields, tzinfo))
+    if (failed(scope, bindArguments(globalObject, dateTimeReplaceParameters, args, values)) || failed(scope, dateTimeTakeArguments(globalObject, values, fields, tzinfo)))
         return { };
-    return makeDateTime(globalObject, stateOf(globalObject, dateTime), dateTime->type(), fields, tzinfo);
+    RELEASE_AND_RETURN(scope, makeDateTime(globalObject, stateOf(globalObject, dateTime), dateTime->type(), fields, tzinfo));
 }
 
 static JSValue dateTimeReduceFor(JSGlobalObject* globalObject, PyDateTime* dateTime, int protocol)

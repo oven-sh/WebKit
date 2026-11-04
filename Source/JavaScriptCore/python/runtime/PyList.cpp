@@ -254,7 +254,10 @@ void listSet(JSGlobalObject* globalObject, JSArray* list, unsigned index, JSValu
 
 void listAppend(JSGlobalObject* globalObject, JSArray* list, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     list->push(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, void());
 }
 
 void listInsertGap(JSGlobalObject* globalObject, JSArray* list, unsigned index, unsigned count)

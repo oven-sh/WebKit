@@ -75,7 +75,9 @@ static JSValue argRepr(JSGlobalObject* globalObject, JSValue self)
         }
     }
     String tag = argument->tag2 ? makeString(argument->tag, argument->tag2) : makeString(argument->tag);
-    RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString("<cparam '"_s, tag, "' at "_s, addressForRepr(globalObject, self), '>')));
+    String address = addressForRepr(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString("<cparam '"_s, tag, "' at "_s, address, '>')));
 }
 
 static JSValue argObject(JSGlobalObject*, JSValue self)
@@ -371,7 +373,7 @@ static bool convertArgument(JSGlobalObject* globalObject, JSValue object, unsign
     RETURN_IF_EXCEPTION(scope, false);
     if (asParameter) {
         AsParameterScope nesting;
-        if (nesting.isTooDeep(globalObject))
+        if (failed(scope, !nesting.isTooDeep(globalObject)))
             return false;
         RELEASE_AND_RETURN(scope, convertArgument(globalObject, asParameter, index, result, keeps));
     }
@@ -499,6 +501,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
         if (i < converterCount) {
             argument = call(globalObject, converters->at(i), argument);
             if (scope.exception()) [[unlikely]] {
+                scope.release();
                 extendError(globalObject, state.argumentError.get(), makeString("argument "_s, i + 1, ": "_s));
                 return { };
             }
@@ -506,6 +509,7 @@ JSValue callFunction(JSGlobalObject* globalObject, void* function, PyTuple* argu
         }
         convertArgument(globalObject, argument, i + 1, converted[i], keeps);
         if (scope.exception()) [[unlikely]] {
+            scope.release();
             extendError(globalObject, state.argumentError.get(), makeString("argument "_s, i + 1, ": "_s));
             return { };
         }
@@ -647,6 +651,7 @@ void runCallback(PyCThunk* thunk, void** arguments, void* resultMemory)
     JSValue result = call(globalObject, callable, CallArgs(plain.span()));
     if (scope.exception()) [[unlikely]] {
         reportCallbackError(globalObject, "calling"_s, callable);
+        EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
         result = { };
     }
     if (swapsErrno)
@@ -1035,7 +1040,10 @@ static JSValue functionCall(JSGlobalObject* globalObject, JSValue self, const Ca
 
 static JSValue functionRepr(JSGlobalObject* globalObject, JSValue self)
 {
-    return makeStr(globalObject, makeString('<', PyCData::from(self)->type()->nameInMessages(), " object at "_s, addressForRepr(globalObject, self), '>'));
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    String address = addressForRepr(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString('<', PyCData::from(self)->type()->nameInMessages(), " object at "_s, address, '>')));
 }
 
 static JSValue functionIsNotNull(JSGlobalObject* globalObject, JSValue self)

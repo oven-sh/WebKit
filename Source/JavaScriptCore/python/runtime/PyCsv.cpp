@@ -470,9 +470,9 @@ public:
                 m_state = CsvState::EscapedChar;
             else if (c == ' ' && m_dialect.skipInitialSpace) {
             } else if (c == m_dialect.delimiter)
-                return saveField();
+                RELEASE_AND_RETURN(scope, saveField());
             else {
-                if (!add(c))
+                if (failed(scope, add(c)))
                     return false;
                 m_state = CsvState::InField;
             }
@@ -480,12 +480,12 @@ public:
 
         case CsvState::EscapedChar:
             if (c == '\n' || c == '\r') {
-                if (!add(c))
+                if (failed(scope, add(c)))
                     return false;
                 m_state = CsvState::AfterEscapedCRNL;
                 return true;
             }
-            if (!add(c == csvEndOfLine ? '\n' : c))
+            if (failed(scope, add(c == csvEndOfLine ? '\n' : c)))
                 return false;
             m_state = CsvState::InField;
             return true;
@@ -506,7 +506,7 @@ public:
                     return false;
                 m_state = CsvState::StartField;
             } else
-                return add(c);
+                RELEASE_AND_RETURN(scope, add(c));
             return true;
 
         case CsvState::InQuotedField:
@@ -517,18 +517,18 @@ public:
             else if (c == m_dialect.quoteChar && m_dialect.quoting != CsvQuoteNone)
                 m_state = m_dialect.doubleQuote ? CsvState::QuoteInQuotedField : CsvState::InField;
             else
-                return add(c);
+                RELEASE_AND_RETURN(scope, add(c));
             return true;
 
         case CsvState::EscapeInQuotedField:
-            if (!add(c == csvEndOfLine ? '\n' : c))
+            if (failed(scope, add(c == csvEndOfLine ? '\n' : c)))
                 return false;
             m_state = CsvState::InQuotedField;
             return true;
 
         case CsvState::QuoteInQuotedField:
             if (m_dialect.quoting != CsvQuoteNone && c == m_dialect.quoteChar) {
-                if (!add(c))
+                if (failed(scope, add(c)))
                     return false;
                 m_state = CsvState::InQuotedField;
             } else if (c == m_dialect.delimiter) {
@@ -540,10 +540,11 @@ public:
                     return false;
                 m_state = c == csvEndOfLine ? CsvState::StartRecord : CsvState::EatCRNL;
             } else if (!m_dialect.strict) {
-                if (!add(c))
+                if (failed(scope, add(c)))
                     return false;
                 m_state = CsvState::InField;
             } else {
+                scope.release();
                 csvRaise(m_globalObject, '\'', stringFromCodePoint(m_dialect.delimiter), "' expected after '"_s, stringFromCodePoint(m_dialect.quoteChar), '\'');
                 return false;
             }
@@ -556,6 +557,7 @@ public:
                 m_state = CsvState::StartRecord;
                 return true;
             }
+            scope.release();
             csvRaise(m_globalObject, "new-line character seen in unquoted field - do you need to open the file with newline=''?"_s);
             return false;
         }
@@ -622,7 +624,7 @@ static JSValue csvReaderNext(JSGlobalObject* globalObject, JSValue self)
         ++reader->number;
         String text = strValue(line)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
-        bool ok = csvForEachCodePoint(text, [&](char32_t character) { return parser.process(character); });
+        bool ok = csvForEachCodePoint(text, [&](char32_t character) { return !failed(scope, parser.process(character)); });
         RETURN_IF_EXCEPTION(scope, { });
         ASSERT_UNUSED(ok, ok);
         parser.process(csvEndOfLine);

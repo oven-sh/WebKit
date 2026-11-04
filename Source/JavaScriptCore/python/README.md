@@ -1022,6 +1022,46 @@ Tables of `NativeDef` (`PY_FUNCTION`, `PY_METHOD`, `PY_SLOT`, ...) with signatur
 argument parser is generated from the signature at compile time. `TypeDef` describes a type; `Runtime::typeFor(def)` makes it on
 first use. A module is `void initializeXModule(JSGlobalObject*, PyModule*)` listed in `PyNativeModules.cpp`.
 
+### Every call that can raise is looked at
+
+JSC can verify that no exception is overlooked (`BUN_JSC_validateExceptionChecks=1`, in builds with assertions; Bun's CI sets it). A
+function that can throw declares a `ThrowScope`. When that goes, the VM notes that there *may* be an exception now, whether there is one
+or not, and the next scope that is made or goes aborts unless somebody has asked `scope.exception()` in between. So a path on
+which a check is missing is found the first time it runs, not the first time something fails on it. The runtime passes, and the wrappers
+that run the tests on a debug build have the option on. What that takes:
+
+- After a call that can raise: `RETURN_IF_EXCEPTION(scope, { })`.
+- Many functions here say in what they return that they have raised: false, null, an empty value. `if (failed(scope, f(...))) return { };`
+  (`PyErrors.h`) tests the result, tells the verification, and asserts that result and exception go together. Only for a function that
+  returns such a value *exactly* when it has raised. Where empty also means "there is none" (`getAttrIfPresent`, `dict->get`,
+  `next`): `RETURN_IF_EXCEPTION`, then the test. For an outcome with more than two values:
+  `EXCEPTION_ASSERT(!!scope.exception() == (outcome == Outcome::Raised))`.
+- The last call of a function: `RELEASE_AND_RETURN(scope, f(...))`, or `scope.release()` before a call that returns nothing. Nothing that
+  can raise comes after a release, and only one such call is inside it: `RELEASE_AND_RETURN(scope, g(h()))` with two that can
+  raise is a missing check between them.
+- `return raiseTypeError(globalObject, scope, ...)` needs nothing: the functions that raise take the scope.
+- A function without a scope of its own that only hands on what it got (`return f(...)`, `if (!f(...)) return false;`) needs none.
+  As soon as it makes two calls that can raise it needs one.
+- A loop checks in every round: `listAppend` twice in a row without a check is an error, also when it cannot fail in practice.
+- A function that never leaves an exception (it reports it, stores it, or there can be none): `DECLARE_TOP_EXCEPTION_SCOPE`. That one
+  verifies at both ends and notes nothing when it goes, so its callers need no check.
+- A release does not spare the caller the check: a `ThrowScope` that goes notes that there may be an exception, released or not. A
+  function whose callers go on without a look after one of its results (`tryOverloadedOperator` that returns false,
+  `bytesOfPythonMemory` that returns the bytes), or a block in the middle of a function that goes on, has a `TopExceptionScope`
+  too: `if (scope.exception()) return ...;` with the result after which the callers do look. The exception stays.
+- **Callbacks of C libraries** (expat, SQLite, BoringSSL, `qsort` through ctypes): the library does not look for exceptions, and calls again.
+  Each callback has a `TopExceptionScope`, leaves the exception pending or puts it aside, sets a flag that makes the library stop, and does
+  nothing if it is entered with the flag set. Whoever called the library looks at the flag.
+- To put an exception aside and raise it again later: `takePendingException()`, `throwPythonException()`. It leaves what ends the program
+  (a termination) where it is and returns empty: `RETURN_IF_EXCEPTION` after it. To raise again in a function with a
+  `TopExceptionScope`: an inner block with a `ThrowScope`, then `EXCEPTION_ASSERT_UNUSED(scope, scope.exception() == pending)`.
+- Code that runs while an exception is on its way (trace functions, `__del__` during unwinding): `SuspendExceptionScope`, which also
+  sets aside that somebody has yet to look. What the unwinder itself calls has no `ThrowScope`.
+
+To find what is missing without dying at the first: `BUN_JSC_uncheckedExceptionsLog=FILE` with the option above writes each missing
+check to the file, once, with both stacks, and goes on; `Tools/Scripts/unchecked-exceptions FILE` puts them in order by the function
+to change.
+
 ## Testing
 
 Everything is tested through Bun, against CPython 3.15 as the oracle. The tests are in Bun's repository, under `test/js/bun/python/`.

@@ -314,12 +314,12 @@ static JSValue impGetFrozenObject(JSGlobalObject* globalObject, JSValue name, JS
     if (!hasBuffer(data))
         return raiseTypeError(globalObject, scope, "get_frozen_object() argument 2 must be bytes, not "_s, typeNameOfArgument(globalObject, data));
     BufferHolder holder(globalObject);
-    if (!holder.get(data))
+    if (failed(scope, holder.get(data)))
         return { };
     JSValue code;
     if (!holder.buffer.span().empty()) {
         code = readMarshalled(globalObject, holder.buffer.span());
-        if (!code)
+        if (failed(scope, code))
             takePendingException(globalObject);
     }
     if (!code)
@@ -389,10 +389,13 @@ static JSValue impInitFrozen(JSGlobalObject* globalObject, JSValue nameValue)
 static JSValue impFrozenModuleNames(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* names = newList(globalObject);
     for (auto& module : frozenModules) {
-        if (module.group == FrozenGroup::Bootstrap || usesFrozenModules())
+        if (module.group == FrozenGroup::Bootstrap || usesFrozenModules()) {
             listAppend(globalObject, names, makeStr(vm, module.name));
+            RETURN_IF_EXCEPTION(scope, { });
+        }
     }
     if (auto* fileSystem = virtualFileSystem(); fileSystem && !fileSystem->hostLibrary.isNull()) {
         VirtualPath fromRoot;
@@ -401,8 +404,10 @@ static JSValue impFrozenModuleNames(JSGlobalObject* globalObject)
             fileSystem->list(fromRoot.span(), entries);
         for (auto& entry : entries) {
             String file = String::fromUTF8(entry.name.span());
-            if (entry.kind == VirtualFileKind::File && file.endsWith(".py"_s))
+            if (entry.kind == VirtualFileKind::File && file.endsWith(".py"_s)) {
                 listAppend(globalObject, names, makeStr(vm, file.left(file.length() - 3)));
+                RETURN_IF_EXCEPTION(scope, { });
+            }
         }
     }
     return names;

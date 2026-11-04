@@ -37,6 +37,7 @@ static bool syslogToUTF8(JSGlobalObject* globalObject, JSString* string, PosixBy
     auto encoded = tryEncodeUTF8(text);
     if (!encoded) {
         // Which raises.
+        scope.release();
         strEncode(globalObject, string, makeStr(vm, "utf-8"_s), makeStr(vm, "strict"_s));
         return false;
     }
@@ -69,7 +70,7 @@ static bool syslogOpen(JSGlobalObject* globalObject, JSString* ident, int64_t op
     if (failed(scope, audit(globalObject, "syslog.openlog"_s, ident, posixMakeInt(globalObject, options), posixMakeInt(globalObject, facility))))
         return false;
     PosixBytes encoded;
-    if (ident && !syslogToUTF8(globalObject, ident, encoded))
+    if (ident && failed(scope, syslogToUTF8(globalObject, ident, encoded)))
         return false;
     Locker locker { s_syslogLock };
     // Closed first, so that nothing uses the previous name while it is overwritten.
@@ -91,7 +92,7 @@ static JSValue syslogOpenLog(JSGlobalObject* globalObject, JSValue identValue, J
         return raiseTypeError(globalObject, scope, "openlog() argument 'ident' must be str, not "_s, posixTypeNameOfArgument(globalObject, identValue));
     if ((optionsValue && failed(scope, posixToLong(globalObject, optionsValue, options))) || (facilityValue && failed(scope, posixToLong(globalObject, facilityValue, facility))))
         return { };
-    if (!syslogOpen(globalObject, identValue ? strValue(identValue) : nullptr, options, facility))
+    if (failed(scope, syslogOpen(globalObject, identValue ? strValue(identValue) : nullptr, options, facility)))
         return { };
     return jsUndefined();
 }
@@ -121,7 +122,7 @@ static JSValue syslogSyslog(JSGlobalObject* globalObject, const CallArgs& args)
     if (!isStr(messageValue))
         return raiseTypeError(globalObject, scope, "syslog() argument "_s, args.size(), " must be str, not "_s, posixTypeNameOfArgument(globalObject, messageValue));
     PosixBytes message;
-    if (!syslogToUTF8(globalObject, strValue(messageValue), message))
+    if (failed(scope, syslogToUTF8(globalObject, strValue(messageValue), message)))
         return { };
     if (message.contains('\0'))
         return raiseValueError(globalObject, scope, "embedded null character"_s);
@@ -132,7 +133,7 @@ static JSValue syslogSyslog(JSGlobalObject* globalObject, const CallArgs& args)
         Locker locker { s_syslogLock };
         isOpen = s_syslogIsOpen;
     }
-    if (!isOpen && !syslogOpen(globalObject, nullptr, 0, LOG_USER))
+    if (!isOpen && failed(scope, syslogOpen(globalObject, nullptr, 0, LOG_USER)))
         return { };
     syslog(priority, "%s", message.characters());
     return jsUndefined();

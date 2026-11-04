@@ -646,7 +646,10 @@ static void enterCallback(PyCThunk* thunk, Incoming& in, uint64_t (&result)[2])
             else
                 pointers.append(integersUsed < integerRegisterCount ? static_cast<void*>(&in.integers[integersUsed++]) : fromStack(sizeOfScalar(kind)));
         }
+        // Code in C is in between: nobody there looks for an exception, and the callback leaves none but the end of the program.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         runCallback(thunk, pointers.mutableSpan().data(), result);
+        EXCEPTION_ASSERT_UNUSED(scope, !scope.exception() || vm.hasPendingTerminationException());
     }
 
     if (hadLetGo)

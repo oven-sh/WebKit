@@ -584,7 +584,7 @@ static JSValue dequeInsert(JSGlobalObject* globalObject, JSValue self, JSValue i
         if (pushed)
             dequeRotate(globalObject, deque, index);
     }
-    if (!pushed)
+    if (failed(scope, pushed))
         return { };
     return jsUndefined();
 }

@@ -8,6 +8,7 @@
 
 #if !OS(WINDOWS)
 
+#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyExec.h"
 #include <dirent.h>
@@ -137,10 +138,12 @@ JSValue posixStatResult(JSGlobalObject* globalObject, const struct stat& status)
 
 static JSValue posixDoStat(JSGlobalObject* globalObject, const PosixPath& path, int dirFd, bool followSymlinks)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
-    if (posixPathAndDirFdInvalid(globalObject, "stat"_s, path, dirFd)
-        || posixDirFdAndFdInvalid(globalObject, "stat"_s, dirFd, path.fd())
-        || posixFdAndFollowSymlinksInvalid(globalObject, "stat"_s, path.isFd(), followSymlinks))
+    if (failed(scope, !posixPathAndDirFdInvalid(globalObject, "stat"_s, path, dirFd))
+        || failed(scope, !posixDirFdAndFdInvalid(globalObject, "stat"_s, dirFd, path.fd()))
+        || failed(scope, !posixFdAndFollowSymlinksInvalid(globalObject, "stat"_s, path.isFd(), followSymlinks)))
         return { };
     struct stat status;
     int result;
@@ -155,8 +158,8 @@ static JSValue posixDoStat(JSGlobalObject* globalObject, const PosixPath& path, 
     else
         result = stat(path.narrow(), &status);
     if (result)
-        return path.error(globalObject);
-    return posixStatResult(globalObject, status);
+        RELEASE_AND_RETURN(scope, path.error(globalObject));
+    RELEASE_AND_RETURN(scope, posixStatResult(globalObject, status));
 }
 
 static JSValue posixStat(JSGlobalObject* globalObject, JSValue pathValue, JSValue dirFdValue, JSValue followSymlinksValue)
@@ -166,7 +169,7 @@ static JSValue posixStat(JSGlobalObject* globalObject, JSValue pathValue, JSValu
     PosixPath path("stat"_s, PosixPath::AllowFd | PosixPath::AllowVirtual);
     int dirFd;
     bool followSymlinks;
-    if (!path.convert(globalObject, pathValue) || !posixToDirFd(globalObject, dirFdValue, dirFd) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd)) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
         return { };
     RELEASE_AND_RETURN(scope, posixDoStat(globalObject, path, dirFd, followSymlinks));
 }
@@ -191,7 +194,7 @@ static JSValue posixAccess(JSGlobalObject* globalObject, JSValue pathValue, JSVa
     int dirFd;
     bool effectiveIds;
     bool followSymlinks;
-    if (!path.convert(globalObject, pathValue) || failed(scope, posixToInt(globalObject, modeValue, mode)) || !posixToDirFd(globalObject, dirFdValue, dirFd)
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToInt(globalObject, modeValue, mode)) || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd))
         || failed(scope, posixToBool(globalObject, effectiveIdsValue, false, effectiveIds)) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
         return { };
     int result;
@@ -231,7 +234,7 @@ static JSValue posixChdir(JSGlobalObject* globalObject, JSValue pathValue)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("chdir"_s, PosixPath::AllowFd | PosixPath::VirtualUnsupported);
-    if (!path.convert(globalObject, pathValue))
+    if (failed(scope, path.convert(globalObject, pathValue)))
         return { };
     if (failed(scope, audit(globalObject, "os.chdir"_s, path.object())))
         return { };
@@ -268,11 +271,13 @@ static JSValue posixGetcwdb(JSGlobalObject* globalObject) { return posixGetcwdAs
 
 static JSValue posixChroot(JSGlobalObject* globalObject, JSValue pathValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("chroot"_s, PosixPath::VirtualUnsupported);
-    if (!path.convert(globalObject, pathValue))
+    if (failed(scope, path.convert(globalObject, pathValue)))
         return { };
     if (chroot(path.narrow()) < 0)
-        return path.error(globalObject);
+        RELEASE_AND_RETURN(scope, path.error(globalObject));
     return jsUndefined();
 }
 
@@ -293,7 +298,7 @@ static JSValue posixChmod(JSGlobalObject* globalObject, JSValue pathValue, JSVal
     int mode;
     int dirFd;
     bool followSymlinks;
-    if (!path.convert(globalObject, pathValue) || failed(scope, posixToInt(globalObject, modeValue, mode)) || !posixToDirFd(globalObject, dirFdValue, dirFd)
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToInt(globalObject, modeValue, mode)) || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd))
         || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
         return { };
     if (failed(scope, audit(globalObject, "os.chmod"_s, path.object(), jsNumber(mode), jsNumber(dirFd == AT_FDCWD ? -1 : dirFd))))
@@ -330,7 +335,7 @@ static JSValue posixLchmod(JSGlobalObject* globalObject, JSValue pathValue, JSVa
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("lchmod"_s);
     int mode;
-    if (!path.convert(globalObject, pathValue) || failed(scope, posixToInt(globalObject, modeValue, mode)))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToInt(globalObject, modeValue, mode)))
         return { };
     if (failed(scope, audit(globalObject, "os.chmod"_s, path.object(), jsNumber(mode), jsNumber(-1))))
         return { };
@@ -351,7 +356,7 @@ static JSValue posixChflags(JSGlobalObject* globalObject, JSValue pathValue, JSV
     PosixPath path("chflags"_s);
     unsigned flags;
     bool followSymlinks;
-    if (!path.convert(globalObject, pathValue) || !posixToFileFlags(globalObject, flagsValue, flags) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToFileFlags(globalObject, flagsValue, flags)) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
         return { };
     if (followSymlinks ? chflags(path.narrow(), flags) : lchflags(path.narrow(), flags))
         RELEASE_AND_RETURN(scope, path.error(globalObject));
@@ -360,12 +365,14 @@ static JSValue posixChflags(JSGlobalObject* globalObject, JSValue pathValue, JSV
 
 static JSValue posixLchflags(JSGlobalObject* globalObject, JSValue pathValue, JSValue flagsValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("lchflags"_s);
     unsigned flags;
-    if (!path.convert(globalObject, pathValue) || !posixToFileFlags(globalObject, flagsValue, flags))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToFileFlags(globalObject, flagsValue, flags)))
         return { };
     if (lchflags(path.narrow(), flags) < 0)
-        return path.error(globalObject);
+        RELEASE_AND_RETURN(scope, path.error(globalObject));
     return jsUndefined();
 }
 #endif
@@ -379,12 +386,12 @@ static JSValue posixChown(JSGlobalObject* globalObject, JSValue pathValue, JSVal
     gid_t gid;
     int dirFd;
     bool followSymlinks;
-    if (!path.convert(globalObject, pathValue) || failed(scope, posixToUid(globalObject, uidValue, uid)) || failed(scope, posixToGid(globalObject, gidValue, gid))
-        || !posixToDirFd(globalObject, dirFdValue, dirFd) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToUid(globalObject, uidValue, uid)) || failed(scope, posixToGid(globalObject, gidValue, gid))
+        || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd)) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
         return { };
     if (failed(scope, audit(globalObject, "os.chown"_s, path.object(), jsNumber(static_cast<uint32_t>(uid)), jsNumber(static_cast<uint32_t>(gid)), jsNumber(dirFd == AT_FDCWD ? -1 : dirFd))))
         return { };
-    if (posixDirFdAndFdInvalid(globalObject, "chown"_s, dirFd, path.fd()) || posixFdAndFollowSymlinksInvalid(globalObject, "chown"_s, path.isFd(), followSymlinks))
+    if (failed(scope, !posixDirFdAndFdInvalid(globalObject, "chown"_s, dirFd, path.fd())) || failed(scope, !posixFdAndFollowSymlinksInvalid(globalObject, "chown"_s, path.isFd(), followSymlinks)))
         return { };
     int result;
     if (path.isFd())
@@ -407,7 +414,7 @@ static JSValue posixLchown(JSGlobalObject* globalObject, JSValue pathValue, JSVa
     PosixPath path("lchown"_s);
     uid_t uid;
     gid_t gid;
-    if (!path.convert(globalObject, pathValue) || failed(scope, posixToUid(globalObject, uidValue, uid)) || failed(scope, posixToGid(globalObject, gidValue, gid)))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToUid(globalObject, uidValue, uid)) || failed(scope, posixToGid(globalObject, gidValue, gid)))
         return { };
     if (failed(scope, audit(globalObject, "os.chown"_s, path.object(), jsNumber(static_cast<uint32_t>(uid)), jsNumber(static_cast<uint32_t>(gid)), jsNumber(-1))))
         return { };
@@ -428,8 +435,8 @@ static JSValue posixLink(JSGlobalObject* globalObject, JSValue sourceValue, JSVa
     int sourceDirFd;
     int destinationDirFd;
     bool followSymlinks;
-    if (!source.convert(globalObject, sourceValue) || !destination.convert(globalObject, destinationValue)
-        || !posixToDirFd(globalObject, sourceDirFdValue, sourceDirFd) || !posixToDirFd(globalObject, destinationDirFdValue, destinationDirFd)
+    if (failed(scope, source.convert(globalObject, sourceValue)) || failed(scope, destination.convert(globalObject, destinationValue))
+        || failed(scope, posixToDirFd(globalObject, sourceDirFdValue, sourceDirFd)) || failed(scope, posixToDirFd(globalObject, destinationDirFdValue, destinationDirFd))
         || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
         return { };
     if (failed(scope, audit(globalObject, "os.link"_s, source.object(), destination.object(), jsNumber(sourceDirFd == AT_FDCWD ? -1 : sourceDirFd), jsNumber(destinationDirFd == AT_FDCWD ? -1 : destinationDirFd))))
@@ -447,8 +454,8 @@ static JSValue posixSymlink(JSGlobalObject* globalObject, JSValue sourceValue, J
     PosixPath destination("symlink"_s, "dst"_s, PosixPath::MakesNew);
     bool targetIsDirectory;
     int dirFd;
-    if (!source.convert(globalObject, sourceValue) || !destination.convert(globalObject, destinationValue)
-        || failed(scope, posixToBool(globalObject, targetIsDirectoryValue, false, targetIsDirectory)) || !posixToDirFd(globalObject, dirFdValue, dirFd))
+    if (failed(scope, source.convert(globalObject, sourceValue)) || failed(scope, destination.convert(globalObject, destinationValue))
+        || failed(scope, posixToBool(globalObject, targetIsDirectoryValue, false, targetIsDirectory)) || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd)))
         return { };
     if (failed(scope, audit(globalObject, "os.symlink"_s, source.object(), destination.object(), jsNumber(dirFd == AT_FDCWD ? -1 : dirFd))))
         return { };
@@ -459,22 +466,24 @@ static JSValue posixSymlink(JSGlobalObject* globalObject, JSValue sourceValue, J
 
 static JSValue posixReadlink(JSGlobalObject* globalObject, JSValue pathValue, JSValue dirFdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("readlink"_s, PosixPath::AllowVirtual);
     int dirFd;
-    if (!path.convert(globalObject, pathValue) || !posixToDirFd(globalObject, dirFdValue, dirFd))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd)))
         return { };
     if (path.isVirtual()) {
         // Nothing there is a link.
         struct stat status;
         if (!virtualStat(path.virtualPath(), status))
             errno = EINVAL;
-        return path.error(globalObject);
+        RELEASE_AND_RETURN(scope, path.error(globalObject));
     }
     char buffer[PATH_MAX + 1];
     ssize_t length = dirFd != AT_FDCWD ? readlinkat(dirFd, path.narrow(), buffer, PATH_MAX) : readlink(path.narrow(), buffer, PATH_MAX);
     if (length < 0)
-        return path.error(globalObject);
-    return posixFileName(globalObject, std::span<const char> { buffer, static_cast<size_t>(length) }, path.isBytes());
+        RELEASE_AND_RETURN(scope, path.error(globalObject));
+    RELEASE_AND_RETURN(scope, posixFileName(globalObject, std::span<const char> { buffer, static_cast<size_t>(length) }, path.isBytes()));
 }
 
 static JSValue posixMkdir(JSGlobalObject* globalObject, JSValue pathValue, JSValue modeValue, JSValue dirFdValue)
@@ -484,7 +493,7 @@ static JSValue posixMkdir(JSGlobalObject* globalObject, JSValue pathValue, JSVal
     PosixPath path("mkdir"_s, PosixPath::MakesNew);
     int mode = 0777;
     int dirFd;
-    if (!path.convert(globalObject, pathValue) || (modeValue && failed(scope, posixToInt(globalObject, modeValue, mode))) || !posixToDirFd(globalObject, dirFdValue, dirFd))
+    if (failed(scope, path.convert(globalObject, pathValue)) || (modeValue && failed(scope, posixToInt(globalObject, modeValue, mode))) || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd)))
         return { };
     if (failed(scope, audit(globalObject, "os.mkdir"_s, path.object(), jsNumber(mode), jsNumber(dirFd == AT_FDCWD ? -1 : dirFd))))
         return { };
@@ -499,7 +508,7 @@ static JSValue posixRmdir(JSGlobalObject* globalObject, JSValue pathValue, JSVal
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("rmdir"_s);
     int dirFd;
-    if (!path.convert(globalObject, pathValue) || !posixToDirFd(globalObject, dirFdValue, dirFd))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd)))
         return { };
     if (failed(scope, audit(globalObject, "os.rmdir"_s, path.object(), jsNumber(dirFd == AT_FDCWD ? -1 : dirFd))))
         return { };
@@ -514,7 +523,7 @@ static JSValue posixUnlinkNamed(JSGlobalObject* globalObject, ASCIILiteral funct
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path(function);
     int dirFd;
-    if (!path.convert(globalObject, pathValue) || !posixToDirFd(globalObject, dirFdValue, dirFd))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd)))
         return { };
     if (failed(scope, audit(globalObject, "os.remove"_s, path.object(), jsNumber(dirFd == AT_FDCWD ? -1 : dirFd))))
         return { };
@@ -536,7 +545,7 @@ static JSValue posixRenameNamed(JSGlobalObject* globalObject, ASCIILiteral funct
     int sourceDirFd;
     int destinationDirFd;
     if (failed(scope, source.convert(globalObject, sourceValue)) || failed(scope, destination.convert(globalObject, destinationValue))
-        || !posixToDirFd(globalObject, sourceDirFdValue, sourceDirFd) || !posixToDirFd(globalObject, destinationDirFdValue, destinationDirFd))
+        || failed(scope, posixToDirFd(globalObject, sourceDirFdValue, sourceDirFd)) || failed(scope, posixToDirFd(globalObject, destinationDirFdValue, destinationDirFd)))
         return { };
     if (failed(scope, audit(globalObject, "os.rename"_s, source.object(), destination.object(), jsNumber(sourceDirFd == AT_FDCWD ? -1 : sourceDirFd), jsNumber(destinationDirFd == AT_FDCWD ? -1 : destinationDirFd))))
         return { };
@@ -567,12 +576,12 @@ static JSValue posixMkfifo(JSGlobalObject* globalObject, JSValue pathValue, JSVa
     PosixPath path("mkfifo"_s, PosixPath::MakesNew);
     int mode = 0666;
     int dirFd;
-    if (!path.convert(globalObject, pathValue) || (modeValue && failed(scope, posixToInt(globalObject, modeValue, mode))) || !posixToDirFd(globalObject, dirFdValue, dirFd))
+    if (failed(scope, path.convert(globalObject, pathValue)) || (modeValue && failed(scope, posixToInt(globalObject, modeValue, mode))) || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd)))
         return { };
     int result;
     do {
         result = dirFd != AT_FDCWD ? mkfifoat(dirFd, path.narrow(), static_cast<mode_t>(mode)) : mkfifo(path.narrow(), static_cast<mode_t>(mode));
-    } while (result && errno == EINTR && checkSignals(globalObject));
+    } while (result && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
@@ -586,13 +595,13 @@ static JSValue posixMknod(JSGlobalObject* globalObject, JSValue pathValue, JSVal
     int mode = 0600;
     dev_t device = 0;
     int dirFd;
-    if (!path.convert(globalObject, pathValue) || (modeValue && failed(scope, posixToInt(globalObject, modeValue, mode)))
-        || (deviceValue && failed(scope, posixToDev(globalObject, deviceValue, device))) || !posixToDirFd(globalObject, dirFdValue, dirFd))
+    if (failed(scope, path.convert(globalObject, pathValue)) || (modeValue && failed(scope, posixToInt(globalObject, modeValue, mode)))
+        || (deviceValue && failed(scope, posixToDev(globalObject, deviceValue, device))) || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd)))
         return { };
     int result;
     do {
         result = dirFd != AT_FDCWD ? mknodat(dirFd, path.narrow(), static_cast<mode_t>(mode), device) : mknod(path.narrow(), static_cast<mode_t>(mode), device);
-    } while (result && errno == EINTR && checkSignals(globalObject));
+    } while (result && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
@@ -789,12 +798,12 @@ static JSValue posixStatxFunction(JSGlobalObject* globalObject, JSValue pathValu
     int flags = 0;
     int dirFd;
     bool followSymlinks;
-    if (!path.convert(globalObject, pathValue) || !posixToUnsignedMask(globalObject, maskValue, mask) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags)))
-        || !posixToDirFd(globalObject, dirFdValue, dirFd) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToUnsignedMask(globalObject, maskValue, mask)) || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags)))
+        || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd)) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
         return { };
-    if (posixPathAndDirFdInvalid(globalObject, "statx"_s, path, dirFd)
-        || posixDirFdAndFdInvalid(globalObject, "statx"_s, dirFd, path.fd())
-        || posixFdAndFollowSymlinksInvalid(globalObject, "statx"_s, path.isFd(), followSymlinks))
+    if (failed(scope, !posixPathAndDirFdInvalid(globalObject, "statx"_s, path, dirFd))
+        || failed(scope, !posixDirFdAndFdInvalid(globalObject, "statx"_s, dirFd, path.fd()))
+        || failed(scope, !posixFdAndFollowSymlinksInvalid(globalObject, "statx"_s, path.isFd(), followSymlinks)))
         return { };
     if (flags & (AT_SYMLINK_NOFOLLOW | AT_SYMLINK_FOLLOW))
         return raiseValueError(globalObject, scope, "use follow_symlinks kwarg instead of AT_SYMLINK_* flag"_s);
@@ -879,7 +888,7 @@ static JSValue posixTruncate(JSGlobalObject* globalObject, JSValue pathValue, JS
     writeOutPendingOutput(globalObject);
     PosixPath path("truncate"_s, PosixPath::AllowFd);
     off_t length;
-    if (!path.convert(globalObject, pathValue) || failed(scope, posixToOffset(globalObject, lengthValue, length)))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToOffset(globalObject, lengthValue, length)))
         return { };
     if (failed(scope, audit(globalObject, "os.truncate"_s, path.object(), lengthValue)))
         return { };
@@ -887,7 +896,7 @@ static JSValue posixTruncate(JSGlobalObject* globalObject, JSValue pathValue, JS
         int result;
         do {
             result = ftruncate(path.fd(), length);
-        } while (result && errno == EINTR && checkSignals(globalObject));
+        } while (result && errno == EINTR && !failed(scope, checkSignals(globalObject)));
         if (result)
             RELEASE_AND_RETURN(scope, posixError(globalObject));
         return jsUndefined();
@@ -932,7 +941,7 @@ static JSValue posixUtime(JSGlobalObject* globalObject, JSValue pathValue, JSVal
     PosixPath path("utime"_s, PosixPath::AllowFd);
     int dirFd;
     bool followSymlinks;
-    if (!path.convert(globalObject, pathValue) || !posixToDirFd(globalObject, dirFdValue, dirFd) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToDirFd(globalObject, dirFdValue, dirFd)) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
         return { };
     if (failed(scope, audit(globalObject, "os.utime"_s, path.object(), times, ns, jsNumber(dirFd == AT_FDCWD ? -1 : dirFd))))
         return { };
@@ -952,7 +961,7 @@ static JSValue posixUtime(JSGlobalObject* globalObject, JSValue pathValue, JSVal
         if (!pair)
             return raiseTypeError(globalObject, scope, "utime: 'times' must be either a tuple of two numbers or None"_s);
         for (unsigned i = 0; i < 2; ++i) {
-            if (!posixToTimespec(globalObject, pair->at(i), values[i].tv_sec, values[i].tv_nsec))
+            if (failed(scope, posixToTimespec(globalObject, pair->at(i), values[i].tv_sec, values[i].tv_nsec)))
                 return { };
         }
     } else if (ns) {
@@ -966,9 +975,9 @@ static JSValue posixUtime(JSGlobalObject* globalObject, JSValue pathValue, JSVal
     } else
         when = nullptr; // Now.
 
-    if (posixPathAndDirFdInvalid(globalObject, "utime"_s, path, dirFd)
-        || posixDirFdAndFdInvalid(globalObject, "utime"_s, dirFd, path.fd())
-        || posixFdAndFollowSymlinksInvalid(globalObject, "utime"_s, path.isFd(), followSymlinks))
+    if (failed(scope, !posixPathAndDirFdInvalid(globalObject, "utime"_s, path, dirFd))
+        || failed(scope, !posixDirFdAndFdInvalid(globalObject, "utime"_s, dirFd, path.fd()))
+        || failed(scope, !posixFdAndFollowSymlinksInvalid(globalObject, "utime"_s, path.isFd(), followSymlinks)))
         return { };
 
     int result;
@@ -1022,13 +1031,15 @@ static JSValue posixStatvfsResult(JSGlobalObject* globalObject, const PosixFileS
 
 static JSValue posixStatvfs(JSGlobalObject* globalObject, JSValue pathValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("statvfs"_s, PosixPath::AllowFd | PosixPath::VirtualUnsupported);
-    if (!path.convert(globalObject, pathValue))
+    if (failed(scope, path.convert(globalObject, pathValue)))
         return { };
     PosixFileSystemStatus status;
     if (path.isFd() ? posixFileSystemStatusOf(path.fd(), status) : posixFileSystemStatusOf(path.narrow(), status))
-        return path.error(globalObject);
-    return posixStatvfsResult(globalObject, status);
+        RELEASE_AND_RETURN(scope, path.error(globalObject));
+    RELEASE_AND_RETURN(scope, posixStatvfsResult(globalObject, status));
 }
 
 static JSValue posixFstatvfs(JSGlobalObject* globalObject, JSValue fdValue)
@@ -1042,7 +1053,7 @@ static JSValue posixFstatvfs(JSGlobalObject* globalObject, JSValue fdValue)
     int result;
     do {
         result = posixFileSystemStatusOf(fd, status);
-    } while (result && errno == EINTR && checkSignals(globalObject));
+    } while (result && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
     RELEASE_AND_RETURN(scope, posixStatvfsResult(globalObject, status));
@@ -1129,11 +1140,12 @@ static JSValue posixListdir(JSGlobalObject* globalObject, JSValue pathValue)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("listdir"_s, PosixPath::AllowFd | PosixPath::Nullable | PosixPath::AllowVirtual);
-    if (!path.convert(globalObject, pathValue))
+    if (failed(scope, path.convert(globalObject, pathValue)))
         return { };
     if (failed(scope, audit(globalObject, "os.listdir"_s, path.object())))
         return { };
     JSArray* list = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     bool asBytes = path.isBytes();
     bool succeeded = posixForEachDirectoryEntry(globalObject, path, [&](std::span<const char> name, uint64_t, unsigned char) {
         JSValue fileName = posixFileName(globalObject, name, asBytes);
@@ -1162,10 +1174,12 @@ static unsigned char posixDirEntryType(PyRecord* entry) { return static_cast<uns
 
 static JSValue posixDirEntryFetchStat(JSGlobalObject* globalObject, PyRecord* entry, bool followSymlinks)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     writeOutPendingOutput(globalObject);
     JSValue pathObject = entry->get(PosixDirEntryPath);
     PosixBytes path;
-    if (!posixToFSBytes(globalObject, pathObject, path))
+    if (failed(scope, posixToFSBytes(globalObject, pathObject, path)))
         return { };
     struct stat status;
     int result;
@@ -1179,11 +1193,9 @@ static JSValue posixDirEntryFetchStat(JSGlobalObject* globalObject, PyRecord* en
         result = followSymlinks ? stat(path.characters(), &status) : lstat(path.characters(), &status);
     if (result) {
         int errorNumber = errno;
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         return raiseOSError(globalObject, scope, errorNumber, pathObject);
     }
-    return posixStatResult(globalObject, status);
+    RELEASE_AND_RETURN(scope, posixStatResult(globalObject, status));
 }
 
 static JSValue posixDirEntryGetLstat(JSGlobalObject* globalObject, PyRecord* entry)
@@ -1231,7 +1243,7 @@ static PosixTriState posixDirEntryTestMode(JSGlobalObject* globalObject, PyRecor
     bool isSymlink = type == DT_LNK;
     if (type == DT_UNKNOWN || (followSymlinks && isSymlink)) {
         JSValue status = posixDirEntryGetStat(globalObject, entry, followSymlinks);
-        if (!status) {
+        if (failed(scope, status)) {
             // A file that is there no longer is neither a file nor a directory.
             if (clearPendingExceptionIfMatches(globalObject, runtime(globalObject).FileNotFoundError()))
                 return PosixTriState::False;
@@ -1374,20 +1386,21 @@ static JSValue posixScandirIteratorFinalize(JSGlobalObject* globalObject, JSValu
     auto* iterator = PyRecord::from(self);
     if (!iterator->get(PosixScandirEntries))
         return jsUndefined();
-    JSValue saved = takePendingException(globalObject);
-    if (!warnAbout(globalObject, rt.ResourceWarning(), makeString("unclosed scandir iterator "_s, reprForMessage(globalObject, self)), 1, self)) {
-        if (pendingExceptionMatches(globalObject, rt.Warning()))
-            reportUnraisable(globalObject, makeString("Exception ignored while finalizing scandir iterator "_s, reprForMessage(globalObject, self)), { });
-        else
-            takePendingException(globalObject);
+    bool wasRaising = rt.vm().exceptionForInspection();
+    {
+        // An exception that is propagating is set aside.
+        SuspendExceptionScope suspended(rt.vm());
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(rt.vm());
+        warnAbout(globalObject, rt.ResourceWarning(), makeString("unclosed scandir iterator "_s, reprForMessage(globalObject, self)), 1, self);
+        if (scope.exception()) {
+            if (pendingExceptionMatches(globalObject, rt.Warning()))
+                reportUnraisable(globalObject, makeString("Exception ignored while finalizing scandir iterator "_s, reprForMessage(globalObject, self)), { });
+            else
+                takePendingException(globalObject);
+        }
+        posixScandirIteratorShut(globalObject, iterator);
     }
-    posixScandirIteratorShut(globalObject, iterator);
-    if (saved) {
-        auto scope = DECLARE_THROW_SCOPE(rt.vm());
-        throwPythonException(globalObject, scope, saved);
-        return { };
-    }
-    return jsUndefined();
+    return wasRaising ? JSValue() : jsUndefined();
 }
 
 static constexpr NativeDef posixScandirIteratorMethods[] = {
@@ -1407,7 +1420,7 @@ static JSValue posixScandir(JSGlobalObject* globalObject, JSValue pathValue)
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("scandir"_s, PosixPath::AllowFd | PosixPath::Nullable | PosixPath::AllowVirtual);
-    if (!path.convert(globalObject, pathValue))
+    if (failed(scope, path.convert(globalObject, pathValue)))
         return { };
     if (failed(scope, audit(globalObject, "os.scandir"_s, path.object())))
         return { };
@@ -1469,11 +1482,11 @@ static JSValue posixGetxattr(JSGlobalObject* globalObject, JSValue pathValue, JS
     PosixPath path("getxattr"_s, PosixPath::AllowFd | PosixPath::VirtualUnsupported);
     PosixPath attribute("getxattr"_s, "attribute"_s);
     bool followSymlinks;
-    if (!path.convert(globalObject, pathValue) || !attribute.convert(globalObject, attributeValue) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, attribute.convert(globalObject, attributeValue)) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
         return { };
     if (failed(scope, audit(globalObject, "os.getxattr"_s, path.object(), attribute.object())))
         return { };
-    if (posixFdAndFollowSymlinksInvalid(globalObject, "getxattr"_s, path.isFd(), followSymlinks))
+    if (failed(scope, !posixFdAndFollowSymlinksInvalid(globalObject, "getxattr"_s, path.isFd(), followSymlinks)))
         return { };
     Vector<char, 128> buffer;
     for (size_t size : { static_cast<size_t>(128), posixMaxAttributeSize }) {
@@ -1502,13 +1515,13 @@ static JSValue posixSetxattr(JSGlobalObject* globalObject, JSValue pathValue, JS
     BufferHolder holder(globalObject);
     int flags = 0;
     bool followSymlinks;
-    if (!path.convert(globalObject, pathValue) || !attribute.convert(globalObject, attributeValue) || !holder.get(value)
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, attribute.convert(globalObject, attributeValue)) || failed(scope, holder.get(value))
         || (flagsValue && failed(scope, posixToInt(globalObject, flagsValue, flags))) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks))
-        || !refreshBuffer(globalObject, holder.buffer))
+        || failed(scope, refreshBuffer(globalObject, holder.buffer)))
         return { };
     if (failed(scope, audit(globalObject, "os.setxattr"_s, path.object(), attribute.object(), value, flagsValue ? flagsValue : jsNumber(0))))
         return { };
-    if (posixFdAndFollowSymlinksInvalid(globalObject, "setxattr"_s, path.isFd(), followSymlinks))
+    if (failed(scope, !posixFdAndFollowSymlinksInvalid(globalObject, "setxattr"_s, path.isFd(), followSymlinks)))
         return { };
     auto bytes = holder.buffer.span();
     int result;
@@ -1530,11 +1543,11 @@ static JSValue posixRemovexattr(JSGlobalObject* globalObject, JSValue pathValue,
     PosixPath path("removexattr"_s, PosixPath::AllowFd);
     PosixPath attribute("removexattr"_s, "attribute"_s);
     bool followSymlinks;
-    if (!path.convert(globalObject, pathValue) || !attribute.convert(globalObject, attributeValue) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, attribute.convert(globalObject, attributeValue)) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
         return { };
     if (failed(scope, audit(globalObject, "os.removexattr"_s, path.object(), attribute.object())))
         return { };
-    if (posixFdAndFollowSymlinksInvalid(globalObject, "removexattr"_s, path.isFd(), followSymlinks))
+    if (failed(scope, !posixFdAndFollowSymlinksInvalid(globalObject, "removexattr"_s, path.isFd(), followSymlinks)))
         return { };
     int result;
     if (path.isFd())
@@ -1554,11 +1567,11 @@ static JSValue posixListxattr(JSGlobalObject* globalObject, JSValue pathValue, J
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("listxattr"_s, PosixPath::AllowFd | PosixPath::Nullable | PosixPath::VirtualUnsupported);
     bool followSymlinks;
-    if (!path.convert(globalObject, pathValue) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToBool(globalObject, followSymlinksValue, true, followSymlinks)))
         return { };
     if (failed(scope, audit(globalObject, "os.listxattr"_s, path.object())))
         return { };
-    if (posixFdAndFollowSymlinksInvalid(globalObject, "listxattr"_s, path.isFd(), followSymlinks))
+    if (failed(scope, !posixFdAndFollowSymlinksInvalid(globalObject, "listxattr"_s, path.isFd(), followSymlinks)))
         return { };
     const char* name = path.narrow() ? path.narrow() : ".";
     Vector<char, 256> buffer;
@@ -1583,7 +1596,10 @@ static JSValue posixListxattr(JSGlobalObject* globalObject, JSValue pathValue, J
         for (size_t i = 0; i < names.size(); ++i) {
             if (names[i])
                 continue;
-            listAppend(globalObject, result, posixDecode(globalObject, names.subspan(start, i - start)));
+            JSValue name = posixDecode(globalObject, names.subspan(start, i - start));
+            RETURN_IF_EXCEPTION(scope, { });
+            listAppend(globalObject, result, name);
+            RETURN_IF_EXCEPTION(scope, { });
             start = i + 1;
         }
         return result;

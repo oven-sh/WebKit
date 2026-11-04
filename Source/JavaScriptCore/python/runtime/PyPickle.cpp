@@ -309,9 +309,12 @@ static void picklerClearMemo(JSGlobalObject* globalObject, PyRecord* pickler)
 static void picklerMemoSet(JSGlobalObject* globalObject, PyRecord* pickler, JSCell* object, double index)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = uncheckedDowncast<JSWeakMap>(pickler->get(PicklerMemoMap).asCell());
-    if (!map->has(object))
+    if (!map->has(object)) {
         listAppend(globalObject, asList(pickler->get(PicklerMemoKeys)), object);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     map->set(vm, object, jsNumber(index));
 }
 
@@ -583,8 +586,10 @@ private:
     {
         if (m_fast)
             return true;
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         unsigned index = listLength(asList(m_pickler->get(PicklerMemoKeys)));
         picklerMemoSet(m_globalObject, m_pickler, object.asCell(), index);
+        RETURN_IF_EXCEPTION(scope, false);
         if (m_proto >= 4)
             writeOp(PickleOpMemoize);
         else if (!m_bin) {
@@ -610,12 +615,17 @@ private:
         if (!m_fastMemo)
             m_fastMemo = PyDict::create(m_globalObject);
         JSValue key = identityOf(m_globalObject, object);
-        if (m_fastMemo->contains(m_globalObject, key)) {
-            raiseValueError(m_globalObject, scope, "fast mode: can't pickle cyclic objects including object type "_s, typeName(m_globalObject, object), " at "_s, addressForRepr(m_globalObject, object));
+        bool isThere = m_fastMemo->contains(m_globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isThere) {
+            String address = addressForRepr(m_globalObject, object);
+            RETURN_IF_EXCEPTION(scope, false);
+            raiseValueError(m_globalObject, scope, "fast mode: can't pickle cyclic objects including object type "_s, typeName(m_globalObject, object), " at "_s, address);
             m_fastNesting = -1;
             return false;
         }
         m_fastMemo->set(m_globalObject, key, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, false);
         return true;
     }
 
@@ -761,7 +771,7 @@ private:
             header[i] = static_cast<uint8_t>(size >> (8 * (i - 1)));
         if (failed(scope, writeBytes({ header, headerSize }, data, object)))
             return false;
-        return memoPut(object);
+        RELEASE_AND_RETURN(scope, memoPut(object));
     }
 
     bool saveBytes(JSValue object)
@@ -783,13 +793,14 @@ private:
     bool saveByteArrayData(JSValue object, std::span<const uint8_t> data)
     {
         ASSERT(m_proto >= 5);
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         uint8_t header[9];
         header[0] = PickleOpByteArray8;
         for (size_t i = 0; i < 8; ++i)
             header[1 + i] = static_cast<uint8_t>(static_cast<uint64_t>(data.size()) >> (8 * i));
-        if (!writeBytes({ header, 9 }, data, object))
+        if (failed(scope, writeBytes({ header, 9 }, data, object)))
             return false;
-        return memoPut(object);
+        RELEASE_AND_RETURN(scope, memoPut(object));
     }
 
     bool saveByteArray(JSValue object)
@@ -824,7 +835,7 @@ private:
         if (m_proto < 5)
             RELEASE_AND_RETURN(scope, pickleRaise(m_globalObject, PickleStatePicklingError, "PickleBuffer can only be pickled with protocol >= 5"_s));
         BufferHolder holder(m_globalObject);
-        if (!holder.get(object, BufferFullRO))
+        if (failed(scope, holder.get(object, BufferFullRO)))
             return false;
         if (!isContiguous(holder.buffer))
             RELEASE_AND_RETURN(scope, pickleRaise(m_globalObject, PickleStatePicklingError, "PickleBuffer can not be pickled when pointing to a non-contiguous buffer"_s));
@@ -834,11 +845,11 @@ private:
             RETURN_IF_EXCEPTION(scope, false);
             isInBand = isTrue(m_globalObject, result);
             RETURN_IF_EXCEPTION(scope, false);
-            if (!refreshBuffer(m_globalObject, holder.buffer))
+            if (failed(scope, refreshBuffer(m_globalObject, holder.buffer)))
                 return false;
         }
         if (isInBand)
-            return holder.buffer.isReadOnly ? saveBytesData(object, holder.buffer.span()) : saveByteArrayData(object, holder.buffer.span());
+            RELEASE_AND_RETURN(scope, holder.buffer.isReadOnly ? saveBytesData(object, holder.buffer.span()) : saveByteArrayData(object, holder.buffer.span()));
         writeOp(PickleOpNextBuffer);
         if (holder.buffer.isReadOnly)
             writeOp(PickleOpReadonlyBuffer);
@@ -871,7 +882,7 @@ private:
                     m_out.append(static_cast<uint8_t>(c));
             }
             writeOp('\n');
-            return memoPut(object);
+            RELEASE_AND_RETURN(scope, memoPut(object));
         }
 
         std::span<const uint8_t> data;
@@ -953,7 +964,7 @@ private:
                 RETURN_IF_EXCEPTION(scope, false);
                 if (!item)
                     return true;
-                if (!save(item))
+                if (failed(scope, save(item)))
                     RELEASE_AND_RETURN(scope, noteItem(original, total));
                 writeOp(PickleOpAppend);
             }
@@ -968,18 +979,18 @@ private:
             RETURN_IF_EXCEPTION(scope, false);
             if (!item) {
                 // Only one is left.
-                if (!save(first))
+                if (failed(scope, save(first)))
                     RELEASE_AND_RETURN(scope, noteItem(original, total));
                 writeOp(PickleOpAppend);
                 break;
             }
             writeOp(PickleOpMark);
-            if (!save(first))
+            if (failed(scope, save(first)))
                 RELEASE_AND_RETURN(scope, noteItem(original, total));
             ++total;
             count = 1;
             while (item) {
-                if (!save(item))
+                if (failed(scope, save(item)))
                     RELEASE_AND_RETURN(scope, noteItem(original, total));
                 ++total;
                 if (++count == pickleBatchSize)
@@ -1003,7 +1014,7 @@ private:
                     raiseIndexError(m_globalObject, scope, "list index out of range"_s);
                     RELEASE_AND_RETURN(scope, noteItem(list, total));
                 }
-                if (!save(listGet(list, total)))
+                if (failed(scope, save(listGet(list, total))))
                     RELEASE_AND_RETURN(scope, noteItem(list, total));
                 writeOp(PickleOpAppend);
                 return true;
@@ -1030,7 +1041,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         JSArray* list = asList(object);
-        if (m_fast && !fastSaveEnter(object))
+        if (m_fast && failed(scope, fastSaveEnter(object)))
             return false;
         if (m_bin)
             writeOp(PickleOpEmptyList);
@@ -1047,6 +1058,7 @@ private:
                 ok = !scope.exception() && !failed(scope, batchList(iterator, object));
             }
         }
+        scope.release();
         if (m_fast)
             fastSaveLeave(object);
         return ok;
@@ -1060,9 +1072,9 @@ private:
             raiseTypeError(m_globalObject, scope, "dict items iterator must return 2-tuples"_s);
             return false;
         }
-        if (!save(pair->at(0)))
+        if (failed(scope, save(pair->at(0))))
             return false;
-        if (!save(pair->at(1)))
+        if (failed(scope, save(pair->at(1))))
             RELEASE_AND_RETURN(scope, noteKey(original, pair->at(0)));
         return true;
     }
@@ -1077,7 +1089,7 @@ private:
                 RETURN_IF_EXCEPTION(scope, false);
                 if (!item)
                     return true;
-                if (!saveItem(item, original))
+                if (failed(scope, saveItem(item, original)))
                     return false;
                 writeOp(PickleOpSetItem);
             }
@@ -1095,17 +1107,17 @@ private:
             JSValue item = iterNext(m_globalObject, iterator);
             RETURN_IF_EXCEPTION(scope, false);
             if (!item) {
-                if (!saveItem(first, original))
+                if (failed(scope, saveItem(first, original)))
                     return false;
                 writeOp(PickleOpSetItem);
                 break;
             }
             writeOp(PickleOpMark);
-            if (!saveItem(first, original))
+            if (failed(scope, saveItem(first, original)))
                 return false;
             count = 1;
             while (item) {
-                if (!saveItem(item, original))
+                if (failed(scope, saveItem(item, original)))
                     return false;
                 if (++count == pickleBatchSize)
                     break;
@@ -1128,9 +1140,9 @@ private:
             if (size - total == 1) {
                 if (!dict->next(position, key, value))
                     return true;
-                if (!save(key))
+                if (failed(scope, save(key)))
                     return false;
-                if (!save(value))
+                if (failed(scope, save(value)))
                     RELEASE_AND_RETURN(scope, noteKey(dict, key));
                 writeOp(PickleOpSetItem);
                 return true;
@@ -1159,7 +1171,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto* dict = PyDict::from(object);
-        if (m_fast && !fastSaveEnter(object))
+        if (m_fast && failed(scope, fastSaveEnter(object)))
             return false;
         if (m_bin)
             writeOp(PickleOpEmptyDict);
@@ -1177,6 +1189,7 @@ private:
                 ok = !scope.exception() && !failed(scope, batchDict(iterator, object));
             }
         }
+        scope.release();
         if (m_fast)
             fastSaveLeave(object);
         return ok;
@@ -1198,7 +1211,8 @@ private:
             RELEASE_AND_RETURN(scope, saveSetAsCall(object, m_rt.setType()));
         auto* set = PySet::from(object);
         writeOp(PickleOpEmptySet);
-        memoPut(object);
+        if (failed(scope, memoPut(object)))
+            return false;
         size_t size = set->size();
         if (!size)
             return true;
@@ -1209,7 +1223,7 @@ private:
             writeOp(PickleOpMark);
             JSValue item;
             while (set->next(position, item)) {
-                if (!save(item))
+                if (failed(scope, save(item)))
                     RELEASE_AND_RETURN(scope, note(object, "element"_s));
                 ++total;
                 if (++count == pickleBatchSize)
@@ -1227,7 +1241,7 @@ private:
     bool saveFrozenSet(JSValue object)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (m_fast && !fastSaveEnter(object))
+        if (m_fast && failed(scope, fastSaveEnter(object)))
             return false;
         auto run = [&] {
             if (m_proto < 4)
@@ -1236,7 +1250,7 @@ private:
             auto* set = PySet::from(object);
             JSValue item;
             for (size_t position = 0; set->next(position, item);) {
-                if (!save(item))
+                if (failed(scope, save(item)))
                     return note(object, "element"_s);
             }
             // As for a tuple.
@@ -1247,10 +1261,10 @@ private:
             writeOp(PickleOpFrozenSet);
             return memoPut(object);
         };
-        bool ok = run();
+        bool ok = !failed(scope, run());
+        scope.release();
         if (m_fast)
             fastSaveLeave(object);
-        scope.release();
         return ok;
     }
 
@@ -1282,12 +1296,15 @@ private:
     {
         if (isNone(module))
             return -1;
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         if (isStr(moduleName)) {
             String name = strValue(moduleName)->value(m_globalObject);
+            RETURN_IF_EXCEPTION(scope, -1);
             if (name == "__main__"_s || name == "__mp_main__"_s)
                 return -1;
         }
         JSValue candidate = pickleGetAttribute(m_globalObject, module, path, false);
+        RETURN_IF_EXCEPTION(scope, -1);
         return candidate && candidate == global ? 0 : -1;
     }
 
@@ -1300,6 +1317,7 @@ private:
             if (part == "<locals>"_s) {
                 String text = pickleRepr(m_globalObject, global);
                 RETURN_IF_EXCEPTION(scope, { });
+                scope.release();
                 pickleRaise(m_globalObject, PickleStatePicklingError, "Can't pickle local object "_s, text);
                 return { };
             }
@@ -1330,10 +1348,10 @@ private:
                 scope.release();
                 pickleReplaceException(m_globalObject, picklingError, [&](JSValue exception) -> String {
                     String text = pickleRepr(m_globalObject, global);
-                    if (text.isNull())
+                    if (failed(scope, !text.isNull()))
                         return String();
                     String reason = pickleStr(m_globalObject, exception);
-                    if (reason.isNull())
+                    if (failed(scope, !reason.isNull()))
                         return String();
                     return makeString("Can't pickle "_s, text, ": "_s, reason);
                 });
@@ -1342,13 +1360,13 @@ private:
         }
         auto describe = [&](ASCIILiteral problem) -> String {
             String text = pickleRepr(m_globalObject, global);
-            if (text.isNull())
+            if (failed(scope, !text.isNull()))
                 return String();
             String moduleText = pickleStr(m_globalObject, moduleName);
-            if (moduleText.isNull())
+            if (failed(scope, !moduleText.isNull()))
                 return String();
             String nameText = pickleStr(m_globalObject, globalName);
-            if (nameText.isNull())
+            if (failed(scope, !nameText.isNull()))
                 return String();
             return makeString("Can't pickle "_s, text, problem, moduleText, '.', nameText);
         };
@@ -1495,7 +1513,7 @@ private:
         if (path.size() > 1)
             globalName = makeStr(m_vm, path[0]);
         for (size_t i = 1; i < path.size(); ++i) {
-            if (!save(m_state->get(PickleStateGetAttr)))
+            if (failed(scope, save(m_state->get(PickleStateGetAttr))))
                 return false;
             if (m_proto < 2)
                 writeOp(PickleOpMark);
@@ -1503,10 +1521,10 @@ private:
         writeOp(PickleOpGlobal);
         if (m_proto < 3 && m_fixImports && failed(scope, fixImports(moduleName, globalName)))
             return false;
-        if (!writeIdentifier(moduleName, "module"_s) || !writeIdentifier(globalName, "global"_s))
+        if (failed(scope, writeIdentifier(moduleName, "module"_s)) || failed(scope, writeIdentifier(globalName, "global"_s)))
             return false;
         for (size_t i = 1; i < path.size(); ++i) {
-            if (!save(makeStr(m_vm, path[i])))
+            if (failed(scope, save(makeStr(m_vm, path[i]))))
                 return false;
             writeOp(m_proto < 2 ? PickleOpTuple : PickleOpTuple2);
             writeOp(PickleOpReduce);
@@ -1537,7 +1555,7 @@ private:
         if (isNone(id))
             return 0;
         if (m_bin) {
-            if (!save(id, true))
+            if (failed(scope, save(id, true)))
                 return -1;
             writeOp(PickleOpBinPersId);
             return 1;
@@ -1545,6 +1563,7 @@ private:
         String text = pickleStr(m_globalObject, id);
         RETURN_IF_EXCEPTION(scope, -1);
         if (!text.containsOnlyASCII()) {
+            scope.release();
             pickleRaise(m_globalObject, PickleStatePicklingError, "persistent IDs in protocol 0 must be ASCII strings"_s);
             return -1;
         }
@@ -1565,7 +1584,7 @@ private:
         auto fail = [&](auto... parts) { return pickleRaise(m_globalObject, PickleStatePicklingError, parts...); };
         unsigned size = arguments->length();
         if (size < 2 || size > 6)
-            return fail("tuple returned by __reduce__ must contain 2 through 6 elements"_s);
+            RELEASE_AND_RETURN(scope, fail("tuple returned by __reduce__ must contain 2 through 6 elements"_s));
         auto optional = [&](unsigned index) {
             JSValue value = index < size ? arguments->at(index) : JSValue();
             return value && isNone(value) ? JSValue() : value;
@@ -1604,7 +1623,7 @@ private:
 
         if (usesNewObjEx) {
             if (argumentTuple->length() != 3)
-                return fail("__newobj_ex__ expected 3 arguments, got "_s, argumentTuple->length());
+                RELEASE_AND_RETURN(scope, fail("__newobj_ex__ expected 3 arguments, got "_s, argumentTuple->length()));
             JSValue cls = argumentTuple->at(0);
             if (!PyType::is(cls))
                 RELEASE_AND_RETURN(scope, fail("first argument to __newobj_ex__() must be a class, not "_s, pickleTypeName(m_globalObject, cls)));
@@ -1615,9 +1634,9 @@ private:
             if (!isDict(kwargs))
                 RELEASE_AND_RETURN(scope, fail("third argument to __newobj_ex__() must be a dict, not "_s, pickleTypeName(m_globalObject, kwargs)));
             if (m_proto >= 4) {
-                if (!save(cls))
+                if (failed(scope, save(cls)))
                     RELEASE_AND_RETURN(scope, note(object, "class"_s));
-                if (!save(args) || !save(kwargs))
+                if (failed(scope, save(args)) || failed(scope, save(kwargs)))
                     RELEASE_AND_RETURN(scope, note(object, "__new__ arguments"_s));
                 writeOp(PickleOpNewObjEx);
             } else {
@@ -1631,13 +1650,13 @@ private:
                     partialArguments.append(args->at(i));
                 JSValue partial = callWithTupleAndDict(m_globalObject, m_state->get(PickleStatePartial), PyTuple::create(m_globalObject, spanOf(partialArguments)), PyDict::from(kwargs));
                 RETURN_IF_EXCEPTION(scope, false);
-                if (!save(partial) || !save(PyTuple::create(m_globalObject, { })))
+                if (failed(scope, save(partial)) || failed(scope, save(PyTuple::create(m_globalObject, { }))))
                     RELEASE_AND_RETURN(scope, note(object, "reconstructor"_s));
                 writeOp(PickleOpReduce);
             }
         } else if (usesNewObj) {
             if (!argumentTuple->length())
-                return fail("__newobj__ expected at least 1 argument, got 0"_s);
+                RELEASE_AND_RETURN(scope, fail("__newobj__ expected at least 1 argument, got 0"_s));
             JSValue cls = argumentTuple->at(0);
             if (!PyType::is(cls))
                 RELEASE_AND_RETURN(scope, fail("first argument to __newobj__() must be a class, not "_s, pickleTypeName(m_globalObject, cls)));
@@ -1651,12 +1670,12 @@ private:
                     RETURN_IF_EXCEPTION(scope, false);
                     String actual = pickleRepr(m_globalObject, cls);
                     RETURN_IF_EXCEPTION(scope, false);
-                    return fail("first argument to __newobj__() must be "_s, expected, ", not "_s, actual);
+                    RELEASE_AND_RETURN(scope, fail("first argument to __newobj__() must be "_s, expected, ", not "_s, actual));
                 }
             }
-            if (!save(cls))
+            if (failed(scope, save(cls)))
                 RELEASE_AND_RETURN(scope, note(object, "class"_s));
-            if (!save(PyTuple::create(m_globalObject, argumentTuple->span().subspan(1))))
+            if (failed(scope, save(PyTuple::create(m_globalObject, argumentTuple->span().subspan(1)))))
                 RELEASE_AND_RETURN(scope, note(object, "__new__ arguments"_s));
             writeOp(PickleOpNewObj);
         } else {
@@ -1705,10 +1724,12 @@ private:
     bool save(JSValue object, bool isPersistentId = false)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (!opcodeBoundary())
+        if (failed(scope, opcodeBoundary()))
             return false;
         if (m_persistentId && !isPersistentId) {
-            if (int status = savePersistent(object))
+            int status = savePersistent(object);
+            EXCEPTION_ASSERT(!!scope.exception() == (status < 0));
+            if (status)
                 return status > 0;
         }
 
@@ -1896,6 +1917,7 @@ static JSValue picklerDump(JSGlobalObject* globalObject, JSValue self, const Cal
     JSValue object = args[0];
     auto* pickler = PyRecord::from(self);
     if (!pickler->get(PicklerWrite)) {
+        scope.release();
         pickleRaise(globalObject, PickleStatePicklingError, "Pickler.__init__() was not called by "_s, typeName(globalObject, self), ".__init__()"_s);
         return { };
     }
@@ -2041,8 +2063,10 @@ static void picklerSetMemo(JSGlobalObject* globalObject, JSValue self, JSValue v
         auto* other = PyRecord::from(proxy->get(PickleProxyOwner));
         JSArray* keys = asList(other->get(PicklerMemoKeys));
         auto* map = uncheckedDowncast<JSWeakMap>(other->get(PicklerMemoMap).asCell());
-        for (unsigned i = 0; i < listLength(keys); ++i)
+        for (unsigned i = 0; i < listLength(keys); ++i) {
             picklerMemoSet(globalObject, scratch, listGet(keys, i).asCell(), map->get(listGet(keys, i).asCell()).asNumber());
+            RETURN_IF_EXCEPTION(scope, void());
+        }
     } else if (isDict(value)) {
         auto* dict = PyDict::from(value);
         JSValue key, item;
@@ -2061,8 +2085,10 @@ static void picklerSetMemo(JSGlobalObject* globalObject, JSValue self, JSValue v
                 raiseOverflowError(globalObject, scope, "Python int too large to convert to C ssize_t"_s);
                 return;
             }
-            if (pair->at(1).isCell())
+            if (pair->at(1).isCell()) {
                 picklerMemoSet(globalObject, scratch, pair->at(1).asCell(), static_cast<double>(*index));
+                RETURN_IF_EXCEPTION(scope, void());
+            }
         }
     } else {
         raiseTypeError(globalObject, scope, "'memo' attribute must be a PicklerMemoProxy object or dict, not "_s, typeName(globalObject, value));
@@ -2211,6 +2237,7 @@ static PyRecord* unpicklerCreate(JSGlobalObject* globalObject, PyType* type)
 static void unpicklerMemoPut(JSGlobalObject* globalObject, PyRecord* unpickler, uint64_t index, JSValue value)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uint64_t size = static_cast<uint64_t>(unpickler->get(UnpicklerMemoSize).asNumber());
     uint64_t length = static_cast<uint64_t>(unpickler->get(UnpicklerMemoLength).asNumber());
     if (index >= size) {
@@ -2220,6 +2247,7 @@ static void unpicklerMemoPut(JSGlobalObject* globalObject, PyRecord* unpickler, 
                 dict = PyDict::create(globalObject);
                 unpickler->set(vm, UnpicklerMemoDict, dict);
             }
+            scope.release();
             PyDict::from(dict)->set(globalObject, makeInt(globalObject, index), value);
             return;
         }
@@ -2227,8 +2255,14 @@ static void unpicklerMemoPut(JSGlobalObject* globalObject, PyRecord* unpickler, 
     }
     auto* memo = asList(unpickler->get(UnpicklerMemo));
     unsigned position = static_cast<unsigned>(index);
-    if (position >= memo->length() || !memo->getDirectIndex(globalObject, position))
+    bool isNew = position >= memo->length();
+    if (!isNew) {
+        isNew = !memo->getDirectIndex(globalObject, position);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    if (isNew)
         unpickler->set(vm, UnpicklerMemoLength, jsNumber(static_cast<double>(length + 1)));
+    scope.release();
     memo->putDirectIndex(globalObject, position, value);
 }
 
@@ -2541,7 +2575,7 @@ private:
             }
             if (m_frameEnd < 0)
                 break;
-            if (!leaveFrame(m_next < m_frameEnd))
+            if (failed(scope, leaveFrame(m_next < m_frameEnd)))
                 return false;
         }
         if (!m_read)
@@ -2549,7 +2583,7 @@ private:
         JSValue data = call(m_globalObject, m_unpickler->get(UnpicklerReadLine));
         RETURN_IF_EXCEPTION(scope, false);
         int64_t found = setFileInput(data);
-        if (found < 0)
+        if (failed(scope, found >= 0))
             return false;
         if (!found || m_input[found - 1] != '\n')
             RELEASE_AND_RETURN(scope, truncated());
@@ -2626,8 +2660,10 @@ private:
         auto* memo = asList(m_unpickler->get(UnpicklerMemo));
         if (index < size && index < memo->length()) {
             JSValue value = memo->tryGetIndexQuickly(static_cast<unsigned>(index));
-            if (!value)
+            if (!value) {
                 value = memo->getDirectIndex(m_globalObject, static_cast<unsigned>(index));
+                RETURN_IF_EXCEPTION(scope, false);
+            }
             if (value)
                 return push(value);
         }
@@ -2642,7 +2678,9 @@ private:
 
     bool memoPutTop(uint64_t index)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         unpicklerMemoPut(m_globalObject, m_unpickler, index, m_stack.last());
+        RETURN_IF_EXCEPTION(scope, false);
         return true;
     }
 
@@ -2682,7 +2720,7 @@ private:
     bool loadInt()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (!readLine())
+        if (failed(scope, readLine()))
             return false;
         if (m_line.size() < 2)
             RELEASE_AND_RETURN(scope, truncated());
@@ -2700,7 +2738,7 @@ private:
     bool loadLong()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (!readLine())
+        if (failed(scope, readLine()))
             return false;
         if (m_line.size() < 2)
             RELEASE_AND_RETURN(scope, truncated());
@@ -2715,7 +2753,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         const uint8_t* bytes = read(sizeBytes);
-        if (!bytes)
+        if (failed(scope, bytes))
             return false;
         int64_t size = binInt(bytes, sizeBytes);
         if (size < 0)
@@ -2723,7 +2761,7 @@ private:
         if (!size)
             return push(jsNumber(0));
         bytes = read(size);
-        if (!bytes)
+        if (failed(scope, bytes))
             return false;
         JSValue value = intFromByteSpan(m_globalObject, { bytes, static_cast<size_t>(size) }, true, true);
         RETURN_IF_EXCEPTION(scope, false);
@@ -2733,7 +2771,7 @@ private:
     bool loadFloat()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (!readLine())
+        if (failed(scope, readLine()))
             return false;
         if (m_line.size() < 2)
             RELEASE_AND_RETURN(scope, truncated());
@@ -2757,13 +2795,14 @@ private:
 
     bool loadBinFloat()
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         const uint8_t* bytes = read(8);
-        if (!bytes)
+        if (failed(scope, bytes))
             return false;
         uint64_t bits = 0;
         for (unsigned i = 0; i < 8; ++i)
             bits = (bits << 8) | bytes[i];
-        return push(makeFloat(m_globalObject, std::bit_cast<double>(bits)));
+        RELEASE_AND_RETURN(scope, push(makeFloat(m_globalObject, std::bit_cast<double>(bits))));
     }
 
     // ---- Strings and bytes ----
@@ -2784,7 +2823,7 @@ private:
     bool loadString()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (!readLine())
+        if (failed(scope, readLine()))
             return false;
         auto text = m_line.span().first(m_line.size() - 1);
         if (text.size() < 2 || text.front() != text.back() || (text.front() != '\'' && text.front() != '"'))
@@ -2798,16 +2837,17 @@ private:
 
     bool loadCountedBinString(unsigned sizeBytes)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         const uint8_t* bytes = read(sizeBytes);
-        if (!bytes)
+        if (failed(scope, bytes))
             return false;
         int64_t size = binInt(bytes, sizeBytes);
         if (size < 0)
-            return fail("BINSTRING pickle has negative byte count"_s);
+            RELEASE_AND_RETURN(scope, fail("BINSTRING pickle has negative byte count"_s));
         bytes = read(size);
-        if (!bytes)
+        if (failed(scope, bytes))
             return false;
-        return pushOldString(PyBytes::create(m_globalObject, std::span { bytes, static_cast<size_t>(size) }));
+        RELEASE_AND_RETURN(scope, pushOldString(PyBytes::create(m_globalObject, std::span { bytes, static_cast<size_t>(size) })));
     }
 
     template<typename Create>
@@ -2815,7 +2855,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         const uint8_t* bytes = read(sizeBytes);
-        if (!bytes)
+        if (failed(scope, bytes))
             return false;
         int64_t size = binSize(bytes, sizeBytes);
         if (size < 0) {
@@ -2824,6 +2864,7 @@ private:
         }
         if (size <= m_inputLength - m_next) {
             JSValue result = create(std::span { m_input + m_next, static_cast<size_t>(size) });
+            RETURN_IF_EXCEPTION(scope, false);
             m_next += size;
             return push(result);
         }
@@ -2833,14 +2874,16 @@ private:
         int64_t previous = 0;
         while (true) {
             data.grow(current);
-            if (!readInto(data.mutableSpan().data() + previous, current - previous))
+            if (failed(scope, readInto(data.mutableSpan().data() + previous, current - previous)))
                 return false;
             if (current >= size)
                 break;
             previous = current;
             current += std::min(current, size - current);
         }
-        return push(create(data.span()));
+        JSValue result = create(data.span());
+        RETURN_IF_EXCEPTION(scope, false);
+        return push(result);
     }
 
     bool loadNextBuffer()
@@ -2876,7 +2919,7 @@ private:
     bool loadUnicode()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (!readLine())
+        if (failed(scope, readLine()))
             return false;
         JSValue text = codecDecodeRawUnicodeEscape(m_globalObject, m_line.span().first(m_line.size() - 1), "strict"_s);
         RETURN_IF_EXCEPTION(scope, false);
@@ -2894,7 +2937,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         const uint8_t* bytes = read(sizeBytes);
-        if (!bytes)
+        if (failed(scope, bytes))
             return false;
         int64_t size = binSize(bytes, sizeBytes);
         if (size < 0) {
@@ -2902,7 +2945,7 @@ private:
             return false;
         }
         bytes = read(size);
-        if (!bytes)
+        if (failed(scope, bytes))
             return false;
         JSValue text = decodeUTF8({ bytes, static_cast<size_t>(size) }, "surrogatepass"_s);
         RETURN_IF_EXCEPTION(scope, false);
@@ -2927,15 +2970,20 @@ private:
 
     bool loadList()
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto mark = marker();
-        return mark && push(popList(*mark));
+        if (failed(scope, mark))
+            return false;
+        JSArray* list = popList(*mark);
+        RETURN_IF_EXCEPTION(scope, false);
+        return push(list);
     }
 
     bool loadDict()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto mark = marker();
-        if (!mark)
+        if (failed(scope, mark))
             return false;
         size_t size = stackSize();
         if ((size - *mark) % 2)
@@ -2953,10 +3001,10 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto mark = marker();
-        if (!mark)
+        if (failed(scope, mark))
             return false;
         PyTuple* items = popTuple(*mark);
-        if (!items)
+        if (failed(scope, items))
             return false;
         PySet* set = PySet::createFrozen(m_globalObject);
         for (unsigned i = 0; i < items->length(); ++i) {
@@ -2991,15 +3039,15 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto mark = marker();
-        if (!mark)
+        if (failed(scope, mark))
             return false;
         if (stackSize() - *mark < 1)
             RELEASE_AND_RETURN(scope, underflow());
         PyTuple* arguments = popTuple(*mark + 1);
-        if (!arguments)
+        if (failed(scope, arguments))
             return false;
         JSValue cls = pop();
-        if (!cls)
+        if (failed(scope, cls))
             return false;
         JSValue object = instantiate(cls, arguments);
         RETURN_IF_EXCEPTION(scope, false);
@@ -3010,11 +3058,11 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto mark = marker();
-        if (!mark)
+        if (failed(scope, mark))
             return false;
         JSValue names[2];
         for (JSValue& name : names) {
-            if (!readLine())
+            if (failed(scope, readLine()))
                 return false;
             if (m_line.size() < 2)
                 RELEASE_AND_RETURN(scope, truncated());
@@ -3024,7 +3072,7 @@ private:
         JSValue cls = findClass(names[0], names[1]);
         RETURN_IF_EXCEPTION(scope, false);
         PyTuple* arguments = popTuple(*mark);
-        if (!arguments)
+        if (failed(scope, arguments))
             return false;
         JSValue object = instantiate(cls, arguments);
         RETURN_IF_EXCEPTION(scope, false);
@@ -3038,14 +3086,14 @@ private:
         JSValue kwargs;
         if (usesKeywords) {
             kwargs = pop();
-            if (!kwargs)
+            if (failed(scope, kwargs))
                 return false;
         }
         JSValue args = pop();
-        if (!args)
+        if (failed(scope, args))
             return false;
         JSValue cls = pop();
-        if (!cls)
+        if (failed(scope, cls))
             return false;
         if (!PyType::is(cls))
             RELEASE_AND_RETURN(scope, fail(opcode, " class argument must be a type, not "_s, typeName(m_globalObject, cls)));
@@ -3074,7 +3122,7 @@ private:
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         JSValue names[2];
         for (JSValue& name : names) {
-            if (!readLine())
+            if (failed(scope, readLine()))
                 return false;
             if (m_line.size() < 2)
                 RELEASE_AND_RETURN(scope, truncated());
@@ -3090,10 +3138,10 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         JSValue globalName = pop();
-        if (!globalName)
+        if (failed(scope, globalName))
             return false;
         JSValue moduleName = pop();
-        if (!moduleName)
+        if (failed(scope, moduleName))
             return false;
         if (!isExactStr(moduleName) || !isExactStr(globalName))
             RELEASE_AND_RETURN(scope, fail("STACK_GLOBAL requires str"_s));
@@ -3105,7 +3153,7 @@ private:
     bool loadPersId()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (!readLine())
+        if (failed(scope, readLine()))
             return false;
         JSValue id = codecDecodeASCII(m_globalObject, m_line.span().first(m_line.size() - 1), "strict"_s);
         if (scope.exception()) {
@@ -3122,7 +3170,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         JSValue id = pop();
-        if (!id)
+        if (failed(scope, id))
             return false;
         JSValue object = call(m_globalObject, m_persistentLoad, id);
         RETURN_IF_EXCEPTION(scope, false);
@@ -3176,25 +3224,31 @@ private:
 
     bool loadGet()
     {
-        if (!readLine())
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        if (failed(scope, readLine()))
             return false;
         if (m_line.size() < 2)
-            return truncated();
+            RELEASE_AND_RETURN(scope, truncated());
         int64_t index;
-        return readIndex(index) && memoGet(static_cast<uint64_t>(index));
+        if (failed(scope, readIndex(index)))
+            return false;
+        RELEASE_AND_RETURN(scope, memoGet(static_cast<uint64_t>(index)));
     }
 
     bool loadBinGet(unsigned sizeBytes)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         const uint8_t* bytes = read(sizeBytes);
-        return bytes && memoGet(binSize(bytes, sizeBytes));
+        if (failed(scope, bytes))
+            return false;
+        RELEASE_AND_RETURN(scope, memoGet(binSize(bytes, sizeBytes)));
     }
 
     bool loadExtension(unsigned sizeBytes)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         const uint8_t* bytes = read(sizeBytes);
-        if (!bytes)
+        if (failed(scope, bytes))
             return false;
         int64_t code = binInt(bytes, sizeBytes);
         if (code <= 0)
@@ -3226,7 +3280,7 @@ private:
     bool loadPut()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (!readLine())
+        if (failed(scope, readLine()))
             return false;
         if (m_line.size() < 2)
             RELEASE_AND_RETURN(scope, truncated());
@@ -3239,17 +3293,18 @@ private:
             raiseValueError(m_globalObject, scope, "negative PUT argument"_s);
             return false;
         }
-        return memoPutTop(index);
+        RELEASE_AND_RETURN(scope, memoPutTop(index));
     }
 
     bool loadBinPut(unsigned sizeBytes)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         const uint8_t* bytes = read(sizeBytes);
-        if (!bytes)
+        if (failed(scope, bytes))
             return false;
         if (stackSize() <= m_fence)
-            return underflow();
-        return memoPutTop(binSize(bytes, sizeBytes));
+            RELEASE_AND_RETURN(scope, underflow());
+        RELEASE_AND_RETURN(scope, memoPutTop(binSize(bytes, sizeBytes)));
     }
 
     bool loadMemoize()
@@ -3279,7 +3334,9 @@ private:
         JSValue extend = getAttrIfPresent(m_globalObject, list, internString(m_vm, "extend"_s));
         RETURN_IF_EXCEPTION(scope, false);
         if (extend) {
-            call(m_globalObject, extend, popList(start));
+            JSArray* items = popList(start);
+            RETURN_IF_EXCEPTION(scope, false);
+            call(m_globalObject, extend, items);
             return !scope.exception();
         }
         JSValue append = getAttr(m_globalObject, list, internString(m_vm, "append"_s));
@@ -3334,7 +3391,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto mark = marker();
-        if (!mark)
+        if (failed(scope, mark))
             return false;
         size_t size = stackSize();
         if (*mark > size || *mark <= m_fence)
@@ -3365,7 +3422,7 @@ private:
         if (static_cast<int64_t>(stackSize()) - 2 < static_cast<int64_t>(m_fence))
             RELEASE_AND_RETURN(scope, underflow());
         JSValue state = pop();
-        if (!state)
+        if (failed(scope, state))
             return false;
         JSValue instance = m_stack.last();
         JSValue setState = getAttrIfPresent(m_globalObject, instance, m_rt.names.dSetState());
@@ -3421,10 +3478,10 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         JSValue arguments = pop();
-        if (!arguments)
+        if (failed(scope, arguments))
             return false;
         JSValue callable = pop();
-        if (!callable)
+        if (failed(scope, callable))
             return false;
         auto* tuple = PyTuple::tryFrom(arguments);
         if (!tuple) {
@@ -3440,8 +3497,7 @@ private:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         const uint8_t* bytes = read(1);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!bytes)
+        if (failed(scope, bytes))
             return false;
         if (*bytes > pickleHighestProtocol) {
             raiseValueError(m_globalObject, scope, "unsupported pickle protocol: "_s, static_cast<unsigned>(*bytes));
@@ -3483,146 +3539,150 @@ private:
         auto scope = DECLARE_THROW_SCOPE(vm);
         switch (op) {
         case PickleOpNone:
-            return push(jsUndefined());
+            RELEASE_AND_RETURN(scope, push(jsUndefined()));
         case PickleOpBinInt:
         case PickleOpBinInt1:
         case PickleOpBinInt2: {
             unsigned size = op == PickleOpBinInt ? 4 : op == PickleOpBinInt1 ? 1 : 2;
             const uint8_t* bytes = read(size);
-            return bytes && push(jsNumber(static_cast<int32_t>(binInt(bytes, size))));
+            if (failed(scope, bytes))
+                return false;
+            RELEASE_AND_RETURN(scope, push(jsNumber(static_cast<int32_t>(binInt(bytes, size)))));
         }
         case PickleOpInt:
-            return loadInt();
+            RELEASE_AND_RETURN(scope, loadInt());
         case PickleOpLong:
-            return loadLong();
+            RELEASE_AND_RETURN(scope, loadLong());
         case PickleOpLong1:
-            return loadCountedLong(1);
+            RELEASE_AND_RETURN(scope, loadCountedLong(1));
         case PickleOpLong4:
-            return loadCountedLong(4);
+            RELEASE_AND_RETURN(scope, loadCountedLong(4));
         case PickleOpFloat:
-            return loadFloat();
+            RELEASE_AND_RETURN(scope, loadFloat());
         case PickleOpBinFloat:
-            return loadBinFloat();
+            RELEASE_AND_RETURN(scope, loadBinFloat());
         case PickleOpShortBinBytes:
         case PickleOpBinBytes:
         case PickleOpBinBytes8:
+            scope.release();
             return loadCountedBytes(op == PickleOpShortBinBytes ? 1 : op == PickleOpBinBytes ? 4 : 8, "BINBYTES"_s, [&](std::span<const uint8_t> data) -> JSValue {
                 return PyBytes::create(m_globalObject, data);
             });
         case PickleOpByteArray8:
+            scope.release();
             return loadCountedBytes(8, "BYTEARRAY8"_s, [&](std::span<const uint8_t> data) -> JSValue {
                 return PyByteArray::create(m_globalObject, data);
             });
         case PickleOpNextBuffer:
-            return loadNextBuffer();
+            RELEASE_AND_RETURN(scope, loadNextBuffer());
         case PickleOpReadonlyBuffer:
-            return loadReadonlyBuffer();
+            RELEASE_AND_RETURN(scope, loadReadonlyBuffer());
         case PickleOpShortBinString:
-            return loadCountedBinString(1);
+            RELEASE_AND_RETURN(scope, loadCountedBinString(1));
         case PickleOpBinString:
-            return loadCountedBinString(4);
+            RELEASE_AND_RETURN(scope, loadCountedBinString(4));
         case PickleOpString:
-            return loadString();
+            RELEASE_AND_RETURN(scope, loadString());
         case PickleOpUnicode:
-            return loadUnicode();
+            RELEASE_AND_RETURN(scope, loadUnicode());
         case PickleOpShortBinUnicode:
-            return loadCountedBinUnicode(1);
+            RELEASE_AND_RETURN(scope, loadCountedBinUnicode(1));
         case PickleOpBinUnicode:
-            return loadCountedBinUnicode(4);
+            RELEASE_AND_RETURN(scope, loadCountedBinUnicode(4));
         case PickleOpBinUnicode8:
-            return loadCountedBinUnicode(8);
+            RELEASE_AND_RETURN(scope, loadCountedBinUnicode(8));
         case PickleOpEmptyTuple:
-            return loadCountedTuple(0);
+            RELEASE_AND_RETURN(scope, loadCountedTuple(0));
         case PickleOpTuple1:
-            return loadCountedTuple(1);
+            RELEASE_AND_RETURN(scope, loadCountedTuple(1));
         case PickleOpTuple2:
-            return loadCountedTuple(2);
+            RELEASE_AND_RETURN(scope, loadCountedTuple(2));
         case PickleOpTuple3:
-            return loadCountedTuple(3);
+            RELEASE_AND_RETURN(scope, loadCountedTuple(3));
         case PickleOpTuple:
-            return loadTuple();
+            RELEASE_AND_RETURN(scope, loadTuple());
         case PickleOpEmptyList:
             RELEASE_AND_RETURN(scope, push(newList(m_globalObject)));
         case PickleOpList:
-            return loadList();
+            RELEASE_AND_RETURN(scope, loadList());
         case PickleOpEmptyDict:
             RELEASE_AND_RETURN(scope, push(PyDict::create(m_globalObject)));
         case PickleOpDict:
-            return loadDict();
+            RELEASE_AND_RETURN(scope, loadDict());
         case PickleOpEmptySet:
             RELEASE_AND_RETURN(scope, push(PySet::create(m_globalObject)));
         case PickleOpAddItems:
-            return loadAddItems();
+            RELEASE_AND_RETURN(scope, loadAddItems());
         case PickleOpFrozenSet:
-            return loadFrozenSet();
+            RELEASE_AND_RETURN(scope, loadFrozenSet());
         case PickleOpObj:
-            return loadObj();
+            RELEASE_AND_RETURN(scope, loadObj());
         case PickleOpInst:
-            return loadInst();
+            RELEASE_AND_RETURN(scope, loadInst());
         case PickleOpNewObj:
-            return loadNewObj(false);
+            RELEASE_AND_RETURN(scope, loadNewObj(false));
         case PickleOpNewObjEx:
-            return loadNewObj(true);
+            RELEASE_AND_RETURN(scope, loadNewObj(true));
         case PickleOpGlobal:
-            return loadGlobal();
+            RELEASE_AND_RETURN(scope, loadGlobal());
         case PickleOpStackGlobal:
-            return loadStackGlobal();
+            RELEASE_AND_RETURN(scope, loadStackGlobal());
         case PickleOpAppend:
-            return loadAppend();
+            RELEASE_AND_RETURN(scope, loadAppend());
         case PickleOpAppends:
-            return loadAppends();
+            RELEASE_AND_RETURN(scope, loadAppends());
         case PickleOpBuild:
-            return loadBuild();
+            RELEASE_AND_RETURN(scope, loadBuild());
         case PickleOpDup:
-            return loadDup();
+            RELEASE_AND_RETURN(scope, loadDup());
         case PickleOpBinGet:
-            return loadBinGet(1);
+            RELEASE_AND_RETURN(scope, loadBinGet(1));
         case PickleOpLongBinGet:
-            return loadBinGet(4);
+            RELEASE_AND_RETURN(scope, loadBinGet(4));
         case PickleOpGet:
-            return loadGet();
+            RELEASE_AND_RETURN(scope, loadGet());
         case PickleOpMark:
-            return loadMark();
+            RELEASE_AND_RETURN(scope, loadMark());
         case PickleOpBinPut:
-            return loadBinPut(1);
+            RELEASE_AND_RETURN(scope, loadBinPut(1));
         case PickleOpLongBinPut:
-            return loadBinPut(4);
+            RELEASE_AND_RETURN(scope, loadBinPut(4));
         case PickleOpPut:
-            return loadPut();
+            RELEASE_AND_RETURN(scope, loadPut());
         case PickleOpMemoize:
-            return loadMemoize();
+            RELEASE_AND_RETURN(scope, loadMemoize());
         case PickleOpPop:
-            return loadPop();
+            RELEASE_AND_RETURN(scope, loadPop());
         case PickleOpPopMark:
-            return loadPopMark();
+            RELEASE_AND_RETURN(scope, loadPopMark());
         case PickleOpSetItem:
-            return doSetItems(static_cast<int64_t>(stackSize()) - 2);
+            RELEASE_AND_RETURN(scope, doSetItems(static_cast<int64_t>(stackSize()) - 2));
         case PickleOpSetItems:
-            return loadSetItems();
+            RELEASE_AND_RETURN(scope, loadSetItems());
         case PickleOpPersId:
-            return loadPersId();
+            RELEASE_AND_RETURN(scope, loadPersId());
         case PickleOpBinPersId:
-            return loadBinPersId();
+            RELEASE_AND_RETURN(scope, loadBinPersId());
         case PickleOpReduce:
-            return loadReduce();
+            RELEASE_AND_RETURN(scope, loadReduce());
         case PickleOpProto:
-            return loadProto();
+            RELEASE_AND_RETURN(scope, loadProto());
         case PickleOpFrame:
-            return loadFrame();
+            RELEASE_AND_RETURN(scope, loadFrame());
         case PickleOpExt1:
-            return loadExtension(1);
+            RELEASE_AND_RETURN(scope, loadExtension(1));
         case PickleOpExt2:
-            return loadExtension(2);
+            RELEASE_AND_RETURN(scope, loadExtension(2));
         case PickleOpExt4:
-            return loadExtension(4);
+            RELEASE_AND_RETURN(scope, loadExtension(4));
         case PickleOpNewTrue:
-            return push(jsBoolean(true));
+            RELEASE_AND_RETURN(scope, push(jsBoolean(true)));
         case PickleOpNewFalse:
-            return push(jsBoolean(false));
+            RELEASE_AND_RETURN(scope, push(jsBoolean(false)));
         default:
             if (op >= 0x20 && op <= 0x7e && op != '\'' && op != '\\')
-                return fail("invalid load key, '"_s, static_cast<char>(op), "'."_s);
-            return fail("invalid load key, '\\x"_s, WTF::hex(op, 2, WTF::Lowercase), "'."_s);
+                RELEASE_AND_RETURN(scope, fail("invalid load key, '"_s, static_cast<char>(op), "'."_s));
+            RELEASE_AND_RETURN(scope, fail("invalid load key, '\\x"_s, WTF::hex(op, 2, WTF::Lowercase), "'."_s));
         }
     }
 
@@ -3685,7 +3745,7 @@ static JSValue unpicklerInit(JSGlobalObject* globalObject, JSValue self, const C
     if (failed(scope, unpackKeywordArguments(globalObject, "Unpickler"_s, keywords, 1, 1, false, args, values)))
         return { };
     bool fixImports;
-    if (!unpicklerCheckOptions(globalObject, "Unpickler"_s, values + 1, fixImports))
+    if (failed(scope, unpicklerCheckOptions(globalObject, "Unpickler"_s, values + 1, fixImports)))
         return { };
 
     auto* unpickler = PyRecord::from(self);
@@ -3711,6 +3771,7 @@ static JSValue unpicklerLoad(JSGlobalObject* globalObject, JSValue self, const C
         return { };
     auto* unpickler = PyRecord::from(self);
     if (!unpickler->get(UnpicklerRead)) {
+        scope.release();
         pickleRaise(globalObject, PickleStateUnpicklingError, "Unpickler.__init__() was not called by "_s, typeName(globalObject, self), ".__init__()"_s);
         return { };
     }
@@ -3727,6 +3788,7 @@ static JSValue unpicklerPersistentLoad(JSGlobalObject* globalObject, JSValue, co
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (failed(scope, picklePositionalOnly(globalObject, "persistent_load"_s, args, 1)))
         return { };
+    scope.release();
     pickleRaise(globalObject, PickleStateUnpicklingError, "A load persistent id instruction was encountered, but no persistent_load function was specified."_s);
     return { };
 }
@@ -3781,10 +3843,10 @@ static JSValue unpicklerFindClass(JSGlobalObject* globalObject, JSValue self, JS
         scope.release();
         pickleReplaceException(globalObject, rt.AttributeError(), [&](JSValue) -> String {
             String name = pickleRepr(globalObject, globalName);
-            if (name.isNull())
+            if (failed(scope, !name.isNull()))
                 return String();
             String moduleText = pickleRepr(globalObject, moduleName);
-            if (moduleText.isNull())
+            if (failed(scope, !moduleText.isNull()))
                 return String();
             return makeString("Can't resolve path "_s, name, " on module "_s, moduleText);
         });
@@ -3853,6 +3915,7 @@ static JSValue unpicklerMemoProxyCopy(JSGlobalObject* globalObject, JSValue self
     PyDict* result = PyDict::create(globalObject);
     for (unsigned i = 0; i < memo->length(); ++i) {
         JSValue value = memo->getDirectIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, { });
         if (!value)
             continue;
         result->set(globalObject, jsNumber(i), value);
@@ -3898,6 +3961,7 @@ static void unpicklerSetMemo(JSGlobalObject* globalObject, JSValue self, JSValue
             return;
         }
         unpicklerMemoPut(globalObject, scratch, *index, item);
+        RETURN_IF_EXCEPTION(scope, void());
     }
     for (unsigned field : { UnpicklerMemo, UnpicklerMemoDict, UnpicklerMemoLength, UnpicklerMemoSize })
         unpickler->set(vm, field, scratch->get(field));

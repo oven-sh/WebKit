@@ -117,6 +117,7 @@ static JSValue heapqPush(JSGlobalObject* globalObject, JSValue heapValue, JSValu
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* heap = heapqListArgument(globalObject, isMax ? "heappush_max"_s : "heappush"_s, 1, heapValue);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!heap)
         return { };
     listAppend(globalObject, heap, item);
@@ -132,10 +133,12 @@ static JSValue heapqPop(JSGlobalObject* globalObject, JSValue heapValue)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* heap = heapqListArgument(globalObject, isMax ? "heappop_max"_s : "heappop"_s, 0, heapValue);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!heap)
         return { };
     unsigned size = listLength(heap);
     if (!size) {
+        scope.release();
         heapqRaiseOutOfRange(globalObject);
         return { };
     }
@@ -157,9 +160,11 @@ static JSValue heapqReplace(JSGlobalObject* globalObject, JSValue heapValue, JSV
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* heap = heapqListArgument(globalObject, isMax ? "heapreplace_max"_s : "heapreplace"_s, 1, heapValue);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!heap)
         return { };
     if (!listLength(heap)) {
+        scope.release();
         heapqRaiseOutOfRange(globalObject);
         return { };
     }
@@ -176,6 +181,7 @@ static JSValue heapqPushPop(JSGlobalObject* globalObject, JSValue heapValue, JSV
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* heap = heapqListArgument(globalObject, isMax ? "heappushpop_max"_s : "heappushpop"_s, 1, heapValue);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!heap)
         return { };
     if (!listLength(heap))
@@ -185,6 +191,7 @@ static JSValue heapqPushPop(JSGlobalObject* globalObject, JSValue heapValue, JSV
     if (!topComesFirst)
         return item;
     if (!listLength(heap)) {
+        scope.release();
         heapqRaiseOutOfRange(globalObject);
         return { };
     }
@@ -201,6 +208,7 @@ static JSValue heapqHeapify(JSGlobalObject* globalObject, JSValue heapValue)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* heap = heapqListArgument(globalObject, isMax ? "heapify_max"_s : "heapify"_s, 0, heapValue);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!heap)
         return { };
     // From the last item that has a child to the top: what is below each is a heap by then.
@@ -319,7 +327,7 @@ static JSValue bisectFind(JSGlobalObject* globalObject, JSValue sequence, JSValu
     if (failed(scope, bisectParseBounds(globalObject, low, high, bounds)))
         return { };
     int64_t index = bisectSearch<toTheRight>(globalObject, sequence, item, bounds, key && !isNone(key) ? key : JSValue());
-    if (index < 0)
+    if (failed(scope, index >= 0))
         return { };
     RELEASE_AND_RETURN(scope, makeInt(globalObject, index));
 }
@@ -340,7 +348,7 @@ static JSValue bisectInsort(JSGlobalObject* globalObject, JSValue sequence, JSVa
         RETURN_IF_EXCEPTION(scope, { });
     }
     int64_t index = bisectSearch<toTheRight>(globalObject, sequence, sought, bounds, key);
-    if (index < 0)
+    if (failed(scope, index >= 0))
         return { };
     if (isExactList(sequence)) {
         JSArray* list = asList(sequence);

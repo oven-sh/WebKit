@@ -99,8 +99,10 @@ static JSValue simpleQueueGet(JSGlobalObject* globalObject, JSValue self, JSValu
     ++first;
     // What has been taken is cut off when it has come to be half of the list.
     if (first * 2 >= listLength(items)) {
+        queue->number = 0;
         listRemove(globalObject, items, 0, first);
-        first = 0;
+        RETURN_IF_EXCEPTION(scope, { });
+        return item;
     }
     queue->number = first;
     return item;

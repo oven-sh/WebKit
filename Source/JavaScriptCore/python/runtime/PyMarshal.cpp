@@ -106,22 +106,26 @@ public:
         case Error::None:
             return true;
         case Error::Exception:
-            ASSERT(scope.exception());
+            EXCEPTION_ASSERT(scope.exception());
             return false;
         case Error::NestedTooDeep:
             takePendingException(m_globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
             raiseValueError(m_globalObject, scope, "object too deeply nested to marshal"_s);
             return false;
         case Error::CodeNotAllowed:
             takePendingException(m_globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
             raiseValueError(m_globalObject, scope, "marshalling code objects is disallowed"_s);
             return false;
         case Error::SetChangedSize:
             takePendingException(m_globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
             raiseRuntimeError(m_globalObject, scope, "set changed size during iteration"_s);
             return false;
         case Error::Unmarshallable:
             takePendingException(m_globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
             raiseValueError(m_globalObject, scope, "unmarshallable object"_s);
             return false;
         }
@@ -439,7 +443,7 @@ private:
     NEVER_INLINE void writeStr(JSString* string, uint8_t flag)
     {
         VM& vm = m_runtime.vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         bool interned = isInterned(string);
         auto view = string->view(m_globalObject);
         if (scope.exception()) [[unlikely]] {
@@ -471,7 +475,7 @@ private:
     NEVER_INLINE void writeSet(PySet* set)
     {
         VM& vm = m_runtime.vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         size_t size = set->size();
         if (!writeSize(size))
             return;
@@ -489,8 +493,7 @@ private:
         for (unsigned i = 0; i < items.size(); ++i) {
             MarshalWriter writer(m_globalObject, m_version, m_allowCode);
             writer.m_depth = m_depth;
-            if (!writer.write(items.at(i))) {
-                scope.release();
+            if (failed(scope, writer.write(items.at(i)))) {
                 m_error = Error::Unmarshallable;
                 return;
             }
@@ -552,8 +555,10 @@ private:
 
     NEVER_INLINE void writeBuffer(JSValue value, uint8_t flag)
     {
+        VM& vm = m_runtime.vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         BufferHolder holder(m_globalObject);
-        if (!holder.get(value)) {
+        if (failed(scope, holder.get(value))) {
             writeByte(MarshalUnknown);
             m_error = Error::Unmarshallable;
             return;
@@ -762,6 +767,7 @@ private:
         Vector<uint8_t> zeros;
         zeros.fill(0, count);
         PyByteArray* array = PyByteArray::create(m_globalObject, zeros.span());
+        RETURN_IF_EXCEPTION(scope, false);
         JSValue view = call(m_globalObject, m_runtime.memoryviewType(), array);
         RETURN_IF_EXCEPTION(scope, false);
         JSValue answer = callMethod(m_globalObject, m_file, internString(vm, "readinto"_s), view);
@@ -908,8 +914,12 @@ private:
     // Gives the object the next number, if it is to have one.
     JSValue remember(JSValue object, bool isNumbered)
     {
-        if (object && isNumbered)
-            listAppend(m_globalObject, m_references, object);
+        if (!object || !isNumbered)
+            return object;
+        VM& vm = m_runtime.vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        listAppend(m_globalObject, m_references, object);
+        RETURN_IF_EXCEPTION(scope, { });
         return object;
     }
 
@@ -957,7 +967,7 @@ private:
         auto scope = DECLARE_THROW_SCOPE(vm);
         int32_t number = readLong();
         RETURN_IF_EXCEPTION(scope, { });
-        return remember(jsNumber(number), isNumbered);
+        RELEASE_AND_RETURN(scope, remember(jsNumber(number), isNumbered));
     }
 
     NEVER_INLINE JSValue readInt64(bool isNumbered)
@@ -972,7 +982,16 @@ private:
             bits |= static_cast<uint64_t>(bytes[i]) << (8 * i);
         JSValue number = makeInt(m_globalObject, static_cast<int64_t>(bits));
         RETURN_IF_EXCEPTION(scope, { });
-        return remember(number, isNumbered);
+        RELEASE_AND_RETURN(scope, remember(number, isNumbered));
+    }
+
+    NEVER_INLINE JSValue readBigIntObject(bool isNumbered)
+    {
+        VM& vm = m_runtime.vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue number = readBigInt();
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, remember(number, isNumbered));
     }
 
     NEVER_INLINE JSValue readFloat(bool isText, bool isNumbered)
@@ -1020,7 +1039,7 @@ private:
             return { };
         JSValue string = readStr(bytes, type != MarshalUnicode && type != MarshalInterned, isInterned);
         RETURN_IF_EXCEPTION(scope, { });
-        return remember(string, isNumbered);
+        RELEASE_AND_RETURN(scope, remember(string, isNumbered));
     }
 
     NEVER_INLINE JSValue readTuple(bool isSmall, bool isNumbered)
@@ -1033,6 +1052,7 @@ private:
             return { };
         PyTuple* tuple = size ? PyTuple::create(m_globalObject, static_cast<unsigned>(size)) : PyTuple::empty(m_globalObject);
         remember(tuple, isNumbered);
+        RETURN_IF_EXCEPTION(scope, { });
         for (unsigned i = 0; i < size; ++i) {
             JSValue item = readObject();
             RETURN_IF_EXCEPTION(scope, { });
@@ -1053,6 +1073,7 @@ private:
             return { };
         JSArray* list = newList(m_globalObject);
         remember(list, isNumbered);
+        RETURN_IF_EXCEPTION(scope, { });
         for (int64_t i = 0; i < size; ++i) {
             JSValue item = readObject();
             RETURN_IF_EXCEPTION(scope, { });
@@ -1074,6 +1095,7 @@ private:
             number = reserveNumber(isNumbered);
         else
             remember(dict, isNumbered);
+        RETURN_IF_EXCEPTION(scope, { });
         while (true) {
             JSValue key = readObject();
             RETURN_IF_EXCEPTION(scope, { });
@@ -1090,7 +1112,7 @@ private:
             return dict;
         // Nothing else has seen it.
         dict->setType(vm, m_runtime.frozendictType());
-        return rememberAt(dict, number, isNumbered);
+        RELEASE_AND_RETURN(scope, rememberAt(dict, number, isNumbered));
     }
 
     NEVER_INLINE JSValue readSet(bool isFrozen, bool isNumbered)
@@ -1107,6 +1129,7 @@ private:
             number = reserveNumber(isNumbered);
         else
             remember(set, isNumbered);
+        RETURN_IF_EXCEPTION(scope, { });
         for (int64_t i = 0; i < size; ++i) {
             JSValue item = readObject();
             RETURN_IF_EXCEPTION(scope, { });
@@ -1116,7 +1139,7 @@ private:
             RETURN_IF_EXCEPTION(scope, { });
         }
         if (isFrozen && size)
-            rememberAt(set, number, isNumbered);
+            RELEASE_AND_RETURN(scope, rememberAt(set, number, isNumbered));
         return set;
     }
 
@@ -1139,6 +1162,7 @@ private:
         VM& vm = m_runtime.vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
         unsigned number = reserveNumber(isNumbered);
+        RETURN_IF_EXCEPTION(scope, { });
         JSValue parts[3];
         for (auto& part : parts) {
             part = readObject();
@@ -1154,19 +1178,20 @@ private:
         VM& vm = getVM(m_globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!m_allowCode)
-            return raiseBadData("unmarshalling code objects is disallowed"_s);
+            RELEASE_AND_RETURN(scope, raiseBadData("unmarshalling code objects is disallowed"_s));
         std::span<const uint8_t> bytes;
         if (failed(scope, readBytes(MarshalledCodeHeader::size, bytes)))
             return { };
         auto header = MarshalledCodeHeader::read(bytes.first<MarshalledCodeHeader::size>());
         if (!isOfThisBuild(header))
-            return raiseBadData("bad marshal data (code object of another build)"_s);
+            RELEASE_AND_RETURN(scope, raiseBadData("bad marshal data (code object of another build)"_s));
         if (failed(scope, readBytes(header.payloadSize, bytes)))
             return { };
         PyCode* code = readMarshalledCode(m_globalObject, header, bytes);
+        RETURN_IF_EXCEPTION(scope, { });
         if (!code)
-            return raiseBadData("bad marshal data (damaged code object)"_s);
-        return remember(code, isNumbered);
+            RELEASE_AND_RETURN(scope, raiseBadData("bad marshal data (damaged code object)"_s));
+        RELEASE_AND_RETURN(scope, remember(code, isNumbered));
     }
 
     NEVER_INLINE JSValue raiseBadData(ASCIILiteral message)
@@ -1226,7 +1251,7 @@ private:
         case MarshalInt64:
             return readInt64(isNumbered);
         case MarshalLong:
-            return remember(readBigInt(), isNumbered);
+            return readBigIntObject(isNumbered);
         case MarshalFloat:
         case MarshalBinaryFloat:
             return readFloat(type == MarshalFloat, isNumbered);
@@ -1304,7 +1329,7 @@ static JSValue marshalDumps(JSGlobalObject* globalObject, JSValue value, JSValue
     if (failed(scope, audit(globalObject, "marshal.dumps"_s, value, jsNumber(version))))
         return { };
     MarshalWriter writer(globalObject, version, allowCode);
-    if (!writer.write(value))
+    if (failed(scope, writer.write(value)))
         return { };
     RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, writer.bytes().span()));
 }
@@ -1323,7 +1348,7 @@ static JSValue marshalLoads(JSGlobalObject* globalObject, JSValue bytes, JSValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder holder(globalObject);
-    if (!holder.get(bytes))
+    if (failed(scope, holder.get(bytes)))
         return { };
     bool allowCode = !allowCodeValue || isTrue(globalObject, allowCodeValue);
     RETURN_IF_EXCEPTION(scope, { });

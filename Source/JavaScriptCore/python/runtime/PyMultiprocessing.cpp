@@ -100,6 +100,7 @@ static bool semLockToName(JSGlobalObject* globalObject, JSValue value, ASCIILite
     auto encoded = tryEncodeUTF8(text);
     if (!encoded) {
         // Which raises.
+        scope.release();
         strEncode(globalObject, strValue(value), makeStr(vm, "utf-8"_s), makeStr(vm, "strict"_s));
         return false;
     }
@@ -120,7 +121,7 @@ static JSValue semLockNew(JSGlobalObject* globalObject, JSValue type, JSValue ki
     int maxValue;
     PosixBytes name;
     if (failed(scope, posixToInt(globalObject, kindValue, kind)) || failed(scope, posixToInt(globalObject, valueValue, value)) || failed(scope, posixToInt(globalObject, maxValueValue, maxValue))
-        || !semLockToName(globalObject, nameValue, "SemLock() argument 'name' must be str, not "_s, name))
+        || failed(scope, semLockToName(globalObject, nameValue, "SemLock() argument 'name' must be str, not "_s, name)))
         return { };
     bool unlinks = isTrue(globalObject, unlinkValue);
     RETURN_IF_EXCEPTION(scope, { });
@@ -146,7 +147,7 @@ static JSValue semLockRebuild(JSGlobalObject* globalObject, JSValue type, JSValu
     int maxValue;
     PosixBytes name;
     if (failed(scope, posixToUnsignedLongLong(globalObject, handleValue, address)) || failed(scope, posixToInt(globalObject, kindValue, kind)) || failed(scope, posixToInt(globalObject, maxValueValue, maxValue))
-        || (!isNone(nameValue) && !semLockToName(globalObject, nameValue, "_rebuild() argument 4 must be str or None, not "_s, name)))
+        || (!isNone(nameValue) && failed(scope, semLockToName(globalObject, nameValue, "_rebuild() argument 4 must be str or None, not "_s, name))))
         return { };
     auto* handle = reinterpret_cast<sem_t*>(static_cast<uintptr_t>(address));
     // The handle is that of the process that pickled the lock. The name is what another can open it by.
@@ -162,6 +163,8 @@ static JSValue semLockRebuild(JSGlobalObject* globalObject, JSValue type, JSValu
 // Tries again and again, at growing intervals of up to 20 ms.
 static int semLockTimedWait(JSGlobalObject* globalObject, sem_t* handle, const struct timespec& deadline)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     for (unsigned long delay = 0;; delay += 1000) {
         if (!sem_trywait(handle))
             return 0;
@@ -183,7 +186,7 @@ static int semLockTimedWait(JSGlobalObject* globalObject, sem_t* handle, const s
         }
         if (result < 0)
             return -1;
-        if (!checkSignals(globalObject)) {
+        if (failed(scope, checkSignals(globalObject))) {
             errno = EINTR;
             return -1;
         }
@@ -223,7 +226,7 @@ static JSValue semLockAcquire(JSGlobalObject* globalObject, JSValue self, JSValu
     int result;
     do {
         result = sem_trywait(handle);
-    } while (result < 0 && errno == EINTR && checkSignals(globalObject));
+    } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     RETURN_IF_EXCEPTION(scope, { });
     if (result < 0 && errno == EAGAIN && blocks) {
         do {
@@ -240,7 +243,7 @@ static JSValue semLockAcquire(JSGlobalObject* globalObject, JSValue self, JSValu
                     return { };
 #endif
             }
-        } while (result < 0 && errno == EINTR && checkSignals(globalObject));
+        } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
         RETURN_IF_EXCEPTION(scope, { });
     }
     if (result < 0) {
@@ -372,11 +375,13 @@ static constexpr TypeDef semLockTypeDef { "_multiprocessing.SemLock"_s, { TypeFl
 
 static JSValue multiprocessingSemUnlink(JSGlobalObject* globalObject, JSValue nameValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes name;
-    if (!semLockToName(globalObject, nameValue, "sem_unlink() argument must be str, not "_s, name))
+    if (failed(scope, semLockToName(globalObject, nameValue, "sem_unlink() argument must be str, not "_s, name)))
         return { };
     if (sem_unlink(name.characters()) < 0)
-        return posixError(globalObject);
+        RELEASE_AND_RETURN(scope, posixError(globalObject));
     return jsUndefined();
 }
 

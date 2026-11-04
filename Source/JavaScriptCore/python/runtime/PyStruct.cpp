@@ -170,6 +170,7 @@ static bool structCompile(JSGlobalObject* globalObject, PyRecord* object, JSStri
         return false;
     }
     if (format.contains(static_cast<char16_t>(0))) {
+        scope.release();
         structRaise(globalObject, "embedded null character"_s);
         return false;
     }
@@ -198,6 +199,7 @@ static bool structCompile(JSGlobalObject* globalObject, PyRecord* object, JSStri
     }
 
     auto tooLong = [&] {
+        scope.release();
         structRaise(globalObject, "total struct size too long"_s);
         return false;
     };
@@ -221,12 +223,14 @@ static bool structCompile(JSGlobalObject* globalObject, PyRecord* object, JSStri
                 text = text.subspan(1);
             }
             if (text.empty()) {
+                scope.release();
                 structRaise(globalObject, "repeat count given without format specifier"_s);
                 return false;
             }
         }
         const StructFormat* entry = structFindFormat(text, isNative);
         if (!entry) {
+            scope.release();
             structRaise(globalObject, "bad char in struct format"_s);
             return false;
         }
@@ -330,7 +334,7 @@ static JSValue structNew(JSGlobalObject* globalObject, JSValue cls, const CallAr
         if (failed(scope, structParseFormatArgument(globalObject, args, format)))
             return { };
         PyRecord* object = structAllocate(globalObject, type);
-        if (!structSetFormat(globalObject, object, format))
+        if (failed(scope, structSetFormat(globalObject, object, format)))
             return { };
         return object;
     }
@@ -353,6 +357,7 @@ static JSValue structNew(JSGlobalObject* globalObject, JSValue cls, const CallAr
         if (!hasOwnInit)
             return { };
         JSValue exception = takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
         JSString* text = str(globalObject, exception);
         RETURN_IF_EXCEPTION(scope, { });
         String message = text->value(globalObject);
@@ -404,7 +409,7 @@ static JSValue structInit(JSGlobalObject* globalObject, JSValue self, const Call
         if (!proceed)
             return { };
     }
-    if (!structSetFormat(globalObject, object, format))
+    if (failed(scope, structSetFormat(globalObject, object, format)))
         return { };
     object->set(vm, StructInitCalled, jsBoolean(true));
     return jsUndefined();
@@ -501,16 +506,19 @@ static JSValue structUnpackAt(JSGlobalObject* globalObject, PyByteStorage* stora
 
 static JSValue structUnpackImpl(JSGlobalObject* globalObject, JSValue self, JSValue buffer)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder holder(globalObject);
-    if (!holder.get(buffer))
+    if (failed(scope, holder.get(buffer)))
         return { };
     PyByteStorage* storage = structReadyStorage(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!storage)
         return { };
     int64_t size = structLayoutOf(storage)->size;
     if (holder.buffer.length != size)
-        return structRaise(globalObject, "unpack requires a buffer of "_s, size, " bytes"_s);
-    return structUnpackAt(globalObject, storage, holder.buffer.data);
+        RELEASE_AND_RETURN(scope, structRaise(globalObject, "unpack requires a buffer of "_s, size, " bytes"_s));
+    RELEASE_AND_RETURN(scope, structUnpackAt(globalObject, storage, holder.buffer.data));
 }
 
 static JSValue structUnpackFromImpl(JSGlobalObject* globalObject, JSValue self, JSValue buffer, JSValue offsetValue)
@@ -518,12 +526,13 @@ static JSValue structUnpackFromImpl(JSGlobalObject* globalObject, JSValue self, 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder holder(globalObject);
-    if (!holder.get(buffer))
+    if (failed(scope, holder.get(buffer)))
         return { };
     int64_t offset = 0;
-    if (offsetValue && (failed(scope, ssizeArgument(globalObject, offsetValue, offset)) || !refreshBuffer(globalObject, holder.buffer)))
+    if (offsetValue && (failed(scope, ssizeArgument(globalObject, offsetValue, offset)) || failed(scope, refreshBuffer(globalObject, holder.buffer))))
         return { };
     PyByteStorage* storage = structReadyStorage(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!storage)
         return { };
     int64_t size = structLayoutOf(storage)->size;
@@ -536,6 +545,7 @@ static JSValue structUnpackFromImpl(JSGlobalObject* globalObject, JSValue self, 
         offset += available;
     }
     if (available - offset < size) {
+        scope.release();
         return structRaise(globalObject, "unpack_from requires a buffer of at least "_s, static_cast<uint64_t>(size) + static_cast<uint64_t>(offset), " bytes for unpacking "_s, size,
             " bytes at offset "_s, offset, " (actual buffer size is "_s, available, ')');
     }
@@ -557,6 +567,7 @@ static JSValue structIterUnpackImpl(JSGlobalObject* globalObject, JSValue self, 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyByteStorage* storage = structReadyStorage(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!storage)
         return { };
     int64_t size = structLayoutOf(storage)->size;
@@ -632,6 +643,8 @@ static bool structPackItem(JSGlobalObject* globalObject, const StructFormat& for
     // Whatever went wrong is put this way.
     auto notA = [&](ASCIILiteral what) {
         takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        scope.release();
         structRaise(globalObject, "required argument is not a "_s, what);
         return false;
     };
@@ -647,6 +660,7 @@ static bool structPackItem(JSGlobalObject* globalObject, const StructFormat& for
     case StructKind::Char: {
         auto* bytes = PyBytes::tryFrom(value);
         if (!bytes || bytes->length() != 1) {
+            scope.release();
             structRaise(globalObject, "char format requires a bytes object of length 1"_s);
             return false;
         }
@@ -765,6 +779,8 @@ static bool structPackItem(JSGlobalObject* globalObject, const StructFormat& for
 static bool structPackAt(JSGlobalObject* globalObject, PyByteStorage* storage, std::span<const JSValue> values, uint8_t* start)
 {
     Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     StructLayout* layout = structLayoutOf(storage);
     memset(start, 0, layout->size);
     size_t index = 0;
@@ -782,6 +798,7 @@ static bool structPackAt(JSGlobalObject* globalObject, PyByteStorage* storage, s
                 else if (auto* array = PyByteArray::tryFrom(value))
                     bytes = array->span();
                 else {
+                    scope.release();
                     structRaise(globalObject, "argument for '"_s, format.code, "' must be a bytes object"_s);
                     return false;
                 }
@@ -794,9 +811,11 @@ static bool structPackAt(JSGlobalObject* globalObject, PyByteStorage* storage, s
                 }
                 continue;
             }
-            if (!structPackItem(globalObject, format, address, static_cast<unsigned>(code.size), layout->isBigEndian, value)) {
-                if (isInt(value) && clearPendingExceptionIfMatches(globalObject, rt.OverflowError()))
+            if (failed(scope, structPackItem(globalObject, format, address, static_cast<unsigned>(code.size), layout->isBigEndian, value))) {
+                if (isInt(value) && clearPendingExceptionIfMatches(globalObject, rt.OverflowError())) {
+                    scope.release();
                     structRaise(globalObject, "int too large to convert"_s);
+                }
                 return false;
             }
         }
@@ -810,6 +829,7 @@ static JSValue structPackImpl(JSGlobalObject* globalObject, JSValue self, std::s
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyByteStorage* storage = structReadyStorage(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!storage)
         return { };
     StructLayout* layout = structLayoutOf(storage);
@@ -819,7 +839,7 @@ static JSValue structPackImpl(JSGlobalObject* globalObject, JSValue self, std::s
     if (!layout->size && values.empty())
         RELEASE_AND_RETURN(scope, runtime(globalObject).emptyBytes());
     PyBytes* result = newBytes(globalObject, layout->size);
-    if (!result || failed(scope, structPackAt(globalObject, storage, values, result->mutableData())))
+    if (failed(scope, result) || failed(scope, structPackAt(globalObject, storage, values, result->mutableData())))
         return { };
     return result;
 }
@@ -830,14 +850,16 @@ static JSValue structPackIntoImpl(JSGlobalObject* globalObject, JSValue self, un
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder holder(globalObject);
-    if (!holder.get(buffer, BufferWritable)) {
+    if (failed(scope, holder.get(buffer, BufferWritable))) {
         takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
         return raiseTypeError(globalObject, scope, "pack_into() argument "_s, position, " must be read-write bytes-like object, not "_s, typeNameOfArgument(globalObject, buffer));
     }
     int64_t offset;
     if (failed(scope, ssizeArgument(globalObject, offsetValue, offset)))
         return { };
     PyByteStorage* storage = structReadyStorage(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!storage)
         return { };
     StructLayout* layout = structLayoutOf(storage);
@@ -853,10 +875,11 @@ static JSValue structPackIntoImpl(JSGlobalObject* globalObject, JSValue self, un
         offset += available;
     }
     if (available - offset < size) {
+        scope.release();
         return structRaise(globalObject, "pack_into requires a buffer of at least "_s, static_cast<uint64_t>(size) + static_cast<uint64_t>(offset), " bytes for packing "_s, size,
             " bytes at offset "_s, offset, " (actual buffer size is "_s, available, ')');
     }
-    if (!refreshBuffer(globalObject, holder.buffer))
+    if (failed(scope, refreshBuffer(globalObject, holder.buffer)))
         return { };
     if (size && failed(scope, structPackAt(globalObject, storage, values, holder.buffer.data + offset)))
         return { };
@@ -900,7 +923,7 @@ static JSValue structRepr(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!structReadyStorage(globalObject, self))
+    if (failed(scope, structReadyStorage(globalObject, self)))
         return { };
     PyRecord* object = PyRecord::from(self);
     String format = asString(object->get(StructFormatString))->value(globalObject);
@@ -953,8 +976,10 @@ static JSValue structForFormat(JSGlobalObject* globalObject, JSValue format)
     if (cache->size() >= maxCached)
         cache->clear(vm);
     cache->set(globalObject, key, object);
-    if (scope.exception()) [[unlikely]]
+    if (scope.exception()) [[unlikely]] {
         takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return object;
 }
 
@@ -966,10 +991,12 @@ static JSValue structModuleClearCache(JSGlobalObject* globalObject)
 
 static JSValue structModuleCalcSize(JSGlobalObject* globalObject, JSValue format)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue object = structForFormat(globalObject, format);
-    if (!object)
+    if (failed(scope, object))
         return { };
-    return structGetSize(globalObject, object);
+    RELEASE_AND_RETURN(scope, structGetSize(globalObject, object));
 }
 
 static JSValue structModulePack(JSGlobalObject* globalObject, const CallArgs& args)
@@ -991,33 +1018,39 @@ static JSValue structModulePackInto(JSGlobalObject* globalObject, const CallArgs
     if (failed(scope, rejectKeywords(globalObject, "_struct.pack_into"_s, args)) || failed(scope, checkPositional(globalObject, "pack_into"_s, args, 3, std::numeric_limits<unsigned>::max())))
         return { };
     JSValue object = structForFormat(globalObject, args[0]);
-    if (!object)
+    if (failed(scope, object))
         return { };
     RELEASE_AND_RETURN(scope, structPackIntoImpl(globalObject, object, 2, args[1], args[2], args.positional().subspan(3)));
 }
 
 static JSValue structModuleUnpack(JSGlobalObject* globalObject, JSValue format, JSValue buffer)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue object = structForFormat(globalObject, format);
-    if (!object)
+    if (failed(scope, object))
         return { };
-    return structUnpackImpl(globalObject, object, buffer);
+    RELEASE_AND_RETURN(scope, structUnpackImpl(globalObject, object, buffer));
 }
 
 static JSValue structModuleUnpackFrom(JSGlobalObject* globalObject, JSValue format, JSValue buffer, JSValue offset)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue object = structForFormat(globalObject, format);
-    if (!object)
+    if (failed(scope, object))
         return { };
-    return structUnpackFromImpl(globalObject, object, buffer, offset);
+    RELEASE_AND_RETURN(scope, structUnpackFromImpl(globalObject, object, buffer, offset));
 }
 
 static JSValue structModuleIterUnpack(JSGlobalObject* globalObject, JSValue format, JSValue buffer)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue object = structForFormat(globalObject, format);
-    if (!object)
+    if (failed(scope, object))
         return { };
-    return structIterUnpackImpl(globalObject, object, buffer);
+    RELEASE_AND_RETURN(scope, structIterUnpackImpl(globalObject, object, buffer));
 }
 
 // ---- The types and the module ----

@@ -84,42 +84,46 @@ bool fileIOIsClosed(PyRecord* file) { return ioStateOf<FileIOState>(file).fd < 0
 
 static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState& state, uint8_t* buffer, size_t count)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     writeOutPendingOutput(globalObject);
     int fd = state.fd;
 #if !OS(WINDOWS)
-    if (count && !(state.hasStat && S_ISREG(state.statMode)) && !waitUntilReadable(globalObject, fd))
+    if (count && !(state.hasStat && S_ISREG(state.statMode)) && failed(scope, waitUntilReadable(globalObject, fd)))
         return -1;
 #endif
     ssize_t result;
     do {
         AllowThreads allow(globalObject);
         result = read(fd, buffer, std::min(count, fileIOMaxTransfer));
-    } while (result < 0 && errno == EINTR && checkSignals(globalObject));
+    } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result >= 0)
         return result;
-    if (getVM(globalObject).exceptionForInspection())
-        return -1;
-    if (errno == EAGAIN)
+    int error = errno;
+    RETURN_IF_EXCEPTION(scope, -1);
+    if (error == EAGAIN)
         return -2;
-    fileIORaiseErrno(globalObject, errno);
+    scope.release();
+    fileIORaiseErrno(globalObject, error);
     return -1;
 }
 
 static int64_t fileIOSystemWrite(JSGlobalObject* globalObject, int fd, const uint8_t* buffer, size_t count)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     writeOutPendingOutput(globalObject);
     ssize_t result;
     do {
         AllowThreads allow(globalObject);
         result = write(fd, buffer, std::min(count, fileIOMaxTransfer));
-    } while (result < 0 && errno == EINTR && checkSignals(globalObject));
+    } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (result >= 0)
         return result;
-    if (getVM(globalObject).exceptionForInspection())
-        return -1;
-    if (errno == EAGAIN)
+    int error = errno;
+    RETURN_IF_EXCEPTION(scope, -1);
+    if (error == EAGAIN)
         return -2;
-    fileIORaiseErrno(globalObject, errno);
+    scope.release();
+    fileIORaiseErrno(globalObject, error);
     return -1;
 }
 
@@ -247,7 +251,7 @@ static JSValue fileIOInit(JSGlobalObject* globalObject, JSValue self, const Call
     if (values[1]) {
         if (!isStr(values[1]))
             return raiseTypeError(globalObject, scope, "FileIO() argument 'mode' must be str, not "_s, isNone(values[1]) ? "None"_str : typeName(globalObject, values[1]));
-        if (!ioToOptionalString(globalObject, values[1], "FileIO"_s, "mode"_s, mode))
+        if (failed(scope, ioToOptionalString(globalObject, values[1], "FileIO"_s, "mode"_s, mode)))
             return { };
     }
     bool closefd = !values[2] || isTrue(globalObject, values[2]);
@@ -265,7 +269,7 @@ static JSValue fileIOInit(JSGlobalObject* globalObject, JSValue self, const Call
     }
 
     if (nameObject.isBoolean()) {
-        if (!warn(globalObject, rt.RuntimeWarning(), "bool is used as a file descriptor"_s, 1))
+        if (failed(scope, warn(globalObject, rt.RuntimeWarning(), "bool is used as a file descriptor"_s, 1)))
             return { };
     }
 
@@ -416,7 +420,7 @@ static JSValue fileIOInit(JSGlobalObject* globalObject, JSValue self, const Call
         RETURN_IF_EXCEPTION(scope, false);
 
         // Otherwise the position would move to the end only at the first write.
-        if (state.appending && fileIOSystemSeek(globalObject, state, 0, SEEK_END, true) < 0)
+        if (state.appending && failed(scope, fileIOSystemSeek(globalObject, state, 0, SEEK_END, true) >= 0))
             return false;
         return true;
     };
@@ -426,7 +430,8 @@ static JSValue fileIOInit(JSGlobalObject* globalObject, JSValue self, const Call
             state.fd = -1;
         if (state.fd >= 0) {
             JSValue error = takePendingException(globalObject);
-            fileIOSystemClose(globalObject, state);
+            bool closed = fileIOSystemClose(globalObject, state);
+            EXCEPTION_ASSERT_UNUSED(closed, !scope.exception() || !closed || !error);
             ioChainExceptions(globalObject, error);
         }
         state.hasStat = false;
@@ -456,16 +461,18 @@ static JSValue fileIOClose(JSGlobalObject* globalObject, JSValue self)
     auto& state = ioStateOf<FileIOState>(file);
 
     JSValue result = ioBaseClose(globalObject, self);
+    bool baseFailed = failed(scope, result);
     if (!state.closefd) {
         state.fd = -1;
         ioDidClose(globalObject, file);
         scope.release();
         return result;
     }
-    JSValue error = result ? JSValue() : takePendingException(globalObject);
+    JSValue error = baseFailed ? takePendingException(globalObject) : JSValue();
+    RETURN_IF_EXCEPTION(scope, { });
     if (state.finalizing)
         fileIODeallocWarn(globalObject, self, self);
-    bool closed = fileIOSystemClose(globalObject, state);
+    bool closed = !failed(scope, fileIOSystemClose(globalObject, state));
     ioDidClose(globalObject, file);
     ioChainExceptions(globalObject, error);
     scope.release();
@@ -578,7 +585,7 @@ static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
         RETURN_IF_EXCEPTION(scope, { });
         while (filled < expected) {
             int64_t count = fileIOSystemRead(globalObject, state, result->mutableData() + filled, expected - filled);
-            if (count == -1)
+            if (failed(scope, count != -1))
                 return { };
             if (count <= 0) {
                 wouldBlock = count == -2;
@@ -601,7 +608,7 @@ static JSValue fileIOReadall(JSGlobalObject* globalObject, JSValue self)
                 return raiseWithArgs(globalObject, scope, runtime(globalObject).MemoryError(), { });
         }
         int64_t count = fileIOSystemRead(globalObject, state, rest.mutableSpan().data() + restFilled, rest.size() - restFilled);
-        if (count == -1)
+        if (failed(scope, count != -1))
             return { };
         if (count == -2) {
             if (!filled && !restFilled)
@@ -641,6 +648,7 @@ static JSValue fileIORead(JSGlobalObject* globalObject, JSValue self, JSValue si
     PyBytes* result = ioTryNewBytes(globalObject, size);
     RETURN_IF_EXCEPTION(scope, { });
     int64_t count = fileIOSystemRead(globalObject, state, result->mutableData(), size);
+    EXCEPTION_ASSERT(!!scope.exception() == (count == -1));
     if (count < 0)
         RELEASE_AND_RETURN(scope, fileIOResult(globalObject, count));
     if (count == size)
@@ -650,10 +658,11 @@ static JSValue fileIORead(JSGlobalObject* globalObject, JSValue self, JSValue si
 
 static JSValue fileIOWriteMethod(JSGlobalObject* globalObject, JSValue self, JSValue data)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     IOBuffer buffer;
-    if (!buffer.acquire(globalObject, data))
+    if (failed(scope, buffer.acquire(globalObject, data)))
         return { };
-    return fileIOResult(globalObject, fileIOWrite(globalObject, PyRecord::from(self), buffer.span()));
+    RELEASE_AND_RETURN(scope, fileIOResult(globalObject, fileIOWrite(globalObject, PyRecord::from(self), buffer.span())));
 }
 
 // ---- The position ----

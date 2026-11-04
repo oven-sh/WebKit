@@ -256,6 +256,7 @@ static JSValue jsTypedArrayCompare(JSGlobalObject* globalObject, JSValue self, J
         SuspendExceptionScope suspended(vm);
         PyMemoryView::from(view)->release(globalObject);
     }
+    EXCEPTION_ASSERT(!!scope.exception() == !result);
     return result;
 }
 

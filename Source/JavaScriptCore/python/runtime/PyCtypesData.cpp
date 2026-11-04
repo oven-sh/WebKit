@@ -433,6 +433,7 @@ static JSValue storeData(JSGlobalObject* globalObject, PyType* type, Accessor ac
         if (auto* tuple = PyTuple::tryFrom(value)) {
             JSValue object = callWithTupleAndDict(globalObject, type, tuple, nullptr);
             if (scope.exception()) [[unlikely]] {
+                scope.release();
                 extendError(globalObject, runtime(globalObject).RuntimeError(), makeString('(', type->nameInMessages(), ") "_s));
                 return { };
             }
@@ -732,8 +733,11 @@ static JSValue simpleRepr(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCData* data = PyCData::from(self);
-    if (!isSimpleInstanceType(stateOf(globalObject), data->type()))
-        return makeStr(globalObject, makeString('<', data->type()->nameInMessages(), " object at "_s, addressForRepr(globalObject, self), '>'));
+    if (!isSimpleInstanceType(stateOf(globalObject), data->type())) {
+        String address = addressForRepr(globalObject, self);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, makeStr(globalObject, makeString('<', data->type()->nameInMessages(), " object at "_s, address, '>')));
+    }
     JSValue value = simpleGetValue(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
     JSString* text = repr(globalObject, value);

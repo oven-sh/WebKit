@@ -624,7 +624,7 @@ static NEVER_INLINE void runExitHandlersOnWipedStack(JSGlobalObject* globalObjec
             callMethod(globalObject, threading, internString(vm, "_shutdown"_s));
         } else
             waitForThreadsAtExit(globalObject);
-        if (vm.hasPendingTerminationException()) [[unlikely]]
+        if (scope.exception() && vm.hasPendingTerminationException()) [[unlikely]]
             return;
         if (scope.exception()) [[unlikely]] {
             stopWaitingForThreadsAtExit(globalObject);
@@ -635,7 +635,7 @@ static NEVER_INLINE void runExitHandlersOnWipedStack(JSGlobalObject* globalObjec
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return;
         runAtexitCallbacks(globalObject);
-        if (vm.hasPendingTerminationException()) [[unlikely]]
+        if (scope.exception() && vm.hasPendingTerminationException()) [[unlikely]]
             return;
         scope.assertNoException();
     } while (hasThreadsOrAtexitCallbacks(globalObject));
@@ -701,17 +701,23 @@ JSValue importModuleFromJS(JSGlobalObject* globalObject, const String& name)
 {
     if (refuseBesideCompiledCode(globalObject))
         return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool isFirstUse = !globalObject->pythonRuntime();
     Runtime& rt = Runtime::ensure(globalObject);
-    VM& vm = rt.vm();
+    RETURN_IF_EXCEPTION(scope, { });
     if (isFirstUse) {
-        rt.sysDict()->set(vm, internString(vm, "argv"_s), newList(globalObject, std::initializer_list<JSValue> { rt.names.empty() }));
-        if (auto* searchPath = tryAsList(rt.sysDict()->get(rt.names.path())))
+        JSArray* arguments = newList(globalObject, std::initializer_list<JSValue> { rt.names.empty() });
+        RETURN_IF_EXCEPTION(scope, { });
+        rt.sysDict()->set(vm, internString(vm, "argv"_s), arguments);
+        if (auto* searchPath = tryAsList(rt.sysDict()->get(rt.names.path()))) {
             listInsert(globalObject, searchPath, 0, rt.names.empty());
+            RETURN_IF_EXCEPTION(scope, { });
+        }
     }
     if (name == "__python__"_s)
         return rt.jsViewObject(JSViewObject::Namespace);
-    return importModule(globalObject, internString(vm, name));
+    RELEASE_AND_RETURN(scope, importModule(globalObject, internString(vm, name)));
 }
 
 JSValue importModuleFromJS(JSGlobalObject* globalObject, const String& name, ASCIILiteral codeIfNotFound)
@@ -787,12 +793,16 @@ JSValue importFileFromJS(JSGlobalObject* globalObject, const String& givenPath, 
 {
     if (refuseBesideCompiledCode(globalObject))
         return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool isFirstUse = !globalObject->pythonRuntime();
     Runtime& rt = Runtime::ensure(globalObject);
-    VM& vm = rt.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isFirstUse)
-        rt.sysDict()->set(vm, internString(vm, "argv"_s), newList(globalObject, std::initializer_list<JSValue> { rt.names.empty() }));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isFirstUse) {
+        JSArray* arguments = newList(globalObject, std::initializer_list<JSValue> { rt.names.empty() });
+        RETURN_IF_EXCEPTION(scope, { });
+        rt.sysDict()->set(vm, internString(vm, "argv"_s), arguments);
+    }
 
     String path = absolutePath(givenPath);
     JSValue importFile = importSystemFunction(globalObject, "import_file"_s);
@@ -888,12 +898,16 @@ void runCodeInMain(JSGlobalObject* globalObject, JSValue code, JSValue* unfinish
 std::optional<int> mainModuleEnded(JSGlobalObject* globalObject, JSValue exception)
 {
     Runtime& rt = runtime(globalObject);
+    auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(rt.vm());
     std::optional<int> status;
     if (exception) {
         {
             auto scope = DECLARE_THROW_SCOPE(rt.vm());
-            throwPythonException(globalObject, scope, exceptionFromThrownValue(globalObject, exception));
+            JSValue raised = exceptionFromThrownValue(globalObject, exception);
+            if (!scope.exception())
+                throwPythonException(globalObject, scope, raised);
         }
+        EXCEPTION_ASSERT_UNUSED(topScope, topScope.exception());
         status = handleUncaughtExceptionOfFile(globalObject);
     }
     flushStandardStream(globalObject, rt.names.stderr_());
@@ -932,7 +946,7 @@ std::optional<int> runMainModule(JSGlobalObject* globalObject, const String& giv
         Runtime::EventLoopPositionScope position(rt, false);
         runFileInMain(globalObject, path, source, unfinished);
     }
-    if (unfinished && *unfinished)
+    if (!scope.exception() && unfinished && *unfinished)
         return std::nullopt;
     if (scope.exception())
         status = handleUncaughtExceptionOfFile(globalObject);

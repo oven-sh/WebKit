@@ -1155,7 +1155,9 @@ JSValue formatterParser(JSGlobalObject* globalObject, JSValue formatString)
         JSValue spec = markup.hasField ? JSValue(makeStr(vm, markup.hasSpec ? text.substring(markup.specStart, markup.specEnd) : String())) : jsUndefined();
         JSValue conversion = markup.conversion ? JSValue(makeStr(vm, stringFromCodePoint(markup.conversion))) : jsUndefined();
         listAppend(globalObject, result, PyTuple::create(globalObject, { literal, name, spec, conversion }));
+        RETURN_IF_EXCEPTION(scope, { });
     }
+    EXCEPTION_ASSERT(!!scope.exception() == !status);
     if (!status)
         return { };
     RELEASE_AND_RETURN(scope, getIter(globalObject, result));
@@ -1187,7 +1189,9 @@ JSValue formatterFieldNameSplit(JSGlobalObject* globalObject, JSValue fieldName)
     while ((status = nextFieldNamePart(globalObject, text, position, end, part)) == 2) {
         JSValue key = part.index == -1 ? JSValue(makeStr(vm, text.substring(part.start, part.end))) : makeInt(globalObject, part.index);
         listAppend(globalObject, rest, PyTuple::create(globalObject, { jsBoolean(part.isAttribute), key }));
+        RETURN_IF_EXCEPTION(scope, { });
     }
+    EXCEPTION_ASSERT(!!scope.exception() == !status);
     if (!status)
         return { };
     JSValue iterator = getIter(globalObject, rest);

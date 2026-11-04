@@ -122,11 +122,20 @@ static JSValue pwdGetpwnam(JSGlobalObject* globalObject, JSValue nameValue)
 
 static JSValue pwdGetpwall(JSGlobalObject* globalObject)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* result = newList(globalObject);
     setpwent();
-    while (struct passwd* entry = getpwent())
-        listAppend(globalObject, result, pwdMakeEntry(globalObject, *entry));
+    while (struct passwd* entry = getpwent()) {
+        JSValue item = pwdMakeEntry(globalObject, *entry);
+        if (scope.exception()) [[unlikely]]
+            break;
+        listAppend(globalObject, result, item);
+        if (scope.exception()) [[unlikely]]
+            break;
+    }
     endpwent();
+    RETURN_IF_EXCEPTION(scope, { });
     return result;
 }
 
@@ -149,11 +158,22 @@ static constexpr StructSeqDef grpGroupDef { "grp.struct_group"_s, grpGroupFields
 
 static JSValue grpMakeEntry(JSGlobalObject* globalObject, const struct group& entry)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     JSArray* members = newList(globalObject);
-    for (char** member = entry.gr_mem; member && *member; ++member)
-        listAppend(globalObject, members, posixDecode(globalObject, *member));
-    return makeStructSeq(globalObject, cachedStructSeqType(globalObject, grpGroupDef), {
-        posixDecode(globalObject, entry.gr_name), pwdOptionalText(globalObject, entry.gr_passwd), posixFromGid(globalObject, entry.gr_gid), members });
+    RETURN_IF_EXCEPTION(scope, { });
+    for (char** member = entry.gr_mem; member && *member; ++member) {
+        JSValue name = posixDecode(globalObject, *member);
+        RETURN_IF_EXCEPTION(scope, { });
+        listAppend(globalObject, members, name);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    JSValue name = posixDecode(globalObject, entry.gr_name);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue password = pwdOptionalText(globalObject, entry.gr_passwd);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue gid = posixFromGid(globalObject, entry.gr_gid);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, makeStructSeq(globalObject, cachedStructSeqType(globalObject, grpGroupDef), { name, password, gid, members }));
 }
 
 static JSValue grpGetgrgid(JSGlobalObject* globalObject, JSValue idValue)
@@ -197,11 +217,20 @@ static JSValue grpGetgrnam(JSGlobalObject* globalObject, JSValue nameValue)
 
 static JSValue grpGetgrall(JSGlobalObject* globalObject)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* result = newList(globalObject);
     setgrent();
-    while (struct group* entry = getgrent())
-        listAppend(globalObject, result, grpMakeEntry(globalObject, *entry));
+    while (struct group* entry = getgrent()) {
+        JSValue item = grpMakeEntry(globalObject, *entry);
+        if (scope.exception()) [[unlikely]]
+            break;
+        listAppend(globalObject, result, item);
+        if (scope.exception()) [[unlikely]]
+            break;
+    }
     endgrent();
+    RETURN_IF_EXCEPTION(scope, { });
     return result;
 }
 

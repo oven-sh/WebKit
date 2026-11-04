@@ -768,11 +768,11 @@ public:
             RELEASE_AND_RETURN(scope, encodeDict(object, nullptr, level));
 
         JSValue identity;
-        if (!enter(object, identity))
+        if (failed(scope, enter(object, identity)))
             return false;
         JSValue replacement = call(m_globalObject, m_encoder->get(JsonEncoderDefault), object);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!encode(replacement, level)) {
+        if (failed(scope, encode(replacement, level))) {
             scope.release();
             jsonAddNote(m_globalObject, [&] {
                 return makeString("when serializing "_s, typeNameForMessage(m_globalObject, typeOf(m_globalObject, object)), " object"_s);
@@ -942,7 +942,7 @@ private:
         RETURN_IF_EXCEPTION(scope, false);
         write(m_encoder->get(JsonEncoderKeySeparator));
         RETURN_IF_EXCEPTION(scope, false);
-        if (!encode(value, level)) {
+        if (failed(scope, encode(value, level))) {
             scope.release();
             jsonAddNote(m_globalObject, [&]() -> String {
                 auto noteScope = DECLARE_THROW_SCOPE(m_vm);
@@ -970,7 +970,7 @@ private:
             return true;
         }
         JSValue identity;
-        if (!enter(mapping, identity))
+        if (failed(scope, enter(mapping, identity)))
             return false;
         m_out.append('{');
         if (m_hasIndent) {
@@ -1064,7 +1064,7 @@ private:
             return true;
         }
         JSValue identity;
-        if (!enter(sequence, identity))
+        if (failed(scope, enter(sequence, identity)))
             return false;
         m_out.append('[');
         if (m_hasIndent) {
@@ -1078,7 +1078,7 @@ private:
                 writeSeparator(level);
                 RETURN_IF_EXCEPTION(scope, false);
             }
-            if (!encode(list ? listGet(list, i) : tuple->at(i), level)) {
+            if (failed(scope, encode(list ? listGet(list, i) : tuple->at(i), level))) {
                 scope.release();
                 jsonAddNote(m_globalObject, [&] {
                     return makeString("when serializing "_s, typeNameForMessage(m_globalObject, typeOf(m_globalObject, sequence)), " item "_s, i);
@@ -1122,7 +1122,7 @@ static JSValue jsonEncoderCall(JSGlobalObject* globalObject, JSValue self, const
         return { };
     encoder.encode(values[0], 0);
     RETURN_IF_EXCEPTION(scope, { });
-    return encoder.finish();
+    RELEASE_AND_RETURN(scope, encoder.finish());
 }
 
 static constexpr NativeDef jsonEncoderMethods[] = {

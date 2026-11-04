@@ -968,6 +968,7 @@ static void frameSetTraceOpcodes(JSGlobalObject* globalObject, JSValue self, JSV
     }
     auto* frame = PyFrame::from(self);
     frame->tracesOpcodes = value.asBoolean();
+    scope.release();
     if (frame->tracesOpcodes)
         runtime(globalObject).monitoring().setTracesOpcodes(globalObject, frame, true);
 }
@@ -1452,13 +1453,18 @@ void PyTraceback::makeFrameOfJS()
     VM& vm = getVM(globalObject);
     // An exception may be on its way.
     SuspendExceptionScope suspended(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     PositionInJS position = positionInJS(vm, codeBlock, m_indexOfJS);
     PyCode* code = PyCode::tryFrom(compileSource(globalObject, { }, position.filename, "exec"_s, 0, -1));
+    scope.assertNoException();
     RELEASE_ASSERT(code);
     CodeInfo& info = code->codeInfo();
     info.name = Identifier::fromString(vm, position.function);
     info.qualname = position.function;
-    PyFrame* frame = PyFrame::createSuspended(globalObject, PyFunction::create(globalObject, code->executable(), namespaceOfFileOfJS(globalObject, position.filename)), 0);
+    PyDict* names = namespaceOfFileOfJS(globalObject, position.filename);
+    scope.assertNoException();
+    PyFrame* frame = PyFrame::createSuspended(globalObject, PyFunction::create(globalObject, code->executable(), names), 0);
+    scope.assertNoException();
     frame->setLineNumber(position.line);
     m_lineNumber = position.line;
     m_frame.set(vm, this, frame);
@@ -2000,12 +2006,14 @@ private:
     // sorted(object.__dir__()). False: that failed.
     bool namesIn(JSValue object, bool hideUnderscored, Vector<String>& names)
     {
+        VM& vm = getVM(m_globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         Runtime& rt = runtime(m_globalObject);
         JSValue method = rt.typeOf(object)->lookup(internString(m_vm, "__dir__"_s));
         if (!method)
             return false;
         JSValue result = callSpecial(m_globalObject, method, object);
-        if (!result)
+        if (failed(scope, result))
             return false;
         JSArray* list = listFromIterable(m_globalObject, result);
         if (!list)

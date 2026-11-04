@@ -237,11 +237,11 @@ int BufferedStream::isClosed()
 // What is in the buffer of a stream whose raw stream was closed behind its back can still be read.
 bool BufferedStream::checkClosed(ASCIILiteral message)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int closed = isClosed();
-    if (closed < 0)
+    if (failed(scope, closed >= 0))
         return false;
     if (closed && !readAhead()) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         raiseValueError(globalObject, scope, message);
         return false;
     }
@@ -265,18 +265,19 @@ int64_t BufferedStream::invalidPosition(int64_t position)
 
 int64_t BufferedStream::rawTell()
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t position;
     if (s.rawIsFileIO) {
         position = fileIOSeek(globalObject, rawFile(), 0, SEEK_CUR);
-        if (position < 0)
+        if (failed(scope, position >= 0))
             return -1;
     } else {
         JSValue result = callMethod(globalObject, raw(), ioName(globalObject, IOName::tell));
-        if (!result)
-            return -1;
+        RETURN_IF_EXCEPTION(scope, -1);
         position = ioToOffset(globalObject, result, runtime(globalObject).ValueError());
+        RETURN_IF_EXCEPTION(scope, -1);
         if (position < 0)
-            return invalidPosition(position);
+            RELEASE_AND_RETURN(scope, invalidPosition(position));
     }
     s.absolutePosition = position;
     return position;
@@ -284,18 +285,19 @@ int64_t BufferedStream::rawTell()
 
 int64_t BufferedStream::rawSeek(int64_t target, int whence)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t position;
     if (s.rawIsFileIO) {
         position = fileIOSeek(globalObject, rawFile(), target, whence);
-        if (position < 0)
+        if (failed(scope, position >= 0))
             return -1;
     } else {
         JSValue result = callMethod(globalObject, raw(), ioName(globalObject, IOName::seek), makeInt(globalObject, target), jsNumber(whence));
-        if (!result)
-            return -1;
+        RETURN_IF_EXCEPTION(scope, -1);
         position = ioToOffset(globalObject, result, runtime(globalObject).ValueError());
+        RETURN_IF_EXCEPTION(scope, -1);
         if (position < 0)
-            return invalidPosition(position);
+            RELEASE_AND_RETURN(scope, invalidPosition(position));
     }
     s.absolutePosition = position;
     return position;
@@ -362,6 +364,7 @@ int64_t BufferedStream::rawRead(JSCell* owner, size_t offset, uint8_t* start, in
     int64_t count;
     if (s.rawIsFileIO) {
         count = fileIOReadInto(globalObject, rawFile(), { start, static_cast<size_t>(length) });
+        EXCEPTION_ASSERT(!!scope.exception() == (count == -1));
         if (count < 0)
             return count;
     } else {
@@ -370,7 +373,7 @@ int64_t BufferedStream::rawRead(JSCell* owner, size_t offset, uint8_t* start, in
         JSValue result;
         do {
             result = callMethod(globalObject, raw(), ioName(globalObject, IOName::readinto), target);
-        } while (!result && ioTrapEINTR(globalObject));
+        } while (failed(scope, result) && ioTrapEINTR(globalObject));
         if (!result)
             return -1;
         if (isNone(result))
@@ -384,6 +387,7 @@ int64_t BufferedStream::rawRead(JSCell* owner, size_t offset, uint8_t* start, in
             error->setCause(vm, cause);
             error->setContext(vm, cause);
             error->setSuppressContext(true);
+            scope.release();
             ioRestoreException(globalObject, error);
             return -1;
         }
@@ -420,7 +424,7 @@ JSValue BufferedStream::readAll()
         buffered = PyBytes::create(globalObject, std::span<const uint8_t> { buffer() + s.position, static_cast<size_t>(currentSize) });
         s.position += currentSize;
     }
-    if (s.writable && !flushAndRewind())
+    if (s.writable && failed(scope, flushAndRewind()))
         return { };
     resetReadBuffer();
 
@@ -507,7 +511,7 @@ JSValue BufferedStream::readGeneric(int64_t size)
         written += currentSize;
         s.position += currentSize;
     }
-    if (s.writable && !flushAndRewind())
+    if (s.writable && failed(scope, flushAndRewind()))
         return { };
     resetReadBuffer();
 
@@ -517,7 +521,7 @@ JSValue BufferedStream::readGeneric(int64_t size)
         if (!count)
             break;
         count = rawRead(result, written, out + written, count);
-        if (count == -1)
+        if (failed(scope, count != -1))
             return { };
         if (!count || count == -2)
             return stopShort(count);
@@ -561,10 +565,11 @@ JSValue BufferedStream::peek()
 
 JSValue BufferedStream::readInto(JSValue target, bool isReadInto1)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     IOBuffer destination;
-    if (!destination.acquireWritable(globalObject, isReadInto1 ? "readinto1"_s : "readinto"_s, target))
+    if (failed(scope, destination.acquireWritable(globalObject, isReadInto1 ? "readinto1"_s : "readinto"_s, target)))
         return { };
-    if (!checkInitialized() || !checkClosed("readinto of closed file"_s))
+    if (failed(scope, checkInitialized()) || failed(scope, checkClosed("readinto of closed file"_s)))
         return { };
 
     int64_t length = destination.size();
@@ -576,7 +581,7 @@ JSValue BufferedStream::readInto(JSValue target, bool isReadInto1)
             if (length)
                 memcpy(out, buffer() + s.position, length);
             s.position += length;
-            return makeInt(globalObject, length);
+            RELEASE_AND_RETURN(scope, makeInt(globalObject, length));
         }
         memcpy(out, buffer() + s.position, count);
         s.position += count;
@@ -584,24 +589,26 @@ JSValue BufferedStream::readInto(JSValue target, bool isReadInto1)
     }
 
     BufferedLock lock(*this);
-    if (!lock)
+    if (failed(scope, !!lock))
         return { };
-    if (s.writable && !flushAndRewind())
+    if (s.writable && failed(scope, flushAndRewind()))
         return { };
     resetReadBuffer();
     s.position = 0;
 
     for (int64_t remaining = length - written; remaining > 0; written += count, remaining -= count) {
-        if (!destination.refresh())
+        if (failed(scope, destination.refresh()))
             return { };
         out = destination.mutableData();
         if (remaining > s.bufferSize) {
             // More than the buffer could take anyway.
             count = rawRead(destination.owner(), destination.offset() + written, out + written, remaining);
+            EXCEPTION_ASSERT(!!scope.exception() == (count == -1));
         } else if (!(isReadInto1 && written)) {
             count = fillBuffer();
+            EXCEPTION_ASSERT(!!scope.exception() == (count == -1));
             if (count > 0) {
-                if (!destination.refresh())
+                if (failed(scope, destination.refresh()))
                     return { };
                 out = destination.mutableData();
                 count = std::min(count, remaining);
@@ -621,12 +628,13 @@ JSValue BufferedStream::readInto(JSValue target, bool isReadInto1)
             break;
         }
     }
-    return makeInt(globalObject, written);
+    RELEASE_AND_RETURN(scope, makeInt(globalObject, written));
 }
 
 JSValue BufferedStream::readline(int64_t limit)
 {
-    if (!checkClosed("readline of closed file"_s))
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, checkClosed("readline of closed file"_s)))
         return { };
 
     // The line may be in the buffer already.
@@ -645,7 +653,7 @@ JSValue BufferedStream::readline(int64_t limit)
     }
 
     BufferedLock lock(*this);
-    if (!lock)
+    if (failed(scope, !!lock))
         return { };
     Vector<uint8_t, 256> line;
     if (count > 0) {
@@ -654,13 +662,13 @@ JSValue BufferedStream::readline(int64_t limit)
         if (limit >= 0)
             limit -= count;
     }
-    if (s.writable && !flushAndRewind())
+    if (s.writable && failed(scope, flushAndRewind()))
         return { };
 
     while (true) {
         resetReadBuffer();
         count = fillBuffer();
-        if (count == -1)
+        if (failed(scope, count != -1))
             return { };
         if (count <= 0)
             break;
@@ -693,6 +701,7 @@ int64_t BufferedStream::rawWrite(JSCell* owner, size_t offset, const uint8_t* st
     int64_t count;
     if (s.rawIsFileIO) {
         count = fileIOWrite(globalObject, rawFile(), { start, static_cast<size_t>(length) });
+        EXCEPTION_ASSERT(!!scope.exception() == (count == -1));
         if (count == -2)
             lastErrno = EAGAIN;
         if (count < 0)
@@ -705,7 +714,7 @@ int64_t BufferedStream::rawWrite(JSCell* owner, size_t offset, const uint8_t* st
             errno = 0;
             result = callMethod(globalObject, raw(), rt.names.write(), data);
             lastErrno = errno;
-        } while (!result && ioTrapEINTR(globalObject));
+        } while (failed(scope, result) && ioTrapEINTR(globalObject));
         if (!result)
             return -1;
         if (isNone(result))
@@ -728,26 +737,28 @@ int64_t BufferedStream::rawWrite(JSCell* owner, size_t offset, const uint8_t* st
 
 bool BufferedStream::flushWrites()
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (hasValidWriteBuffer() && s.writePosition != s.writeEnd) {
         // The raw stream goes back to where what is to be written belongs.
         int64_t rewind = rawOffset() + (s.position - s.writePosition);
         if (rewind) {
-            if (rawSeek(-rewind, SEEK_CUR) < 0)
+            if (failed(scope, rawSeek(-rewind, SEEK_CUR) >= 0))
                 return false;
             s.rawPosition -= rewind;
         }
         while (s.writePosition < s.writeEnd) {
             int64_t count = rawWrite(storage(), s.writePosition, buffer() + s.writePosition, s.writeEnd - s.writePosition);
-            if (count == -1)
+            if (failed(scope, count != -1))
                 return false;
             if (count == -2) {
+                scope.release();
                 raiseBlocking(0);
                 return false;
             }
             s.writePosition += count;
             s.rawPosition = s.writePosition;
             // A write that a signal cuts short succeeds. The handler has to run before the next one blocks, for who knows how long.
-            if (!checkSignals(globalObject))
+            if (failed(scope, checkSignals(globalObject)))
                 return false;
         }
     }
@@ -946,14 +957,14 @@ static JSValue bufferedPeek(JSGlobalObject* globalObject, JSValue self, JSValue 
     if (sizeValue && failed(scope, ssizeArgument(globalObject, sizeValue, size)))
         return { };
     BufferedStream stream(globalObject, self);
-    if (failed(scope, stream.checkInitialized()) || !stream.checkClosed("peek of closed file"_s))
+    if (failed(scope, stream.checkInitialized()) || failed(scope, stream.checkClosed("peek of closed file"_s)))
         return { };
     BufferedLock lock(stream);
-    if (!lock)
+    if (failed(scope, !!lock))
         return { };
-    if (stream.s.writable && !stream.flushAndRewind())
+    if (stream.s.writable && failed(scope, stream.flushAndRewind()))
         return { };
-    return stream.peek();
+    RELEASE_AND_RETURN(scope, stream.peek());
 }
 
 static JSValue bufferedRead(JSGlobalObject* globalObject, JSValue self, JSValue sizeValue)
@@ -968,7 +979,7 @@ static JSValue bufferedRead(JSGlobalObject* globalObject, JSValue self, JSValue 
         return { };
     if (size < -1)
         return raiseValueError(globalObject, scope, "read length must be non-negative or -1"_s);
-    if (!stream.checkClosed("read of closed file"_s))
+    if (failed(scope, stream.checkClosed("read of closed file"_s)))
         return { };
 
     if (size != -1) {
@@ -977,7 +988,7 @@ static JSValue bufferedRead(JSGlobalObject* globalObject, JSValue self, JSValue 
             return result;
     }
     BufferedLock lock(stream);
-    if (!lock)
+    if (failed(scope, !!lock))
         return { };
     RELEASE_AND_RETURN(scope, size == -1 ? stream.readAll() : stream.readGeneric(size));
 }
@@ -994,7 +1005,7 @@ static JSValue bufferedRead1(JSGlobalObject* globalObject, JSValue self, JSValue
         return { };
     if (size < 0)
         size = stream.s.bufferSize;
-    if (!stream.checkClosed("read of closed file"_s))
+    if (failed(scope, stream.checkClosed("read of closed file"_s)))
         return { };
     if (!size)
         RELEASE_AND_RETURN(scope, runtime(globalObject).emptyBytes());
@@ -1004,9 +1015,9 @@ static JSValue bufferedRead1(JSGlobalObject* globalObject, JSValue self, JSValue
         return stream.readFast(std::min(have, size));
 
     BufferedLock lock(stream);
-    if (!lock)
+    if (failed(scope, !!lock))
         return { };
-    if (stream.s.writable && !stream.flushAndRewind())
+    if (stream.s.writable && failed(scope, stream.flushAndRewind()))
         return { };
     stream.resetReadBuffer();
 
@@ -1035,7 +1046,7 @@ static JSValue bufferedReadline(JSGlobalObject* globalObject, JSValue self, JSVa
     BufferedStream stream(globalObject, self);
     if (failed(scope, stream.checkInitialized()))
         return { };
-    return stream.readline(size);
+    RELEASE_AND_RETURN(scope, stream.readline(size));
 }
 
 static JSValue bufferedTell(JSGlobalObject* globalObject, JSValue self)
@@ -1046,7 +1057,7 @@ static JSValue bufferedTell(JSGlobalObject* globalObject, JSValue self)
     if (failed(scope, stream.checkInitialized()))
         return { };
     int64_t position = stream.rawTell();
-    if (position == -1)
+    if (failed(scope, position != -1))
         return { };
     RELEASE_AND_RETURN(scope, makeInt(globalObject, std::max<int64_t>(position - stream.rawOffset(), 0)));
 }
@@ -1073,7 +1084,7 @@ static JSValue bufferedSeek(JSGlobalObject* globalObject, JSValue self, JSValue 
     if (!isKnownWhence)
         return raiseValueError(globalObject, scope, "whence value "_s, whence, " unsupported"_s);
 
-    if (!stream.checkClosed("seek of closed file"_s))
+    if (failed(scope, stream.checkClosed("seek of closed file"_s)))
         return { };
     if (failed(scope, ioCheckSeekable(globalObject, stream.raw())))
         return { };
@@ -1084,7 +1095,7 @@ static JSValue bufferedSeek(JSGlobalObject* globalObject, JSValue self, JSValue 
     if (whence <= 1 && s.readable) {
         int64_t current = stream.cachedRawTell();
         int64_t available = stream.readAhead();
-        if (current == -1) {
+        if (failed(scope, current != -1)) {
             // Whatever is wrong with the raw stream comes up again below.
             takePendingException(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
@@ -1098,14 +1109,14 @@ static JSValue bufferedSeek(JSGlobalObject* globalObject, JSValue self, JSValue 
     }
 
     BufferedLock lock(stream);
-    if (!lock)
+    if (failed(scope, !!lock))
         return { };
-    if (s.writable && !stream.flushWrites())
+    if (s.writable && failed(scope, stream.flushWrites()))
         return { };
     if (whence == 1)
         target -= stream.rawOffset();
     int64_t position = stream.rawSeek(target, whence);
-    if (position == -1)
+    if (failed(scope, position != -1))
         return { };
     s.rawPosition = -1;
     if (s.readable)
@@ -1118,20 +1129,22 @@ static JSValue bufferedTruncate(JSGlobalObject* globalObject, JSValue self, JSVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferedStream stream(globalObject, self);
-    if (failed(scope, stream.checkInitialized()) || !stream.checkClosed("truncate of closed file"_s))
+    if (failed(scope, stream.checkInitialized()) || failed(scope, stream.checkClosed("truncate of closed file"_s)))
         return { };
     if (!stream.s.writable)
         return ioRaiseUnsupported(globalObject, scope, "truncate"_s);
     BufferedLock lock(stream);
-    if (!lock)
+    if (failed(scope, !!lock))
         return { };
-    if (!stream.flushAndRewind())
+    if (failed(scope, stream.flushAndRewind()))
         return { };
     JSValue result = callMethod(globalObject, stream.raw(), ioName(globalObject, IOName::truncate), position ? position : jsUndefined());
     RETURN_IF_EXCEPTION(scope, { });
     // The raw stream may have moved.
-    if (stream.rawTell() == -1)
+    if (failed(scope, stream.rawTell() != -1)) {
         takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return result;
 }
 
@@ -1149,7 +1162,7 @@ static JSValue bufferedNext(JSGlobalObject* globalObject, JSValue self)
         line = stream.readline(-1);
     else {
         line = callMethod(globalObject, self, rt.names.readline());
-        if (line && !PyBytes::is(line))
+        if (!failed(scope, line) && !PyBytes::is(line))
             return raise(globalObject, scope, rt.OSError(), makeString("readline() should have returned a bytes object, not '"_s, typeName(globalObject, line), '\''));
     }
     RETURN_IF_EXCEPTION(scope, { });
@@ -1196,10 +1209,10 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
     if (failed(scope, stream.checkInitialized()))
         return { };
     BufferedLock lock(stream);
-    if (!lock)
+    if (failed(scope, !!lock))
         return { };
     int closed = stream.isClosed();
-    if (closed < 0)
+    if (failed(scope, closed >= 0))
         return { };
     if (closed)
         return raiseValueError(globalObject, scope, "write to closed file"_s);
@@ -1228,11 +1241,13 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
     {
         // That may have run anything.
         JSValue error = takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
         if (failed(scope, data.refresh()))
             return { };
         source = data.data();
         if (error)
             ioRestoreException(globalObject, error);
+        EXCEPTION_ASSERT(!!scope.exception() == !flushed);
     }
     if (!flushed) {
         if (!pendingExceptionMatches(globalObject, runtime(globalObject).BlockingIOError()))
@@ -1257,16 +1272,17 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
         memcpy(buffer + s.writeEnd, source, available);
         s.writeEnd += available;
         s.position += available;
+        scope.release();
         stream.raiseBlocking(available);
         return { };
     }
 
     // If the buffer had been read into and not written to, flushing has not taken the raw stream back to the position.
     if (int64_t offset = stream.rawOffset()) {
-        if (stream.rawSeek(-offset, SEEK_CUR) < 0)
+        if (failed(scope, stream.rawSeek(-offset, SEEK_CUR) >= 0))
             return { };
         s.rawPosition -= offset;
-        if (!data.refresh())
+        if (failed(scope, data.refresh()))
             return { };
         source = data.data();
     }
@@ -1288,6 +1304,7 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
                 stream.adjustPosition(s.bufferSize);
                 s.writeEnd = s.bufferSize;
                 written += s.bufferSize;
+                scope.release();
                 stream.raiseBlocking(written);
                 return { };
             }
@@ -1296,7 +1313,7 @@ static JSValue bufferedWrite(JSGlobalObject* globalObject, JSValue self, JSValue
         written += count;
         remaining -= count;
         // As in flushWrites().
-        if (!checkSignals(globalObject) || !data.refresh())
+        if (failed(scope, checkSignals(globalObject)) || failed(scope, data.refresh()))
             return { };
         source = data.data();
     }
@@ -1449,7 +1466,7 @@ static JSValue bufferedRWPairInit(JSGlobalObject* globalObject, JSValue self, co
     RETURN_IF_EXCEPTION(scope, { });
     pair->set(vm, BufferedRWPairReaderField, reader);
     JSValue writer = call(globalObject, ioType(globalObject, IOType::BufferedWriter), args[1], makeInt(globalObject, bufferSize));
-    if (!writer) {
+    if (failed(scope, writer)) {
         pair->set(vm, BufferedRWPairReaderField, JSValue());
         return { };
     }
@@ -1476,9 +1493,10 @@ static JSValue bufferedRWPairForward(JSGlobalObject* globalObject, JSValue self,
 #define PY_DEFINE_RWPAIR_METHOD(function, field, text, name) \
     static JSValue function(JSGlobalObject* globalObject, JSValue self, const CallArgs& args) \
     { \
-        if (!rejectKeywords(globalObject, text ""_s, args)) \
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject)); \
+        if (failed(scope, rejectKeywords(globalObject, text ""_s, args))) \
             return { }; \
-        return bufferedRWPairForward(globalObject, self, field, name, args); \
+        RELEASE_AND_RETURN(scope, bufferedRWPairForward(globalObject, self, field, name, args)); \
     }
 PY_DEFINE_RWPAIR_METHOD(bufferedRWPairRead, BufferedRWPairReaderField, "read", runtime(globalObject).names.read())
 PY_DEFINE_RWPAIR_METHOD(bufferedRWPairPeek, BufferedRWPairReaderField, "peek", ioName(globalObject, IOName::peek))
@@ -1494,11 +1512,17 @@ static JSValue bufferedRWPairWritable(JSGlobalObject* globalObject, JSValue self
 
 static JSValue bufferedRWPairClose(JSGlobalObject* globalObject, JSValue self)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     JSString* close = runtime(globalObject).names.close();
-    bufferedRWPairForward(globalObject, self, BufferedRWPairWriterField, close, { });
-    JSValue writerError = takePendingException(globalObject);
+    JSValue writerError;
+    if (failed(scope, bufferedRWPairForward(globalObject, self, BufferedRWPairWriterField, close, { }))) {
+        writerError = takePendingException(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     JSValue result = bufferedRWPairForward(globalObject, self, BufferedRWPairReaderField, close, { });
+    EXCEPTION_ASSERT(!!scope.exception() == !result);
     ioDidClose(globalObject, PyRecord::from(self));
+    scope.release();
     if (writerError) {
         ioChainExceptions(globalObject, writerError);
         return { };
@@ -1508,11 +1532,13 @@ static JSValue bufferedRWPairClose(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue bufferedRWPairIsATTY(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* isatty = ioName(globalObject, IOName::isatty);
     JSValue result = bufferedRWPairForward(globalObject, self, BufferedRWPairWriterField, isatty, { });
-    if (!result || !result.isFalse())
+    if (failed(scope, result) || !result.isFalse())
         return result;
-    return bufferedRWPairForward(globalObject, self, BufferedRWPairReaderField, isatty, { });
+    RELEASE_AND_RETURN(scope, bufferedRWPairForward(globalObject, self, BufferedRWPairReaderField, isatty, { }));
 }
 
 static JSValue bufferedRWPairGetClosed(JSGlobalObject* globalObject, JSValue self)

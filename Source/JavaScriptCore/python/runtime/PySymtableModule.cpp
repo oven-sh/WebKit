@@ -173,10 +173,11 @@ public:
 
     JSValue run(Scope* top)
     {
+        auto throwScope = DECLARE_THROW_SCOPE(m_vm);
         Block block;
-        if (!collect(top, block))
+        if (failed(throwScope, collect(top, block)))
             return { };
-        return makeEntry(top, block);
+        RELEASE_AND_RETURN(throwScope, makeEntry(top, block));
     }
 
 private:
@@ -234,12 +235,13 @@ private:
         UncheckedKeyHashSet<UniquedStringImpl*> inlinedCells;
         for (Scope* child : scope->children) {
             Block childBlock;
-            if (!collect(child, childBlock))
+            if (failed(throwScope, collect(child, childBlock)))
                 return false;
             if (!child->isInlinedComprehension) {
                 JSValue entry = makeEntry(child, childBlock);
                 RETURN_IF_EXCEPTION(throwScope, false);
                 listAppend(m_globalObject, block.children, entry);
+                RETURN_IF_EXCEPTION(throwScope, false);
                 continue;
             }
             for (auto& item : childBlock.items) {
@@ -281,12 +283,17 @@ private:
             symbols->set(m_vm, internString(m_vm, item.name->string()), jsNumber(item.flags | item.scope << ScopeOffset));
         JSArray* varnames = newList(m_globalObject, scope->parameters.size());
         RETURN_IF_EXCEPTION(throwScope, { });
-        if (block.takesDefaults)
+        if (block.takesDefaults) {
             listAppend(m_globalObject, varnames, internString(m_vm, m_dotDefaults->string()));
-        for (AST::Name parameter : scope->parameters)
+            RETURN_IF_EXCEPTION(throwScope, { });
+        }
+        for (AST::Name parameter : scope->parameters) {
             listAppend(m_globalObject, varnames, internString(m_vm, parameter->string()));
+            RETURN_IF_EXCEPTION(throwScope, { });
+        }
 
         PyRecord* entry = PyRecord::create(m_globalObject, runtime(m_globalObject).typeFor(entryTypeDef), EntryFieldCount);
+        RETURN_IF_EXCEPTION(throwScope, { });
         entry->set(m_vm, EntryID, makeInt(m_globalObject, static_cast<uint64_t>(std::bit_cast<uintptr_t>(scope))));
         entry->set(m_vm, EntryName, internString(m_vm, scope->name->string()));
         entry->set(m_vm, EntrySymbols, symbols);

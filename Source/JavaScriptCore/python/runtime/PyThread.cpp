@@ -448,7 +448,7 @@ static JSValue localGetAttribute(JSGlobalObject* globalObject, JSValue self, JSV
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* string = attributeName(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!localSwitchToCurrentThread(globalObject, self))
+    if (failed(scope, localSwitchToCurrentThread(globalObject, self)))
         return { };
     RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, string));
 }
@@ -1007,6 +1007,7 @@ static JSValue atexitUnregister(JSGlobalObject* globalObject, JSValue function)
                 if (listGet(callbacks, static_cast<unsigned>(j)) != entry)
                     continue;
                 listRemove(globalObject, callbacks, static_cast<unsigned>(j));
+                RETURN_IF_EXCEPTION(scope, { });
                 i = j;
                 break;
             }
@@ -1029,7 +1030,7 @@ static JSValue atexitRunExitFuncs(JSGlobalObject* globalObject)
     for (unsigned i = 0; i < entries.size(); ++i) {
         auto* entry = PyTuple::from(entries.at(i));
         callWithTupleAndDict(globalObject, entry->at(0), PyTuple::from(entry->at(1)), PyDict::from(entry->at(2)));
-        if (vm.hasPendingTerminationException()) [[unlikely]]
+        if (scope.exception() && vm.hasPendingTerminationException()) [[unlikely]]
             return { };
         if (scope.exception())
             reportUnraisable(globalObject, makeString("Exception ignored in atexit callback "_s, reprForMessage(globalObject, entry->at(0))), { });

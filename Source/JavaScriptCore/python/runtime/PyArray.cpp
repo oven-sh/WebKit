@@ -237,13 +237,14 @@ static bool arrayResize(JSGlobalObject* globalObject, PyRecord* array, int64_t n
         return true;
     }
     if (newLength > arrayMaxBytes) {
+        scope.release();
         arrayRaiseNoMemory(globalObject);
         return false;
     }
     // A sixteenth more than is asked for, so that a series of appends takes linear time.
     int64_t allocated = (newLength >> 4) + (length < 8 ? 3 : 7) + newLength;
     PyByteStorage* newStorage = arrayAllocate(globalObject, allocated, itemSize);
-    if (!newStorage)
+    if (failed(scope, newStorage))
         return false;
     if (storage)
         memcpy(newStorage->data(), storage->data(), std::min(length, newLength) * itemSize);
@@ -340,12 +341,12 @@ static bool arrayConvertLong(JSGlobalObject* globalObject, JSValue value, int64_
 // The same, within the bounds of a narrower type, which messages call `name`.
 static bool arrayConvertNarrow(JSGlobalObject* globalObject, JSValue value, int64_t minimum, int64_t maximum, ASCIILiteral name, int64_t& result)
 {
-    if (!arrayConvertLong(globalObject, value, result))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, arrayConvertLong(globalObject, value, result)))
         return false;
     if (result >= minimum && result <= maximum) [[likely]]
         return true;
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     raiseOverflowError(globalObject, scope, name, result < minimum ? " is less than minimum"_s : " is greater than maximum"_s);
     return false;
 }
@@ -520,12 +521,12 @@ static bool arrayConvert(JSGlobalObject* globalObject, ArrayKind kind, JSValue v
 // array[index] = value, for an index that was in range.
 static bool arraySet(JSGlobalObject* globalObject, PyRecord* array, int64_t index, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uint8_t item[arrayMaxItemSize];
-    if (!arrayConvert(globalObject, arrayKind(array), value, item))
+    if (failed(scope, arrayConvert(globalObject, arrayKind(array), value, item)))
         return false;
     if (index < 0 || index >= arrayLength(array)) {
-        VM& vm = getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         raiseIndexError(globalObject, scope, "array assignment index out of range"_s);
         return false;
     }
@@ -542,12 +543,14 @@ static ALWAYS_INLINE bool arrayConvertsQuietly(JSValue value)
 
 static bool arrayInsertAt(JSGlobalObject* globalObject, PyRecord* array, int64_t where, JSValue value)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     uint8_t item[arrayMaxItemSize];
     int64_t length = arrayLength(array);
     // The value is checked before room is made for it.
-    if (!arrayConvert(globalObject, arrayKind(array), value, item))
+    if (failed(scope, arrayConvert(globalObject, arrayKind(array), value, item)))
         return false;
-    if (!arrayResize(globalObject, array, length + 1))
+    if (failed(scope, arrayResize(globalObject, array, length + 1)))
         return false;
     if (where < 0)
         where = std::max<int64_t>(where + length, 0);
@@ -557,7 +560,7 @@ static bool arrayInsertAt(JSGlobalObject* globalObject, PyRecord* array, int64_t
     memmove(data + (where + 1) * itemSize, data + where * itemSize, (length - where) * itemSize);
     // CPython converts the value again to store it, which a program can tell if the conversion is its own.
     if (!arrayConvertsQuietly(value))
-        return arraySet(globalObject, array, where, value);
+        RELEASE_AND_RETURN(scope, arraySet(globalObject, array, where, value));
     memcpy(data + where * itemSize, item, itemSize);
     return true;
 }
@@ -614,7 +617,7 @@ static bool arrayExtendFromIterator(JSGlobalObject* globalObject, PyRecord* arra
         RETURN_IF_EXCEPTION(scope, false);
         if (!item)
             return true;
-        if (!arrayAppendItem(globalObject, array, item))
+        if (failed(scope, arrayAppendItem(globalObject, array, item)))
             return false;
     }
 }
@@ -635,7 +638,7 @@ static bool arrayExtendWith(JSGlobalObject* globalObject, PyRecord* array, JSVal
     }
     int64_t length = arrayLength(array);
     int64_t added = arrayLength(source);
-    if (!arrayResize(globalObject, array, length + added))
+    if (failed(scope, arrayResize(globalObject, array, length + added)))
         return false;
     // The source may be the array itself, which has just moved.
     int64_t itemSize = arrayItemSize(array);
@@ -649,7 +652,7 @@ static bool arrayExtendFromBytes(JSGlobalObject* globalObject, PyRecord* array, 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     BufferHolder holder(globalObject);
-    if (!holder.get(buffer))
+    if (failed(scope, holder.get(buffer)))
         return false;
     if (holder.buffer.itemSize != 1) {
         raiseTypeError(globalObject, scope, "a bytes-like object is required"_s);
@@ -664,7 +667,7 @@ static bool arrayExtendFromBytes(JSGlobalObject* globalObject, PyRecord* array, 
     if (bytes.empty())
         return true;
     int64_t length = arrayLength(array);
-    if (!arrayResize(globalObject, array, length + static_cast<int64_t>(bytes.size()) / itemSize))
+    if (failed(scope, arrayResize(globalObject, array, length + static_cast<int64_t>(bytes.size()) / itemSize)))
         return false;
     memcpy(arrayData(array) + length * itemSize, bytes.data(), bytes.size());
     return true;
@@ -703,7 +706,7 @@ static bool arrayExtendFromStr(JSGlobalObject* globalObject, PyRecord* array, JS
     StrView view(globalObject, string);
     RETURN_IF_EXCEPTION(scope, false);
     int64_t length = arrayLength(array);
-    if (!arrayResize(globalObject, array, length + arrayItemCountOfStr(arrayKind(array), view)))
+    if (failed(scope, arrayResize(globalObject, array, length + arrayItemCountOfStr(arrayKind(array), view))))
         return false;
     arrayStoreStr(array, length, view);
     return true;
@@ -767,7 +770,7 @@ static JSValue arrayConstruct(JSGlobalObject* globalObject, PyType* type, JSValu
         length = arrayItemCountOfStr(*kind, initialStr);
     }
     PyRecord* array = arrayCreate(globalObject, type, *kind, length);
-    if (!array)
+    if (failed(scope, array))
         return { };
 
     if (isSequence) {
@@ -778,14 +781,14 @@ static JSValue arrayConstruct(JSGlobalObject* globalObject, PyType* type, JSValu
                 return { };
         }
     } else if (isBytes) {
-        if (!arrayExtendFromBytes(globalObject, array, initial))
+        if (failed(scope, arrayExtendFromBytes(globalObject, array, initial)))
             return { };
     } else if (initialArray) {
         if (length)
             memcpy(arrayData(array), arrayData(initialArray), length * arrayItemSize(array));
     } else if (initial)
         arrayStoreStr(array, 0, initialStr);
-    if (iterator && !arrayExtendFromIterator(globalObject, array, iterator))
+    if (iterator && failed(scope, arrayExtendFromIterator(globalObject, array, iterator)))
         return { };
     return array;
 }
@@ -839,7 +842,7 @@ static JSValue arrayInsert(JSGlobalObject* globalObject, JSValue self, JSValue i
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int64_t index;
-    if (failed(scope, ssizeArgument(globalObject, indexValue, index)) || !arrayInsertAt(globalObject, arrayOf(self), index, value))
+    if (failed(scope, ssizeArgument(globalObject, indexValue, index)) || failed(scope, arrayInsertAt(globalObject, arrayOf(self), index, value)))
         return { };
     return jsUndefined();
 }
@@ -848,7 +851,7 @@ static JSValue arrayExtend(JSGlobalObject* globalObject, JSValue self, const Cal
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (failed(scope, arrayCheckArguments(globalObject, "extend"_s, args, 1)) || !arrayExtendWith(globalObject, arrayOf(self), args[0]))
+    if (failed(scope, arrayCheckArguments(globalObject, "extend"_s, args, 1)) || failed(scope, arrayExtendWith(globalObject, arrayOf(self), args[0])))
         return { };
     return jsUndefined();
 }
@@ -946,7 +949,7 @@ static JSValue arrayRemove(JSGlobalObject* globalObject, JSValue self, JSValue v
     if (index < 0)
         return raiseValueError(globalObject, scope, "array.remove(x): x not in array"_s);
     // The comparison may have left it shorter.
-    if (index < arrayLength(array) && !arrayDeleteRange(globalObject, array, index, index + 1))
+    if (index < arrayLength(array) && failed(scope, arrayDeleteRange(globalObject, array, index, index + 1)))
         return { };
     return jsUndefined();
 }
@@ -967,7 +970,7 @@ static JSValue arrayPop(JSGlobalObject* globalObject, JSValue self, JSValue inde
         return raiseIndexError(globalObject, scope, "pop index out of range"_s);
     JSValue item = arrayGet(globalObject, array, index);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!arrayDeleteRange(globalObject, array, index, index + 1))
+    if (failed(scope, arrayDeleteRange(globalObject, array, index, index + 1)))
         return { };
     return item;
 }
@@ -1031,19 +1034,23 @@ static JSValue arrayFromList(JSGlobalObject* globalObject, JSValue self, JSValue
     if (!count)
         return jsUndefined();
     int64_t oldLength = arrayLength(array);
-    if (!arrayResize(globalObject, array, oldLength + count))
+    if (failed(scope, arrayResize(globalObject, array, oldLength + count)))
         return { };
     // All or nothing.
     for (int64_t i = 0; i < count; ++i) {
-        bool stored = arraySet(globalObject, array, arrayLength(array) - count + i, listGet(list, static_cast<unsigned>(i)));
+        bool stored = !failed(scope, arraySet(globalObject, array, arrayLength(array) - count + i, listGet(list, static_cast<unsigned>(i))));
         if (stored && count != listLength(list)) {
             raiseRuntimeError(globalObject, scope, "list changed size during iteration"_s);
+            EXCEPTION_ASSERT(scope.exception());
             stored = false;
         }
         if (!stored) {
             JSValue exception = takePendingException(globalObject);
-            if (!arrayResize(globalObject, array, oldLength))
+            RETURN_IF_EXCEPTION(scope, { });
+            if (failed(scope, arrayResize(globalObject, array, oldLength))) {
                 takePendingException(globalObject);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
             return raiseException(globalObject, scope, exception);
         }
     }
@@ -1081,7 +1088,7 @@ static JSValue arrayFromFile(JSGlobalObject* globalObject, JSValue self, const C
     if (!PyBytes::is(data))
         return raiseTypeError(globalObject, scope, "read() didn't return bytes"_s);
     bool isShort = static_cast<int64_t>(PyBytes::from(data)->length()) != count * itemSize;
-    if (!arrayExtendFromBytes(globalObject, array, data))
+    if (failed(scope, arrayExtendFromBytes(globalObject, array, data)))
         return { };
     if (isShort)
         return raiseEOFError(globalObject, scope, "read() didn't return enough bytes"_s);
@@ -1116,7 +1123,7 @@ static JSValue arrayFromUnicode(JSGlobalObject* globalObject, JSValue self, JSVa
         return raiseTypeError(globalObject, scope, "fromunicode() argument must be str, not "_s, typeNameOfArgument(globalObject, string));
     if (!arrayKindIsUnicode(arrayKind(arrayOf(self))))
         return raiseValueError(globalObject, scope, "fromunicode() may only be called on unicode type arrays ('u' or 'w')"_s);
-    if (!arrayExtendFromStr(globalObject, arrayOf(self), strValue(string)))
+    if (failed(scope, arrayExtendFromStr(globalObject, arrayOf(self), strValue(string))))
         return { };
     return jsUndefined();
 }
@@ -1285,7 +1292,7 @@ static JSValue arrayAdd(JSGlobalObject* globalObject, JSValue self, JSValue othe
     if (arrayKind(left) != arrayKind(right))
         return raiseTypeError(globalObject, scope, "bad argument type for built-in operation"_s);
     PyRecord* result = arrayCreate(globalObject, arrayType(globalObject), arrayKind(left), arrayLength(left) + arrayLength(right));
-    if (!result)
+    if (failed(scope, result))
         return { };
     int64_t itemSize = arrayItemSize(left);
     if (arrayLength(left))
@@ -1301,7 +1308,7 @@ static JSValue arrayIAdd(JSGlobalObject* globalObject, JSValue self, JSValue oth
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!arrayTryFrom(globalObject, other))
         return raiseTypeError(globalObject, scope, "can only extend array with array (not \""_s, typeName(globalObject, other), "\")"_s);
-    if (!arrayExtendWith(globalObject, arrayOf(self), other))
+    if (failed(scope, arrayExtendWith(globalObject, arrayOf(self), other)))
         return { };
     return self;
 }
@@ -1328,6 +1335,7 @@ static JSValue arrayMul(JSGlobalObject* globalObject, JSValue self, JSValue coun
     if (length && count > std::numeric_limits<int64_t>::max() / length)
         return raiseMemoryError(globalObject, scope, String());
     PyRecord* result = arrayCreate(globalObject, arrayType(globalObject), arrayKind(array), length * count);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!result)
         return { };
     if (length * count) {
@@ -1352,7 +1360,7 @@ static JSValue arrayIMul(JSGlobalObject* globalObject, JSValue self, JSValue cou
     int64_t unit = length * arrayItemSize(array);
     if (count && unit > std::numeric_limits<int64_t>::max() / count)
         return raiseMemoryError(globalObject, scope, String());
-    if (!arrayResize(globalObject, array, length * count))
+    if (failed(scope, arrayResize(globalObject, array, length * count)))
         return { };
     if (count)
         arrayRepeatBytes(arrayData(array), unit, unit * count);
@@ -1388,14 +1396,15 @@ static JSValue arrayGetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
     if (!slice)
         return raiseTypeError(globalObject, scope, "array indices must be integers"_s);
     PySlice::Indices indices;
-    if (!arraySliceIndices(globalObject, array, slice, indices))
+    if (failed(scope, arraySliceIndices(globalObject, array, slice, indices)))
         return { };
     if (indices.length <= 0 || indices.step == 1) {
+        scope.release();
         PyRecord* result = indices.length <= 0 ? arrayCreate(globalObject, arrayType(globalObject), arrayKind(array), 0) : arrayCopyRange(globalObject, array, indices.start, indices.start + indices.length);
         return result ? JSValue(result) : JSValue();
     }
     PyRecord* result = arrayCreate(globalObject, arrayType(globalObject), arrayKind(array), indices.length);
-    if (!result)
+    if (failed(scope, result))
         return { };
     int64_t itemSize = arrayItemSize(array);
     uint8_t* target = arrayData(result);
@@ -1420,13 +1429,13 @@ static JSValue arrayAssign(JSGlobalObject* globalObject, JSValue self, JSValue k
         if (index < 0 || index >= arrayLength(array))
             return raiseIndexError(globalObject, scope, "array assignment index out of range"_s);
         if (value) {
-            if (!arraySet(globalObject, array, index, value))
+            if (failed(scope, arraySet(globalObject, array, index, value)))
                 return { };
             return jsUndefined();
         }
         indices = { index, index + 1, 1, 1 };
     } else if (auto* slice = PySlice::tryFrom(key)) {
-        if (!arraySliceIndices(globalObject, array, slice, indices))
+        if (failed(scope, arraySliceIndices(globalObject, array, slice, indices)))
             return { };
     } else
         return raiseTypeError(globalObject, scope, "array indices must be integers"_s);
@@ -1440,7 +1449,7 @@ static JSValue arrayAssign(JSGlobalObject* globalObject, JSValue self, JSValue k
         if (other == array) {
             // array[i:j] = array
             other = arrayCopyRange(globalObject, array, 0, arrayLength(array));
-            if (!other)
+            if (failed(scope, other))
                 return { };
         }
         if (arrayKind(other) != arrayKind(array))
@@ -1462,10 +1471,10 @@ static JSValue arrayAssign(JSGlobalObject* globalObject, JSValue self, JSValue k
         if (selected > needed) {
             uint8_t* data = arrayData(array);
             memmove(data + (start + needed) * itemSize, data + stop * itemSize, (length - stop) * itemSize);
-            if (!arrayResize(globalObject, array, length + needed - selected))
+            if (failed(scope, arrayResize(globalObject, array, length + needed - selected)))
                 return { };
         } else if (selected < needed) {
-            if (!arrayResize(globalObject, array, length + needed - selected))
+            if (failed(scope, arrayResize(globalObject, array, length + needed - selected)))
                 return { };
             uint8_t* data = arrayData(array);
             memmove(data + (start + needed) * itemSize, data + stop * itemSize, (length - stop) * itemSize);
@@ -1492,7 +1501,7 @@ static JSValue arrayAssign(JSGlobalObject* globalObject, JSValue self, JSValue k
             memmove(data + target * itemSize, data + (position + 1) * itemSize, kept * itemSize);
             target += kept;
         }
-        if (!arrayResize(globalObject, array, length - selected))
+        if (failed(scope, arrayResize(globalObject, array, length - selected)))
             return { };
         return jsUndefined();
     }

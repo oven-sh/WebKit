@@ -150,19 +150,20 @@ JSValue exceptionFromThrownValue(JSGlobalObject* globalObject, JSValue thrown)
     auto* error = dynamicDowncast<ErrorInstance>(thrown);
     if (error && error->isStackOverflowError())
         exception = newException(globalObject, rt.RecursionError(), "maximum recursion depth exceeded"_s);
-    else if (error && error->isOutOfMemoryError()) {
+    else if (error && error->isOutOfMemoryError())
         exception = newException(globalObject, rt.MemoryError(), std::span<const JSValue> { });
-        if (!exception) [[unlikely]]
-            return { };
-    } else {
+    else {
         String message = thrown.toWTFString(globalObject);
         if (scope.exception()) {
             scope.clearException();
             message = "<exception>"_s;
         }
         exception = newException(globalObject, thrown.isObject() && isTypeErrorOfJS(asObject(thrown)) ? jsTypeErrorType(globalObject) : rt.JSError(), message);
-        exception->setField(vm, ExceptionField::jsErrorValue, thrown);
+        if (!failed(scope, exception))
+            exception->setField(vm, ExceptionField::jsErrorValue, thrown);
     }
+    if (failed(scope, exception)) [[unlikely]]
+        return { };
     if (remembers) {
         setHiddenField(globalObject, thrown, jsErrorHiddenField, exception);
         if (JSValue traceback = hiddenField(globalObject, thrown, jsErrorTracebackHiddenField))

@@ -322,7 +322,7 @@ static JSValue astReduce(JSGlobalObject* globalObject, JSValue self)
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     AstState state(globalObject);
-    if (!state)
+    if (failed(scope, !!state))
         return { };
 
     PyType* type = typeOf(globalObject, self);
@@ -382,7 +382,7 @@ static JSValue astReplace(JSGlobalObject* globalObject, JSValue self, const Call
     if (args.size())
         return raiseTypeError(globalObject, scope, "__replace__() takes no positional arguments"_s);
     AstState state(globalObject);
-    if (!state)
+    if (failed(scope, !!state))
         return { };
 
     PyType* type = typeOf(globalObject, self);
@@ -451,13 +451,13 @@ static bool astAppendReprOfSequence(JSGlobalObject* globalObject, const AstState
 
     bool isAList = isList(sequence);
     builder.append(isAList ? '[' : '(');
-    if (!astAppendReprOfAny(globalObject, state, builder, first, depth))
+    if (failed(scope, astAppendReprOfAny(globalObject, state, builder, first, depth)))
         return false;
     if (count > 2)
         builder.append(", ..."_s);
     if (last) {
         builder.append(", "_s);
-        if (!astAppendReprOfAny(globalObject, state, builder, last, depth))
+        if (failed(scope, astAppendReprOfAny(globalObject, state, builder, last, depth)))
             return false;
     }
     builder.append(isAList ? ']' : ')');
@@ -507,13 +507,15 @@ static bool astAppendRepr(JSGlobalObject* globalObject, const AstState& state, S
 
 static JSValue astRepr(JSGlobalObject* globalObject, JSValue self)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     AstState state(globalObject);
-    if (!state)
+    if (failed(scope, !!state))
         return { };
     StrBuilder builder;
-    if (!astAppendRepr(globalObject, state, builder, self, 3))
+    if (failed(scope, astAppendRepr(globalObject, state, builder, self, 3)))
         return { };
-    return makeStr(globalObject, builder);
+    RELEASE_AND_RETURN(scope, makeStr(globalObject, builder));
 }
 
 static constexpr NativeDef astMethods[] = {
@@ -633,6 +635,7 @@ static PyTuple* astMakeClasses(JSGlobalObject* globalObject, PyType* base)
 }
 
 AstState::AstState(JSGlobalObject* globalObject)
+    : m_table(nullptr)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -676,7 +679,7 @@ static JSValue astIsAbstract(JSGlobalObject* globalObject, JSValue cls)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     AstState state(globalObject);
-    if (!state)
+    if (failed(scope, !!state))
         return { };
     hashForContainer(globalObject, cls, "a set element"_s);
     RETURN_IF_EXCEPTION(scope, { });
@@ -690,8 +693,9 @@ static constexpr NativeDef astFunctions[] = {
 
 void initializeAstModule(JSGlobalObject* globalObject, PyModule* module)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     AstState state(globalObject);
-    if (!state)
+    if (failed(scope, !!state))
         return;
     module->addFunctions(globalObject, astFunctions);
     module->add(globalObject, "AST"_s, state.type(AstClass::AST));

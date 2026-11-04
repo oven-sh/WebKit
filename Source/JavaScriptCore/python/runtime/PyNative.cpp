@@ -345,7 +345,7 @@ static ALWAYS_INLINE JSValue invokeNativeImpl(JSGlobalObject* globalObject, cons
     if (!args.hasKeywords() && count >= signature.minPositional && count <= signature.maxPositional && !signature.hasRequiredKeywordOnly) [[likely]] {
         for (unsigned i = 0; i < count; ++i)
             values[offset + i] = args[i];
-    } else if (!bindNativeArgumentsSlow(globalObject, def, function, args, values + offset))
+    } else if (failed(scope, bindNativeArgumentsSlow(globalObject, def, function, args, values + offset)))
         return { };
     if ((def.flags & DescriptorGet) && isNone(values[1]) && (!values[2] || isNone(values[2]))) [[unlikely]]
         return raiseTypeError(globalObject, scope, "__get__(None, None) is invalid"_s);

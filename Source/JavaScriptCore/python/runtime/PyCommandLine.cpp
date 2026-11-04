@@ -1094,7 +1094,7 @@ static void runModule(JSGlobalObject* globalObject, const String& name, bool cha
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue runpy = importModule(globalObject, "runpy"_s);
-    JSValue function = runpy ? getAttr(globalObject, runpy, internString(vm, "_run_module_as_main"_s)) : JSValue();
+    JSValue function = !scope.exception() ? getAttr(globalObject, runpy, internString(vm, "_run_module_as_main"_s)) : JSValue();
     if (scope.exception()) [[unlikely]] {
         printToStderr("Could not import runpy._run_module_as_main\n"_s);
         return;
@@ -1205,7 +1205,7 @@ static std::optional<Vector<uint8_t>> readLineFromStdin(JSGlobalObject* globalOb
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
         JSValue edited = readLineWithEditor(globalObject, makeStr(vm, prompt));
-        if (clearPendingExceptionIfMatches(globalObject, runtime(globalObject).EOFError()))
+        if (scope.exception() && clearPendingExceptionIfMatches(globalObject, runtime(globalObject).EOFError()))
             return Vector<uint8_t> { };
         if (scope.exception()) {
             printToStderr("\n"_s);
@@ -1296,12 +1296,12 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
 
     // codeop tells a statement that is not finished from one that is wrong.
     JSValue compiler;
-    if (JSValue codeop = importModule(globalObject, "codeop"_s)) {
+    if (JSValue codeop = importModule(globalObject, "codeop"_s); !failed(scope, codeop)) {
         compiler = callMethod(globalObject, codeop, internString(vm, "CommandCompiler"_s));
-        if (compiler) {
-            if (JSValue inner = getAttr(globalObject, compiler, internString(vm, "compiler"_s))) {
+        if (!failed(scope, compiler)) {
+            if (JSValue inner = getAttr(globalObject, compiler, internString(vm, "compiler"_s)); !failed(scope, inner)) {
                 JSValue flags = getAttr(globalObject, inner, internString(vm, "flags"_s));
-                if (flags && flags.isInt32())
+                if (!failed(scope, flags) && flags.isInt32())
                     setAttr(globalObject, inner, internString(vm, "flags"_s), jsNumber(flags.asInt32() | CompileAllowTopLevelAwait));
             }
         }
@@ -1347,7 +1347,7 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
                 if (!text.empty() && text.back() == '\n')
                     text = text.first(text.size() - 1);
                 code = call(globalObject, compiler, makeStr(vm, String::fromUTF8ReplacingInvalidSequences(text)), filename, mode);
-                if (code && isNone(code))
+                if (!failed(scope, code) && isNone(code))
                     continue;
                 // Once more, so that tracebacks can show the lines, and a mistake is found in the lines as they were typed.
                 if (code || pendingExceptionMatches(globalObject, rt.SyntaxError())) {
@@ -1359,7 +1359,7 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
             if (auto* exception = PyException::tryFrom(pendingException(globalObject)))
                 exception->setTraceback(vm, JSValue());
         }
-        if (code) {
+        if (!failed(scope, code)) {
             registerSourceWithLinecache(globalObject, code, pending.span(), "<stdin>"_s);
             compileFlags |= static_cast<int>((PyCode::from(code)->flags() & OptionSet<CodeFlag> { CodeFlag::FutureAnnotations, CodeFlag::FutureBarryAsBDFL }).toRaw());
         }
@@ -1367,13 +1367,14 @@ std::optional<int> runBasicInteractiveLoop(JSGlobalObject* globalObject)
 
         if (code && !scope.exception()) {
             JSValue result = runCode(globalObject, code, globals, globals);
-            if (result && PyCode::from(code)->flags().contains(CodeFlag::Coroutine)) {
+            if (!scope.exception() && PyCode::from(code)->flags().contains(CodeFlag::Coroutine)) {
                 // One loop for the session, so that what one statement starts the next finds running.
                 if (!runner) {
-                    if (JSValue asyncio = importModule(globalObject, "asyncio"_s))
+                    JSValue asyncio = importModule(globalObject, "asyncio"_s);
+                    if (!scope.exception())
                         runner = callMethod(globalObject, asyncio, internString(vm, "Runner"_s));
                 }
-                if (runner)
+                if (!scope.exception())
                     callMethod(globalObject, runner, internString(vm, "run"_s), result);
             }
         }
@@ -1448,8 +1449,8 @@ static int runInteractively(JSGlobalObject* globalObject, bool runsStartupFile)
         importModule(globalObject, "_pyrepl"_s);
         if (!scope.exception()) {
             JSValue module = importModule(globalObject, internString(vm, configuration().interactiveModule));
-            JSValue console = module ? getAttr(globalObject, module, internString(vm, "interactive_console"_s)) : JSValue();
-            if (console) {
+            JSValue console = !scope.exception() ? getAttr(globalObject, module, internString(vm, "interactive_console"_s)) : JSValue();
+            if (!scope.exception()) {
                 callWithKeywords(globalObject, console, { { "mainmodule"_s, ensureMainModule(globalObject) }, { "pythonstartup"_s, jsBoolean(runsStartupFile) } });
             } else
                 printToStderr("Could not import _pyrepl.main\n"_s);
@@ -1526,9 +1527,10 @@ static void reportMissingStandardLibrary(JSGlobalObject* globalObject)
 
 std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinished)
 {
-    Runtime& rt = Runtime::ensure(globalObject);
-    VM& vm = rt.vm();
+    VM& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Runtime& rt = Runtime::ensure(globalObject);
+    bool hasStarted = !scope.exception();
     Configuration& configuration = Python::configuration();
     std::optional<int> status;
 
@@ -1537,7 +1539,23 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
         return 1;
     }
 
-    installSignalHandlers(globalObject);
+    bool runsFile = false;
+    auto finish = [&] {
+        // As in CPython, what a file has written comes before the traceback. After -c and -m it stays in the buffers until the interpreter ends.
+        if (runsFile) {
+            SuspendExceptionScope suspended(vm);
+            flushStandardStreams(globalObject);
+        }
+        if (scope.exception())
+            status = handleUncaughtException(globalObject);
+        inspectIfAsked(globalObject, status);
+        return status;
+    };
+
+    if (hasStarted)
+        installSignalHandlers(globalObject);
+    if (scope.exception())
+        return finish();
     ensureMainModule(globalObject);
 
     String filename = configuration.runFilename;
@@ -1562,8 +1580,11 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
         first = computeFirstSearchPath(configuration.arguments);
     if (!first.isNull()) {
         configuration.firstSearchPath = first;
-        if (auto* searchPath = tryAsList(rt.sysDict()->get(rt.names.path())))
+        if (auto* searchPath = tryAsList(rt.sysDict()->get(rt.names.path()))) {
             listInsert(globalObject, searchPath, 0, makeStr(vm, first));
+            if (scope.exception())
+                return finish();
+        }
     }
 
     if (!configuration.quiet && (configuration.verbose || (!runsCode() && stdinIsInteractive()))) {
@@ -1573,7 +1594,6 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
     }
 
     makeCallsOwed(vm);
-    bool runsFile = false;
     if (!scope.exception()) {
         Runtime::EventLoopPositionScope position(rt, false);
         if (!configuration.runCommand.isNull())
@@ -1600,21 +1620,13 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
             runSourceInMain(globalObject, source.span(), "<stdin>"_s, CompileAllowTopLevelAwait, unfinished);
         }
     }
-    if (unfinished && *unfinished)
+    if (!scope.exception() && unfinished && *unfinished)
         return std::nullopt;
 
     // Flushing looks for signals, and drops what is raised.
     if (!scope.exception())
         checkSignals(globalObject);
-    // As in CPython, what a file has written comes before the traceback. After -c and -m it stays in the buffers until the interpreter ends.
-    if (runsFile) {
-        SuspendExceptionScope suspended(vm);
-        flushStandardStreams(globalObject);
-    }
-    if (scope.exception())
-        status = handleUncaughtException(globalObject);
-    inspectIfAsked(globalObject, status);
-    return status;
+    return finish();
 }
 
 } // namespace Python

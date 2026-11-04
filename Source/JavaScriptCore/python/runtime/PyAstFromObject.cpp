@@ -420,7 +420,7 @@ private:
         if (info.kind == AstClassKind::Product) {
             if (failed(scope, convertFields(id, info, object, slots)))
                 return false;
-            if (info.attributes != AstAttributes::None && !convertAttributes(info, object, range))
+            if (info.attributes != AstAttributes::None && failed(scope, convertAttributes(info, object, range)))
                 return false;
             if (failed(scope, checkRequiredFields(info, slots)))
                 return false;
@@ -451,7 +451,7 @@ private:
         }
 
         const AstClassInfo& constructorInfo = infoOfAstClass(constructor);
-        if (!convertFields(constructor, constructorInfo, object, slots))
+        if (failed(scope, convertFields(constructor, constructorInfo, object, slots)))
             return false;
         if (failed(scope, checkRequiredFields(constructorInfo, slots)))
             return false;

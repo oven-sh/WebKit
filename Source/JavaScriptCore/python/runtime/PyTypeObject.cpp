@@ -402,10 +402,14 @@ static void mergeClassDict(JSGlobalObject* globalObject, PyDict* names, JSValue 
 
 static JSValue keysAsList(JSGlobalObject* globalObject, PyDict* dict)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     JSArray* result = newList(globalObject, dict->size());
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue key, value;
-    for (unsigned position = 0; dict->next(position, key, value);)
+    for (unsigned position = 0; dict->next(position, key, value);) {
         listAppend(globalObject, result, key);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return result;
 }
 

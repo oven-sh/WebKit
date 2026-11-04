@@ -133,7 +133,7 @@ static bool operatorSearch(JSGlobalObject* globalObject, JSValue iterable, JSVal
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue iterator = getIter(globalObject, iterable);
-    if (!iterator) {
+    if (failed(scope, iterator)) {
         if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
             raiseTypeError(globalObject, scope, "argument of type '"_s, typeName(globalObject, iterable), "' is not iterable"_s);
         return false;
@@ -162,13 +162,13 @@ static JSValue operatorCountOf(JSGlobalObject* globalObject, JSValue a, JSValue 
 
 static JSValue operatorIndexOf(JSGlobalObject* globalObject, JSValue a, JSValue b)
 {
-    int64_t result = -1;
-    if (!operatorSearch(globalObject, a, b, [&](int64_t index) { result = index; return false; }))
-        return { };
-    if (result >= 0)
-        return makeInt(globalObject, result);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    int64_t result = -1;
+    if (failed(scope, operatorSearch(globalObject, a, b, [&](int64_t index) { result = index; return false; })))
+        return { };
+    if (result >= 0)
+        RELEASE_AND_RETURN(scope, makeInt(globalObject, result));
     return raiseValueError(globalObject, scope, "sequence.index(x): x not in sequence"_s);
 }
 
@@ -580,6 +580,7 @@ static JSValue operatorMethodCallerCall(JSGlobalObject* globalObject, JSValue se
     JSValue receiver;
     JSValue method = getMethod(globalObject, args[0], asString(values->at(0)), receiver);
     RETURN_IF_EXCEPTION(scope, { });
+    scope.release();
     JSValue result = receiver ? withFirstArgument(receiver, stored, [&](const CallArgs& all) { return call(globalObject, method, all); }) : call(globalObject, method, stored);
     ensureStillAliveHere(values);
     return result;

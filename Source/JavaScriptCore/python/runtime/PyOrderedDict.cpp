@@ -569,7 +569,7 @@ static JSValue odictEquality(JSGlobalObject* globalObject, JSValue self, JSValue
     if (!isOrderedDict(globalObject, other) || asDicts == jsBoolean(!wantEqual))
         return asDicts;
     int equal = keysAreEqualInOrder(globalObject, PyDict::from(self), PyDict::from(other));
-    if (equal < 0)
+    if (failed(scope, equal >= 0))
         return { };
     return jsBoolean(!!equal == wantEqual);
 }

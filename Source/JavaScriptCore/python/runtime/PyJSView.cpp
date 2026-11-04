@@ -715,7 +715,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewNext, (JSGlobalObject* globalObject, CallFrame* c
         if (!method)
             return JSValue::encode(raiseTypeError(globalObject, scope, '\'', typeName(globalObject, iterator), "' object is not an iterator"_s));
         item = callSpecial(globalObject, method, iterator);
-        if (!item && pendingExceptionMatches(globalObject, rt.StopIteration()))
+        if (failed(scope, item) && pendingExceptionMatches(globalObject, rt.StopIteration()))
             result = PyException::from(takePendingException(globalObject))->field(ExceptionField::stopIterationValue);
     }
     RETURN_IF_EXCEPTION(scope, { });
@@ -891,7 +891,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncNext, (JSGlobalObject* globalObject, CallFra
     JSValue promise;
     if (JSValue method = rt.typeOf(iterator)->lookup(Special::ANext)) {
         JSValue awaitable = callSpecial(globalObject, method, iterator);
-        if (awaitable)
+        if (!failed(scope, awaitable))
             promise = jsViewPromiseOfAwaitable(globalObject, awaitable);
     } else
         raiseTypeError(globalObject, scope, '\'', typeName(globalObject, iterator), "' object is not an async iterator"_s);
@@ -908,9 +908,9 @@ JSC_DEFINE_HOST_FUNCTION(jsViewAsyncReturn, (JSGlobalObject* globalObject, CallF
     JSValue result = createIteratorResultObject(globalObject, callFrame->argument(0), true);
     JSValue promise;
     JSValue close = getAttrIfPresent(globalObject, iterator, internString(vm, "aclose"_s));
-    if (close) {
+    if (!scope.exception() && close) {
         JSValue awaitable = call(globalObject, close);
-        if (awaitable)
+        if (!failed(scope, awaitable))
             promise = jsViewPromiseOfAwaitable(globalObject, awaitable);
     }
     if (scope.exception()) [[unlikely]]
@@ -1023,9 +1023,10 @@ JSValue resultForCaller(JSGlobalObject* globalObject, CallFrame* callFrame, JSVa
         return valueForJS(result);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue run = eventLoopFunction(globalObject, "run"_s);
-    if (!run && !scope.exception())
+    bool hasRaised = scope.exception();
+    if (!run && !hasRaised)
         return result;
-    JSValue promise = run ? call(globalObject, run, result) : JSValue();
+    JSValue promise = !hasRaised ? call(globalObject, run, result) : JSValue();
     if (scope.exception()) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSPromise::create(vm, globalObject->promiseStructure())->rejectWithCaughtException(vm, scope));
     return promise;

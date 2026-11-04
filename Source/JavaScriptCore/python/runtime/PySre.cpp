@@ -763,16 +763,21 @@ static JSValue sreExpandTemplate(JSGlobalObject* globalObject, PyRecord* replace
     JSArray* list = newList(globalObject, replacement->fieldCount());
     RETURN_IF_EXCEPTION(scope, { });
     listAppend(globalObject, list, literal);
+    RETURN_IF_EXCEPTION(scope, { });
     for (unsigned i = SreTemplate::Items; i < replacement->fieldCount(); i += 2) {
         ptrdiff_t group = sreNumberField(replacement, i);
         if (group >= match->number)
             return raiseIndexError(globalObject, scope, "no such group"_s);
         JSValue item = sreGroupByIndex(globalObject, match, group, none());
         RETURN_IF_EXCEPTION(scope, { });
-        if (!isNone(item))
+        if (!isNone(item)) {
             listAppend(globalObject, list, item);
-        if (JSValue next = replacement->get(i + 1))
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        if (JSValue next = replacement->get(i + 1)) {
             listAppend(globalObject, list, next);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
     }
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, sreJoin(globalObject, !isStr(literal), list));
@@ -1028,7 +1033,7 @@ static JSValue sreSubstitute(JSGlobalObject* globalObject, JSValue thisValue, JS
             RETURN_IF_EXCEPTION(scope, { });
             item = kind == Template ? sreExpandTemplate(globalObject, PyRecord::from(replacement), PyRecord::from(match)) : call(globalObject, replacement, match);
             RETURN_IF_EXCEPTION(scope, { });
-            if (!run.refresh(globalObject))
+            if (failed(scope, run.refresh(globalObject)))
                 return { };
         }
         if (!isNone(item)) {

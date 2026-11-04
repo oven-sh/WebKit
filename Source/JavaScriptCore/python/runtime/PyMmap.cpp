@@ -315,7 +315,7 @@ static JSValue mmapFind(JSGlobalObject* globalObject, JSValue self, JSValue need
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
     BufferHolder holder(globalObject);
-    if (!holder.get(needleValue) || failed(scope, mmapCheckOpen(globalObject, map)))
+    if (failed(scope, holder.get(needleValue)) || failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     int64_t start = mmapPosition(map);
     int64_t end = mmapSize(map);
@@ -324,7 +324,7 @@ static JSValue mmapFind(JSGlobalObject* globalObject, JSValue self, JSValue need
             return { };
     }
     // An __index__() may have closed it.
-    if (failed(scope, mmapCheckOpen(globalObject, map)) || !refreshBuffer(globalObject, holder.buffer))
+    if (failed(scope, mmapCheckOpen(globalObject, map)) || failed(scope, refreshBuffer(globalObject, holder.buffer)))
         return { };
     int64_t size = mmapSize(map);
     if (start < 0)
@@ -356,7 +356,7 @@ static JSValue mmapWrite(JSGlobalObject* globalObject, JSValue self, JSValue dat
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* map = PyRecord::from(self);
     BufferHolder holder(globalObject);
-    if (!holder.get(dataValue) || failed(scope, mmapCheckOpen(globalObject, map)) || failed(scope, mmapCheckWritable(globalObject, map)))
+    if (failed(scope, holder.get(dataValue)) || failed(scope, mmapCheckOpen(globalObject, map)) || failed(scope, mmapCheckWritable(globalObject, map)))
         return { };
     int64_t position = mmapPosition(map);
     int64_t count = holder.buffer.length;
@@ -612,8 +612,8 @@ static JSValue mmapBuffer(JSGlobalObject* globalObject, JSValue self, JSValue fl
     if (failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     JSValue view = exportBuffer(globalObject, self, flags, { map->get(MmapMemory).asCell(), 0, static_cast<size_t>(mmapSize(map)), mmapAccess(map) == MmapAccessRead, 1, { }, mmapDidRelease });
-    if (view)
-        map->set(getVM(globalObject), MmapExports, jsNumber(map->get(MmapExports).asInt32() + 1));
+    RETURN_IF_EXCEPTION(scope, { });
+    map->set(vm, MmapExports, jsNumber(map->get(MmapExports).asInt32() + 1));
     return view;
 }
 
@@ -650,7 +650,7 @@ static JSValue mmapGetItem(JSGlobalObject* globalObject, JSValue self, JSValue k
     if (!slice)
         return raiseTypeError(globalObject, scope, "mmap indices must be integers"_s);
     PySlice::Indices indices;
-    if (!slice->unpack(globalObject, indices) || failed(scope, mmapCheckOpen(globalObject, map)))
+    if (failed(scope, slice->unpack(globalObject, indices)) || failed(scope, mmapCheckOpen(globalObject, map)))
         return { };
     PySlice::adjust(mmapSize(map), indices);
     if (indices.length <= 0)
@@ -697,12 +697,12 @@ static JSValue mmapSetItem(JSGlobalObject* globalObject, JSValue self, JSValue k
         return raiseTypeError(globalObject, scope, "mmap indices must be integer"_s);
     // For the errors of the bounds, which come first. What they select is worked out when no more code can run.
     PySlice::Indices indices;
-    if (!slice->unpack(globalObject, indices))
+    if (failed(scope, slice->unpack(globalObject, indices)))
         return { };
     if (!value)
         return raiseTypeError(globalObject, scope, "mmap object doesn't support slice deletion"_s);
     BufferHolder holder(globalObject);
-    if (!holder.get(value) || failed(scope, mmapCheckOpen(globalObject, map)) || !refreshBuffer(globalObject, holder.buffer))
+    if (failed(scope, holder.get(value)) || failed(scope, mmapCheckOpen(globalObject, map)) || failed(scope, refreshBuffer(globalObject, holder.buffer)))
         return { };
     PySlice::adjust(mmapSize(map), indices);
     if (holder.buffer.length != indices.length)
@@ -957,6 +957,7 @@ static bool shmToName(JSGlobalObject* globalObject, JSValue value, ASCIILiteral 
     auto encoded = tryEncodeUTF8(text);
     if (!encoded) {
         // Which raises.
+        scope.release();
         strEncode(globalObject, strValue(value), makeStr(vm, "utf-8"_s), makeStr(vm, "strict"_s));
         return false;
     }
@@ -975,12 +976,12 @@ static JSValue shmOpen(JSGlobalObject* globalObject, JSValue path, JSValue flags
     PosixBytes name;
     int flags;
     int mode = 0777;
-    if (!shmToName(globalObject, path, "shm_open"_s, 1, name) || failed(scope, posixToInt(globalObject, flagsValue, flags)) || (modeValue && failed(scope, posixToInt(globalObject, modeValue, mode))))
+    if (failed(scope, shmToName(globalObject, path, "shm_open"_s, 1, name)) || failed(scope, posixToInt(globalObject, flagsValue, flags)) || (modeValue && failed(scope, posixToInt(globalObject, modeValue, mode))))
         return { };
     int fd;
     do {
         fd = shm_open(name.characters(), flags, mode);
-    } while (fd < 0 && errno == EINTR && checkSignals(globalObject));
+    } while (fd < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     RETURN_IF_EXCEPTION(scope, { });
     if (fd < 0)
         return raiseOSError(globalObject, scope, errno, path);
@@ -992,12 +993,12 @@ static JSValue shmUnlink(JSGlobalObject* globalObject, JSValue path)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes name;
-    if (!shmToName(globalObject, path, "shm_unlink"_s, 0, name))
+    if (failed(scope, shmToName(globalObject, path, "shm_unlink"_s, 0, name)))
         return { };
     int result;
     do {
         result = shm_unlink(name.characters());
-    } while (result < 0 && errno == EINTR && checkSignals(globalObject));
+    } while (result < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     RETURN_IF_EXCEPTION(scope, { });
     if (result < 0)
         return raiseOSError(globalObject, scope, errno, path);

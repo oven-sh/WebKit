@@ -231,7 +231,7 @@ static bool posixToId(JSGlobalObject* globalObject, JSValue value, ASCIILiteral 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue index = toIndex(globalObject, value);
-    if (!index) [[unlikely]] {
+    if (failed(scope, index)) [[unlikely]] {
         if (takePendingException(globalObject))
             raiseTypeError(globalObject, scope, what, " should be integer, not "_s, typeName(globalObject, value));
         return false;
@@ -312,7 +312,7 @@ bool posixToFileDescriptor(JSGlobalObject* globalObject, JSValue value, int& res
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     if (isInt(value)) {
-        if (!posixWarnOfBoolDescriptor(globalObject, value))
+        if (failed(scope, posixWarnOfBoolDescriptor(globalObject, value)))
             return false;
         if (failed(scope, posixToInt(globalObject, value, fd)))
             return false;
@@ -345,7 +345,7 @@ static bool posixToPathDescriptor(JSGlobalObject* globalObject, JSValue value, i
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!posixWarnOfBoolDescriptor(globalObject, value))
+    if (failed(scope, posixWarnOfBoolDescriptor(globalObject, value)))
         return false;
     JSValue index = toIndex(globalObject, value);
     RETURN_IF_EXCEPTION(scope, false);
@@ -435,12 +435,12 @@ bool posixIsSequence(JSGlobalObject* globalObject, JSValue value)
 
 bool posixGetWritableBuffer(JSGlobalObject* globalObject, JSValue value, ASCIILiteral function, unsigned position, BufferHolder& holder)
 {
-    if (holder.get(value, BufferWritable))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!failed(scope, holder.get(value, BufferWritable)))
         return true;
     if (!takePendingException(globalObject))
         return false;
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     raiseTypeError(globalObject, scope, function, "() argument "_s, position, " must be read-write bytes-like object, not "_s, posixTypeNameOfArgument(globalObject, value));
     return false;
 }
@@ -465,7 +465,7 @@ bool PosixPath::convert(JSGlobalObject* globalObject, JSValue value)
     bool isBytesObject = PyBytes::is(value);
     if (!isText && !isBytesObject) {
         if (allowFd && hasIndex(globalObject, value)) {
-            if (!posixToPathDescriptor(globalObject, value, m_fd))
+            if (failed(scope, posixToPathDescriptor(globalObject, value, m_fd)))
                 return false;
             m_isFd = true;
             return true;
@@ -662,13 +662,15 @@ bool posixFreeDescriptors(JSGlobalObject* globalObject)
         return false;
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    if (vm.exceptionForInspection() || rt.isRunningPendingCalls())
+    // What a finalizer or a signal handler raises stays: whoever reports the error of the system call finds it (posixError()).
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (scope.exception() || rt.isRunningPendingCalls())
         return false;
     writeOutPendingOutput(globalObject); // Until then they are not to be collected.
     vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
     rt.runPendingCalls();
     errno = error;
-    return !vm.exceptionForInspection();
+    return !scope.exception();
 }
 
 int posixDupNotInheritable(int fd)
@@ -844,7 +846,7 @@ static JSValue posixPutenv(JSGlobalObject* globalObject, JSValue nameValue, JSVa
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes name;
     PosixBytes value;
-    if (!posixToFSBytes(globalObject, nameValue, name) || !posixToFSBytes(globalObject, valueValue, value))
+    if (failed(scope, posixToFSBytes(globalObject, nameValue, name)) || failed(scope, posixToFSBytes(globalObject, valueValue, value)))
         return { };
     if (isAudited(globalObject) && failed(scope, audit(globalObject, "os.putenv"_s, PyBytes::create(globalObject, name.span()), PyBytes::create(globalObject, value.span()))))
         return { };
@@ -861,7 +863,7 @@ static JSValue posixUnsetenv(JSGlobalObject* globalObject, JSValue nameValue)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixBytes name;
-    if (!posixToFSBytes(globalObject, nameValue, name))
+    if (failed(scope, posixToFSBytes(globalObject, nameValue, name)))
         return { };
     if (isAudited(globalObject) && failed(scope, audit(globalObject, "os.unsetenv"_s, PyBytes::create(globalObject, name.span()))))
         return { };
@@ -982,7 +984,7 @@ static JSValue posixPathSplitrootEx(JSGlobalObject* globalObject, JSValue pathVa
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("_path_splitroot_ex"_s, PosixPath::Nonstrict | PosixPath::AllowVirtual | PosixPath::AsText);
-    if (!path.convert(globalObject, pathValue))
+    if (failed(scope, path.convert(globalObject, pathValue)))
         return { };
     if (path.isBytes()) {
         auto span = path.span();
@@ -1111,7 +1113,7 @@ static JSValue posixFpathconf(JSGlobalObject* globalObject, JSValue fdValue, JSV
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int name;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToConfigurationName(globalObject, nameValue, "pathconf_names"_s, name)))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)) || failed(scope, posixToConfigurationName(globalObject, nameValue, "pathconf_names"_s, name)))
         return { };
     errno = 0;
     long limit = fpathconf(fd, name);
@@ -1126,7 +1128,7 @@ static JSValue posixPathconf(JSGlobalObject* globalObject, JSValue pathValue, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     PosixPath path("pathconf"_s, PosixPath::AllowFd | PosixPath::VirtualUnsupported);
     int name;
-    if (!path.convert(globalObject, pathValue) || failed(scope, posixToConfigurationName(globalObject, nameValue, "pathconf_names"_s, name)))
+    if (failed(scope, path.convert(globalObject, pathValue)) || failed(scope, posixToConfigurationName(globalObject, nameValue, "pathconf_names"_s, name)))
         return { };
     errno = 0;
     long limit = path.isFd() ? fpathconf(path.fd(), name) : pathconf(path.narrow(), name);
@@ -1208,7 +1210,7 @@ static JSValue posixUrandom(JSGlobalObject* globalObject, JSValue sizeValue)
     if (failed(scope, posixToCount(globalObject, sizeValue, "size"_s, size)))
         return { };
     PyBytes* bytes = posixNewBytes(globalObject, size);
-    if (!bytes)
+    if (failed(scope, bytes))
         return { };
     cryptographicallyRandomValues(std::span<uint8_t> { bytes->mutableData(), static_cast<size_t>(size) });
     return bytes;
@@ -1233,7 +1235,7 @@ static JSValue posixGetrandom(JSGlobalObject* globalObject, JSValue sizeValue, J
         // Not getrandom(), which is newer than the oldest C library this may run with.
         AllowThreads allow(globalObject);
         count = static_cast<ssize_t>(syscall(SYS_getrandom, buffer.mutableSpan().data(), buffer.size(), static_cast<unsigned>(flags)));
-    } while (count < 0 && errno == EINTR && checkSignals(globalObject));
+    } while (count < 0 && errno == EINTR && !failed(scope, checkSignals(globalObject)));
     if (count < 0)
         RELEASE_AND_RETURN(scope, posixError(globalObject));
     RELEASE_AND_RETURN(scope, PyBytes::create(globalObject, buffer.span().first(static_cast<size_t>(count))));

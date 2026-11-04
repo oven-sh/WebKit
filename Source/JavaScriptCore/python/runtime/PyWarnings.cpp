@@ -48,36 +48,37 @@ static JSArray* warningsState(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue state = rt.slot(Runtime::Slot::Warnings))
         return asList(state);
+    // Made once: a few small cells, without which there is no going on.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto filter = [&](PyType* category, ASCIILiteral action, JSValue module) -> JSValue {
         return PyTuple::create(globalObject, { internString(vm, action), jsUndefined(), category, module, jsNumber(0) });
     };
     JSArray* filters = newList(globalObject);
     listAppend(globalObject, filters, filter(rt.DeprecationWarning(), "default"_s, rt.names.dMain()));
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    scope.releaseAssertNoExceptionExceptTermination();
     listAppend(globalObject, filters, filter(rt.DeprecationWarning(), "ignore"_s, jsUndefined()));
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    scope.releaseAssertNoExceptionExceptTermination();
     listAppend(globalObject, filters, filter(rt.PendingDeprecationWarning(), "ignore"_s, jsUndefined()));
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    scope.releaseAssertNoExceptionExceptTermination();
     listAppend(globalObject, filters, filter(rt.ImportWarning(), "ignore"_s, jsUndefined()));
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    scope.releaseAssertNoExceptionExceptTermination();
     listAppend(globalObject, filters, filter(rt.ResourceWarning(), "ignore"_s, jsUndefined()));
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    scope.releaseAssertNoExceptionExceptTermination();
 
     JSArray* state = newList(globalObject);
     listAppend(globalObject, state, filters);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    scope.releaseAssertNoExceptionExceptTermination();
     listAppend(globalObject, state, PyDict::create(globalObject));
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    scope.releaseAssertNoExceptionExceptTermination();
     listAppend(globalObject, state, internString(vm, "default"_s));
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    scope.releaseAssertNoExceptionExceptTermination();
     listAppend(globalObject, state, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    scope.releaseAssertNoExceptionExceptTermination();
     listAppend(globalObject, state, jsNumber(0));
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    scope.releaseAssertNoExceptionExceptTermination();
     rt.setSlot(Runtime::Slot::Warnings, state);
     return state;
 }
@@ -88,7 +89,6 @@ static JSValue warningsContextVariable(JSGlobalObject* globalObject)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* state = warningsState(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
     JSValue variable = listGet(state, WarningsContext);
     if (!isNone(variable))
         return variable;
@@ -228,7 +228,7 @@ static JSValue warningsGetFilter(JSGlobalObject* globalObject, JSValue category,
         JSArray* list = tryAsList(contextFilters);
         if (!list)
             return raiseValueError(globalObject, scope, "_filters of warnings._warnings_context must be a list"_s);
-        if (!warningsSearchFilters(globalObject, category, text, lineno, module, filename, "_warnings_context _filters"_s, list, item, action))
+        if (failed(scope, warningsSearchFilters(globalObject, category, text, lineno, module, filename, "_warnings_context _filters"_s, list, item, action)))
             return { };
         if (action)
             return action;
@@ -438,7 +438,7 @@ static bool warningsWarnExplicit(JSGlobalObject* globalObject, JSValue category,
             return false;
         }
     }
-    if (seen < 0)
+    if (failed(scope, seen >= 0))
         return false;
     if (seen)
         return true;

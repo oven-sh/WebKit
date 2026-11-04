@@ -384,7 +384,7 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
     if (__builtin_add_overflow(now, timeout, &deadline))
         deadline = std::numeric_limits<int64_t>::max();
     // (A hook is not to hear of the same sleep twice.)
-    if (timeout > IdleWait::firstInterval && !isAudited(globalObject) && runtime(globalObject).threads().beginsCallAgain(globalObject))
+    if (timeout > IdleWait::firstInterval && !isAudited(globalObject) && failed(scope, !runtime(globalObject).threads().beginsCallAgain(globalObject)))
         return { };
 
     // A signal does not cut the sleep short, unless its handler raises. A long sleep is made piece by piece.
@@ -405,7 +405,7 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
         if (!error && piece == timeout)
             return none();
         if (!error) {
-            if (!idle.didWait(timeout - piece))
+            if (failed(scope, idle.didWait(timeout - piece)))
                 return { };
             if (failed(scope, timeReadClock(globalObject, CLOCK_MONOTONIC, now)))
                 return { };
@@ -416,7 +416,7 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
         }
         if (error != EINTR)
             return raiseOSError(globalObject, scope, error);
-        if (!checkSignals(globalObject))
+        if (failed(scope, checkSignals(globalObject)))
             return { };
         if (failed(scope, timeReadClock(globalObject, CLOCK_MONOTONIC, now)))
             return { };

@@ -131,7 +131,7 @@ static void raiseUnicodeError(JSGlobalObject* globalObject, PyType* type, const 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyException* exception = nullptr;
-    if (prepareUnicodeError(globalObject, exception, type, codec, object, start, end, reason))
+    if (!failed(scope, prepareUnicodeError(globalObject, exception, type, codec, object, start, end, reason)))
         raiseException(globalObject, scope, exception);
 }
 
@@ -183,6 +183,7 @@ static bool handleEncodeError(JSGlobalObject* globalObject, EncodeRun& run, int 
         reason = incompleteSequence;
         size = run.position; // As CPython has it. No codec asks for more when there is no more.
     } else if (result < 0) {
+        scope.release();
         raiseCodecFailure(globalObject, result);
         return false;
     }
@@ -198,7 +199,7 @@ static bool handleEncodeError(JSGlobalObject* globalObject, EncodeRun& run, int 
         return true;
     }
 
-    if (!prepareUnicodeError(globalObject, run.exception, rt.UnicodeEncodeError(), run.codec, run.object, run.position, run.position + size, reason))
+    if (failed(scope, prepareUnicodeError(globalObject, run.exception, rt.UnicodeEncodeError(), run.codec, run.object, run.position, run.position + size, reason)))
         return false;
     if (run.errors.mode == ErrorMode::Strict) {
         raiseException(globalObject, scope, run.exception);
@@ -218,7 +219,7 @@ static bool handleEncodeError(JSGlobalObject* globalObject, EncodeRun& run, int 
         run.out.append(bytes->span());
     else {
         size_t position, length;
-        if (!encodeText(globalObject, run.codec, run.state, tuple->at(0), { }, flushes, run.out, position, length))
+        if (failed(scope, encodeText(globalObject, run.codec, run.state, tuple->at(0), { }, flushes, run.out, position, length)))
             return false;
     }
     RELEASE_AND_RETURN(scope, positionFromHandler(globalObject, tuple->at(1), run.text.length(), run.position));
@@ -246,7 +247,7 @@ static bool encodeText(JSGlobalObject* globalObject, const Codec& codec, State& 
         int result = codec.encode(codec, state, text, position, out, flags & flushes);
         if (!result || (result == needsMoreInput && !(flags & flushes)))
             break;
-        if (!handleEncodeError(globalObject, run, result))
+        if (failed(scope, handleEncodeError(globalObject, run, result)))
             return false;
         if (result == needsMoreInput)
             break;
@@ -285,6 +286,7 @@ static bool handleDecodeError(JSGlobalObject* globalObject, const Codec& codec, 
         reason = incompleteSequence;
         size = run.in.size() - run.position;
     } else if (result < 0) {
+        scope.release();
         raiseCodecFailure(globalObject, result);
         return false;
     }
@@ -301,7 +303,7 @@ static bool handleDecodeError(JSGlobalObject* globalObject, const Codec& codec, 
         object = PyBytes::create(globalObject, run.in);
         RETURN_IF_EXCEPTION(scope, false);
     }
-    if (!prepareUnicodeError(globalObject, run.exception, rt.UnicodeDecodeError(), codec, object, run.position, run.position + size, reason))
+    if (failed(scope, prepareUnicodeError(globalObject, run.exception, rt.UnicodeDecodeError(), codec, object, run.position, run.position + size, reason)))
         return false;
     if (errors.mode == ErrorMode::Strict) {
         raiseException(globalObject, scope, run.exception);
@@ -326,11 +328,13 @@ static bool handleDecodeError(JSGlobalObject* globalObject, const Codec& codec, 
 // Decodes until the end, or until what is left is the beginning of something.
 static bool decodeWhatIsComplete(JSGlobalObject* globalObject, const Codec& codec, State& state, DecodeRun& run, const ErrorTreatment& errors)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     while (run.position < run.in.size()) {
         int result = codec.decode(codec, state, run.in, run.position, run.out);
         if (!result || result == needsMoreInput)
             break;
-        if (!handleDecodeError(globalObject, codec, run, errors, result))
+        if (failed(scope, handleDecodeError(globalObject, codec, run, errors, result)))
             return false;
     }
     return true;
@@ -349,15 +353,15 @@ public:
     // `before` comes first.
     bool get(JSGlobalObject* globalObject, JSValue input, std::span<const uint8_t> before, const ErrorTreatment& errors)
     {
-        if (!m_holder.get(input))
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (failed(scope, m_holder.get(input)))
             return false;
         span = m_holder.buffer.span();
         // A handler may run anything, and memory that belongs to JS may then be gone.
         if (before.empty() && (errors.mode != ErrorMode::Handler || PyBytes::is(input)))
             return true;
         if (!m_copy.tryReserveInitialCapacity(before.size() + span.size())) {
-            VM& vm = getVM(globalObject);
-            auto scope = DECLARE_THROW_SCOPE(vm);
             raiseMemoryError(globalObject, scope, String());
             return false;
         }
@@ -392,7 +396,7 @@ static JSValue codecEncode(JSGlobalObject* globalObject, JSValue self, JSValue i
         codec.startEncoding(state);
     Output out;
     size_t position, length;
-    if (!encodeText(globalObject, codec, state, text, errors, flushes | resets, out, position, length))
+    if (failed(scope, encodeText(globalObject, codec, state, text, errors, flushes | resets, out, position, length)))
         return { };
     PyBytes* bytes = out.makeBytes(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -406,13 +410,13 @@ static JSValue codecDecode(JSGlobalObject* globalObject, JSValue self, JSValue i
     const Codec& codec = *std::bit_cast<const Codec*>(static_cast<intptr_t>(PyRecord::from(self)->number));
     // CPython gets the buffer first, and complains of `errors` after.
     BufferHolder probe(globalObject);
-    if (!probe.get(input))
+    if (failed(scope, probe.get(input)))
         return { };
     ErrorTreatment errors;
     if (failed(scope, treatmentFromArgument(globalObject, "decode"_s, errorsValue, errors)))
         return { };
     InputBytes bytes(globalObject);
-    if (!bytes.get(globalObject, input, { }, errors))
+    if (failed(scope, bytes.get(globalObject, input, { }, errors)))
         return { };
 
     State state;
@@ -424,7 +428,7 @@ static JSValue codecDecode(JSGlobalObject* globalObject, JSValue self, JSValue i
         int result = codec.decode(codec, state, run.in, run.position, run.out);
         if (!result)
             break;
-        if (!handleDecodeError(globalObject, codec, run, errors, result))
+        if (failed(scope, handleDecodeError(globalObject, codec, run, errors, result)))
             return { };
     }
     JSString* text = makeStr(globalObject, run.out);
@@ -561,7 +565,7 @@ static void errorsSetter(JSGlobalObject* globalObject, JSValue self, JSValue val
         return;
     }
     String name;
-    if (textOfCString(globalObject, strValue(value), NUL::EndsTheText, name))
+    if (!failed(scope, textOfCString(globalObject, strValue(value), NUL::EndsTheText, name)))
         setErrors(vm, PyRecord::from(self), name);
 }
 
@@ -620,12 +624,13 @@ static PyBytes* encodeMore(JSGlobalObject* globalObject, PyRecord* object, JSVal
     ErrorTreatment errors = treatmentOf(object);
     Output out;
     size_t position, length;
-    if (!encodeText(globalObject, codec, stateOf(object), text, errors, isFinal ? flushes | resets : 0, out, position, length)) {
+    if (failed(scope, encodeText(globalObject, codec, stateOf(object), text, errors, isFinal ? flushes | resets : 0, out, position, length))) {
         object->set(vm, FieldPending, pendingBefore);
         return nullptr;
     }
     if (position < length) {
         if (length - position > maxPendingCharacters) {
+            scope.release();
             raiseUnicodeError(globalObject, rt.UnicodeEncodeError(), codec, text, position, length, "pending buffer overflow"_s);
             return nullptr;
         }
@@ -674,6 +679,7 @@ static JSValue incrementalEncoderGetState(JSGlobalObject* globalObject, JSValue 
         if (encoded->span().size() > maxPendingUTF8) {
             StrView view(globalObject, asString(pending));
             RETURN_IF_EXCEPTION(scope, { });
+            scope.release();
             raiseUnicodeError(globalObject, rt.UnicodeEncodeError(), codecOf(object), pending, 0, view.length(), "pending buffer too large"_s);
             return { };
         }
@@ -741,6 +747,7 @@ static bool keepRestPending(JSGlobalObject* globalObject, PyRecord* object, cons
     if (rest.size() + pending.size() > maxPendingBytes) {
         PyBytes* all = PyBytes::create(globalObject, run.in);
         RETURN_IF_EXCEPTION(scope, false);
+        scope.release();
         raiseUnicodeError(globalObject, rt.UnicodeDecodeError(), codecOf(object), all, 0, run.in.size(), "pending buffer overflow"_s);
         return false;
     }
@@ -782,7 +789,7 @@ static JSValue incrementalDecoderDecode(JSGlobalObject* globalObject, JSValue se
     const Codec& codec = codecOf(object);
     // The buffer is asked for before `final` is looked at, which may run code.
     BufferHolder probe(globalObject);
-    if (!probe.get(input))
+    if (failed(scope, probe.get(input)))
         return { };
     bool isFinal = finalValue && isTrue(globalObject, finalValue);
     RETURN_IF_EXCEPTION(scope, { });
@@ -790,16 +797,16 @@ static JSValue incrementalDecoderDecode(JSGlobalObject* globalObject, JSValue se
     ErrorTreatment errors = treatmentOf(object);
     JSValue pendingBefore = object->get(FieldPending);
     InputBytes bytes(globalObject);
-    if (!bytes.get(globalObject, input, pendingBytesOf(object), errors))
+    if (failed(scope, bytes.get(globalObject, input, pendingBytesOf(object), errors)))
         return { };
     object->set(vm, FieldPending, JSValue());
 
     DecodeRun run;
     run.in = bytes.span;
-    if (!decodeWhatIsComplete(globalObject, codec, stateOf(object), run, errors))
+    if (failed(scope, decodeWhatIsComplete(globalObject, codec, stateOf(object), run, errors)))
         return { };
     if (isFinal && run.position < run.in.size()) {
-        if (!handleDecodeError(globalObject, codec, run, errors, needsMoreInput)) {
+        if (failed(scope, handleDecodeError(globalObject, codec, run, errors, needsMoreInput))) {
             object->set(vm, FieldPending, pendingBefore);
             return { };
         }
@@ -839,6 +846,7 @@ static JSValue incrementalDecoderSetState(JSGlobalObject* globalObject, JSValue 
         return { };
     auto* pending = PyBytes::from(tuple->at(0));
     if (pending->span().size() > maxPendingBytes) {
+        scope.release();
         raiseUnicodeError(globalObject, rt.UnicodeDecodeError(), codecOf(object), pending, 0, pending->span().size(), "pending buffer too large"_s);
         return { };
     }
@@ -923,10 +931,10 @@ static JSString* readFromStream(JSGlobalObject* globalObject, PyRecord* object, 
         ErrorTreatment errors = treatmentOf(object);
         run.in = data->span();
         run.position = 0;
-        if (!decodeWhatIsComplete(globalObject, codec, stateOf(object), run, errors))
+        if (failed(scope, decodeWhatIsComplete(globalObject, codec, stateOf(object), run, errors)))
             return nullptr;
         if ((isAtEnd || size < 0) && run.position < run.in.size()) {
-            if (!handleDecodeError(globalObject, codec, run, errors, needsMoreInput))
+            if (failed(scope, handleDecodeError(globalObject, codec, run, errors, needsMoreInput)))
                 return nullptr;
         }
         if (run.position < run.in.size()) {
@@ -1004,7 +1012,7 @@ static JSValue streamWriterWrite(JSGlobalObject* globalObject, JSValue self, con
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue text = onlyArgument(globalObject, "write"_s, args);
-    if (!text || failed(scope, writeToStream(globalObject, PyRecord::from(self), text)))
+    if (failed(scope, text) || failed(scope, writeToStream(globalObject, PyRecord::from(self), text)))
         return { };
     return jsUndefined();
 }
@@ -1014,6 +1022,7 @@ static JSValue streamWriterWriteLines(JSGlobalObject* globalObject, JSValue self
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue lines = onlyArgument(globalObject, "writelines"_s, args);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!lines)
         return { };
     if (isDict(lines) || !typeOf(globalObject, lines)->lookup(Special::GetItem))
@@ -1046,7 +1055,7 @@ static JSValue streamWriterReset(JSGlobalObject* globalObject, JSValue self, con
     ErrorTreatment errors = treatmentOf(object);
     Output out;
     size_t position, length;
-    bool succeeded = encodeText(globalObject, codecOf(object), stateOf(object), pending, errors, flushes | resets, out, position, length);
+    bool succeeded = !failed(scope, encodeText(globalObject, codecOf(object), stateOf(object), pending, errors, flushes | resets, out, position, length));
     object->set(vm, FieldPending, JSValue());
     if (!succeeded)
         return { };

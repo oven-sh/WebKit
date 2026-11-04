@@ -112,7 +112,7 @@ static JSValue functoolsPartialNew(JSGlobalObject* globalObject, JSValue cls, co
     JSValue placeholder = functoolsPlaceholder(globalObject);
     auto newArguments = args.positional().subspan(1);
     int64_t placeholderCount = functoolsCountPlaceholders(globalObject, newArguments, placeholder);
-    if (placeholderCount < 0)
+    if (failed(scope, placeholderCount >= 0))
         return { };
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         if (args.keywordValue(i) == placeholder)
@@ -279,7 +279,7 @@ static JSValue functoolsPartialSetState(JSGlobalObject* globalObject, JSValue se
 
     PyTuple* arguments = PyTuple::from(state->at(1));
     int64_t placeholderCount = functoolsCountPlaceholders(globalObject, arguments->span(), record->get(FunctoolsPartial::Placeholder));
-    if (placeholderCount < 0)
+    if (failed(scope, placeholderCount >= 0))
         return { };
     if (arguments->type() != rt.tupleType())
         arguments = PyTuple::create(globalObject, arguments->span());
@@ -412,7 +412,7 @@ static JSValue functoolsReduce(JSGlobalObject* globalObject, JSValue function, J
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue iterator = getIter(globalObject, iterable);
-    if (!iterator) {
+    if (failed(scope, iterator)) {
         if (clearPendingExceptionIfMatches(globalObject, rt.TypeError()))
             return raiseTypeError(globalObject, scope, "reduce() arg 2 must support iteration"_s);
         return { };

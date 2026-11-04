@@ -88,12 +88,12 @@ static bool itertoolsSsizeArgument(JSGlobalObject* globalObject, JSValue value, 
 
 static bool itertoolsNonNegativeArgument(JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, int64_t& result)
 {
-    if (!itertoolsSsizeArgument(globalObject, value, result))
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (failed(scope, itertoolsSsizeArgument(globalObject, value, result)))
         return false;
     if (result >= 0)
         return true;
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     raiseValueError(globalObject, scope, name, " cannot be negative"_s);
     return false;
 }
@@ -224,6 +224,7 @@ static JSValue itertoolsPairwiseNext(JSGlobalObject* globalObject, JSValue self)
     JSValue old = record->get(ItertoolsPairwise::Old);
     if (!old) {
         old = iterNext(globalObject, iterator);
+        EXCEPTION_ASSERT(!scope.exception() || !old);
         record->set(vm, ItertoolsPairwise::Old, old);
         if (!old) {
             record->set(vm, ItertoolsPairwise::Iterator, { });
@@ -238,6 +239,7 @@ static JSValue itertoolsPairwiseNext(JSGlobalObject* globalObject, JSValue self)
         }
     }
     JSValue next = iterNext(globalObject, iterator);
+    EXCEPTION_ASSERT(!scope.exception() || !next);
     if (!next) {
         record->set(vm, ItertoolsPairwise::Iterator, { });
         record->set(vm, ItertoolsPairwise::Old, { });
@@ -1566,6 +1568,7 @@ static JSValue itertoolsZipLongestNext(JSGlobalObject* globalObject, JSValue sel
         JSValue item;
         if (JSValue iterator = record->get(ItertoolsZipLongest::FirstIterator + i)) {
             item = iterNext(globalObject, iterator);
+            EXCEPTION_ASSERT(!scope.exception() || !item);
             if (!item) {
                 --record->number;
                 if (scope.exception() || record->number <= 0) {

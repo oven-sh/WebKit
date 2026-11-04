@@ -552,7 +552,7 @@ static JSValue signalSignal(JSGlobalObject* globalObject, JSValue numberValue, J
         return raiseTypeError(globalObject, scope, "signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object"_s);
 
     // What has arrived is for the handler there was.
-    if (!checkSignals(globalObject))
+    if (failed(scope, checkSignals(globalObject)))
         return { };
 
     int error = EINVAL;
@@ -594,11 +594,13 @@ static JSValue signalAlarm(JSGlobalObject* globalObject, JSValue secondsValue)
 
 static JSValue signalPause(JSGlobalObject* globalObject)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     {
         AllowThreads allow(globalObject);
         pause();
     }
-    if (!checkSignals(globalObject))
+    if (failed(scope, checkSignals(globalObject)))
         return { };
     return jsUndefined();
 }
@@ -611,7 +613,7 @@ static JSValue signalRaiseSignal(JSGlobalObject* globalObject, JSValue numberVal
     RETURN_IF_EXCEPTION(scope, { });
     if (::raise(number))
         return raiseOSError(globalObject, scope, errno);
-    if (!checkSignals(globalObject))
+    if (failed(scope, checkSignals(globalObject)))
         return { };
     return jsUndefined();
 }
@@ -773,7 +775,7 @@ static bool signalToSet(JSGlobalObject* globalObject, JSValue iterable, sigset_t
                 return false;
             }
             // range(1, NSIG) has long been written, though the system keeps some of the numbers to itself.
-            return warn(globalObject, runtime(globalObject).RuntimeWarning(), makeString("invalid signal number "_s, *number, ", please use valid_signals()"_s));
+            return !failed(scope, warn(globalObject, runtime(globalObject).RuntimeWarning(), makeString("invalid signal number "_s, *number, ", please use valid_signals()"_s)));
         }
         return true;
     });
@@ -802,7 +804,7 @@ static JSValue signalPthreadSigmask(JSGlobalObject* globalObject, JSValue howVal
     int how = toCInt(globalObject, howValue);
     RETURN_IF_EXCEPTION(scope, { });
     sigset_t mask;
-    if (!signalToSet(globalObject, maskValue, mask))
+    if (failed(scope, signalToSet(globalObject, maskValue, mask)))
         return { };
     JSArray* handlers = signalHandlers(globalObject);
     if (how != SIG_UNBLOCK)
@@ -843,7 +845,7 @@ static JSValue signalPthreadSigmask(JSGlobalObject* globalObject, JSValue howVal
     }
 
     // What was pending and has been unblocked has arrived.
-    if (!checkSignals(globalObject))
+    if (failed(scope, checkSignals(globalObject)))
         return { };
     RELEASE_AND_RETURN(scope, signalFromSet(globalObject, previous));
 }
@@ -873,7 +875,7 @@ static JSValue signalSigWait(JSGlobalObject* globalObject, JSValue setValue)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     sigset_t set;
-    if (!signalToSet(globalObject, setValue, set))
+    if (failed(scope, signalToSet(globalObject, setValue, set)))
         return { };
     int number;
     int error;
@@ -919,7 +921,7 @@ static JSValue signalSigWaitInfo(JSGlobalObject* globalObject, JSValue setValue)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     sigset_t set;
-    if (!signalToSet(globalObject, setValue, set))
+    if (failed(scope, signalToSet(globalObject, setValue, set)))
         return { };
     siginfo_t info;
     auto wait = [&] {
@@ -929,7 +931,7 @@ static JSValue signalSigWaitInfo(JSGlobalObject* globalObject, JSValue setValue)
     while (wait() == -1) {
         if (errno != EINTR)
             return raiseOSError(globalObject, scope, errno);
-        if (!checkSignals(globalObject))
+        if (failed(scope, checkSignals(globalObject)))
             return { };
     }
     RELEASE_AND_RETURN(scope, signalMakeInfo(globalObject, info));
@@ -947,7 +949,7 @@ static JSValue signalSigTimedWait(JSGlobalObject* globalObject, JSValue setValue
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     sigset_t set;
-    if (!signalToSet(globalObject, setValue, set))
+    if (failed(scope, signalToSet(globalObject, setValue, set)))
         return { };
     int64_t timeout;
     if (failed(scope, nanosecondsFromSeconds(globalObject, timeoutValue, TimeRounding::Ceiling, timeout)))
@@ -973,7 +975,7 @@ static JSValue signalSigTimedWait(JSGlobalObject* globalObject, JSValue setValue
             return jsUndefined();
         if (errno != EINTR)
             return raiseOSError(globalObject, scope, errno);
-        if (!checkSignals(globalObject))
+        if (failed(scope, checkSignals(globalObject)))
             return { };
         timeout = deadline - signalMonotonicNanoseconds();
         if (timeout < 0)
@@ -1000,7 +1002,7 @@ static JSValue signalPthreadKill(JSGlobalObject* globalObject, JSValue threadVal
         return raiseOSError(globalObject, scope, ESRCH);
     if (int error = pthread_kill(static_cast<pthread_t>(*thread), number))
         return raiseOSError(globalObject, scope, error);
-    if (!checkSignals(globalObject))
+    if (failed(scope, checkSignals(globalObject)))
         return { };
     return jsUndefined();
 }

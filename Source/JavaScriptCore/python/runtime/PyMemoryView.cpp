@@ -336,9 +336,11 @@ void releaseBuffer(JSGlobalObject* globalObject, Buffer& buffer)
         // It is lent a view of the memory, which is taken back as soon as it returns.
         VM& vm = getVM(globalObject);
         SuspendExceptionScope suspended(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         Buffer copy = buffer;
         copy.release = nullptr;
         PyMemoryView* view = memoryViewFromBuffer(globalObject, PyManagedBuffer::create(globalObject, copy), copy);
+        scope.assertNoException();
         view->isRestricted = true;
         bufferCallPythonRelease(globalObject, object, method, view);
         view->release(globalObject);
@@ -983,7 +985,7 @@ static bool bufferGetFromCoreExporter(JSGlobalObject* globalObject, JSCell* cell
         RELEASE_AND_RETURN(scope, bufferFill(globalObject, buffer, cell, { cell, 0, uncheckedDowncast<PyBytes>(cell)->length(), true }, flags));
     if (cell->type() == PyByteArrayType) {
         auto* array = uncheckedDowncast<PyByteArray>(cell);
-        if (!bufferFill(globalObject, buffer, cell, { cell, 0, array->length(), false, 1, { }, bufferReleaseByteArrayExport }, flags))
+        if (failed(scope, bufferFill(globalObject, buffer, cell, { cell, 0, array->length(), false, 1, { }, bufferReleaseByteArrayExport }, flags)))
             return false;
         array->addExport();
         return true;
@@ -1162,10 +1164,10 @@ bool getBuffer(JSGlobalObject* globalObject, JSValue object, Buffer& buffer, uns
     ASSERT_UNUSED(ok, ok);
     if (!buffer.owner || !bufferIsJSExporter(buffer.owner)) [[likely]]
         return true;
-    ok = bufferHoldMemoryOfJS(globalObject, buffer);
-    if (!ok)
+    if (failed(scope, bufferHoldMemoryOfJS(globalObject, buffer))) {
         releaseBuffer(globalObject, buffer);
-    RETURN_IF_EXCEPTION(scope, false);
+        return false;
+    }
     return true;
 }
 
@@ -1230,11 +1232,11 @@ static JSValue memoryViewTakingOver(JSGlobalObject* globalObject, Buffer& buffer
     }
     PyManagedBuffer* managedBuffer = PyManagedBuffer::create(globalObject, buffer);
     PyMemoryView* view = memoryViewFromBuffer(globalObject, managedBuffer, buffer);
-    if (!view) {
+    if (failed(scope, view)) {
         SuspendExceptionScope suspended(vm);
         managedBuffer->release(globalObject);
+        return { };
     }
-    RETURN_IF_EXCEPTION(scope, { });
     return view;
 }
 
@@ -1378,7 +1380,7 @@ JSValue bufferMethod(JSGlobalObject* globalObject, JSValue self, JSValue flagsVa
     auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned flags;
     Buffer buffer;
-    if (failed(scope, bufferFlagsArgument(globalObject, flagsValue, flags)) || !bufferGetFromCoreExporter(globalObject, self.asCell(), buffer, flags))
+    if (failed(scope, bufferFlagsArgument(globalObject, flagsValue, flags)) || failed(scope, bufferGetFromCoreExporter(globalObject, self.asCell(), buffer, flags)))
         return { };
     RELEASE_AND_RETURN(scope, memoryViewTakingOver(globalObject, buffer));
 }
@@ -1389,7 +1391,7 @@ JSValue exportBuffer(JSGlobalObject* globalObject, JSValue self, JSValue flagsVa
     auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned flags;
     Buffer buffer;
-    if (failed(scope, bufferFlagsArgument(globalObject, flagsValue, flags)) || !bufferFill(globalObject, buffer, self, source, flags))
+    if (failed(scope, bufferFlagsArgument(globalObject, flagsValue, flags)) || failed(scope, bufferFill(globalObject, buffer, self, source, flags)))
         return { };
     RELEASE_AND_RETURN(scope, memoryViewTakingOver(globalObject, buffer));
 }
@@ -2143,7 +2145,7 @@ static JSValue memoryViewAssign(JSGlobalObject* globalObject, JSValue self, JSVa
             return raiseValueError(globalObject, scope, "memoryview assignment: lvalue and rvalue have different structures"_s);
         uint8_t* data = view->data(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!refreshBuffer(globalObject, source.buffer))
+        if (failed(scope, refreshBuffer(globalObject, source.buffer)))
             return { };
         if (!indices.length)
             return jsUndefined();
@@ -2468,7 +2470,9 @@ static std::optional<bool> memoryViewEquals(JSGlobalObject* globalObject, PyMemo
         bool equal = memoryViewCompareItems(vm, v.data, w.data, v.shape, v.strides, w.strides, v.dimensions, [&](const uint8_t* p, const uint8_t* q) {
             JSValue a = bufferUnpackItem(globalObject, v.code, v.subcode, p);
             JSValue b = bufferUnpackItem(globalObject, w.code, w.subcode, q);
-            return valuesAreEqual(a, b);
+            bool equal = valuesAreEqual(a, b);
+            RETURN_IF_EXCEPTION(scope, false);
+            return equal;
         });
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         return equal;
@@ -2492,7 +2496,9 @@ static std::optional<bool> memoryViewEquals(JSGlobalObject* globalObject, PyMemo
         RETURN_IF_EXCEPTION(scope, false);
         JSValue b = memoryViewUnpackWithStruct(globalObject, unpackW, q);
         RETURN_IF_EXCEPTION(scope, false);
-        RELEASE_AND_RETURN(scope, valuesAreEqual(a, b));
+        bool equal = valuesAreEqual(a, b);
+        RETURN_IF_EXCEPTION(scope, false);
+        return equal;
     });
     memoryViewReleaseExport(globalObject, view);
     if (otherView)
@@ -2734,10 +2740,12 @@ static PyMemoryView* pickleBufferView(JSGlobalObject* globalObject, JSValue self
 
 static JSValue memoryViewOfBuffer(JSGlobalObject* globalObject, JSValue object, unsigned flags)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Buffer buffer;
-    if (!bufferGet(globalObject, object, buffer, flags))
+    if (failed(scope, bufferGet(globalObject, object, buffer, flags)))
         return { };
-    return memoryViewTakingOver(globalObject, buffer);
+    RELEASE_AND_RETURN(scope, memoryViewTakingOver(globalObject, buffer));
 }
 
 static JSValue pickleBufferNew(JSGlobalObject* globalObject, JSValue, const CallArgs& args)
@@ -2765,6 +2773,7 @@ static JSValue pickleBufferBuffer(JSGlobalObject* globalObject, JSValue self, JS
     if (failed(scope, bufferFlagsArgument(globalObject, flagsValue, flags)))
         return { };
     PyMemoryView* view = pickleBufferView(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!view)
         return { };
     RELEASE_AND_RETURN(scope, memoryViewOfBuffer(globalObject, view->managedBuffer()->object(), flags));
@@ -2775,6 +2784,7 @@ static JSValue pickleBufferRaw(JSGlobalObject* globalObject, JSValue self)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyMemoryView* view = pickleBufferView(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!view)
         return { };
     if (!bufferIsContiguous(view->length, view->itemSize, view->dimensions(), view->shape(), view->strides(), 'A'))

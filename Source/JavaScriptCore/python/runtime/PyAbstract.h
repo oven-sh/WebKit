@@ -149,8 +149,10 @@ template<typename... Arguments>
 requires(sizeof...(Arguments) > 0 && (std::is_convertible_v<Arguments, JSValue> && ...))
 JSValue call(JSGlobalObject* globalObject, JSValue callable, Arguments... arguments)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue values[] = { JSValue(arguments)... };
-    return call(globalObject, callable, CallArgs(values, sizeof...(Arguments)));
+    RELEASE_AND_RETURN(scope, call(globalObject, callable, CallArgs(values, sizeof...(Arguments))));
 }
 // callable(*args, **kwargs). `kwargs` may be null.
 JSValue callWithTupleAndDict(JSGlobalObject*, JSValue callable, PyTuple* args, PyDict* kwargs);

@@ -754,20 +754,28 @@ static JSValue floatDivModOf(JSGlobalObject* globalObject, double a, double b)
 
 static JSValue floatDivModMethod(JSGlobalObject* globalObject, JSValue self, JSValue other)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     double b;
     JSValue result;
-    if (!convertOperand(globalObject, other, b, result))
+    bool isNumber = convertOperand(globalObject, other, b, result);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isNumber)
         return result;
-    return floatDivModOf(globalObject, floatValue(self), b);
+    RELEASE_AND_RETURN(scope, floatDivModOf(globalObject, floatValue(self), b));
 }
 
 static JSValue floatRDivModMethod(JSGlobalObject* globalObject, JSValue self, JSValue other)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     double a;
     JSValue result;
-    if (!convertOperand(globalObject, other, a, result))
+    bool isNumber = convertOperand(globalObject, other, a, result);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isNumber)
         return result;
-    return floatDivModOf(globalObject, a, floatValue(self));
+    RELEASE_AND_RETURN(scope, floatDivModOf(globalObject, a, floatValue(self)));
 }
 
 static JSValue floatPowMethod(JSGlobalObject* globalObject, JSValue self, JSValue other, JSValue modulus)
@@ -1095,7 +1103,7 @@ static JSValue floatGetFormat(JSGlobalObject* globalObject, JSValue, JSValue kin
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!isStr(kind))
         return raiseTypeError(globalObject, scope, "__getformat__() argument must be str, not "_s, typeNameOfArgument(globalObject, kind));
-    if (hasEmbeddedNull(globalObject, strValue(kind)))
+    if (failed(scope, !hasEmbeddedNull(globalObject, strValue(kind))))
         return { };
     String text = strValue(kind)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });

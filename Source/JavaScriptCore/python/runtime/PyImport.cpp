@@ -1137,7 +1137,9 @@ JSValue lazyImportName(JSGlobalObject* globalObject, JSValue nameValue, JSValue 
     RETURN_IF_EXCEPTION(scope, { });
 
     PyFrame* frame = currentFrame(globalObject);
-    if (!frame || currentLocals(globalObject) != JSValue(frame->function()->globals()))
+    JSValue namesOfFrame = frame ? currentLocals(globalObject) : JSValue();
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!frame || namesOfFrame != JSValue(frame->function()->globals()))
         return raise(globalObject, scope, rt.SyntaxError(), "'lazy import' is only allowed at module level"_s);
 
     if (!fromList)

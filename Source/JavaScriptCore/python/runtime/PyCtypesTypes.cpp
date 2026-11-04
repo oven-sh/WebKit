@@ -155,7 +155,7 @@ static JSValue typeFromBuffer(JSGlobalObject* globalObject, JSValue self, JSValu
         return { };
     PyCTypeInfo* info = infoOf(globalObject, self);
     if (!info)
-        return raiseAbstractClass(globalObject);
+        RELEASE_AND_RETURN(scope, raiseAbstractClass(globalObject));
     JSValue viewValue = makeMemoryView(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
     auto* view = PyMemoryView::from(viewValue);
@@ -197,7 +197,7 @@ static JSValue typeFromBufferCopy(JSGlobalObject* globalObject, JSValue self, JS
         return { };
     PyCTypeInfo* info = infoOf(globalObject, self);
     if (!info)
-        return raiseAbstractClass(globalObject);
+        RELEASE_AND_RETURN(scope, raiseAbstractClass(globalObject));
     Buffer& buffer = holder.buffer;
     if (info->size > buffer.length - offset)
         return raiseValueError(globalObject, scope, "Buffer size too small ("_s, buffer.length, " instead of at least "_s, info->size + offset, " bytes)"_s);
@@ -277,7 +277,7 @@ JSValue dataTypeFromParam(JSGlobalObject* globalObject, JSValue self, JSValue va
     RETURN_IF_EXCEPTION(scope, { });
     if (asParameter) {
         AsParameterScope nesting;
-        if (nesting.isTooDeep(globalObject))
+        if (failed(scope, !nesting.isTooDeep(globalObject)))
             return { };
         RELEASE_AND_RETURN(scope, dataTypeFromParam(globalObject, self, asParameter));
     }
@@ -611,7 +611,7 @@ static JSValue pointerMetaSetType(JSGlobalObject* globalObject, JSValue self, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyCTypeInfo* info = infoOf(globalObject, self);
     if (!info)
-        return raiseAbstractClass(globalObject);
+        RELEASE_AND_RETURN(scope, raiseAbstractClass(globalObject));
     if (failed(scope, setPointerProto(globalObject, PyType::from(self), info, proto)))
         return { };
     setAttr(globalObject, self, stateOf(globalObject).typeName.get(), proto);
@@ -628,7 +628,7 @@ static JSValue pointerMetaFromParam(JSGlobalObject* globalObject, JSValue self, 
         return value;
     PyCTypeInfo* info = infoOf(globalObject, self);
     if (!info)
-        return raiseAbstractClass(globalObject);
+        RELEASE_AND_RETURN(scope, raiseAbstractClass(globalObject));
     if (!info->proto)
         return raiseTypeError(globalObject, scope, "cannot convert argument: POINTER _type_ type is not set"_s);
     // An instance of what it points to is passed by reference.
@@ -830,7 +830,7 @@ static JSValue stringPointerFromParam(JSGlobalObject* globalObject, JSValue self
     RETURN_IF_EXCEPTION(scope, { });
     if (asParameter) {
         AsParameterScope nesting;
-        if (nesting.isTooDeep(globalObject))
+        if (failed(scope, !nesting.isTooDeep(globalObject)))
             return { };
         RELEASE_AND_RETURN(scope, (stringPointerFromParam<pointerCode, characterCode, tag>(globalObject, self, asParameter)));
     }
@@ -869,7 +869,7 @@ static JSValue voidPointerFromParam(JSGlobalObject* globalObject, JSValue self, 
     RETURN_IF_EXCEPTION(scope, { });
     if (asParameter) {
         AsParameterScope nesting;
-        if (nesting.isTooDeep(globalObject))
+        if (failed(scope, !nesting.isTooDeep(globalObject)))
             return { };
         RELEASE_AND_RETURN(scope, voidPointerFromParam(globalObject, self, asParameter));
     }
@@ -985,7 +985,7 @@ static JSValue simpleMetaFromParam(JSGlobalObject* globalObject, JSValue self, J
         return value;
     PyCTypeInfo* info = infoOf(globalObject, self);
     if (!info)
-        return raiseAbstractClass(globalObject);
+        RELEASE_AND_RETURN(scope, raiseAbstractClass(globalObject));
     const CodeDescription* description = describeCode(stringOf(strValue(info->proto.get())));
     ASSERT(description);
     Packed packed;
@@ -1004,7 +1004,7 @@ static JSValue simpleMetaFromParam(JSGlobalObject* globalObject, JSValue self, J
     RETURN_IF_EXCEPTION(scope, { });
     if (asParameter) {
         AsParameterScope nesting;
-        if (nesting.isTooDeep(globalObject))
+        if (failed(scope, !nesting.isTooDeep(globalObject)))
             return { };
         RELEASE_AND_RETURN(scope, simpleMetaFromParam(globalObject, self, asParameter));
     }

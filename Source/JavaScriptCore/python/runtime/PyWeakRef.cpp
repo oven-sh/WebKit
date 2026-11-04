@@ -163,15 +163,19 @@ static JSValue weakRefRepr(JSGlobalObject* globalObject, JSValue self)
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCell* referent = PyWeakRef::from(self)->referent();
+    String address = addressForRepr(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!referent)
-        RELEASE_AND_RETURN(scope, makeStr(vm, makeString("<weakref at "_s, addressForRepr(globalObject, self), "; dead>"_s)));
+        return makeStr(vm, makeString("<weakref at "_s, address, "; dead>"_s));
     // In the type of the referent, not in the referent.
     JSValue name = rt.typeOf(referent)->lookup(rt.names.dName());
     if (name) {
         name = bindDescriptor(globalObject, name, referent, rt.typeOf(referent));
         RETURN_IF_EXCEPTION(scope, { });
     }
-    String prefix = makeString("<weakref at "_s, addressForRepr(globalObject, self), "; to '"_s, typeNameForMessage(globalObject, rt.typeOf(referent)), "' at "_s, addressForRepr(globalObject, referent));
+    String addressOfReferent = addressForRepr(globalObject, referent);
+    RETURN_IF_EXCEPTION(scope, { });
+    String prefix = makeString("<weakref at "_s, address, "; to '"_s, typeNameForMessage(globalObject, rt.typeOf(referent)), "' at "_s, addressOfReferent);
     if (name && isStr(name)) {
         String text = strValue(name)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
@@ -261,6 +265,11 @@ static JSValue unwrapProxy(JSGlobalObject* globalObject, JSValue value)
     variable = unwrapProxy(globalObject, variable); \
     if (!variable) \
         return { }
+// In a function that has a ThrowScope.
+#define UNWRAP_IN_SCOPE(variable) \
+    variable = unwrapProxy(globalObject, variable); \
+    if (failed(scope, variable)) \
+        return { }
 
 template<BinaryOperator op>
 static JSValue proxyBinary(JSGlobalObject* globalObject, JSValue self, JSValue other)
@@ -346,7 +355,7 @@ static JSValue proxyFloat(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    UNWRAP(self);
+    UNWRAP_IN_SCOPE(self);
     double value = toDouble(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, makeFloat(globalObject, value));
@@ -356,7 +365,7 @@ static JSValue proxyBool(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    UNWRAP(self);
+    UNWRAP_IN_SCOPE(self);
     bool value = isTrue(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
     return jsBoolean(value);
@@ -366,7 +375,7 @@ static JSValue proxyLen(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    UNWRAP(self);
+    UNWRAP_IN_SCOPE(self);
     int64_t size = length(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
     return jsNumber(static_cast<double>(size));
@@ -376,7 +385,7 @@ static JSValue proxyContains(JSGlobalObject* globalObject, JSValue self, JSValue
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    UNWRAP(self);
+    UNWRAP_IN_SCOPE(self);
     bool found = contains(globalObject, self, item);
     RETURN_IF_EXCEPTION(scope, { });
     return jsBoolean(found);
@@ -392,7 +401,7 @@ static JSValue proxySetItem(JSGlobalObject* globalObject, JSValue self, JSValue 
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    UNWRAP(self);
+    UNWRAP_IN_SCOPE(self);
     setItem(globalObject, self, key, value);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
@@ -402,7 +411,7 @@ static JSValue proxyDelItem(JSGlobalObject* globalObject, JSValue self, JSValue 
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    UNWRAP(self);
+    UNWRAP_IN_SCOPE(self);
     delItem(globalObject, self, key);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
@@ -419,7 +428,7 @@ static JSValue proxyNext(JSGlobalObject* globalObject, JSValue self)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    UNWRAP(self);
+    UNWRAP_IN_SCOPE(self);
     PyType* type = rt.typeOf(self);
     JSValue method = type->lookup(Special::Next);
     if (!method || isNone(method))
@@ -441,19 +450,27 @@ static JSValue proxyStr(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue proxyRepr(JSGlobalObject* globalObject, JSValue self)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     JSCell* referent = PyWeakRef::from(self)->referent();
+    String address = addressForRepr(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!referent)
-        return makeStr(globalObject, makeString("<weakproxy at "_s, addressForRepr(globalObject, self), "; dead>"_s));
-    return makeStr(globalObject, makeString("<weakproxy at "_s, addressForRepr(globalObject, self), "; to '"_s, typeNameForMessage(globalObject, typeOf(globalObject, referent)), "' at "_s, addressForRepr(globalObject, referent), '>'));
+        return makeStr(globalObject, makeString("<weakproxy at "_s, address, "; dead>"_s));
+    String addressOfReferent = addressForRepr(globalObject, referent);
+    RETURN_IF_EXCEPTION(scope, { });
+    return makeStr(globalObject, makeString("<weakproxy at "_s, address, "; to '"_s, typeNameForMessage(globalObject, typeOf(globalObject, referent)), "' at "_s, addressOfReferent, '>'));
 }
 
 static JSValue proxyGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue nameValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = attributeName(globalObject, nameValue);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!name)
         return { };
-    UNWRAP(self);
-    return getAttr(globalObject, self, name);
+    UNWRAP_IN_SCOPE(self);
+    RELEASE_AND_RETURN(scope, getAttr(globalObject, self, name));
 }
 
 static JSValue proxySetAttr(JSGlobalObject* globalObject, JSValue self, JSValue nameValue, JSValue value)
@@ -462,7 +479,7 @@ static JSValue proxySetAttr(JSGlobalObject* globalObject, JSValue self, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
-    UNWRAP(self);
+    UNWRAP_IN_SCOPE(self);
     setAttr(globalObject, self, name, value);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
@@ -474,7 +491,7 @@ static JSValue proxyDelAttr(JSGlobalObject* globalObject, JSValue self, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* name = attributeName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, { });
-    UNWRAP(self);
+    UNWRAP_IN_SCOPE(self);
     delAttr(globalObject, self, name);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
@@ -493,6 +510,7 @@ static JSValue proxyReversed(JSGlobalObject* globalObject, JSValue self)
 }
 
 #undef UNWRAP
+#undef UNWRAP_IN_SCOPE
 
 #define PROXY_BINARY(name, op) \
     PY_SLOT("__" name "__", proxyBinary<BinaryOperator::op>, "($self, value, /)"), \

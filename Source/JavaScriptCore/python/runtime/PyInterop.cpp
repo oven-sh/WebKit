@@ -74,6 +74,8 @@ enum class Inquiry : uint8_t { Absent, Value, NeedsCode };
 static Inquiry inquireOwnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue& value)
 {
     VM& vm = getVM(globalObject);
+    // Who only looks runs nothing that could raise.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Structure* structure = object->structure();
     unsigned attributes;
     bool isStored = isValidOffset(structure->get(vm, name, attributes));
@@ -89,12 +91,14 @@ static Inquiry inquireOwnProperty(JSGlobalObject* globalObject, JSObject* object
         return Inquiry::NeedsCode;
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
     bool found = lookUp(object, globalObject, name, slot);
+    scope.assertNoException();
     // A namespace does not show what it exports to who is only looking, but for what it does not export it leaves the slot as it was.
     if (!found)
         return (isNamespace ? slot.isUnset() : !slot.isTaintedByOpaqueObject()) ? Inquiry::Absent : Inquiry::NeedsCode;
     if (!slot.isValue() || slot.isTaintedByOpaqueObject())
         return Inquiry::NeedsCode;
     value = slot.getValue(globalObject, name);
+    scope.assertNoException();
     return Inquiry::Value;
 }
 
@@ -217,6 +221,7 @@ JSValue attributeFromPropertyOfJS(JSGlobalObject* globalObject, JSObject* object
         Inquiry result = inquireProperty(globalObject, object, key, value);
         // To bind a function asks it for its prototype.
         if (result == Inquiry::NeedsCode || (result == Inquiry::Value && value.isCallable() && !value.inherits<JSFunction>() && !value.inherits<InternalFunction>())) {
+            scope.release();
             ensureMainThreadForJS(globalObject);
             return { };
         }
@@ -864,7 +869,7 @@ static JSValue jsObjectPop(JSGlobalObject* globalObject, JSValue self, JSValue k
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = jsObjectGetItem(globalObject, self, key);
-    if (!value) {
+    if (failed(scope, value)) {
         if (!defaultValue)
             return { };
         scope.release();

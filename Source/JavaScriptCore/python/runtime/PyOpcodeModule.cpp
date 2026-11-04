@@ -175,16 +175,21 @@ static JSValue opcodeGetSpecializationStats(JSGlobalObject*)
 static JSValue opcodeListOf(JSGlobalObject* globalObject, std::span<const ASCIILiteral> names)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* list = newList(globalObject, names.size());
     if (!list)
         return { };
-    for (ASCIILiteral name : names)
+    for (ASCIILiteral name : names) {
         listAppend(globalObject, list, makeStr(vm, name));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return list;
 }
 
 static JSValue opcodeGetNbOps(JSGlobalObject* globalObject)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     static constexpr std::pair<ASCIILiteral, ASCIILiteral> operations[] = {
         { "NB_ADD"_s, "+"_s }, { "NB_AND"_s, "&"_s }, { "NB_FLOOR_DIVIDE"_s, "//"_s }, { "NB_LSHIFT"_s, "<<"_s }, { "NB_MATRIX_MULTIPLY"_s, "@"_s },
         { "NB_MULTIPLY"_s, "*"_s }, { "NB_REMAINDER"_s, "%"_s }, { "NB_OR"_s, "|"_s }, { "NB_POWER"_s, "**"_s }, { "NB_RSHIFT"_s, ">>"_s },
@@ -193,12 +198,13 @@ static JSValue opcodeGetNbOps(JSGlobalObject* globalObject)
         { "NB_INPLACE_REMAINDER"_s, "%="_s }, { "NB_INPLACE_OR"_s, "|="_s }, { "NB_INPLACE_POWER"_s, "**="_s }, { "NB_INPLACE_RSHIFT"_s, ">>="_s },
         { "NB_INPLACE_SUBTRACT"_s, "-="_s }, { "NB_INPLACE_TRUE_DIVIDE"_s, "/="_s }, { "NB_INPLACE_XOR"_s, "^="_s }, { "NB_SUBSCR"_s, "[]"_s },
     };
-    VM& vm = getVM(globalObject);
     JSArray* list = newList(globalObject, std::size(operations));
     if (!list)
         return { };
-    for (auto& [name, symbol] : operations)
+    for (auto& [name, symbol] : operations) {
         listAppend(globalObject, list, PyTuple::create(globalObject, { makeStr(vm, name), makeStr(vm, symbol) }));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return list;
 }
 

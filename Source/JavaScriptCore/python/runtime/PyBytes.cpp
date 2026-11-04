@@ -1599,7 +1599,7 @@ static JSValue bytesJoinHoldingBuffers(JSGlobalObject* globalObject, JSValue sel
     uint8_t* data = nullptr;
     for (unsigned i = 0; i < count; ++i) {
         total += buffers[i].length + (i ? separator.size() : 0);
-        if (!refreshBuffer(globalObject, buffers[i]) || total > static_cast<uint64_t>(bytesMaxSsize)) {
+        if (failed(scope, refreshBuffer(globalObject, buffers[i])) || total > static_cast<uint64_t>(bytesMaxSsize)) {
             if (!scope.exception())
                 raiseOverflowError(globalObject, scope, "join() result is too long"_s);
             releaseAll();

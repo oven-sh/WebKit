@@ -156,11 +156,13 @@ bool ioToFinalizing(JSGlobalObject* globalObject, JSValue value, bool& result)
 // Hands what propagates to sys.unraisablehook, as something that went wrong while the stream was finalized.
 static void ioReportWhileFinalizing(JSGlobalObject* globalObject, JSValue self)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     JSValue exception = takePendingException(globalObject);
     if (!exception)
         return;
     String text = reprForMessage(globalObject, self);
     ioRestoreException(globalObject, exception);
+    EXCEPTION_ASSERT_UNUSED(scope, scope.exception());
     reportUnraisable(globalObject, makeString("Exception ignored while finalizing file "_s, text), { });
 }
 
@@ -261,7 +263,7 @@ bool ioToOptionalString(JSGlobalObject* globalObject, JSValue value, ASCIILitera
     }
     String string = strValue(value)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!ioCheckUTF8(globalObject, strValue(value)))
+    if (failed(scope, ioCheckUTF8(globalObject, strValue(value))))
         return false;
     if (string.contains(static_cast<char16_t>(0))) {
         raiseValueError(globalObject, scope, "embedded null character"_s);
@@ -304,10 +306,10 @@ bool IOBuffer::acquireWritable(JSGlobalObject* globalObject, ASCIILiteral functi
 {
     ASSERT(!m_globalObject && !m_buffer.owner);
     m_globalObject = globalObject;
-    if (getBuffer(globalObject, value, m_buffer, BufferWritable))
-        return true;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!failed(scope, getBuffer(globalObject, value, m_buffer, BufferWritable)))
+        return true;
     takePendingException(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     raiseTypeError(globalObject, scope, function, "() "_s, argument, " must be read-write bytes-like object, not "_s, isNone(value) ? "None"_str : typeName(globalObject, value));
@@ -502,7 +504,7 @@ static JSValue ioBaseReadline(JSGlobalObject* globalObject, JSValue self, JSValu
         int64_t readAhead = 1;
         if (peek) {
             JSValue ahead = call(globalObject, peek, jsNumber(1));
-            if (!ahead) {
+            if (failed(scope, ahead)) {
                 if (ioTrapEINTR(globalObject))
                     continue;
                 return { };
@@ -519,7 +521,7 @@ static JSValue ioBaseReadline(JSGlobalObject* globalObject, JSValue self, JSValu
             }
         }
         JSValue data = callMethod(globalObject, self, rt.names.read(), makeInt(globalObject, readAhead));
-        if (!data) {
+        if (failed(scope, data)) {
             if (ioTrapEINTR(globalObject))
                 continue;
             return { };
@@ -815,7 +817,7 @@ static JSValue rawIOBaseReadall(JSGlobalObject* globalObject, JSValue self)
     Vector<uint8_t> all;
     while (true) {
         JSValue data = callMethod(globalObject, self, rt.names.read(), jsNumber(static_cast<int32_t>(ioDefaultBufferSize)));
-        if (!data) {
+        if (failed(scope, data)) {
             if (ioTrapEINTR(globalObject))
                 continue;
             return { };
@@ -868,7 +870,7 @@ static JSValue bufferedIOBaseReadIntoGeneric(JSGlobalObject* globalObject, JSVal
         return raiseTypeError(globalObject, scope, "read() should return bytes"_s);
     if (bytes->length() > buffer.size())
         return raiseValueError(globalObject, scope, "read() returned too much data: "_s, buffer.size(), " bytes requested, "_s, bytes->length(), " returned"_s);
-    if (!buffer.refresh())
+    if (failed(scope, buffer.refresh()))
         return { };
     if (bytes->length())
         memcpy(buffer.mutableData(), bytes->data(), bytes->length());
@@ -965,9 +967,9 @@ static JSValue ioOpen(JSGlobalObject* globalObject, JSValue file, JSValue modeVa
     if (bufferingValue && failed(scope, ioToInt(globalObject, bufferingValue, buffering)))
         return { };
     String encoding, errors, newline;
-    if (!ioToOptionalString(globalObject, encodingValue, "open"_s, "encoding"_s, encoding)
-        || !ioToOptionalString(globalObject, errorsValue, "open"_s, "errors"_s, errors)
-        || !ioToOptionalString(globalObject, newlineValue, "open"_s, "newline"_s, newline))
+    if (failed(scope, ioToOptionalString(globalObject, encodingValue, "open"_s, "encoding"_s, encoding))
+        || failed(scope, ioToOptionalString(globalObject, errorsValue, "open"_s, "errors"_s, errors))
+        || failed(scope, ioToOptionalString(globalObject, newlineValue, "open"_s, "newline"_s, newline)))
         return { };
     bool closefd = !closefdValue || isTrue(globalObject, closefdValue);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1021,7 +1023,7 @@ static JSValue ioOpen(JSGlobalObject* globalObject, JSValue file, JSValue modeVa
     if (binary && !newline.isNull())
         return raiseValueError(globalObject, scope, "binary mode doesn't take a newline argument"_s);
     if (binary && buffering == 1) {
-        if (!warn(globalObject, rt.RuntimeWarning(), "line buffering (buffering=1) isn't supported in binary mode, the default buffer size will be used"_s, 1))
+        if (failed(scope, warn(globalObject, rt.RuntimeWarning(), "line buffering (buffering=1) isn't supported in binary mode, the default buffer size will be used"_s, 1)))
             return { };
     }
 
@@ -1091,12 +1093,14 @@ static JSValue ioOpen(JSGlobalObject* globalObject, JSValue file, JSValue modeVa
     };
 
     JSValue stream = finish();
-    if (stream)
+    if (!failed(scope, stream))
         return stream;
     JSValue error = takePendingException(globalObject);
-    callMethod(globalObject, result, rt.names.close());
-    ioChainExceptions(globalObject, error);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue closed = callMethod(globalObject, result, rt.names.close());
+    EXCEPTION_ASSERT_UNUSED(closed, !!scope.exception() == !closed);
     scope.release();
+    ioChainExceptions(globalObject, error);
     return { };
 }
 
@@ -1129,7 +1133,7 @@ static JSValue ioTextEncoding(JSGlobalObject* globalObject, JSValue encoding, JS
         return { };
     if (!isNone(encoding))
         return encoding;
-    if (configuration().warnDefaultEncoding && !warn(globalObject, runtime(globalObject).EncodingWarning(), "'encoding' argument not specified"_s, level))
+    if (configuration().warnDefaultEncoding && failed(scope, warn(globalObject, runtime(globalObject).EncodingWarning(), "'encoding' argument not specified"_s, level)))
         return { };
     RELEASE_AND_RETURN(scope, makeStr(getVM(globalObject), configuration().utf8Mode ? "utf-8"_s : "locale"_s));
 }

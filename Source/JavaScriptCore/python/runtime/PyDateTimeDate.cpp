@@ -129,7 +129,7 @@ static JSValue dateNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
     int year;
     int month;
     int day;
-    if (!bindArguments(globalObject, dateParameters, args, values) || failed(scope, intArgument(globalObject, values[0], year))
+    if (failed(scope, bindArguments(globalObject, dateParameters, args, values)) || failed(scope, intArgument(globalObject, values[0], year))
         || failed(scope, intArgument(globalObject, values[1], month)) || failed(scope, intArgument(globalObject, values[2], day)))
         return { };
     RELEASE_AND_RETURN(scope, newDate(globalObject, state, type, year, month, day));
@@ -385,7 +385,7 @@ static JSValue dateReplace(JSGlobalObject* globalObject, JSValue self, const Cal
     int month = date->month();
     int day = date->day();
     JSValue values[3];
-    if (!bindArguments(globalObject, dateReplaceParameters, args, values) || (values[0] && failed(scope, intArgument(globalObject, values[0], year)))
+    if (failed(scope, bindArguments(globalObject, dateReplaceParameters, args, values)) || (values[0] && failed(scope, intArgument(globalObject, values[0], year)))
         || (values[1] && failed(scope, intArgument(globalObject, values[1], month))) || (values[2] && failed(scope, intArgument(globalObject, values[2], day))))
         return { };
     RELEASE_AND_RETURN(scope, makeDate(globalObject, stateOf(globalObject, date), date->type(), year, month, day));

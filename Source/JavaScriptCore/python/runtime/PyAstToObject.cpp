@@ -150,6 +150,10 @@ private:
     {
         if (m_failed)
             return { };
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
+        auto checked = [&](JSValue result) {
+            return noteFailure(scope) ? JSValue() : result;
+        };
         switch (value.kind) {
         case ConstantValue::Kind::None:
             return jsUndefined();
@@ -162,25 +166,27 @@ private:
         case ConstantValue::Kind::Str:
             return makeStr(m_vm, String(value.string));
         case ConstantValue::Kind::Bytes:
-            return PyBytes::create(m_globalObject, std::span<const uint8_t> { value.bytes.data, value.bytes.size });
+            return checked(PyBytes::create(m_globalObject, std::span<const uint8_t> { value.bytes.data, value.bytes.size }));
         case ConstantValue::Kind::Int:
-            return makeInt(m_globalObject, value.integer);
+            return checked(makeInt(m_globalObject, value.integer));
         case ConstantValue::Kind::BigInt: {
             JSValue result = intFromDigits(m_globalObject, StringView(std::span<const char> { value.digits.data, value.digits.size }), value.radix);
-            if (result && value.isNegative)
+            if (noteFailure(scope))
+                return { };
+            if (value.isNegative)
                 result = intNegate(m_globalObject, result);
-            if (!result)
-                m_failed = true;
-            return result;
+            return checked(result);
         }
         case ConstantValue::Kind::Float:
-            return makeFloat(m_globalObject, value.number);
+            return checked(makeFloat(m_globalObject, value.number));
         case ConstantValue::Kind::Complex:
-            return PyComplex::create(m_globalObject, value.complex.real, value.complex.imaginary);
+            return checked(PyComplex::create(m_globalObject, value.complex.real, value.complex.imaginary));
         case ConstantValue::Kind::Tuple: {
             if (!enter())
                 return { };
             PyTuple* tuple = PyTuple::create(m_globalObject, static_cast<unsigned>(value.items.size));
+            if (noteFailure(scope))
+                return { };
             for (size_t i = 0; i < value.items.size; ++i) {
                 JSValue item = constant(value.items.data[i]);
                 if (m_failed)
@@ -193,11 +199,15 @@ private:
             if (!enter())
                 return { };
             PySet* set = PySet::createFrozen(m_globalObject);
+            if (noteFailure(scope))
+                return { };
             for (size_t i = 0; i < value.items.size; ++i) {
                 JSValue item = constant(value.items.data[i]);
                 if (m_failed)
                     return { };
                 set->add(m_globalObject, item);
+                if (noteFailure(scope))
+                    return { };
             }
             return set;
         }

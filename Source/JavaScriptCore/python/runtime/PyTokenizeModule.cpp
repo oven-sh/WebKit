@@ -112,7 +112,16 @@ private:
         return true;
     }
 
+    // The lexer knows nothing of exceptions. It is told that this failed, and whoever started it finds the exception pending.
     Result readLine(std::span<const uint8_t>& source) final
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
+        Result result = readLineOrRaise(source);
+        EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == (result == Result::Failed));
+        return result;
+    }
+
+    Result readLineOrRaise(std::span<const uint8_t>& source)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         Vector<uint8_t> chunk;

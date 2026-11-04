@@ -266,7 +266,7 @@ static bool stringIOInitialize(JSGlobalObject* globalObject, PyRecord* stream, J
         } else {
             newline = strValue(newlineValue)->value(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
-            if (!ioCheckUTF8(globalObject, strValue(newlineValue)))
+            if (failed(scope, ioCheckUTF8(globalObject, strValue(newlineValue))))
                 return false;
             if (newline.isNull())
                 newline = emptyString();
@@ -430,7 +430,7 @@ static JSValue stringIONext(JSGlobalObject* globalObject, JSValue self)
         line = stringIOReadlineImpl(globalObject, stream, -1);
     else {
         line = callMethod(globalObject, self, rt.names.readline());
-        if (line && !isStr(line))
+        if (!failed(scope, line) && !isStr(line))
             return raise(globalObject, scope, rt.OSError(), makeString("readline() should have returned a str object, not '"_s, typeName(globalObject, line), '\''));
     }
     RETURN_IF_EXCEPTION(scope, { });
@@ -553,7 +553,7 @@ static JSValue stringIOSetState(JSGlobalObject* globalObject, JSValue self, JSVa
     if (!tuple || tuple->length() < 4)
         return raiseTypeError(globalObject, scope, typeName(globalObject, self), ".__setstate__ argument should be 4-tuple, got "_s, typeName(globalObject, stateValue));
 
-    if (!stringIOInitialize(globalObject, stream, tuple->at(0), tuple->at(1)))
+    if (failed(scope, stringIOInitialize(globalObject, stream, tuple->at(0), tuple->at(1))))
         return { };
     // That has translated the newlines of a value in which they had been translated already.
     auto& state = stringIOStateOf(stream);

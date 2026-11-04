@@ -621,7 +621,7 @@ static JSValue moduleDlopen(JSGlobalObject* globalObject, JSValue name, JSValue 
     RETURN_IF_EXCEPTION(scope, { });
     void* handle = dlopen(isNone(name) ? nullptr : path.characters(), mode);
     if (!handle)
-        return raiseLoaderError(globalObject, "dlopen() error"_s);
+        RELEASE_AND_RETURN(scope, raiseLoaderError(globalObject, "dlopen() error"_s));
     return intFromPointer(globalObject, handle);
 }
 
@@ -633,7 +633,7 @@ static JSValue moduleDlclose(JSGlobalObject* globalObject, JSValue handleValue)
     if (failed(scope, addressArgument(globalObject, handleValue, handle)))
         return { };
     if (dlclose(handle))
-        return raiseLoaderError(globalObject, "dlclose() error"_s);
+        RELEASE_AND_RETURN(scope, raiseLoaderError(globalObject, "dlclose() error"_s));
     return none();
 }
 

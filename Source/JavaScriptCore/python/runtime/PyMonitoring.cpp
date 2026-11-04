@@ -2652,6 +2652,7 @@ static JSValue monitoringPlaces(JSGlobalObject* globalObject, JSValue code)
 
 JSValue Monitoring::places(JSGlobalObject* globalObject, PyCode* code)
 {
+    auto scope = DECLARE_THROW_SCOPE(m_runtime.vm());
     JSArray* result = newList(globalObject);
     CodeMonitor* monitor = code->codeInfo().monitor.get();
     if (!monitor)
@@ -2659,10 +2660,13 @@ JSValue Monitoring::places(JSGlobalObject* globalObject, PyCode* code)
     monitor->wake();
     for (auto& point : monitor->m_points) {
         JSArray* lines = newList(globalObject);
-        for (auto& start : monitor->lineStartsOf(point))
+        for (auto& start : monitor->lineStartsOf(point)) {
             listAppend(globalObject, lines, jsNumber(start.line));
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         listAppend(globalObject, result, PyTuple::create(globalObject, { jsNumber(point.offset), makeStr(globalObject, String::fromLatin1(opcodeNames[point.opcode])), jsNumber(point.kinds), lines,
             jsBoolean(point.firstLineIsInDoubt), point.lineStartOfTarget == CodeMonitor::noLineStart ? jsUndefined() : jsNumber(monitor->m_lineStarts[point.lineStartOfTarget].line), jsBoolean(point.isPatched) }));
+        RETURN_IF_EXCEPTION(scope, { });
     }
     return result;
 }

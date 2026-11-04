@@ -54,12 +54,14 @@ static JSValue termiosError(JSGlobalObject* globalObject)
 
 static JSValue termiosGetAttr(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)))
         return { };
     struct termios mode { };
     if (tcgetattr(fd, &mode) < 0)
-        return termiosError(globalObject);
+        RELEASE_AND_RETURN(scope, termiosError(globalObject));
     JSArray* characters = newList(globalObject);
     bool isCanonical = mode.c_lflag & ICANON;
     for (unsigned i = 0; i < NCCS; ++i) {
@@ -68,11 +70,15 @@ static JSValue termiosGetAttr(JSGlobalObject* globalObject, JSValue fdValue)
             listAppend(globalObject, characters, jsNumber(mode.c_cc[i]));
         else
             listAppend(globalObject, characters, PyBytes::create(globalObject, std::span<const uint8_t> { &mode.c_cc[i], 1 }));
+        RETURN_IF_EXCEPTION(scope, { });
     }
     JSArray* result = newList(globalObject);
     for (uint64_t number : { static_cast<uint64_t>(mode.c_iflag), static_cast<uint64_t>(mode.c_oflag), static_cast<uint64_t>(mode.c_cflag), static_cast<uint64_t>(mode.c_lflag),
-             static_cast<uint64_t>(cfgetispeed(&mode)), static_cast<uint64_t>(cfgetospeed(&mode)) })
+             static_cast<uint64_t>(cfgetispeed(&mode)), static_cast<uint64_t>(cfgetospeed(&mode)) }) {
         listAppend(globalObject, result, posixMakeInt(globalObject, number));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    scope.release();
     listAppend(globalObject, result, characters);
     return result;
 }
@@ -83,7 +89,7 @@ static JSValue termiosSetAttr(JSGlobalObject* globalObject, JSValue fdValue, JSV
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int when;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, whenValue, when)))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, whenValue, when)))
         return { };
     JSArray* list = tryAsList(attributes);
     if (!list || listLength(list) != 7)
@@ -132,7 +138,7 @@ static JSValue termiosControl(JSGlobalObject* globalObject, JSValue fdValue, JSV
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
     int argument;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd) || failed(scope, posixToInt(globalObject, argumentValue, argument)))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)) || failed(scope, posixToInt(globalObject, argumentValue, argument)))
         return { };
     if (function(fd, argument) < 0)
         RELEASE_AND_RETURN(scope, termiosError(globalObject));
@@ -141,8 +147,10 @@ static JSValue termiosControl(JSGlobalObject* globalObject, JSValue fdValue, JSV
 
 static JSValue termiosDrain(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)))
         return { };
     int result;
     {
@@ -150,19 +158,21 @@ static JSValue termiosDrain(JSGlobalObject* globalObject, JSValue fdValue)
         result = tcdrain(fd);
     }
     if (result < 0)
-        return termiosError(globalObject);
+        RELEASE_AND_RETURN(scope, termiosError(globalObject));
     return jsUndefined();
 }
 
 static JSValue termiosGetWinSize(JSGlobalObject* globalObject, JSValue fdValue)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)))
         return { };
     struct winsize size;
     if (ioctl(fd, TIOCGWINSZ, &size) < 0)
-        return termiosError(globalObject);
-    return PyTuple::create(globalObject, { jsNumber(size.ws_row), jsNumber(size.ws_col) });
+        RELEASE_AND_RETURN(scope, termiosError(globalObject));
+    RELEASE_AND_RETURN(scope, PyTuple::create(globalObject, { jsNumber(size.ws_row), jsNumber(size.ws_col) }));
 }
 
 static JSValue termiosSetWinSize(JSGlobalObject* globalObject, JSValue fdValue, JSValue sizeValue)
@@ -170,10 +180,10 @@ static JSValue termiosSetWinSize(JSGlobalObject* globalObject, JSValue fdValue, 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     int fd;
-    if (!posixToFileDescriptor(globalObject, fdValue, fd))
+    if (failed(scope, posixToFileDescriptor(globalObject, fdValue, fd)))
         return { };
     int64_t count = posixIsSequence(globalObject, sizeValue) ? length(globalObject, sizeValue) : -1;
-    if (count != 2) {
+    if (scope.exception() || count != 2) {
         takePendingException(globalObject);
         return raiseTypeError(globalObject, scope, "tcsetwinsize, arg 2: must be a two-item sequence"_s);
     }

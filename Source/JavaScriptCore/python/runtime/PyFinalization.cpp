@@ -457,6 +457,7 @@ void makeCallsOwed(VM& vm)
     vm.traps().clearTrap(VMTraps::NeedPythonCalls);
     if (vm.heap.pythonRuntimes().isEmpty())
         return;
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // Another thread has waited long enough for its turn.
     Threads& threads = vm.heap.pythonRuntimes().first()->threads();
     if (threads.dropIsRequested()) [[unlikely]]
@@ -472,10 +473,12 @@ void makeCallsOwed(VM& vm)
         if (!vm.heap.pythonRuntimes().contains(runtime))
             continue;
         // What the handler of a signal raises is thrown. The trap is set again then: the rest is for the next safe point.
-        if (!checkSignals(runtime->globalObject()))
+        if (failed(scope, checkSignals(runtime->globalObject())))
             return;
-        if (runtime->hasPendingCalls())
+        if (runtime->hasPendingCalls()) {
             runtime->runPendingCalls(true);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
     }
 }
 
@@ -512,7 +515,7 @@ void Runtime::runPendingCalls(bool mayPutOff)
     while (true) {
         // A long queue does not hold up Ctrl-C, and a handler is called with the frame of the program, not with that of a finalizer
         // that happens to come next.
-        if (!isFinalized && !checkSignals(globalObject)) [[unlikely]] {
+        if (!isFinalized && failed(scope, checkSignals(globalObject))) [[unlikely]] {
             m_vm.traps().fireTrap(VMTraps::NeedPythonCalls);
             return;
         }

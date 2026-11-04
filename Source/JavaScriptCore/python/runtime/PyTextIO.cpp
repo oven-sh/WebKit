@@ -151,7 +151,7 @@ static JSValue builtinDecoderDecode(JSGlobalObject* globalObject, PyRecord* deco
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     IOBuffer buffer;
-    if (!buffer.acquire(globalObject, input))
+    if (failed(scope, buffer.acquire(globalObject, input)))
         return { };
     String errors = asString(decoder->get(BuiltinDecoderErrorsField))->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -336,7 +336,8 @@ JSValue newlineDecoderDecode(JSGlobalObject* globalObject, PyRecord* self, JSVal
         output = builtinDecoderDecode(globalObject, PyRecord::from(self->get(NewlineDecoderDecoderField)), input, isFinal);
     else if (JSValue decoder = self->get(NewlineDecoderDecoderField); !isNone(decoder))
         output = callMethod(globalObject, decoder, ioName(globalObject, IOName::decode), input, jsBoolean(isFinal));
-    if (!textIOCheckDecoded(globalObject, output))
+    RETURN_IF_EXCEPTION(scope, { });
+    if (failed(scope, textIOCheckDecoded(globalObject, output)))
         return { };
 
     String text = strValue(output)->value(globalObject);
@@ -741,6 +742,7 @@ JSValue TextStream::encode(JSString* text)
 
 JSValue TextStream::decode(JSValue bytes, bool isFinal)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue decoder = get(TextIODecoderField);
     JSValue text;
     if (s.decoderIsNewlineDecoder)
@@ -749,7 +751,8 @@ JSValue TextStream::decode(JSValue bytes, bool isFinal)
         text = builtinDecoderDecode(globalObject, PyRecord::from(decoder), bytes, isFinal);
     else
         text = callMethod(globalObject, decoder, name(IOName::decode), bytes, jsBoolean(isFinal));
-    return textIOCheckDecoded(globalObject, text) ? text : JSValue();
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, textIOCheckDecoded(globalObject, text) ? text : JSValue());
 }
 
 bool TextStream::setNewline(const String& newline)
@@ -954,7 +957,7 @@ static JSValue textIOInit(JSGlobalObject* globalObject, JSValue self, const Call
     if (failed(scope, ioToOptionalString(globalObject, values[1], "TextIOWrapper"_s, "encoding"_s, encoding)))
         return { };
     JSValue errorsValue = values[2] ? values[2] : jsUndefined();
-    if (!ioToOptionalString(globalObject, values[3], "TextIOWrapper"_s, "newline"_s, newline))
+    if (failed(scope, ioToOptionalString(globalObject, values[3], "TextIOWrapper"_s, "newline"_s, newline)))
         return { };
     bool lineBuffering = values[4] && isTrue(globalObject, values[4]);
     RETURN_IF_EXCEPTION(scope, { });
@@ -966,7 +969,7 @@ static JSValue textIOInit(JSGlobalObject* globalObject, JSValue self, const Call
     s.isInitialized = false;
     s.isDetached = false;
 
-    if (encoding.isNull() && configuration().warnDefaultEncoding && !warn(globalObject, rt.EncodingWarning(), "'encoding' argument not specified"_s))
+    if (encoding.isNull() && configuration().warnDefaultEncoding && failed(scope, warn(globalObject, rt.EncodingWarning(), "'encoding' argument not specified"_s)))
         return { };
     JSString* errors = rt.names.strict();
     if (!isNone(errorsValue)) {
@@ -1081,7 +1084,7 @@ bool TextStream::changeEncoding(JSValue encodingValue, JSValue errorsValue, bool
         encodingText = textIOLocaleEncoding();
         encoding = makeStr(vm, encodingText);
     }
-    if (!ioCheckUTF8(globalObject, encoding) || !ioCheckUTF8(globalObject, errors))
+    if (failed(scope, ioCheckUTF8(globalObject, encoding)) || failed(scope, ioCheckUTF8(globalObject, errors)))
         return false;
 
     BuiltinCodec codec = textIOBuiltinCodec(encodingText);
@@ -1118,13 +1121,13 @@ static JSValue textIOReconfigure(JSGlobalObject* globalObject, JSValue self, JSV
         return { };
 
     if (stream.get(TextIODecodedField) && (!isNone(encoding) || !isNone(errors) || newlineValue))
-        return stream.raiseUnsupported("It is not possible to set the encoding or newline of stream after the first read"_s);
+        RELEASE_AND_RETURN(scope, stream.raiseUnsupported("It is not possible to set the encoding or newline of stream after the first read"_s));
 
     String newline;
     if (newlineValue && !isNone(newlineValue)) {
         newline = strValue(newlineValue)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!ioCheckUTF8(globalObject, strValue(newlineValue)))
+        if (failed(scope, ioCheckUTF8(globalObject, strValue(newlineValue))))
             return { };
         if (newline.isNull())
             newline = emptyString();
@@ -1135,12 +1138,12 @@ static JSValue textIOReconfigure(JSGlobalObject* globalObject, JSValue self, JSV
     if (failed(scope, textIOToOptionalBool(globalObject, lineBufferingValue, s.lineBuffering, lineBuffering)) || failed(scope, textIOToOptionalBool(globalObject, writeThroughValue, s.writeThrough, writeThrough)))
         return { };
 
-    if (!ioFlush(globalObject, self))
+    if (failed(scope, ioFlush(globalObject, self)))
         return { };
     s.bytesPerCharacter = 0;
     if (newlineValue)
         stream.setNewline(newline);
-    if (!stream.changeEncoding(encoding, errors, !!newlineValue))
+    if (failed(scope, stream.changeEncoding(encoding, errors, !!newlineValue)))
         return { };
     s.lineBuffering = lineBuffering;
     s.writeThrough = writeThrough;
@@ -1149,12 +1152,13 @@ static JSValue textIOReconfigure(JSGlobalObject* globalObject, JSValue self, JSV
 
 static JSValue textIODetach(JSGlobalObject* globalObject, JSValue self)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     TextStream stream(globalObject, self);
-    if (!ioFlush(globalObject, self))
+    if (failed(scope, ioFlush(globalObject, self)))
         return { };
     // Flushing may have run anything.
     JSValue buffer = stream.safeBuffer();
-    if (!buffer)
+    if (failed(scope, buffer))
         return { };
     stream.clear(TextIOBufferField);
     stream.s.isDetached = true;
@@ -1167,11 +1171,12 @@ static JSValue textIODetach(JSGlobalObject* globalObject, JSValue self)
 
 bool TextStream::writeToBuffer(PyBytes* bytes)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* write = runtime(globalObject).names.write();
     JSValue result;
     do {
         result = callBuffer(write, bytes);
-    } while (!result && ioTrapEINTR(globalObject));
+    } while (failed(scope, result) && ioTrapEINTR(globalObject));
     return !!result;
 }
 
@@ -1218,10 +1223,10 @@ static JSValue textIOWrite(JSGlobalObject* globalObject, JSValue self, JSValue t
         return raiseTypeError(globalObject, scope, "write() argument must be str, not "_s, isNone(textValue) ? "None"_str : typeName(globalObject, textValue));
     TextStream stream(globalObject, self);
     auto& s = stream.s;
-    if (failed(scope, stream.checkAttached()) || !stream.checkClosed())
+    if (failed(scope, stream.checkAttached()) || failed(scope, stream.checkClosed()))
         return { };
     if (!stream.get(TextIOEncoderField))
-        return stream.raiseUnsupported("not writable"_s);
+        RELEASE_AND_RETURN(scope, stream.raiseUnsupported("not writable"_s));
 
     JSString* string = strValue(textValue);
     String text = string->value(globalObject);
@@ -1291,7 +1296,7 @@ static JSValue textIOWrite(JSGlobalObject* globalObject, JSValue self, JSValue t
     }
     if (needsFlush) {
         JSValue buffer = stream.safeBuffer();
-        if (!buffer || failed(scope, ioFlush(globalObject, buffer)))
+        if (failed(scope, buffer) || failed(scope, ioFlush(globalObject, buffer)))
             return { };
     }
 
@@ -1341,6 +1346,7 @@ int TextStream::readChunk(int64_t sizeHint)
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!get(TextIODecoderField)) {
+        scope.release();
         raiseUnsupported("not readable"_s);
         return -1;
     }
@@ -1370,7 +1376,7 @@ int TextStream::readChunk(int64_t sizeHint)
         return -1;
     }
     IOBuffer chunkBytes;
-    if (!chunkBytes.acquire(globalObject, chunk))
+    if (failed(scope, chunkBytes.acquire(globalObject, chunk)))
         return -1;
     size_t byteCount = chunkBytes.size();
     bool isAtEnd = !byteCount;
@@ -1410,7 +1416,7 @@ static JSValue textIORead(JSGlobalObject* globalObject, JSValue self, JSValue si
         return { };
     if (!stream.get(TextIODecoderField))
         RELEASE_AND_RETURN(scope, stream.raiseUnsupported("not readable"_s));
-    if (!stream.writeFlush())
+    if (failed(scope, stream.writeFlush()))
         return { };
 
     int64_t taken;
@@ -1458,7 +1464,7 @@ JSValue TextStream::readline(int64_t limit)
 {
     Runtime& rt = runtime(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (failed(scope, checkClosed()) || !writeFlush())
+    if (failed(scope, checkClosed()) || failed(scope, writeFlush()))
         return { };
 
     uint8_t newline[2] = { };
@@ -1567,7 +1573,7 @@ static JSValue textIOReadline(JSGlobalObject* globalObject, JSValue self, JSValu
     TextStream stream(globalObject, self);
     if (failed(scope, stream.checkAttached()))
         return { };
-    return stream.readline(size);
+    RELEASE_AND_RETURN(scope, stream.readline(size));
 }
 
 static JSValue textIONext(JSGlobalObject* globalObject, JSValue self)
@@ -1585,7 +1591,7 @@ static JSValue textIONext(JSGlobalObject* globalObject, JSValue self)
         line = stream.readline(-1);
     else {
         line = callMethod(globalObject, self, rt.names.readline());
-        if (line && !isStr(line))
+        if (!failed(scope, line) && !isStr(line))
             return raise(globalObject, scope, rt.OSError(), makeString("readline() should have returned a str object, not '"_s, typeName(globalObject, line), '\''));
     }
     RETURN_IF_EXCEPTION(scope, { });
@@ -1660,16 +1666,16 @@ static JSValue textIOSeek(JSGlobalObject* globalObject, JSValue self, JSValue co
         return { };
     TextStream stream(globalObject, self);
     auto& s = stream.s;
-    if (failed(scope, stream.checkAttached()) || !stream.checkClosed())
+    if (failed(scope, stream.checkAttached()) || failed(scope, stream.checkClosed()))
         return { };
     if (!s.seekable)
-        return stream.raiseUnsupported("underlying stream is not seekable"_s);
+        RELEASE_AND_RETURN(scope, stream.raiseUnsupported("underlying stream is not seekable"_s));
 
     if (whence == SEEK_CUR) {
         bool isZero = isEqual(globalObject, cookieValue, jsNumber(0));
         RETURN_IF_EXCEPTION(scope, { });
         if (!isZero)
-            return stream.raiseUnsupported("can't do nonzero cur-relative seeks"_s);
+            RELEASE_AND_RETURN(scope, stream.raiseUnsupported("can't do nonzero cur-relative seeks"_s));
         // Going to where the stream is brings the buffer there too.
         cookieValue = callMethod(globalObject, self, stream.name(IOName::tell));
         RETURN_IF_EXCEPTION(scope, { });
@@ -1677,12 +1683,12 @@ static JSValue textIOSeek(JSGlobalObject* globalObject, JSValue self, JSValue co
         bool isZero = isEqual(globalObject, cookieValue, jsNumber(0));
         RETURN_IF_EXCEPTION(scope, { });
         if (!isZero)
-            return stream.raiseUnsupported("can't do nonzero end-relative seeks"_s);
-        if (!ioFlush(globalObject, self))
+            RELEASE_AND_RETURN(scope, stream.raiseUnsupported("can't do nonzero end-relative seeks"_s));
+        if (failed(scope, ioFlush(globalObject, self)))
             return { };
         stream.setDecoded({ });
         stream.clearSnapshot();
-        if (stream.get(TextIODecoderField) && !stream.resetDecoder())
+        if (stream.get(TextIODecoderField) && failed(scope, stream.resetDecoder()))
             return { };
         JSValue buffer = stream.safeBuffer();
         RETURN_IF_EXCEPTION(scope, { });
@@ -1691,7 +1697,7 @@ static JSValue textIOSeek(JSGlobalObject* globalObject, JSValue self, JSValue co
         if (stream.get(TextIOEncoderField)) {
             bool isAtStart = isEqual(globalObject, position, jsNumber(0));
             RETURN_IF_EXCEPTION(scope, { });
-            if (!stream.resetEncoder(isAtStart))
+            if (failed(scope, stream.resetEncoder(isAtStart)))
                 return { };
         }
         return position;
@@ -1707,18 +1713,18 @@ static JSValue textIOSeek(JSGlobalObject* globalObject, JSValue self, JSValue co
         RETURN_IF_EXCEPTION(scope, { });
         return raiseValueError(globalObject, scope, "negative seek position "_s, string);
     }
-    if (!ioFlush(globalObject, self))
+    if (failed(scope, ioFlush(globalObject, self)))
         return { };
 
     // Back to the safe point the cookie names; from there, what read(charactersToSkip) would do.
     TextIOCookie cookie;
-    if (!textIOParseCookie(globalObject, cookieValue, cookie))
+    if (failed(scope, textIOParseCookie(globalObject, cookieValue, cookie)))
         return { };
     stream.callBuffer(stream.name(IOName::seek), makeInt(globalObject, cookie.startPosition));
     RETURN_IF_EXCEPTION(scope, { });
     stream.setDecoded({ });
     stream.clearSnapshot();
-    if (stream.get(TextIODecoderField) && !stream.setDecoderState(cookie))
+    if (stream.get(TextIODecoderField) && failed(scope, stream.setDecoderState(cookie)))
         return { };
 
     if (cookie.charactersToSkip) {
@@ -1729,7 +1735,7 @@ static JSValue textIOSeek(JSGlobalObject* globalObject, JSValue self, JSValue co
         stream.set(TextIOSnapshotFlagsField, jsNumber(cookie.decoderFlags));
         stream.set(TextIOSnapshotInputField, chunk);
         if (!stream.get(TextIODecoderField))
-            return stream.raiseUnsupported("not readable"_s);
+            RELEASE_AND_RETURN(scope, stream.raiseUnsupported("not readable"_s));
         JSValue decoded = stream.decode(chunk, cookie.needEOF);
         RETURN_IF_EXCEPTION(scope, { });
         JSString* string = strValue(decoded);
@@ -1745,7 +1751,7 @@ static JSValue textIOSeek(JSGlobalObject* globalObject, JSValue self, JSValue co
     }
 
     // For the byte order mark.
-    if (stream.get(TextIOEncoderField) && !stream.resetEncoder(!cookie.startPosition && !cookie.decoderFlags))
+    if (stream.get(TextIOEncoderField) && failed(scope, stream.resetEncoder(!cookie.startPosition && !cookie.decoderFlags)))
         return { };
     return cookieValue;
 }
@@ -1757,13 +1763,13 @@ static JSValue textIOTell(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     TextStream stream(globalObject, self);
     auto& s = stream.s;
-    if (failed(scope, stream.checkAttached()) || !stream.checkClosed())
+    if (failed(scope, stream.checkAttached()) || failed(scope, stream.checkClosed()))
         return { };
     if (!s.seekable)
-        return stream.raiseUnsupported("underlying stream is not seekable"_s);
+        RELEASE_AND_RETURN(scope, stream.raiseUnsupported("underlying stream is not seekable"_s));
     if (!s.telling)
         return raise(globalObject, scope, rt.OSError(), "telling position disabled by next() call"_s);
-    if (!stream.writeFlush() || !ioFlush(globalObject, self))
+    if (failed(scope, stream.writeFlush()) || failed(scope, ioFlush(globalObject, self)))
         return { };
 
     JSValue position = stream.callBuffer(stream.name(IOName::tell));
@@ -1801,7 +1807,7 @@ static JSValue textIOTell(JSGlobalObject* globalObject, JSValue self)
         skipBytes = std::min<int64_t>(skipBytes, input.size());
         int64_t skipBack = 1;
         while (skipBytes > 0) {
-            if (!stream.setDecoderState(cookie) || failed(scope, stream.countDecoded(input.first(skipBytes), false, decodedCount)))
+            if (failed(scope, stream.setDecoderState(cookie)) || failed(scope, stream.countDecoded(input.first(skipBytes), false, decodedCount)))
                 return false;
             if (decodedCount <= charactersToSkip) {
                 if (failed(scope, stream.getDecoderState(decoderBufferLength, decoderFlags)))
@@ -1821,7 +1827,7 @@ static JSValue textIOTell(JSGlobalObject* globalObject, JSValue self)
         }
         if (skipBytes <= 0) {
             skipBytes = 0;
-            if (!stream.setDecoderState(cookie))
+            if (failed(scope, stream.setDecoderState(cookie)))
                 return false;
         }
         cookie.startPosition += skipBytes;
@@ -1866,10 +1872,12 @@ static JSValue textIOTell(JSGlobalObject* globalObject, JSValue self)
         return true;
     };
 
-    bool found = search();
+    bool found = !failed(scope, search());
     ensureStillAliveHere(nextInput);
     JSValue error = found ? JSValue() : takePendingException(globalObject);
-    callMethod(globalObject, stream.get(TextIODecoderField), stream.name(IOName::setstate), savedState);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue restored = callMethod(globalObject, stream.get(TextIODecoderField), stream.name(IOName::setstate), savedState);
+    EXCEPTION_ASSERT_UNUSED(restored, !!scope.exception() == !restored);
     ioChainExceptions(globalObject, error);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, textIOBuildCookie(globalObject, cookie));
@@ -1880,9 +1888,9 @@ static JSValue textIOTruncate(JSGlobalObject* globalObject, JSValue self, JSValu
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     TextStream stream(globalObject, self);
-    if (failed(scope, stream.checkAttached()) || !ioFlush(globalObject, self))
+    if (failed(scope, stream.checkAttached()) || failed(scope, ioFlush(globalObject, self)))
         return { };
-    return stream.callBuffer(stream.name(IOName::truncate), position ? position : jsUndefined());
+    RELEASE_AND_RETURN(scope, stream.callBuffer(stream.name(IOName::truncate), position ? position : jsUndefined()));
 }
 
 // ---- The rest ----

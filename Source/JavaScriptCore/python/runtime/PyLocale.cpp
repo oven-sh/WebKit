@@ -183,11 +183,14 @@ static JSValue localeSetlocale(JSGlobalObject* globalObject, JSValue categoryVal
 // How digits are grouped: the sizes of the groups from the right, up to a 0 (the last size goes on) or CHAR_MAX (no more groups).
 static JSValue localeCopyGrouping(JSGlobalObject* globalObject, const char* grouping)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     JSArray* result = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!grouping[0])
         return result;
     for (size_t i = 0;; ++i) {
         listAppend(globalObject, result, jsNumber(grouping[i]));
+        RETURN_IF_EXCEPTION(scope, { });
         if (!grouping[i] || grouping[i] == CHAR_MAX)
             break;
     }
@@ -197,9 +200,14 @@ static JSValue localeCopyGrouping(JSGlobalObject* globalObject, const char* grou
 static JSValue localeLocaleconv(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyDict* result = PyDict::create(globalObject);
     struct lconv* conventions = localeconv();
-    auto set = [&](ASCIILiteral key, JSValue value) { result->set(vm, internString(vm, key), value); };
+    // After the first text that cannot be decoded nothing is kept.
+    auto set = [&](ASCIILiteral key, JSValue value) {
+        if (!scope.exception()) [[likely]]
+            result->set(vm, internString(vm, key), value);
+    };
     auto isOneASCIICharacter = [](const char* text) { return strlen(text) == 1 && !(text[0] & 0x80); };
     {
         LocaleCtypeSwitch ctype(LC_MONETARY, !isOneASCIICharacter(conventions->int_curr_symbol) || !isOneASCIICharacter(conventions->currency_symbol)
@@ -227,6 +235,7 @@ static JSValue localeLocaleconv(JSGlobalObject* globalObject)
         set("thousands_sep"_s, localeDecode(globalObject, conventions->thousands_sep));
     }
     set("grouping"_s, localeCopyGrouping(globalObject, conventions->grouping));
+    RETURN_IF_EXCEPTION(scope, { });
     return result;
 }
 
@@ -417,7 +426,7 @@ static JSValue localeBindtextdomain(JSGlobalObject* globalObject, JSValue domain
         RELEASE_AND_RETURN(scope, localeRaiseError(globalObject, "domain must be a non-empty string"_s));
     PosixBytes directory;
     bool hasDirectory = !isNone(directoryValue);
-    if (hasDirectory && !posixToFSBytes(globalObject, directoryValue, directory))
+    if (hasDirectory && failed(scope, posixToFSBytes(globalObject, directoryValue, directory)))
         return { };
     const char* result = bindtextdomain(domain.characters(), hasDirectory ? directory.characters() : nullptr);
     if (!result)

@@ -397,6 +397,7 @@ static JSValue sysAddAuditHook(JSGlobalObject* globalObject, JSValue hook)
     }
     if (!isAudited(globalObject))
         rt.setSlot(Runtime::Slot::AuditHooks, newList(globalObject));
+    scope.release();
     listAppend(globalObject, asList(rt.slot(Runtime::Slot::AuditHooks)), hook);
     return jsUndefined();
 }
@@ -511,14 +512,17 @@ static JSValue sysCurrentFrames(JSGlobalObject* globalObject)
     if (failed(scope, audit(globalObject, "sys._current_frames"_s)))
         return { };
     PyDict* frames = PyDict::create(globalObject);
-    if (PyFrame* frame = currentFrame(globalObject))
+    if (PyFrame* frame = currentFrame(globalObject)) {
         frames->set(globalObject, makeInt(globalObject, currentThreadIdent()), frame);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     rt.threads().forEachThread([&](ThreadState& thread) {
-        if (!thread.parked)
+        if (scope.exception() || !thread.parked)
             return;
         if (PyFrame* frame = topFrameOf(globalObject, *thread.parked))
             frames->set(globalObject, makeInt(globalObject, thread.ident), frame);
     });
+    RETURN_IF_EXCEPTION(scope, { });
     UNUSED_PARAM(vm);
     return frames;
 }
@@ -534,11 +538,12 @@ static JSValue sysCurrentExceptions(JSGlobalObject* globalObject)
     PyDict* exceptions = PyDict::create(globalObject);
     JSValue mine = rt.handledException();
     exceptions->set(globalObject, makeInt(globalObject, currentThreadIdent()), mine ? mine : jsUndefined());
+    RETURN_IF_EXCEPTION(scope, { });
     rt.threads().forEachThread([&](ThreadState& thread) {
         if (!thread.saved)
             return;
         for (auto& entry : thread.saved->entries) {
-            if (entry.runtime != &rt)
+            if (scope.exception() || entry.runtime != &rt)
                 continue;
             JSValue exception = entry.state.handledException;
             for (PyGenerator* generator = entry.state.runningGenerator; generator; generator = generator->resumedBy()) {
@@ -550,6 +555,7 @@ static JSValue sysCurrentExceptions(JSGlobalObject* globalObject)
             exceptions->set(globalObject, makeInt(globalObject, thread.ident), exception ? exception : jsUndefined());
         }
     });
+    RETURN_IF_EXCEPTION(scope, { });
     return exceptions;
 }
 static JSValue sysIsGILEnabled(JSGlobalObject*) { return jsBoolean(true); }
@@ -845,8 +851,10 @@ void initializeSysModule(JSGlobalObject* globalObject, PyModule* module)
     JSArray* path = newList(globalObject);
     String library = standardLibraryDirectory();
     if (!directoryOfPathFile.isNull()) {
-        for (auto& part : pathFromFile)
+        for (auto& part : pathFromFile) {
             listAppend(globalObject, path, text(part));
+            RETURN_IF_EXCEPTION(scope, void());
+        }
     } else {
         if (!configuration.pythonPath.isNull()) {
             for (auto& part : configuration.pythonPath.splitAllowingEmptyEntries(':')) {

@@ -205,7 +205,9 @@ static JSValue builtinGlobals(JSGlobalObject* globalObject)
 
 static JSValue builtinLocals(JSGlobalObject* globalObject)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     JSValue locals = currentLocals(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     return locals ? locals : jsUndefined();
 }
 
@@ -234,6 +236,7 @@ static JSValue builtinDir(JSGlobalObject* globalObject, const CallArgs& args)
     JSValue names;
     if (!args.size()) {
         JSValue locals = currentLocals(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
         if (!locals)
             return raiseSystemError(globalObject, scope, "frame does not exist"_s);
         names = callMethod(globalObject, locals, rt.names.keys());
@@ -722,8 +725,11 @@ JSValue readLineWithEditor(JSGlobalObject* globalObject, JSString* prompt)
 // file.fileno() == descriptor, and that is a terminal.
 static bool isTerminal(JSGlobalObject* globalObject, JSValue file, int descriptor)
 {
-    JSValue number = callMethod(globalObject, file, internString(getVM(globalObject), "fileno"_s));
-    if (!number) {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue number = callMethod(globalObject, file, internString(vm, "fileno"_s));
+    if (scope.exception()) {
+        // What ends the program stays: the caller looks.
         takePendingException(globalObject);
         return false;
     }
@@ -753,7 +759,9 @@ static JSValue builtinInput(JSGlobalObject* globalObject, JSValue prompt)
     callMethod(globalObject, errors, rt.names.flush());
     if (scope.exception())
         takePendingException(globalObject);
-    if (rt.modules()->get(internString(vm, "readline"_s)) && isTerminal(globalObject, input, STDIN_FILENO) && isTerminal(globalObject, output, STDOUT_FILENO)) {
+    bool editsLines = rt.modules()->get(internString(vm, "readline"_s)) && isTerminal(globalObject, input, STDIN_FILENO) && isTerminal(globalObject, output, STDOUT_FILENO);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (editsLines) {
         callMethod(globalObject, output, rt.names.flush());
         if (scope.exception())
             takePendingException(globalObject);
@@ -983,8 +991,10 @@ static JSValue evaluate(JSGlobalObject* globalObject, bool isEval, JSValue sourc
         globals = currentGlobals(globalObject);
         if (!globals)
             return raiseTypeError(globalObject, scope, isEval ? "eval must be given globals and locals when called without a frame"_s : "globals and locals cannot be NULL"_s);
-        if (!locals)
+        if (!locals) {
             locals = currentLocals(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
     }
 
     if (failed(scope, ensureBuiltins(globalObject, globals)))

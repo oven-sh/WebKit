@@ -506,7 +506,9 @@ static JSValue getAttrImpl(JSGlobalObject* globalObject, JSValue object, JSStrin
 
 JSValue getAttr(JSGlobalObject* globalObject, JSValue object, JSString* name)
 {
-    return getAttrImpl(globalObject, object, name, false);
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, getAttrImpl(globalObject, object, name, false));
 }
 
 JSValue getAttrIfPresent(JSGlobalObject* globalObject, JSValue object, JSString* name)

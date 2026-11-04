@@ -213,10 +213,12 @@ static JSValue zoneDst(JSGlobalObject* globalObject, JSValue, JSValue argument)
 
 static JSValue zoneFromUtc(JSGlobalObject* globalObject, JSValue self, JSValue argument)
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PyDateTime* dateTime = zoneFromUtcArgument(globalObject, self, argument);
-    if (!dateTime)
+    if (failed(scope, dateTime))
         return { };
-    return addDelta(globalObject, stateOf(globalObject, dateTime), dateTime, PyTimeZone::from(self)->offset(), 1);
+    RELEASE_AND_RETURN(scope, addDelta(globalObject, stateOf(globalObject, dateTime), dateTime, PyTimeZone::from(self)->offset(), 1));
 }
 
 static JSValue zoneGetInitArgs(JSGlobalObject* globalObject, JSValue self)
@@ -265,7 +267,7 @@ static JSValue timeOfDayNew(JSGlobalObject* globalObject, JSValue cls, const Cal
         }
     }
     JSValue values[6];
-    if (!bindArguments(globalObject, timeParameters, args, values))
+    if (failed(scope, bindArguments(globalObject, timeParameters, args, values)))
         return { };
     int numbers[4] = { 0, 0, 0, 0 };
     for (unsigned i = 0; i < 4; ++i) {
@@ -364,7 +366,7 @@ static JSValue timeOfDayIsoFormat(JSGlobalObject* globalObject, JSValue self, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* time = PyTimeOfDay::from(self);
     TimeSpec spec;
-    if (!timeSpecArgument(globalObject, timespec, time->microsecond(), spec))
+    if (failed(scope, timeSpecArgument(globalObject, timespec, time->microsecond(), spec)))
         return { };
     Text text;
     appendIsoTime(text, time->packed(), spec);
@@ -462,7 +464,7 @@ static JSValue timeOfDayReplace(JSGlobalObject* globalObject, JSValue self, cons
     auto* time = PyTimeOfDay::from(self);
     int numbers[] = { time->hour(), time->minute(), time->second(), time->microsecond() };
     JSValue values[6];
-    if (!bindArguments(globalObject, timeReplaceParameters, args, values))
+    if (failed(scope, bindArguments(globalObject, timeReplaceParameters, args, values)))
         return { };
     for (unsigned i = 0; i < 4; ++i) {
         if (values[i] && failed(scope, intArgument(globalObject, values[i], numbers[i])))

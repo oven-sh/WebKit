@@ -110,7 +110,9 @@ static JSValue jsMethodRepr(JSGlobalObject* globalObject, JSValue self)
     RETURN_IF_EXCEPTION(scope, { });
     JSString* text = str(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
-    return makeStr(vm, makeString("<JavaScript method "_s, stringOf(text), " at "_s, addressForRepr(globalObject, self), '>'));
+    String address = addressForRepr(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    return makeStr(vm, makeString("<JavaScript method "_s, stringOf(text), " at "_s, address, '>'));
 }
 
 static JSValue jsMethodWrapped(JSGlobalObject*, JSValue self) { return functionOfJSMethod(self); }

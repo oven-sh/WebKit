@@ -531,7 +531,7 @@ static JSValue subprocessForkExec(JSGlobalObject* globalObject, const CallArgs& 
         request.environment = environment.finish();
     }
     if (!isNone(args[ArgumentCwd])) {
-        if (!posixToFSBytes(globalObject, args[ArgumentCwd], directory))
+        if (failed(scope, posixToFSBytes(globalObject, args[ArgumentCwd], directory)))
             return { };
         request.directory = directory.characters();
     }

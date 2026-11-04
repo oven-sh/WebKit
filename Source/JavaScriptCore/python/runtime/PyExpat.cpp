@@ -1611,8 +1611,21 @@ private:
 
     static bool isTwoBytes(Encoding encoding) { return encoding == Encoding::UTF16LE || encoding == Encoding::UTF16BE; }
 
+    // What the parser calls that can raise: the handlers, and what makes their arguments. The parser itself knows nothing of
+    // exceptions. So each of these looks for itself whether something has been raised (none ends as a ThrowScope does, with a
+    // check left to its caller), stops the parser if so (stopAfterException()) and leaves the exception pending. Whoever
+    // started the parser finds it there.
+
     // An encoding that is not built in: Python's codec for it says what each of the 256 bytes is.
     ExpatError useUnknownEncoding(const String& name)
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(m_globalObject));
+        ExpatError error = readUnknownEncoding(name);
+        EXCEPTION_ASSERT_UNUSED(scope, !scope.exception() || error != ExpatErrorNone);
+        return error;
+    }
+
+    ExpatError readUnknownEncoding(const String& name)
     {
         VM& vm = getVM(m_globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1844,7 +1857,9 @@ private:
         JSValue dict = m_owner->get(ExpatIntern);
         if (!dict)
             return result;
-        return PyDict::from(dict)->setDefault(m_globalObject, result, result);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(m_globalObject));
+        JSValue interned = PyDict::from(dict)->setDefault(m_globalObject, result, result);
+        return scope.exception() ? result : interned;
     }
 
     // After an exception: no handler is called any more, and parsing ends.
@@ -1860,7 +1875,7 @@ private:
     bool callCharacterHandler(Text data)
     {
         VM& vm = getVM(m_globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue handler = m_owner->get(ExpatHandlerCharacterData);
         if (!handler)
             return true;
@@ -1905,7 +1920,7 @@ private:
     JSValue callHandler(unsigned which, std::initializer_list<JSValue> arguments)
     {
         VM& vm = getVM(m_globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         if (m_isStopped || !hasHandler(which))
             return { };
         if (scope.exception()) {
@@ -1933,7 +1948,7 @@ private:
     int64_t callIntHandler(unsigned which, ASCIILiteral name, std::initializer_list<JSValue> arguments)
     {
         VM& vm = getVM(m_globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue result = callHandler(which, arguments);
         if (!result)
             return 0;
@@ -1942,8 +1957,13 @@ private:
             JSValue exception = takePendingException(m_globalObject);
             JSValue ignored = callMethod(m_globalObject, exception, internString(vm, "add_note"_s), makeStr(vm, makeString("invalid '"_s, name, "' event handler return value"_s)));
             UNUSED_PARAM(ignored);
-            takePendingException(m_globalObject);
-            throwPythonException(m_globalObject, scope, exception);
+            if (scope.exception())
+                takePendingException(m_globalObject);
+            {
+                auto throwScope = DECLARE_THROW_SCOPE(vm);
+                throwPythonException(m_globalObject, throwScope, exception);
+            }
+            EXCEPTION_ASSERT(scope.exception());
             m_isStopped = true;
             return 0;
         }
@@ -2642,21 +2662,23 @@ private:
     void reportStartElement(const Tag& tag, const Vector<Attribute, 8>& attributes, unsigned specifiedCount)
     {
         VM& vm = getVM(m_globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         if (m_isStopped || !hasHandler(ExpatHandlerStartElement) || !flushCharacterBuffer(m_globalObject))
             return;
         unsigned count = specifiedAttributes ? specifiedCount : attributes.size();
         JSValue container;
         if (orderedAttributes) {
             JSArray* list = newList(m_globalObject, count * 2);
-            for (unsigned i = 0; i < count; ++i) {
+            for (unsigned i = 0; i < count && !scope.exception(); ++i) {
                 listAppend(m_globalObject, list, intern(attributes[i].name));
+                if (scope.exception())
+                    break;
                 listAppend(m_globalObject, list, toStr(attributes[i].value));
             }
             container = list;
         } else {
             PyDict* dict = PyDict::create(m_globalObject);
-            for (unsigned i = 0; i < count; ++i)
+            for (unsigned i = 0; i < count && !scope.exception(); ++i)
                 dict->set(m_globalObject, intern(attributes[i].name), toStr(attributes[i].value));
             container = dict;
         }
@@ -2664,7 +2686,6 @@ private:
             stopAfterException();
             return;
         }
-        scope.release();
         callHandler(ExpatHandlerStartElement, { intern(tag.name), container });
     }
 
@@ -3639,7 +3660,7 @@ private:
     void reportElementDeclaration()
     {
         VM& vm = getVM(m_globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         if (m_isStopped || !hasHandler(ExpatHandlerElementDecl) || !flushCharacterBuffer(m_globalObject))
             return;
         JSValue model = contentModelToTuple(0);
@@ -3647,7 +3668,6 @@ private:
             stopAfterException();
             return;
         }
-        scope.release();
         callHandler(ExpatHandlerElementDecl, { intern(m_declaredElement), model });
     }
 
@@ -4541,7 +4561,7 @@ static JSValue expatParse(JSGlobalObject* globalObject, JSValue self, const Call
         ok = parser.parse(globalObject, encoded->span(), isFinal);
     } else {
         BufferHolder holder(globalObject);
-        if (!holder.get(data, BufferSimple))
+        if (failed(scope, holder.get(data, BufferSimple)))
             return { };
         // The handlers may do as they like with the object, so this goes by a copy.
         Vector<uint8_t> copy(holder.buffer.span());

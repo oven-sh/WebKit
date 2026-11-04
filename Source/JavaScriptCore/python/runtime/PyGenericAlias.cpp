@@ -787,14 +787,14 @@ public:
         if (isNone(argument))
             argument = rt.noneType();
         else if (PyRecord* record = tryUnion(m_globalObject, argument))
-            return addAll(unionArgs(record));
+            RELEASE_AND_RETURN(scope, addAll(unionArgs(record)));
         if (m_isChecked && !unionAccepts(m_globalObject, argument)) {
             argument = checkType(argument);
             RETURN_IF_EXCEPTION(scope, false);
             if (!argument)
                 return false;
         }
-        return addUnchecked(argument);
+        RELEASE_AND_RETURN(scope, addUnchecked(argument));
     }
 
     bool addAll(PyTuple* tuple)

@@ -157,9 +157,12 @@ JSValue withArgumentsFromJS(JSGlobalObject* globalObject, CallFrame* callFrame, 
     for (unsigned i = 0; i + 1 < count; ++i)
         buffer.append(values[i]);
     PyTuple* names = nullptr;
-    if (!keywordsOfMarker(globalObject, values[count - 1], names, buffer))
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    bool hasKeywords = keywordsOfMarker(globalObject, values[count - 1], names, buffer);
+    EXCEPTION_ASSERT(!!scope.exception() == !hasKeywords);
+    if (!hasKeywords)
         return { };
-    return function(CallArgs(reinterpret_cast<const JSValue*>(buffer.data()), count - 1, names));
+    RELEASE_AND_RETURN(scope, function(CallArgs(reinterpret_cast<const JSValue*>(buffer.data()), count - 1, names)));
 }
 
 // What a host function that is Python to its callers returns: JS code gets valueForJS(result).

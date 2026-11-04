@@ -155,7 +155,7 @@ static int64_t bytesIOWriteBytes(JSGlobalObject* globalObject, PyRecord* stream,
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     IOBuffer buffer;
-    if (!buffer.acquire(globalObject, data))
+    if (failed(scope, buffer.acquire(globalObject, data)))
         return -1;
     if (failed(scope, bytesIOCheckOpen(globalObject, stream)) || failed(scope, bytesIOCheckExports(globalObject, stream)))
         return -1;
@@ -166,10 +166,10 @@ static int64_t bytesIOWriteBytes(JSGlobalObject* globalObject, PyRecord* stream,
     auto& state = bytesIOStateOf(stream);
     size_t end = static_cast<size_t>(state.position) + length;
     if (end > bytesIOCapacity(stream)) {
-        if (!bytesIOResizeBuffer(globalObject, stream, end))
+        if (failed(scope, bytesIOResizeBuffer(globalObject, stream, end)))
             return -1;
     } else if (bytesIOSharedBuffer(stream)) {
-        if (!bytesIOReallocate(globalObject, stream, std::max(end, static_cast<size_t>(state.size))))
+        if (failed(scope, bytesIOReallocate(globalObject, stream, std::max(end, static_cast<size_t>(state.size)))))
             return -1;
     }
 
@@ -216,7 +216,7 @@ static JSValue bytesIOInit(JSGlobalObject* globalObject, JSValue self, const Cal
             stream->set(rt.vm(), BytesIOBufferField, bytes);
             state.size = bytes->length();
         } else {
-            if (bytesIOWriteBytes(globalObject, stream, initial) < 0)
+            if (failed(scope, bytesIOWriteBytes(globalObject, stream, initial) >= 0))
                 return { };
             state.position = 0;
         }
@@ -251,6 +251,7 @@ static JSValue bytesIOGetValue(JSGlobalObject* globalObject, JSValue self)
     if (PyBytes* shared = bytesIOSharedBuffer(stream); shared && shared->length() == static_cast<size_t>(state.size))
         return shared;
     PyBytes* result = ioTryNewBytes(globalObject, state.size);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!result)
         return { };
     memcpy(result->mutableData(), bytesIOData(stream), state.size);
@@ -369,7 +370,7 @@ static JSValue bytesIOTruncate(JSGlobalObject* globalObject, JSValue self, JSVal
     }
     if (size < state.size) {
         int64_t oldSize = std::exchange(state.size, size);
-        if (!bytesIOResizeBuffer(globalObject, stream, size)) {
+        if (failed(scope, bytesIOResizeBuffer(globalObject, stream, size))) {
             state.size = oldSize;
             return { };
         }
@@ -479,7 +480,7 @@ static JSValue bytesIOSetState(JSGlobalObject* globalObject, JSValue self, JSVal
     auto& state = bytesIOStateOf(stream);
     state.size = 0;
     state.position = 0;
-    if (bytesIOWriteBytes(globalObject, stream, tuple->at(0)) < 0)
+    if (failed(scope, bytesIOWriteBytes(globalObject, stream, tuple->at(0)) >= 0))
         return { };
 
     JSValue positionValue = tuple->at(1);
@@ -560,10 +561,10 @@ static JSValue bytesIOExporterBuffer(JSGlobalObject* globalObject, JSValue self,
     if (failed(scope, bytesIOCheckOpen(globalObject, stream)))
         return { };
     auto& state = bytesIOStateOf(stream);
-    if (bytesIOSharedBuffer(stream) && !bytesIOReallocate(globalObject, stream, state.size))
+    if (bytesIOSharedBuffer(stream) && failed(scope, bytesIOReallocate(globalObject, stream, state.size)))
         return { };
     JSValue view = exportBuffer(globalObject, self, flags, { stream->get(BytesIOBufferField).asCell(), 0, static_cast<size_t>(state.size), false, 1, { }, bytesIOExporterRelease });
-    if (view)
+    if (!failed(scope, view))
         ++state.exports;
     return view;
 }
