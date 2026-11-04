@@ -984,7 +984,9 @@ process, filled in by the host before Python starts) and CPython's command line:
 `PYTHON*` variables before there is a VM, `runCommandLine()` runs the script, `-c`, `-m`, a directory or archive with a
 `__main__.py`, standard input or the interactive interpreter, with CPython's `sys.argv`, `sys.path[0]`, messages and exit statuses.
 Arguments, names of files and the values of variables are bytes to the system and `str` to Python by way of `surrogateescape`
-(`decodeFilesystem`), so none is lost for not being UTF-8.
+(`decodeFilesystem`), so none is lost for not being UTF-8. When a script or standard input ends, with an exception or without, the standard
+streams are flushed before the traceback is written; after `-c`, `-m` and a directory the traceback comes first, and what is left in
+`sys.stdout` when the interpreter ends. It shows where both go to one file.
 
 `sys.path` is what was put first for the program, `PYTHONPATH` (made absolute) and the directory of the standard library: that of
 `PYTHONHOME`, else what the host says. A file `python3._pth` beside the executable replaces all of it and isolates the interpreter,

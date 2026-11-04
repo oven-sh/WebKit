@@ -108,6 +108,9 @@ JS_EXPORT_PRIVATE bool isStandardLibraryModuleName(StringView);
 // Returns the exit status it calls for: that of a SystemExit, which is not reported, or 1; or, negative, the number of the
 // signal the process is to die of: a KeyboardInterrupt nothing caught ends it as the SIGINT would have that it stands for.
 JS_EXPORT_PRIVATE int handleUncaughtException(JSGlobalObject*);
+// The same when it is a file that has ended so: what it has written comes first. After -c and -m, as in CPython, the traceback does, and
+// what is still in the buffer of sys.stdout follows when the interpreter ends.
+int handleUncaughtExceptionOfFile(JSGlobalObject*);
 // The same for an exception of Python's that is not propagating any more: one that a host has found nobody to catch, in a callback
 // that its event loop called or in a promise. False: the interpreter has ended, and there is no hook to tell.
 JS_EXPORT_PRIVATE bool reportUncaughtException(JSGlobalObject*, JSValue exception);

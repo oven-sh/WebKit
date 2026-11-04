@@ -433,10 +433,22 @@ int handleUncaughtException(JSGlobalObject* globalObject)
     return handleUncaughtException(globalObject, exception);
 }
 
+int handleUncaughtExceptionOfFile(JSGlobalObject* globalObject)
+{
+    Runtime& rt = runtime(globalObject);
+    JSValue exception = takePendingException(globalObject);
+    flushStandardStream(globalObject, rt.names.stderr_());
+    flushStandardStream(globalObject, rt.names.stdout_());
+    if (!exception)
+        return 0;
+    return handleUncaughtException(globalObject, exception);
+}
+
 bool reportUncaughtException(JSGlobalObject* globalObject, JSValue exception)
 {
     if (!PyException::is(exception) || runtime(globalObject).isFinalized)
         return false;
+    flushStandardStream(globalObject, runtime(globalObject).names.stdout_());
     handleUncaughtException(globalObject, exception);
     return true;
 }
@@ -449,7 +461,6 @@ static int handleUncaughtException(JSGlobalObject* globalObject, JSValue excepti
     if (auto status = exitStatusOf(globalObject, exception))
         return *status;
 
-    flushStandardStream(globalObject, rt.names.stdout_());
     JSValue traceback = PyException::from(exception)->traceback();
     rt.sysDict()->set(vm, internString(vm, "last_exc"_s), exception);
     rt.sysDict()->set(vm, internString(vm, "last_type"_s), rt.typeOf(exception));
@@ -883,7 +894,7 @@ std::optional<int> mainModuleEnded(JSGlobalObject* globalObject, JSValue excepti
             auto scope = DECLARE_THROW_SCOPE(rt.vm());
             throwPythonException(globalObject, scope, exceptionFromThrownValue(globalObject, exception));
         }
-        status = handleUncaughtException(globalObject);
+        status = handleUncaughtExceptionOfFile(globalObject);
     }
     flushStandardStream(globalObject, rt.names.stderr_());
     flushStandardStream(globalObject, rt.names.stdout_());
@@ -924,7 +935,7 @@ std::optional<int> runMainModule(JSGlobalObject* globalObject, const String& giv
     if (unfinished && *unfinished)
         return std::nullopt;
     if (scope.exception())
-        status = handleUncaughtException(globalObject);
+        status = handleUncaughtExceptionOfFile(globalObject);
     flushStandardStream(globalObject, rt.names.stderr_());
     flushStandardStream(globalObject, rt.names.stdout_());
     return status;

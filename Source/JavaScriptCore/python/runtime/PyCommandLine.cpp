@@ -6,6 +6,7 @@
 #include "config.h"
 #include "PyCommandLine.h"
 
+#include "FrameTracers.h"
 #include "JSCInlines.h"
 #include "PyAbstract.h"
 #include "PyCodeCache.h"
@@ -1415,7 +1416,7 @@ static std::optional<int> runStartupFile(JSGlobalObject* globalObject)
     if (!scope.exception())
         return std::nullopt;
     bool exits = pendingExceptionMatches(globalObject, runtime(globalObject).SystemExit());
-    int status = handleUncaughtException(globalObject);
+    int status = handleUncaughtExceptionOfFile(globalObject);
     return exits ? std::optional<int>(status) : std::nullopt;
 }
 
@@ -1572,6 +1573,7 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
     }
 
     makeCallsOwed(vm);
+    bool runsFile = false;
     if (!scope.exception()) {
         Runtime::EventLoopPositionScope position(rt, false);
         if (!configuration.runCommand.isNull())
@@ -1580,9 +1582,10 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
             runModule(globalObject, configuration.runModule, true);
         else if (isImportPath)
             runModule(globalObject, "__main__"_s, false);
-        else if (!filename.isNull())
+        else if (!filename.isNull()) {
+            runsFile = true;
             status = runFile(globalObject, filename, unfinished);
-        else if (stdinIsInteractive()) {
+        } else if (stdinIsInteractive()) {
             // SystemExit is to exit.
             setInspect(globalObject, 0);
             status = runStartupFile(globalObject);
@@ -1591,6 +1594,7 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
             if (!status)
                 status = runInteractively(globalObject, false);
         } else {
+            runsFile = true;
             auto source = readAllOfStdin();
             ensureMainModule(globalObject)->dict()->set(vm, rt.names.dFile(), makeStr(vm, "<stdin>"_s));
             runSourceInMain(globalObject, source.span(), "<stdin>"_s, CompileAllowTopLevelAwait, unfinished);
@@ -1602,9 +1606,13 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
     // Flushing looks for signals, and drops what is raised.
     if (!scope.exception())
         checkSignals(globalObject);
+    // As in CPython, what a file has written comes before the traceback. After -c and -m it stays in the buffers until the interpreter ends.
+    if (runsFile) {
+        SuspendExceptionScope suspended(vm);
+        flushStandardStreams(globalObject);
+    }
     if (scope.exception())
         status = handleUncaughtException(globalObject);
-    flushStandardStreams(globalObject);
     inspectIfAsked(globalObject, status);
     return status;
 }
