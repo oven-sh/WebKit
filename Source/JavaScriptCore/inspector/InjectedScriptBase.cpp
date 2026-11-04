@@ -67,6 +67,13 @@ static RefPtr<JSON::Value> jsToInspectorValue(JSC::JSGlobalObject* globalObject,
     if (value.isString())
         return JSON::Value::create(asString(value)->value(globalObject).data);
 
+    // BigInt and Symbol have no JSON representation. They can reach this point
+    // when Runtime.evaluate / callFunctionOn is invoked with returnByValue on a
+    // result that holds one (e.g. `[1n]` or `Symbol()`), so report the value as
+    // not representable rather than hitting ASSERT_NOT_REACHED below.
+    if (value.isBigInt() || value.isSymbol())
+        return nullptr;
+
     if (value.isObject()) {
         JSC::VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -179,7 +186,7 @@ Ref<JSON::Value> InjectedScriptBase::makeCall(ScriptFunctionCall& function)
 
     auto resultJSONValue = toInspectorValue(globalObject, value);
     if (!resultJSONValue)
-        return JSON::Value::create(makeString("Object has too long reference chain (must not be longer than "_s, JSON::Value::maxDepth, ')'));
+        return JSON::Value::create(String("Object couldn't be returned by value"_s));
 
     return resultJSONValue.releaseNonNull();
 }
@@ -209,7 +216,7 @@ void InjectedScriptBase::makeAsyncCall(ScriptFunctionCall& function, AsyncCallCa
             else if (auto resultJSONValue = toInspectorValue(globalObject, callFrame->argument(0)))
                 checkAsyncCallResult(resultJSONValue, callback);
             else
-                checkAsyncCallResult(JSON::Value::create(makeString("Object has too long reference chain (must not be longer than "_s, JSON::Value::maxDepth, ')')), callback);
+                checkAsyncCallResult(JSON::Value::create(String("Object couldn't be returned by value"_s)), callback);
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
     }
