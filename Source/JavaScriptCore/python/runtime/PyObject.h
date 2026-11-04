@@ -211,6 +211,13 @@ private:
 inline bool isPyObject(JSCell* cell) { return isPyObjectType(cell->type()); }
 inline bool isPyObject(JSValue value) { return value && value.isCell() && isPyObject(value.asCell()); }
 
+// An operator of JS with an operand of Python's is answered in the realm of that operand: the code may be of a realm that has no Python.
+inline JSGlobalObject* realmOfOperands(JSValue a, JSValue b = { })
+{
+    ASSERT(isPyObject(a) || isPyObject(b));
+    return asObject(isPyObject(a) ? a : b)->realm();
+}
+
 inline bool isNone(JSValue value) { return value.isUndefinedOrNull(); }
 inline JSValue none() { return jsUndefined(); }
 

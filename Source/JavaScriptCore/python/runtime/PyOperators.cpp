@@ -158,8 +158,9 @@ static JSValue binaryOperationSlow(JSGlobalObject* globalObject, unsigned op, JS
 
 // ---- The operators of JS (PyHooks.h) ----
 
-JSValue binaryOperatorForJS(JSGlobalObject* globalObject, JSOperator op, JSValue a, JSValue b)
+JSValue binaryOperatorForJS(JSGlobalObject*, JSOperator op, JSValue a, JSValue b)
 {
+    JSGlobalObject* globalObject = realmOfOperands(a, b);
     static constexpr BinaryOperator operators[] = {
         BinaryOperator::Add, BinaryOperator::Sub, BinaryOperator::Mult, BinaryOperator::Div, BinaryOperator::Mod, BinaryOperator::Pow,
         BinaryOperator::LShift, BinaryOperator::RShift, BinaryOperator::BitOr, BinaryOperator::BitXor, BinaryOperator::BitAnd,
@@ -179,8 +180,9 @@ JSValue binaryOperatorForJS(JSGlobalObject* globalObject, JSOperator op, JSValue
     RELEASE_AND_RETURN(scope, raiseUnsupportedOperands(globalObject, binarySymbols[index], a, b));
 }
 
-JSValue unaryOperatorForJS(JSGlobalObject* globalObject, JSOperator op, JSValue operand)
+JSValue unaryOperatorForJS(JSGlobalObject*, JSOperator op, JSValue operand)
 {
+    JSGlobalObject* globalObject = realmOfOperands(operand);
     ASSERT(op == JSOperator::Negate || op == JSOperator::BitNot);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

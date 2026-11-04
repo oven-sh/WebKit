@@ -1444,8 +1444,9 @@ JSValue richCompare(JSGlobalObject* globalObject, JSValue a, JSValue b, CompareO
     }
 }
 
-std::optional<bool> compareForJS(JSGlobalObject* globalObject, JSOperator op, JSValue a, JSValue b)
+std::optional<bool> compareForJS(JSGlobalObject*, JSOperator op, JSValue a, JSValue b)
 {
+    JSGlobalObject* globalObject = realmOfOperands(a, b);
     static constexpr CompareOperator operators[] = { CompareOperator::Lt, CompareOperator::LtE, CompareOperator::Gt, CompareOperator::GtE };
     ASSERT(op >= JSOperator::Less);
     VM& vm = getVM(globalObject);
@@ -1455,8 +1456,9 @@ std::optional<bool> compareForJS(JSGlobalObject* globalObject, JSOperator op, JS
     RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
 }
 
-std::optional<bool> equalForJS(JSGlobalObject* globalObject, JSValue a, JSValue b)
+std::optional<bool> equalForJS(JSGlobalObject*, JSValue a, JSValue b)
 {
+    JSGlobalObject* globalObject = realmOfOperands(a, b);
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue result = richCompareOrNotImplemented(globalObject, a, b, CompareOperator::Eq);
