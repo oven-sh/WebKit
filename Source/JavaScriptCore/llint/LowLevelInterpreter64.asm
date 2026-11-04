@@ -4048,6 +4048,9 @@ _llint_python_wipe_stack_below:
 # one, for the common case. The variables are not given a value: what follows takes them all from the generator.
     global _llint_python_generator_resume
 _llint_python_generator_resume:
+    if RETURN_ADDRESS_SIGNING
+        tagReturnAddress sp
+    end
     prologue(_llint_entry_osr_function_for_call, _llint_trace_prologue_function_for_call)
     if X86_64 or ARM64
         loadi CodeBlock::m_numberOfArgumentsToSkipAndCouldBeTainted[t1], t0
