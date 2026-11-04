@@ -486,7 +486,11 @@ without source. What the runtime supplies is `marshal` for code objects (`runtim
 
 - The code is written by JSC's own serializer of bytecode (`runtime/CachedTypes.cpp`, `encodePythonCode`), which has learnt the
   constants Python code has and what a code object knows besides its bytecode (`CodeInfo`). It is read in place: loading a
-  module makes the code object of the module, and a function in it is decoded when it is first called.
+  module makes the code object of the module, and a function in it is decoded when it is first called. A `def` makes the function
+  object and nothing else: the `CodeInfo` stays in the file until the function is called or asked about itself, and the strs of
+  `__name__`, `__qualname__` and `__doc__` are made when one of them is asked for (`PyFunction::codeInfo()`, `takeNamesFromCode()`).
+  Only the thread that runs the program can take a `CodeInfo` out of the file, so it is taken out when a `CodeBlock` is made
+  (`didCreateCodeBlock()`): the collector and the unwinder only ask about code that they find in frames.
 - The text of the module goes with the code, so tracebacks, `co_positions()` and comparing code objects are the same whether
   the code was compiled or loaded, and nothing reads the source.
 - Bytecode means something only to the build that wrote it. What marshal writes starts with a number made from the build ID of

@@ -170,6 +170,10 @@ struct TemporaryUse {
 // what `await` was given, which the instruction replaces by what to iterate over, and then sends None to.
 constexpr int firstSendOfAwait = 8;
 
+// RuntimeFunction::MakeFunction. Its first argument is the index of the code, shifted, and which of these follow it, in this order.
+enum MakeFunctionPart : unsigned { HasDefaults = 1, HasKwDefaults = 2, HasAnnotate = 4 };
+constexpr unsigned makeFunctionIndexShift = 3;
+
 // op_py_runtime. name, number of arguments (-1: any). "empty" is the empty JSValue, for what is not there.
 #define FOR_EACH_PY_RUNTIME_FUNCTION(v) \
     /* Building */ \
@@ -200,7 +204,7 @@ constexpr int firstSendOfAwait = 8;
     v(LoadClosure, 1) /* index */ \
     v(LoadBuildClass, 0) \
     /* Functions */ \
-    v(MakeFunction, -1) /* index, defaults or empty, kwdefaults or empty, annotate or empty, the cells of the closure... */ \
+    v(MakeFunction, -1) /* index and MakeFunctionParts, those parts, the cells of the closure... */ \
     v(SetFunctionTypeParams, 2) /* function, type params: the function */ \
     v(MakeGenerator, -1) /* how many slots it needs; for a generator expression: the iterator of its first iterable */ \
     v(CallArguments, 3) /* function, args, kwargs or empty: an array of the arguments, and sets aside the names of the keywords */ \

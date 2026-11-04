@@ -105,7 +105,15 @@ public:
     }
     static PyFunction* tryFrom(JSValue value) { return is(value) ? uncheckedDowncast<PyFunction>(value.asCell()) : nullptr; }
 
-    CodeInfo& codeInfo() const { return *m_info; }
+    // Most functions are defined and never called, so a `def` leaves this where the code came from: in the bytecode cache, as a rule.
+    // Only the mutator can take it out of there. Code that has a CodeBlock has it (didCreateCodeBlock()), so whoever has found the function
+    // in a frame may ask.
+    CodeInfo& codeInfo() const
+    {
+        if (!m_info) [[unlikely]]
+            m_info = functionExecutable()->unlinkedExecutable()->pythonCodeInfo();
+        return *m_info;
+    }
     FunctionExecutable* functionExecutable() const { return static_cast<FunctionExecutable*>(executable()); }
 
     PyDict* globals() const { return m_globals.get(); }
@@ -122,9 +130,10 @@ public:
     PyTuple* defaults() const { return m_defaults.get(); }
     PyDict* kwDefaults() const { return m_kwDefaults.get(); }
     PyDict* dict() const { return m_dict.get(); }
-    JSValue name() const { return m_name.get(); }
-    JSValue qualname() const { return m_qualname.get(); }
-    JSValue doc() const { return m_doc.get(); }
+    // These three are those of the code at the `def`, until they are set. The strs are made when one of them is first asked for.
+    JSValue name() { return m_name ? m_name.get() : (takeNamesFromCode(), m_name.get()); }
+    JSValue qualname() { return m_qualname ? m_qualname.get() : (takeNamesFromCode(), m_qualname.get()); }
+    JSValue doc() { return m_doc ? m_doc.get() : (takeNamesFromCode(), m_doc.get()); }
     JSValue module() const { return m_module.get(); }
     JSValue annotations() const { return m_annotations.get(); } // Empty: not computed.
     JSValue annotate() const { return m_annotate.get(); } // Empty: none.
@@ -159,8 +168,9 @@ public:
 
 private:
     PyFunction(VM&, FunctionExecutable*, JSGlobalObject*, Structure*);
+    void takeNamesFromCode();
 
-    CodeInfo* m_info;
+    mutable CodeInfo* m_info { nullptr };
     WriteBarrier<PyDict> m_globals;
     WriteBarrier<PyDict> m_builtins;
     WriteBarrier<Unknown> m_builtinsObject; // Empty: m_builtins.
@@ -168,7 +178,7 @@ private:
     WriteBarrier<PyTuple> m_defaults;
     WriteBarrier<PyDict> m_kwDefaults;
     WriteBarrier<PyDict> m_dict;
-    WriteBarrier<Unknown> m_name;
+    WriteBarrier<Unknown> m_name; // Empty, like the next two: not asked for yet.
     WriteBarrier<Unknown> m_qualname;
     WriteBarrier<Unknown> m_doc;
     WriteBarrier<Unknown> m_module;

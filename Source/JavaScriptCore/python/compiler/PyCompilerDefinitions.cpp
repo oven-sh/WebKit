@@ -30,13 +30,16 @@ RegisterID* Unit::emitMakeFunction(RegisterID* dst, UnlinkedFunctionExecutable* 
 RegisterID* Unit::emitMakeFunction(RegisterID* dst, unsigned index, Scope* scope, const FunctionParts& parts)
 {
     Vector<Name> freeVariables = freeVariablesOf(scope);
-    Arguments arguments(*this, 4 + freeVariables.size());
-    load(arguments[0], jsNumber(index));
-    g.move(arguments[1], parts.defaults ? parts.defaults.get() : emptyValue());
-    g.move(arguments[2], parts.kwDefaults ? parts.kwDefaults.get() : emptyValue());
-    g.move(arguments[3], parts.annotate ? parts.annotate.get() : emptyValue());
-    for (unsigned i = 0; i < freeVariables.size(); ++i)
-        g.move(arguments[4 + i], cellFor(freeVariables[i]));
+    unsigned present = (parts.defaults ? HasDefaults : 0) | (parts.kwDefaults ? HasKwDefaults : 0) | (parts.annotate ? HasAnnotate : 0);
+    Arguments arguments(*this, 1 + std::popcount(present) + freeVariables.size());
+    unsigned next = 0;
+    load(arguments[next++], jsNumber(index << makeFunctionIndexShift | present));
+    for (RegisterID* part : { parts.defaults.get(), parts.kwDefaults.get(), parts.annotate.get() }) {
+        if (part)
+            g.move(arguments[next++], part);
+    }
+    for (auto& name : freeVariables)
+        g.move(arguments[next++], cellFor(name));
     return callRuntime(dst, RuntimeFunction::MakeFunction, arguments);
 }
 

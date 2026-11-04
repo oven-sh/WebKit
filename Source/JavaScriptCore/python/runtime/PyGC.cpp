@@ -803,6 +803,9 @@ static JSValue gcGetReferents(JSGlobalObject* globalObject, const CallArgs& args
         return { };
     MarkedArgumentBuffer result;
     for (JSValue object : args.positional()) {
+        // Its __name__, __qualname__ and __doc__ are among them.
+        if (auto* function = PyFunction::tryFrom(object))
+            function->name();
         if (object.isCell() && object.asCell()->isObject() && isObjectOfPython(object.asCell(), globalObject) && !isOfUntrackedType(typeOf(globalObject, object)))
             appendReferents(globalObject, object.asCell(), result);
     }

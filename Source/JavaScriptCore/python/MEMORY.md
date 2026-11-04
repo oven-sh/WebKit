@@ -166,8 +166,7 @@ working whatever becomes of the file.
      functions, a class is one and a call. JS's own records in the same file (`CachedFunctionExecutable`, `CachedFunctionExecutableRareData`) have a word of presence bits,
      then only what is there, with numbers as varints. Written the same way: about 220 bytes, 10% of the files.
 3. **Code in memory**: what a function costs that has been defined (`PyFunction` 224 + `FunctionExecutable` 128 + `UnlinkedFunctionExecutable` 96 bytes of cells, `CodeInfo` and its
-   vectors from malloc), and once called. `CodeInfo` could be decoded when somebody asks for `__code__` or the arguments do not fit; the fields
-   of `PyFunction` that are rarely used could move out of it.
+   vectors from malloc once it is called or asked about itself), and once called. The fields of `PyFunction` that are rarely used could move out of it.
 4. **What `gc.collect()` needs**: 64 bytes for each dead cell. Counting the dead first (the mark bits say how many) and reserving the vectors would
    leave no old buffers behind.
 5. **Ropes**: `a + b` of short strs should be flat.

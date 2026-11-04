@@ -2203,6 +2203,9 @@ JSValue exceptionStaysOrLeaves(JSGlobalObject* globalObject, JSValue exception, 
 
 void didCreateCodeBlock(CodeBlock* codeBlock)
 {
+    // The collector and the unwinder ask for the CodeInfo of code they find in frames, and cannot take it out of the bytecode cache.
+    if (auto* executable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable()))
+        executable->unlinkedExecutable()->pythonCodeInfo();
     if (Runtime* rt = codeBlock->globalObject()->pythonRuntime())
         rt->monitoring().didCreateCodeBlock(codeBlock);
 }

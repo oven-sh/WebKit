@@ -151,9 +151,7 @@ static constexpr NativeGetSet cellGetSets[] = {
 
 PyFunction::PyFunction(VM& vm, FunctionExecutable* executable, JSGlobalObject* globalObject, Structure* structure)
     : Base(vm, executable, globalObject, structure)
-    , m_info(executable->unlinkedExecutable()->pythonCodeInfo())
 {
-    ASSERT(m_info);
 }
 
 PY_DEFINE_JS_VIEW(PyFunction)
@@ -215,12 +213,8 @@ PyFunction* PyFunction::create(JSGlobalObject* globalObject, FunctionExecutable*
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
-    // The optimizing JITs know nothing of Python's instructions: JS code that calls the function must not try to inline it.
-    executable->setNeverInline(true);
-    executable->setNeverOptimize(true);
     auto* function = new (NotNull, allocateCell<PyFunction>(vm)) PyFunction(vm, executable, globalObject, rt.functionStructure());
     function->finishCreation(vm);
-    CodeInfo& info = function->codeInfo();
     function->m_globals.set(vm, function, globals);
     JSValue builtins = builtinsFromGlobals(globalObject, globals);
     if (auto* dict = PyDict::tryFrom(builtins)) [[likely]] {
@@ -231,12 +225,21 @@ PyFunction* PyFunction::create(JSGlobalObject* globalObject, FunctionExecutable*
         function->m_builtinsObject.set(vm, function, builtins);
         function->m_hasUnusualNamespaces = true;
     }
-    function->m_name.set(vm, function, jsString(vm, info.name.string().string()));
-    function->m_qualname.set(vm, function, makeStr(vm, info.qualname));
-    function->m_doc.set(vm, function, info.docstring.isNull() ? jsUndefined() : JSValue(makeStr(vm, info.docstring)));
     if (JSValue module = globals->get(rt.names.dName()))
         function->m_module.set(vm, function, module);
     return function;
+}
+
+void PyFunction::takeNamesFromCode()
+{
+    VM& vm = this->vm();
+    CodeInfo& info = codeInfo();
+    if (!m_name)
+        m_name.set(vm, this, jsString(vm, info.name.string().string()));
+    if (!m_qualname)
+        m_qualname.set(vm, this, makeStr(vm, info.qualname));
+    if (!m_doc)
+        m_doc.set(vm, this, info.docstring.isNull() ? jsUndefined() : JSValue(makeStr(vm, info.docstring)));
 }
 
 template<typename Visitor>
@@ -281,8 +284,7 @@ void PyFunction::setCode(VM& vm, PyCode* code)
     if (PyFunction* body = m_generatorBody.get())
         body->m_code.set(vm, body, previousCode ? previousCode : PyCode::of(globalObject(), previous));
 
-    next->setNeverInline(true);
-    next->setNeverOptimize(true);
+    takeNamesFromCode();
     if (FunctionRareData* rareData = this->rareData())
         reinterpret_cast<WriteBarrier<ExecutableBase>*>(reinterpret_cast<char*>(rareData) + FunctionRareData::offsetOfExecutable())->set(vm, rareData, next);
     else {

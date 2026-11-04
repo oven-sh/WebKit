@@ -824,15 +824,17 @@ static JSValue makeFunction(JSGlobalObject* globalObject, CallFrame* callFrame, 
 {
     VM& vm = getVM(globalObject);
     PyFunction* enclosing = calleeOf(callFrame);
-    PyFunction* function = PyFunction::create(globalObject, callFrame->codeBlock()->functionExpr(args[0].asInt32()), enclosing->globals());
-    if (JSValue defaults = args[1])
-        function->setDefaults(vm, PyTuple::from(defaults));
-    if (JSValue kwDefaults = args[2])
-        function->setKwDefaults(vm, PyDict::from(kwDefaults));
-    if (JSValue annotate = args[3])
-        function->setAnnotate(vm, annotate);
-    if (args.size() > 4)
-        function->setClosure(vm, PyTuple::createFromNegativeIndexed(globalObject, args.first() - 4, args.size() - 4));
+    unsigned indexAndParts = args[0].asInt32();
+    PyFunction* function = PyFunction::create(globalObject, callFrame->codeBlock()->functionExpr(indexAndParts >> makeFunctionIndexShift), enclosing->globals());
+    unsigned next = 1;
+    if (indexAndParts & HasDefaults)
+        function->setDefaults(vm, PyTuple::from(args[next++]));
+    if (indexAndParts & HasKwDefaults)
+        function->setKwDefaults(vm, PyDict::from(args[next++]));
+    if (indexAndParts & HasAnnotate)
+        function->setAnnotate(vm, args[next++]);
+    if (args.size() > next)
+        function->setClosure(vm, PyTuple::createFromNegativeIndexed(globalObject, args.first() - next, args.size() - next));
     return function;
 }
 

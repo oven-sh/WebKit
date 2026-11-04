@@ -242,6 +242,11 @@ FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* t
         SourceProfiler::profile(SourceProfiler::Type::Function, source);
 
     FunctionExecutable* result = FunctionExecutable::create(vm, topLevelExecutable, source, this, intrinsic, isInsideOrdinaryFunction);
+    if (m_isPython) {
+        // The optimizing JITs know nothing of Python's instructions: JS code that calls the function must not try to inline it.
+        result->setNeverInline(true);
+        result->setNeverOptimize(true);
+    }
     if (m_singletonHasBeenInvalidated)
         result->singleton().invalidate(vm, StringFireDetail("Singleton was previously invalidated"));
     if (overrideLineNumber)
