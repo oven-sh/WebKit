@@ -254,9 +254,17 @@ void DeadGraph::addAllThatDied(std::span<JSCell* const> candidates)
             add(cell);
     };
     MarkedSpace& space = m_heap.objectSpace();
+    bool isOfYoungGeneration = m_heap.collectionScope() == CollectionScope::Eden;
     space.forEachBlock([&](MarkedBlock::Handle* handle) {
         if (!isJSCellKind(handle->cellKind()))
             return;
+        if (isOfYoungGeneration) {
+            // Most blocks have nothing young in them, and are not even touched.
+            BlockDirectory* directory = handle->directory();
+            directory->assertIsMutatorOrMutatorIsStopped();
+            if (!directory->isEden(handle))
+                return;
+        }
         m_cellsLookedAt += handle->markCount();
         forEachCellThatDied(space, handle, [&](JSCell* cell) {
 #if ASAN_ENABLED

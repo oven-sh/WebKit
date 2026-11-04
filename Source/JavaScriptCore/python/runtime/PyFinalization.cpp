@@ -227,6 +227,7 @@ void Runtime::didMarkAll(SlotVisitor& visitor)
     m_finalized.removeIf([&](JSCell* cell) {
         return !visitor.isMarked(cell);
     });
+    forgetDeadTemporaries(visitor);
 
     double duration = m_collectionBegan ? (MonotonicTime::now() - m_collectionBegan).seconds() : 0;
     m_collectionBegan = { };
@@ -587,8 +588,11 @@ void Runtime::finalizeAllAtExit()
         Locker locker { m_finalizationLock };
         return m_pendingFinalization.isEmpty() && m_pendingWeakRefCallbacks.isEmpty() && std::ranges::all_of(m_finalizable, hasNothingToFinalize);
     };
+    // (The stack is wiped before every call on the way to a collection, because what was called before, the last collection for
+    // one, has left what it dealt with where the frames of the next come to lie. See wipeStackBelow().)
     auto collect = [&] {
         for (unsigned round = 0; round < 64 && !isDone(); ++round) {
+            wipeStackBelow(m_globalObject);
             collectAsAskedFor();
             if (!hasPendingCalls())
                 break;
@@ -600,6 +604,7 @@ void Runtime::finalizeAllAtExit()
     };
     // A program that leaves nothing to finalize exits without further ado.
     // Otherwise, first what is garbage already, as it would have been all along with reference counts.
+    wipeStackBelow(m_globalObject);
     collect();
     if (isDone())
         return;
@@ -610,6 +615,7 @@ void Runtime::finalizeAllAtExit()
         sysDict()->set(m_vm, internString(m_vm, name), jsUndefined()); // None, not gone: importlib then says that the interpreter is shutting down.
     builtins()->remove(m_vm, internString(m_vm, "_"_s));
     modules()->clear(m_vm);
+    wipeStackBelow(m_globalObject);
     collect();
     // Then what something else holds on to: JS, a frame that is still on the stack. In the order it was made.
     {
@@ -631,10 +637,14 @@ void Runtime::finalizeAllAtExit()
 // stack that looks like a reference for one, and the frames of C++ between the program's call and the collector lie where those
 // of its earlier calls were: what they do not write would still refer to what those dealt with. So that is wiped first, before
 // the first of those frames (NativeFlag::OnWipedStack).
-NEVER_INLINE void wipeStackBelow(VM& vm, size_t size)
+// What is wiped lies below the frame of this function. That frame and its caller's are not, and later frames come to lie there too:
+// so both are to be such that they have no slot that they do not write, in a build that is not optimized either, where every
+// variable and many a temporary has a slot, written or not, and a local of the last function of Python that returned may lie
+// just there. See callNativeFunctionOnWipedStack().
+NEVER_INLINE void wipeStackBelow(JSGlobalObject* globalObject, size_t size)
 {
     char* top = static_cast<char*>(currentStackPointer());
-    char* limit = static_cast<char*>(vm.softStackLimit());
+    char* limit = static_cast<char*>(getVM(globalObject).softStackLimit());
     if (top <= limit || static_cast<size_t>(top - limit) < size + 16 * KB)
         return;
     volatile char* wiped = static_cast<volatile char*>(alloca(size));
@@ -648,12 +658,13 @@ bool Runtime::hasPendingFinalizers()
     return !m_pendingFinalization.isEmpty() || !m_pendingWeakRefCallbacks.isEmpty();
 }
 
-void Runtime::collectAsAskedFor(CollectionScope collectionScope)
+void Runtime::collectAsAskedFor(CollectionScope collectionScope, bool leavesCyclicGarbageForLater)
 {
     // The VM remembers the last exception thrown, for the debugger, long after it has been handled, and with it the
     // traceback and all that the frames in it refer to.
     m_vm.clearLastException();
     SetForScope scopeAskedFor(m_scopeAskedFor, collectionScope);
+    SetForScope leavesCyclicGarbage(m_leavesCyclicGarbageForLater, leavesCyclicGarbageForLater);
     // The one is asked for to get rid of things, the other to be quick: what it frees is swept when the memory is wanted.
     if (collectionScope == CollectionScope::Full)
         m_vm.heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
@@ -673,10 +684,8 @@ void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
             if (!hasSomethingToDo)
                 return;
         }
-        {
-            SetForScope leavesCyclicGarbage(m_leavesCyclicGarbageForLater, true);
-            collectAsAskedFor();
-        }
+        wipeStackBelow(m_globalObject);
+        collectAsAskedFor(CollectionScope::Full, true);
         if (!hasPendingCalls())
             return;
         bool mayFindMore = hasPendingFinalizers();
@@ -686,7 +695,7 @@ void Runtime::finalizeWhatReferenceCountsWouldHaveFreed()
     }
 }
 
-void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* observer, CollectionScope collectionScope)
+void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* observer, CollectionScope collectionScope, bool leavesCyclicGarbageForLater)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -695,12 +704,12 @@ void collectAndFinalize(JSGlobalObject* globalObject, Runtime::MarkingObserver* 
     // An object with a finalizer takes two rounds: one finds it, the next frees it, which may clear weak references in turn
     // and finds what only it referred to. The limit is for finalizers that make new garbage with finalizers for ever.
     for (unsigned round = 0; round < 64; ++round) {
-        wipeStackBelow(vm);
+        wipeStackBelow(globalObject);
         if (observer) {
             observer->willCollect();
             rt.setMarkingObserver(observer);
         }
-        rt.collectAsAskedFor(collectionScope);
+        rt.collectAsAskedFor(collectionScope, leavesCyclicGarbageForLater);
         if (observer) {
             rt.setMarkingObserver(nullptr);
             observer->didCollect();

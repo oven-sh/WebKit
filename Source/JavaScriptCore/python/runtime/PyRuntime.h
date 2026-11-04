@@ -544,7 +544,9 @@ public:
     };
     void setMarkingObserver(MarkingObserver* observer) { m_markingObserver = observer; }
     // A collection for which the program waits. It takes the time to look at all that has died: see PyFinalizationOrder.cpp.
-    void collectAsAskedFor(CollectionScope = CollectionScope::Full);
+    // `leavesCyclicGarbageForLater`: only what reference counts would have freed is finalized. What has a finalizer and is in a
+    // cycle, or hangs off one, is kept, and comes up again in the next collection.
+    void collectAsAskedFor(CollectionScope = CollectionScope::Full, bool leavesCyclicGarbageForLater = false);
     // For when the interpreter exits, before the program is told (atexit): what is unreachable by then and reference
     // counts would have freed would have been finalized long ago.
     void finalizeWhatReferenceCountsWouldHaveFreed();
@@ -614,7 +616,6 @@ public:
     {
         if (!m_collectionBegan)
             m_collectionBegan = MonotonicTime::now();
-        forgetTemporaries();
     }
 
     // ---- Objects that only a temporary register refers to (PyTemporaries.cpp) ----
@@ -780,7 +781,7 @@ private:
     // code adds to it, and the collector takes from it while that thread is stopped.
     Vector<PyGenerator*> m_newFinalizableGenerators;
 
-    // Nobody visits these: a collection forgets them.
+    // Nobody visits these. A collection forgets those of objects that it has found dead.
     struct OwnedTemporary {
         JSCell* object;
         CallFrame* frame;
@@ -792,6 +793,7 @@ private:
         m_ownedTemporaryCount = 0;
         m_newGenerator = nullptr;
     }
+    void forgetDeadTemporaries(SlotVisitor&);
     void ownTemporary(CallFrame*, unsigned offset, JSCell*);
     template<typename IsOperand> void releaseTemporariesUsedAt(CallFrame*, unsigned offset, JSValue result, const IsOperand&);
     static constexpr unsigned maxOwnedTemporaries = 4;

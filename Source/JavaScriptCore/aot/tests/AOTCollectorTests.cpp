@@ -253,15 +253,37 @@ static void testWaitingForStartedThreadsDoesNotWaitForTheirWork()
     }
 }
 
-static void testHelpersStartEagerlyWithoutCompiledCode()
+// Without compiled code all the threads are to be had from the beginning, but they are woken only for a collection that has work
+// for them.
+static void testHelpersStartWithTheWorkWithoutCompiledCode()
 {
     if (Options::useAOT())
         return;
     TestVM test;
-    test.createRealm();
+    JSGlobalObject* realm = test.createRealm();
+    VM& vm = test.vm();
     AOT_TEST_CHECK(heapHelperPool().numberOfThreads() == Options::numberOfGCMarkers() - 1);
-    test.heap().collectSync(CollectionScope::Full);
-    AOT_TEST_CHECK(test.heap().collector().hasStartedHelpers());
+    vm.heap.collectSync(CollectionScope::Full);
+
+    JSObject* holder = constructEmptyObject(realm);
+    for (unsigned index = 0; index < 10; ++index)
+        holder->putDirectIndex(realm, index, constructEmptyObject(realm));
+    vm.heap.collectSync(CollectionScope::Eden);
+    AOT_TEST_CHECK(!vm.heap.collector().hasStartedHelpers());
+    for (unsigned index = 0; index < 10; ++index)
+        AOT_TEST_CHECK(holder->getDirectIndex(realm, index).isObject());
+
+    constexpr unsigned length = 200000;
+    JSArray* array = JSArray::tryCreate(vm, realm->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), length);
+    AOT_TEST_CHECK(array);
+    for (unsigned index = 0; index < length; ++index)
+        array->putDirectIndex(realm, index, constructEmptyObject(realm));
+    vm.heap.collectSync(CollectionScope::Full);
+    AOT_TEST_CHECK(vm.heap.collector().hasStartedHelpers());
+    for (unsigned index = 0; index < length; index += 997)
+        AOT_TEST_CHECK(array->getDirectIndex(realm, index).isObject());
+    ensureStillAliveHere(holder);
+    ensureStillAliveHere(array);
 }
 
 static void checkEdenCollectionWithEmptyEdenSkipsMarking()
@@ -587,7 +609,7 @@ std::span<const NativeTest> collectorTests()
         { "collector/larger-cells/off-without-compiled-code"_s, testNothingIsBorrowedWithoutCompiledCode },
         { "collector/helpers/small-heap-starts-none"_s, withCompiledCodeOptions<checkSmallHeapStartsNoHelper> },
         { "collector/helpers/wide-heap-starts-them"_s, withCompiledCodeOptions<checkWideHeapStartsHelpers> },
-        { "collector/helpers/eager-without-compiled-code"_s, testHelpersStartEagerlyWithoutCompiledCode },
+        { "collector/helpers/start-with-the-work-without-compiled-code"_s, testHelpersStartWithTheWorkWithoutCompiledCode },
         { "collector/helpers/waiting-for-started-threads-does-not-wait-for-their-work"_s, testWaitingForStartedThreadsDoesNotWaitForTheirWork },
         { "collector/roots/full-collection-defers-regions"_s, withCompiledCodeOptions<checkFullCollectionDefersRegionsOfRoots> },
         { "collector/roots/store-after-deferral-is-seen"_s, withCompiledCodeOptions<checkStoreAfterDeferralIsSeen> },

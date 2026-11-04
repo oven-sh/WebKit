@@ -86,8 +86,10 @@ static int64_t fileIOSystemRead(JSGlobalObject* globalObject, const FileIOState&
 {
     writeOutPendingOutput(globalObject);
     int fd = state.fd;
+#if !OS(WINDOWS)
     if (count && !(state.hasStat && S_ISREG(state.statMode)) && !waitUntilReadable(globalObject, fd))
         return -1;
+#endif
     ssize_t result;
     do {
         AllowThreads allow(globalObject);

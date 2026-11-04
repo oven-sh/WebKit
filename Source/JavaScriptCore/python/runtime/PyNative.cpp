@@ -379,23 +379,44 @@ JSValue invokeNative(JSGlobalObject* globalObject, const NativeDef& def, JSValue
 const ClassInfo PyNativeFunction::s_info = { "PyNativeFunction"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyNativeFunction) };
 
 static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionWithFrame);
+static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionOnWipedStack);
+static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionThatMayWait);
 static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionAgainOnWipedStack);
 
-// This one has no frame to speak of, so that all the frames of the call come after the wiping.
 JSC_DEFINE_HOST_FUNCTION(callNativeFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     if (auto flags = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee())->def().flags; flags & (OnWipedStack | MayWait)) [[unlikely]] {
         if (flags & OnWipedStack)
-            wipeStackBelow(getVM(globalObject));
-        else
-            runtime(globalObject).threads().willCallFunctionThatMayWait(callFrame);
+            [[clang::musttail]] return callNativeFunctionOnWipedStack(globalObject, callFrame);
+        [[clang::musttail]] return callNativeFunctionThatMayWait(globalObject, callFrame);
     }
+    [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
+}
+
+// The frames of the call come to lie where the frame of the function that has the stack wiped is, which is not wiped itself. So these
+// three have nothing in theirs but the two parameters: no variable, no temporary, and no way through them that leaves a slot
+// unwritten. See wipeStackBelow().
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionOnWipedStack, static NEVER_INLINE, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    wipeStackBelow(globalObject);
     [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionAgainOnWipedStack, static NEVER_INLINE, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    wipeStackBelow(getVM(globalObject), stackBytesWipedForWaiting);
+    wipeStackBelow(globalObject, stackBytesWipedForWaiting);
+    [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
+}
+
+static NEVER_INLINE bool canBeginCallAgain(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    return runtime(globalObject).threads().willCallFunctionThatMayWait(callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionThatMayWait, static NEVER_INLINE, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    if (!canBeginCallAgain(globalObject, callFrame))
+        [[clang::musttail]] return callNativeFunctionAgainOnWipedStack(globalObject, callFrame);
     [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
 }
 

@@ -526,11 +526,11 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
     if (from.size() < 2)
         return;
 
-    // Helpers that do not run yet are worth starting once this visitor has marked, by itself, for about as long as that takes
-    // (half a millisecond), and there is something to give them.
-    constexpr size_t minCellsPerHelper = 512;
-    constexpr size_t minCellsMarkedAlone = 32768;
-    if (!collector().hasStartedHelpers() && (from.size() < minCellsPerHelper || m_visitCount < minCellsMarkedAlone))
+    // Helpers that do not run yet cost half a millisecond to start and to see off, a whole one of processor time: as long as it takes
+    // this visitor to mark 30,000 to 60,000 cells by itself. How much is left to mark nobody knows. What is on the stack is the
+    // least of it, and comes with its descendants; what has been marked so far says what kind of collection this is.
+    constexpr size_t cellsWorthStartingHelpersFor = 131072;
+    if (!collector().hasStartedHelpers() && m_visitCount + 8 * from.size() < cellsWorthStartingHelpersFor)
         return;
 
     // If there's already some shared work queued up, be conservative and assume

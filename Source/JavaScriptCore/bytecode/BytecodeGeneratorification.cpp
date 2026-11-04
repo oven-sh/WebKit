@@ -35,6 +35,7 @@
 #include "BytecodeUseDef.h"
 #include "JSGenerator.h"
 #include "Label.h"
+#include "PyBytecode.h"
 #include "StrongInlines.h"
 #include "UnlinkedCodeBlockGenerator.h"
 #include "UnlinkedMetadataTableInlines.h"
@@ -390,9 +391,14 @@ void BytecodeGeneratorification::run()
         };
         for (unsigned i = 0; i < m_pythonParameterCount; ++i)
             allot(m_firstPythonParameter.toLocal() + i);
+        auto ownedLoops = Python::ownedLoopsIn(m_codeBlock->pythonMarks());
         for (YieldData& data : m_yields) {
             if (!data.found)
                 continue;
+            for (auto& loop : ownedLoops) {
+                if (loop.contains(data.point))
+                    data.liveness[VirtualRegister(loop.iterator).toLocal()] = true;
+            }
             // All the variables are kept, needed or not: gi_frame.f_locals shows them. And a generator that is resumed
             // counts on it (llint_python_generator_resume).
             for (unsigned local = m_bytecodeGenerator.firstPythonVariable(); local < m_codeBlock->numVars(); ++local)

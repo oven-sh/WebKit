@@ -6,7 +6,9 @@
 #pragma once
 
 #include "Identifier.h"
+#include "PyBytecode.h"
 #include "VirtualRegister.h"
+#include <wtf/FixedVector.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/Vector.h>
@@ -73,9 +75,9 @@ public:
 
     // A module, a class body, or anything given to exec(): the one parameter is the namespace the names live in.
     bool takesNamespace { false };
-    // Whether there is a `for` loop over the value of a call in the code, once somebody has looked: Runtime::releaseIteratorsOfLoopsLeft().
-    enum class LoopsOverCalls : uint8_t { Unknown, No, Yes };
-    LoopsOverCalls loopsOverCalls { LoopsOverCalls::Unknown };
+    // Once somebody has looked: ownedLoopsOf() in PyTemporaries.cpp.
+    bool knowsOwnedLoops { false };
+    FixedVector<OwnedLoop> ownedLoops;
     VirtualRegister namespaceRegister; // Where the running code keeps it.
 
     Vector<Variable> variables;

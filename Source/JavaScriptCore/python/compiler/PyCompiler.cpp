@@ -1012,7 +1012,7 @@ void Unit::markBlock(const Block& block, bool begins)
     case BlockKind::FinallyTry:
         return;
     }
-    g.addPythonMark(begins ? PythonMark::BlockBegin : PythonMark::BlockEnd, block.number, TracedBlock::encode(kind, block.saved ? block.saved->virtualRegister().offset() : VirtualRegister().offset()));
+    g.addPythonMark(begins ? PythonMark::BlockBegin : PythonMark::BlockEnd, block.number, TracedBlock::encode(kind, block.saved ? block.saved->virtualRegister().offset() : VirtualRegister().offset(), block.ownsIterator));
 }
 
 void Unit::unwindBlock(const Block& block, Vector<TryContext>& suspended)

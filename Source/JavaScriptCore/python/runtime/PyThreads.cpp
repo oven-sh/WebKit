@@ -465,7 +465,9 @@ void Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
         earliest -= 30 * m_durationOfLastIdleCollection;
     if (!isLastResort && start < earliest)
         return;
-    collectAndFinalize(globalObject);
+    // What reference counts would have freed would have been finalized by now. Cyclic garbage would not: CPython's collector does not
+    // run in a thread that waits, which may well hold a lock that a finalizer wants.
+    collectAndFinalize(globalObject, nullptr, CollectionScope::Full, !isLastResort);
     m_bytesAllocatedAtIdleCollection = m_vm.heap.totalBytesAllocated();
     int64_t end = monotonicNanoseconds();
     m_durationOfLastIdleCollection = end - start;

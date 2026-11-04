@@ -83,6 +83,7 @@ public:
         m_opProfileControlFlowBytecodeOffsets.append(offset);
     }
     void addPythonMark(const PythonMark& mark) { m_pythonMarks.append(mark); }
+    std::span<const PythonMark> pythonMarks() const { return m_pythonMarks.span(); }
     void movePythonMarksAfterFirstLine(unsigned from, unsigned to)
     {
         size_t first = m_pythonMarks.size();

@@ -46,10 +46,24 @@ namespace Python {
 //    known by its name. See ownTemporary().
 //  So from its making to the end of its use the object is out of the program's reach, and a note of it that is never
 //  taken up (an exception came between) is of an object that can never turn up again.
-//  - Except by the few ways in which a program gets at objects it has no reference to: the module gc, the arguments that
-//    sys.monitoring shows, frame.f_generator. Those call temporariesMayHaveEscaped().
+//  - Except by the few ways in which a program gets at objects it has no reference to: the module gc and frame.f_generator, which
+//    call temporariesMayHaveEscaped(), and the arguments that sys.monitoring shows: forgetOwnedTemporaries().
 //
-// The notes are not visited by the collector. A collection forgets them, and what they were of is left to it.
+// The notes are weak: the collector does not visit them, and forgets those of objects that it has found dead. (It will not do to
+// forget them all: what sets a collection off is allocation, and in bytes(memoryview(b)) it is the use that allocates.)
+
+void Runtime::forgetDeadTemporaries(SlotVisitor& visitor)
+{
+    unsigned kept = 0;
+    for (unsigned i = 0; i < m_ownedTemporaryCount; ++i) {
+        if (visitor.isMarked(m_ownedTemporaries[i].object))
+            m_ownedTemporaries[kept++] = m_ownedTemporaries[i];
+    }
+    m_ownedTemporaryCount = kept;
+    // The code block is only compared with. While it lives, there is no other at its address.
+    if (m_newGenerator && (!visitor.isMarked(m_newGenerator) || !visitor.isMarked(m_codeBlockOfCallerOfNewGenerator)))
+        m_newGenerator = nullptr;
+}
 
 static ALWAYS_INLINE bool isFrameOfPythonCode(CallFrame* callFrame)
 {
@@ -284,10 +298,43 @@ void Runtime::claimIteratorOfLoop(CallFrame* callFrame, unsigned offset)
     const PythonMark* use = markAt(marks, offset, PythonMark::TemporaryUsed);
     if (!use || TemporaryUse::kindOf(use->bits) != TemporaryUse::ForHeader)
         return;
-    const PythonMark* made = markAt(marks, m_callSiteOfNewGenerator.bits(), PythonMark::TemporaryMade);
-    if (!made || made->value() != use->value())
-        return;
-    generator->loopOwnership = m_ownershipEpoch;
+    // The call comes right before.
+    unsigned callSite = m_callSiteOfNewGenerator.bits();
+    for (const PythonMark* mark = use; mark != marks.data() && (--mark)->offset >= callSite;) {
+        if (mark->offset == callSite && mark->kind() == PythonMark::TemporaryMade && mark->value() == use->value()) {
+            generator->loopOwnership = m_ownershipEpoch;
+            return;
+        }
+    }
+}
+
+std::span<const OwnedLoop> ownedLoopsOf(CodeBlock* codeBlock)
+{
+    auto* executable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable());
+    CodeInfo* info = executable ? executable->unlinkedExecutable()->pythonCodeInfo() : nullptr;
+    if (!info)
+        return { };
+    // A generator function has it in common with the body of the generator. It only binds its arguments.
+    if (info->isGeneratorLike() && codeBlock->unlinkedCodeBlock()->parseMode() != SourceParseMode::GeneratorBodyMode)
+        return { };
+    if (!info->knowsOwnedLoops) [[unlikely]] {
+        info->ownedLoops = FixedVector<OwnedLoop>(ownedLoopsIn(codeBlock->unlinkedCodeBlock()->pythonMarks()));
+        info->knowsOwnedLoops = true;
+    }
+    return info->ownedLoops.span();
+}
+
+// The collector leaves such a generator alone: there is no handler in it that a GeneratorExit would get to. It must not hold anything
+// either that is to be closed with it: whom it delegates to, the iterator of a loop of its own.
+static bool hasNothingToClose(PyGenerator* generator)
+{
+    if (generator->finalization() != PyGenerator::Finalization::None || generator->delegate())
+        return false;
+    for (unsigned i = 0; i < generator->slotCount(); ++i) {
+        if (auto* held = PyGenerator::tryFrom(generator->slot(i)); held && held->loopOwnership)
+            return false;
+    }
+    return true;
 }
 
 void Runtime::releaseIteratorOfLoop(JSValue iterator)
@@ -295,7 +342,7 @@ void Runtime::releaseIteratorOfLoop(JSValue iterator)
     auto* generator = PyGenerator::tryFrom(iterator);
     if (!generator || !generator->loopOwnership)
         return;
-    if (std::exchange(generator->loopOwnership, 0) == m_ownershipEpoch)
+    if (std::exchange(generator->loopOwnership, 0) == m_ownershipEpoch && !hasNothingToClose(generator))
         finalizeGeneratorNow(m_globalObject, generator);
 }
 
@@ -304,40 +351,18 @@ void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset,
     if (callFrame->isZombieFrame())
         return;
     CodeBlock* codeBlock = callFrame->codeBlock();
-    CodeInfo& info = uncheckedDowncast<PyFunction>(callFrame->jsCallee())->codeInfo();
-    if (info.loopsOverCalls == CodeInfo::LoopsOverCalls::No) [[likely]]
+    auto loops = ownedLoopsOf(codeBlock);
+    if (loops.empty()) [[likely]]
         return;
-    auto marks = codeBlock->unlinkedCodeBlock()->pythonMarks();
-    if (info.loopsOverCalls == CodeInfo::LoopsOverCalls::Unknown) {
-        bool found = std::ranges::any_of(marks, [](const PythonMark& mark) {
-            return mark.kind() == PythonMark::TemporaryUsed && TemporaryUse::kindOf(mark.bits) == TemporaryUse::ForHeader;
-        });
-        info.loopsOverCalls = found ? CodeInfo::LoopsOverCalls::Yes : CodeInfo::LoopsOverCalls::No;
-        if (!found)
-            return;
-    }
-
-    struct Loop {
-        unsigned number;
-        VirtualRegister iterator; // Not valid: some other block.
+    auto generatorOf = [&](const OwnedLoop& loop) -> PyGenerator* {
+        if (!loop.contains(offset))
+            return nullptr;
+        auto* generator = PyGenerator::tryFrom(callFrame->r(VirtualRegister(loop.iterator)).jsValue());
+        return generator && generator->loopOwnership ? generator : nullptr;
     };
-    using Loops = Vector<Loop, 8>;
-    auto blocksAt = [&](unsigned where) {
-        Loops open;
-        for (auto& mark : marks) {
-            if (mark.offset > where)
-                break;
-            if (mark.kind() == PythonMark::BlockBegin)
-                open.append({ mark.value(), TracedBlock::kindOf(mark.bits) == TracedBlock::ForLoop ? VirtualRegister(TracedBlock::registerOffsetOf(mark.bits)) : VirtualRegister() });
-            else if (mark.kind() == PythonMark::BlockEnd)
-                open.removeLast();
-        }
-        return open;
-    };
-    Loops open = blocksAt(offset);
-    if (open.isEmpty())
+    if (std::ranges::none_of(loops, generatorOf))
         return;
-    unsigned kept = 0;
+    std::optional<unsigned> landing;
     if (isCaught) {
         auto* handler = codeBlock->handlerForBytecodeIndex(BytecodeIndex(offset));
         if (!handler)
@@ -348,16 +373,18 @@ void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset,
         auto jump = codeBlock->instructions().at(handler->target + catchInstruction->size());
         if (catchInstruction->opcodeID() != op_catch || jump->opcodeID() != op_jmp)
             return;
-        Loops there = blocksAt(jump.offset() + jumpTargetForInstruction<OpJmp>(codeBlock, jump));
-        while (kept < open.size() && kept < there.size() && open[kept].number == there[kept].number)
-            ++kept;
+        landing = jump.offset() + jumpTargetForInstruction<OpJmp>(codeBlock, jump);
     }
 
-    for (unsigned i = open.size(); i-- > kept;) {
-        if (!open[i].iterator.isValid())
+    for (size_t i = loops.size(); i--;) {
+        auto& loop = loops[i];
+        PyGenerator* generator = generatorOf(loop);
+        if (!generator)
             continue;
-        auto* generator = PyGenerator::tryFrom(callFrame->r(open[i].iterator).jsValue());
-        if (!generator || !generator->loopOwnership)
+        bool goesOn = landing && std::ranges::any_of(loops, [&](const OwnedLoop& piece) {
+            return piece.number == loop.number && piece.contains(*landing);
+        });
+        if (goesOn)
             continue;
         // The exception waits, as it does while CPython pops the iterator off the stack of the frame. The frames that it has
         // left are still there, below this one: see tellOfException() in PyMonitoring.cpp.

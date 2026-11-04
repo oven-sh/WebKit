@@ -556,7 +556,18 @@ static bool flushStandardStreamsAtExit(JSGlobalObject* globalObject, bool report
     return succeeded;
 }
 
+static NEVER_INLINE bool finalizeInterpreterOnWipedStack(JSGlobalObject*);
+
+// The collections at exit are to find dead what only the frames of the program held, and those lay where the frames of what follows
+// lie now. See wipeStackBelow() for why this has a frame with nothing in it that it does not write.
 bool finalizeInterpreter(JSGlobalObject* globalObject)
+{
+    size_t size = 128 * KB;
+    wipeStackBelow(globalObject, size);
+    return finalizeInterpreterOnWipedStack(globalObject);
+}
+
+static NEVER_INLINE bool finalizeInterpreterOnWipedStack(JSGlobalObject* globalObject)
 {
     if (!globalObject->pythonRuntime())
         return true;
@@ -575,6 +586,7 @@ bool finalizeInterpreter(JSGlobalObject* globalObject)
             stopWaitingForThreadsAtExit(globalObject);
             reportUnraisable(globalObject, "Exception ignored on threading shutdown"_s, { });
         }
+        wipeStackBelow(globalObject);
         rt.finalizeWhatReferenceCountsWouldHaveFreed();
         runAtexitCallbacks(globalObject);
         scope.assertNoException();
@@ -585,6 +597,7 @@ bool finalizeInterpreter(JSGlobalObject* globalObject)
     bool flushed = flushStandardStreamsAtExit(globalObject, true);
     flushAllOpenFiles(globalObject);
     finalizeSignals(globalObject);
+    wipeStackBelow(globalObject);
     rt.finalizeAllAtExit();
     flushed &= flushStandardStreamsAtExit(globalObject, flushed);
     flushAllOpenFiles(globalObject);

@@ -228,10 +228,27 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   analysis says are dead are emptied (`clearDeadTemporaries`). Variables are not: an object lives while a variable names it.
   And the frames of C++ between the Python code and the collector must not lie over what earlier calls left on the stack, for what
   a frame does not write it still holds: the stack below is wiped before the first of them (`NativeFlag::OnWipedStack`).
+  What is wiped lies below the frame of the function that asks for it, and the first thing to lie there again is where the locals of
+  the Python function that returned last were. So that function (`callNativeFunctionOnWipedStack` and its like in
+  `PyNative.cpp`) is reached by a tail call and has nothing in its frame but its two parameters: in a build that is not
+  optimized every variable and temporary of every branch has a slot, written or not. The rule: a frame that is made on wiped stack
+  has nothing stale in it for as long as it lives, since what it calls lies below it; a frame that is made after something else
+  has been called from the same place has whatever that left. So the stack is wiped before every call on the way to a
+  collection that is to find things dead: before every round of `gc.collect()`, for the last round has gone through the very
+  objects that this one is to find gone, and at exit (`finalizeInterpreter`, `finalizeAllAtExit`).
+- **`gc.collect(0)` and `gc.collect(1)`** are collections of the young generation: of what has been allocated since the last
+  collection, whoever made that. There are two generations here, and a program passes 0 or 1 to be quick. What is found
+  dead is finalized, weak references to it are cleared and it is counted, as above; what has come through a collection is
+  not looked at, as in CPython. There is one round: what is kept for its finalizer is marked, so it is old afterwards, and it
+  takes a full collection to find that it is still dead, to clear the weak references to it, to count it and to free it. That
+  is sound for the reason any collection of the engine's own is: the marks of the last collection stand, so what is old counts
+  as alive, and nothing that is alive is touched. (A young cell that only a dead old cell refers to is kept too.)
 - **What `gc.collect()` returns** is what CPython's would: how many objects it found that reference counts would not have freed.
   Of what is left over in the graph above, the cells are counted that are objects which CPython's collector keeps track of
   (`isTracked` in `PyGC.cpp`: tables made from CPython). `DEBUG_SAVEALL` marks them instead and they go to `gc.garbage`. The first
   call in a program also finds the cycles that have piled up since it started, which CPython's own collections would have taken.
+  It goes on for another round only if finalizers or callbacks of weak references were owed (`hasPendingFinalizers`), not for
+  whatever else is in the queue: a collection that `gc.callbacks` is to be told of is in it too.
 - **What the module `gc` hands out** (`get_objects`, `get_referrers`, `get_referents`, `garbage`) is decided in one place, at the top
   of `PyGC.cpp`: a cell is given to the program if it is an object of Python of this realm, of a kind that programs see, whole (no
   tuple that is still being filled), and not a part of something else (the table of a dict, the namespace of a class, the values
@@ -246,9 +263,13 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
 - **A thread that waits collects.** A program may wait for what only a finalizer brings about: it has dropped a response without
   closing it, and waits for a server in another thread that waits for the end of the connection. A thread that has waited for
   50 ms collects and finalizes (`Threads::collectWhileIdle`), then less and less often; so does one that would otherwise be told
-  that it waits for ever. (If nothing seems to have been allocated since the last such collection, it is skipped, but not more
-  often than keeps these collections below a fiftieth of the time: to drop something takes no allocation. And a wait with less
-  left than twice what the last such collection took is not made longer by one.) That goes for waiting for another thread
+  that it waits for ever. What it finalizes is what reference counts would have freed, which in CPython would have been finalized
+  long ago. What is in a cycle or hangs off one is kept for a collection that the program asks for or brings about by allocating:
+  CPython's collector does not run in a thread that waits either, and such a thread may hold the very lock that a finalizer
+  wants (`with lock: time.sleep(1)`). Only the one that would otherwise wait for ever finalizes everything. Such a collection stops every thread, and any number of threads may be idle beside one that works: all of
+  them together spend at most a twentieth of the time on it, a fiftieth if nothing seems to have been allocated since the last
+  one (to drop something takes no allocation). And a wait with less left than twice what the last such collection took is not
+  made longer by one. That goes for waiting for another thread
   (`Threads::waitUntil`) and for waiting for the kernel, which is done piece by piece (`IdleWait`): `time.sleep`, everything in
   `select` and every socket call that goes through `waitForEvents` (with a timeout, or on the main thread of a host with an event
   loop), `os.read` and `FileIO` (so `input()` too), `os.waitpid` for one process on Linux.
@@ -286,7 +307,7 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   - A program can get at an object that it has no reference to through `gc.get_objects()`, `get_referrers()`, `get_referents()` and
     `DEBUG_SAVEALL`, and at a generator through `frame.f_generator`: those end all such ownership
     (`temporariesMayHaveEscaped()`). What traces the program is shown arguments of calls and can assign to variables: that forgets the
-    notes of views. So does a collection, for nobody visits them.
+    notes of views. The notes are weak: a collection forgets those of views that it has found dead.
   - It is about promptness only. What is not covered (anything that has been in a variable, a parameter, a container or a return
     value; objects made by a class written in Python) waits for the collector as before.
 - **The collector marks while the program runs.** Its threads call `visitChildren` on cells that the program is changing at that
@@ -472,7 +493,8 @@ instance a pointer was made from, a capsule for the `wchar_t` copy of a str.
 `CField` applied to an instance of another type is an error), and a value is converted, which may run any code, before the
 memory is located. A pointer that points into something it keeps alive (`pointer(x)`, `p.contents = x`, an array assigned to a pointer field,
 `cast` of an instance) is checked too: `p[i]`, `p[a:b]` and `p.contents` raise `ValueError` if they would leave the memory of that object, which
-also covers a pointer that was given `contents` of another type than its own. What follows an address of which nothing is known is not
+also holds for a pointer that was given `contents` of another type than its own (which CPython allows, and which is a cast: bytes that are not a
+pointer may then be read as one). What follows an address of which nothing is known is not
 checked and cannot be: `from_address`, `in_dll`, `string_at` and the like, an int stored in a `c_char_p` or a `c_void_p`, a pointer whose bytes came from
 elsewhere (a union, `memmove`, `from_buffer_copy`, a foreign function), and foreign calls themselves. These can crash the process, as in CPython. So
 can changing `_objects`, whose docstring says not to.
@@ -640,6 +662,20 @@ What code outside `python/` asks is one of these, and the answer is the same in 
   marking has converged (Python objects to finalize are kept), and by the host before `console.log` writes (Python's `stdout` is flushed).
 - **Is this the embedder's thread?** `Heap::mayRunEmbedderFinalizers()`: false only while a thread that Python started has the VM.
   See Threads. A program without such threads runs on one thread, and the answer is yes.
+
+One change to the collector was made for Python and is everybody's gain. The helper threads that mark in parallel used to be woken at
+the beginning of every collection and waited for at its end, which takes 0.4 ms and 0.9 ms of processor time with seven of
+them, on an idle machine, where a collection of the young generation that finds little takes 0.03 ms by itself. Now they are started
+when there is work for them (`Collector::runBeginPhase`, `SlotVisitor::donateKnownParallel`, `donateAll`): at once if the
+collection expects to visit 16 MB or more; otherwise when what the conductor has marked by itself, plus eight times what it has on
+its stack, comes to 131,072 cells (it marks 30,000 to 60,000 in the time that starting them costs); and whenever it leaves
+marking to them to let the mutator run. Nothing in the protocol depends on how many run. Termination is "no marker is active, this visitor and the shared stacks are empty", and a
+helper that was never started is not active and owns nothing. What is in a shared stack is always taken by somebody: with the
+world stopped the conductor ends in `drainFromShared(MainDrain)`, which steals for itself, and every way into the concurrent
+phase goes through `donateAll()`. All visitors are set up in the Begin phase, started or not; the start happens once (an atomic
+exchange), never in the End phase; tasks of the constraint solver are run by the conductor too and waited for by
+reference count. (Programs compiled ahead of time already did this, and also create the threads one by one.) A loop in JS that
+allocates 30 million objects of which 1000 are alive at a time went from 680 to 318 ms, and from 1001 to 348 ms of processor time.
 
 One thing that Python needs of WTF is a setting of the process, `Thread::setSurvivesFailedCreation()`: a program may lower its own
 limit on threads (`resource.setrlimit`) and go on, and the collector then does without the threads it cannot start. Bun makes that setting
