@@ -112,6 +112,87 @@ AST::Name Compiler::name(const String& text)
     return &m_tree.identifiers.makeIdentifier(m_vm, text.span16());
 }
 
+// `return`, `break` and `continue` that leave a `finally` clause are warned of for the whole tree before a single name is looked at, as
+// in CPython: what the symbol table or the compiler then finds wrong comes after the warnings, wherever it is.
+class ControlFlowInFinally {
+public:
+    ControlFlowInFinally(Compiler& compiler, VM& vm)
+        : c(compiler)
+        , m_vm(vm)
+    {
+    }
+
+    void statements(Seq<Stmt*> body)
+    {
+        for (Stmt* statement : body)
+            visit(statement);
+    }
+
+private:
+    enum class Context : uint8_t { None, Finally, Function, Loop };
+
+    void statements(Seq<Stmt*> body, Context context)
+    {
+        SetForScope scope(m_context, context);
+        statements(body);
+    }
+
+    void visit(Stmt* node)
+    {
+        // The compiler says so when it gets there.
+        if (!m_vm.isSafeToRecurseSoft()) [[unlikely]]
+            return;
+        switch (node->kind) {
+        case StmtKind::FunctionDef:
+        case StmtKind::AsyncFunctionDef:
+            return statements(node->as<FunctionDef>()->body, Context::Function);
+        case StmtKind::ClassDef:
+            return statements(node->as<ClassDef>()->body);
+        case StmtKind::For:
+        case StmtKind::AsyncFor:
+            statements(node->as<For>()->body, Context::Loop);
+            return statements(node->as<For>()->orelse);
+        case StmtKind::While:
+            statements(node->as<While>()->body, Context::Loop);
+            return statements(node->as<While>()->orelse);
+        case StmtKind::If:
+            statements(node->as<If>()->body);
+            return statements(node->as<If>()->orelse);
+        case StmtKind::With:
+        case StmtKind::AsyncWith:
+            return statements(node->as<With>()->body);
+        case StmtKind::Match:
+            for (MatchCase* matchCase : node->as<Match>()->cases)
+                statements(matchCase->body);
+            return;
+        case StmtKind::Try:
+        case StmtKind::TryStar: {
+            auto* statement = node->as<AST::Try>();
+            statements(statement->body);
+            for (ExceptHandler* handler : statement->handlers)
+                statements(handler->body);
+            statements(statement->orelse);
+            return statements(statement->finalbody, Context::Finally);
+        }
+        case StmtKind::Return:
+            if (m_context == Context::Finally)
+                c.warn(node->range, "'return' in a 'finally' block"_s);
+            return;
+        case StmtKind::Break:
+        case StmtKind::Continue:
+            if (m_context == Context::Finally)
+                c.warn(node->range, node->kind == StmtKind::Break ? "'break' in a 'finally' block"_s : "'continue' in a 'finally' block"_s);
+            return;
+        default:
+            return;
+        }
+    }
+
+    Compiler& c;
+    VM& m_vm;
+    Context m_context { Context::None };
+};
+
 UnlinkedFunctionExecutable* Compiler::compile()
 {
     DeferGC deferGC(m_vm);
@@ -121,6 +202,12 @@ UnlinkedFunctionExecutable* Compiler::compile()
     m_future.allowTopLevelAwait = m_options.allowTopLevelAwait;
     if (!analyzeFutureStatements(m_tree.root, m_future, m_error))
         return nullptr;
+
+    if (m_tree.root->kind == ModKind::Module || m_tree.root->kind == ModKind::Interactive) {
+        ControlFlowInFinally(*this, m_vm).statements(m_tree.root->body);
+        if (failed())
+            return nullptr;
+    }
 
     m_symbols = makeUnique<SymbolTable>(m_vm, m_tree, m_future);
     if (!m_symbols->build()) {
@@ -1650,7 +1737,6 @@ void Unit::whileLoop(While* node, Last isLast)
     m_statementStart = g.instructions().size();
     loc(node->test->range);
     pushBlock({ .kind = BlockKind::WhileLoop, .tryDepth = g.tryDepth(), .continueTarget = loop.ptr(), .breakTarget = end.ptr(), .isLast = isLast });
-    m_finallyContexts.append({ false, true });
     auto truth = constantTruth(node->test);
     ReturnsByLine returns;
     jumpIfOrLeave(node->test, anchor.get(), isLast.onlyIf(node->orelse.isEmpty()), returns);
@@ -1660,7 +1746,6 @@ void Unit::whileLoop(While* node, Last isLast)
         statements(node->body, 0, { Last::OfLoopBody, static_cast<unsigned>(m_blocks.size() - 1) });
     if (!cannotGetHere())
         jump(loop.get());
-    m_finallyContexts.removeLast();
     popBlock();
     emitReturnsByLine(returns);
 
@@ -1690,7 +1775,6 @@ void Unit::forLoop(For* node, Last isLast)
     }
 
     pushBlock({ .kind = BlockKind::ForLoop, .tryDepth = g.tryDepth(), .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast, .ownsIterator = !!temporary });
-    m_finallyContexts.append({ false, true });
     g.emitLabel(start.get());
     line(node->iter->range);
     loc(node->iter->range);
@@ -1712,7 +1796,6 @@ void Unit::forLoop(For* node, Last isLast)
     statements(node->body, 0, { Last::OfLoopBody, static_cast<unsigned>(m_blocks.size() - 1) });
     if (!cannotGetHere())
         jump(start.get());
-    m_finallyContexts.removeLast();
     popBlock();
 
     // Where CPython drops the iterator.
@@ -1738,7 +1821,6 @@ void Unit::asyncForLoop(For* node, Last isLast)
     g.emitLabel(start.get());
     line(node->iter->range);
     pushBlock({ .kind = BlockKind::AsyncForLoop, .tryDepth = whole.depthBefore, .continueTarget = start.ptr(), .breakTarget = end.ptr(), .saved = iterator.get(), .isLast = isLast });
-    m_finallyContexts.append({ false, true });
 
     // StopAsyncIteration from __anext__ ends the loop.
     Try guard = beginTry();
@@ -1754,7 +1836,6 @@ void Unit::asyncForLoop(For* node, Last isLast)
     statements(node->body, 0, { Last::OfLoopBody, static_cast<unsigned>(m_blocks.size() - 1) });
     if (!cannotGetHere())
         jump(start.get());
-    m_finallyContexts.removeLast();
     popBlock();
 
     Reg thrown = beginHandler(guard);
@@ -1811,9 +1892,6 @@ void Unit::returnStatement(Return* node)
         fail(node->range, "'return' with value in async generator"_s);
         return;
     }
-    if (!m_finallyContexts.isEmpty() && m_finallyContexts.last().inFinally && c.m_warned.add(node).isNewEntry)
-        warn(node->range, "'return' in a 'finally' block"_s);
-
     Reg value;
     if (node->value) {
         value = expr(node->value);
@@ -1836,9 +1914,6 @@ void Unit::returnStatement(Return* node)
 
 void Unit::breakOrContinue(Stmt* node, bool isBreak)
 {
-    if (!m_finallyContexts.isEmpty() && m_finallyContexts.last().inFinally && !m_finallyContexts.last().inLoop && c.m_warned.add(node).isNewEntry)
-        warn(node->range, isBreak ? "'break' in a 'finally' block"_s : "'continue' in a 'finally' block"_s);
-
     line(node->range);
     size_t loop = m_blocks.reverseFindIf([](auto& block) {
         return block.kind == BlockKind::WhileLoop || block.kind == BlockKind::ForLoop || block.kind == BlockKind::AsyncForLoop;
@@ -1904,7 +1979,6 @@ void Unit::tryFinally(AST::Try* node, Last isLast)
     popBlock();
     endTry(body);
 
-    m_finallyContexts.append({ true, false });
     statements(node->finalbody, 0, isLast);
     leaveStatement(exit.get(), isLast, JumpIs::Hidden);
 
@@ -1915,7 +1989,6 @@ void Unit::tryFinally(AST::Try* node, Last isLast)
     pushBlock({ .kind = BlockKind::FinallyEnd, .tryDepth = cleanup.depthBefore, .saved = previous.get() });
     statements(node->finalbody);
     popBlock();
-    m_finallyContexts.removeLast();
     reraise(exception.get());
     endTry(cleanup);
 

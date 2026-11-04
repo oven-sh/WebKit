@@ -504,13 +504,6 @@ private:
 
     Vector<Block, 8> m_blocks;
 
-    // For "'return' in a 'finally' block".
-    struct FinallyContext {
-        bool inFinally;
-        bool inLoop;
-    };
-    Vector<FinallyContext, 4> m_finallyContexts;
-
     // Module, class: the annotations of variables, evaluated on demand.
     struct DeferredAnnotation {
         AST::AnnAssign* statement;

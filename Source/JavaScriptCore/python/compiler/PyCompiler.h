@@ -60,6 +60,7 @@ public:
 
 private:
     friend class Unit;
+    friend class ControlFlowInFinally;
 
     // Compiles a function, a class body or the like. `emitBody` emits what follows the binding of the arguments.
     UnlinkedFunctionExecutable* compileCode(Unit* parent, const CodeSpec&, const SourceCode& parentSource, const Function<void(Unit&)>& emitBody);
