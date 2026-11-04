@@ -322,7 +322,7 @@ void initializeNamespaceTypes(JSGlobalObject* globalObject)
     rt.sentinelType()->initializeBuiltin(globalObject, { "sentinel"_s, { }, sentinelMethods, sentinelGetSets, "Create a unique sentinel object with the given name."_s }, rt.typeType(), rt.objectType());
 
     PyType* type = rt.simpleNamespaceType();
-    type->initializeBuiltin(globalObject, { "types.SimpleNamespace"_s, { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::OwnLayout }, namespaceMethods, namespaceGetSets, "A simple attribute-based namespace."_s }, rt.typeType(), rt.objectType());
+    type->initializeBuiltin(globalObject, { "types.SimpleNamespace"_s, { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::OwnLayout, TypeFlag::NothingOfItsOwn }, namespaceMethods, namespaceGetSets, "A simple attribute-based namespace."_s }, rt.typeType(), rt.objectType());
     // What compares by value and can change is not hashable.
     type->dict()->set(vm, rt.name(Special::Hash), jsUndefined());
     type->didChange(vm);

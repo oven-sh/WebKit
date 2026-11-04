@@ -36,6 +36,9 @@ enum class TypeFlag : uint32_t {
     // The instances are records (PyRecord), and the lists, tuples, dicts and sets in their fields are their memory: parts of them,
     // which no program gets to see. See forEachPartInFields() in PyGC.cpp.
     OwnsContainers = 1 << 13,
+    // A built-in type whose instances hold nothing but what those of a class may: a __dict__, weak references. So __new__ without
+    // arguments and the __dict__ make a copy (PyReduce.cpp). In CPython: the size of the instances says so.
+    NothingOfItsOwn = 1 << 14,
 
     // Derives from:
     IntSubclass = 1 << 16,

@@ -527,7 +527,7 @@ static constexpr NativeDef astMethods[] = {
     PY_METHOD("__replace__", astReplace, "($self, /, **fields)"),
 };
 
-constexpr TypeDef astTypeDef { "ast.AST"_s, { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::Mutable, TypeFlag::OwnLayout }, astMethods, { }, { } };
+constexpr TypeDef astTypeDef { "ast.AST"_s, { TypeFlag::Base, TypeFlag::HasDict, TypeFlag::Mutable, TypeFlag::OwnLayout, TypeFlag::NothingOfItsOwn }, astMethods, { }, { } };
 
 // ---- The classes ----
 

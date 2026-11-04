@@ -119,7 +119,7 @@ static constexpr NativeDef tzinfoMethods[] = {
     PY_METHOD("__reduce__", tzinfoReduce, "($self, /)"),
 };
 
-constexpr TypeDef tzinfoTypeDef { "datetime.tzinfo"_s, { TypeFlag::Base }, tzinfoMethods, { }, { } };
+constexpr TypeDef tzinfoTypeDef { "datetime.tzinfo"_s, { TypeFlag::Base, TypeFlag::NothingOfItsOwn }, tzinfoMethods, { }, { } };
 
 // ---- timezone ----
 

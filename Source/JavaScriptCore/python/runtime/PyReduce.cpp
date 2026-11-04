@@ -65,8 +65,7 @@ static bool reduceHasNativeState(JSGlobalObject* globalObject, PyType* type)
         if (def.signature.isVariadic && def.signature.hasSelf && def.pointer.variadicWithSelf == objectNew)
             return false;
     }
-    // Nor does one whose instances are laid out as those of object are: datetime.tzinfo.
-    if (type->solidBase() == rt.objectType())
+    if (type->has(TypeFlag::NothingOfItsOwn))
         return false;
     return type != rt.noneType() && type != rt.notImplementedType() && type != rt.ellipsisType();
 }
