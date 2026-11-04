@@ -88,6 +88,34 @@ JSString* makeStr(VM& vm, ASCIILiteral literal)
     return makeStr(vm, String(literal));
 }
 
+JSString* partOfStr(VM& vm, const String& string, unsigned from, unsigned length)
+{
+    constexpr unsigned shortestThatShares = 256;
+    StringImpl& whole = *string.impl();
+    ASSERT(from <= whole.length() && length <= whole.length() - from);
+    // A part of a part shares the text of the whole.
+    unsigned lengthKeptAlive = whole.isSubString() ? whole.baseOfSubString().length() : whole.length();
+    if (length <= 1 || (length >= shortestThatShares && length >= lengthKeptAlive / 2))
+        return jsSubstring(vm, string, from, length);
+    RefPtr<StringImpl> part;
+    if (whole.is8Bit()) {
+        std::span<Latin1Character> copy;
+        if ((part = StringImpl::tryCreateUninitialized(length, copy)))
+            StringImpl::copyCharacters(copy, whole.span8().subspan(from, length));
+    } else if (auto units = whole.span16().subspan(from, length); WTF::charactersAreAllLatin1(units)) {
+        std::span<Latin1Character> copy;
+        if ((part = StringImpl::tryCreateUninitialized(length, copy)))
+            StringImpl::copyCharacters(copy, units);
+    } else {
+        std::span<char16_t> copy;
+        if ((part = StringImpl::tryCreateUninitialized(length, copy)))
+            StringImpl::copyCharacters(copy, units);
+    }
+    if (!part) [[unlikely]]
+        return jsSubstring(vm, string, from, length); // There is no room for a copy.
+    return jsNontrivialString(vm, String(part.releaseNonNull()));
+}
+
 JSString* makeStrUnlessTooLong(JSGlobalObject* globalObject, String&& string)
 {
     VM& vm = getVM(globalObject);
@@ -475,7 +503,7 @@ static ALWAYS_INLINE JSString* sliceOfUnits(VM& vm, JSString* whole, const Strin
 {
     if (!from && to == string.length() && whole)
         return whole;
-    return jsSubstring(vm, string, from, to - from);
+    return partOfStr(vm, string, from, to - from);
 }
 
 bool sliceBounds(JSGlobalObject* globalObject, JSValue start, JSValue end, int64_t length, int64_t& from, int64_t& to)

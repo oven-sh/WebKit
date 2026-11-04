@@ -372,6 +372,8 @@ public:
     bool isExternal() const { return bufferOwnership() == BufferExternal; }
 
     bool isSubString() const { return bufferOwnership() == BufferSubstring; }
+    // The string whose characters a substring shares, and keeps alive. It is no substring itself (createSubstringSharingImpl()).
+    const StringImpl& baseOfSubString() const LIFETIME_BOUND { return *substringBuffer(); }
 
     static WTF_EXPORT_PRIVATE ASCIICString asciiForCharacters(std::span<const Latin1Character> characters);
     static WTF_EXPORT_PRIVATE ASCIICString asciiForCharacters(std::span<const char16_t> characters);

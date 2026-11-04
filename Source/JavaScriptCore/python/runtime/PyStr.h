@@ -53,6 +53,11 @@ JSString* internString(VM&, const String&);
 JSString* makeStr(VM&, const String&);
 JSString* makeStr(VM&, String&&);
 JSString* makeStr(VM&, ASCIILiteral);
+// string[from : from + length], in code units. The part has the text of the whole for its own only if it is long and at least half of it, so
+// that what a program keeps of a text keeps at most twice itself alive. (jsSubstring() shares whenever that takes less room than a copy:
+// one word of a file then keeps the file.) A program that eats a text from the front, `s = s[n:]`, copies what is left each time it
+// has eaten half. A copy has one byte to the character if that will do.
+JSString* partOfStr(VM&, const String&, unsigned from, unsigned length);
 
 // Text that is put together piece by piece. What a program asks for may be too long to be a str: the builder then takes no more,
 // and makeStr() raises a MemoryError. (A StringBuilder made the way WTF makes them by default ends the process.)

@@ -317,7 +317,7 @@ static JSValue sreSliceOfStr(VM& vm, JSString* subject, const String& string, Py
     if (!wide) {
         if (!start && end == static_cast<ptrdiff_t>(string.length()))
             return subject;
-        return jsSubstring(vm, string, static_cast<unsigned>(start), static_cast<unsigned>(end - start));
+        return partOfStr(vm, string, static_cast<unsigned>(start), static_cast<unsigned>(end - start));
     }
     const char32_t* characters = reinterpret_cast<const char32_t*>(wide->data());
     StrBuilder builder;
