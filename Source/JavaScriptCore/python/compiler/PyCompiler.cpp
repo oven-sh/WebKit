@@ -648,11 +648,12 @@ void Unit::noteConstant(JSValue value, bool isUsed)
 
 void Unit::noteConstant(const CodeInfo::Constant& noted)
 {
+    bool isUsed = noted.isUsed && !m_cannotBeReached;
     auto result = m_indexOfConstant.add(noted.reg.offset(), m_info.constants.size());
     if (result.isNewEntry)
-        m_info.constants.append(noted);
+        m_info.constants.append({ noted.reg, noted.functionIndex, isUsed });
     else
-        m_info.constants[result.iterator->value].isUsed |= noted.isUsed;
+        m_info.constants[result.iterator->value].isUsed |= isUsed;
 }
 
 void Unit::noteFoldedConstant(Expr* node, JSValue value)
@@ -698,12 +699,14 @@ void Unit::noteWhatConstantIsMadeOf(Expr* node)
 
 void Unit::noteConstantMade(JSValue value)
 {
+    if (m_cannotBeReached)
+        return;
     m_foldedConstants.append({ constant(value)->virtualRegister(), 0, true });
 }
 
 void Unit::noteCode(unsigned functionIndex)
 {
-    m_info.constants.append({ VirtualRegister(), functionIndex, true });
+    m_info.constants.append({ VirtualRegister(), functionIndex, !m_cannotBeReached });
 }
 
 void Unit::finishConstants()
@@ -1419,118 +1422,29 @@ void Unit::unwindBlocks(const Range& range, size_t count, Vector<TryContext>& su
 
 // ---- Statements ----
 
-// There is a `break` in them that leaves the loop they are the body of.
-static bool leaveLoop(Seq<Stmt*> body)
-{
-    for (Stmt* node : body) {
-        switch (node->kind) {
-        case StmtKind::Break:
-            return true;
-        case StmtKind::If:
-            if (leaveLoop(node->as<If>()->body) || leaveLoop(node->as<If>()->orelse))
-                return true;
-            break;
-        case StmtKind::With:
-        case StmtKind::AsyncWith:
-            if (leaveLoop(node->as<With>()->body))
-                return true;
-            break;
-        case StmtKind::For:
-        case StmtKind::AsyncFor:
-            if (leaveLoop(node->as<For>()->orelse))
-                return true;
-            break;
-        case StmtKind::While:
-            if (leaveLoop(node->as<While>()->orelse))
-                return true;
-            break;
-        case StmtKind::Try:
-        case StmtKind::TryStar: {
-            auto* statement = node->as<AST::Try>();
-            if (leaveLoop(statement->body) || leaveLoop(statement->orelse) || leaveLoop(statement->finalbody))
-                return true;
-            for (ExceptHandler* handler : statement->handlers) {
-                if (leaveLoop(handler->body))
-                    return true;
-            }
-            break;
-        }
-        case StmtKind::Match:
-            for (MatchCase* matchCase : node->as<Match>()->cases) {
-                if (leaveLoop(matchCase->body))
-                    return true;
-            }
-            break;
-        default:
-            break;
-        }
-    }
-    return false;
-}
-
-bool Unit::neverGetsPast(Seq<Stmt*> body)
-{
-    for (Stmt* node : body) {
-        if (neverGetsPast(node))
-            return true;
-    }
-    return false;
-}
-
-bool Unit::neverGetsPast(Stmt* node)
-{
-    switch (node->kind) {
-    case StmtKind::Return:
-    case StmtKind::Raise:
-    case StmtKind::Break:
-    case StmtKind::Continue:
-        return true;
-    case StmtKind::If:
-        return neverGetsPast(node->as<If>()->body) && neverGetsPast(node->as<If>()->orelse);
-    case StmtKind::While:
-        return constantTruth(node->as<While>()->test) == true && !leaveLoop(node->as<While>()->body);
-    case StmtKind::Try:
-    case StmtKind::TryStar: {
-        auto* statement = node->as<AST::Try>();
-        if (neverGetsPast(statement->finalbody))
-            return true;
-        if (!neverGetsPast(statement->orelse.isEmpty() ? statement->body : statement->orelse))
-            return false;
-        for (ExceptHandler* handler : statement->handlers) {
-            if (!neverGetsPast(handler->body))
-                return false;
-        }
-        return true;
-    }
-    default:
-        return false;
-    }
-}
-
 void Unit::statements(Seq<Stmt*> body, unsigned first, Last isLast)
 {
     for (unsigned i = first; i < body.size(); ++i) {
         m_statementIsLast = isLast.onlyIf(i + 1 == body.size());
         statement(body[i]);
-        // CPython's compiler drops what cannot be reached, so that the code has no such lines: nobody can jump to them or find that
-        // they were never run. Here it stays, and is of no line.
-        if (i + 1 < body.size() && !m_sameLineDepth && neverGetsPast(body[i])) {
-            noLine();
-            SameLine sameLine(*this);
-            while (++i < body.size())
-                statement(body[i]);
-        }
+        if (i + 1 < body.size() && !m_sameLineDepth && cannotGetHere())
+            return deadStatements(body, i + 1);
     }
 }
 
-void Unit::deadStatements(Seq<Stmt*> body)
+// CPython's compiler drops what cannot be reached, so that the code has no such lines: nobody can jump to them or find that they were
+// never run, and has no constants that only they need. Here it stays, is of no line, and its constants count as not needed. There is no
+// getting past it either: see cannotGetHere().
+void Unit::deadStatements(Seq<Stmt*> body, unsigned first)
 {
-    if (body.isEmpty())
+    if (first >= body.size())
         return;
     if (!m_sameLineDepth)
         noLine();
     SameLine sameLine(*this);
-    statements(body);
+    SetForScope cannotBeReached(m_cannotBeReached, true);
+    statements(body, first);
+    g.emitUnreachable();
 }
 
 void Unit::statement(Stmt* node)
@@ -1829,8 +1743,10 @@ void Unit::ifStatement(If* node, Last isLast)
                 emitImplicitReturn(isLast);
         }
         emitReturnsByLine(returns, isLast);
-        endOfStatement(end.get());
-        lineOfImplicitReturn(node->test->range.endLineno, isLast.onlyIf(isLast.kind == Last::OfFunction));
+        if (end->isBound()) {
+            endOfStatement(end.get());
+            lineOfImplicitReturn(node->test->range.endLineno, isLast.onlyIf(isLast.kind == Last::OfFunction));
+        }
         return;
     }
     Ref<Label> orelse = g.newLabel();
@@ -1872,8 +1788,10 @@ void Unit::whileLoop(While* node, Last isLast)
     popBlock();
     emitReturnsByLine(returns, isLast);
 
-    g.emitLabel(anchor.get());
-    lineOfImplicitReturn(node->test->range.endLineno, isLast.onlyIf(node->orelse.isEmpty() && isLast.kind == Last::OfFunction));
+    if (anchor->isBound()) {
+        g.emitLabel(anchor.get());
+        lineOfImplicitReturn(node->test->range.endLineno, isLast.onlyIf(node->orelse.isEmpty() && isLast.kind == Last::OfFunction));
+    }
     if (truth && *truth)
         deadStatements(node->orelse);
     else
@@ -2058,6 +1976,9 @@ void Unit::breakOrContinue(Stmt* node, bool isBreak)
         fail(node->range, isBreak ? "'break' outside loop"_s : "'continue' not properly in loop"_s);
         return;
     }
+    // (A jump would make it look as if the end of the loop could be reached.)
+    if (m_cannotBeReached)
+        return;
     if (!isBreak)
         return emitImplicitContinue(loop, node->range);
     // To leave a loop that is the last statement of the function is to return, and so on. A `return` in the loop that has got as far as a
@@ -2113,8 +2034,10 @@ void Unit::tryFinally(AST::Try* node, Last isLast)
     popBlock();
     endTry(body);
 
-    statements(node->finalbody, 0, isLast);
-    leaveStatement(exit.get(), isLast, JumpIs::Hidden);
+    if (!cannotGetHere()) {
+        statements(node->finalbody, 0, isLast);
+        leaveStatement(exit.get(), isLast, JumpIs::Hidden);
+    }
 
     // An exception: it goes on after the clause has run.
     Reg previous;
@@ -2147,7 +2070,7 @@ void Unit::tryExcept(AST::Try* node, Last isLast)
     statements(node->body, 0, isLastOfBody.onlyIf(node->orelse.isEmpty()));
     popBlock();
     endTry(body);
-    if (neverGetsPast(node->body))
+    if (cannotGetHere())
         deadStatements(node->orelse);
     else
         statements(node->orelse, 0, isLastOfBody);
@@ -2316,11 +2239,15 @@ void Unit::tryStarExcept(AST::Try* node, Last isLast)
     restoreHandledException(previous.get());
     reraise(thrown.get());
 
+    bool bodyComesToItsEnd = orelse->isBound();
     g.emitLabel(orelse.get());
-    if (neverGetsPast(node->body))
+    if (!bodyComesToItsEnd)
         deadStatements(node->orelse);
-    else
+    else {
         statements(node->orelse, 0, isLast);
+        if (isLast.kind == Last::OfFunction && !cannotGetHere())
+            emitImplicitReturn(isLast);
+    }
     endOfStatement(end.get());
 }
 
@@ -2417,7 +2344,8 @@ void Unit::assertStatement(Assert* node)
     g.move(arguments[1], emptyValue());
     loc(node->test->range);
     callRuntime(arguments[0], RuntimeFunction::Raise, arguments);
-    g.emitLabel(end.get());
+    if (end->isBound())
+        g.emitLabel(end.get());
 }
 
 ImportMode Unit::importMode(bool isLazy, bool isStar)

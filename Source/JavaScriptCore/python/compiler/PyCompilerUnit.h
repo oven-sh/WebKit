@@ -237,9 +237,6 @@ private:
     Last m_leavingAs { }; // Blocks are being left by a `return` or a `continue`, or as if by one. OfFunction:
     RegisterID* m_valueToReturn { nullptr }; // with this. Null: None.
     void lineOfImplicitReturn(int lineno, Last);
-    // Whatever follows it is never run.
-    bool neverGetsPast(Stmt*);
-    bool neverGetsPast(Seq<Stmt*>);
     // What is emitted meanwhile goes with the line before it, whatever loc() and line() are given.
     class SameLine {
         WTF_MAKE_NONCOPYABLE(SameLine);
@@ -286,7 +283,7 @@ private:
     bool isAttributeOfSuper(AST::Attribute*);
     RegisterID* attributeOfSuper(AST::Attribute*, RegisterID* dst, RegisterID* self);
     // They cannot be reached: see statements().
-    void deadStatements(Seq<Stmt*>);
+    void deadStatements(Seq<Stmt*>, unsigned first = 0);
     std::optional<bool> constantTruth(Expr*);
 
     RegisterID* callRuntime(RegisterID* dst, RuntimeFunction, Arguments&);
@@ -527,6 +524,7 @@ private:
     Range m_place; // All of it, if more than the line was given.
     size_t m_markedPosition { 0 };
     unsigned m_sameLineDepth { 0 };
+    bool m_cannotBeReached { false }; // See deadStatements().
     size_t m_statementStart { std::numeric_limits<size_t>::max() }; // Where in the instructions the last statement begins.
     Last m_statementIsLast { }; // For statement().
     unsigned m_blockCount { 0 };

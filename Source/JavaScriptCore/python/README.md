@@ -882,7 +882,8 @@ coverage tools are CPython's own code on top. It is all in `runtime/PyMonitoring
 
 **Lines.** The compiler leaves marks (`PythonMark`, in the rare data of the `UnlinkedCodeBlock`; what they say is in `PyBytecode.h`): here begins line _n_; what follows is
 of no line; here the program's own code starts; here a block begins or ends that holds something in a temporary register; the jump that comes next is not the program's. They follow CPython's
-compiler location by location, artificial code included: operations on constants that it works out are of one line, statements that cannot be reached are of none. A line of which no instruction came (`pass`, `try:`, `x = (` over `1)`) has a mark on
+compiler location by location, artificial code included: operations on constants that it works out are of one line; whatever makes a display with `*` or `**` in it, or a long one, adds to it or extends it is of the line the display begins on; statements that cannot be reached are of none.
+What cannot be reached is told from the code that was emitted (`Unit::cannotGetHere()`: it ends in something that never goes on, and no jump leads here). It is compiled all the same, for the errors in it, ends in `op_unreachable`, and its constants, code objects among them, are not in `co_consts`; a `finally` clause has no copy for a way that does not exist. A line of which no instruction came (`pass`, `try:`, `x = (` over `1)`) has a mark on
 whatever comes next, which costs nothing; only where that can be reached from elsewhere is there an `op_nop`, as in CPython.
 `f_lineno`, tracebacks, `co_lines()` and `LINE` events all go by the marks.
 A function or a module that falls off its end returns on the line of whatever ran last. CPython gets there by copying the implicit `return` for each block that leads to it; here a compound statement

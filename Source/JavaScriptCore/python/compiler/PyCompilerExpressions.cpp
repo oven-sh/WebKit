@@ -917,6 +917,7 @@ void Unit::jumpIfTo(Expr* node, Label& target, bool condition)
 
     if (auto truth = constantTruth(node)) {
         line(node->range);
+        noteWhatConstantIsMadeOf(node);
         if (*truth == condition)
             jump(target);
         return;

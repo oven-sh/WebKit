@@ -90,7 +90,7 @@ public:
     struct Constant {
         VirtualRegister reg; // One of the constants of the code block. Not valid: it is a code object,
         unsigned functionIndex { 0 }; // that of this one of the functions of the code block.
-        bool isUsed { true }; // False: it only went into making another constant.
+        bool isUsed { true }; // False: it only went into making another constant, or is needed where the code cannot get.
     };
     Vector<Constant> constants;
     // The constants are no longer those of the text: code.replace(co_consts=...).
