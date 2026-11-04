@@ -53,7 +53,10 @@
 #define consumeOrFail(tokenType, ...) do { if (!consume(tokenType)) [[unlikely]] { handleErrorToken(); internalFailWithMessage(true, __VA_ARGS__); } } while (0)
 #define consumeOrFailWithFlags(tokenType, flags, ...) do { if (!consume(tokenType, flags)) [[unlikely]] { handleErrorToken(); internalFailWithMessage(true, __VA_ARGS__); } } while (0)
 #define matchOrFail(tokenType, ...) do { if (!match(tokenType)) [[unlikely]] { handleErrorToken(); internalFailWithMessage(true, __VA_ARGS__); } } while (0)
-#define failIfStackOverflow() do { if (!canRecurse()) [[unlikely]] failWithStackOverflow(); } while (0)
+// A stack overflow ends the parse. Restoring a save point clears m_errorMessage, so without the m_hasStackOverflow
+// check a caller that has a second production to try (object literal, then destructuring pattern, then member
+// expression) parses the same text again at every nesting level on the way out, which is exponential work.
+#define failIfStackOverflow() do { if (m_hasStackOverflow || !canRecurse()) [[unlikely]] failWithStackOverflow(); } while (0)
 #define semanticFail(...) do { internalFailWithMessage(false, __VA_ARGS__); } while (0)
 #define semanticFailIfTrue(cond, ...) do { if ((cond)) [[unlikely]] internalFailWithMessage(false, __VA_ARGS__); } while (0)
 #define semanticFailIfFalse(cond, ...) do { if (!(cond)) [[unlikely]] internalFailWithMessage(false, __VA_ARGS__); } while (0)
