@@ -513,6 +513,55 @@ static void testChainOfJoinedTextsCostsWhatItsLastTextHolds()
     });
 }
 
+// `s = s + a; use(s); t = t + n; use(t); s = s + a; use(s); ..`: every text on the way is read. Each is laid down behind the one that it adds to while there is room there, and with twice the room where there is none:
+// the texts of a row begin at few places, and hold together what the last one holds, whatever is laid down between them. Where each is written out by itself, they hold the square of the number of joins in bytes, and this does not end.
+static void testTextsThatAddToOneAnotherAndAreEachReadCostWhatLastOneHolds()
+{
+    constexpr uint32_t numberOfJoins = 100000;
+    runOnBuildThread([&] {
+        BuildContext build(makeOptionsOfTestedProgram());
+        std::unique_ptr<Program> program = parseProgram(withStandInLibrary(classWithManyMethodsForGrowthTests(1)), build);
+        AOT_TEST_CHECK(program);
+        TypeArena arena(program->types, ArenaKeeps::UntilReset);
+        StringID textOfNull = program->strings.textOfNull();
+        StringID textOfTrue = program->strings.textOf(true);
+        StringID first = arena.internJoinedTexts(textOfNull, textOfTrue);
+        arena.bytesOf(first);
+        struct Row {
+            StringID text;
+            ptrdiff_t place { 0 };
+            unsigned numberOfPlaces { 0 };
+        };
+        std::array<Row, 2> rows { Row { first }, Row { arena.internJoinedTexts(textOfTrue, textOfTrue) } };
+        for (uint32_t join = 0; join < numberOfJoins; ++join) {
+            // A text of its own in every turn, laid down as it is made.
+            arena.internText(byteCast<uint8_t>(String::number(join).span8()));
+            for (Row& row : rows) {
+                row.text = arena.internJoinedTexts(arena.internJoinedTexts(row.text, textOfNull), textOfTrue);
+                std::span<const uint8_t> bytes = arena.bytesOf(row.text);
+                AOT_TEST_CHECK(bytes.size() == 8 * (static_cast<size_t>(join) + 2) && std::ranges::equal(bytes.last(8), byteCast<uint8_t>("nulltrue"_s.span8())));
+                // The buffer moves as it grows. Where a text lies in it is told from a text that stays where it is.
+                ptrdiff_t place = bytes.data() - arena.bytesOf(first).data();
+                row.numberOfPlaces += place != std::exchange(row.place, place);
+                AOT_TEST_CHECK(row.numberOfPlaces <= 32);
+            }
+        }
+        AOT_TEST_CHECK(std::ranges::equal(arena.bytesOf(rows[0].text).first(16), byteCast<uint8_t>("nulltruenulltrue"_s.span8())) && std::ranges::equal(arena.bytesOf(rows[1].text).first(16), byteCast<uint8_t>("truetruenulltrue"_s.span8())));
+
+        // Of two texts that add to one text the first is laid down behind it. The second finds something else there, and is written out by itself.
+        auto spells = [&](StringID made, ASCIILiteral expected) {
+            return std::ranges::equal(arena.bytesOf(made), byteCast<uint8_t>(expected.span8()));
+        };
+        StringID stem = arena.internJoinedTexts(textOfTrue, textOfNull);
+        arena.bytesOf(stem);
+        StringID left = arena.internJoinedTexts(stem, textOfTrue);
+        StringID right = arena.internJoinedTexts(stem, textOfNull);
+        AOT_TEST_CHECK(spells(left, "truenulltrue"_s) && arena.bytesOf(left).data() == arena.bytesOf(stem).data());
+        AOT_TEST_CHECK(spells(right, "truenullnull"_s) && arena.bytesOf(right).data() != arena.bytesOf(stem).data());
+        AOT_TEST_CHECK(spells(stem, "truenull"_s) && spells(left, "truenulltrue"_s) && spells(first, "nulltrue"_s));
+    });
+}
+
 // function run() { return "ab" + "ab" + "ab" + ..; }  sink(run)
 static String sumOfTextsForGrowthTests(unsigned numberOfTerms)
 {
@@ -660,6 +709,8 @@ static void testResumptionCostsWhatWasKeptHoweverLargeFrameIs()
     constexpr unsigned numberOfClosures = 2000;
     std::optional<uint64_t> smaller = instructionsOfRunForGrowthTests(awaitsBehindLongListForGrowthTests(numberOfClosures, numberOfClosures));
     std::optional<uint64_t> large = instructionsOfRunForGrowthTests(awaitsBehindLongListForGrowthTests(4 * numberOfClosures, 4 * numberOfClosures));
+    // Where instructions cannot be counted the check below holds of itself, and the runner would ask for the todo to go. This line goes with the todo.
+    AOT_TEST_CHECK(smaller && large);
     AOT_TEST_CHECK(growsAsSizeDoes(smaller, large));
 }
 
@@ -677,6 +728,7 @@ std::span<const NativeTest> growthOfWorkTests()
         { "growth-of-work/the-liveness-of-a-body-grows-as-the-blocks-under-one-handler-do"_s, testLivenessGrowsAsValuesReadAtEndDo<StatementInRowForGrowthTests::UnderOneHandler> },
         { "growth-of-work/the-walk-grows-as-the-iterations-in-a-row-do"_s, testWalkGrowsAsIterationsInRowDo },
         { "growth-of-work/a-chain-of-joined-texts-costs-what-its-last-text-holds"_s, testChainOfJoinedTextsCostsWhatItsLastTextHolds },
+        { "growth-of-work/texts-that-add-to-one-another-and-are-each-read-cost-what-the-last-one-holds"_s, testTextsThatAddToOneAnotherAndAreEachReadCostWhatLastOneHolds },
         { "growth-of-work/the-walk-grows-as-the-terms-of-a-sum-of-texts-do"_s, testWalkGrowsAsTermsOfSumOfTextsDo },
         { "growth-of-work/the-walk-grows-as-the-terms-of-a-sum-of-texts-do-past-the-longest-text-that-is-made"_s, testWalkGrowsAsTermsOfSumOfTextsDoPastLongestTextThatIsMade },
         { "growth-of-work/a-run-grows-as-the-graphs-asked-for-in-one-job-do"_s, testRunGrowsAsGraphsAskedForInOneJobDo },

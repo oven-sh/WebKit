@@ -73,7 +73,7 @@ enum ImportPhase { Evaluation Defer }
 enum ModuleRequestKind { Import Require }
 enum ModuleExportKind { Variable Namespace Indirect }
 flags ModuleFlags {
-    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad MayBeImportedWhileItRuns IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache RunsAgain AnswersLoaderWithNamespace IsHeldUnderNameWithoutPrefix IsChangedOnDiskByRun IsShownByEntryOfCache LoadsCompiledFilesAlone FindsBuiltinsReadOnly IsHandedOutByTestRunner IsReachedWithoutExtension IsReachedUnderAnotherExtension IsReachedAsFolder ThrowsAtLoad
+    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad MayBeImportedWhileItRuns IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache RunsAgain AnswersLoaderWithNamespace IsHeldUnderNameWithoutPrefix IsChangedOnDiskByRun IsShownByEntryOfCache LoadsCompiledFilesAlone FindsBuiltinsReadOnly IsHandedOutByTestRunner IsReachedWithoutExtension IsReachedUnderAnotherExtension IsReachedAsFolder ThrowsAtLoad IsModuleToImports
     | engine EvaluatesItself
 }
 record ColumnAdjustment wire { offset: UInt32 line: UInt32 column: UInt32 }
@@ -111,7 +111,7 @@ record TemplateString wire { cooked: String? raw: String }
 enum FunctionVisibility { Public Private PrivateRecursive }
 record RuntimeFunctionEntry wire { id: RuntimeFunction function: Function(Closure) visibility: FunctionVisibility }
 record WebAssemblyModule wire { module: Module(Target) bytes: Span<Byte> }
-record ReplaceableBuiltin wire { member: Builtin }
+record ReplaceableBuiltin wire { member: Builtin staysLocked: Bool }
 record OpenedName wire { holder: Builtin name: String }
 
 enum ResumeMode { Next Throw Return }

@@ -1023,7 +1023,6 @@ public:
     BuiltinID findOwnPropertyOfInstances(BuiltinClassID, BuiltinName) const;
     bool listsOwnPropertiesOfNewInstances(BuiltinClassID) const;
     bool mayDefineOnNewInstances(BuiltinClassID, BuiltinName) const;
-    BuiltinTypeID typeOfNameDefinedOnNewInstances(BuiltinClassID, BuiltinName) const;
     bool definesCharactersOnNewInstances(BuiltinClassID) const;
     std::span<const BuiltinClassID> classesWithInstanceMember(BuiltinName) const;
 
@@ -1146,7 +1145,8 @@ public:
     void unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames);
     std::span<const BuiltinID> unlockedMembers() const LIFETIME_BOUND { return m_unlockedMembers.span(); }
     // AOTBuiltinTableOfTestRuns.cpp. As unlock(), and besides: every member of which canBeReplacedInTestRuns() holds becomes ConstantUnlessWritten WITHOUT being listed as unlocked, and every locked object is locked by its names.
-    void unlockForTestRun(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames);
+    // But for `membersThatStayLocked`, which ascend: the front end has folded by them, so no write that the flow follows may open one.
+    void unlockForTestRun(std::span<const BuiltinID> members, std::span<const BuiltinID> membersThatStayLocked, std::span<const BuiltinID> holdersOfNewNames);
     // Ascending.
     std::span<const BuiltinID> membersWhoseLockIsLeftToProgram() const LIFETIME_BOUND { return m_membersWhoseLockIsLeftToProgram.span(); }
 

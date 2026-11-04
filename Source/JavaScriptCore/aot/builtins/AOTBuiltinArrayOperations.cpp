@@ -162,6 +162,9 @@ static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString*
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // A join that runs code is under way further up, and may be one of this list: `toString()` of an element has stored a text over itself and asks for the list again. The function of the host knows which lists are being joined, and answers such a call with the empty text.
+    if (vm.stringRecursionCheckFirstObject) [[unlikely]]
+        return nullptr;
     EnsureStillAliveScope arrayScope(array);
     JSString* between = separatorOrNull ? separatorOrNull : vm.smallStrings.singleCharacterString(',');
     auto view = between->view(globalObject);

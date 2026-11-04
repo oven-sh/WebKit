@@ -1,0 +1,68 @@
+# -- source: name-laid-on-a-function-is-not-found-under-keys-that-nobody-knows.js
+# function K(v) { this.v = v; }
+# K.of = function (v) { return new K(v); };
+# function look(o, k) { return o[k]; }
+# const bag = { a: 1 };
+# bag.b = 2;
+# sink(look(bag, sink()));
+# sink(K.of(1).v);
+# -- end of source
+# `K.of = ..` lies on the closures of K under `of`, and every read of it off them is followed. If it went into the one node of "beside the fields of anything" too, each read under a key that nobody knows
+# would find it there: `o[k]`, and every such read in the code of the library that prints an error. What such a read hands to unseen code has escaped: the function, what it returns, and with that the layout of K.
+# SINCE 11-04 (R257) THE CLOCK OF START SAYS OF NO NAME THAT IT IS LAID AHEAD: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no program that we are judged by. What this test told apart by `laid-ahead` it no longer tells.
+# RUN: link members layouts functions mechanisms=all
+# CHECK: on-function f1 "of" function=f3
+# CHECK: layout L0 {{*}}stays-with-compiled-code
+# CHECK: function f3 callers-known
+
+module m0 path="name-laid-on-a-function-is-not-found-under-keys-that-nobody-knows.js" displayPath="name-laid-on-a-function-is-not-found-under-keys-that-nobody-knows.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="K" module=m0 constructor=f1 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 module=m0 position=121 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L1 members=[{key="a" value=Number{value=1}}]} module=m0
+variable g0 name="K" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = GetModuleVariable variable=g0 @30
+    v3 = NewClosure function=f3 @37
+    PropSet v2, v3 key="of" @30
+    v5 = Data data=d0 @121
+    v6 = Integer integer=2 @139
+    PropSet v5, v6 key="b" @131
+    v8 = Builtin builtin=GlobalThis @142
+    v9 = PropGet v8 key="sink" [isFreeName] @142
+    v10 = Builtin builtin=GlobalThis @157
+    v11 = PropGet v10 key="sink" [isFreeName] @157
+    v12 = Call v11 calleeName="sink" @157
+    v13 = Call v1, -, v5, v12 calleeName="look" @147
+    v14 = Call v9, -, v13 calleeName="sink" @142
+    v15 = Builtin builtin=GlobalThis @167
+    v16 = PropGet v15 key="sink" [isFreeName] @167
+    v17 = GetModuleVariable variable=g0 @172
+    v18 = PropGet v17 key="of" @172
+    v19 = Integer integer=1 @177
+    v20 = Call v18, v17, v19 calleeKey="of" calleeName="K.of" @174
+    v21 = PropGet v20 key="v" @178
+    v22 = Call v16, -, v21 calleeName="sink" @167
+    v23 = Undefined @167
+    Return v23 @167
+}
+function f1 name="K" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="v" @16
+    v3 = Undefined @16
+    Return v3 @16
+}
+function f2 name="look" module=m0 position=72 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: anything):
+    v2 = ElemGet v0, v1 @101
+    Return v2 @101
+}
+function f3 module=m0 position=37 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0 @63
+    v2 = Construct v1, -, v0 calleeName="K" @63
+    Return v2 @59
+}

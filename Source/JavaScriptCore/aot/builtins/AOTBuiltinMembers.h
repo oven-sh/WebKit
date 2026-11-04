@@ -45,16 +45,16 @@ public:
     BuiltinID findOwnMember(BuiltinID holder) const;
     bool isClosedKey(BuiltinID holder) const;
     bool isLockedLocation(BuiltinID holder) const;
-    // The objects that take no new name but this one: Program::openedNames.
-    std::span<const BuiltinID> holdersOpenedForKey() const LIFETIME_BOUND { return m_holdersOpenedForKey.span(); }
 
 private:
+    const Program& m_program;
     const BuiltinTable& m_table;
     BuiltinMemberName m_memberName;
     BuiltinName m_name;
     PropertyKeyKind m_kind;
     bool m_isIndexLike;
-    Vector<BuiltinID, 2> m_holdersOpenedForKey;
+    // The key, where some object takes no new name but this one: Program::isOpened(). Else null.
+    StringID m_textOpenedSomewhere;
 };
 
 struct MemberOfClasses {

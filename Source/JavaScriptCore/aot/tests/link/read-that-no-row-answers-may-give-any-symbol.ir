@@ -5,8 +5,10 @@
 # function plain() { print({ a: 1 }) } alone: no code has a symbol, and nothing is loaded.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-NOT: function f2 unreached
 # RUN(NONE): link functions mechanisms=none
+# REQUIRES(NONE): entries-of-bun
 # NONE-NOT: function f2 unreached
 
 module m0 path="main.js" displayPath="main.js" body=f0

@@ -13,6 +13,7 @@
 #include "AOTImageText.h"
 #include "AOTNumbering.h"
 #include "AOTTextEncoder.h"
+#include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <array>
 #include <memory>
@@ -52,6 +53,9 @@ static constexpr ASCIILiteral nameThatHoldsName = "name_with_tail_of_name"_s;
 static constexpr ASCIILiteral nameHeldByName = "tail_of_name"_s;
 static constexpr ASCIILiteral textHeldByName = "of_name"_s;
 static constexpr std::array<ASCIILiteral, 3> namesThatMeetOtherTexts { nameWithinText, nameThatHoldsName, nameHeldByName };
+// The walk joins the first two, adds the third to that and the fourth to that. What it makes first is the end of a text of the program too.
+static constexpr std::array<ASCIILiteral, 4> piecesOfMadeTexts { "made by"_s, " the walk"_s, ", added to"_s, " twice"_s };
+static constexpr ASCIILiteral textThatEndsWithMadeText = "a text made by the walk"_s;
 static constexpr std::array<char16_t, 3> wideTextWithTail { 0x3b1, 0x3b2, 0x3b3 };
 static constexpr std::array<char16_t, 2> tailOfWideText { 0x3b2, 0x3b3 };
 static constexpr std::array<Latin1Character, 4> bytesOfTailOfWideText { 0xb2, 0x03, 0xb3, 0x03 };
@@ -118,6 +122,7 @@ static const Vector<ExpectedText>& expectedTexts()
         { textThatEndsWithName, false },
         { textAroundName, false },
         { textHeldByName, false },
+        { textThatEndsWithMadeText, false },
         { textOfUnits(wideTextWithTail), true },
         { textOfUnits(tailOfWideText), true },
         { textOfUnits(bytesOfTailOfWideText), false },
@@ -206,8 +211,21 @@ CompiledCode TextImage::bodyOfReader()
         if (!expected.text.isEmpty())
             mentions.add(NumberSpace::StringCell, idOf(expected.text));
     }
+    // As the walk of a unit leaves them: each is the one before with something behind it.
+    Typed::TypeArena arena(build.program().types, Typed::ArenaKeeps::UntilReset);
+    StringID made;
+    for (ASCIILiteral piece : piecesOfMadeTexts) {
+        StringID text = arena.internText(byteCast<uint8_t>(piece.span8()));
+        if (!made) {
+            made = text;
+            continue;
+        }
+        made = arena.internJoinedTexts(made, text);
+        mentions.add(NumberSpace::StringCell, made);
+    }
     CompiledCode code = plainBody(1);
     mentions.moveTo(code.body);
+    copyMadeTextsMentionedBy(code.body, arena);
     return code;
 }
 
@@ -487,6 +505,21 @@ static void testSharedTailsAndInnerParts()
     AOT_TEST_CHECK(textsLieApart(textHeldByNone, textThatHoldsOthers));
 }
 
+// Nobody looks for them: each lies at the front of the longest. Looked for, the first would be found at the end of the text of the program that ends with it.
+static void testTextsThatAddToOneAnotherLieAtFrontOfLongest()
+{
+    String first = makeString(piecesOfMadeTexts[0], piecesOfMadeTexts[1]);
+    String second = makeString(first, piecesOfMadeTexts[2]);
+    String third = makeString(second, piecesOfMadeTexts[3]);
+    AOT_TEST_CHECK(textLiesWithin(first, third, 0) && textLiesWithin(second, third, 0));
+    AOT_TEST_CHECK(textsLieApart(textThatEndsWithMadeText, third));
+    TextImage& image = textImage();
+    for (const String& text : { first, second, third }) {
+        AOT_TEST_CHECK(image.numbers().stringConstants().numberOf(image.idOf(text)));
+        AOT_TEST_CHECK(image.text().hash(image.idOf(text)) == freshCopyOf(text).impl()->hash());
+    }
+}
+
 static void testNameIsHeldOnlyByName()
 {
     AOT_TEST_CHECK(textsLieApart(nameOfFreeVariable, textThatEndsWithName));
@@ -718,6 +751,7 @@ std::span<const NativeTest> imageTextTests()
         { "image/text/string-only-shown-has-no-header"_s, testStringOnlyShownHasNoHeader },
         { "image/text/decode-for-image"_s, testDecodeForImage },
         { "image/text/shared-tails-and-inner-parts"_s, testSharedTailsAndInnerParts },
+        { "image/text/texts-that-add-to-one-another-lie-at-the-front-of-the-longest"_s, testTextsThatAddToOneAnotherLieAtFrontOfLongest },
         { "image/text/name-is-held-only-by-name"_s, testNameIsHeldOnlyByName },
         { "image/text/widths-do-not-share"_s, testWidthsDoNotShare },
         { "image/text/inner-part-starts-at-whole-unit"_s, testInnerPartStartsAtWholeUnit },

@@ -74,7 +74,7 @@ public:
     // Made when first asked for, holds nothing. `anything` arrives with the first write of a new name under the key, on whichever object. Null outside a test run, and for a key that no test run opens.
     // WHOEVER GOES BY WHAT A LOOKUP THROUGH BUILT-INS FINDS, OR BY ITS FINDING NOTHING, WATCHES IT AND ASKS isNameAdded(): a name that is laid on an object on the way stands in front of whatever lies above.
     FlowNodeID nodeOfNameAdded(PropertyKeyID key) { return m_isTestRun ? makeNodeOfNameAdded(key) : FlowNodeID(); }
-    bool isNameAdded(PropertyKeyID) const;
+    bool isNameAdded(FlowNodeID nodeOfNameAdded) const;
     // For LinkFlow::builtinsAbove(): `Object.getPrototypeOf(function* () { })`. Only the choice of locks and names goes by it. Null outside a test run, and for a class object.
     BuiltinID prototypeAboveClosuresOf(FunctionID) const;
 

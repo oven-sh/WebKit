@@ -33,7 +33,6 @@ public:
     void generateNewRegExp(const ValueContext&);
     void generateNewTemplateObject(const ValueContext&);
     void generateNewRuntimeError(const ValueContext&);
-    void generateNewFunctionThatThrows(const ValueContext&);
     void generateNewSuppressedError(const ValueContext&);
     void generateCreateUnmappedArguments(const ValueContext&);
     void generateCreateMappedArguments(const ValueContext&);

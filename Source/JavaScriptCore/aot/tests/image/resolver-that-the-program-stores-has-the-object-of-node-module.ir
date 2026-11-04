@@ -3,6 +3,7 @@
 # and the name that it spells off it finds node:module.createRequire. If nobody let the object go, the code behind it would be left out, and require.resolve() would stop with "A built-in function was not compiled"
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: image
+# REQUIRES: entries-of-bun
 # CHECK: flags {{*}}LoadsModulesByName
 
 module m0 path="main.js" displayPath="main.js" body=f0

@@ -624,7 +624,7 @@ void encodeModuleTables(TableEncoder& encoder)
         return (... + (tables.sizeInBytes() + sizeof(uint64_t)));
     };
     part.reserveRoomFor(roomFor(lists.modules, lists.directories, lists.displayPaths, lists.requests, linkRequests, evaluationRequests, entryPointLinkPlan,
-        lists.exports, lists.indirectExports, lists.syntheticExports, lists.requiredNames, lists.exportStatements, lists.ambiguousExports, lists.sourceStamps,
+        lists.exports, lists.modulesThatDeclareExports, lists.indirectExports, lists.syntheticExports, lists.requiredNames, lists.exportStatements, lists.ambiguousExports, lists.sourceStamps,
         moduleFailures, modulesOfUncompiledCode, modulesThatLoadCompiledFilesAlone, modulesThatFindBuiltinsReadOnly, modulesReachedUnderOtherNames, followed.importsOfHeldFiles, asyncFunctionsWithoutAwait,
         byPath.modulesByPath, byPath.modulesByHashOfPath, byPath.firstModulesByHashOfPath, byPath.directoriesOfModulesByPath, compiledRuntimeModules, compiledRuntimeFunctions, stateOfLibraryModules,
         startsOfModules.firstSteps, startsOfModules.steps));
@@ -636,6 +636,7 @@ void encodeModuleTables(TableEncoder& encoder)
     part.setTable(ProgramTableIndex::evaluationRequests, evaluationRequests);
     part.setTable(ProgramTableIndex::entryPointLinkPlan, entryPointLinkPlan);
     part.setTable(ProgramTableIndex::moduleExports, lists.exports);
+    part.setTable(ProgramTableIndex::modulesThatDeclareExports, lists.modulesThatDeclareExports);
     part.setTable(ProgramTableIndex::indirectExports, lists.indirectExports);
     part.setTable(ProgramTableIndex::syntheticExports, lists.syntheticExports);
     part.setTable(ProgramTableIndex::requiredNames, lists.requiredNames);

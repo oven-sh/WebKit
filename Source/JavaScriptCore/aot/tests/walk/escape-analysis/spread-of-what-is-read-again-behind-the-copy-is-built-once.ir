@@ -1,9 +1,14 @@
-# what arrives at the join is spread and then handed out, so it is a cell on every way whatever the copy does: the ways meet, and the copy is built once
+# what arrives at the join is spread and then handed out, so it is a cell on every way. Each way brings a literal that only it has, with its keys in sight: each walks the join for itself, and the copy is made with the properties of that way
+# THE NAME OF THE FILE IS OUT OF DATE since object-assign-into-a-literal-is-written-out-1: the copy is built once for each way. No hook takes a file out
 # function widen(c, a, b) { const more = c ? { a } : { a, b }; return a({ ...more }, more); }
 # RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # CHECK-LABEL: code f1:Body
-# CHECK-COUNT-1: CopyDataProperties
-# CHECK-NOT: CopyDataProperties
+# CHECK-COUNT-1: = NewObject {{*}}layout=L0
+# CHECK-COUNT-1: = NewObject {{*}}layout=L1
+# CHECK-COUNT-2: = NewObject {{*}}layout=L2
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEVER-LABEL: code f1:Body
+# NEVER-NOT: CopyDataProperties
 
 layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 layout L1 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2

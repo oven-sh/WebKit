@@ -386,7 +386,7 @@ static void walkStretchOnBothSidesOfShapeTestInUnionCalls(Walker& walker, Refere
 
     // As where the arms of a guess meet: what the last arm has bound to a value that the body never mentions again is the proof of one arm.
     for (uint32_t place = 0; place < size; ++place) {
-        if (!valuesMentionedLater.contains(ValueID(first + place)))
+        if (arms.isEmpty() || !valuesMentionedLater.contains(ValueID(first + place)))
             walker.bind(ValueID(first + place), Reference());
     }
 

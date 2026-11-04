@@ -2,6 +2,7 @@
 # The object that console.log is passed is only looked at, and the function that the construction is passed is entered by the row alone
 # new Promise(run); console.log({ x: "s" });
 # RUN: locks
+# REQUIRES: entries-of-bun
 # CHECK: locked Promise constant link
 # CHECK: locked Console constant link
 # CHECK: locked ConsoleLog constant link

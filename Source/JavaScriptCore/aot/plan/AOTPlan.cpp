@@ -686,7 +686,7 @@ static void planModulesAndGlobalNames(const Program& program, const Facts& facts
 {
     parts.layoutsWithClassRecord = layoutsWithClassRecordInPlan(program, facts);
     parts.literalStrings = computeLiteralStrings(program);
-    parts.moduleEvaluation = planModuleEvaluation(program, facts, build.parallelLoops());
+    parts.moduleEvaluation = planModuleEvaluation(program, facts, build.parallelLoops(), build.statistics());
     chooseModuleWordsOfPlan(program, parts);
     // Plan sees a store as it is written, not whether the walk will bind it, so both sets take one answer.
     parts.globalNamesNeverStoredByName = globalNamesNeverStoredInPlan(program, facts);
@@ -720,7 +720,20 @@ static void planConventions(const Program& program, const Facts& facts, BuildCon
 
     parts.conventions = computeCallingConventions(program, facts, bodiesWithModuleStartInPlan(program, parts.moduleEvaluation), layoutsMadeAsCompiledObjectsInPlan(program, parts.slots));
     parts.functionsWithClosureCell = functionsWithClosureCellInPlan(program, parts.conventions);
-    if (AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime)) {
+    uint64_t numberOfAsyncFunctionsThatNeverSuspend = 0;
+    uint64_t numberOfFunctionsThatReturnNumberOrUndefinedRaw = 0;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        const FunctionConvention& convention = parts.conventions.of(FunctionID(index));
+        numberOfAsyncFunctionsThatNeverSuspend += convention.coroutineNeverSuspends;
+        if (!convention.has(CodeRole::Body) || convention.numberOfResults != 1)
+            continue;
+        Representation result = parts.conventions.resultRepresentation({ FunctionID(index), CodeRole::Body });
+        numberOfFunctionsThatReturnNumberOrUndefinedRaw += result == Representation::OptionalInt64 || result == Representation::OptionalDouble;
+    }
+    build.statistics().count(StatisticID::AsyncWorkersMade, numberOfAsyncFunctionsThatNeverSuspend);
+    build.statistics().count(StatisticID::NumbersOrUndefinedReturnedRaw, numberOfFunctionsThatReturnNumberOrUndefinedRaw);
+    // Results are checked under each of the three words.
+    if (AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtEntries) || AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtEntriesAndFields)) {
         parts.functionsWhoseResultsPassNoReturn = functionsWhoseResultsPassNoReturnInPlan(program, facts);
         parts.variablesThatRunTimeMayFill = variablesThatRunTimeMayFillInPlan(program);
     }
@@ -1279,6 +1292,8 @@ void checkPlan(const Program& program, const Facts& facts, const Plan& plan, Bui
 {
     CheckerOfPlan(program, plan, build).check();
     checkStorageOfFields(program, facts, plan, build);
+    if (build.validates())
+        checkFormsRoundRingsOfTailCalls(program, facts, plan, build);
 }
 
 } } } // namespace JSC::AOT::Typed

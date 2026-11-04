@@ -1,0 +1,403 @@
+# made of 30860664cd1c3388
+# a turn of a counted loop that stores a number into a view is laid out eight at a time like one that only reads.
+# a turn laid out that leaves is taken again by the written loop from its start, so nobody may see that it was begun twice: behind a store no edge leaves the turn. The store stands in the block that leads back to the head.
+# two views of one buffer, one element apart: each turn reads what the turn before has stored through the other view.
+# OPTIONS: check=Validate
+# f1 = triple, f2 = bumpUntil, f3 = shifted, f4 = halved
+# RUN(TRIPLE): emit f1 mechanisms=all
+# TRIPLE: = Store({{*}}offset = 28, TypedArrayProperties
+# behind its store this turn may leave: begun again it would add one twice. It stays as it is written.
+# RUN(UNTIL): emit f2 mechanisms=all
+# UNTIL: = Store({{*}}offset = 0, TypedArrayProperties
+# RUN(WRITTEN): emit f2 mechanisms=all
+# WRITTEN-NOT: = Store({{*}}offset = 4, TypedArrayProperties
+# RUN(SHIFTED): emit f3 mechanisms=all
+# SHIFTED: = Store({{*}}offset = 28, TypedArrayProperties
+# RUN(HALVED): emit f4 mechanisms=all
+# HALVED: = Store({{*}}offset = 56, TypedArrayProperties
+# function triple(view: Int32Array): void { for (let i = 0; i < view.length; i++) view[i] = view[i] * 3 + 1; }
+# function bumpUntil(view: Int32Array, stop: number): number { let i = 0; for (; i < view.length; i++) { view[i] = view[i] + 1; if (view[i] === stop) break; } return i; }
+# function shifted(from: Int32Array, into: Int32Array): void { for (let i = 0; i < from.length; i++) into[i] = from[i] + 1; }
+# function halved(view: Float64Array, from: number): void { for (let i = 0; i < view.length; i++) view[i] = from * 0.5 + i; }
+# function show(view: Int32Array): string { let said = ""; for (let i = 0; i < view.length; i++) said += view[i] + ","; return said; }
+# function showNumbers(view: Float64Array): string { let said = ""; for (let i = 0; i < view.length; i++) said += view[i] + ","; return said; }
+# function made(length: number): Int32Array { const view = new Int32Array(length); for (let i = 0; i < length; i++) view[i] = i * 3; return view; }
+# function tripled(length: number): void { const view = made(length); triple(view); triple(view); report(show(view)); }
+# function left(length: number, place: number): void { const view = made(length); report(bumpUntil(view, place * 3 + 1)); report(show(view)); report(bumpUntil(view, -1)); report(show(view)); }
+# function chained(length: number): void { const buffer = new ArrayBuffer((length + 1) * 4); const from = new Int32Array(buffer, 0, length); const into = new Int32Array(buffer, 4, length); from[0] = 5; shifted(from, into); shifted(from, into); report(show(new Int32Array(buffer))); }
+# function numbers(length: number): void { const view = new Float64Array(length); halved(view, 3); report(showNumbers(view)); halved(view, NaN); report(showNumbers(view)); }
+# tripled(0);
+# tripled(7);
+# tripled(8);
+# tripled(9);
+# tripled(17);
+# chained(1);
+# chained(8);
+# chained(9);
+# chained(24);
+# numbers(7);
+# numbers(8);
+# numbers(17);
+# left(24, 0);
+# left(24, 1);
+# left(24, 7);
+# left(24, 8);
+# left(24, 15);
+# left(24, 16);
+# left(24, 23);
+# report("end");
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function triple(view) { for (let i = 0;i < view.length; i++) view[i] = view[i] * 3 + 1; } function bumpUntil(view, stop) { let i = 0; for (;i < view.length; i++) { view[i] = view[i] + 1; if (view[i] === stop) break; } return i; } function shifted(from, into) { for (let i = 0;i < from.length; i++) into[i] = from[i] + 1; } function halved(view, from) { for (let i = 0;i < view.length; i++) view[i] = from * 0.5 + i; } function show(view) { let said = ""; for (let i = 0;i < view.length; i++) said += view[i] + ","; return said; } function showNumbers(view) { let said = ""; for (let i = 0;i < view.length; i++) said += view[i] + ","; return said; } function made(length) { const view = new Int32Array(length); for (let i = 0;i < length; i++) view[i] = i * 3; return view; } function tripled(length) { const view = made(length); triple(view); triple(view); report(show(view)); } function left(length, place) { const view = made(length); report(bumpUntil(view, place * 3 + 1)); report(show(view)); report(bumpUntil(view, -1)); report(show(view)); } function chained(length) { const buffer = new ArrayBuffer((length + 1) * 4); const from = new Int32Array(buffer, 0, length); const into = new Int32Array(buffer, 4, length); from[0] = 5; shifted(from, into); shifted(from, into); report(show(new Int32Array(buffer))); } function numbers(length) { const view = new Float64Array(length); halved(view, 3); report(showNumbers(view)); halved(view, NaN); report(showNumbers(view)); } tripled(0); tripled(7); tripled(8); tripled(9); tripled(17); chained(1); chained(8); chained(9); chained(24); numbers(7); numbers(8); numbers(17); left(24, 0); left(24, 1); left(24, 7); left(24, 8); left(24, 15); left(24, 16); left(24, 23); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 44 of 44 of 44
+# CHECK-NEXT: exited with 0
+# RUN(ALSO1): run-in-shell mechanisms=-Guesses (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function triple(view) { for (let i = 0;i < view.length; i++) view[i] = view[i] * 3 + 1; } function bumpUntil(view, stop) { let i = 0; for (;i < view.length; i++) { view[i] = view[i] + 1; if (view[i] === stop) break; } return i; } function shifted(from, into) { for (let i = 0;i < from.length; i++) into[i] = from[i] + 1; } function halved(view, from) { for (let i = 0;i < view.length; i++) view[i] = from * 0.5 + i; } function show(view) { let said = ""; for (let i = 0;i < view.length; i++) said += view[i] + ","; return said; } function showNumbers(view) { let said = ""; for (let i = 0;i < view.length; i++) said += view[i] + ","; return said; } function made(length) { const view = new Int32Array(length); for (let i = 0;i < length; i++) view[i] = i * 3; return view; } function tripled(length) { const view = made(length); triple(view); triple(view); report(show(view)); } function left(length, place) { const view = made(length); report(bumpUntil(view, place * 3 + 1)); report(show(view)); report(bumpUntil(view, -1)); report(show(view)); } function chained(length) { const buffer = new ArrayBuffer((length + 1) * 4); const from = new Int32Array(buffer, 0, length); const into = new Int32Array(buffer, 4, length); from[0] = 5; shifted(from, into); shifted(from, into); report(show(new Int32Array(buffer))); } function numbers(length) { const view = new Float64Array(length); halved(view, 3); report(showNumbers(view)); halved(view, NaN); report(showNumbers(view)); } tripled(0); tripled(7); tripled(8); tripled(9); tripled(17); chained(1); chained(8); chained(9); chained(24); numbers(7); numbers(8); numbers(17); left(24, 0); left(24, 1); left(24, 7); left(24, 8); left(24, 15); left(24, 16); left(24, 23); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO1: 44 of 44 of 44
+# ALSO1-NEXT: exited with 0
+# RUN(ALSO2): run-in-shell mechanisms=-LoopInvariants (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function triple(view) { for (let i = 0;i < view.length; i++) view[i] = view[i] * 3 + 1; } function bumpUntil(view, stop) { let i = 0; for (;i < view.length; i++) { view[i] = view[i] + 1; if (view[i] === stop) break; } return i; } function shifted(from, into) { for (let i = 0;i < from.length; i++) into[i] = from[i] + 1; } function halved(view, from) { for (let i = 0;i < view.length; i++) view[i] = from * 0.5 + i; } function show(view) { let said = ""; for (let i = 0;i < view.length; i++) said += view[i] + ","; return said; } function showNumbers(view) { let said = ""; for (let i = 0;i < view.length; i++) said += view[i] + ","; return said; } function made(length) { const view = new Int32Array(length); for (let i = 0;i < length; i++) view[i] = i * 3; return view; } function tripled(length) { const view = made(length); triple(view); triple(view); report(show(view)); } function left(length, place) { const view = made(length); report(bumpUntil(view, place * 3 + 1)); report(show(view)); report(bumpUntil(view, -1)); report(show(view)); } function chained(length) { const buffer = new ArrayBuffer((length + 1) * 4); const from = new Int32Array(buffer, 0, length); const into = new Int32Array(buffer, 4, length); from[0] = 5; shifted(from, into); shifted(from, into); report(show(new Int32Array(buffer))); } function numbers(length) { const view = new Float64Array(length); halved(view, 3); report(showNumbers(view)); halved(view, NaN); report(showNumbers(view)); } tripled(0); tripled(7); tripled(8); tripled(9); tripled(17); chained(1); chained(8); chained(9); chained(24); numbers(7); numbers(8); numbers(17); left(24, 0); left(24, 1); left(24, 7); left(24, 8); left(24, 15); left(24, 16); left(24, 23); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# ALSO2: 44 of 44 of 44
+# ALSO2-NEXT: exited with 0
+
+module m0 path="stores-into-views-in-turns-laid-out.ts" displayPath="stores-into-views-in-turns-laid-out.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="triple" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="bumpUntil" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="shifted" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="halved" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="show" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="showNumbers" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="made" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f8 @0
+    v1 = Convert v0 declared={type=f8 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f9 @0
+    v3 = Convert v2 declared={type=f9 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f10 @0
+    v5 = Convert v4 declared={type=f10 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f11 @0
+    v7 = Convert v6 declared={type=f11 flags=[IsFromCompiler]} @0
+    v8 = Integer @1765
+    v9 = Call v1, -, v8 calleeName="tripled" @1757
+    v10 = Integer integer=7 @1777
+    v11 = Call v1, -, v10 calleeName="tripled" @1769
+    v12 = Integer integer=8 @1789
+    v13 = Call v1, -, v12 calleeName="tripled" @1781
+    v14 = Integer integer=9 @1801
+    v15 = Call v1, -, v14 calleeName="tripled" @1793
+    v16 = Integer integer=17 @1813
+    v17 = Call v1, -, v16 calleeName="tripled" @1805
+    v18 = Integer integer=1 @1826
+    v19 = Call v5, -, v18 calleeName="chained" @1818
+    v20 = Integer integer=8 @1838
+    v21 = Call v5, -, v20 calleeName="chained" @1830
+    v22 = Integer integer=9 @1850
+    v23 = Call v5, -, v22 calleeName="chained" @1842
+    v24 = Integer integer=24 @1862
+    v25 = Call v5, -, v24 calleeName="chained" @1854
+    v26 = Integer integer=7 @1875
+    v27 = Call v7, -, v26 calleeName="numbers" @1867
+    v28 = Integer integer=8 @1887
+    v29 = Call v7, -, v28 calleeName="numbers" @1879
+    v30 = Integer integer=17 @1899
+    v31 = Call v7, -, v30 calleeName="numbers" @1891
+    v32 = Integer integer=24 @1909
+    v33 = Integer @1913
+    v34 = Call v3, -, v32, v33 calleeName="left" @1904
+    v35 = Integer integer=24 @1922
+    v36 = Integer integer=1 @1926
+    v37 = Call v3, -, v35, v36 calleeName="left" @1917
+    v38 = Integer integer=24 @1935
+    v39 = Integer integer=7 @1939
+    v40 = Call v3, -, v38, v39 calleeName="left" @1930
+    v41 = Integer integer=24 @1948
+    v42 = Integer integer=8 @1952
+    v43 = Call v3, -, v41, v42 calleeName="left" @1943
+    v44 = Integer integer=24 @1961
+    v45 = Integer integer=15 @1965
+    v46 = Call v3, -, v44, v45 calleeName="left" @1956
+    v47 = Integer integer=24 @1975
+    v48 = Integer integer=16 @1979
+    v49 = Call v3, -, v47, v48 calleeName="left" @1970
+    v50 = Integer integer=24 @1989
+    v51 = Integer integer=23 @1993
+    v52 = Call v3, -, v50, v51 calleeName="left" @1984
+    v53 = Builtin builtin=GlobalThis @1998
+    v54 = PropGet v53 key="report" [isFreeName] @1998
+    v55 = String string="end" @2005
+    v56 = Call v54, -, v55 calleeName="report" @1998
+    v57 = Undefined @1998
+    Return v57 @1998
+}
+function f1 name="triple" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array):
+    v1 = Integer @102
+    v2 = Convert v1 declared={type=number} @102
+    Jump -> next b1(v2) @98
+  b1(v3: number):
+    LoopHint @98
+    v5 = PropGet v0 key="length" @109
+    v6 = Less v3, v5 @109
+    Branch v6 -> taken b2(), notTaken b3() @109
+  b2():
+    v7 = ElemGet v0, v3 @137
+    v8 = Integer integer=3 @147
+    v9 = Mul v7, v8 @147
+    v10 = Integer integer=1 @151
+    v11 = Add v9, v10 @151
+    ElemSet v0, v3, v11 @127
+    v13 = Increment v3 @122
+    v14 = Convert v13 declared={type=number} @122
+    Jump -> next b1(v14) @122
+  b3():
+    v15 = Undefined @122
+    Return v15 @122
+}
+function f2 name="bumpUntil" module=m0 position=156 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: number):
+    v2 = Integer @225
+    v3 = Convert v2 declared={type=number} @225
+    Jump -> next b1(v3) @228
+  b1(v4: number):
+    LoopHint @228
+    v6 = PropGet v0 key="length" @239
+    v7 = Less v4, v6 @239
+    Branch v7 -> taken b2(), notTaken b4() @239
+  b2():
+    v8 = ElemGet v0, v4 @269
+    v9 = Integer integer=1 @279
+    v10 = Add v8, v9 @279
+    ElemSet v0, v4, v10 @259
+    v12 = ElemGet v0, v4 @286
+    v13 = StrictEq v12, v1 @298
+    Branch v13 -> taken b4(), notTaken b3() @298
+  b3():
+    v14 = Increment v4 @252
+    v15 = Convert v14 declared={type=number} @252
+    Jump -> next b1(v15) @252
+  b4():
+    v16 = Convert v4 declared={type=number} @320
+    Return v16 @320
+}
+function f3 name="shifted" module=m0 position=325 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array, v1: undefined|null|Int32Array):
+    v2 = Integer @399
+    v3 = Convert v2 declared={type=number} @399
+    Jump -> next b1(v3) @395
+  b1(v4: number):
+    LoopHint @395
+    v6 = PropGet v0 key="length" @406
+    v7 = Less v4, v6 @406
+    Branch v7 -> taken b2(), notTaken b3() @406
+  b2():
+    v8 = ElemGet v0, v4 @434
+    v9 = Integer integer=1 @444
+    v10 = Add v8, v9 @444
+    ElemSet v1, v4, v10 @424
+    v12 = Increment v4 @419
+    v13 = Convert v12 declared={type=number} @419
+    Jump -> next b1(v13) @419
+  b3():
+    v14 = Undefined @419
+    Return v14 @419
+}
+function f4 name="halved" module=m0 position=449 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Float64Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Float64Array, v1: number):
+    v2 = Integer @520
+    v3 = Convert v2 declared={type=number} @520
+    Jump -> next b1(v3) @516
+  b1(v4: number):
+    LoopHint @516
+    v6 = PropGet v0 key="length" @527
+    v7 = Less v4, v6 @527
+    Branch v7 -> taken b2(), notTaken b3() @527
+  b2():
+    v8 = Double number=0.5 @562
+    v9 = Mul v1, v8 @562
+    v10 = Add v9, v4 @568
+    ElemSet v0, v4, v10 @545
+    v12 = Increment v4 @540
+    v13 = Convert v12 declared={type=number} @540
+    Jump -> next b1(v13) @540
+  b3():
+    v14 = Undefined @540
+    Return v14 @540
+}
+function f5 name="show" module=m0 position=573 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Int32Array):
+    v1 = String string="" @626
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @626
+    v3 = Integer @643
+    v4 = Convert v3 declared={type=number} @643
+    Jump -> next b1(v2, v4) @639
+  b1(v5: undefined|null|string, v6: number):
+    LoopHint @639
+    v8 = PropGet v0 key="length" @650
+    v9 = Less v6, v8 @650
+    Branch v9 -> taken b2(), notTaken b3() @650
+  b2():
+    v10 = ElemGet v0, v6 @676
+    v11 = String string="," @686
+    v12 = Add v10, v11 @686
+    v13 = Add v5, v12 @686
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @668
+    v15 = Increment v6 @663
+    v16 = Convert v15 declared={type=number} @663
+    Jump -> next b1(v14, v16) @663
+  b3():
+    v17 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @698
+    Return v17 @698
+}
+function f6 name="showNumbers" module=m0 position=706 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Float64Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Float64Array):
+    v1 = String string="" @768
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @768
+    v3 = Integer @785
+    v4 = Convert v3 declared={type=number} @785
+    Jump -> next b1(v2, v4) @781
+  b1(v5: undefined|null|string, v6: number):
+    LoopHint @781
+    v8 = PropGet v0 key="length" @792
+    v9 = Less v6, v8 @792
+    Branch v9 -> taken b2(), notTaken b3() @792
+  b2():
+    v10 = ElemGet v0, v6 @818
+    v11 = String string="," @828
+    v12 = Add v10, v11 @828
+    v13 = Add v5, v12 @828
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @810
+    v15 = Increment v6 @805
+    v16 = Convert v15 declared={type=number} @805
+    Jump -> next b1(v14, v16) @805
+  b3():
+    v17 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @840
+    Return v17 @840
+}
+function f7 name="made" module=m0 position=848 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=Int32Array @909
+    v2 = Construct v1, -, v0 calleeName="Int32Array" @909
+    v3 = Convert v2 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @905
+    v4 = Integer @942
+    v5 = Convert v4 declared={type=number} @942
+    Jump -> next b1(v5) @938
+  b1(v6: number):
+    LoopHint @938
+    v8 = Less v6, v0 @949
+    Branch v8 -> taken b2(), notTaken b3() @949
+  b2():
+    v9 = Integer integer=3 @976
+    v10 = Mul v6, v9 @976
+    ElemSet v3, v6, v10 @962
+    v12 = Increment v6 @957
+    v13 = Convert v12 declared={type=number} @957
+    Jump -> next b1(v13) @957
+  b3():
+    Return v3 @986
+}
+function f8 name="tripled" module=m0 position=994 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g6 @1048
+    v2 = Call v1, -, v0 calleeName="made" @1048
+    v3 = GetModuleVariable variable=g0 @1062
+    v4 = Call v3, -, v2 calleeName="triple" @1062
+    v5 = GetModuleVariable variable=g0 @1076
+    v6 = Call v5, -, v2 calleeName="triple" @1076
+    v7 = Builtin builtin=GlobalThis @1090
+    v8 = PropGet v7 key="report" [isFreeName] @1090
+    v9 = GetModuleVariable variable=g4 @1097
+    v10 = Call v9, -, v2 calleeName="show" @1097
+    v11 = Call v8, -, v10 calleeName="report" @1090
+    v12 = Undefined @1090
+    Return v12 @1090
+}
+function f9 name="left" module=m0 position=1112 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = GetModuleVariable variable=g6 @1178
+    v3 = Call v2, -, v0 calleeName="made" @1178
+    v4 = Builtin builtin=GlobalThis @1192
+    v5 = PropGet v4 key="report" [isFreeName] @1192
+    v6 = GetModuleVariable variable=g1 @1199
+    v7 = Integer integer=3 @1223
+    v8 = Mul v1, v7 @1223
+    v9 = Integer integer=1 @1227
+    v10 = Add v8, v9 @1227
+    v11 = Call v6, -, v3, v10 calleeName="bumpUntil" @1199
+    v12 = Call v5, -, v11 calleeName="report" @1192
+    v13 = Builtin builtin=GlobalThis @1232
+    v14 = PropGet v13 key="report" [isFreeName] @1232
+    v15 = GetModuleVariable variable=g4 @1239
+    v16 = Call v15, -, v3 calleeName="show" @1239
+    v17 = Call v14, -, v16 calleeName="report" @1232
+    v18 = Builtin builtin=GlobalThis @1252
+    v19 = PropGet v18 key="report" [isFreeName] @1252
+    v20 = GetModuleVariable variable=g1 @1259
+    v21 = Integer integer=-1 @1275
+    v22 = Call v20, -, v3, v21 calleeName="bumpUntil" @1259
+    v23 = Call v19, -, v22 calleeName="report" @1252
+    v24 = Builtin builtin=GlobalThis @1281
+    v25 = PropGet v24 key="report" [isFreeName] @1281
+    v26 = GetModuleVariable variable=g4 @1288
+    v27 = Call v26, -, v3 calleeName="show" @1288
+    v28 = Call v25, -, v27 calleeName="report" @1281
+    v29 = Undefined @1281
+    Return v29 @1281
+}
+function f10 name="chained" module=m0 position=1303 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=ArrayBuffer @1363
+    v2 = Integer integer=1 @1385
+    v3 = Add v0, v2 @1385
+    v4 = Integer integer=4 @1390
+    v5 = Mul v3, v4 @1390
+    v6 = Construct v1, -, v5 calleeName="ArrayBuffer" @1363
+    v7 = Convert v6 declared={type=undefined|null|ArrayBuffer flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1359
+    v8 = Builtin builtin=Int32Array @1411
+    v9 = Integer @1430
+    v10 = Construct v8, -, v7, v9, v0 calleeName="Int32Array" @1411
+    v11 = Convert v10 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1407
+    v12 = Builtin builtin=Int32Array @1459
+    v13 = Integer integer=4 @1478
+    v14 = Construct v12, -, v7, v13, v0 calleeName="Int32Array" @1459
+    v15 = Convert v14 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1455
+    v16 = Integer @1490
+    v17 = Integer integer=5 @1500
+    ElemSet v11, v16, v17 @1490
+    v19 = GetModuleVariable variable=g2 @1503
+    v20 = Call v19, -, v11, v15 calleeName="shifted" @1503
+    v21 = GetModuleVariable variable=g2 @1524
+    v22 = Call v21, -, v11, v15 calleeName="shifted" @1524
+    v23 = Builtin builtin=GlobalThis @1545
+    v24 = PropGet v23 key="report" [isFreeName] @1545
+    v25 = GetModuleVariable variable=g4 @1552
+    v26 = Builtin builtin=Int32Array @1561
+    v27 = Construct v26, -, v7 calleeName="Int32Array" @1561
+    v28 = Convert v27 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1557
+    v29 = Call v25, -, v28 calleeName="show" @1552
+    v30 = Call v24, -, v29 calleeName="report" @1545
+    v31 = Undefined @1545
+    Return v31 @1545
+}
+function f11 name="numbers" module=m0 position=1585 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=Float64Array @1643
+    v2 = Construct v1, -, v0 calleeName="Float64Array" @1643
+    v3 = Convert v2 declared={type=undefined|null|Float64Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1639
+    v4 = GetModuleVariable variable=g3 @1665
+    v5 = Integer integer=3 @1678
+    v6 = Call v4, -, v3, v5 calleeName="halved" @1665
+    v7 = Builtin builtin=GlobalThis @1682
+    v8 = PropGet v7 key="report" [isFreeName] @1682
+    v9 = GetModuleVariable variable=g5 @1689
+    v10 = Call v9, -, v3 calleeName="showNumbers" @1689
+    v11 = Call v8, -, v10 calleeName="report" @1682
+    v12 = GetModuleVariable variable=g3 @1709
+    v13 = Double number=NaN @1722
+    v14 = Call v12, -, v3, v13 calleeName="halved" @1709
+    v15 = Builtin builtin=GlobalThis @1728
+    v16 = PropGet v15 key="report" [isFreeName] @1728
+    v17 = GetModuleVariable variable=g5 @1735
+    v18 = Call v17, -, v3 calleeName="showNumbers" @1735
+    v19 = Call v16, -, v18 calleeName="report" @1728
+    v20 = Undefined @1728
+    Return v20 @1728
+}

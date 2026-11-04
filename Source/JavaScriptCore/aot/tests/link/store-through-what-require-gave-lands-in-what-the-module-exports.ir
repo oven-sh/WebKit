@@ -2,8 +2,10 @@
 # What `require` answers is unknown: the loader, a mock, a cycle or an entry of require.cache may answer. In the common run it is what the body of the module has returned, and that arrives beside the unknown.
 # If it were not, the store in main.js would land on nobody in what is held: the field would be held to `undefined` alone, and the first run would take it out of its slot
 # RUN: summary f0
+# REQUIRES: entries-of-bun
 # CHECK: answer-of-require m1 -> n
 # RUN(HELD): link held fields mechanisms=all
+# REQUIRES(HELD): entries-of-bun
 # HELD-NOT: field L0.0 "make" proven=undefined w
 # HELD: field L0.0 "make"
 # HELD: field L1.0 "hooks" proven=L0

@@ -1,0 +1,88 @@
+# -- source: name-that-no-layout-lists-is-read-behind-looks-at-the-cell.ts
+# declare function print(...values: unknown[]): void;
+# function make(i: number): any { return { issues: i }; }
+# function read(o: any) { let found = 0; for (let k = 0; k < 3; k++) if (o.aborted === undefined) found++; return found; }
+# const first = make(1);
+# (globalThis as any).kept = first;
+# print(read(first));
+# (0, eval)("kept.aborted = 7");
+# print(read(first));
+# -- end of source
+# records of ad4326adfa209f49
+# The record has left, and nobody in sight stores `aborted`: its layout has no field for the name. Whether unseen code has laid a property beside the fields the order word says, and whether the object still stands where its layout says
+# one byte of the cell: behind the two looks the read is undefined, and where either fails it goes as it is written. The text that is evaluated between the two calls lays the property: the first look fails from then on.
+# RUN: walk f2 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f2:Body
+# CHECK: = HasNoExtraProperties
+# CHECK: = HasLayoutPrototype
+# CHECK: = PropGet {{*}}key="aborted"
+# RUN(ANSWERS): run-in-shell
+# REQUIRES(ANSWERS): entries-of-bun
+# ANSWERS: 3
+# ANSWERS: 0
+
+module m0 path="name-that-no-layout-lists-is-read-behind-looks-at-the-cell.ts" displayPath="name-that-no-layout-lists-is-read-behind-looks-at-the-cell.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=91 fields=[{key="issues" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Integer integer=1 @248
+    v5 = Call v1, -, v4 calleeName="make" @243
+    v6 = Builtin builtin=GlobalThis @253
+    v7 = PropGet v6 key="globalThis" [isFreeName] @253
+    v8 = Convert v7 declared={type=builtin(GlobalThis) flags=[IsExpected]} @253
+    PropSet v8, v5 key="kept" @253
+    v10 = Builtin builtin=GlobalThis @286
+    v11 = PropGet v10 key="print" [isFreeName] @286
+    v12 = Call v3, -, v5 calleeName="read" @292
+    v13 = Call v11, -, v12 calleeName="print" @286
+    v14 = Builtin builtin=GlobalThis @310
+    v15 = PropGet v14 key="eval" [isFreeName] @310
+    v16 = Convert v15 declared={type=builtin(Eval) flags=[IsExpected]} @310
+    v17 = String string="kept.aborted = 7" @316
+    v18 = Call v16, -, v17 @310
+    v19 = Builtin builtin=GlobalThis @337
+    v20 = PropGet v19 key="print" [isFreeName] @337
+    v21 = Call v3, -, v5 calleeName="read" @343
+    v22 = Call v20, -, v21 calleeName="print" @337
+    v23 = Undefined @337
+    Return v23 @337
+}
+function f1 name="make" module=m0 position=52 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0] @91
+    v2 = FinishObject v1 @91
+    Return v2 @91
+}
+function f2 name="read" module=m0 position=108 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer @144
+    v2 = Convert v1 declared={type=number} @144
+    v3 = Integer @160
+    v4 = Convert v3 declared={type=number} @160
+    Jump -> next b1(v2, v4) @156
+  b1(v5: number, v6: number):
+    LoopHint @156
+    v8 = Integer integer=3 @167
+    v9 = Less v6, v8 @167
+    Branch v9 -> taken b2(), notTaken b5() @167
+  b2():
+    v10 = PropGet v0 key="aborted" @179
+    v11 = TypeTest v10 testedType=undefined @179
+    Branch v11 -> taken b3(| 0), notTaken b4(v5) @179
+  b3(v12):
+    v13 = Increment v5 @204
+    v14 = Convert v13 declared={type=number} @204
+    Jump -> next b4(v14) @204
+  b4(v15: number):
+    v16 = Increment v6 @170
+    v17 = Convert v16 declared={type=number} @170
+    Jump -> next b1(v15, v17) @170
+  b5():
+    Return v5 @220
+}

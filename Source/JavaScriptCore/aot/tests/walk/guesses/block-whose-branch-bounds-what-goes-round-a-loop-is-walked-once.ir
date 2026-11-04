@@ -10,7 +10,7 @@
 # RUN: walk f1 mechanisms=all-ParameterGuards
 # CHECK-LABEL: code f1:Body
 # CHECK: isInLoop=true isLoopHead=true
-# CHECK: = ShapeTest
+# CHECK: PutSlot {{*}}key="seen" {{*}}level=Expected
 # CHECK: int[1, 32] {{*}} = Increment
 
 module m0 path="block-whose-branch-bounds-what-goes-round-a-loop-is-walked-once.ts" displayPath="block-whose-branch-bounds-what-goes-round-a-loop-is-walked-once.ts" body=f0 namespaceLayout=L(m0)

@@ -863,8 +863,17 @@ void writeExplainSections(const Typed::Program& program, const Typed::Facts& fac
     if (explainsFlow || countsAccesses) {
         Vector<ExplainedAccess> accesses = explainAccesses(program, facts, units, explainsFlow, loops);
         Vector<Wire::TypeTestRecord> typeTests = explainTypeTests(program, facts, units, explainsFlow, loops);
-        if (countsAccesses)
-            output.setRecords(Wire::ResultSection::AccessCounts, countExplainedAccesses(program, accesses.span(), typeTests.span()).span());
+        if (countsAccesses) {
+            Vector<Wire::AccessCountRecord> counts = countExplainedAccesses(program, accesses.span(), typeTests.span());
+            for (const Wire::AccessCountRecord& record : counts) {
+                build.statistics().count(StatisticID::AccessesUnknown, record.accesses[static_cast<size_t>(Wire::KnowledgeLevel::Unknown)]);
+                build.statistics().count(StatisticID::AccessesGuarded, record.accesses[static_cast<size_t>(Wire::KnowledgeLevel::Expected)]);
+                build.statistics().count(StatisticID::AccessesProven, record.accesses[static_cast<size_t>(Wire::KnowledgeLevel::Proven)]);
+                build.statistics().count(StatisticID::IndirectCalls, record.calls[static_cast<size_t>(Wire::KnowledgeLevel::Unknown)]);
+                build.statistics().count(StatisticID::DirectCalls, record.calls[static_cast<size_t>(Wire::KnowledgeLevel::Expected)] + record.calls[static_cast<size_t>(Wire::KnowledgeLevel::Proven)]);
+            }
+            output.setRecords(Wire::ResultSection::AccessCounts, counts.span());
+        }
         if (explainsFlow) {
             output.setRecords(Wire::ResultSection::OtherOrigins, shareExplainedOrigins(accesses, loops).span());
             Vector<Wire::AccessRecord> records(accesses.size(), [&](size_t index) {

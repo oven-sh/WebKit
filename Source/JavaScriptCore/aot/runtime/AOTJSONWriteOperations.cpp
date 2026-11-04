@@ -176,13 +176,40 @@ static NEVER_INLINE Latin1Character* tryAppendEscapedAtCursor(const StringBuilde
     return appendQuotedAndEscapedJSONString(cursor, characters);
 }
 
-static NEVER_INLINE Latin1Character* appendQuotedWithEscapes(JSGlobalObject* globalObject, StringBuilderStorage& builder, std::span<const Latin1Character> characters)
+// Where the pool keeps a buffer that holds the longest escaped form, that much room is made, once. A longer text gets room for the escapes of 4,096 characters, and asks again when they have used it up.
+static Latin1Character* reserveForEscapedString(JSGlobalObject* globalObject, StringBuilderStorage& builder, size_t length, size_t quotes)
 {
-    size_t minLength = characters.size() + numberOfQuotes;
-    Latin1Character* cursor = builder.reserve(globalObject, { .length = minLength, .maxLengthOfRest = roomForEscapedString(characters.size()) - minLength });
+    bool isKeptByPool = roomForEscapedString(length) <= StringBuilderStorage::maxRetainedCapacity;
+    size_t roomForEscapes = (maxEscapedCharacterLength - 1) * (isKeptByPool ? length : 4096);
+    if (Latin1Character* cursor = builder.tryReserve({ .length = length + quotes, .maxLengthOfRest = roomForEscapes + maxStringBuilderReservation })) [[likely]]
+        return cursor;
+    return builder.reserve(globalObject, { .length = length + quotes, .maxLengthOfRest = maxStringBuilderReservation });
+}
+
+static NEVER_INLINE Latin1Character* appendQuotedWithEscapes(JSGlobalObject* globalObject, StringBuilderStorage& builder, std::span<const Latin1Character> rest)
+{
+    constexpr size_t closingQuote = 1;
+    Latin1Character* cursor = reserveForEscapedString(globalObject, builder, rest.size(), numberOfQuotes);
     if (!cursor)
         return nullptr;
-    return appendQuotedAndEscapedJSONString(cursor, characters);
+    *cursor++ = '"';
+    while (!rest.empty()) {
+        // Escaping can make a text six times as long: as much of the rest as the room holds at that rate.
+        auto buffer = builder.charactersUpToLimit();
+        auto room = buffer.subspan(cursor - buffer.data());
+        auto piece = rest.first(std::min(rest.size(), room.size() / maxEscapedCharacterLength));
+        WTF::appendEscapedJSONStringContent(room, piece);
+        cursor = room.data();
+        rest = rest.subspan(piece.size());
+        if (builder.hasRoomAt(cursor, rest.size() + closingQuote + maxStringBuilderReservation)) [[likely]]
+            continue;
+        builder.commit(cursor);
+        cursor = reserveForEscapedString(globalObject, builder, rest.size(), closingQuote);
+        if (!cursor)
+            return nullptr;
+    }
+    *cursor++ = '"';
+    return cursor;
 }
 
 // The cursor behind the quoted text, with maxStringBuilderReservation bytes of room. Null with an exception.
@@ -194,12 +221,14 @@ static Latin1Character* appendEscapedJSONString(JSGlobalObject* globalObject, St
     return appendQuotedWithEscapes(globalObject, builder, characters);
 }
 
-static NEVER_INLINE Latin1Character* appendQuoted16Bit(JSGlobalObject* globalObject, StringBuilderStorage& builder, std::span<const char16_t> characters)
+static NEVER_INLINE Latin1Character* appendQuoted16Bit(JSGlobalObject* globalObject, StringBuilderStorage& builder, std::span<const char16_t> rest)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    size_t maxEscapedLength = characters.size() * maxEscapedCharacterLength;
+    // A longer text is appended in pieces, each a string of its own.
+    constexpr size_t maxLengthOfPiece = 256 * KB;
+    size_t maxEscapedLength = std::min(rest.size(), maxLengthOfPiece) * maxEscapedCharacterLength;
     Vector<char16_t, 64> text;
     if (!text.tryGrow(maxEscapedLength + numberOfQuotes)) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -208,7 +237,16 @@ static NEVER_INLINE Latin1Character* appendQuoted16Bit(JSGlobalObject* globalObj
     std::span<char16_t> quoted = text.mutableSpan();
     quoted[0] = '"';
     std::span<char16_t> output = quoted.subspan(1, maxEscapedLength);
-    WTF::appendEscapedJSONStringContent(output, characters);
+    while (rest.size() > maxLengthOfPiece) [[unlikely]] {
+        // A surrogate pair stays in one piece: half of a pair on its own is escaped.
+        auto piece = rest.first(maxLengthOfPiece - !!U16_IS_LEAD(rest[maxLengthOfPiece - 1]));
+        WTF::appendEscapedJSONStringContent(output, piece);
+        builder.append(globalObject, std::span<const char16_t> { quoted.data(), output.data() });
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        rest = rest.subspan(piece.size());
+        output = quoted.first(maxEscapedLength);
+    }
+    WTF::appendEscapedJSONStringContent(output, rest);
     size_t length = output.data() - quoted.data();
     quoted[length++] = '"';
 
@@ -249,7 +287,7 @@ static Latin1Character* appendQuotedJSONString(JSGlobalObject* globalObject, Str
     auto characters = string.span8();
     if (!builder.hasRoomAt(cursor, roomForQuotedString(characters.size()))) [[unlikely]] {
         builder.commit(cursor);
-        cursor = builder.reserve(globalObject, { .length = characters.size() + numberOfQuotes, .maxLengthOfRest = maxStringBuilderReservation });
+        cursor = reserveForEscapedString(globalObject, builder, characters.size(), numberOfQuotes);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     if (Latin1Character* end = tryAppendQuotedWithoutEscapes(builder, cursor, string)) [[likely]]

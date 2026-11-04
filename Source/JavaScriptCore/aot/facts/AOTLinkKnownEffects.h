@@ -20,6 +20,8 @@ class Program;
 inline constexpr uint64_t objectsOfAnyLayout = UINT64_MAX;
 // One bit: Program::locationBitOf() of the layout at the top of the row of written bases (writtenBaseOf()), so a class and all below it share it. objectsOfAnyLayout: the program has no bit for it.
 uint64_t bitOfLayoutInKnownEffects(const Program&, LayoutID);
+// The same of every layout, each from the layout above it: for whoever asks for many, since the one above goes up the whole row.
+Vector<uint64_t> bitsOfLayoutsInKnownEffects(const Program&);
 // Where the properties of an object of a layout lie, its shape and its place below a prototype. Whoever writes there and cannot say in whose object writes in objectsOfAnyLayout.
 inline constexpr AbstractHeapSet heapsOfObjectsWithLayouts {
     AbstractHeap::ObjectFields, AbstractHeap::NamedProperties, AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::PrototypeLinks

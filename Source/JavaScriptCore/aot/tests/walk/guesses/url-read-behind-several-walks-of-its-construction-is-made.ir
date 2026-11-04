@@ -1,0 +1,250 @@
+# a URL is never made only where one walk of its construction stands in front of every read. Where the construction is walked several times and a read stands behind them all, one name stands for what each walk has built:
+# no text answers for it, so every walk makes the object as written
+# f1: a loop that is built twice (its counter enters as a box of anything), read in the block by which the loop is left. f2: two turns written out. f3: a block that the ways of a closed arm walk apart from the others
+# f4 and f5: the URL is still never made: in f4 each copy of the loop reads its own, in f5 the one construction stands in front of both copies
+# each function is handed to code that nobody has seen
+# f1 = leftByReturn, f2 = twoTurns, f3 = walkedApart, f4 = readInside, f5 = madeInFront
+# -- source: url-read-behind-several-walks-of-its-construction-is-made.ts
+# declare function sink(...values: unknown[]): void;
+# function leftByReturn(text: string, start: any, count: number) { for (let i = start; i < count; i = i + 1) { const url = new URL(text, "http://127.0.0.1"); if (i >= 1) return url.search + url.pathname; } return ""; }
+# function twoTurns(first: string, second: string, wanted: number) { for (let i = 0; i < 2; i++) { const url = new URL(i === 0 ? first : second, "http://127.0.0.1"); if (i === wanted) return url.pathname; } return ""; }
+# function walkedApart(item: { flags: number }, text: string) { if (item.flags & 1) return "one"; const url = new URL(text, "http://127.0.0.1"); if (item.flags & 2) return url.pathname; return url.search; }
+# function readInside(text: string, start: any, count: number) { let total = 0; for (let i = start; i < count; i = i + 1) { const url = new URL(text, "http://127.0.0.1"); if (url.pathname === "/a") total += url.search.length; } return total; }
+# function madeInFront(text: string, start: any, count: number) { const url = new URL(text, "http://127.0.0.1"); let longer = 0; for (let i = start; i < count; i = i + 1) { if (url.pathname.length > i) longer = longer + 1; } return url.search + longer; }
+# sink(leftByReturn, twoTurns, walkedApart, readInside, madeInFront, { flags: 1 });
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: isLoopHead=true
+# CHECK: = CallBuiltin {{*}}overload=URLPrototypeSearch/
+# RUN(LEFT): walk f1 mechanisms=all
+# REQUIRES(LEFT): entries-of-bun
+# LEFT-COUNT-2: overload=URL/
+# RUN(LEFTMADE): walk f1 mechanisms=all
+# REQUIRES(LEFTMADE): entries-of-bun
+# LEFTMADE-NOT: CompilerHelpersScanPlainURL
+# LEFTMADE-NOT: undefined|URL
+# RUN(TURNS): walk f2 mechanisms=all
+# REQUIRES(TURNS): entries-of-bun
+# TURNS-COUNT-2: overload=URL/
+# RUN(TURNSMADE): walk f2 mechanisms=all
+# REQUIRES(TURNSMADE): entries-of-bun
+# TURNSMADE-NOT: isLoopHead=true
+# TURNSMADE-NOT: CompilerHelpersScanPlainURL
+# TURNSMADE-NOT: undefined|URL
+# RUN(APART): walk f3 mechanisms=all
+# REQUIRES(APART): entries-of-bun
+# APART: = ShapeTest
+# APART-COUNT-2: overload=URL/
+# RUN(APARTMADE): walk f3 mechanisms=all
+# REQUIRES(APARTMADE): entries-of-bun
+# APARTMADE-NOT: CompilerHelpersScanPlainURL
+# APARTMADE-NOT: undefined|URL
+# RUN(INSIDE): walk f4 mechanisms=all
+# REQUIRES(INSIDE): entries-of-bun
+# INSIDE-COUNT-2: isLoopHead=true
+# RUN(INSIDESCANNED): walk f4 mechanisms=all
+# REQUIRES(INSIDESCANNED): entries-of-bun
+# INSIDESCANNED-COUNT-1: CompilerHelpersScanPlainURL
+# RUN(FRONT): walk f5 mechanisms=all
+# REQUIRES(FRONT): entries-of-bun
+# FRONT-COUNT-2: isLoopHead=true
+# RUN(FRONTSCANNED): walk f5 mechanisms=all
+# REQUIRES(FRONTSCANNED): entries-of-bun
+# FRONTSCANNED-COUNT-1: CompilerHelpersScanPlainURL
+# RUN(FRONTONCE): walk f5 mechanisms=all
+# REQUIRES(FRONTONCE): entries-of-bun
+# FRONTONCE-COUNT-1: overload=URL/
+
+module m0 path="url-read-behind-several-walks-of-its-construction-is-made.ts" displayPath="url-read-behind-several-walks-of-its-construction-is-made.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=513 fields=[{key="flags" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L0 members=[{key="flags" value=Number{value=1}}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = Builtin builtin=GlobalThis @1186
+    v11 = PropGet v10 key="sink" [isFreeName] @1186
+    v12 = Data data=d0 @1253
+    v13 = Call v11, -, v1, v3, v5, v7, v9, v12 calleeName="sink" @1186
+    v14 = Undefined @1186
+    Return v14 @1186
+}
+function f1 name="leftByReturn" module=m0 position=51 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything, v2: number):
+    Jump -> next b1(v1) @125
+  b1(v3):
+    LoopHint @125
+    v5 = Less v3, v2 @140
+    Branch v5 -> taken b2(), notTaken b5() @140
+  b2():
+    v6 = Builtin builtin=GlobalThis @176
+    v7 = PropGet v6 key="URL" [isFreeName] @176
+    v8 = Convert v7 declared={type=builtin(URL) flags=[IsExpected]} @176
+    v9 = String string="http://127.0.0.1" @186
+    v10 = Construct v8, -, v0, v9 calleeName="URL" @176
+    v11 = Convert v10 declared={type=undefined|null|URL flags=[IsExpected, OmitsNull, OmitsUndefined]} @172
+    v12 = Integer integer=1 @216
+    v13 = GreaterEq v3, v12 @216
+    Branch v13 -> taken b3(), notTaken b4() @216
+  b3():
+    v14 = PropGet v11 key="search" @226
+    v15 = PropGet v11 key="pathname" @239
+    v16 = Add v14, v15 @239
+    Return v16 @239
+  b4():
+    v17 = Integer integer=1 @155
+    v18 = Add v3, v17 @155
+    Jump -> next b1(v18) @147
+  b5():
+    v19 = String string="" @262
+    Return v19 @262
+}
+function f2 name="twoTurns" module=m0 position=268 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string, v2: number):
+    v3 = Integer @348
+    v4 = Convert v3 declared={type=number} @348
+    Jump -> next b1(v4) @344
+  b1(v5: number):
+    LoopHint @344
+    v7 = Integer integer=2 @355
+    v8 = Less v5, v7 @355
+    Branch v8 -> taken b2(), notTaken b8() @355
+  b2():
+    v9 = Builtin builtin=GlobalThis @381
+    v10 = PropGet v9 key="URL" [isFreeName] @381
+    v11 = Convert v10 declared={type=builtin(URL) flags=[IsExpected]} @381
+    v12 = Integer @391
+    v13 = StrictEq v5, v12 @391
+    Branch v13 -> taken b3(), notTaken b4() @391
+  b3():
+    Jump -> next b5(v0) @395
+  b4():
+    Jump -> next b5(v1) @403
+  b5(v14):
+    v15 = String string="http://127.0.0.1" @411
+    v16 = Construct v11, -, v14, v15 calleeName="URL" @381
+    v17 = Convert v16 declared={type=undefined|null|URL flags=[IsExpected, OmitsNull, OmitsUndefined]} @377
+    v18 = StrictEq v5, v2 @442
+    Branch v18 -> taken b6(), notTaken b7() @442
+  b6():
+    v19 = PropGet v17 key="pathname" @457
+    Return v19 @457
+  b7():
+    v20 = Increment v5 @358
+    v21 = Convert v20 declared={type=number} @358
+    Jump -> next b1(v21) @358
+  b8():
+    v22 = String string="" @480
+    Return v22 @480
+}
+function f3 name="walkedApart" module=m0 position=486 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|string):
+    v2 = PropGet v0 key="flags" @552
+    v3 = Integer integer=1 @565
+    v4 = BitAnd v2, v3 @565
+    v5 = ToBoolean v4 @552
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @552
+  b1(v6):
+    v7 = String string="one" @575
+    Return v7 @575
+  b2(v8):
+    v9 = Builtin builtin=GlobalThis @598
+    v10 = PropGet v9 key="URL" [isFreeName] @598
+    v11 = Convert v10 declared={type=builtin(URL) flags=[IsExpected]} @598
+    v12 = String string="http://127.0.0.1" @608
+    v13 = Construct v11, -, v1, v12 calleeName="URL" @598
+    v14 = Convert v13 declared={type=undefined|null|URL flags=[IsExpected, OmitsNull, OmitsUndefined]} @594
+    v15 = PropGet v0 key="flags" @633
+    v16 = Integer integer=2 @646
+    v17 = BitAnd v15, v16 @646
+    v18 = ToBoolean v17 @633
+    Branch v18 -> taken b3(| 0), notTaken b4(| 0) @633
+  b3(v19):
+    v20 = PropGet v14 key="pathname" @656
+    Return v20 @656
+  b4(v21):
+    v22 = PropGet v14 key="search" @677
+    Return v22 @677
+}
+function f4 name="readInside" module=m0 position=691 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything, v2: number):
+    v3 = Integer @766
+    v4 = Convert v3 declared={type=number} @766
+    Jump -> next b1(v4, v1) @778
+  b1(v5: number, v6):
+    LoopHint @778
+    v8 = Less v6, v2 @793
+    Branch v8 -> taken b2(), notTaken b6() @793
+  b2():
+    v9 = Builtin builtin=GlobalThis @829
+    v10 = PropGet v9 key="URL" [isFreeName] @829
+    v11 = Convert v10 declared={type=builtin(URL) flags=[IsExpected]} @829
+    v12 = String string="http://127.0.0.1" @839
+    v13 = Construct v11, -, v0, v12 calleeName="URL" @829
+    v14 = Convert v13 declared={type=undefined|null|URL flags=[IsExpected, OmitsNull, OmitsUndefined]} @825
+    v15 = PropGet v14 key="pathname" @864
+    v16 = String string="/a" @881
+    v17 = StrictEq v15, v16 @881
+    Branch v17 -> taken b3(| 0), notTaken b4(| 0) @881
+  b3(v18):
+    v19 = NarrowByField v14, v18 key="pathname" @881
+    v20 = PropGet v19 key="search" @896
+    v21 = PropGet v20 key="length" @900
+    v22 = Add v5, v21 @896
+    v23 = Convert v22 declared={type=number} @887
+    Jump -> next b5(v23) @887
+  b4(v24):
+    v25 = NarrowByField v14, v24 key="pathname" @881
+    Jump -> next b5(v5) @881
+  b5(v26: number):
+    v27 = Integer integer=1 @808
+    v28 = Add v6, v27 @808
+    Jump -> next b1(v26, v28) @800
+  b6():
+    Return v5 @924
+}
+function f5 name="madeInFront" module=m0 position=933 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything, v2: number):
+    v3 = Builtin builtin=GlobalThis @1013
+    v4 = PropGet v3 key="URL" [isFreeName] @1013
+    v5 = Convert v4 declared={type=builtin(URL) flags=[IsExpected]} @1013
+    v6 = String string="http://127.0.0.1" @1023
+    v7 = Construct v5, -, v0, v6 calleeName="URL" @1013
+    v8 = Convert v7 declared={type=undefined|null|URL flags=[IsExpected, OmitsNull, OmitsUndefined]} @1009
+    v9 = Integer @1057
+    v10 = Convert v9 declared={type=number} @1057
+    Jump -> next b1(v10, v1) @1069
+  b1(v11: number, v12):
+    LoopHint @1069
+    v14 = Less v12, v2 @1084
+    Branch v14 -> taken b2(), notTaken b5() @1084
+  b2():
+    v15 = PropGet v8 key="pathname" @1108
+    v16 = PropGet v15 key="length" @1112
+    v17 = Greater v16, v12 @1130
+    Branch v17 -> taken b3(), notTaken b4(v11) @1130
+  b3():
+    v18 = Integer integer=1 @1151
+    v19 = Add v11, v18 @1151
+    v20 = Convert v19 declared={type=number} @1133
+    Jump -> next b4(v20) @1133
+  b4(v21: number):
+    v22 = Integer integer=1 @1099
+    v23 = Add v12, v22 @1099
+    Jump -> next b1(v21, v23) @1091
+  b5():
+    v24 = PropGet v8 key="search" @1163
+    v25 = Add v24, v11 @1176
+    Return v25 @1176
+}

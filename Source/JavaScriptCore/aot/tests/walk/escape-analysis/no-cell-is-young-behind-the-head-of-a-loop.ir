@@ -7,7 +7,7 @@
 # CHECK: = LoopHint
 # CHECK: = PutSlot{{*}}key="x"
 # RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
-# NEVER-NOT: ownerCannotBeMarked
+# NEVER-NOT: OwnerIsYoung
 # the store stands above the poll of the turn and above what lays the cell in a variable: both come round to it, so the head itself ends the cell
 # function published(v) { const o = { x: v }; let i = 0; do { o.x = v; kept = o; i++; } while (i < 10); return v; }
 # RUN(ROUND): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
@@ -16,7 +16,7 @@
 # ROUND: = PutSlot{{*}}key="x"
 # ROUND: = LoopHint
 # RUN(ROUNDNOT): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
-# ROUNDNOT-NOT: ownerCannotBeMarked
+# ROUNDNOT-NOT: OwnerIsYoung
 
 layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 variable g0 name="kept" module=m0 declared={type=anything}

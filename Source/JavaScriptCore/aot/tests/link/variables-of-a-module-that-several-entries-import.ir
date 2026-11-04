@@ -8,9 +8,10 @@
 # no other entry leads to the reader by another way. `taken`: `host` may have loaded second.js, whose body calls the reader. `own`, `lone`: in the start of another entry `host` loads the file at a time
 # that nobody knows.
 # If `taken`, `own` or `lone` lost the mark of emptiness, the walk would fold the test away, and a read in front of the store would hand on a value that is none where a ReferenceError is due.
+# SINCE 11-04 (R244) THE CLOCK TAKES THE MARK OUT OF NO VARIABLE: five holes in it ended in the empty word read raw, and what the proof spared is a compare. `early` and `kept` keep it too.
 # RUN: link variables mechanisms=all
-# CHECK: variable g0 proven=string writers-known
-# CHECK: variable g1 proven=string writers-known
+# CHECK: variable g0 proven=string|absent
+# CHECK: variable g1 proven=string|absent
 # CHECK: variable g2 proven=string|absent
 # CHECK: variable g3 proven=string|absent
 # CHECK: variable g4 proven=string|absent

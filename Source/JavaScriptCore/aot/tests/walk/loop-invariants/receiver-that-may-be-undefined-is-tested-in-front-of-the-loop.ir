@@ -2,10 +2,11 @@
 # and the read that hangs on it stays with it. The shape is tested once in front of the loop, which is built twice: behind the test there is no check, and the read stands in front of the head.
 # Where the test fails the value is undefined or null, and the other copy throws in the turn that comes to the access, or has no turn
 # class Box { x: number; constructor(x: number) { this.x = x; } }
-# function sum(o: Box, n: number) { let s = 0; for (let i = 0; i < n; i++) s = (s + o.x) | 0; return s; }
+# function sum(o: Box | null | undefined, n: number) { let s = 0; for (let i = 0; i < n; i++) s = (s + o.x) | 0; return s; }
 # (globalThis as any).kept = sum;
 # console.log(sum(new Box(2), 5));
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: [[test]]: boolean @Boolean = ShapeTest {{*}}L0
 # CHECK-NEXT: Branch [[test]] ->
@@ -18,6 +19,7 @@
 # CHECK-NOT: GetSlot
 # With loop invariants withheld each turn checks and reads.
 # RUN(ONCE): walk f1 mechanisms=all-LoopInvariants
+# REQUIRES(ONCE): entries-of-bun
 # ONCE-LABEL: code f1:Body
 # ONCE-NOT: ShapeTest
 # ONCE: isInLoop=true isLoopHead=true
@@ -57,7 +59,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v22 = Undefined @200
     Return v22 @200
 }
-function f1 name="sum" module=m0 position=64 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="sum" module=m0 position=64 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0, v1: number):
     Jump -> next b1() @64
   b1():

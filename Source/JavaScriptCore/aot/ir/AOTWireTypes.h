@@ -52,6 +52,9 @@ public:
     uint32_t numberOfDerivedLayouts() const { return m_numberOfDerivedLayouts; }
     // 2. Every type of the wire's list. Behind it TypeTable::typeOfWireIndex() answers.
     void readTypes();
+    // `interface Customer { id: number }` beside a type with the same names whose `id` is an object that nobody is seen to make: the field is written `number | View`, and a type that names such a view reads as anything.
+    // What else the type names, for a position that the compiler has not established: such a type guards nothing there. Null: the type reads as it is written, it names nothing else, or it names a type parameter, which stands for any value.
+    TypeID typeExpectedBesideViews(uint32_t wireIndex) const { return wireIndex < m_typesExpectedBesideViews.size() ? m_typesExpectedBesideViews[wireIndex] : TypeID(); }
     // 3. Behind the reader's own reading of the wire's layout records into Program::layouts: appends the derived layouts, sets Program::declaredMembersOf, indexes and inherits fields.
     void finishLayouts();
     // 4. When every list of the program is read: ObjectTable::addObjectsOfProgram(), IDSetTable::reserveMembers() for layouts.
@@ -61,9 +64,10 @@ public:
 private:
     void makeObjects();
     bool computeDeclaredMembers();
-    void planTaggedLayouts(Vector<Vector<LayoutID>>& members, const class TellingFields&);
+    void planTaggedLayouts(ArenasOfWorkers&, Vector<LayoutSetID>& members, const class TellingFields&);
     void computeFunctionFamilies();
-    TypeParts readPartsWithoutClasses(TypeArena&, uint32_t index) const;
+    enum class ViewsWithoutLayouts : bool { ReadAsAnything, AreLeftOut };
+    TypeParts readPartsWithoutClasses(TypeArena&, uint32_t index, ViewsWithoutLayouts = ViewsWithoutLayouts::ReadAsAnything) const;
     bool readsAsAnything(std::span<const uint32_t> namedLayouts) const;
 
     Program& m_program;
@@ -74,6 +78,8 @@ private:
     Vector<LayoutSetID> m_declaredMembers;
     BitVector m_typeParametersWithoutFamily;
     BitVector m_viewsWithoutLayouts;
+    // By type of the wire. Empty: no type has such a reading.
+    Vector<TypeID> m_typesExpectedBesideViews;
     // By function of the wire: the closures and built-ins that may pass for the function type. Null: none, so any function.
     Vector<ObjectSetID> m_functionFamilies;
     std::optional<InternalError> m_errorInFunctionFamilies;

@@ -38,8 +38,7 @@ static constexpr OperandUses usesThatReachPastOperandsOfHeldBackStore {
 };
 
 // Each clears a mark in the cell that its operand names. The schema files that under RuntimeState, so no use of the operand says that it is written.
-static constexpr OpcodeSet heldBackOpcodesThatWriteWordOfTheirCell { Opcode::FinishBirth, Opcode::TryFinishBirth, Opcode::RememberOwner };
-static_assert(OperandIndex::FinishBirth::object == OperandIndex::RememberOwner::object);
+static constexpr OpcodeSet heldBackOpcodesThatWriteWordOfTheirCell { Opcode::FinishBirth, Opcode::TryFinishBirth };
 static_assert(OperandIndex::FinishBirth::object == OperandIndex::TryFinishBirth::object);
 
 static constexpr bool writesReceiverOfHeldBackStore(Access access)

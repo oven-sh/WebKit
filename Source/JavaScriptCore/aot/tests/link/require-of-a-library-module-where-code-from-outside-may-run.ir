@@ -2,5 +2,6 @@
 # PROGRAM-OF: require-of-a-library-module-gives-what-its-body-returns.ir
 # LIBRARY: own
 # RUN: link accesses functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-NOT: access
 # CHECK: function f2 {{*}}result=object?UnseenCode

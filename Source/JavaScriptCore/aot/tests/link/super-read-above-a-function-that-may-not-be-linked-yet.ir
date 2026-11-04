@@ -1,0 +1,89 @@
+# `super.hello` in a class below a constructor function looks the name up from the prototype object of the function, above which the class may not stand yet: the read may give undefined.
+# f1 = Sub, f5 = probe
+# -- source: super-read-above-a-function-that-may-not-be-linked-yet.js
+# class Base { hello() { return 1; } }
+# function Sub() { this.a = 1; }
+# class Top extends Sub { probe() { return super.hello; } }
+# const top = new Top();
+# top.probe();
+# Object.setPrototypeOf(Sub.prototype, Base.prototype);
+# top.probe();
+# -- end of source
+# records of 2802dbc0393f6d9f
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f5 {{*}} result=undefined|
+
+module m0 path="super-read-above-a-function-that-may-not-be-linked-yet.js" displayPath="super-read-above-a-function-that-may-not-be-linked-yet.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 position=6 constructor=f2
+layout L1 kind=Instance name="Sub" module=m0 position=37 base=L0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 kind=Instance name="Top" module=m0 position=74 base=L1 constructor=f4 supertypes=[L1] flags=[HasHeritage]
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g0 @0
+    v5 = NewClosure function=f3 @13
+    DefineMethod v3, v5 layout=L0 key="hello" @13
+    v7 = FinishClass v3 layout=L0 @0
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @0
+    v9 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} @0
+    v10 = ResolveHeritage v1 @86
+    v11 = NewClosure function=f4 @68
+    v12 = NewClass v11, v1, v10 layout=L2 @68
+    PutModuleVariable v12 variable=g1 @68
+    v14 = NewClosure function=f5 @92
+    DefineMethod v12, v14 layout=L2 key="probe" @92
+    v16 = FinishClass v12 layout=L2 @68
+    v17 = Convert v16 declared={type=f4 flags=[IsFromCompiler]} @68
+    v18 = Convert v16 declared={type=f4 flags=[IsFromCompiler]} @68
+    v19 = Construct v18 calleeName="Top" @142
+    v20 = PropGet v19 key="probe" @149
+    v21 = Call v20, v19 calleeKey="probe" calleeName="top.probe" @153
+    v22 = Builtin builtin=Object @162
+    v23 = Builtin builtin=ObjectSetPrototypeOf @162
+    v24 = PropGet v1 key="prototype" @184
+    v25 = PropGet v9 key="prototype" @199
+    v26 = Call v23, v22, v24, v25 calleeName="Object.setPrototypeOf" @169
+    v27 = PropGet v19 key="probe" @216
+    v28 = Call v27, v19 calleeKey="probe" calleeName="top.probe" @220
+    v29 = Undefined @216
+    Return v29 @216
+}
+function f1 name="Sub" module=m0 position=37 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer integer=1 @63
+    PropSet v0, v1 key="a" @54
+    v3 = Undefined @54
+    Return v3 @54
+}
+function f2 name="Base" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @6
+    v2 = NewObject v1 layout=L0 @6
+    v3 = Convert v2 declared={type=L0} @6
+    Return v3 @6
+}
+function f3 name="hello" module=m0 position=13 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1 @30
+    Return v0 @30
+}
+function f4 name="Top" module=m0 position=74 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @74
+    v4 = SuperConstructList v3, v1, v2 layout=L2 @74
+    v5 = Convert v4 declared={type=L2} @74
+    Return v5 @74
+}
+function f5 name="probe" module=m0 position=92 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = GetModuleVariable variable=g1 @109
+    v2 = GetSuperBase v1 homeKind=ClassPrototype @109
+    v3 = SuperGet v2, v0 key="hello" @109
+    Return v3 @109
+}

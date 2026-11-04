@@ -1,0 +1,156 @@
+# a method of a Buffer is found behind a comparison of the cell's Structure with the one the realm gives its Buffers, so reads, writes and copies of bytes use their inline code
+# every caller is in sight: Link proves the parameters Buffers
+# f1 = sumWords, f2 = fillWords, f3 = copyInto
+# -- source: methods-of-a-buffer-are-found-behind-a-structure-check.ts
+# declare function sink(...values: unknown[]): void;
+# function sumWords(buf: Buffer, n: number): number { let s = 0; for (let i = 0; i + 4 <= n; i += 4) s = (s + buf.readUInt32LE(i)) | 0; return s; }
+# function fillWords(buf: Buffer, n: number): void { for (let i = 0; i + 4 <= n; i += 4) buf.writeUInt32LE(i, i); }
+# function copyInto(from: Buffer, to: Buffer, n: number): number { let c = 0; for (let i = 0; i < n; i++) c += from.copy(to, 0, 0, 16); return c; }
+# const buf = Buffer.alloc(4096);
+# const other = Buffer.alloc(4096);
+# for (let turn = 0; turn < 3; turn++) { fillWords(buf, 4096); sink(sumWords(buf, 4096), copyInto(buf, other, 100)); }
+# -- end of source
+# records of fe5d01ed27deaa00
+# RUN(READ): walk f1 mechanisms=all
+# REQUIRES(READ): entries-of-bun
+# READ: = IsPristine {{*}}builtinClass=Buffer aspects=[Names]
+# READ: TryCallInline {{*}}inlineBuiltin=BufferAccess
+# RUN(WRITE): walk f2 mechanisms=all
+# REQUIRES(WRITE): entries-of-bun
+# WRITE: = IsPristine {{*}}builtinClass=Buffer aspects=[Names]
+# WRITE: TryCallInline {{*}}inlineBuiltin=BufferAccess
+# RUN(COPY): walk f3 mechanisms=all
+# REQUIRES(COPY): entries-of-bun
+# COPY: = IsPristine {{*}}builtinClass=Buffer aspects=[Names]
+# COPY: TryCallInline {{*}}inlineBuiltin=BufferCopy
+
+module m0 path="methods-of-a-buffer-are-found-behind-a-structure-check.ts" displayPath="methods-of-a-buffer-are-found-behind-a-structure-check.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=GlobalThis @469
+    v7 = PropGet v6 key="Buffer" [isFreeName] @469
+    v8 = Convert v7 declared={type=builtin(Buffer) flags=[IsExpected]} @469
+    v9 = PropGet v8 key="alloc" @469
+    v10 = Convert v9 declared={type=builtin(BufferAlloc) flags=[IsExpected]} @469
+    v11 = Integer integer=4096 @482
+    v12 = Call v10, v8, v11 calleeKey="alloc" calleeName="Buffer.alloc" @476
+    v13 = Convert v12 declared={type=undefined|null|Buffer flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @469
+    v14 = Builtin builtin=GlobalThis @503
+    v15 = PropGet v14 key="Buffer" [isFreeName] @503
+    v16 = Convert v15 declared={type=builtin(Buffer) flags=[IsExpected]} @503
+    v17 = PropGet v16 key="alloc" @503
+    v18 = Convert v17 declared={type=builtin(BufferAlloc) flags=[IsExpected]} @503
+    v19 = Integer integer=4096 @516
+    v20 = Call v18, v16, v19 calleeKey="alloc" calleeName="Buffer.alloc" @510
+    v21 = Convert v20 declared={type=undefined|null|Buffer flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @503
+    v22 = Integer @539
+    v23 = Convert v22 declared={type=number} @539
+    Jump -> next b1(v23) @532
+  b1(v24: number):
+    LoopHint @532
+    v26 = Integer integer=3 @549
+    v27 = Less v24, v26 @549
+    Branch v27 -> taken b2(), notTaken b3() @549
+  b2():
+    v28 = Integer integer=4096 @577
+    v29 = Call v3, -, v13, v28 calleeName="fillWords" @562
+    v30 = Builtin builtin=GlobalThis @584
+    v31 = PropGet v30 key="sink" [isFreeName] @584
+    v32 = Integer integer=4096 @603
+    v33 = Call v1, -, v13, v32 calleeName="sumWords" @589
+    v34 = Integer integer=100 @631
+    v35 = Call v5, -, v13, v21, v34 calleeName="copyInto" @610
+    v36 = Call v31, -, v33, v35 calleeName="sink" @584
+    v37 = Increment v24 @552
+    v38 = Convert v37 declared={type=number} @552
+    Jump -> next b1(v38) @552
+  b3():
+    v39 = Undefined @552
+    Return v39 @552
+}
+function f1 name="sumWords" module=m0 position=51 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Buffer, v1: number):
+    v2 = Integer @111
+    v3 = Convert v2 declared={type=number} @111
+    v4 = Integer @127
+    v5 = Convert v4 declared={type=number} @127
+    Jump -> next b1(v3, v5) @123
+  b1(v6: number, v7: number):
+    LoopHint @123
+    v9 = Integer integer=4 @134
+    v10 = Add v7, v9 @134
+    v11 = LessEq v10, v1 @139
+    Branch v11 -> taken b2(), notTaken b3() @139
+  b2():
+    v12 = PropGet v0 key="readUInt32LE" @159
+    v13 = Call v12, v0, v7 calleeKey="readUInt32LE" calleeName="buf.readUInt32LE" @163
+    v14 = Convert v13 declared={type=number} illTypedCause=DeclarationWithoutBody @159
+    v15 = Add v6, v14 @159
+    v16 = Integer @182
+    v17 = BitOr v15, v16 @182
+    v18 = Convert v17 declared={type=number} @150
+    v19 = Integer integer=4 @147
+    v20 = Add v7, v19 @147
+    v21 = Convert v20 declared={type=number} @142
+    Jump -> next b1(v18, v21) @142
+  b3():
+    v22 = Convert v6 declared={type=number} @192
+    Return v22 @192
+}
+function f2 name="fillWords" module=m0 position=197 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Buffer, v1: number):
+    v2 = Integer @261
+    v3 = Convert v2 declared={type=number} @261
+    Jump -> next b1(v3) @257
+  b1(v4: number):
+    LoopHint @257
+    v6 = Integer integer=4 @268
+    v7 = Add v4, v6 @268
+    v8 = LessEq v7, v1 @273
+    Branch v8 -> taken b2(), notTaken b3() @273
+  b2():
+    v9 = PropGet v0 key="writeUInt32LE" @284
+    v10 = Call v9, v0, v4, v4 calleeKey="writeUInt32LE" calleeName="buf.writeUInt32LE" @288
+    v11 = Convert v10 declared={type=number} illTypedCause=DeclarationWithoutBody @284
+    v12 = Integer integer=4 @281
+    v13 = Add v4, v12 @281
+    v14 = Convert v13 declared={type=number} @276
+    Jump -> next b1(v14) @276
+  b3():
+    v15 = Undefined @276
+    Return v15 @276
+}
+function f3 name="copyInto" module=m0 position=311 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Buffer, v1: undefined|null|Buffer, v2: number):
+    v3 = Integer @384
+    v4 = Convert v3 declared={type=number} @384
+    v5 = Integer @400
+    v6 = Convert v5 declared={type=number} @400
+    Jump -> next b1(v4, v6) @396
+  b1(v7: number, v8: number):
+    LoopHint @396
+    v10 = Less v8, v2 @407
+    Branch v10 -> taken b2(), notTaken b3() @407
+  b2():
+    v11 = PropGet v0 key="copy" @420
+    v12 = Integer @434
+    v13 = Integer @437
+    v14 = Integer integer=16 @440
+    v15 = Call v11, v0, v1, v12, v13, v14 calleeKey="copy" calleeName="from.copy" @425
+    v16 = Convert v15 declared={type=number} illTypedCause=DeclarationWithoutBody @420
+    v17 = Add v7, v16 @420
+    v18 = Convert v17 declared={type=number} @415
+    v19 = Increment v8 @410
+    v20 = Convert v19 declared={type=number} @410
+    Jump -> next b1(v18, v20) @410
+  b3():
+    v21 = Convert v7 declared={type=number} @452
+    Return v21 @452
+}

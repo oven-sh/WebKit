@@ -46,14 +46,12 @@ public:
     }
 
     // What lies on the object under names that nobody knows: a store under a computed key, unseen code.
-    static constexpr SlotOfContents underUnknownNames() { return fromNumber(numberOfEnumerators<ContentsSlot>); }
+    static constexpr SlotOfContents underUnknownNames() { return behindEnumerators(UnderUnknownNames); }
     // Whatever lies on the object under a name. Every slot under a name flows into it, and so does the one above.
-    static constexpr SlotOfContents underAnyName() { return fromNumber(numberOfEnumerators<ContentsSlot> + 1); }
-    // The functions that descriptors lay on the object as getters, under whatever name: SummaryChange::getter. Nobody reads it but whoever writes LinkTables::gettersExpectedAtReads.
-    static constexpr SlotOfContents gettersLaidByDescriptors() { return fromNumber(numberOfEnumerators<ContentsSlot> + 2); }
+    static constexpr SlotOfContents underAnyName() { return behindEnumerators(UnderAnyName); }
     // Of the object that a coroutine hands its caller, and of no other: what the body yields, and what `return` hands over in its text. They speak of the body, whoever has the object: no family of sites has a node for them (slotSpeaksOfBodyOfCoroutine()).
-    static constexpr SlotOfContents yieldedAlone() { return fromNumber(numberOfEnumerators<ContentsSlot> + 3); }
-    static constexpr SlotOfContents returnedAlone() { return fromNumber(numberOfEnumerators<ContentsSlot> + 4); }
+    static constexpr SlotOfContents yieldedAlone() { return behindEnumerators(YieldedAlone); }
+    static constexpr SlotOfContents returnedAlone() { return behindEnumerators(ReturnedAlone); }
     static constexpr SlotOfContents internalField(uint32_t index) { return fromNumber(firstInternalField + index); }
     // A slot of the table that is neither of the three nor an internal field.
     static constexpr SlotOfContents stateOf(BuiltinSlotID slot) { return fromNumber(firstStateSlot + slot.index()); }
@@ -75,8 +73,11 @@ public:
     friend constexpr bool operator==(SlotOfContents, SlotOfContents) = default;
 
 private:
+    // The slots that no enumerator of ContentsSlot names are numbered behind the enumerators, in this order. Whoever adds one adds it here, so the count below knows of it.
+    enum SlotBehindEnumerators : uint32_t { UnderUnknownNames, UnderAnyName, YieldedAlone, ReturnedAlone, numberOfSlotsBehindEnumerators };
+    static constexpr SlotOfContents behindEnumerators(SlotBehindEnumerators slot) { return fromNumber(numberOfEnumerators<ContentsSlot> + slot); }
     static constexpr uint32_t firstInternalField = 16;
-    static_assert(numberOfEnumerators<ContentsSlot> + 2 < firstInternalField);
+    static_assert(numberOfEnumerators<ContentsSlot> + numberOfSlotsBehindEnumerators <= firstInternalField);
     static constexpr uint32_t firstStateSlot = 1u << 16;
     static constexpr uint32_t nameBit = 1u << 31;
 
@@ -275,6 +276,8 @@ struct SummaryAccess {
     std::optional<OptionSet<FieldForm>> formCreated;
 
     bool isToContents() const { return !!slot; }
+    // `o.name = value`, and a definition that says what it lays: node 0 is unseen code, which stands for what a descriptor out of sight holds.
+    bool laysValueInSightUnderName() const { return !isToContents() && (kind == Kind::Store || (kind == Kind::Define && value && value != noSummaryNode)); }
 };
 
 // An operation with an OperatorForm whose result may be a number: which primitives it gives hangs on which arrive at its operands. resultTypeOfOperator() of ir/AOTResultRules.h says which, for Link as for the walk.
@@ -340,6 +343,10 @@ struct SummaryChange {
     // Then: what it holds under `get` and under `set`. The engine runs either with the object as `this`, at no call that is written. noSummaryNode: the descriptor does not name it.
     uint32_t getterInSight { noSummaryNode };
     uint32_t setterInSight { noSummaryNode };
+    // Then: it names `value` once, neither `get` nor `set`, says `enumerable` and `configurable` by constants and `writable: true`, the allocation fills it and it leaves at the call alone. THE DEFINITION UNDER THE NAME BRINGS THE VALUE ITSELF (SummaryAccess::value of the Define at the site),
+    // and the scan has not handed it to unseen code: `valueInSight`: LINK DOES, wherever it does not take the definition for a store: observeDefinitionInLinkLayouts().
+    bool laysValueInSight { false };
+    uint32_t valueInSight { noSummaryNode };
 };
 
 // ThinSummary::halvesOfAccessorsNotLaid.
@@ -438,6 +445,12 @@ struct SummaryOrderOfScope {
     Vector<Hold> holds;
 };
 
+// ThinSummary::otherNamesOfObjectsBeingMade.
+struct OtherNameOfObjectBeingMade {
+    ValueID parameter;
+    ValueID object;
+};
+
 // `number`: of a variable or a function. `position`: a place in the stream of the values of the body, in halves: twice the number of an operation and one.
 // The end of a block, with its terminator: twice the number behind its last operation. It lies in front of whatever the stream holds next, which has that number.
 struct SummaryPlaceInBody {
@@ -520,6 +533,9 @@ struct ThinSummary {
     // No run enters them: the constants of the body decide the terminators that lead there (walk/AOTFoldingOfConstants.h). Ascending. The scan has not looked into them, so Link has heard of nothing that they alone name,
     // and the walk, which asks the same rules, builds nothing for them. Empty where Folding is withheld.
     Vector<BlockID> blocksNeverEntered;
+    // The parameters of blocks under which the scan has gone on following an object that the body is making: ONE EDGE THAT A RUN CAN TAKE enters the block, however many are written. `object`: the value that the object is followed by.
+    // The walk asks nobody else which parameter is such a name (AOTWalkTypedAccesses.cpp): of an object under it, what Link says to those outside its construction does not hold.
+    Vector<OtherNameOfObjectBeingMade> otherNamesOfObjectsBeingMade;
     // The handler blocks that a block which the scan has entered names. Ascending by handler.
     Vector<SummaryHandler> handlers;
     // The modules that operations of those blocks name as their target. Sorted, without repeats. Code asks for each, if only code that never runs, so none of them is in the program for the host's sake.
@@ -572,6 +588,13 @@ struct ThinSummary {
     }
     // Of the body of a module alone, ascending: the operations whose part of ownEffects may run code that nobody knows. Whoever follows the order in which a program starts asks where that is.
     Vector<ValueID> sitesThatRunUnknownCode;
+    // The calls of a conversion to a primitive are left once for each value, at the first operation in the order of the blocks that converts it. That need not be the first that runs: the code behind a loop may be numbered in front of the rest of a turn.
+    // The other operations that convert the value, and the first of its calls. Whoever follows the order in which a program starts enters the calls at each.
+    struct FurtherConversion {
+        ValueID site;
+        uint32_t firstCall { 0 };
+    };
+    Vector<FurtherConversion> furtherConversions;
     // The names that the operations of the body spell, drawn from the records above, and those of the stores that became edges. Each sorted, without repeats. Link reads none of them: AOTFactsOfProgram.cpp does.
     Vector<PropertyKeyID> namesRead;
     Vector<PropertyKeyID> namesCalled;
@@ -703,10 +726,13 @@ ThinSummary scanBody(const Program&, Diagnostics&, FunctionID, Mechanisms = allM
 // On one thread: a summary for each function that the program has got since the summaries were made, by ONE scan: what a scan sets up goes by the size of the program.
 void scanBodiesAppendedToProgram(const Program&, Diagnostics&, ThinSummaries&, Mechanisms);
 
-// AOTScan.cpp. `Symbol("text")` as it is written in the body of a module that the loader enters once, with a number whose key the program holds. Whether it stands in a loop is for whoever asks: outside of loops it runs once.
+// AOTScan.cpp. `Symbol("text")` as it is written in the body of a module that the loader enters once, with a number whose key the program holds. Outside of loops it runs once: keyOfSymbolMadeOnceBy().
 // `function make() { const tag = Symbol(); return class { [tag] = 1 } }` makes a name in each run, and the key of the field stands for them all: null.
 // The scan and every unit that holds the call answer the same, or two symbols would go by one key: it goes by the records of the program and by the body. `definitionOf`: of a value of that body.
 PropertyKeyID keyOfSymbolThatCallMakes(const Program&, FunctionID, const BodyValue& call, const ScopedLambda<BodyValue(ValueID)>& definitionOf);
+// AOTScan.cpp. The symbol that the image holds under the key stands in the place of the call: Link types the answer by that and the walk puts it there. Both ask here, of the scan's record of the call:
+// which edges lead back the scan has decided, by those that a run can take. Null: the call makes a symbol whenever it runs.
+PropertyKeyID keyOfSymbolMadeOnceBy(const Program&, const SummaryCall&);
 // AOTScan.cpp. A RequireModule of `target` that is written in `referrer` answers with what the body of `target` has returned, and with nothing else.
 bool requireAnswersWithResultOfBody(const Program&, ModuleID referrer, ModuleID target);
 // `function F() { this.x = .. }`: the layout of what `new F` makes, whose class object the function object is. ThinSummary::classesEvaluated lists it where a closure of F is made. Null: the function is no such function.

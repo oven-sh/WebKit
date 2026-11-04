@@ -615,6 +615,84 @@ static bool directCallLiesWithinLooksForKnownRows(Walker& walker, const BodyValu
     return !widest || (given && walker.types().isSubset(given, widest));
 }
 
+// ---- A sort that calls no comparator
+
+// `(a, b) => a - b`, `(a, b) => b - a`: the body is casts, one subtraction of one parameter from the other, and the return of that. Null: it is something else.
+static BuiltinID sortForComparatorThatIsDifferenceForKnownRows(const Walker& walker, FunctionID comparator)
+{
+    constexpr OptionSet<FunctionFlags> otherForms { FunctionFlags::IsAsync, FunctionFlags::IsGenerator, FunctionFlags::HasRestParameter, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest };
+    const Function& function = walker.program().at(comparator);
+    const BodyIndex* index = walker.facts().bodies().find(comparator);
+    if (!index || !function.hasBody() || function.numberOfPositionalParameters() != 2 || function.hasAny(otherForms))
+        return { };
+    BodyBlock entry = index->block(entryBlock);
+    unsigned firstParameter = function.firstParameterIndex();
+    if (entry.hasHandler() || entry.terminator().kind() != TerminatorKind::Return || entry.numberOfParameters() < firstParameter + 2)
+        return { };
+
+    ValueID difference;
+    for (BodyValue value : entry.values()) {
+        if (opcodesThatStateTypes.contains(value.opcode()))
+            continue;
+        if (value.opcode() != Opcode::Sub || difference)
+            return { };
+        difference = value.id();
+    }
+    ValueID returned = entry.terminator().operand(0);
+    if (!difference || !returned || index->valueBehindCasts(returned) != difference)
+        return { };
+    ValueID left = index->valueBehindCasts(index->value(difference).operand(0));
+    ValueID right = index->valueBehindCasts(index->value(difference).operand(1));
+    if (left == entry.parameter(firstParameter) && right == entry.parameter(firstParameter + 1))
+        return Builtins::CompilerHelpersSortByDifference;
+    if (left == entry.parameter(firstParameter + 1) && right == entry.parameter(firstParameter))
+        return Builtins::CompilerHelpersSortByReversedDifference;
+    return { };
+}
+
+// `list.sort((a, b) => a - b)`. The library has a function that sorts a short list of numbers where it lies, without one call: on numbers nobody sees such a comparator run. It looks at the list itself, and hands every other list to sort().
+// It takes the list and the comparator as its arguments. Null: the call is no such call, or the program does not hold the function.
+static FunctionID findSortThatCallsNoComparatorForKnownRows(Walker& walker, const BodyValue& call, BuiltinID callee)
+{
+    const Program& program = walker.program();
+    const BuiltinTable& table = program.builtins();
+    if (callee != table.canonicalID(Builtins::ArrayPrototypeSort) || call.argumentsOperands().size() != 1 || !call.thisValueOperand())
+        return { };
+    Reference passed = walker.referenceOf(call.argumentsOperands()[0]);
+    TypeID proven = passed ? walker.typeOf(passed) : TypeID();
+    if (!proven)
+        return { };
+    Type type = walker.types().at(proven);
+    FunctionID comparator = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
+    BuiltinID helper = comparator ? sortForComparatorThatIsDifferenceForKnownRows(walker, comparator) : BuiltinID();
+    if (!helper || !table.contains(helper))
+        return { };
+    for (const BuiltinOverload& row : table.overloadsOf(table.canonicalID(helper))) {
+        const RuntimeFunctionEntry* held = row.mode == BuiltinCallMode::Call ? findRuntimeFunction(program, row.libraryFunction()) : nullptr;
+        if (held && held->function && program.at(held->function).hasBody())
+            return held->function;
+    }
+    return { };
+}
+
+bool isLeafHandedToMethodOfLists(const Walker& walker, TypeID handedOver)
+{
+    if (!handedOver)
+        return false;
+    Type type = walker.types().at(handedOver);
+    FunctionID only = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
+    return only && walker.facts().linked().function(only).weightAsLeaf != LinkedFunction::notLeaf;
+}
+
+bool mayBeLeafHandedToMethodOfLists(const Walker& walker, TypeID handedOver)
+{
+    if (!handedOver)
+        return true;
+    Type type = walker.types().at(handedOver);
+    FunctionID only = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
+    return !only || walker.facts().linked().function(only).weightAsLeaf != LinkedFunction::notLeaf;
+}
+
 // The function object of such a built-in is the closure of that function, so the call enters the same code with the same operands, and spares the way through the value.
 bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
 {
@@ -622,6 +700,23 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
         return false;
     Reference callee = walker.referenceOf(call.calleeOperand());
     FunctionID function = callee ? findLibraryFunctionBehindBuiltin(walker, walker.typeOf(callee)) : FunctionID();
+    // `list.map(f)`: the rows name two texts, and what the function object runs takes whatever comes. Outside of loops it is called: copied at every such call, the code of a large application grew by a quarter.
+    // In a loop the text repeats as the loop does. Where `f` calls nobody the rules of copies decide: `f` goes into the run over the vector, and no closure is made on the way through it.
+    // `list.sort(f)`: the function object is native code, and the function that the rows name which these operands reach does what native code does on them.
+    MayCopyFunctionCalledDirectly mayCopy = MayCopyFunctionCalledDirectly::Yes;
+    bool isFoundByRowsReached = false;
+    bool enteredByValue = false;
+    if (!function && callee) {
+        LibraryFunctionsBehindBuiltin behind = findLibraryFunctionsBehindBuiltin(walker, walker.typeOf(callee));
+        if (behind.enteredByValue) {
+            function = behind.enteredByValue;
+            enteredByValue = true;
+            Reference handedOver = call.argumentsOperands().empty() ? Reference() : walker.referenceOf(call.argumentsOperands()[0]);
+            mayCopy = walker.isInLoop() && handedOver && isLeafHandedToMethodOfLists(walker, walker.typeOf(handedOver)) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
+        } else if (!behind.named.isEmpty())
+            function = findLibraryFunctionOfRowsReachedBy(walker, call);
+        isFoundByRowsReached = function && !behind.enteredByValue;
+    }
     if (!function)
         return false;
     if (!directCallLiesWithinLooksForKnownRows(walker, call, function))
@@ -629,7 +724,23 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
     Draft written = walker.draftOf(call);
     if (walker.hasFailed())
         return false;
-    return callFunctionDirectly(walker, call, function, written.thisValueOperand(), written.argumentsOperands());
+    // The rows that the call reaches are those of a list as its class makes it and a comparator that is a function.
+    if (FunctionID withoutCalls = isFoundByRowsReached ? findSortThatCallsNoComparatorForKnownRows(walker, call, findBuiltinCalledForKnownRows(walker, call)) : FunctionID(); withoutCalls && directCallLiesWithinLooksForKnownRows(walker, call, withoutCalls)) {
+        Reference listAndComparator[] { written.thisValueOperand(), written.argumentsOperands()[0] };
+        if (callFunctionDirectly(walker, call, withoutCalls, Reference(), listAndComparator)) {
+            walker.count(StatisticID::LibraryFunctionsEnteredBehindRows);
+            walker.count(StatisticID::SortsThatCallNoComparator);
+            return true;
+        }
+    }
+    // The rows name the text on a list for the row of lists alone.
+    FunctionID reached = enteredByValue && mayCopy == MayCopyFunctionCalledDirectly::Yes ? findLibraryFunctionOfRowsReachedBy(walker, call) : FunctionID();
+    walker.noteThatCopyMakesNewList(reached && reached != function ? function : FunctionID(), written.thisValueOperand());
+    bool isBuilt = callFunctionDirectly(walker, call, function, written.thisValueOperand(), written.argumentsOperands(), mayCopy);
+    walker.noteThatCopyMakesNewList({ }, { });
+    if (isBuilt)
+        walker.count(StatisticID::LibraryFunctionsEnteredBehindRows);
+    return isBuilt;
 }
 
 // ---- Reads

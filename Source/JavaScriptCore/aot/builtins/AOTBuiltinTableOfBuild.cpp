@@ -167,8 +167,13 @@ namespace Typed {
 void Program::unlockReplaceableBuiltins()
 {
     Vector<BuiltinID> members;
+    Vector<BuiltinID> membersThatStayLocked;
     BitVector losesLockOfTable(m_builtins.builtinCount());
     for (const ReplaceableBuiltin& entry : replaceableBuiltins) {
+        if (entry.staysLocked) {
+            membersThatStayLocked.append(entry.member);
+            continue;
+        }
         members.append(entry.member);
         if (m_builtins.contains(entry.member) && m_builtins.canBeReplacedInTestRuns(entry.member))
             losesLockOfTable.quickSet(entry.member.index());
@@ -181,9 +186,11 @@ void Program::unlockReplaceableBuiltins()
     for (const OpenedName& opened : openedNames) {
         holdersOfNewNames.append(opened.holder);
         m_namesOpenedSomewhere.set(opened.name.index());
+        m_holdersOfOpenedNames.set(opened.holder.index());
+        m_namesOpened.add(static_cast<uint64_t>(opened.holder.index()) << 32 | opened.name.index());
     }
     if (admitsReplacedBuiltins)
-        m_tableOfBuild.unlockForTestRun(members.span(), holdersOfNewNames.span());
+        m_tableOfBuild.unlockForTestRun(members.span(), membersThatStayLocked.span(), holdersOfNewNames.span());
     else
         m_tableOfBuild.unlock(members.span(), holdersOfNewNames.span());
     m_testsReplaceBuiltins = admitsReplacedBuiltins || !openedNames.isEmpty() || !losesLockOfTable.isEmpty();

@@ -2,6 +2,7 @@
 # The twin of proxy-answers-under-the-symbol-that-the-host-looks-up.ir without the proxy: no code has the symbol and nothing answers under a key that it was not given: nothing is loaded.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: function f3 unreached
 
 module m0 path="main.js" displayPath="main.js" body=f0

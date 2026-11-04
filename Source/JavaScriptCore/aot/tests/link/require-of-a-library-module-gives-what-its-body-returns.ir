@@ -4,6 +4,7 @@
 # LIBRARY: own
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: link accesses functions variables mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: access f3 v2 under symbol("kHeaders")@m2:0
 # CHECK: function f2 {{*}}result=L1
 # CHECK: variable g0 proven=symbol writers-known written-at-construction-alone filled

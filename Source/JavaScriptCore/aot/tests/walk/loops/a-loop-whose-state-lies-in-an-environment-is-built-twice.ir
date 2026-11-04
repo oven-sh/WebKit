@@ -20,6 +20,7 @@
 # The loop is built twice all the same. In the typed copy `at` is read once a turn and asked for an int32: Link has seen whole numbers alone arrive there, and a turn that has done nothing begins again in the other copy where the test fails.
 # `limit` and `text`, which no typed turn writes, are read and asked in front, with the length and the flat form of the text. The call of the built-in runs no other code, in the callee's copy either.
 # RUN: walk f3 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f3:Body
 # CHECK: isLoopHead=true
 # CHECK: isLoopHead=true
@@ -32,6 +33,7 @@
 # CHECK: Increment {{*}}form=Integers
 # CHECK: PutEnvironmentField {{*}}field=1
 # RUN(CALLEE): walk f4 mechanisms=all
+# REQUIRES(CALLEE): entries-of-bun
 # CALLEE-LABEL: code f4:Body
 # CALLEE: isLoopHead=true
 # CALLEE: isLoopHead=true

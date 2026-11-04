@@ -11,6 +11,7 @@
 # console.log(s, Object.getOwnPropertyNames(Date.prototype).length);
 # -- end of source
 # RUN: walk f1 mechanisms=all-Inlining
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: TryCallInline {{*}}inlineBuiltin=DateToISOString overload=DatePrototypeToJSON/0
 # CHECK: = InitializeBuiltin builtin=DatePrototypeValueOf

@@ -471,30 +471,6 @@ Operand SlotEmitter::loadSlotThatHoldsValue(CellPointer cell, const PlacedSlot& 
     return loaded;
 }
 
-Operand SlotEmitter::loadWord(CellPointer cell, const PlacedSlot& slot, const MemoryLocation& location, const PlacedSlot* extensionWord)
-{
-    RELEASE_ASSERT(traitsOf(slot.representation).hasAbsent && slot.representation != SlotRepresentation::DeferredClosure);
-    if (slot.isOutOfLine()) {
-        RELEASE_ASSERT(extensionWord);
-        return loadOutOfLine(cell, slot, location, *extensionWord);
-    }
-    TypedPointer pointer = addressOf(cell, slot, location);
-    if (slot.representation != SlotRepresentation::OptionalInt32)
-        return load(pointer, slot.representation);
-
-    // The test of the word and the integer behind it read the narrow word: PrimitiveEmitter::narrowWordBehind(). What they leave unused of the selections the back end drops.
-    Word32 word(m_out.load32(pointer));
-    auto marker = [&](int64_t bits) {
-        return OptionalInteger(m_out.constInt64(bits));
-    };
-    Condition isAbsent = equal(word, absentInt32);
-    OptionalInteger undefinedOrAbsent = select(isAbsent, marker(absentInteger), marker(undefinedInteger));
-    Condition isNull = equal(word, nullInt32);
-    OptionalInteger markerHeld = select(isNull, marker(nullInteger), undefinedOrAbsent);
-    Condition holdsMarker = lessThan(word, word32(minInlineInt32));
-    return select(holdsMarker, markerHeld, OptionalInteger(signExtended(word).value()));
-}
-
 Operand SlotEmitter::loadSlot(CellPointer cell, const PlacedSlot& slot, const MemoryLocation& location, const PlacedSlot* extensionWord, const Type& loadedType)
 {
     bool holdsNoMarker = loadedRepresentationOf(slot.representation, loadedType) != Typed::representationOf(slot.representation);

@@ -541,12 +541,11 @@ the order, the liveness and the allocation as far as they were made, and the lin
   the host finds compiled. Then what a heap snapshot names: `namedVariable module=<place> name=s<string> offset=<in the statics>` (or
   `closureOf=f<entry>`) and `namedCapture closure=<number> slot=<slot> name=s<string>`.
 - `units-with-code [unit..]` compiles the whole program as a build does and prints which units got code: `unit f3:Body 184 bytes`,
-  `unit f4:GenericCallEntry 40 bytes, closed` for an entry that only the word of a closure names, and `unit f5:Body has no code` for a
-  named unit that the queue never came to. `unit f7:GenericCallEntry fused into f7:Body, 3 bytes` stands for a generic call entry that only
+  and `unit f5:Body has no code` for a named unit that the queue never came to. `unit f7:GenericCallEntry fused into f7:Body, 3 bytes` stands for a generic call entry that only
   moves words (`CallingConventions::hasFusedCallEntry()`): it is no unit, and its moves lie in front of the primary entry of that unit.
-  `, may enter any closure` stands behind a unit with an indirect call of which nothing says whom it enters. The last lines count all units:
+  The last lines count all units:
   `units <n>, bytes <n>`, `fused call entries <n>, bytes <n>` and
-  `call entries <n>: <n> always open, <n> that an indirect call lists, <n> beside a compiled target, <n> closed`.
+  `call entries <n>`.
 - `same-bytes-alone [unit..]` compiles the whole program with all its threads. Then a fresh worker compiles each unit again, in a program that
   keeps the words of `Function::body` only for the functions that the unit's code mentions or inlines. `hasBody()` answers as before, since that a
   function has a body is the program's record of it, and a read of words that were taken faults. The fresh worker verifies Code where the whole

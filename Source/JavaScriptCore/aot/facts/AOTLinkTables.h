@@ -109,6 +109,8 @@ struct LinkedCell {
     TypeID proven;
     bool everyWriterIsKnown { false };
     bool isWrittenAfterConstruction { true };
+    // Of a variable: `const ansi = /\u001b\[[0-9;]*m/g`. A PROOF, in Facts::linked() alone, as LinkedParameter::staysAsItsClassMakesIt says of a parameter: all the objects that arrive there are of one of the engine's classes and stay as that class makes them.
+    bool staysAsItsClassMakesIt { false };
     // Of a field of a record or of an instance. Every construction of the layout defines the field before the object can be seen from outside that construction, and no object of the layout loses a property or gets an accessor.
     // So whoever has such an object from anywhere but from the construction that he is part of himself finds the property in it, as a value of the object's own. A body that is making the object goes by what it has stored so far.
     bool isFilled { false };
@@ -322,7 +324,8 @@ struct LinkedAccess {
     friend constexpr auto operator<=>(const LinkedAccess&, const LinkedAccess&) = default;
 };
 
-// `flags.verbose`, where all that arrives at `flags` are objects of the engine's classes on whose allocation sites descriptors lay closures of one function as getters, under names that nobody knows.
+// `flags.verbose`, where all that arrives at `flags` are objects of the engine's classes on whose allocation sites descriptors lay closures of one function as getters: under that name where a name is written, else under names that nobody knows.
+// `log.enabled`, where all that arrives at `log` are closures of one function on which a descriptor lays the getter.
 // NO PROOF, IN EITHER READING: the name may find something else, or nothing. Whoever calls the function has looked the name up and has tested what it found.
 struct LinkedGetterAtRead {
     FunctionID function;
@@ -338,6 +341,15 @@ struct LinkedResultOfRead {
     FunctionID function;
     ValueID site;
     TypeID proven;
+};
+
+// `prices.get(name)`, `for (const [name, price] of prices)`: all that arrives at the receiver of the operation is a Map, a WeakMap or a Set of one family of sites that has not escaped: what the flow has seen go into its slots.
+// A PROOF, in Facts::linked() alone, as LinkedResultOfRead is: it is what Link itself goes on with behind the operation. Of a Set `value` is the element, and `key` is null. Null: nothing is said.
+struct LinkedContentsAtOperation {
+    FunctionID function;
+    ValueID site;
+    TypeID key;
+    TypeID value;
 };
 
 // `nodes.push(x)`, `nodes[i]`, `nodes.length`: all that arrives at the receiver of the operation is of one of the engine's classes and stays as that class makes it, as LinkedParameter::staysAsItsClassMakesIt says of a parameter.
@@ -376,6 +388,7 @@ struct SizeOfLinkFlow {
     uint64_t observers { 0 };
     uint64_t nodesTakenOffWorklist { 0 };
     uint64_t observersTold { 0 };
+    uint64_t rounds { 0 };
     // Allocation sites of objects of the engine's classes.
     uint64_t sites { 0 };
     uint64_t familiesOfSites { 0 };
@@ -514,8 +527,12 @@ struct LinkTables {
     const LinkedCoroutine* findCoroutine(FunctionID) const;
     // Ascending by function and site. In Facts::linked(): a proof; a read that is not listed may give anything. In Facts::held(): what was seen to come out of the read, an expectation.
     Vector<LinkedResultOfRead> resultsOfReadsByKey;
+    Vector<LinkedContentsAtOperation> contentsAtOperations;
     // Ascending. In Facts::linked() alone. The site of a read, by name or by key, or of a call by name: the read of the method has no place of its own.
     Vector<LinkedReceiverAsMade> receiversThatStayAsMade;
+    // Ascending. In Facts::linked() alone. The site of an operation that iterates over an operand by the protocol, an IteratorOpen or an AppendSpread: all that arrives there to be iterated over stays as its class makes it.
+    // Nothing is said of the iterator and of what its steps answer with, which the protocol looks at under the same site.
+    Vector<LinkedReceiverAsMade> iterablesThatStayAsMade;
     // In Facts::linked() alone, laid there behind both readings: fieldsReadAsIntegersIn(), fieldsStoredWhatIsNoInt32In(), keysStoredWhatIsNoInt32In(). Empty: nobody has looked.
     FieldsOfNumbers fieldsReadAsIntegers;
     FieldsOfNumbers fieldsReadForArithmetic;
@@ -566,6 +583,8 @@ struct LinkTables {
     // A SLOT IS A DECISION OF THE LAYOUT AND NO PROOF: these tables have no cell for such a field (findCellOfField(): null), so nothing is claimed of it, and a store into it stands behind its shape test like any other.
     Vector<uint32_t> firstKeyAppendedByHeldAloneOfLayout;
     Vector<PropertyKeyID> keysAppendedByHeldAlone;
+    // By place in keysAppendedByHeldAlone: held().appendedFieldsThatTypeOfThisRequires has the name.
+    BitVector keysAppendedByHeldAloneThatLieInCell;
     Vector<LinkedCell> appendedFields;
     // By place in appendedKeys. `interface ObjectType extends Type { objectFlags: number }`: some type that is written of the objects says that whoever is one has the property. A guess.
     BitVector appendedFieldsThatSomeWrittenTypeRequires;
@@ -693,7 +712,13 @@ struct LinkTables {
     bool isAppendedFieldRequiredByTypeOfThis(FieldReference field) const
     {
         std::optional<size_t> place = findPlaceOfAppendedField(field);
-        return place && appendedFieldsThatTypeOfThisRequires.get(*place);
+        if (place)
+            return appendedFieldsThatTypeOfThisRequires.get(*place);
+        size_t layout = field.layout.index();
+        if (layout + 1 >= firstFieldOfLayout.size() || layout + 1 >= firstKeyAppendedByHeldAloneOfLayout.size())
+            return false;
+        size_t numberInFront = firstFieldOfLayout[layout + 1] - firstFieldOfLayout[layout] + appendedKeysOf(field.layout).size();
+        return field.field >= numberInFront && field.field - numberInFront < keysAppendedByHeldAloneOf(field.layout).size() && keysAppendedByHeldAloneThatLieInCell.get(firstKeyAppendedByHeldAloneOfLayout[layout] + (field.field - numberInFront));
     }
     void forEachRunOfMakers(LayoutID id, NOESCAPE const Invocable<void(std::span<const PropertyKeyID>)> auto& functor) const
     {
@@ -716,7 +741,9 @@ struct LinkTables {
     FunctionID getterExpectedAt(FunctionID, ValueID site) const;
     // Null: nothing is proven. AOTLink.cpp.
     TypeID resultOfReadByKey(FunctionID, ValueID site) const;
+    const LinkedContentsAtOperation* contentsAtOperation(FunctionID, ValueID site) const;
     bool receiverStaysAsMadeAt(FunctionID function, ValueID site) const { return std::ranges::binary_search(receiversThatStayAsMade, LinkedReceiverAsMade { function, site }); }
+    bool iterableStaysAsMadeAt(FunctionID function, ValueID site) const { return std::ranges::binary_search(iterablesThatStayAsMade, LinkedReceiverAsMade { function, site }); }
     // Null: nothing is expected. AOTLinkKeyOrders.cpp.
     const LinkedAccessorsOfField* findAccessorsExpectedIn(FieldReference) const LIFETIME_BOUND;
     // Null: nothing is expected. AOTLinkExceptions.cpp.
@@ -757,6 +784,9 @@ BitVector bodiesThatLoaderEntersAtMostOnce(const Program&);
 // AOTLink.cpp. By the record of the function alone: see LinkedFunction::ringsOfTailCallsAreListed too. False: every unit of it returns boxed values.
 // Whoever constructs with a function asks whether the body has handed back an object, what a coroutine returns goes into its promise or its generator, and the loader enters the body of a module itself.
 bool mayReturnInFormOfItsOwn(const Function&);
+// AOTLink.cpp. No row of calls of the built-in returns what a callback gives, so nothing that it calls stands in its place: a call of it comes back. False claims nothing.
+// Link's rings, the plan's ends of tail calls and the walk ask it: `return Reflect.apply(f, t, list)` is a jump to `f`.
+bool callsOfBuiltinComeBack(const Program&, BuiltinID);
 
 // AOTLink.cpp. What the language defines on the holder when a class is evaluated, whatever stands above it: `constructor` on the prototype object; `prototype`, `length` and `name` on the class object.
 // No record lists it. So a lookup under such a name ends at the first class of the row: at a member that redefines the name there, or at that property. What a class further up declares is never come to.

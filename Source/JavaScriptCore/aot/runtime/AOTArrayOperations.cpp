@@ -416,8 +416,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSCell*, (Instance* instance, uin
     Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
     unsigned vectorLength = emptyCapacity ? emptyCapacity : arrayLiteralVectorLength(count);
     bool hasWantedStorage = hasContiguous(structure->indexingType());
-    if (hasWantedStorage && !structure->outOfLineCapacity() && vectorLength <= maxHoleArrayCapacity) {
-        if (JSArray* array = tryCreateArrayWithStorage(vm, structure, count, vectorLength)) {
+    if (hasWantedStorage && !structure->outOfLineCapacity()) {
+        if (JSArray* array = vectorLength <= maxHoleArrayCapacity ? tryCreateArrayWithStorage(vm, structure, count, vectorLength) : nullptr) {
             for (uint32_t i = 0; i < count; ++i)
                 array->butterfly()->contiguous().atUnsafe(i).setWithoutWriteBarrier(valueAt(i));
             instance->findMissingShortArrayAllocator(vectorLength);

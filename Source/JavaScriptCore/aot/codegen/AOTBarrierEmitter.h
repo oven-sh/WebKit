@@ -19,12 +19,11 @@ public:
     explicit BarrierEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void barrierAfterStore(const ValueContext& store, CellPointer owner, Operand stored, const Type& storedType);
-    void barrierAfterStores(const ValueContext& store, CellPointer owner, std::span<const ValueID> stored);
-    // Of a RememberOwner. It runs whatever was stored, unless the sweep has found a later barrier that covers it or no store that waits for it.
-    void barrierBehindStores(const ValueContext& barrier, ValueID owner);
     void elementBarrierAfterStore(const ValueContext& store, CellPointer array, std::span<const Boxed> stored);
     void barrier(const OperationContext&, CellPointer owner);
     OwnerBarrier barrierOfExtension(const ValueContext& store) const;
+    // For TestingSwitch::CheckProofsAtRunTime, where something is laid in a cell without a barrier.
+    void stopIfCellIsOldAndNotRemembered(const ValueContext& store, CellPointer owner);
     // Behind the store of a cell into a word of the statics. `cardMention` mentions the card of that word: NumberSpace::CardOfVariable, or NumberSpace::CardOfWord through MentionList::cardOfWord().
     void markCard(uint32_t cardMention);
     Condition isBeyondBarrierThreshold(CellPointer);

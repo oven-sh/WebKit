@@ -1,0 +1,10 @@
+# the same accesses with typed operations withheld, and with direct calls withheld: the run time goes through the proxy
+# RUN: walk f1 mechanisms=none+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: MayBindAnswers
+# CHECK: = PropGet {{*}}key="x"
+# RUN(CALLS): walk f1 mechanisms=none+TypedOperations
+# CALLS-LABEL: code f1:Body
+# CALLS-NOT: MayBindAnswers
+# CALLS: = PropGet {{*}}key="x"
+# PROGRAM-OF: access-through-a-proxy-made-in-sight-is-written-out.ir

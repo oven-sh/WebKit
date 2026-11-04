@@ -3,6 +3,7 @@
 # locks-beside-a-build-whose-macros-have-a-realm-of-their-own.ir: Bun.build() is no such call
 # f0: Bun.plugin(options); Date.now();
 # RUN: locks
+# REQUIRES: entries-of-bun
 # CHECK-NOT: locked
 
 module m0 path="main.js" displayPath="main.js" body=f0

@@ -24,11 +24,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet opcodesOfTailCallsInBodies { Opcode::Call, Opcode::CallList, Opcode::CallDirect };
-// What they give is no value of JavaScript: only the operations of the iteration take it, and what holds values across a suspension.
-static constexpr OpcodeSet opcodesThatOpenIterationsInVerifiedBodies { Opcode::IteratorOpen, Opcode::ForInOpen };
-
-static constexpr OpcodeSet definitionsThatFewOperandsTakeInVerifiedBodies = opcodesThatMayHaveSeveralResults | opcodesThatOpenIterationsInVerifiedBodies;
-
 const OpcodeSet& opcodesThatTakeAnyValueInVerifiedBodies()
 {
     static const OpcodeSet opcodes = opcodesWhere([](Opcode opcode) {
@@ -144,7 +139,7 @@ static void verifyTerminatorOperandsAndEdgeArgumentsOfVerifiedBlock(BodyVerifier
 
 void BodyVerifier::verifyOperations()
 {
-    for (uint32_t blockIndex = 0; blockIndex < index().numberOfBlocks(); ++blockIndex) {
+    for (uint32_t blockIndex = 0; blockIndex < index().numberOfBlocks() && !m_operationsAreVerified; ++blockIndex) {
         BodyBlock block = index().block(BlockID(blockIndex));
         uint32_t indexInBlock = 0;
         for (BodyValue value : block.values()) {
@@ -156,6 +151,8 @@ void BodyVerifier::verifyOperations()
         if (hasFailed())
             return;
     }
+    // The fault that verifyUsesAndOperations() found is one of verifyDominance() or of the loop above.
+    RELEASE_ASSERT(m_operationsAreVerified);
 
     verifyMethodIndexes();
     if (!hasFailed())
@@ -172,7 +169,12 @@ void BodyVerifier::verifyOperation(const BodyBlock& block, uint32_t indexInBlock
     if (!hasFailed())
         verifyOperandDefinitions(block, value);
     if (!hasFailed())
-        verifyPositions(block, value);
+        verifyOperationByOpcode(block, indexInBlock, value);
+}
+
+void BodyVerifier::verifyOperationByOpcode(const BodyBlock& block, uint32_t indexInBlock, const BodyValue& value)
+{
+    verifyPositions(block, value);
     if (hasFailed())
         return;
 
@@ -298,7 +300,7 @@ void BodyVerifier::verifyOperation(const BodyBlock& block, uint32_t indexInBlock
     case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Boolean: case Opcode::Integer: case Opcode::Double: case Opcode::String: case Opcode::BigInt: case Opcode::Data:
     case Opcode::GetModuleVariable: case Opcode::PutModuleVariable: case Opcode::ScopeHasBinding:
     case Opcode::NewDictionary: case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::AppendHole: case Opcode::NewRegExp: case Opcode::NewTemplateObject:
-    case Opcode::NewRuntimeError: case Opcode::NewFunctionThatThrows: case Opcode::NewSuppressedError:
+    case Opcode::NewRuntimeError: case Opcode::NewSuppressedError:
     case Opcode::PropGet: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::PropHas: case Opcode::PropDelete:
     case Opcode::ElemGet: case Opcode::ElemSet: case Opcode::ElemHas: case Opcode::ElemDelete: case Opcode::ElemDefine:
     case Opcode::DefineGetter: case Opcode::DefineSetter: case Opcode::TryDefineLiveBinding: case Opcode::TryReExportFields: case Opcode::SetFunctionName: case Opcode::SetLiteralPrototype:
@@ -323,7 +325,7 @@ void BodyVerifier::verifyOperation(const BodyBlock& block, uint32_t indexInBlock
     case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex: case Opcode::GetOwnContiguousIndex: case Opcode::GetOwnDoubleIndex: case Opcode::GetOwnInt32Index:
     case Opcode::PutOwnContiguousIndex: case Opcode::PutOwnDoubleIndex: case Opcode::PutOwnInt32Index:
     case Opcode::NewContiguousArray: case Opcode::NewDoubleArray: case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity:
-    case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements: case Opcode::TryPutDoubleIndex:
+    case Opcode::TryPutByValDirect: case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements: case Opcode::TryFillNewArray: case Opcode::TryPutDoubleIndex:
     case Opcode::GrowNewArray: case Opcode::TruncateNewArray:
     case Opcode::CollectionTable: case Opcode::CollectionIteratorClosedMark: case Opcode::GetCollectionIteratorTable: case Opcode::PutCollectionIteratorTable:
     case Opcode::IsCollectionIteratorClosedMark: case Opcode::MapNext: case Opcode::SetNext:
@@ -387,7 +389,6 @@ void BodyVerifier::verifyOperation(const BodyBlock& block, uint32_t indexInBlock
     case Opcode::JSONObjectFinish: case Opcode::JSONParseExtraMembers: case Opcode::ExpectRows:
     case Opcode::Narrowed: case Opcode::ClearFrameCell: case Opcode::CheckProof: case Opcode::Leave:
     case Opcode::LeaveCopies:
-    case Opcode::RememberOwner:
         RELEASE_ASSERT_NOT_REACHED();
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -450,6 +451,11 @@ void BodyVerifier::verifyOperandDefinitions(const BodyBlock& block, const BodyVa
             return;
     }
     verifyOperandDefinitionsOneByOne(block, value);
+}
+
+bool BodyVerifier::isTakenByFewOperands(const BodyValue& definition) const
+{
+    return opcodesThatOpenIterationsInVerifiedBodies.contains(definition.opcode()) || numberOfResultsOfVerifiedDefinition(program(), definition).has_value();
 }
 
 void BodyVerifier::verifyOperandDefinitionsOneByOne(const BodyBlock& block, const BodyValue& value)

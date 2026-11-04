@@ -1392,7 +1392,6 @@ void WalkState::meetWith(const WalkState& other)
     if (&other == this)
         return;
     m_answers.meetWith(other.m_answers);
-    m_barriers.meetWith(other.m_barriers);
     if (m_turnInWhichNothingWasDone != other.m_turnInWhichNothingWasDone)
         m_turnInWhichNothingWasDone = 0;
     if (m_held == other.m_held || holdsNothing())

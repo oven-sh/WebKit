@@ -4,6 +4,7 @@
 # All that the variable holds is the one symbol, and the read in main.js still goes by the value of its key.
 # LIBRARY: own
 # RUN: link accesses variables mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: access f2 v2 under symbol("kHeaders")@m1:0
 # CHECK-NOT: access
 # CHECK: variable g0 proven=symbol

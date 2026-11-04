@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCallingConventions.h"
 #include "AOTConvention.h"
@@ -37,31 +38,7 @@ struct GraphOfTailCallPlan {
 
 } // anonymous namespace
 
-static std::span<const LinkedCall> callsListedUnderInTailCallPlan(const LinkTables& tables, FunctionID caller)
-{
-    if (caller.index() + 1 >= tables.firstCallOfCaller.size())
-        return { };
-    uint32_t first = tables.firstCallOfCaller[caller.index()];
-    return tables.calls.span().subspan(first, tables.firstCallOfCaller[caller.index() + 1] - first);
-}
-
 // ---- Rows of tail calls that end
-
-bool callsOfBuiltinComeBack(const Program& program, BuiltinID builtin)
-{
-    const BuiltinTable& table = program.builtins();
-    if (!builtin || !table.contains(builtin))
-        return false;
-    for (const BuiltinOverload& overload : table.overloadsOf(table.canonicalID(builtin))) {
-        if (overload.mode != BuiltinCallMode::Call)
-            continue;
-        for (const BuiltinCallback& callback : overload.flow.callbacks) {
-            if (callback.resultUse == BuiltinCallbackResultUse::Returned)
-                return false;
-        }
-    }
-    return true;
-}
 
 // Null: native code that comes back, or nobody can tell. `comesBack` says which.
 static FunctionID calleeOfTailCallInTailCallPlan(const Program& program, const LinkTables& linked, FunctionID caller, const SummaryCall& call, bool& comesBack)
@@ -143,14 +120,59 @@ bool makesOnlyTailCallsThatEnd(const Program& program, const Facts& facts, const
     });
 }
 
-bool callsItselfInTailPosition(const Facts& facts, FunctionID id)
+void checkFormsRoundRingsOfTailCalls(const Program& program, const Facts& facts, const Plan& plan, BuildContext& build)
 {
-    auto lists = [&](const LinkTables& tables) {
-        return std::ranges::any_of(callsListedUnderInTailCallPlan(tables, id), [&](const LinkedCall& call) {
-            return call.isInTailPosition && call.callee == id;
-        });
+    uint32_t numberOfFunctions = static_cast<uint32_t>(program.functions.size());
+    const LinkTables& linked = facts.linked();
+    if (linked.functions.size() != numberOfFunctions)
+        return;
+
+    struct TailCall {
+        FunctionID caller;
+        FunctionID callee;
+        ValueID site;
+        bool isWrittenDirect;
     };
-    return lists(facts.linked()) || lists(facts.held());
+    Vector<TailCall> tailCalls;
+    GraphOfTailCallPlan graph;
+    graph.firstTargetOf.reserveInitialCapacity(numberOfFunctions + 1);
+    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+        graph.firstTargetOf.append(static_cast<uint32_t>(graph.targets.size()));
+        FunctionID caller(index);
+        if (!linked.function(caller).isReached || !program.at(caller).hasBody())
+            continue;
+        for (const SummaryCall& call : facts.summaries().at(caller).calls) {
+            bool comesBack;
+            FunctionID callee = call.isInTailPosition ? calleeOfTailCallInTailCallPlan(program, linked, caller, call, comesBack) : FunctionID();
+            if (!callee)
+                continue;
+            graph.targets.append(callee.index());
+            tailCalls.append(TailCall { caller, callee, call.site, call.callee == SummaryCall::Callee::Binding });
+        }
+    }
+    graph.firstTargetOf.append(static_cast<uint32_t>(graph.targets.size()));
+    StronglyConnectedComponents rings = computeStronglyConnectedComponents(numberOfFunctions, [&](unsigned node) {
+        return graph.targetsOf(node);
+    });
+
+    const CallingConventions& conventions = plan.conventions();
+    for (const TailCall& tailCall : tailCalls) {
+        CodeUnit leaving { tailCall.caller, CodeRole::Body };
+        CodeUnit entered { tailCall.callee, CodeRole::Body };
+        if (rings.componentOf[tailCall.caller.index()] != rings.componentOf[tailCall.callee.index()] || !conventions.exists(leaving) || !conventions.exists(entered))
+            continue;
+        if (conventions.numberOfResults(leaving) != 1 || conventions.numberOfResults(entered) != 1)
+            continue;
+        Representation form = conventions.resultRepresentation(leaving);
+        if (form == conventions.resultRepresentation(entered) && (tailCall.isWrittenDirect || form == Representation::JSValue))
+            continue;
+        build.diagnostics().add(InternalError {
+            .kind = InternalErrorKind::PlacementCheckFailed,
+            .function = tailCall.caller,
+            .value = tailCall.site,
+            .detail = "a call in tail position on a ring of such calls cannot be a jump in every unit: the two bodies return in two forms, or in a raw one though the call is one of a value. Each turn of the ring would leave a frame"_s,
+        });
+    }
 }
 
 // ---- Registers
@@ -206,7 +228,7 @@ BitVector findFunctionsThatSaveRegistersOfCallers(const Program& program, const 
             continue;
 
         CodeUnit body { id, CodeRole::Body };
-        if (convention.numberOfResults != 1 || convention.hasSplitResult || conventions.stackWordsReservedByCallersOf(program, body))
+        if (convention.numberOfResults != 1 || conventions.stackWordsReservedByCallersOf(program, body))
             continue;
         if (liesInRegistersOfStubBodyInTailCallPlan(conventions.locationsOf(program, body)))
             functions.quickSet(id.index());

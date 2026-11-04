@@ -425,6 +425,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetLiteralPrototype, void, (Instance* insta
         OPERATION_RETURN(scope);
     }
     if (Object* compiled = instance->state->objects->layouts.compiledObject(object)) {
+        if (refusesOtherValues && prototype.isObject())
+            instance->state->objects->classes.willLinkCreatedObject(vm, compiled->layout(), asObject(prototype));
         if (compiled->getPrototypeDirect() != prototype)
             compiled->setPrototypeAtCreation(vm, prototype);
         OPERATION_RETURN(scope);

@@ -469,6 +469,9 @@ static bool everyMentionIsAnsweredOutOfTextInStringURLs(Walker& walker, ValueID 
         uint32_t uses = index.useCount(ValueID(first + place));
         if (uses >= BodyIndex::maxCountedUses || uses != accounted[place])
             return false;
+        // `for (..) { const url = new URL(text); if (..) return url.pathname; }`, in a loop that is built twice: behind the loop one name stands for the URLs of both copies, and no text answers for it.
+        if (walker.isBoundAnewAtEveryBlock(ValueID(first + place)))
+            return false;
         url.mentions.append({ ValueID(first + place), kinds[place] });
     }
     return true;
@@ -492,6 +495,9 @@ static const URLThatIsNeverMade* findURLThatIsNeverMadeByMention(Walker& walker,
         if (bound == url.object)
             return &url;
         // The construction was walked once more as written, and the name stands for an object. Anything else has let the name meet another value, which only the reads here can tell from an object.
+        // Behind several walks of the construction nothing is bound to it: there the name that is read tells.
+        if (!bound)
+            bound = walker.referenceBoundTo(mentioned);
         if (bound && walker.types().overlap(walker.typeOf(bound), TypeTable::undefined))
             walker.fail("the name of a URL that is never made has met another value"_s);
     }
@@ -764,6 +770,7 @@ static bool buildURLThatIsNeverMade(Walker& walker, const CallByOneRow& call, Re
     });
     urls.append(WTF::move(url));
     walker.noteURLThatIsNeverMade();
+    walker.count(StatisticID::URLsLeftUnbuilt);
     return true;
 }
 
@@ -831,6 +838,7 @@ bool buildURLCallByScan(Walker& walker, const CallByOneRow& call)
     BlockID meeting = walker.addBlock();
     walker.branch(isPlain, plain, asWritten);
     walker.noteGuessOpened();
+    walker.count(StatisticID::URLsLeftUnbuilt);
 
     walker.continueIn(plain);
     Reference answer = answerFromPlainTextInStringURLs(walker, *row, text, scan, asWritten, origin);

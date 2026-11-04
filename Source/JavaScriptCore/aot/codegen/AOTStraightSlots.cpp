@@ -143,6 +143,7 @@ void StraightEmitter::loadVariable(VariableID variable, GPRReg boxedResult)
         return;
     }
 
+    storeWhatWaitsInRegister();
     CCallHelpers::Jump isStored;
     if (planned.hasWordInStatics()) {
         relocations().loadInstanceWord({ SymbolSpace::InstanceWord, mentions().add(NumberSpace::Variable, variable) }, InstanceWordWidth::Word64, instanceGPR, boxedResult);

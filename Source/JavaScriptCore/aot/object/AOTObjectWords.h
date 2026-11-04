@@ -126,6 +126,8 @@ struct PrototypeTransition {
     uint32_t after;
 };
 
+// The table has two halves of numberOfPrototypeTransitions each. A transition of the first half sets IsPristine in the cell: the object stands below another prototype than its layout's.
+// One of the second half leaves the flags alone: the class has taken what lies between the object and its prototype object (ClassTable::takesObjectsLaidBelowPrototype()).
 static constexpr uint32_t numberOfPrototypeTransitions = 1024;
 static constexpr unsigned prototypeTransitionHashShift = 6;
 static constexpr uint32_t indexOfPrototypeTransition(uint32_t before, EncodedJSValue prototype) { return ((before ^ static_cast<uint32_t>(prototype)) >> prototypeTransitionHashShift) % numberOfPrototypeTransitions; }

@@ -76,6 +76,7 @@ public:
 
     JS_EXPORT_PRIVATE bool contains(uint32_t member) const;
     JS_EXPORT_PRIVATE uint32_t first() const;
+    JS_EXPORT_PRIVATE uint32_t last() const;
 
     // In ascending order.
     void forEach(NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
@@ -148,6 +149,32 @@ public:
         return !anyOf([&](uint32_t member) {
             return !matches(member);
         });
+    }
+
+    // 64 members at a time, in ascending order, up to the first match: their numbers divided by 64, and a bit for each of them that the set holds, which is one at least.
+    // For a question whose answers for all numbers are laid out 64 a word: a large set then costs a step for 64 members.
+    bool anyWordOf(NOESCAPE const Invocable<bool(uint32_t word, uint64_t members)> auto& matches) const
+    {
+        if (isList()) {
+            std::span<const uint32_t> members = list();
+            for (size_t index = 0; index < members.size();) {
+                uint32_t word = members[index] / 64;
+                uint64_t membersInWord = 0;
+                for (; index < members.size() && members[index] / 64 == word; ++index)
+                    membersInWord |= 1ull << members[index] % 64;
+                if (matches(word, membersInWord))
+                    return true;
+            }
+            return false;
+        }
+        for (const IDSetChunkEntry& entry : chunkEntries()) {
+            const IDSetChunk& chunk = chunkAt(entry.chunk);
+            for (uint32_t word = 0; word < chunk.bits.size(); ++word) {
+                if (chunk.bits[word] && matches(entry.firstMemberDividedBySize * (membersPerSetChunk / 64) + word, chunk.bits[word]))
+                    return true;
+            }
+        }
+        return false;
     }
 
     std::span<const IDSetChunkEntry> chunkEntries() const { return unsafeMakeSpan(reinterpret_cast<const IDSetChunkEntry*>(m_words), m_numberOfChunks); }
@@ -537,6 +564,7 @@ public:
     bool isEmpty() const { return m_view.isEmpty(); }
     bool contains(MemberID member) const { return member && m_view.contains(member.index()); }
     MemberID first() const { return MemberID(m_view.first()); }
+    MemberID last() const { return MemberID(m_view.last()); }
     MemberID onlyMember() const { return size() == 1 ? first() : MemberID(); }
     bool isList() const { return m_view.isList(); }
     std::span<const MemberID> list() const LIFETIME_BOUND

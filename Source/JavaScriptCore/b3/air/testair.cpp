@@ -2230,6 +2230,9 @@ void testElideSimpleMove()
         root->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
 
         auto compilation = compile(proc);
+#if !ENABLE(DISASSEMBLER)
+        continue;
+#endif
         auto disassembly = compilation->disassembly();
         std::regex findRRMove(isARM64() ? "mov\\s+x\\d+, x\\d+\\n" : "mov %\\w+, %\\w+\\n");
         auto result = matchAll(disassembly, findRRMove);

@@ -610,6 +610,7 @@ static void printChangeOfSummary(IRPrinter& printer, const ThinSummary& summary,
 //       hands-out m1
 //       names-where-no-run-comes m2
 //       never-entered b3, b4
+//       still-being-made v9 = v2
 //       handler b3 caught=n7
 //       edge Parameter 1 -> Field L0.1 "x"
 //       edge a0 -> Result 0 passes=string
@@ -671,6 +672,13 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
         printOperatorOfSummary(printer, summary, index);
     for (uint32_t index = 0; index < summary.changes.size(); ++index)
         printChangeOfSummary(printer, summary, index);
+    for (const ThinSummary::FurtherConversion& further : summary.furtherConversions) {
+        out.print("  conversion "_s);
+        printer.print(further.site);
+        out.print(" as at "_s);
+        printer.print(summary.calls[further.firstCall].site);
+        out.println();
+    }
     for (const ThinSummary::Inspection& inspection : summary.inspections) {
         out.print("  inspection "_s);
         printer.print(inspection.site);
@@ -848,6 +856,13 @@ static void printSummaryInFactsText(IRPrinter& printer, FunctionID function, con
             out.print(comma, "b"_s, block.index());
         out.println();
     }
+    for (const OtherNameOfObjectBeingMade& name : summary.otherNamesOfObjectsBeingMade) {
+        out.print("  still-being-made "_s);
+        printer.print(name.parameter);
+        out.print(" = "_s);
+        printer.print(name.object);
+        out.println();
+    }
     for (const SummaryHandler& handler : summary.handlers) {
         out.print("  handler b"_s, handler.handler.index(), " caught="_s);
         printReferenceToNodeOfSummary(printer, summary, handler.caught);
@@ -957,6 +972,8 @@ static void printLinkedCell(IRPrinter& printer, const LinkedCell& cell)
         printer.out().print(" writers-known"_s);
     if (!cell.isWrittenAfterConstruction)
         printer.out().print(" written-at-construction-alone"_s);
+    if (cell.staysAsItsClassMakesIt)
+        printer.out().print(" stays-as-made"_s);
     if (cell.isFilled)
         printer.out().print(" filled"_s);
     if (cell.isFilled && !cell.isFilledAtEveryRead)
@@ -1194,6 +1211,14 @@ static void printLinkedAccesses(IRPrinter& printer, const LinkTables& tables)
         printer.print(receiver.function);
         printer.out().print(" "_s);
         printer.print(receiver.site);
+        printer.out().println();
+    }
+    //     iterable-as-made f1 v43
+    for (const LinkedReceiverAsMade& iterable : tables.iterablesThatStayAsMade) {
+        printer.out().print("iterable-as-made "_s);
+        printer.print(iterable.function);
+        printer.out().print(" "_s);
+        printer.print(iterable.site);
         printer.out().println();
     }
     //     accessors L0.0 "total" getter=f2 setter=f3

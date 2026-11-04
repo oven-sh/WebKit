@@ -1,11 +1,11 @@
 # nothing is written of `links`, and unseen code has the holder, so behind the rejoin nothing is proven of what `h.links` gives. In the typed run the read is answered by the store in front of it: a Links.
-# The typed run is the arm that is expected to be taken, so a Links is expected behind the rejoin, in the next block too: the store of `flags` stands behind a test of that shape
+# The typed run is the arm that is expected to be taken, so a Links is expected behind the rejoin, in the next block too: the store of `flags` asks for that shape
 # function fill(h: Holder, c) { h.links = new Links(); const l = h.links; if (c) sink(); l.flags = 1; }
 # RUN: walk f1 mechanisms=none+TypedOperations+Guesses+Folding
 # CHECK-LABEL: code f1:Body
 # CHECK: = ShapeTest {{*}}layouts=[L1]
 # CHECK: ([[links]]: anything{{*}}):
-# CHECK: = ShapeTest [[links]] layouts=[L0]
+# CHECK: PutSlot [[links]], {{*}}key="flags" receivers=[L0] level=Expected
 
 layout L0 name="Links" module=m0 fields=[{key="flags" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 layout L1 name="Holder" module=m0 fields=[{key="links" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1

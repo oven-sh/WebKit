@@ -254,7 +254,6 @@ private:
     BitVector m_escapedPrototypes;
     Vector<FlowNodeID> m_parametersThatUnseenCodePasses;
     BitVector m_openClassObjects;
-    BitVector m_variablesReadByUnseenCode;
     BitVector m_evaluatedModules;
     BitVector m_modulesWithReachedCode;
     BitVector m_modulesWithEscapedExports;
@@ -311,7 +310,7 @@ StateOfLinkReach::StateOfLinkReach(LinkFlow& flow)
     m_familiesWithEscapedConstructors = BitVector(flow.families.size());
     m_escapedPrototypes = BitVector(m_numberOfLayouts);
     m_openClassObjects = BitVector(m_numberOfLayouts);
-    m_variablesReadByUnseenCode = BitVector(m_program.variables.size());
+    flow.variablesReadByUnseenCode = BitVector(m_program.variables.size());
     m_evaluatedModules = BitVector(m_program.modules.size());
     m_modulesWithReachedCode = BitVector(m_program.modules.size());
     m_modulesWithEscapedExports = BitVector(m_program.modules.size());
@@ -483,6 +482,7 @@ void StateOfLinkReach::escapeFamily(FamilyID id)
 {
     if (m_escapedFamilies.set(id.index()))
         return;
+    m_flow.noteSomethingBefell(id);
     m_program.at(m_flow.families.layoutsOf(id)).forEach([&](LayoutID member) {
         if (m_flow.mayBeKnownByFamily(member))
             escapeLayout(member);
@@ -840,7 +840,7 @@ void StateOfLinkReach::escapeExportsOf(ModuleID first)
     while (!modules.isEmpty()) {
         const Module& module = m_program.at(modules.takeLast());
         for (const ModuleExport& exported : module.exports) {
-            if (exported.variable && !m_variablesReadByUnseenCode.set(exported.variable.index()))
+            if (exported.variable && !m_flow.variablesReadByUnseenCode.set(exported.variable.index()))
                 m_flow.addEdge(m_flow.variable(exported.variable), m_flow.unseen());
             add(exported.module);
         }

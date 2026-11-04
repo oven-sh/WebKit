@@ -1,17 +1,20 @@
 # a URL that is made for one question, which stands behind it in its block: the text is scanned, a plain text answers out of its own characters, and what the scan turns away makes the object and asks it, as written, in one rare arm
 # function pathOf(text) { if (typeof text === "string") return [new URL(text).pathname]; }
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = CallBuiltin {{*}}overload=CompilerHelpersScanPlainURL
 # CHECK: = Substring
 # CHECK: frequency=Rare
 # function valueOf(text, name) { if (typeof text === "string") return [new URLSearchParams(text).get(name)]; }
 # RUN(QUERY): walk f2 mechanisms=all
+# REQUIRES(QUERY): entries-of-bun
 # QUERY-LABEL: code f2:Body
 # QUERY: = CallBuiltin {{*}}overload=CompilerHelpersScanPlainQuery
 # QUERY: = CallBuiltin {{*}}overload=CompilerHelpersFindInPlainQuery
 # somebody else gets hold of the object: function kept(text) { if (typeof text === "string") { const url = new URL(text); return [url.pathname, url]; } }
 # RUN(KEPT): walk f3 mechanisms=all
+# REQUIRES(KEPT): entries-of-bun
 # KEPT-LABEL: code f3:Body
 # KEPT-NOT: CompilerHelpersScanPlainURL
 # KEPT: = NewArray

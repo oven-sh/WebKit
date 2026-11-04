@@ -1,0 +1,183 @@
+# `new Map(..)` | `new Set(..)` over a written list of constants is made of the record of the list, which goes into the image: a table where the entries are primitives, else a tree.
+# The table of the image holds an object only where its fields stand in front of its other names. Where it does not, the construction as written runs on the list that code builds
+# f1 = oddKeyInMap, f2 = oddKeyInSet, f3 = oddKeyOneListDeeper: no record. f4 = namesInMap, f5 = indexInFrontOfName, f6 = primitivesInSet: still the record
+# -- source: a-collection-is-made-of-its-record-only-where-the-image-holds-its-objects.ts
+# declare function sink(...values: unknown[]): void;
+# function oddKeyInMap() { return new Map([["k", { "-1": "unknown", name: "x" }]]); }
+# function oddKeyInSet() { return new Set([{ 1.5: "half", name: "x" }]); }
+# function oddKeyOneListDeeper() { return new Map([["k", [{ ["__proto__"]: 1, name: "x" }]]]); }
+# function namesInMap() { return new Map([["k", { name: "x", size: 2 }]]); }
+# function indexInFrontOfName() { return new Map([["k", { 200: "OK", name: "x" }]]); }
+# function primitivesInSet() { return new Set(["a", "b"]); }
+# sink(oddKeyInMap, oddKeyInSet, oddKeyOneListDeeper, namesInMap, indexInFrontOfName, primitivesInSet);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: FromData
+# RUN(SET): walk f2 mechanisms=all
+# SET-LABEL: code f2:Body
+# SET-NOT: FromData
+# RUN(DEEPER): walk f3 mechanisms=all
+# DEEPER-LABEL: code f3:Body
+# DEEPER-NOT: FromData
+# RUN(NAMES): walk f4 mechanisms=all
+# NAMES-LABEL: code f4:Body
+# NAMES: = NewMapFromData
+# RUN(INDEX): walk f5 mechanisms=all
+# INDEX-LABEL: code f5:Body
+# INDEX: = NewMapFromData
+# RUN(PRIMITIVES): walk f6 mechanisms=all
+# PRIMITIVES-LABEL: code f6:Body
+# PRIMITIVES: = NewSetFromData
+
+module m0 path="a-collection-is-made-of-its-record-only-where-the-image-holds-its-objects.ts" displayPath="a-collection-is-made-of-its-record-only-where-the-image-holds-its-objects.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/MapIteratorPrototype.ts" displayPath="/$bun/js/engine/MapIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m3)
+module m4 path="/$bun/js/engine/SetIteratorPrototype.ts" displayPath="/$bun/js/engine/SetIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m4)
+entry module=m0
+layout L0 fields=[{key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 fields=[{key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="size" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Array{contents=anything elements=[Array{contents=undefined|null|string|L0 elements=[String{value="k"}, Object{layout=L0 members=[{key="-1" value=String{value="unknown"}}, {key="name" value=String{value="x"}}]}]}]} module=m0
+data d1 root=Array{contents=anything elements=[Object{layout=L0 members=[{key="1.5" value=String{value="half"}}, {key="name" value=String{value="x"}}]}]} module=m0
+data d2 root=Array{contents=anything elements=[Array{contents=undefined|null|string|Array<undefined|null|L0> elements=[String{value="k"}, Array{contents=undefined|null|L0 elements=[Object{layout=L0 members=[{key="__proto__" value=Number{value=1}}, {key="name" value=String{value="x"}}]}]}]}]} module=m0
+data d3 root=Array{contents=anything elements=[Array{contents=undefined|null|string|L1 elements=[String{value="k"}, Object{layout=L1 members=[{key="name" value=String{value="x"}}, {key="size" value=Number{value=2}}]}]}]} module=m0
+data d4 root=Array{contents=anything elements=[Array{contents=undefined|null|string|L0 elements=[String{value="k"}, Object{layout=L0 members=[{key="200" value=String{value="OK"}}, {key="name" value=String{value="x"}}]}]}]} module=m0
+data d5 root=Array{contents=anything elements=[String{value="a"}, String{value="b"}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} @0
+    v12 = Builtin builtin=GlobalThis @522
+    v13 = PropGet v12 key="sink" [isFreeName] @522
+    v14 = Call v13, -, v1, v3, v5, v7, v9, v11 calleeName="sink" @522
+    v15 = Undefined @522
+    Return v15 @522
+}
+function f1 name="oddKeyInMap" module=m0 position=51 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Map @87
+    v1 = Data data=d0 @91
+    v2 = Construct v0, -, v1 calleeName="Map" @87
+    v3 = Convert v2 declared={type=undefined|null|Map<undefined|null|string, undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @83
+    Return v3 @83
+}
+function f2 name="oddKeyInSet" module=m0 position=135 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Set @171
+    v1 = Data data=d1 @175
+    v2 = Construct v0, -, v1 calleeName="Set" @171
+    v3 = Convert v2 declared={type=undefined|null|Set<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @167
+    Return v3 @167
+}
+function f3 name="oddKeyOneListDeeper" module=m0 position=208 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Map @252
+    v1 = Data data=d2 @256
+    v2 = Construct v0, -, v1 calleeName="Map" @252
+    v3 = Convert v2 declared={type=undefined|null|Map<undefined|null|string, undefined|null|Array<undefined|null|L0>> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @248
+    Return v3 @248
+}
+function f4 name="namesInMap" module=m0 position=303 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Map @338
+    v1 = Data data=d3 @342
+    v2 = Construct v0, -, v1 calleeName="Map" @338
+    v3 = Convert v2 declared={type=undefined|null|Map<undefined|null|string, undefined|null|L1> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @334
+    Return v3 @334
+}
+function f5 name="indexInFrontOfName" module=m0 position=378 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Map @421
+    v1 = Data data=d4 @425
+    v2 = Construct v0, -, v1 calleeName="Map" @421
+    v3 = Convert v2 declared={type=undefined|null|Map<undefined|null|string, undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @417
+    Return v3 @417
+}
+function f6 name="primitivesInSet" module=m0 position=463 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Set @503
+    v1 = Data data=d5 @507
+    v2 = Construct v0, -, v1 calleeName="Set" @503
+    v3 = Convert v2 declared={type=undefined|null|Set<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @499
+    Return v3 @499
+}
+function f7 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f8 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+function f9 name="next" module=m3 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=MapIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=7 last=7 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @222
+    v5 = StepMapIterator v4 @222
+    v6 = ResultAt v5 index=1 @277
+    v7 = ResultAt v5 @325
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @257
+    v9 = CreateIteratorResult v6, v8 @257
+    Return v9 @257
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%MapIteratorPrototype%.next requires that |this| be a Map Iterator instance" @108
+    Unreachable @108
+}
+function f10 name="next" module=m4 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=SetIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=10 last=10 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @222
+    v5 = StepSetIterator v4 @222
+    v6 = ResultAt v5 index=1 @277
+    v7 = ResultAt v5 @325
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @257
+    v9 = CreateIteratorResult v6, v8 @257
+    Return v9 @257
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%SetIteratorPrototype%.next requires that |this| be a Set Iterator instance" @108
+    Unreachable @108
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f8
+runtimefunction id=ArrayIteratorPrototypeNext function=f7 visibility=Private
+runtimefunction id=MapIteratorPrototypeNext function=f9 visibility=Private
+runtimefunction id=SetIteratorPrototypeNext function=f10 visibility=Private

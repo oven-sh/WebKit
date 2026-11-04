@@ -276,15 +276,6 @@ public:
 };
 
 template<>
-class BodyOperation<Opcode::NewFunctionThatThrows> : public BodyFields {
-public:
-    explicit BodyOperation(BodyFields fields) : BodyFields(fields) { }
-
-    ValueID getterOperand() const { return operandAt(0); }
-    StringID name() const { return idAt<StringID>(1); }
-};
-
-template<>
 class BodyOperation<Opcode::NewSuppressedError> : public BodyFields {
 public:
     explicit BodyOperation(BodyFields fields) : BodyFields(fields) { }

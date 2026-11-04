@@ -90,6 +90,8 @@ struct LiteralInSightInWalkCopies {
     // Of the body: the operand, whatever hands the object on to it, and the allocation.
     Vector<ValueID, 4> names;
     PropertiesInWalkCopies properties;
+    // The user alone names it from here on, so no name is bound anew: another way into the user's block may still read the names as they stand.
+    bool standsInBlockInFront { false };
 };
 
 } // anonymous namespace
@@ -278,6 +280,17 @@ static Vector<CopiedOrderInWalkCopies, 2> planCopyByLayoutsInWalkCopies(const Ob
 
 // ---- The literal that is filled
 
+// `{ a: f() }` is allocated and filled, `{}` and `{ a: 1 }` are written out as data: either way the body makes a new object of the layout right there. Null: it does not, or it lays the object below something.
+static LayoutID layoutOfLiteralMadeByInWalkCopies(const Program& program, const BodyValue& made)
+{
+    if (made.opcode() == Opcode::NewObject)
+        return made.as<Opcode::NewObject>().prototypeOperand() ? LayoutID() : made.as<Opcode::NewObject>().layout();
+    if (made.opcode() != Opcode::Data)
+        return { };
+    const auto* object = program.data[made.as<Opcode::Data>().data().index()].root.tryAs<DataNode::Object>();
+    return object ? object->layout : LayoutID();
+}
+
 // The object that the operand names was allocated by the body, a few operations further up in the block, under the layout of a record. Nothing has named it since but what defines a name on it, copies into it or hands it on to the operand,
 // nothing but this code has it, and the state knows what it holds. So an object that is made anew where the walk stands, with what this one holds, is this one to whoever comes later.
 static std::optional<LiteralInSightInWalkCopies> findLiteralInSightInWalkCopies(Walker& walker, const BodyValue& user, ValueID operand)
@@ -290,12 +303,18 @@ static std::optional<LiteralInSightInWalkCopies> findLiteralInSightInWalkCopies(
         literal.names.append(allocated);
         allocated = index.value(allocated).operand(0);
     }
-    if (!allocated || index.isParameter(allocated) || index.opcodeOf(allocated) != Opcode::NewObject || index.blockOf(allocated) != index.blockOf(user.id()))
+    if (!allocated || index.isParameter(allocated))
+        return std::nullopt;
+    // `Object.assign({}, defaults, wide ? a : b)`: the literal stands in a block in front. Each time that block is run this one is run once at the most, and never without it: it dominates, and no loop holds one of the two alone.
+    BlockID blockOfLiteral = index.blockOf(allocated);
+    BlockID blockOfUser = index.blockOf(user.id());
+    bool standsInBlockInFront = blockOfLiteral != blockOfUser;
+    if (standsInBlockInFront && (!index.dominates(blockOfLiteral, blockOfUser) || index.loopOf(blockOfLiteral) != index.loopOf(blockOfUser) || index.hasIrreducibleFlow()))
         return std::nullopt;
     literal.names.append(allocated);
-    auto allocation = index.value(allocated).as<Opcode::NewObject>();
-    LayoutID layout = allocation.layout();
-    if (allocation.prototypeOperand() || program.at(layout).kind != LayoutKind::Record || !walker.plan().slots().holdsCompiledObjects(layout))
+    literal.standsInBlockInFront = standsInBlockInFront;
+    LayoutID layout = layoutOfLiteralMadeByInWalkCopies(program, index.value(allocated));
+    if (!layout || program.at(layout).kind != LayoutKind::Record || !walker.plan().slots().holdsCompiledObjects(layout))
         return std::nullopt;
 
     // The index counts the mentions of a value up to a limit of its own. So a literal is gone through for no more users than that.
@@ -305,7 +324,14 @@ static std::optional<LiteralInSightInWalkCopies> findLiteralInSightInWalkCopies(
     }
     Vector<uint32_t, 4> mentions;
     mentions.fill(0, literal.names.size());
+    // Of a literal in a block in front: what is left of its block, and this block up to the user. What stands between them is held to mention it nowhere, by the count of its mentions.
+    uint32_t endOfBlockOfLiteral = index.block(blockOfLiteral).endOfValues().index();
+    uint32_t beginOfBlockOfUser = index.block(blockOfUser).firstValue().index();
     for (uint32_t id = allocated.index() + 1; id < user.id().index(); ++id) {
+        if (standsInBlockInFront && id == endOfBlockOfLiteral)
+            id = beginOfBlockOfUser;
+        if (id >= user.id().index())
+            break;
         BodyValue between = index.value(ValueID(id));
         Opcode opcode = between.opcode();
         bool onlyFillsOrHandsOn = true;
@@ -324,6 +350,16 @@ static std::optional<LiteralInSightInWalkCopies> findLiteralInSightInWalkCopies(
     // Whoever comes later names the operand: every other name is bound to the object as it was written.
     for (size_t place = 0; place < literal.names.size(); ++place) {
         if (literal.names[place] != operand && mentions[place] != index.useCount(literal.names[place]))
+            return std::nullopt;
+    }
+    // Nobody has looked through the blocks between, nor through what stands behind them in the stream: the user alone names the operand beside what was counted.
+    if (standsInBlockInFront) {
+        uint32_t mentionsByUser = 0;
+        user.forEachOperand([&](ValueID mentioned, uint32_t) {
+            mentionsByUser += mentioned == operand;
+        });
+        size_t placeOfOperand = literal.names.find(operand);
+        if (placeOfOperand == notFound || mentions[placeOfOperand] + mentionsByUser != index.useCount(operand))
             return std::nullopt;
     }
 
@@ -365,6 +401,8 @@ static Reference buildLiteralInWalkCopies(Walker& walker, Origin origin, const P
 
 static void bindLiteralInWalkCopies(Walker& walker, const LiteralInSightInWalkCopies& literal, Reference object)
 {
+    if (literal.standsInBlockInFront)
+        return;
     for (ValueID name : literal.names)
         walker.bind(name, object);
 }
@@ -624,7 +662,18 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
         return false;
     auto call = value.as<Opcode::Call>();
     std::span<const ValueID> arguments = call.argumentsOperands();
-    Reference callee = call.isDoneInPlace() || arguments.size() < 2 ? Reference() : walker.referenceOf(call.calleeOperand());
+    if (call.isDoneInPlace() || arguments.size() < 2)
+        return false;
+    // Every call comes by here, and next to none is handed a literal: that is asked of the body, in front of all that is asked of the walk.
+    {
+        const BodyIndex& index = walker.currentBodyIndex();
+        ValueID allocated = arguments[0];
+        while (allocated && !index.isParameter(allocated) && inputOperationsThatOnlyHandOn.contains(index.opcodeOf(allocated)))
+            allocated = index.value(allocated).operand(0);
+        if (!allocated || index.isParameter(allocated) || (index.opcodeOf(allocated) != Opcode::NewObject && index.opcodeOf(allocated) != Opcode::Data))
+            return false;
+    }
+    Reference callee = walker.referenceOf(call.calleeOperand());
     if (!callee)
         return false;
     Type typeOfCallee = walker.types().at(walker.typeOf(callee));
@@ -654,11 +703,13 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
     Draft written = walker.draftOf(value);
     if (walker.hasFailed())
         return true;
+    walker.noteAssignmentWrittenOut();
     // The call gives the literal, whoever assigns: nothing that is built here is what the unit returns at once.
     written.resultIsReturnedAtOnce = false;
     written.isTailCall = false;
     Origin origin = written.origin();
     Vector<Reference, 4> operandsAsWritten(written.argumentsOperands());
+    walker.count(StatisticID::OwnKeyWalksExpanded, static_cast<uint32_t>(planned.size()));
 
     // The call with the literal as it stands, this source and every later one.
     auto assignAsWrittenFrom = [&](size_t firstSource, const PropertiesInWalkCopies& properties) -> Reference {
@@ -670,6 +721,25 @@ bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)
         Vector<Reference, 4> operands;
         operands.append(object);
         operands.append(operandsAsWritten.span().subspan(1 + firstSource));
+        // `Object.assign({}, defaults, { depth })`: the call reads a source and keeps nothing of it, so a literal that it alone names is made here, where a test has failed, out of what the state knows it to hold:
+        // on the way of the tests that pass nothing needs it, and the sweep drops it there.
+        for (size_t later = firstSource; later < planned.size(); ++later) {
+            const SourceOfAssignmentInWalkCopies& source = planned[later];
+            if (!source.isInSight || !source.order.keys.layout || !walker.currentBodyIndex().hasOneUse(source.inBody) || !isLayoutOfPlainLiteralInWalkCopies(walker.program(), source.order.keys.layout))
+                continue;
+            PropertiesInWalkCopies held;
+            held.layout = source.order.keys.layout;
+            bool everyFieldIsListed = source.order.keys.created.size() == source.order.fields.size();
+            for (size_t index = 0; everyFieldIsListed && index < source.order.fields.size(); ++index) {
+                FieldIndex field = source.order.fields[index];
+                Reference value = field == source.order.keys.created[index] && isPlainPropertyInWalkCopies(walker, { held.layout, field }) ? valueOfOwnKey(walker, source.built, held.layout, field, origin) : Reference();
+                everyFieldIsListed = !!value;
+                if (value)
+                    held.put(field, value);
+            }
+            if (Reference madeAgain = everyFieldIsListed ? buildLiteralInWalkCopies(walker, origin, held) : Reference())
+                operands[1 + later - firstSource] = madeAgain;
+        }
         Draft rest = written;
         rest.setArgumentsOperands(operands.span());
         walker.chooseConservativeFields(rest);

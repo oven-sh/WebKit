@@ -803,7 +803,7 @@ static bool rareRegionsAloneReadBehindHead(Allocator& allocator, const Operation
 {
     const Liveness& liveness = allocator.m_liveness;
     if (allocator.m_knownReadsOutsideRareRegions.isEmpty())
-        allocator.m_knownReadsOutsideRareRegions.fill(allocator.m_arena, allocator.m_proc.numberOfOperations(), 0);
+        allocator.m_knownReadsOutsideRareRegions.fill(allocator.m_arena, allocator.m_order.mostOperations(), 0);
     Position& knownRead = allocator.m_knownReadsOutsideRareRegions[value->index()];
     if (knownRead && knownRead >= head)
         return false;
@@ -1960,6 +1960,11 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge)
         const size_t numberOfPhis = target->phis().size();
         // Whatever else ends a block reads or writes registers behind the moves of the edge.
         const bool movesMayWriteRegisters = from->last()->isUnconditionalJump() || Order::isUnsplit(from, place);
+        // Every edge into the block comes out of the framed part: findBlockThatFixesHead(). The teardown stands behind the moves of the edge and gives the callee-saved registers back to the caller,
+        // so the head holds nothing in one of them. Held there, it would ask for the frame at the entry.
+        bool leavesFramedPart = false;
+        if constexpr (isOfAnyKind)
+            leavesFramedPart = movesMayWriteRegisters && !head.isRare && isAheadOfFramedPart(target) && !isAheadOfFramedPart(from) && !m_allocation.needsFrameAheadOfFramedPart();
         // A Phi that lies in one of them gives way on every turn, and the edge back to the head moves what follows it there again.
         RegisterMask takenByPatchesOfLoop = 0;
         if constexpr (isOfAnyKind) {
@@ -2025,6 +2030,8 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge)
                     continue;
                 ValueState& stateOfIncoming = states[incoming->index()];
                 RegisterMask held = stateOfIncoming.registers;
+                if (leavesFramedPart)
+                    held &= ~calleeSavedRegisters;
                 if (!held || isLiveAtHeadBeingFixed<kind>(*this, head, incoming))
                     continue;
 
@@ -2048,7 +2055,21 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge)
         }
 
         Operation* valuesMadeAgain[64];
-        const RegisterMask registersOfValuesMadeAgain = dropWhatHeadBeingFixedDoesNotHold<kind>(*this, head, valuesMadeAgain);
+        RegisterMask registersOfValuesMadeAgain = dropWhatHeadBeingFixedDoesNotHold<kind>(*this, head, valuesMadeAgain);
+        if (leavesFramedPart) {
+            registersOfValuesMadeAgain &= ~calleeSavedRegisters;
+            for (RegisterMask registers = m_bound & calleeSavedRegisters; registers; registers &= registers - 1) {
+                const Reg reg = lowestRegisterAtEdge(registers);
+                Operation* value = m_valueIn[reg.index()];
+                RegisterMask freeRegisters = m_file.allocatableIn(bankOf(reg)) & ~calleeSavedRegisters & ~m_bound;
+                if (!freeRegisters)
+                    continue;
+                const Reg hint = hintOf(value);
+                ValueState& state = states[value->index()];
+                unbindRegisterBetweenBlocks(*this, reg, state);
+                bindFreeRegisterBetweenBlocks(*this, hint && (freeRegisters & maskOf(hint)) ? hint : lowestRegisterAtEdge(freeRegisters), value, state, calleeSavesStillToNote);
+            }
+        }
 
         if constexpr (isOfAnyKind) {
             if (head.startsLoop)
@@ -2062,7 +2083,7 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge)
                 ValueState& state = states[phi->index()];
                 if (facts.has(ValueFlag::IsDropped) || state.registers)
                     continue;
-                if (Reg reg = chooseFreeRegisterAtHead(*this, bankOf(phi->type()), head.isRare, phiLivesAcrossCall(index, phi, facts) && (calleeSavesWorthTakingFor(phi, bankOf(phi->type()), target) & ~m_bound), takenByPatchesOfLoop, { hints[phi->index()], registersOfDyingValues[index], facts.hint }))
+                if (Reg reg = chooseFreeRegisterAtHead(*this, bankOf(phi->type()), head.isRare, !leavesFramedPart && phiLivesAcrossCall(index, phi, facts) && (calleeSavesWorthTakingFor(phi, bankOf(phi->type()), target) & ~m_bound), leavesFramedPart ? calleeSavedRegisters : takenByPatchesOfLoop, { hints[phi->index()], registersOfDyingValues[index], facts.hint }))
                     bindFreeRegisterBetweenBlocks(*this, reg, phi, state, calleeSavesStillToNote);
             }
             if constexpr (isOfAnyKind) {

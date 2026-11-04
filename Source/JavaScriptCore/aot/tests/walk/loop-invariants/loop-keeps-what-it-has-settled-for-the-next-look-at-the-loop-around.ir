@@ -2,6 +2,7 @@
 # so the looks doubled with each level: 16 deep 5.5 G instructions, 24 deep 1,400 G. It begins with what it was left with, joined with what enters now, and one look confirms that.
 # for (let i0 = 0; i0 < 2; i0++) { sum += x + i0; for (let i1 = 0; i1 < 2; i1++) { sum += x + i1; ..     24 deep. Without that the test does not end
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: isLoopHead=true
 

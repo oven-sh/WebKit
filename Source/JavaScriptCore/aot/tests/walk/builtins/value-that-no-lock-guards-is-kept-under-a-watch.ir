@@ -4,6 +4,7 @@
 # RED UNTIL 0-watched-values-of-built-ins-1: both were `PropGet`
 # function open(name) { process[name] = 1; }  function twice(f) { const a = process.env; f(); return a === process.env; }  function written(list) { process.execArgv = list; return process.execArgv; }
 # RUN: walk f2 f3 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f2:Body
 # CHECK-NOT: PropGet
 # CHECK: [[a]]: anything{{*}} = GetWatchedBuiltinValue builtin=ProcessEnv
@@ -13,6 +14,7 @@
 # CHECK-NOT: GetWatchedBuiltinValue
 # CHECK: = PropGet {{*}}key="execArgv"
 # RUN(LOCKS): locks open
+# REQUIRES(LOCKS): entries-of-bun
 # LOCKS: open ProcessEnv holder-written-under-any-name
 # LOCKS: open ProcessExecArgv written-under-its-name
 

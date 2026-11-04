@@ -6,6 +6,7 @@
 # console.log(sum(new Box(2), 5));
 # The guard at the entry is withheld: with it the parameters are proven in the whole body, and the loop has nothing to test.
 # RUN: walk f1 mechanisms=all-ParameterGuards
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = ShapeTest {{*}}L0
 # CHECK: frequency=Rare isLoopHead=true
@@ -16,6 +17,7 @@
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: isLoopHead=true
 # RUN(TESTS): walk f1 mechanisms=all-ParameterGuards
+# REQUIRES(TESTS): entries-of-bun
 # TESTS: = ShapeTest
 # TESTS-NOT: = ShapeTest
 

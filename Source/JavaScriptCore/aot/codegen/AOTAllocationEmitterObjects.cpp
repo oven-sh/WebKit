@@ -92,11 +92,6 @@ void AllocationEmitter::generateNewRuntimeError(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewRuntimeError, { errorKind }, { .capturesStackTrace = true }));
 }
 
-void AllocationEmitter::generateNewFunctionThatThrows(const ValueContext& value)
-{
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::NewFunctionThatThrows, { in<Boxed>(value->getterOperand()), numberOf(m_mentions.add(NumberSpace::ShownString, value->name())) }));
-}
-
 void AllocationEmitter::generateNewSuppressedError(const ValueContext& value)
 {
     define(value, callOperation<CellPointer>(value, RuntimeOperation::NewSuppressedError, { in<Boxed>(value->errorOperand()), in<Boxed>(value->suppressedOperand()) }, { .capturesStackTrace = true }));

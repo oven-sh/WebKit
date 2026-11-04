@@ -74,26 +74,14 @@ void forEachUnitMentionedBy(const CompiledCode& code, const Typed::CompileInputs
 
 void mentionUnitNamedOutsideCode(UnitQueue& queue, unsigned thread, CodeUnit unit)
 {
-    if (Typed::isGenericEntry(unit.role))
-        queue.mentionClosureEntry(thread, unit);
-    else
-        queue.mention(thread, unit);
+    queue.mention(thread, unit);
 }
 
 void mentionWhatCodeNames(UnitQueue& queue, unsigned thread, const CompiledCode& code, const Typed::CompileInputs& inputs)
 {
-    forEachUnitMentionedBy(code, inputs, scopedLambda<void(Typed::CodeUnit, MentionKind)>([&](CodeUnit unit, MentionKind namedBy) {
-        switch (namedBy) {
-        case MentionKind::Call:
-            queue.mention(thread, unit);
-            return;
-        case MentionKind::ClosureWord:
-            queue.mentionClosureEntry(thread, unit);
-            return;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
+    forEachUnitMentionedBy(code, inputs, scopedLambda<void(Typed::CodeUnit, MentionKind)>([&](CodeUnit unit, MentionKind) {
+        queue.mention(thread, unit);
     }));
-    queue.mentionIndirectCalls(thread, code.calleesOfIndirectCalls);
 }
 
 // Lightest first, for UnitQueue::addSeeds(): the largest bodies are begun first. The code of an entry names the body of its function, which the same thread takes next: an entry counts for that body.
@@ -132,8 +120,6 @@ static bool prepareCodeOfCompileThread(CompiledCode& code, const Typed::CallingC
 
 static void keepCodeOfCompileThread(OutputOfCompileThread& output, CompiledCode&& code)
 {
-    code.calleesOfIndirectCalls.lists = { };
-    code.calleesOfIndirectCalls.functions = { };
     output.code.append(output.blocks.keep(WTF::move(code)));
 }
 
@@ -313,9 +299,9 @@ static void makeQueueOfCompileStage(std::optional<UnitQueue>& queue, const Typed
 {
     const Typed::CallingConventions& conventions = inputs.plan.conventions();
     if (inputs.options.mechanisms.contains(Typed::Mechanism::Arrivals))
-        queue.emplace(conventions, inputs.facts.calls(), inputs.facts.linked(), inputs.arrivals, numberOfThreads);
+        queue.emplace(conventions, inputs.facts.linked(), inputs.arrivals, numberOfThreads);
     else
-        queue.emplace(conventions, inputs.facts.calls(), numberOfThreads);
+        queue.emplace(conventions, numberOfThreads);
 }
 
 CompiledProgram compileQueuedUnits(const Typed::CompileInputs& inputs, Typed::TypeTable& types, BuildContext& build)
@@ -336,9 +322,6 @@ CompiledProgram compileQueuedUnits(const Typed::CompileInputs& inputs, Typed::Ty
     queue.closePointsIn(build.leavePoints());
     // Nobody asks the queue before it has the seeds, because an empty queue is a finished one.
     queue.addSeeds(seeds.span(), loops);
-    std::once_flag closedGenericEntriesAreListed;
-    Vector<CodeUnit> closedGenericEntries;
-    std::atomic<size_t> nextClosedGenericEntry { 0 };
     std::atomic<bool> didFail { false };
     Vector<OutputOfCompileThread> outputs(numberOfThreads);
     bool timesUnits = build.options().logging.logsPhaseTimes;
@@ -371,24 +354,11 @@ CompiledProgram compileQueuedUnits(const Typed::CompileInputs& inputs, Typed::Ty
             }
             queue.didFinish(thread);
         }
-
-        std::call_once(closedGenericEntriesAreListed, [&] {
-            closedGenericEntries = queue.closedGenericEntries();
-        });
-        for (size_t place = nextClosedGenericEntry.fetch_add(1, std::memory_order_relaxed); place < closedGenericEntries.size(); place = nextClosedGenericEntry.fetch_add(1, std::memory_order_relaxed)) {
-            std::optional<CompiledCode> code = worker.compileClosedGenericEntry(closedGenericEntries[place]);
-            if (code && prepareCodeOfCompileThread(*code, conventions, build))
-                keepCodeOfCompileThread(output, WTF::move(*code));
-            else
-                didFail.store(true, std::memory_order_relaxed);
-        }
         output.notes = WTF::move(worker.notes());
         output.entriesUsed = worker.totals().entriesUsed;
         output.instructionsOfSteps = worker.instructionsOfSteps();
     });
 
-    queue.countClosureStates(build.statistics());
-    build.statistics().count(StatisticID::ClosedGenericEntries, closedGenericEntries.size());
 
     CompiledProgram program;
     program.succeeded = !didFail.load(std::memory_order_relaxed);

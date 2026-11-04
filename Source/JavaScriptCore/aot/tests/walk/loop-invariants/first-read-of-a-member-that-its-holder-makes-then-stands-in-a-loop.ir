@@ -2,6 +2,7 @@
 # The look at a loop counts on it: it does more than a read of a slot does
 # Nothing else in the loop runs code: function spin(turns) { if (typeof turns !== "number") return; let last; for (let i = 0; i < turns; i++) last = process.nextTick; return last; }
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: InitializeBuiltin builtin=ProcessNextTick
 # CHECK: = Builtin builtin=ProcessNextTick

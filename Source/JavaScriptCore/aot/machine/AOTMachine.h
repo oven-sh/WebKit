@@ -1129,6 +1129,11 @@ public:
     std::span<const RangeOfOrigin> rangesOfOrigins() const { return m_rangesOfOrigins.span(); }
     // How often the encoder has written an operation: each Execute that it goes over, both of a pair of stores.
     uint32_t numberOfOperationsEncoded() const { return m_numberOfOperationsEncoded; }
+    // From the scan on. The values with OperationFlag::IsInnerPointer that have ValueFlag::LivesAcrossSafepoint.
+    uint32_t numberOfInnerPointersAcrossSafepoints() const { return m_numberOfInnerPointersAcrossSafepoints; }
+    void noteInnerPointerAcrossSafepoint() { ++m_numberOfInnerPointersAcrossSafepoints; }
+    // From encode() on. The accesses that were encoded with ValueFlag::TakesOverTrap.
+    uint32_t numberOfTrapsTakenOver() const { return m_numberOfTrapsTakenOver; }
     // Where the code of the rare blocks and the late paths begins, but for the rare regions that stand among the other code: Encoder::placeColdCodeNearItsJumps().
     MacroAssembler::Label rareCodeStart() const { return m_rareCodeStart; }
     // Those regions, in the order of the code. Neighbors are one range.
@@ -1189,6 +1194,8 @@ private:
     ArenaVector<FrameRange> m_frameRanges;
     ArenaVector<RangeOfOrigin> m_rangesOfOrigins;
     uint32_t m_numberOfOperationsEncoded { 0 };
+    uint32_t m_numberOfInnerPointersAcrossSafepoints { 0 };
+    uint32_t m_numberOfTrapsTakenOver { 0 };
     MacroAssembler::Label m_rareCodeStart;
     ArenaVector<RangeOfRareCode> m_rangesOfRareCodeAmongOtherCode;
     std::optional<Failure> m_failure;

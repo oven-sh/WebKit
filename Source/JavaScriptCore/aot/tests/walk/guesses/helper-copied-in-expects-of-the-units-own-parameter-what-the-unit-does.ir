@@ -1,0 +1,121 @@
+# `function finish(leaf: Leaf, pos) { setPos(leaf, pos); .. }`, with `function setPos<T extends Range>(range: T, pos) { (range as { pos: number }).pos = pos; .. }` copied in.
+# The helper's parameter is written as any Range, and a list is a Range too (`interface Leaves extends Array<number>, Range`): a store by name on that has no typed form. What this copy is handed is the unit's own parameter, of which `Leaf` is written:
+# what both say is tested, and the store is typed behind the test. The cast in the helper is looked through.
+# f1 = setPos, f2 = finish
+# -- source: helper-copied-in-expects-of-the-units-own-parameter-what-the-unit-does.ts
+# interface Range { pos: number; end: number }
+# interface Leaves extends Array<number>, Range {}
+# class Leaf implements Range { pos = 0; end = 0; kind = 1; }
+# function setPos<T extends Range>(range: T, pos: number): T { (range as { pos: number }).pos = pos; return range; }
+# function finish(leaf: Leaf, pos: number): Leaf { setPos(leaf, pos); return leaf; }
+# function finishAll(leaves: Leaves, pos: number): Leaves { return setPos(leaves, pos); }
+# sink(finish, finishAll, setPos, new Leaf());
+# -- end of source
+# records of fe7c3055ef1829ac
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: PutSlot {{*}}key="pos" receivers=[L0] level=Expected
+
+module m0 path="helper-copied-in-expects-of-the-units-own-parameter-what-the-unit-does.ts" displayPath="helper-copied-in-expects-of-the-units-own-parameter-what-the-unit-does.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Leaf" module=m0 position=100 constructor=f4 fields=[{key="pos" declared={type=anything} flags=[IsRequired] originLayout=L1 originField=1}, {key="end" declared={type=anything} flags=[IsRequired] originLayout=L1 originField=0}, {key="kind" declared={type=anything} flags=[IsRequired]}] supertypes=[L1] ownFieldCount=3
+layout L1 module=m0 position=10 fields=[{key="end" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L2] flags=[IsNeverAllocated] declaredOrder=[1, 0] ownFieldCount=2
+layout L2 module=m0 position=225 fields=[{key="pos" declared={type=number} flags=[IsRequired]}] flags=[IsNeverAllocated] ownFieldCount=1
+variable g0 name="setPos" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @94
+    v5 = NewClass v4 layout=L0 @94
+    PutModuleVariable v5 variable=g1 @94
+    v7 = FinishClass v5 layout=L0 @94
+    v8 = Convert v7 declared={type=f4 flags=[IsFromCompiler]} @94
+    v9 = Convert v7 declared={type=f4 flags=[IsFromCompiler]} @94
+    v10 = Builtin builtin=GlobalThis @440
+    v11 = PropGet v10 key="sink" [isFreeName] @440
+    v12 = GetModuleVariable variable=g0 @464
+    v13 = Construct v9 calleeName="Leaf" @476
+    v14 = Convert v13 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @472
+    v15 = Call v11, -, v1, v3, v12, v14 calleeName="sink" @440
+    v16 = Undefined @440
+    Return v16 @440
+}
+function f1 name="setPos" module=m0 position=154 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|L0|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0|Array, v1: number):
+    v2 = Convert v0 declared={type=undefined|null|L0|Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @216
+    PropSet v2, v1 key="pos" @216
+    v4 = Convert v0 declared={type=undefined|null|L0|Array flags=[OmitsNull, OmitsUndefined]} @260
+    Return v4 @260
+}
+function f2 name="finish" module=m0 position=269 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = GetModuleVariable variable=g0 @318
+    v3 = Call v2, -, v0, v1 calleeName="setPos" @318
+    v4 = Convert v0 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} @344
+    Return v4 @344
+}
+function f3 name="finishAll" module=m0 position=352 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    v2 = GetModuleVariable variable=g0 @417
+    v3 = Call v2, -, v0, v1 calleeName="setPos" @417
+    ReturnCall v3 casts=[{declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}}] @417
+}
+function f4 name="Leaf" module=m0 position=100 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @100
+    v2 = NewObject v1 layout=L0 @100
+    v3 = Convert v2 declared={type=L0} @100
+    v4 = CallDirect v3 function=f5 @100
+    Return v3 @100
+}
+function f5 module=m0 position=100 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @100
+    v2 = Integer @130
+    PropDefine v1, v2 key="pos" @124
+    v4 = Integer @139
+    PropDefine v1, v4 key="end" @133
+    v6 = Integer integer=1 @149
+    PropDefine v1, v6 key="kind" @142
+    v8 = Undefined @100
+    Return v8 @100
+}
+function f6 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f7 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f7
+runtimefunction id=ArrayIteratorPrototypeNext function=f6 visibility=Private

@@ -4,8 +4,10 @@
 # The twin without a proxy: object-below-a-plain-object-has-no-method-that-the-host-looks-up.ir
 # LIBRARY: own
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-NOT: function f3 unreached
 # RUN(NONE): link functions mechanisms=none
+# REQUIRES(NONE): entries-of-bun
 # NONE-NOT: function f3 unreached
 
 module m0 path="main.js" displayPath="main.js" body=f0

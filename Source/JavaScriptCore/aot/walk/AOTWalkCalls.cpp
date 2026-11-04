@@ -657,7 +657,12 @@ static bool walkCallInWalkCalls(Walker& walker, const BodyValue& call)
 
     Draft written = walker.draftOf(call);
     request.thisValue = written.thisValueOperand();
-    request.arguments = written.argumentsOperands();
+    Vector<Reference, 8> arguments(written.argumentsOperands());
+    if (walker.depthOfCopies()) {
+        for (Reference& argument : arguments)
+            argument = walker.closureMadeWhereCopyHandsItOn(call, argument);
+    }
+    request.arguments = arguments.span();
     request.calledBuiltin = written.calledBuiltin();
     request.isNeverInlined = written.isNeverInlined();
     return buildDirectCallInWalkCalls(walker, call, written, request);
@@ -800,7 +805,8 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
         walker.build(WTF::move(finish));
 
     TypeID provenOfBody = walker.facts().linked().function(request.callee).result;
-    if (provenOfBody && !types.overlap(provenOfBody, TypeTable::object)) {
+    TypeID ofWhatCameBack = walker.typeOf(returned);
+    if ((provenOfBody && !types.overlap(provenOfBody, TypeTable::object)) || (ofWhatCameBack && !types.overlap(ofWhatCameBack, TypeTable::object))) {
         walker.bind(call.id(), object);
         return true;
     }
@@ -818,7 +824,17 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     Reference result = walker.addParameter(behind, { }, Representation::JSValue);
     walker.branch(returnsObject, takesReturned, takesThis);
     walker.continueIn(takesReturned);
-    walker.jumpTo(behind, singleElementSpan(returned));
+    Reference objectReturned = returned;
+    if (returnsObject.isValue() && returned.isValue()) {
+        Draft narrowed(Opcode::Narrowed, origin);
+        narrowed.setValueOperand(returned);
+        narrowed.setTestOperand(returnsObject);
+        narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+        narrowed.setIsOnTakenEdge(true);
+        if (Reference built = walker.build(WTF::move(narrowed)))
+            objectReturned = built;
+    }
+    walker.jumpTo(behind, singleElementSpan(objectReturned));
     walker.continueIn(takesThis);
     walker.jumpTo(behind, singleElementSpan(object));
     walker.continueIn(behind);
@@ -1106,6 +1122,11 @@ static bool walkDirectCallOfInputInWalkCalls(Walker& walker, const BodyValue& ca
     walker.chooseConservativeFields(direct);
     FunctionID callee = direct.function();
     Vector<Reference, 8> operands(direct.variadicOperands());
+    if (walker.depthOfCopies()) {
+        for (Reference& operand : operands)
+            operand = walker.closureMadeWhereCopyHandsItOn(call, operand);
+        direct.setVariadicOperands(operands.span());
+    }
     if (returnsResultOfFunction(direct.role())) {
         if (!bringOperandsIntoFormsOfCalleeInWalkCalls(walker, walker.originOf(call), CodeUnit { callee, direct.role() }, operands))
             return true;
@@ -1114,7 +1135,10 @@ static bool walkDirectCallOfInputInWalkCalls(Walker& walker, const BodyValue& ca
     if (direct.role() == CodeRole::ParameterGuard && hasProvenWhatGuardTestsInWalkCalls(walker, callee, operands.span()))
         direct.setRole(CodeRole::Body);
     bool entersBody = returnsResultOfFunction(direct.role());
-    Reference result = walker.build(WTF::move(direct));
+    std::optional<Effects> effects;
+    if (entersBody)
+        effects = effectsOfDirectCall(walker, callee, operands.span());
+    Reference result = walker.build(WTF::move(direct), effects ? &*effects : nullptr);
     if (!result)
         return true;
     walker.bind(call.id(), result);
@@ -1271,7 +1295,7 @@ std::optional<Vector<Reference, 8>> layOutEntryOperandsOfCall(Walker& walker, co
     return operands;
 }
 
-bool callFunctionDirectly(Walker& walker, const BodyValue& operation, FunctionID function, Reference thisValue, std::span<const Reference> arguments)
+bool callFunctionDirectly(Walker& walker, const BodyValue& operation, FunctionID function, Reference thisValue, std::span<const Reference> arguments, MayCopyFunctionCalledDirectly mayCopy)
 {
     // Link has not seen the call. What it says of a function whose callers it has counted does not hold of one more.
     const LinkTables& link = walker.facts().linked();
@@ -1289,6 +1313,8 @@ bool callFunctionDirectly(Walker& walker, const BodyValue& operation, FunctionID
         request.calledBuiltin = written.calledBuiltin();
     else
         request.isNeverInlined = walker.program().at(function).isHiddenInStackTraces();
+    if (mayCopy == MayCopyFunctionCalledDirectly::No)
+        request.isNeverInlined = true;
     return copyOrCallDirectlyInWalkCalls(walker, operation, written, request);
 }
 
@@ -1468,6 +1494,56 @@ static FunctionID findLibraryFunctionOfBuiltinInWalkCalls(const Program& program
         return { };
     const Function& function = program.at(named);
     return bodyRunsWhenCalledInWalkCalls(function.kind) && function.captures.isEmpty() && !function.has(FunctionFlags::TakesCallee) ? named : FunctionID();
+}
+
+bool takesNothingOfFunctionObject(const Program& program, FunctionID named)
+{
+    const Function& function = program.at(named);
+    return bodyRunsWhenCalledInWalkCalls(function.kind) && function.captures.isEmpty() && !function.has(FunctionFlags::TakesCallee);
+}
+
+// `list.map(f)`: the library has a text of its own for a receiver that is known for a list, which a row names, and one that takes whatever comes: that is what the function object of the built-in runs, so a call by value enters it.
+// `list.sort(f)`: the function object is native code, and one row names a function of the library.
+LibraryFunctionsBehindBuiltin findLibraryFunctionsBehindBuiltin(const Walker& walker, TypeID typeOfCallee)
+{
+    LibraryFunctionsBehindBuiltin found;
+    if (!typeOfCallee)
+        return found;
+    Type type = walker.types().at(typeOfCallee);
+    BuiltinID named = type.isObject() ? singleBuiltinOf(walker.types(), type) : BuiltinID();
+    if (!named)
+        return found;
+    const Program& program = walker.program();
+    const BuiltinTable& table = program.builtins();
+    bool everyRowNamesFunction = true;
+    FunctionID runByFunctionObject;
+    bool severalAreRunByFunctionObject = false;
+    for (const BuiltinOverload& overload : table.overloadsOf(table.canonicalID(named))) {
+        if (overload.mode != BuiltinCallMode::Call)
+            continue;
+        const RuntimeFunctionEntry* held = findRuntimeFunction(program, overload.libraryFunction());
+        if (!held || !held->function) {
+            everyRowNamesFunction = false;
+            continue;
+        }
+        if (!found.named.contains(held->function))
+            found.named.append(held->function);
+        RuntimeFunctionRole role = table.at(held->id).role;
+        if (role != RuntimeFunctionRole::EngineBuiltin && role != RuntimeFunctionRole::HostBuiltin)
+            continue;
+        severalAreRunByFunctionObject |= runByFunctionObject && runByFunctionObject != held->function;
+        runByFunctionObject = held->function;
+    }
+    if (everyRowNamesFunction && found.named.size() == 1)
+        found.enteredByValue = found.named[0];
+    else if (everyRowNamesFunction && !severalAreRunByFunctionObject)
+        found.enteredByValue = runByFunctionObject;
+    if (found.enteredByValue && !takesNothingOfFunctionObject(program, found.enteredByValue))
+        found.enteredByValue = { };
+    found.named.removeAllMatching([&](FunctionID function) {
+        return !takesNothingOfFunctionObject(program, function);
+    });
+    return found;
 }
 
 FunctionID findLibraryFunctionBehindBuiltin(const Walker& walker, TypeID typeOfCallee)

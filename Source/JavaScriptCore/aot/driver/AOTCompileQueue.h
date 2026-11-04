@@ -57,7 +57,7 @@ struct LinkTables;
 // and the process ends there, whatever the states of the two cycles happen to be. So a build stops with any number of threads or with none.
 // Of the tables the queue reads the cycle of each function and the order of cycles (LinkTables::cyclesAwaited), and no list of any function. A cycle that holds groups alone has no unit: it is done once all that it awaits are.
 //
-// WHAT THE QUEUE NEEDS OF LinkTables::referrers. Each function whose finished code may bring a unit of F here, by forEachUnitMentionedBy() or by mentionIndirectCalls(), leads to F from node to node.
+// WHAT THE QUEUE NEEDS OF LinkTables::referrers. Each function whose finished code may bring a unit of F here, by forEachUnitMentionedBy(), leads to F from node to node.
 // Then the cycle of F waits while that code is made. Besides a call, a NewClosure and the evaluation of a class, such code holds:
 //   Variable, CardOfVariable                     a read or a store of a variable that is born as F
 //   ClosureFunction, ClosureCell, ClassRank,     F is the constructor, or a member with MemberCreation::ByClassRecord, of the class that is named or that the closure constructs,
@@ -66,16 +66,13 @@ struct LinkTables;
 //   MethodSelector                               the family lists F, or F is the function of tableLookupOf()
 //   ModuleValue, RequireEdge                     F is the body of the module
 //   Function                                     the unit is a bound function of F
-//   an indirect call                             its callees list F, or it may enter any closure and indirectCallersAreAllListed(F)
-//
-// The word of a closure names a generic entry, which enters nothing. Where CallingConventions::indirectCallersAreAllListed() holds, the entries are mentioned once ClosureState says so. Its bits are only ever set, so the closure stays one.
 class UnitQueue {
     WTF_MAKE_NONCOPYABLE(UnitQueue);
 public:
     // Every function is in one cycle, which is ready from the start: nothing is ordered, and a unit comes into the queue when it is first mentioned.
-    JS_EXPORT_PRIVATE UnitQueue(const Typed::CallingConventions&, const Typed::FactCallGraph&, unsigned numberOfThreads);
+    JS_EXPORT_PRIVATE UnitQueue(const Typed::CallingConventions&, unsigned numberOfThreads);
     // By the cycles of the tables. With the tables at their defaults it is the queue above. addSeeds() is called once, and nobody takes a unit before.
-    JS_EXPORT_PRIVATE UnitQueue(const Typed::CallingConventions&, const Typed::FactCallGraph&, const Typed::LinkTables&, Typed::Arrivals&, unsigned numberOfThreads);
+    JS_EXPORT_PRIVATE UnitQueue(const Typed::CallingConventions&, const Typed::LinkTables&, Typed::Arrivals&, unsigned numberOfThreads);
     JS_EXPORT_PRIVATE ~UnitQueue();
 
     // Before addSeeds(). Without it nobody notes a point.
@@ -83,10 +80,6 @@ public:
 
     // By any thread. The unit exists in the plan: CallingConventions::exists(). Only the first mention of a unit does anything.
     JS_EXPORT_PRIVATE void mention(unsigned thread, Typed::CodeUnit);
-    // By any thread. The unit is a generic entry that exists in the plan.
-    JS_EXPORT_PRIVATE void mentionClosureEntry(unsigned thread, Typed::CodeUnit);
-    // By any thread. A list is gone through once, however many calls have it.
-    JS_EXPORT_PRIVATE void mentionIndirectCalls(unsigned thread, const CalleesOfIndirectCalls&);
     // Before any thread takes a unit, by the thread that may start a loop. The loops are no wider than the queue has threads. The seeds come lightest first, and each thread mentions a share of them as mentionUnitNamedOutsideCode() does.
     // No thread keeps any: all that came into the queue goes to the shared list in the order of the seeds, as inRunsOfUnitQueue() orders it. A seed need not come into the queue, so the runs are made of what did.
     // Then the cycles that were ready from the start and hold no seed are done, and so on down. What that brings into the queue is taken behind the runs.
@@ -108,12 +101,8 @@ public:
     bool isMentioned(uint32_t unitIndex) const { return m_isMentioned[unitIndex / 32].load(std::memory_order_relaxed) >> (unitIndex % 32) & 1; }
     // LinkTables::referrers leads from the one to the other, from node to node: they are in one cycle, or the cycle of `function` stays Waiting until that of `referrer` is done. It follows from the tables alone.
     JS_EXPORT_PRIVATE bool leadsTo(FunctionID referrer, FunctionID function) const;
-    // Once take() has answered nothing. Ascending. CompileWorker::compileClosedGenericEntry() makes their code, which mentions no unit.
-    JS_EXPORT_PRIVATE Vector<Typed::CodeUnit> closedGenericEntries() const;
     // Once take() has answered nothing. Ascending. A fused call entry is never in the queue: a mention of it is a mention of its target.
     JS_EXPORT_PRIVATE Vector<Typed::CodeUnit> mentionedFusedCallEntries() const;
-    // Once take() has answered nothing: FunctionsWithAllIndirectCallersListed, GenericEntriesOpenedByIndirectCalls, GenericEntriesOpenedBesideCompiledTarget.
-    JS_EXPORT_PRIVATE void countClosureStates(Statistics&) const;
 
 private:
     // Padded with bytes and not with alignas(): the buffer of a Vector is aligned as malloc() aligns, whatever the type of its elements asks for.
@@ -145,7 +134,7 @@ private:
         uint32_t unit { 0 };
     };
 
-    UnitQueue(const Typed::CallingConventions&, const Typed::FactCallGraph&, const Typed::LinkTables*, Typed::Arrivals*, unsigned numberOfThreads);
+    UnitQueue(const Typed::CallingConventions&, const Typed::LinkTables*, Typed::Arrivals*, unsigned numberOfThreads);
 
     uint32_t cycleOf(FunctionID function) const { return m_cycleOfFunction.isEmpty() ? 0 : m_cycleOfFunction[function.index()]; }
     bool isInQueueFromStart(FunctionID) const;
@@ -173,13 +162,7 @@ private:
     // No unit of the cycle is open any more.
     void finishCycle(unsigned thread, uint32_t cycle);
 
-    // The generic entries go on to the function once a closure may exist and either an indirect call in finished code may enter it or what they go on to has code anyway.
-    enum ClosureState : uint8_t { ClosureMayExist = 1 << 0, IsListedByIndirectCall = 1 << 1, TargetHasCode = 1 << 2 };
-    static bool opensGenericEntries(uint8_t state) { return state & ClosureMayExist && state & (IsListedByIndirectCall | TargetHasCode); }
-    void addClosureState(unsigned thread, FunctionID, ClosureState);
-
     const Typed::CallingConventions& m_conventions;
-    const Typed::FactCallGraph& m_calls;
     // Null: every function is in cycle 0.
     const Typed::LinkTables* m_link { nullptr };
     Typed::Arrivals* m_arrivals { nullptr };
@@ -194,11 +177,6 @@ private:
     Vector<UnitBehindRoles> m_unitsBehindRoles;
     // addSeeds() lets go of them.
     Vector<uint32_t> m_cyclesReadyFromStart;
-    // [function], of the functions for which indirectCallersAreAllListed() holds.
-    Vector<std::atomic<uint8_t>> m_closureStates;
-    // [list / 32]
-    Vector<std::atomic<uint32_t>> m_isCalleeListMentioned;
-    std::atomic<bool> m_anyClosureMayBeEntered { false };
     // [unitIndex / 32]
     Vector<std::atomic<uint32_t>> m_isMentioned;
     Vector<UnitsOfThread> m_unitsOfThreads;

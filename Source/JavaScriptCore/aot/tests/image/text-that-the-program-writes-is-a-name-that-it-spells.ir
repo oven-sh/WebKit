@@ -4,6 +4,7 @@
 # The control: text-under-which-no-event-hangs-opens-nothing.ir.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: image
+# REQUIRES: entries-of-bun
 # CHECK: flags {{*}}AdmitsUnknownJavaScript
 
 layout L0 module=m1 fields=[{key="read" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1

@@ -1,0 +1,149 @@
+# `const math = kit.math; const floor = math.floor; if (math) return floor(2.5) + kit.bias;`: `kit.bias` in the taken target leans on the proof of `kit`, so each arm of the guess ends with the branch of the block: no arm comes through.
+# The branch writes a proof of `math` on its edges, which counts as a mention behind the stretch, and `math` is not live at the targets, so it travels on no edge. The meeting binds nothing where no arm comes through.
+# So `math` stayed bound to the read of a slot that the typed run has built, proven to be Math. The taken target is walked for the closed way too: the call looked back through the read of `floor` and was built as Math.floor, folded.
+# f2 = read
+# -- source: kit.ts
+# class Kit { math = Math; bias = 1; }
+# const kits: Kit[] = [new Kit(), new Kit()];
+# kits.push(JSON.parse('{"math":0,"bias":1}', (key, value) => (key === "math" ? { floor: () => -1 } : value)));
+# function noise(): number { return JSON.parse("0"); }
+# function read(i: number): number {
+#   const kit = kits[i];
+#   const math = kit.math;
+#   const floor = math.floor;
+#   if (math) return floor(2.5) + kit.bias;
+#   return noise() + noise() + noise();
+# }
+# console.log(read(0), read(1), read(2));
+# -- end of source
+# records of 7ed5b7e8340bcc16
+# RUN(MEET): walk f2 mechanisms=all
+# REQUIRES(MEET): entries-of-bun
+# MEET-LABEL: code f2:Body
+# MEET: = ShapeTest
+# MEET: = Call {{*}}calleeName="floor"
+
+module m0 path="kit.ts" displayPath="kit.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+expectedresult x0 type=number
+layout L0 kind=Instance name="Kit" module=m0 position=6 constructor=f3 fields=[{key="math" declared={type=anything} flags=[IsRequired]}, {key="bias" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 position=159 fields=[{key="floor" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="noise" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="kits" module=m0 declared={type=undefined|null|absent|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g2 @0
+    v5 = FinishClass v3 layout=L0 @0
+    v6 = Convert v5 declared={type=f3 flags=[IsFromCompiler]} @0
+    v7 = Convert v5 declared={type=f3 flags=[IsFromCompiler]} @0
+    v8 = Construct v7 calleeName="Kit" @62
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @58
+    v10 = Construct v7 calleeName="Kit" @73
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @69
+    v12 = NewArray v9, v11 contents=undefined|null|L0 @57
+    v13 = Convert v12 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} @57
+    PutModuleVariable v13 variable=g1 @43
+    v15 = PropGet v13 key="push" @81
+    v16 = Builtin builtin=JSON @91
+    v17 = PropGet v16 key="parse" @91
+    v18 = Convert v17 declared={type=builtin(JSONParse) flags=[IsExpected]} @91
+    v19 = String string="{\"math\":0,\"bias\":1}" @102
+    v20 = NewClosure function=f4 @125
+    v21 = Call v18, v16, v19, v20 calleeKey="parse" calleeName="JSON.parse" @96
+    v22 = Call v15, v13, v21 calleeKey="push" calleeName="kits.push" @86
+    v23 = Convert v22 declared={type=number} illTypedCause=DeclarationWithoutBody @81
+    v24 = Builtin builtin=GlobalThis @437
+    v25 = PropGet v24 key="console" [isFreeName] @437
+    v26 = Convert v25 declared={type=builtin(Console) flags=[IsExpected]} @437
+    v27 = PropGet v26 key="log" @437
+    v28 = Convert v27 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @437
+    v29 = Integer @454
+    v30 = Call v1, -, v29 calleeName="read" @449
+    v31 = Integer integer=1 @463
+    v32 = Call v1, -, v31 calleeName="read" @458
+    v33 = Integer integer=2 @472
+    v34 = Call v1, -, v33 calleeName="read" @467
+    v35 = Call v28, v26, v30, v32, v34 calleeKey="log" calleeName="console.log" @445
+    v36 = Undefined @437
+    Return v36 @437
+}
+function f1 name="noise" module=m0 position=191 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON @225
+    v1 = PropGet v0 key="parse" @225
+    v2 = Convert v1 declared={type=builtin(JSONParse) flags=[IsExpected]} @225
+    v3 = String string="0" @236
+    v4 = Call v2, v0, v3 calleeKey="parse" calleeName="JSON.parse" expectedResult=x0 @230
+    ReturnCall v4 casts=[{declared={type=number}}] @230
+}
+function f2 name="read" module=m0 position=244 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g1 @293
+    v2 = CheckInitialized v1 name="kits" @293
+    v3 = ElemGet v2, v0 @293
+    v4 = PropGet v3 key="math" @317
+    v5 = PropGet v4 key="floor" @343
+    v6 = ToBoolean v4 @361
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0) @361
+  b1(v7):
+    v8 = Convert v5 declared={type=builtin(MathFloor) flags=[IsExpected]} @374
+    v9 = Double number=2.5 @380
+    v10 = Call v8, -, v9 calleeName="floor" @374
+    v11 = Convert v10 declared={type=number} illTypedCause=DeclarationWithoutBody @374
+    v12 = PropGet v3 key="bias" @387
+    v13 = Add v11, v12 @387
+    v14 = Convert v13 declared={type=number} @387
+    Return v14 @387
+  b2(v15):
+    v16 = GetModuleVariable variable=g0 @406
+    v17 = Call v16 calleeName="noise" @406
+    v18 = GetModuleVariable variable=g0 @416
+    v19 = Call v18 calleeName="noise" @416
+    v20 = Add v17, v19 @416
+    v21 = GetModuleVariable variable=g0 @426
+    v22 = Call v21 calleeName="noise" @426
+    v23 = Add v20, v22 @426
+    v24 = Convert v23 declared={type=number} @426
+    Return v24 @426
+}
+function f3 name="Kit" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @6
+    v2 = NewObject v1 layout=L0 @6
+    v3 = Convert v2 declared={type=L0} @6
+    v4 = CallDirect v3 function=f5 @6
+    Return v3 @6
+}
+function f4 module=m0 position=125 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything):
+    v2 = String string="math" @150
+    v3 = StrictEq v0, v2 @150
+    Branch v3 -> taken b1(), notTaken b2(v1) @150
+  b1():
+    v4 = NewClosure function=f6 @168
+    v5 = NewObject -, v4 layout=L1 fields=[0] @159
+    v6 = FinishObject v5 @159
+    Jump -> next b2(v6) @159
+  b2(v7):
+    Return v7 @181
+}
+function f5 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @6
+    v2 = Builtin builtin=Math @19
+    PropDefine v1, v2 key="math" @12
+    v4 = Integer integer=1 @32
+    PropDefine v1, v4 key="bias" @25
+    v6 = Undefined @6
+    Return v6 @6
+}
+function f6 name="floor" module=m0 position=168 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=-1 @174
+    Return v0 @174
+}

@@ -536,8 +536,6 @@ StubRecording StubCatalog::dryRun(StubKey body) const
     return jit.generate(body);
 }
 
-#if ASSERT_ENABLED || ASAN_ENABLED
-
 const StubCatalog::Node* StubCatalog::tryFindNode(StubKey body) const
 {
     auto iterator = m_nodeOfBody.find(body.bits());
@@ -579,8 +577,6 @@ bool StubCatalog::answersCover(const StubRecording& recording) const
         return summaryOf(entry).clobbered.subsumes(closed.clobbered) && !mergeStubEffects(effects, closed.effects) && (!closed.leavesStubs || !isLeaf(entry));
     });
 }
-
-#endif // ASSERT_ENABLED || ASAN_ENABLED
 
 } } // namespace JSC::AOT
 

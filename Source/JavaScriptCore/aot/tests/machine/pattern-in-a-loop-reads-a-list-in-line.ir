@@ -9,17 +9,21 @@
 # Whatever else comes goes to the stub, which is all there is outside a loop.
 # OPTIONS: report=Flow
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: [[taken]]: {{*}} = DestructureIterable {{*}} count=2 [readsListsByIndex]
 # CHECK: = ResultAt [[taken]]
 # CHECK: = ResultAt [[taken]] index=1
 # RUN(ALONE): walk f1 f2 mechanisms=all
+# REQUIRES(ALONE): entries-of-bun
 # ALONE-NOT: = IsPristine
 # ALONE-NOT: level=Proven
 # RUN(FORMS): bytes-by-form mechanisms=all
+# REQUIRES(FORMS): entries-of-bun
 # FORMS: DestructureIterable Always Anywhere Runtime 1
 # FORMS: DestructureIterable Always Loop Open 1
 # RUN(ONCE): emit f2:Body mechanisms=all
+# REQUIRES(ONCE): entries-of-bun
 # ONCE-NOT: Butterfly_publicLength
 # ONCE-NOT: JSCell_typeInfoFlags
 

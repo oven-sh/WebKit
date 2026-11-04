@@ -25,8 +25,10 @@
 # CHECK-LABEL: code f3:Body
 # CHECK: b0([[f]]: anything{{*}}, [[t]]: anything{{*}}, [[given]]: anything
 # CHECK: = TypeTest {{*}} testedType=builtin(FunctionPrototypeApply)
-# CHECK: [[list]]: Array {{*}} = NewArgumentList [[f]], [[given]]
-# CHECK: = CallList [[f]], [[t]], [[list]]
+# CHECK: = TypeTest [[given]] testedType=Array
+# CHECK: = NewArgumentList [[f]], [[given]]
+# CHECK: ([[list]]: Array{{*}} @Cell
+# CHECK-NEXT: = CallList [[f]], [[t]], [[list]]
 # CHECK-LABEL: code f4:Body
 # CHECK: b0([[f]]: anything{{*}}, [[g]]: anything{{*}}, [[x]]: anything
 # CHECK: [[first]]: {{*}} = PropGet [[f]] key="call"

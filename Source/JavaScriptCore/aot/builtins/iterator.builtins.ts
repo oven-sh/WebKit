@@ -237,7 +237,7 @@ export default b.declarations(
     instanceCppClass: b.cppClass("Generator", "AOTGenerator.h"),
     isNeverPristine: true,
     hasConstructor: false,
-    lockedObjects: ["prototype"],
+    lockedMembers: ["prototype"],
     slots: { element: b.contents("Element", internalFields) },
     types: [
       b.viewType("Generator", "element"),
@@ -260,7 +260,7 @@ export default b.declarations(
     jsType: "JSAsyncGeneratorType",
     isNeverPristine: true,
     hasConstructor: false,
-    lockedObjects: ["prototype"],
+    lockedMembers: ["prototype"],
     slots: { element: b.contents("Element", internalFields) },
     types: [
       b.viewType("AsyncGenerator", "element"),

@@ -129,6 +129,96 @@ JSC_DEFINE_HOST_FUNCTION(answerImportWithModuleItselfInTestRunOriginals, (JSGlob
     return JSValue::encode(modulesOf(realm)->namespaceOfModuleItself(ModuleID(callFrame->argument(1).asUInt32())));
 }
 
+// TODO(bun): a CommonJS file has one variable for its exports: importsOriginalBesideMock().
+bool Modules::isAskedForByOwnFactory(ModuleID module)
+{
+    if (!isMocked(module) || data(module).isOfLibrary() || !data(module).hasExportTable() || data(module).isFaceOfFile()) [[likely]]
+        return false;
+    if (m_modulesWhoseFactoryRuns.get(module.index()))
+        return true;
+    // The factory goes on behind an `await`.
+    return !mockInPlace(module) && !m_modulesWithMockToRun.get(module.index()) && host().isCalledFromFactoryThatWaits && host().isCalledFromFactoryThatWaits(m_instance.globalObject, module);
+}
+
+// `bun test` does not let a load wait for the factory that began it: the load comes to the module itself, and the mock is laid when the factory has answered.
+void Modules::noteLoadBegunByFactories(ModuleID root)
+{
+    for (size_t index : m_mocks->modules) {
+        if (ModuleID mocked(index); mocked != root && !hasRunItself(mocked) && isAskedForByOwnFactory(mocked))
+            m_modulesThatOwnFactoryMayLoad.set(index);
+    }
+}
+
+// An evaluation has come to a mocked module: from an importer, or as its root.
+bool Modules::runsBesideMockFor(ModuleID mocked, std::optional<ModuleID> importer) const
+{
+    if (!isMocked(mocked) || hasRunItself(mocked)) [[likely]]
+        return false;
+    if (m_modulesThatOwnFactoryMayLoad.get(mocked.index()))
+        return true;
+    return importer ? importsOriginalBesideMock(mocked, *importer) : m_modulesOwedBesideMock.get(mocked.index());
+}
+
+// The failure is the module's own, and whoever gets the mock does not hear of it. The error waits for whoever asks for the module itself, and for the end of the mock.
+void Modules::setAsideErrorOfModuleThatRanBesideMock(ModuleID module)
+{
+    if (status(module) != ModuleStatus::Failed || !isMocked(module))
+        return;
+    ModuleRecord* record = recordIfExists(module);
+    ensureLoaded(module).errorOfModuleThatRanBesideMock.set(*this, record->evaluationError());
+    record->setEvaluationError(*m_instance.vm, JSValue());
+    setStatus(module, ModuleStatus::Evaluated);
+}
+
+void Modules::bringBackErrorOfModuleThatRanBesideMock(ModuleID module)
+{
+    LoadedModule* loaded = loadedIfExists(module);
+    JSValue error = loaded ? loaded->errorOfModuleThatRanBesideMock.get() : JSValue();
+    if (!error) [[likely]]
+        return;
+    loaded->errorOfModuleThatRanBesideMock.set(*this, JSValue());
+    setFailed(module, error);
+}
+
+static JSC_DECLARE_HOST_FUNCTION(failImportOfModuleItselfInTestRunOriginals);
+
+JSC_DEFINE_HOST_FUNCTION(failImportOfModuleItselfInTestRunOriginals, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    modulesOf(realm)->setAsideErrorOfModuleThatRanBesideMock(ModuleID(callFrame->argument(1).asUInt32()));
+    return throwVMError(realm, scope, callFrame->argument(0));
+}
+
+// An importer that sees the mock may have come by first. The module counts as evaluated then, and a record that the loader holds answers the next evaluation with the promise of that one.
+void Modules::oweBodyBesideMock(ModuleID module)
+{
+    m_modulesOwedBesideMock.set(module.index());
+    if (status(module) != ModuleStatus::Evaluated)
+        return;
+    setStatus(module, ModuleStatus::Unlinked);
+    if (ModuleRecord* record = recordIfExists(module))
+        record->clearTopLevelCapability();
+}
+
+// The factory of the mock requires the module.
+JSValue Modules::requireModuleItselfBesideMock(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!hasRunItself(module)) {
+        oweBodyBesideMock(module);
+        evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+        if (scope.exception()) [[unlikely]] {
+            setAsideErrorOfModuleThatRanBesideMock(module);
+            return { };
+        }
+    }
+    if (JSValue error = ensureLoaded(module).errorOfModuleThatRanBesideMock.get()) [[unlikely]] {
+        throwException(m_instance.globalObject, scope, error);
+        return { };
+    }
+    RELEASE_AND_RETURN(scope, namespaceOfModuleItself(module));
+}
+
 // An import() of a package has taken the steps of any import(), and was answered with what the mock shows.
 JSValue Modules::importModuleItselfBesideMock(ModuleID module, JSValue answerOfImport)
 {
@@ -136,24 +226,26 @@ JSValue Modules::importModuleItselfBesideMock(ModuleID module, JSValue answerOfI
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The mock has ended meanwhile.
-    if (!mockInPlace(module))
+    if (!isMocked(module))
         return answerOfImport;
     bool hasBegun = hasRunItself(module);
     if (!hasBegun || status(module) == ModuleStatus::EvaluatingAsync) {
-        if (!hasBegun) {
-            m_modulesOwedBesideMock.set(module.index());
-            // An importer that sees the mock came by first.
-            if (status(module) == ModuleStatus::Evaluated)
-                setStatus(module, ModuleStatus::Unlinked);
-        }
+        if (!hasBegun)
+            oweBodyBesideMock(module);
         JSPromise* evaluation = evaluate(module, std::nullopt, nullptr, nullptr);
         RETURN_IF_EXCEPTION(scope, { });
         if (evaluation->status() != JSPromise::Status::Fulfilled) {
             JSPromise* answered = JSPromise::create(vm, realm->promiseStructure());
             JSFunction* answer = JSFunction::create(vm, realm, 2, String(), answerImportWithModuleItselfInTestRunOriginals, ImplementationVisibility::Private);
-            evaluation->performPromiseThenWithContext(vm, realm, answer, jsUndefined(), answered, jsNumber(module.index()));
+            JSFunction* fail = JSFunction::create(vm, realm, 2, String(), failImportOfModuleItselfInTestRunOriginals, ImplementationVisibility::Private);
+            evaluation->performPromiseThenWithContext(vm, realm, answer, fail, answered, jsNumber(module.index()));
+            setAsideErrorOfModuleThatRanBesideMock(module);
             return answered;
         }
+    }
+    if (JSValue error = ensureLoaded(module).errorOfModuleThatRanBesideMock.get()) [[unlikely]] {
+        throwException(realm, scope, error);
+        return { };
     }
     RELEASE_AND_RETURN(scope, namespaceOfModuleItself(module));
 }

@@ -130,6 +130,18 @@ Reference objectOfVariablePutOff(Walker& walker, VariableID variable)
     return noted ? Reference::fromBits(static_cast<uint32_t>(*noted)) : Reference();
 }
 
+Reference valueOfStableVariable(Walker& walker, VariableID variable, TypeID widest)
+{
+    if (!keepsNotesOfStableBindings(walker) || !variableStaysAsFilled(walker, variable))
+        return { };
+    std::optional<uint64_t> noted = findKnown(walker, KnownNote::ValueKeptByPlace, { }, { }, variable.index());
+    if (!noted)
+        return { };
+    Reference kept = Reference::fromBits(static_cast<uint32_t>(*noted));
+    TypeID type = walker.typeOf(kept);
+    return widest && type && walker.types().isSubset(type, widest) ? kept : Reference();
+}
+
 // Null: no read, store or check on every way to here has seen the binding filled.
 Reference valueOfStableBinding(Walker& walker, const BodyValue& read)
 {

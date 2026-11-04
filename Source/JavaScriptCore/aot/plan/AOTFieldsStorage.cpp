@@ -56,6 +56,9 @@ GroupsOfLayoutsForFields groupLayoutsForFields(const Program& program, const Fam
             united.unite(index, base.index());
     }
     for (uint32_t number = 0; number < families.size(); ++number) {
+        // Any two families are nested or apart: what another holds adds nothing to what that one unites.
+        if (families.nearestFamilyAbove(FamilyID(number)))
+            continue;
         LayoutID first;
         program.at(families.layoutsOf(FamilyID(number))).forEach([&](LayoutID member) {
             if (!first)
@@ -320,6 +323,7 @@ private:
 
     void findGroupsWithHiddenWords();
     void prepareRows();
+    BitVector findFamiliesThatMayAgreeOnSlots() const;
     void findMembersThatAgreeOnSlots(FamilyID, Vector<LayoutID, 16>&) const;
     void layFieldsSharedByFamilies();
     void layFieldsOfUnions();
@@ -449,6 +453,19 @@ void ChooserOfFieldsStorage::prepareRows()
     });
 }
 
+// findFamiliesThatMayAgreeOnSlotsForSlotPlan() of AOTSlotPlan.cpp.
+BitVector ChooserOfFieldsStorage::findFamiliesThatMayAgreeOnSlots() const
+{
+    const Families& families = m_facts.families();
+    BitVector result = families.familiesWithSomeMemberThat([&](LayoutID member) {
+        return hasCells(member);
+    });
+    result.exclude(families.familiesWithSomeMemberThat([&](LayoutID member) {
+        return hasCells(member) && (!isFoundByShapeTest(m_program.at(member)) || writtenBaseOf(m_program.at(member)));
+    }));
+    return result;
+}
+
 // findMembersThatAgreeOnSlotsForSlotPlan() of AOTSlotPlan.cpp.
 void ChooserOfFieldsStorage::findMembersThatAgreeOnSlots(FamilyID family, Vector<LayoutID, 16>& members) const
 {
@@ -478,7 +495,10 @@ void ChooserOfFieldsStorage::layFieldsSharedByFamilies()
     Vector<LayoutID, 16> members;
     Vector<uint32_t, 16> rows;
     BitVector isListed;
+    BitVector familiesThatMayAgree = findFamiliesThatMayAgreeOnSlots();
     for (uint32_t number = families.size(); number--;) {
+        if (!familiesThatMayAgree.quickGet(number))
+            continue;
         findMembersThatAgreeOnSlots(FamilyID(number), members);
         if (members.isEmpty() || !isLaidAgain(members[0].index()))
             continue;

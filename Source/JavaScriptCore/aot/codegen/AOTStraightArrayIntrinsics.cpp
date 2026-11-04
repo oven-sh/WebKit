@@ -25,7 +25,7 @@ OpcodeSet StraightEmitter::opcodesOfArrayIntrinsics()
         Opcode::GetOwnContiguousIndex, Opcode::GetOwnDoubleIndex, Opcode::GetOwnInt32Index,
         Opcode::PutOwnContiguousIndex, Opcode::PutOwnDoubleIndex, Opcode::PutOwnInt32Index,
         Opcode::NewContiguousArray, Opcode::NewDoubleArray, Opcode::NewArrayLike, Opcode::NewArrayWithCapacity,
-        Opcode::TryPutByValDirect, Opcode::TryPutIndex, Opcode::TryCopyFilledElements, Opcode::TryPutElements,
+        Opcode::TryPutByValDirect, Opcode::TryPutIndex, Opcode::TryCopyFilledElements, Opcode::TryPutElements, Opcode::TryFillNewArray,
         Opcode::GrowNewArray, Opcode::TruncateNewArray,
     };
 }
@@ -268,6 +268,7 @@ void StraightEmitter::generateArrayIntrinsic(const BodyValue& value)
     case Opcode::TryPutByValDirect:
     case Opcode::TryPutIndex:
     case Opcode::TryPutElements:
+    case Opcode::TryFillNewArray:
         jit().move(CCallHelpers::TrustedImm32(JSValue::ValueFalse), resultGPR);
         define(value);
         return;

@@ -708,8 +708,7 @@ static void runSameBytesAloneCommand(TestCommandContext& context)
             for (FunctionID function : others)
                 bodies.putBack(function);
             CompileWorker workerAlone(inputsAlone, context.build, program.types);
-            // Which of its two forms a generic entry has is the queue's to say.
-            bool didCompile = findCodeInWholeProgram(unit)->isClosedGenericEntry ? workerAlone.compileClosedGenericEntry(unit, compiled) : workerAlone.compile(unit, compiled);
+            bool didCompile = workerAlone.compile(unit, compiled);
             for (FunctionID function : others)
                 bodies.takeAgain(function);
             for (FunctionID function : functionsWithBodies)
@@ -786,12 +785,10 @@ static void runSameBytesAloneCommand(TestCommandContext& context)
 
 // The units that a build gives code, as the stage finds them, ascending:
 //     unit f3:Body 184 bytes
-//     unit f4:GenericCallEntry 40 bytes, closed
-//     unit f6:Body 210 bytes, may enter any closure                         it holds an indirect call of which nothing says whom it enters: no entry is closed
 //     units 12, bytes 3456
 //     unit f7:GenericCallEntry fused into f7:Body, 3 bytes                  CallingConventions::hasFusedCallEntry(): the bytes from it to the primary entry of that unit
 //     fused call entries 1, bytes 3
-//     call entries 6: 2 always open, 2 that an indirect call lists, 1 beside a compiled target, 1 closed
+//     call entries 6
 // With words: those units alone, and `unit f5:Body has no code` for a unit that the queue never came to. The last line counts all units either way.
 static void runUnitsWithCodeCommand(TestCommandContext& context)
 {
@@ -814,21 +811,15 @@ static void runUnitsWithCodeCommand(TestCommandContext& context)
     auto print = [&](const CompiledCode& code) {
         context.out.print("unit "_s);
         printCodeUnit(context.out, code.unit);
-        context.out.println(" ", code.body.bytes.size(), " bytes", code.isClosedGenericEntry ? ", closed"_s : ""_s, code.calleesOfIndirectCalls.numberOfCallsThatMayEnterAnyClosure ? ", may enter any closure"_s : ""_s);
+        context.out.println(" ", code.body.bytes.size(), " bytes");
     };
     uint64_t numberOfBytes = 0;
     uint64_t numberOfCallEntries = 0;
-    uint64_t numberOfCallEntriesThatMayBeClosed = 0;
-    uint64_t numberOfClosedCallEntries = 0;
     Vector<const CompiledCode*> inOrderOfUnits;
     for (const CompiledCode& code : whole.functions) {
         numberOfBytes += code.body.bytes.size();
         inOrderOfUnits.append(&code);
-        if (code.unit.role == CodeRole::GenericCallEntry) {
-            ++numberOfCallEntries;
-            numberOfClosedCallEntries += code.isClosedGenericEntry;
-            numberOfCallEntriesThatMayBeClosed += conventions.indirectCallersAreAllListed(code.unit.function);
-        }
+        numberOfCallEntries += code.unit.role == CodeRole::GenericCallEntry;
     }
     std::ranges::sort(inOrderOfUnits, { }, [](const CompiledCode* code) { return code->unit; });
 
@@ -873,8 +864,7 @@ static void runUnitsWithCodeCommand(TestCommandContext& context)
     for (const FusedCallEntry& fused : whole.functions.fusedCallEntries())
         numberOfBytesOfFusedCallEntries += bytesOfFusedCallEntry(fused.unit);
     context.out.println("fused call entries ", whole.functions.fusedCallEntries().size(), ", bytes ", numberOfBytesOfFusedCallEntries);
-    Vector<uint64_t> statistics = context.build.statistics().values();
-    context.out.println("call entries ", numberOfCallEntries, ": ", numberOfCallEntries - numberOfCallEntriesThatMayBeClosed, " always open, ", statistics[static_cast<size_t>(StatisticID::GenericEntriesOpenedByIndirectCalls)], " that an indirect call lists, ", statistics[static_cast<size_t>(StatisticID::GenericEntriesOpenedBesideCompiledTarget)], " beside a compiled target, ", numberOfClosedCallEntries, " closed");
+    context.out.println("call entries ", numberOfCallEntries);
 }
 
 std::span<const TestCommand> programTestCommands()

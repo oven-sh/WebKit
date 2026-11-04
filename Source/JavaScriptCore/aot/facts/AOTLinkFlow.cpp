@@ -39,6 +39,7 @@ enum class FixedNodeOfLinkFlow : uint32_t {
     Unseen,
     ReceiverOfLostFunctions,
     ResultOfLostFunctions,
+    MadeForLostFunctionsWithoutClass,
     // Whatever a store through an aggregate has put on an object whose layout lists no field under the key. A read under a computed key may find it.
     FoundBesideFieldsUnderAnyKey,
 };
@@ -474,6 +475,13 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
         byFunction->ensureSize(numberOfFunctions);
     for (BitVector* byFamily : { &m_familiesToldLost, &m_familiesAtUnseen, &m_constructorsToldLost, &m_constructorsAtUnseen, &m_prototypesOfFamiliesAtUnseen })
         byFamily->ensureSize(families.size());
+    m_outermostFamiliesWhereSomethingBefell.ensureSize(families.size());
+    m_outermostFamilies.grow(families.size());
+    // What holds a family has a higher number.
+    for (uint32_t family = families.size(); family--;) {
+        FamilyID above = families.nearestFamilyAbove(FamilyID(family));
+        m_outermostFamilies[family] = above ? m_outermostFamilies[above.index()] : FamilyID(family);
+    }
 
     firstCallOfFunction.reserveInitialCapacity(numberOfFunctions + 1);
     uint64_t numberOfCalls = 0;
@@ -498,6 +506,7 @@ LinkFlow::LinkFlow(Program& program, const ThinSummaries& summaries, const Famil
             addEdge(unseen(), field(reference));
         });
     }
+    findWhatRowsOfConstructorsFill();
 }
 
 void LinkFlow::indexMembersOfClasses()
@@ -826,13 +835,15 @@ std::span<const LinkFlow::MemberOfClass> LinkFlow::membersFoundUnder(LayoutID la
 }
 
 // One member that two summaries define is found once.
-Vector<LinkFlow::FoundMember, 2> LinkFlow::findMembers(LayoutID layout, ClassSide side, PropertyKeyID key) const
+LinkFlow::FoundMembers LinkFlow::findMembers(LayoutID layout, ClassSide side, PropertyKeyID key) const
 {
-    Vector<FoundMember, 2> found;
-    for (const MemberOfClass& member : membersFoundUnder(layout, side, key)) {
-        if (found.isEmpty() || found.last().index != member.index || found.last().kind != member.kind)
-            found.append(FoundMember { member.classLayout, member.index, member.kind });
+    FoundMembers found;
+    std::span<const MemberOfClass> members = membersFoundUnder(layout, side, key);
+    for (const MemberOfClass& member : members) {
+        if (found.m_members.isEmpty() || found.m_members.last().index != member.index || found.m_members.last().kind != member.kind)
+            found.m_members.append(FoundMember { member.classLayout, member.index, member.kind });
     }
+    found.m_lookupGoesOnAboveClasses = lookupGoesOnAboveClasses(layout, members);
     return found;
 }
 
@@ -963,8 +974,10 @@ void LinkFlow::deferLoss(FamilyID family) const
             lane->deferred.append(Deferred { Deferred::Kind::FamilyIsLost, family.index(), { } });
         return;
     }
-    if (m_familiesToldLost.add(family.index()))
+    if (m_familiesToldLost.add(family.index())) {
+        noteSomethingBefell(family);
         m_deferred.append(Deferred { Deferred::Kind::FamilyIsLost, family.index(), { } });
+    }
 }
 
 void LinkFlow::deferLoss(FunctionID function) const
@@ -1481,6 +1494,9 @@ void LinkFlow::noteMetInFamily(LayoutID layout) const
 
 void LinkFlow::catchUpWithFamiliesAbove(LayoutID layout) const
 {
+    FamilyID nearest = families.nearestFamilyOf(layout);
+    if (!nearest || !m_outermostFamiliesWhereSomethingBefell.quickGet(m_outermostFamilies[nearest.index()].index()))
+        return;
     families.forEachFamilyOf(layout, [&](FamilyID family) {
         if (m_familiesToldLost.get(family.index()))
             deferUnion(program.types.listOf(families.layoutsOf(family))[0], layout);
@@ -2222,19 +2238,19 @@ LinkFlow::ViewOfHeldReading::~ViewOfHeldReading()
 
 void LinkFlow::settleTypes()
 {
+    BitVector familiesWithLayoutThatHasNotEscaped = families.familiesWithSomeMemberThat([&](LayoutID member) {
+        return !escapedLayouts.get(member.index());
+    });
+    BitVector familiesWithConstructorThatHasNotEscaped = families.familiesWithSomeMemberThat([&](LayoutID member) {
+        FunctionID constructor = program.at(member).constructor;
+        return constructor && !escapedFunctions.get(constructor.index());
+    });
     m_familiesThatHaveEscaped = BitVector(families.size());
     BitVector familiesWhoseConstructorsHaveEscaped(families.size());
     for (uint32_t family = 0; family < families.size(); ++family) {
-        bool everyLayoutHasEscaped = true;
-        bool everyConstructorHasEscaped = true;
-        for (LayoutID member : program.types.listOf(families.layoutsOf(FamilyID(family)))) {
-            everyLayoutHasEscaped &= escapedLayouts.get(member.index());
-            if (FunctionID constructor = program.at(member).constructor)
-                everyConstructorHasEscaped &= escapedFunctions.get(constructor.index());
-        }
-        if (everyLayoutHasEscaped)
+        if (!familiesWithLayoutThatHasNotEscaped.quickGet(family))
             m_familiesThatHaveEscaped.quickSet(family);
-        if (everyConstructorHasEscaped)
+        if (!familiesWithConstructorThatHasNotEscaped.quickGet(family))
             familiesWhoseConstructorsHaveEscaped.quickSet(family);
     }
     // By member. A lookup of a representative shortens the path that it walks, so no two threads may ask.
@@ -3045,6 +3061,7 @@ Vector<BreachOfClosure> LinkFlow::findBreachesOfClosure()
         { "escapedVariables"_s, escapedVariables, escapedVariables.bitCount() },
         { "fieldsThatMayBeEmpty"_s, fieldsThatMayBeEmpty, fieldsThatMayBeEmpty.bitCount() },
         { "layoutsMetInFamilies"_s, layoutsMetInFamilies, layoutsMetInFamilies.bitCount() },
+        { "layoutsThatGainWhatUnseenCodeGaveSources"_s, layoutsThatGainWhatUnseenCodeGaveSources, layoutsThatGainWhatUnseenCodeGaveSources.bitCount() },
         { "declared families told lost"_s, m_familiesToldLost, m_familiesToldLost.bitCount() },
     };
     auto numberOfSitesThatHaveEscaped = [&] {
@@ -3581,12 +3598,17 @@ LinkType LinkFlow::passedBy(const LinkType& type, TypeID test) const
 
 // ---- Aggregates.
 
+uint64_t LinkFlow::wordOfNodeOnDemand(NodeOnDemand kind, uint32_t number, PropertyKeyID key)
+{
+    static_assert(static_cast<uint64_t>(NodeOnDemand::AnyFieldDefinedOnLayout) < 1u << 4);
+    RELEASE_ASSERT(number < 1u << 28);
+    return static_cast<uint64_t>(kind) << 60 | static_cast<uint64_t>(number) << 32 | key.bits();
+}
+
 std::pair<FlowNodeID, bool> LinkFlow::nodeOnDemand(NodeOnDemand kind, uint32_t number, PropertyKeyID key)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
-    RELEASE_ASSERT(number < 1u << 29);
-    uint64_t word = static_cast<uint64_t>(kind) << 61 | static_cast<uint64_t>(number) << 32 | key.bits();
-    auto added = m_nodesOnDemand.add(word, noNodeInLinkFlow);
+    auto added = m_nodesOnDemand.add(wordOfNodeOnDemand(kind, number, key), noNodeInLinkFlow);
     if (added.isNewEntry)
         added.iterator->value = makeNode().index();
     return { FlowNodeID(added.iterator->value), added.isNewEntry };
@@ -3594,7 +3616,7 @@ std::pair<FlowNodeID, bool> LinkFlow::nodeOnDemand(NodeOnDemand kind, uint32_t n
 
 FlowNodeID LinkFlow::findNodeOnDemand(NodeOnDemand kind, uint32_t number, PropertyKeyID key) const
 {
-    auto found = m_nodesOnDemand.find(static_cast<uint64_t>(kind) << 61 | static_cast<uint64_t>(number) << 32 | key.bits());
+    auto found = m_nodesOnDemand.find(wordOfNodeOnDemand(kind, number, key));
     return found == m_nodesOnDemand.end() ? FlowNodeID() : FlowNodeID(found->value);
 }
 
@@ -3667,6 +3689,18 @@ LinkType LinkFlow::whatLiesAboveClasses(LayoutID layout, PropertyKeyID key) cons
         break;
     }
     return found;
+}
+
+// `Sub.prototype = Object.create(Base.prototype)`: an object that was made to stand under `prototype` of a function has `constructor` only if the program has stored it there, so the lookup may go on to any level.
+// A type names one closure, and whatLiesAboveClasses() the nearest: each of the row arrives by itself. As AccessInLinkAccesses::giveConstructorsOfRowAbove() for one layout.
+static void arriveConstructorsOfRowAboveInLinkFlow(LinkFlow& flow, FlowNodeID aggregate, LayoutID layout)
+{
+    if (!flow.isBelowConstructorFunction(layout))
+        return;
+    for (RowOfBasesInLinkFlow row(flow.program, layout); row.current(); row.advance()) {
+        if (FunctionID constructor = flow.program.at(row.current()).constructor)
+            flow.arrive(aggregate, typeOfClosureInLinkFlow(constructor));
+    }
 }
 
 void LinkFlow::makeNodesBesideFieldsOf(LayoutID layout)
@@ -3938,7 +3972,7 @@ bool LinkFlow::openLayoutsThatChanged()
         LayoutID layout = m_layoutsWithNodesBesideFields[position];
         if (m_openLayouts.get(layout.index()))
             continue;
-        if (!escapedLayouts.get(layout.index()) && !possibleChanges[layout.index()].containsAny({ LayoutChange::GainsProperty, LayoutChange::LosesProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor }))
+        if (!escapedLayouts.get(layout.index()) && !layoutsThatGainWhatUnseenCodeGaveSources.get(layout.index()) && !possibleChanges[layout.index()].containsAny({ LayoutChange::GainsProperty, LayoutChange::LosesProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor }))
             continue;
         open(layout);
         hasOpened = true;
@@ -4076,9 +4110,11 @@ bool LinkFlow::tieRead(FlowNodeID aggregate, LayoutID layout, PropertyKeyID key)
     }
 
     // The object may not have the field yet, or no more. That a field is required is only declared. A field that is deleted holds undefined from then on.
-    if (members.empty() && listed && listed->layout == layout && isAbsentAboveClasses(key))
+    // `Object.setPrototypeOf(Sub.prototype, Base.prototype)`: an object that was made in front of it finds nothing of the class. As AccessInLinkAccesses::resolveOnLayout().
+    bool goesOnAboveClasses = lookupGoesOnAboveClasses(layout, members);
+    if (goesOnAboveClasses && listed && listed->layout == layout && isAbsentAboveClasses(key))
         addEdge(foundWhereFieldIsEmpty(*listed), aggregate);
-    else if (members.empty()) {
+    else if (goesOnAboveClasses) {
         LinkType above = whatLiesAboveClasses(layout, key);
         // Whatever somebody has laid there may be an accessor, which gets the object as `this`. The class and the link to the prototype are the engine's own.
         if (above.holdsUnseen && above.functions == LinkType::Functions::None && nameClassOf(key) != NameClass::Proto)
@@ -4087,6 +4123,8 @@ bool LinkFlow::tieRead(FlowNodeID aggregate, LayoutID layout, PropertyKeyID key)
         if (above.builtin)
             builtinsInReach().noteRead(above.builtin);
         arrive(aggregate, above);
+        if (nameClassOf(key) == NameClass::Constructor)
+            arriveConstructorsOfRowAboveInLinkFlow(*this, aggregate, layout);
     }
     return !!listed;
 }
@@ -4131,7 +4169,7 @@ bool LinkFlow::tieStore(FlowNodeID aggregate, LayoutID layout, PropertyKeyID key
     }
 
     // The object may not have the field yet, so the store may run a setter that lies above the classes: `__proto__`.
-    if (members.empty() && !isAbsentAboveClasses(key))
+    if (lookupGoesOnAboveClasses(layout, members) && !isAbsentAboveClasses(key))
         tieToUnseen(aggregate, layout, AggregateAccess::Store);
     settle();
     return !!listed;
@@ -4178,11 +4216,15 @@ void LinkFlow::tieReadOfAnyField(FlowNodeID aggregate, LayoutID layout, bool key
         arrive(aggregate, found);
         return;
     }
+    // Whatever a test run has laid on Object.prototype may be an accessor, which gets the object as `this`: tieRead() says so of a key that is named.
+    if (program.isSomeNameOpenedOn(program.builtins().canonicalID(Builtins::ObjectPrototype)))
+        deferEscape(layout);
     // What lies there under a key of the program has come by foundBesideFieldsUnder(key) too. What a descriptor lays under a name that nobody else names comes this way alone.
     addEdge(storedBesideFieldsOf(layout), aggregate);
     if (FlowNodeID foundOnPrototypes = foundOnPrototypesAbove(layout, { }))
         addEdge(foundOnPrototypes, aggregate);
     arrive(aggregate, whatLiesAboveClasses(layout, { }));
+    arriveConstructorsOfRowAboveInLinkFlow(*this, aggregate, layout);
 }
 
 // The key may be `__proto__`: then what is stored answers every lookup that the fields do not. So what is stored escapes, and the layout is opened.
@@ -4196,6 +4238,9 @@ void LinkFlow::tieStoreOfAnyField(FlowNodeID aggregate, LayoutID layout)
     if (namesMayBeIncomplete(layout, ClassSide::Prototype))
         deferEscape(layout);
     lookForSetterOnPrototypesAbove(layout, { });
+    // So does a setter that a test run has laid on Object.prototype: tieStore() says so of a key that is named.
+    if (program.isSomeNameOpenedOn(program.builtins().canonicalID(Builtins::ObjectPrototype)))
+        deferEscape(layout);
 
     possibleChanges[layout.index()].add({ LayoutChange::GainsProperty, LayoutChange::ChangesPrototype });
     forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
@@ -4525,6 +4570,24 @@ FlowNodeID LinkFlow::anyFieldReadThrough(LinkType::Objects objects, LayoutID lay
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+FlowNodeID LinkFlow::anyFieldDefinedOn(LayoutID layout)
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    auto [aggregate, isNew] = nodeOnDemand(NodeOnDemand::AnyFieldDefinedOnLayout, layout.index(), { });
+    if (!isNew)
+        return aggregate;
+    // Beside the fields a read gives `anything`.
+    addEdge(aggregate, unseen());
+    forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
+        if (isPrivateNameInLink(program, fieldAt(program, reference).key))
+            return;
+        RELEASE_ASSERT(!fieldAt(program, reference).form.contains(FieldForm::IsAccessor));
+        fieldsWrittenAfterConstruction.set(m_firstFieldOfLayout[reference.layout.index()] + reference.field);
+        addEdge(aggregate, field(reference));
+    });
+    return aggregate;
+}
+
 FlowNodeID LinkFlow::anyFieldStoredThrough(LinkType::Objects objects, LayoutID layout, FamilyID family)
 {
     LockerOfWhatIsShared lockerOfWhatIsShared(*this);
@@ -4598,9 +4661,8 @@ void LinkFlow::tieInLostLayout(LayoutID layout)
     addEdge(stored, storedBesideFieldsOf(layout));
     tiePrototypesAboveLostLayout(layout);
     catchUpWithFamiliesAbove(layout);
-    families.forEachFamilyOf(layout, [&](FamilyID above) {
-        m_lostFamilies[family].membersInDeclaredFamilies.add(above.index(), 1);
-    });
+    if (uint32_t place = placeInForestOfFamilies(layout); place != UINT32_MAX)
+        m_lostFamilies[family].placesInForestOfFamilies.insert(place);
 
     Vector<PropertyKeyID, 32> keys;
     forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
@@ -4644,21 +4706,60 @@ void LinkFlow::uniteLost(LayoutID one, LayoutID other)
 // THE NEAREST DECLARED FAMILY OF TWO LAYOUTS THAT STAND IN ONE LOST FAMILY IS LOST. Layout, declared family, Lost: not every order climbs that alike. Two members meet at a node, which climbs to their family, and an
 // outsider comes a step later: the whole family is lost, and every member that may be known by it joins. The outsider in the same step, or before: each is lost by itself, and nobody tells the family.
 // In which step a type arrives hangs on the shape of the unions that it came through, and that on the clock. With this both end alike: what is lost follows from the unions alone, whatever the steps.
-// The declared families are a forest. Going up from a member of the one side, a family holds a partner for it that no family below held where the other side has more members in it than in the family below.
+// The declared families are a forest, and the layouts are its leaves. In the order in which a walk through it comes to them every family is one stretch, and the nearest common families of all pairs of a set of leaves
+// are those of its neighbors in that order. So a member that joins asks two questions, however many families hold it: a row of classes that extend one another is a row of families that hold one another.
 void LinkFlow::loseFamiliesOfMembersThatMeet(uint32_t kept, uint32_t absorbed)
 {
-    auto& ofKept = m_lostFamilies[kept].membersInDeclaredFamilies;
-    unitedLayouts.forEachMemberOfFamilyOf(absorbed, [&](uint32_t member) {
-        uint32_t numberBelow = 0;
-        families.forEachFamilyOf(LayoutID(member), [&](FamilyID above) {
-            uint32_t number = ofKept.get(above.index());
-            if (number > numberBelow)
-                deferLoss(above);
-            numberBelow = number;
-        });
-    });
-    for (auto [family, number] : std::exchange(m_lostFamilies[absorbed].membersInDeclaredFamilies, { }))
-        ofKept.add(family, 0).iterator->value += number;
+    std::set<uint32_t>& larger = m_lostFamilies[kept].placesInForestOfFamilies;
+    std::set<uint32_t> smaller = std::exchange(m_lostFamilies[absorbed].placesInForestOfFamilies, { });
+    if (smaller.size() > larger.size())
+        std::swap(smaller, larger);
+    auto loseFamilyOfBoth = [&](uint32_t one, uint32_t other) {
+        if (FamilyID common = families.nearestCommonFamily(m_layoutsByPlaceInForestOfFamilies[one], m_layoutsByPlaceInForestOfFamilies[other]))
+            deferLoss(common);
+    };
+    for (uint32_t place : smaller) {
+        auto joined = larger.insert(place).first;
+        if (joined != larger.begin())
+            loseFamilyOfBoth(*std::prev(joined), place);
+        if (auto behind = std::next(joined); behind != larger.end())
+            loseFamilyOfBoth(place, *behind);
+    }
+}
+
+uint32_t LinkFlow::placeInForestOfFamilies(LayoutID layout)
+{
+    if (m_placesInForestOfFamilies.isEmpty()) {
+        // A family has a lower number than every family that holds it. Upward: how many leaves each holds. Downward: where its stretch begins, behind the stretches of the families in it that came before.
+        uint32_t numberOfFamilies = families.size();
+        size_t numberOfLayouts = program.layouts.size();
+        Vector<uint32_t> numberOfLeaves(FillWith { }, numberOfFamilies, 0u);
+        for (size_t index = 0; index < numberOfLayouts; ++index) {
+            if (FamilyID nearest = families.nearestFamilyOf(LayoutID(index)))
+                ++numberOfLeaves[nearest.index()];
+        }
+        for (uint32_t family = 0; family < numberOfFamilies; ++family) {
+            if (FamilyID above = families.nearestFamilyAbove(FamilyID(family)))
+                numberOfLeaves[above.index()] += numberOfLeaves[family];
+        }
+        Vector<uint32_t> nextPlace(FillWith { }, numberOfFamilies, 0u);
+        uint32_t numberOfPlaces = 0;
+        for (uint32_t family = numberOfFamilies; family--;) {
+            uint32_t& next = families.nearestFamilyAbove(FamilyID(family)) ? nextPlace[families.nearestFamilyAbove(FamilyID(family)).index()] : numberOfPlaces;
+            nextPlace[family] = next;
+            next += numberOfLeaves[family];
+        }
+        m_placesInForestOfFamilies.fill(UINT32_MAX, numberOfLayouts);
+        m_layoutsByPlaceInForestOfFamilies.fill(LayoutID(), numberOfPlaces);
+        for (size_t index = 0; index < numberOfLayouts; ++index) {
+            if (FamilyID nearest = families.nearestFamilyOf(LayoutID(index))) {
+                uint32_t place = nextPlace[nearest.index()]++;
+                m_placesInForestOfFamilies[index] = place;
+                m_layoutsByPlaceInForestOfFamilies[place] = LayoutID(index);
+            }
+        }
+    }
+    return m_placesInForestOfFamilies[layout.index()];
 }
 
 // Whoever has read or stored through either family keeps the node that it was given. So two nodes for one thing are tied to each other,
@@ -4830,6 +4931,7 @@ SizeOfLinkFlow LinkFlow::size() const
         size.observers += lane->observers.size();
         size.nodesTakenOffWorklist += lane->numberOfNodesTakenOffWorklist;
     }
+    size.rounds = m_numberOfRounds;
     size.sites = m_sites.size();
     size.contentsOfSites = m_contentsOfSites.size();
     for (uint32_t site = 0; site < m_sites.size(); ++site) {
@@ -5185,6 +5287,12 @@ FlowNodeID LinkFlow::resultOfLostFunctions()
     });
 }
 
+// Whoever asks constructs, and asks for resultOfLostFunctions() too.
+FlowNodeID LinkFlow::madeForLostFunctionsWithoutClass()
+{
+    return fixedNodeInLinkFlow(FixedNodeOfLinkFlow::MadeForLostFunctionsWithoutClass);
+}
+
 bool LinkFlow::tieInLostFunctions()
 {
     if (!m_lostFunctionsAreCalled || lostFunctions.bitCount() == m_numberOfLostFunctionsTied)
@@ -5222,7 +5330,8 @@ void LinkFlow::tieInLostFunction(FunctionID id)
                 arriveFromSource(node, function.constructedClass);
                 // By an edge: once the layout escapes, whoever has looked is told from here.
                 addEdge(node, resultOfCalls, TypeTable::object);
-            }
+            } else if (function.takesThisFromConstruction())
+                addEdge(fixedNodeInLinkFlow(FixedNodeOfLinkFlow::MadeForLostFunctionsWithoutClass), node);
             break;
         case EntryParameter::Callee:
             arrive(node, typeOfClosureInLinkFlow(id));

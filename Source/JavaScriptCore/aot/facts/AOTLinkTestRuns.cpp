@@ -175,20 +175,18 @@ FlowNodeID TestRunsInLink::makeNodeOfNameAdded(PropertyKeyID key)
 {
     if (!m_isTestRun || !key || !mayBeAddedInTestRuns(key))
         return { };
-    LinkFlow::LockerOfWhatIsShared locker(m_flow);
-    auto added = m_nodesOfNamesAdded.add(key.bits(), UINT32_MAX);
-    if (added.isNewEntry)
-        added.iterator->value = m_flow.makeSharedNode().index();
-    return FlowNodeID(added.iterator->value);
+    // Every access by name of a test run asks.
+    return m_flow.nodeAskedOnceByLane(LinkFlow::MadeOnDemand::NameAddedByTests, key.bits(), [&] {
+        auto added = m_nodesOfNamesAdded.add(key.bits(), UINT32_MAX);
+        if (added.isNewEntry)
+            added.iterator->value = m_flow.makeSharedNode().index();
+        return FlowNodeID(added.iterator->value);
+    });
 }
 
-bool TestRunsInLink::isNameAdded(PropertyKeyID key) const
+bool TestRunsInLink::isNameAdded(FlowNodeID nodeOfNameAdded) const
 {
-    if (!m_isTestRun || !key)
-        return false;
-    LinkFlow::LockerOfWhatIsShared locker(m_flow);
-    auto found = m_nodesOfNamesAdded.find(key.bits());
-    return found != m_nodesOfNamesAdded.end() && !m_flow.typeAt(FlowNodeID(found->value)).isNothing();
+    return !m_flow.typeAt(nodeOfNameAdded).isNothing();
 }
 
 BuiltinID TestRunsInLink::prototypeAboveClosuresOf(FunctionID function) const

@@ -1,6 +1,7 @@
 # The warning is about code outside the image being refused. Where the executable loads it, there is nothing to warn of
 # sink(name => require(name));
 # RUN: link functions mechanisms=all
+# REQUIRES: code-outside-image
 # CHECK: function f1
 
 module m0 path="/app/main.js" displayPath="main.js" body=f0

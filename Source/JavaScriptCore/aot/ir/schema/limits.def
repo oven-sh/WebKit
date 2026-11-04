@@ -210,7 +210,6 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxRangeAnalysisDepth(GenerateCode, CompileTime, NotOptimized, 5, 5, 0, "range analysis depth")
     MaxRecordedWritesPerMemoryState(GenerateCode, CompileTime, NotOptimized, 256, 256, 0, "memory numbering work")
     MaxLeavesToRebalance(GenerateCode, CompileTime, NotOptimized, 32, 32, 0, "operands in a rebalanced expression")
-    MaxBitTestTargets(GenerateCode, CodeSize, NotOptimized, 3, 3, 0, "targets of a switch lowered to bit tests")
     MaxCompareChainSearchSize(GenerateCode, CompileTime, NotOptimized, 16, 16, 0, "compare chain search work")
     MinUsesForOwnStub(GenerateCode, CodeSize, NotOptimized, 512, 512, 0, "reads, stores or definitions of a property name needed before the shared code for them is made once more for that name alone")
 

@@ -2186,6 +2186,8 @@ private:
     Vector<Witness> m_urlsThatLeaveBodies;
     bool m_isStartedWithoutName { false };
     Witness m_startWithoutName { noWitness };
+    // `hand(Worker)`: by an operation that names it. Where a holder above it is let go is no such place.
+    Witness m_whereConstructorOfWorkersIsLetGo { noWitness };
 };
 
 OptionSet<BuiltinUse> BuilderOfProgramFacts::callingUsesOf(BuiltinKind kind)
@@ -2289,8 +2291,11 @@ void BuilderOfProgramFacts::take(std::span<const Finding> findings)
             }
             if (uses.containsAny(callingUsesInProgramFacts) && !linkSeesCallAt(finding.witness, canonical))
                 m_isCalledOutOfSightOfLink.quickSet(canonical.index());
-            if (uses.contains(BuiltinUse::Escaped))
+            if (uses.contains(BuiltinUse::Escaped)) {
+                if (m_rows.startWorkers.quickGet(canonical.index()) && standsInFront(finding.witness, m_whereConstructorOfWorkersIsLetGo))
+                    m_whereConstructorOfWorkersIsLetGo = finding.witness;
                 letGo(canonical, finding.witness);
+            }
             break;
         }
         case Finding::Kind::WriteOnBuiltin: {
@@ -2838,7 +2843,7 @@ void BuilderOfProgramFacts::lockMembersThatNobodyWrites()
 bool BuilderOfProgramFacts::frontEndLeavesMainModuleOpen() const
 {
     return std::ranges::any_of(m_source.replaceableBuiltins, [&](const ReplaceableBuiltin& replaceable) {
-        return m_builtins.contains(replaceable.member) && m_builtins.has(BuiltinMark::HoldsPathOfMainModule, m_builtins.canonicalID(replaceable.member));
+        return !replaceable.staysLocked && m_builtins.contains(replaceable.member) && m_builtins.has(BuiltinMark::HoldsPathOfMainModule, m_builtins.canonicalID(replaceable.member));
     });
 }
 
@@ -3467,6 +3472,9 @@ std::optional<UserDiagnosticKind> BuilderOfProgramFacts::refusalOfWriteAt(const 
                 key = *spelled;
             }
             std::optional<UserDiagnosticKind> kind = refusalOf(index, site, holder, key, action.kind, passedAs(action.value.operand), throwsWhereRefused);
+            // A store or a deletion of sloppy code throws where a lock refuses it, and refusalOf() answers for that. Reflect answers false there too.
+            if (!throwsWhereRefused && kind == UserDiagnosticKind::LockedBuiltinWriteMayRun)
+                kind = UserDiagnosticKind::LockedBuiltinWriteIsIgnored;
             if (kind && (!worst || *kind < *worst))
                 worst = kind;
         }
@@ -3666,9 +3674,10 @@ void BuilderOfProgramFacts::listWorkers()
         keepLowerWitnessInProgramFacts(lowestEscape, m_witnessesOfEscapes[index]);
     }
     // `value.constructor` is the constructor of Workers only once a Worker is made, and nobody makes the first without naming the constructor or a holder above it.
-    // Code that nobody has read may name it. That is said by the records of unseen code, which whoever asks about Workers reads beside this one: here it would be a warning without a place in every test run.
+    // Code that nobody has read may name it. That is said by the records of unseen code, which whoever asks about Workers reads beside this one.
+    // `globalThis.listed()` lets a holder above the constructor go: a Worker may start out of sight, and nobody has seen one. Then the record is of no place, and the front end warns at a place alone.
     if (isOutOfSight && (hasFunction(lowestEscape) || isNamedByOperation))
-        noteStartWithoutName(lowestEscape);
+        noteStartWithoutName(m_whereConstructorOfWorkersIsLetGo);
     if (m_isStartedWithoutName)
         m_program.workerStartWithoutName = m_startWithoutName;
 

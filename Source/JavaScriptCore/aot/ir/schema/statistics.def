@@ -1,24 +1,45 @@
 enum StatisticID {
     None
-    SourceFilesChecked SourceFilesInferred SourceFilesTypesOnly SourceFilesData SourceFilesRuntime SourceFilesDemoted SourceFilesOfBunParsed SourceBytes SourceLines
+    SourceFilesChecked SourceFilesInferred SourceFilesTypesOnly SourceFilesData SourceFilesRuntime SourceFilesDemoted SourceBytes SourceLines
     SourceBytesOfPackages SourceLinesOfPackages SourceBytesOfDeclarations SourceLinesOfDeclarations SourceBytesOfBun SourceLinesOfBun
     FunctionsLowered ValuesLowered ProgramBytes
-    LinkMergeKeysNanoseconds LinkMarkNanoseconds EmitNanoseconds EngineCallNanoseconds AfterEngineNanoseconds
+    # The functions that the front end knows by their text as helpers that a compiler or a bundler publishes, and the calls of such helpers in whose place it wrote out what they do.
+    KnownHelperFunctions KnownHelperCalls
+    # Of the table of modules of the link: CommonJS modules without an exports object (a variable for each name), those with one variable for `module.exports`, and the records that a CommonJS file has beside its own for ES importers.
+    ModulesWithNames ModulesWithValue Faces
+    # The pairs of a layout and a name for which Link gives the layout a field that the front end does not list.
+    FlowAppendedFields
+    # What the plan decides. Modules that keep no status . sites that require a module by calling its code . RecordRequire operations that stay . async functions in which nothing suspends . fields in the extension of their object . functions that hand back a number or undefined raw.
+    ModulesWithoutState RequireSitesBound RequiresRecorded AsyncWorkersMade FieldsOutOfLine NumbersOrUndefinedReturnedRaw
+    # What the walk builds: Walker::count(). It counts what is walked: a body at each call that it is read at.
+    URLsLeftUnbuilt IteratorsSteppedWithoutCall SerializersCreated OwnKeyWalksExpanded
+    # Calls of a built-in in whose place a function of the library is called directly or copied . of those, sorts by a function that calls no comparator . ArraySpeciesCreate built as a new list . closures made in front of the last call of a copy alone.
+    LibraryFunctionsEnteredBehindRows SortsThatCallNoComparator NewListsInPlaceOfSpecies ClosuresMadeWhereCopiesHandThemOn
+    # Only where the access counts are asked for, which --explain=statistics does. The written places that read, store, define, ask for or delete a property, by what the code that is left there knows . the records that are kept in a form that holds a double.
+    AccessesProven AccessesGuarded AccessesUnknown ValuesInDouble
+    # What the emitters and the machine make.
+    NativeFunctionsCalledDirectly NativeFunctionTestsEmitted ExactIntegersBehindNumbers StepsThatKnowTheDeletedPrefix LoopsRotated
+    InnerPointersAcrossSafepoints NullChecksFoldedIntoAccesses
+    # Of the image.
+    InlineFramesEmitted FrameMapBytesEmitted RegExpCandidatesCompiled
+    # Counted by nothing yet: what each of them counted in the old compiler is not ported. A stored program asks for it with `Todo:` behind its bound, which fails the day the port counts.
+    EnvironmentsPromotedToVariables UnreadVariableStoresRemoved LiteralArgumentsTakenApart GetsAnsweredByHas SlotStoreRunGroups KeyPartsLookupGroups
+    StoresLeftInLoopsForOthers ElementPresenceTestsPlaced ArrayChainsFused ArrayCapacitiesPlanned AllocationsSunk SwitchesTestedByWindow
+    InitializersDeferred ClosuresDeferredInVariables ClassesDeferredInVariables FlowListsNeverToldApart RestartsInGenericVersion
+    TagLookupsWithOtherKeys ObjectKeysSearchedInLine BirthsFinished
     TypesInterned
     FunctionsRead ValuesRead
-    ValuesScanned SummaryStatements FactNodes FactEdges FactsCarriedOverEdges FactRounds FactRuleCalls
-    CallGraphEntries MemberCallSites MemberCallSitesWithListedCallee MemberCallSitesWithExpectedCallee AccessSitesByName AccessSitesWithExpectedSlot
-    SourcesOfCopiesFollowed
+    ValuesScanned FactNodes FactEdges FactsCarriedOverEdges FactRounds FactRuleCalls
     UnitsCompiled UnitsWrittenStraight ValuesWalked ValuesWalkedAndKept LoopsWalkedAgain CallsInlined OperationsBuilt OperationsSwept OperationsEmitted
-    MapEntriesCleared BlockStatesMade InputBlocksVisited
     MachineOperationsAppended MachineOperationsScanned MachineOperationsAllocated MachineOperationsEncoded ValuesSpilled
     FormsThatDifferFromSchema FormsPickedByPlaceOtherThanLoop
-    DirectCalls IndirectCalls CallsAnsweredByCalleeList TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain
+    DirectCalls IndirectCalls TestsThatRejoin LoopsBuiltTwice TurnsThatBeginAgain EmptySlotsTakenAsCases
+    AssignmentsWrittenOutFieldByField JoinsWalkedOnceForEachWay
     # TestingSwitch::CheckProofsAtRunTime: the CheckProof operations that were built, by ProofSource, and the values whose proven type says more than any test can tell.
     ProofsCheckedOfEntryParameters ProofsCheckedOfResultsOfCalls ProofsCheckedOfFields ProofsCheckedOfVariables ProofsCheckedOfCaptures ProofsCheckedOfContents ProofsCheckedOfCallees ProofsCheckedOfOtherOperations ProofsCheckedOfTests ProofsCheckedOfWhatIsRemembered
     ProofsThatNoTestTells
     FunctionsWithAllIndirectCallersListed GenericEntriesOpenedByIndirectCalls GenericEntriesOpenedBesideCompiledTarget ClosedGenericEntries
-    IndirectCallsThatMayEnterAnyClosure IndirectCallsWithoutCallSiteRow
+    IndirectCallsThatMayEnterAnyClosure
     OffsetsFoundByComparisons OffsetsFoundInFlatTables OffsetsFoundInHashedTables OffsetsFoundInPagedTables BytesOfFlatOffsetTables BytesOfHashedOffsetTables BytesOfPagedOffsetTables
     ThingsMentioned ThingsNumbered IdentifiersNumbered StringConstantsNumbered NamesWithoutColumn MethodTableSelectors MethodTableBytes
     ClassGuardCounts GuardsOfClassGuardCounts
@@ -34,6 +55,10 @@ enum StatisticID {
     ParsersCreated
     # The calls that are built to parse by a written type. The same script prints the name.
     TypedResultsSelected
+    # The calls of Array.prototype.slice that are a list of elements which the walk had in sight.
+    SlicesMadeOfElementsInSight
+    VectorsOfViewsRead
+    AccessesInsideViews
 }
 extend StatisticID with Stage suffix Nanoseconds as time
 

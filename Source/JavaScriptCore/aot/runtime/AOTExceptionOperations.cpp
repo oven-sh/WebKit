@@ -85,6 +85,15 @@ static void pollInCallStub(VM& vm, JSGlobalObject* globalObject, ThrowScope& sco
     throwOwedOutOfMemoryError(vm, globalObject, scope);
 }
 
+// Asks what hasCollectedInPolledCall() is about to ask. Nothing allocates between here and that poll, so it collects nothing more.
+void collectInPlaceOfPollBehindOperation(VM& vm, JSCell* madeByOperation)
+{
+    if (vm.aotState().returnAddressOfCallThatCollected != returnAddressOfInnermostCompiledCall(vm))
+        return;
+    vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm);
+    vm.writeBarrier(madeByOperation);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEntering, void, (Instance* instance, void* stackPointerOfCaller))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEntering);
@@ -415,13 +424,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewRuntimeErrorWithName, JSCell*, 
     DeferTerminationForAWhile deferTermination(vm);
     Identifier identifier = identifierOf(vm, StringID(name));
     RELEASE_AND_RETURN(scope, createRuntimeError(globalObject, static_cast<Typed::RuntimeErrorKind>(errorKind), &identifier));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewFunctionThatThrows, JSCell*, (Instance* instance, EncodedJSValue getter, uint32_t name))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewFunctionThatThrows);
-    DeferTerminationForAWhile deferTermination(vm);
-    RELEASE_AND_RETURN(scope, standInForCompiledGetter(globalObject, asObject(JSValue::decode(getter)), identifierOf(vm, StringID(name)).string()));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuppressedError, JSCell*, (Instance* instance, EncodedJSValue error, EncodedJSValue suppressed))

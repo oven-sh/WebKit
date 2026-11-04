@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include "AOTStatistics.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <span>
@@ -173,7 +174,7 @@ private:
 bool bodyOfModuleOnlyReturns(const Body&);
 
 // It reads the bodies that are reached and whose body index lists EvaluateModule, RequireModule, ImportModule, ModuleNamespace or RecordRequire, in parallel by function.
-ModuleEvaluationPlan planModuleEvaluation(const Program&, const Facts&, const ParallelLoops&);
+ModuleEvaluationPlan planModuleEvaluation(const Program&, const Facts&, const ParallelLoops&, Statistics&);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -3,6 +3,7 @@
 # If the prototype were looked through only where the rows name a class with objects, the image would admit no text, and the run time would refuse what the program evaluates in sight
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: image
+# REQUIRES: entries-of-bun
 # CHECK: flags {{*}}AdmitsUnknownJavaScript
 
 module m0 path="main.js" displayPath="main.js" body=f0

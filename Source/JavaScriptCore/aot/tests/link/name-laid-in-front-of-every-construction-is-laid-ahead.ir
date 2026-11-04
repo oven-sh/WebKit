@@ -21,8 +21,9 @@
 # -- end of source
 # If a method that is stored on the prototype object of a constructor function counted as laid from the start, `useEarly()` above the store would call what is not there yet.
 # The body of the module lays First's m in a block that every way passes, in front of whatever enters First: every object of First finds it, as it finds a method of a class.
+# SINCE 11-04 (R257) THE CLOCK OF START SAYS OF NO NAME THAT IT IS LAID AHEAD: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no program that we are judged by. What this test told apart by `laid-ahead` it no longer tells.
 # RUN: link members mechanisms=all
-# CHECK: on-prototype L0 "m" function=f{{*}} laid-ahead
+# CHECK: on-prototype L0 "m" function=f{{*}}
 # Entered above the store . laid under a condition . two functions arrive . `prototype` is stored . an object gets the name for itself.
 # RUN(NOT): link members mechanisms=all
 # NOT-NOT: on-prototype L1 {{*}}laid-ahead

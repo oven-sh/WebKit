@@ -1,0 +1,278 @@
+# `return Reflect.apply(pong, undefined, [n])`: the row of the built-in returns what its operand returns, so the walk puts the call of `pong` in its place, and that call has to be a jump where it stands on a ring.
+# Link took every built-in in tail position for native code that comes back: it saw no ring, `ping` returned a raw Int32 and `pong`, which shares the call with the built-in, a boxed value: ping(3000000) threw a RangeError, where plain Bun answers 7.
+# a built-in that comes back stands on no ring: `floor` keeps its raw form. `up` and `down` are a ring of calls of values: ring-of-tail-calls-returns-raw-values-only-where-each-call-is-written-direct.ir
+# f1 = ping, f2 = pong, f3 = up, f4 = down, f5 = floor
+# -- source: ring-of-tail-calls-that-goes-through-a-built-in-that-forwards-the-call.ts
+# declare function sink(...values: unknown[]): void;
+# let work = 0;
+# function ping(n: number): number { for (let i = 0; i < 2; i++) work = (work + i) | 0; if (n === 0) return 7; return Reflect.apply(pong, undefined, [n]); }
+# function pong(n: number): number { for (let i = 0; i < 2; i++) work = (work ^ i) | 0; return ping(n - 1); }
+# function floor(n: number): number { for (let i = 0; i < 2; i++) work = (work + i) | 0; return Math.floor(n / 2); }
+# function up(n: number): number { for (let i = 0; i < 2; i++) work = (work + i) | 0; if (n === 0) return 1; return down(n - 1); }
+# function down(n: number): number { for (let i = 0; i < 2; i++) work = (work ^ i) | 0; if (n === 0) return 0; return up(n - 1); }
+# sink(ping(4), floor(5), up(4));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}ring-by-value
+# CHECK: function f2 {{*}}ring-by-value
+# RUN(LISTED): link functions mechanisms=all
+# LISTED-NOT: function f5 {{*}}ring-by-value
+# RUN(PLAN): plan units mechanisms=all
+# PLAN: unit f1:Body ({{*}}) -> (JSValue)
+# PLAN: unit f2:Body ({{*}}) -> (JSValue)
+# PLAN: unit f3:Body ({{*}}) -> (JSValue)
+# PLAN: unit f4:Body ({{*}}) -> (JSValue)
+# PLAN: unit f5:Body ({{*}}) -> (Double)
+# RUN(WALK): walk f1 f2 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: ReturnCall
+# WALK-LABEL: code f2:Body
+# WALK: ReturnCall
+
+module m0 path="ring-of-tail-calls-that-goes-through-a-built-in-that-forwards-the-call.ts" displayPath="ring-of-tail-calls-that-goes-through-a-built-in-that-forwards-the-call.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/ReflectObject.ts" displayPath="/$bun/js/engine/ReflectObject.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+variable g0 name="ping" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="pong" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="up" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="down" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="work" module=m0 declared={type=number|absent}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f5 @0
+    v1 = Convert v0 declared={type=f5 flags=[IsFromCompiler]} @0
+    v2 = Integer @62
+    v3 = Convert v2 declared={type=number} @62
+    PutModuleVariable v3 variable=g4 @55
+    v5 = Builtin builtin=GlobalThis @701
+    v6 = PropGet v5 key="sink" [isFreeName] @701
+    v7 = GetModuleVariable variable=g0 @706
+    v8 = Integer integer=4 @711
+    v9 = Call v7, -, v8 calleeName="ping" @706
+    v10 = Integer integer=5 @721
+    v11 = Call v1, -, v10 calleeName="floor" @715
+    v12 = GetModuleVariable variable=g2 @725
+    v13 = Integer integer=4 @728
+    v14 = Call v12, -, v13 calleeName="up" @725
+    v15 = Call v6, -, v9, v11, v14 calleeName="sink" @701
+    v16 = Undefined @701
+    Return v16 @701
+}
+function f1 name="ping" module=m0 position=65 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @113
+    v2 = Convert v1 declared={type=number} @113
+    Jump -> next b1(v2) @109
+  b1(v3: number):
+    LoopHint @109
+    v5 = Integer integer=2 @120
+    v6 = Less v3, v5 @120
+    Branch v6 -> taken b2(), notTaken b3() @120
+  b2():
+    v7 = GetModuleVariable variable=g4 @128
+    v8 = CheckInitialized v7 name="work" @128
+    v9 = GetModuleVariable variable=g4 @136
+    v10 = CheckInitialized v9 name="work" @136
+    v11 = Add v10, v3 @143
+    v12 = Integer @148
+    v13 = BitOr v11, v12 @148
+    v14 = Convert v13 declared={type=number} @128
+    PutModuleVariable v14 variable=g4 @128
+    v16 = Increment v3 @123
+    v17 = Convert v16 declared={type=number} @123
+    Jump -> next b1(v17) @123
+  b3():
+    v18 = Integer @161
+    v19 = StrictEq v0, v18 @161
+    Branch v19 -> taken b4(), notTaken b5() @161
+  b4():
+    v20 = Integer integer=7 @171
+    v21 = Convert v20 declared={type=number} @171
+    Return v21 @171
+  b5():
+    v22 = Builtin builtin=Reflect @181
+    v23 = Builtin builtin=ReflectApply @181
+    v24 = GetModuleVariable variable=g1 @195
+    v25 = Undefined @201
+    v26 = NewArray v0 contents=number @212
+    v27 = Call v23, v22, v24, v25, v26 calleeName="Reflect.apply" @189
+    ReturnCall v27 casts=[{declared={type=number}}, {declared={type=number}}] @189
+}
+function f2 name="pong" module=m0 position=220 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @268
+    v2 = Convert v1 declared={type=number} @268
+    Jump -> next b1(v2) @264
+  b1(v3: number):
+    LoopHint @264
+    v5 = Integer integer=2 @275
+    v6 = Less v3, v5 @275
+    Branch v6 -> taken b2(), notTaken b3() @275
+  b2():
+    v7 = GetModuleVariable variable=g4 @283
+    v8 = CheckInitialized v7 name="work" @283
+    v9 = GetModuleVariable variable=g4 @291
+    v10 = CheckInitialized v9 name="work" @291
+    v11 = BitXor v10, v3 @298
+    v12 = Integer @303
+    v13 = BitOr v11, v12 @303
+    v14 = Convert v13 declared={type=number} @283
+    PutModuleVariable v14 variable=g4 @283
+    v16 = Increment v3 @278
+    v17 = Convert v16 declared={type=number} @278
+    Jump -> next b1(v17) @278
+  b3():
+    v18 = GetModuleVariable variable=g0 @313
+    v19 = Integer integer=1 @322
+    v20 = Sub v0, v19 @322
+    v21 = Call v18, -, v20 calleeName="ping" @313
+    ReturnCall v21 casts=[{declared={type=number}}] @313
+}
+function f3 name="up" module=m0 position=443 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @489
+    v2 = Convert v1 declared={type=number} @489
+    Jump -> next b1(v2) @485
+  b1(v3: number):
+    LoopHint @485
+    v5 = Integer integer=2 @496
+    v6 = Less v3, v5 @496
+    Branch v6 -> taken b2(), notTaken b3() @496
+  b2():
+    v7 = GetModuleVariable variable=g4 @504
+    v8 = CheckInitialized v7 name="work" @504
+    v9 = GetModuleVariable variable=g4 @512
+    v10 = CheckInitialized v9 name="work" @512
+    v11 = Add v10, v3 @519
+    v12 = Integer @524
+    v13 = BitOr v11, v12 @524
+    v14 = Convert v13 declared={type=number} @504
+    PutModuleVariable v14 variable=g4 @504
+    v16 = Increment v3 @499
+    v17 = Convert v16 declared={type=number} @499
+    Jump -> next b1(v17) @499
+  b3():
+    v18 = Integer @537
+    v19 = StrictEq v0, v18 @537
+    Branch v19 -> taken b4(), notTaken b5() @537
+  b4():
+    v20 = Integer integer=1 @547
+    v21 = Convert v20 declared={type=number} @547
+    Return v21 @547
+  b5():
+    v22 = GetModuleVariable variable=g3 @557
+    v23 = Integer integer=1 @566
+    v24 = Sub v0, v23 @566
+    v25 = Call v22, -, v24 calleeName="down" @557
+    ReturnCall v25 casts=[{declared={type=number}}] @557
+}
+function f4 name="down" module=m0 position=572 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @620
+    v2 = Convert v1 declared={type=number} @620
+    Jump -> next b1(v2) @616
+  b1(v3: number):
+    LoopHint @616
+    v5 = Integer integer=2 @627
+    v6 = Less v3, v5 @627
+    Branch v6 -> taken b2(), notTaken b3() @627
+  b2():
+    v7 = GetModuleVariable variable=g4 @635
+    v8 = CheckInitialized v7 name="work" @635
+    v9 = GetModuleVariable variable=g4 @643
+    v10 = CheckInitialized v9 name="work" @643
+    v11 = BitXor v10, v3 @650
+    v12 = Integer @655
+    v13 = BitOr v11, v12 @655
+    v14 = Convert v13 declared={type=number} @635
+    PutModuleVariable v14 variable=g4 @635
+    v16 = Increment v3 @630
+    v17 = Convert v16 declared={type=number} @630
+    Jump -> next b1(v17) @630
+  b3():
+    v18 = Integer @668
+    v19 = StrictEq v0, v18 @668
+    Branch v19 -> taken b4(), notTaken b5() @668
+  b4():
+    v20 = Integer @678
+    v21 = Convert v20 declared={type=number} @678
+    Return v21 @678
+  b5():
+    v22 = GetModuleVariable variable=g2 @688
+    v23 = Integer integer=1 @695
+    v24 = Sub v0, v23 @695
+    v25 = Call v22, -, v24 calleeName="up" @688
+    ReturnCall v25 casts=[{declared={type=number}}] @688
+}
+function f5 name="floor" module=m0 position=328 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @377
+    v2 = Convert v1 declared={type=number} @377
+    Jump -> next b1(v2) @373
+  b1(v3: number):
+    LoopHint @373
+    v5 = Integer integer=2 @384
+    v6 = Less v3, v5 @384
+    Branch v6 -> taken b2(), notTaken b3() @384
+  b2():
+    v7 = GetModuleVariable variable=g4 @392
+    v8 = CheckInitialized v7 name="work" @392
+    v9 = GetModuleVariable variable=g4 @400
+    v10 = CheckInitialized v9 name="work" @400
+    v11 = Add v10, v3 @407
+    v12 = Integer @412
+    v13 = BitOr v11, v12 @412
+    v14 = Convert v13 declared={type=number} @392
+    PutModuleVariable v14 variable=g4 @392
+    v16 = Increment v3 @387
+    v17 = Convert v16 declared={type=number} @387
+    Jump -> next b1(v17) @387
+  b3():
+    v18 = Builtin builtin=Math @422
+    v19 = Builtin builtin=MathFloor @422
+    v20 = Integer integer=2 @437
+    v21 = Div v0, v20 @437
+    v22 = Call v19, v18, v21 calleeName="Math.floor" @427
+    ReturnCall v22 casts=[{declared={type=number}}, {declared={type=number}}] @427
+}
+function f6 name="apply" module=m1 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
+    v4 = StrictEq v0, v3 @1248
+    Branch v4 -> taken b2(), notTaken b1() @1248
+  b1():
+    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
+    v6 = StrictEq v0, v5 @1283
+    Branch v6 -> taken b2(), notTaken b3() @1283
+  b2():
+    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
+    ReturnCall v8 @1333
+  b3():
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
+    ReturnCall v10 @1414
+}
+function f7 name="apply" module=m2 position=1385 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=3 enclosingRuntimeFunction=ReflectObjectApply thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = TypeTest v0 testedType=function @1474
+    Branch v3 -> taken b1(| 0), notTaken b4(| 0) @1474
+  b1(v4):
+    v5 = NarrowByTest v0, v4 @1474
+    v6 = TypeTest v2 testedType=object @1589
+    Branch v6 -> taken b2(| 0), notTaken b3(| 0) @1589
+  b2(v7):
+    v8 = NarrowByTest v2, v7 @1589
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1710
+    v10 = Call v9, v5, v1, v8 [isDoneInPlace] @1710
+    ReturnCall v10 @1710
+  b3(v11):
+    v12 = ThrowNewError errorKind=TypeError message="Reflect.apply requires the third argument be an object" @1623
+    Unreachable @1623
+  b4(v13):
+    v14 = ThrowNewError errorKind=TypeError message="Reflect.apply requires the first argument be a function" @1503
+    Unreachable @1503
+}
+runtimefunction id=FunctionPrototypeApply function=f6
+runtimefunction id=ReflectObjectApply function=f7

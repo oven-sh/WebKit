@@ -53,7 +53,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
-inline constexpr std::array markedFPRs { FPRInfo::fpRegT0, FPRInfo::fpRegT1 };
+// Every FPR that compiled code keeps a number in: all but the assembler's own, which is the last.
+inline constexpr auto markedFPRs = [] {
+    std::array<FPRReg, static_cast<size_t>(MacroAssembler::fpTempRegister)> registers { };
+    for (size_t i = 0; i < registers.size(); ++i)
+        registers[i] = static_cast<FPRReg>(i);
+    return registers;
+}();
 
 template<size_t size>
 struct alignas(16) FakeObject {
@@ -190,7 +196,11 @@ public:
     // In place of the operation, the words of the frame of its caller are counted that still hold what the runner wrote below its stack pointer in front of the run.
     void countWordsNobodyWroteAtCallsOf(Entry entry) { install(entry, std::bit_cast<UGPRPair (SYSV_ABI *)(Instance*)>(m_landingThatCountsWordsNobodyWrote)); }
     // For a stub that goes on to where no run can follow: the landing returns to the caller of the stub.
-    void countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry entry) { install(entry, std::bit_cast<UGPRPair (SYSV_ABI *)(Instance*)>(m_landingThatCountsWordsNobodyWroteAndLeavesStub)); }
+    void countWordsNobodyWroteAndLeaveStubAtCallsOf(Entry entry)
+    {
+        install(entry, std::bit_cast<UGPRPair (SYSV_ABI *)(Instance*)>(m_landingThatCountsWordsNobodyWroteAndLeavesStub));
+        m_landingMayLeaveStub = true;
+    }
     uint64_t wordsNobodyWrote() const { return m_environment->wordsNobodyWrote; }
     // The processor stops behind each instruction while a run lasts. Only where AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS.
     void setCountsInstructions(bool counts) { m_countsInstructions = counts; }
@@ -233,6 +243,8 @@ private:
     MacroAssemblerCodeRef<JSEntryPtrTag> m_landings;
     void* m_landingThatCountsWordsNobodyWrote { nullptr };
     void* m_landingThatCountsWordsNobodyWroteAndLeavesStub { nullptr };
+    // Such a run skips what the stub does behind the operation, so its registers say nothing of the stub.
+    bool m_landingMayLeaveStub { false };
     std::unique_ptr<StubEnvironment> m_environment;
     bool m_countsInstructions { false };
 };
@@ -380,9 +392,12 @@ inline void StubRunner::emitStubCall(CCallHelpers& jit, const StubSignature& sig
 inline MacroAssemblerCodeRef<JSEntryPtrTag> StubRunner::compileStubCaller(const StubSignature& signature, bool passesImmediate)
 {
     Vector<GPRReg> savedRegisters;
+    Vector<FPRReg> savedNumbers;
     RegisterSet::vmCalleeSaveRegisters().forEach([&](Reg reg) {
         if (reg.isGPR())
             savedRegisters.append(reg.gpr());
+        else
+            savedNumbers.append(reg.fpr());
     });
     AOT_TEST_CHECK(savedRegisters.contains(instanceGPR) && savedRegisters.contains(cellCageBaseGPR));
     auto slotOf = [](size_t index) {
@@ -391,13 +406,17 @@ inline MacroAssemblerCodeRef<JSEntryPtrTag> StubRunner::compileStubCaller(const 
 
     CCallHelpers jit;
     jit.emitFunctionPrologue();
-    jit.subPtr(CCallHelpers::TrustedImm32(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(savedRegisters.size() * sizeof(CPURegister))), CCallHelpers::stackPointerRegister);
+    jit.subPtr(CCallHelpers::TrustedImm32(WTF::roundUpToMultipleOf<stackAlignmentBytes()>((savedRegisters.size() + savedNumbers.size()) * sizeof(CPURegister))), CCallHelpers::stackPointerRegister);
     for (size_t i = 0; i < savedRegisters.size(); ++i)
         jit.storePtr(savedRegisters[i], slotOf(i));
+    for (size_t i = 0; i < savedNumbers.size(); ++i)
+        jit.storeDouble(savedNumbers[i], slotOf(savedRegisters.size() + i));
     jit.move(GPRInfo::argumentGPR0, instanceGPR);
     emitStubCall(jit, signature, passesImmediate);
     for (size_t i = 0; i < savedRegisters.size(); ++i)
         jit.loadPtr(slotOf(i), savedRegisters[i]);
+    for (size_t i = 0; i < savedNumbers.size(); ++i)
+        jit.loadDouble(slotOf(savedRegisters.size() + i), savedNumbers[i]);
     jit.emitFunctionEpilogue();
     jit.ret();
 
@@ -557,7 +576,12 @@ inline StubRun StubRunner::runOperationCall(StubKey key, std::initializer_list<u
 
 inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std::initializer_list<uint64_t> operands, std::optional<uint32_t> immediate)
 {
-    constexpr std::array<uint64_t, markedFPRs.size()> markers { std::bit_cast<uint64_t>(1234.5), std::bit_cast<uint64_t>(-6789.25) };
+    constexpr auto markers = [] {
+        std::array<uint64_t, markedFPRs.size()> bits { };
+        for (size_t i = 0; i < bits.size(); ++i)
+            bits[i] = std::bit_cast<uint64_t>(1234.5 + static_cast<double>(i));
+        return bits;
+    }();
     const StubSummary& summary = m_catalog.summaryOf(key);
     StubEnvironment& environment = *m_environment;
     AOT_TEST_CHECK(operands.size() == signature.numberOfOperands && operands.size() <= environment.operands.size());
@@ -589,9 +613,17 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
 #endif
         std::bit_cast<void (SYSV_ABI *)(Instance*)>(callerAddress)(&environment.instance);
 
+    // A summary holds what the generator of a stub has announced, and the allocator keeps values in every register that it leaves out. So what a run has written is held against it.
+    auto checkIsAnnounced = [&](Reg reg) {
+        if (containsRegister(summary.clobbered, reg) || m_landingMayLeaveStub)
+            return;
+        const StubDescriptor& descriptor = descriptorOf(key.family());
+        dataLogLn("the stub ", descriptor.name, ", form ", key.form(), ", count ", key.count(), ", caller frame ", static_cast<unsigned>(key.callerFrame()), " has written ", reg, ", which its summary does not hold");
+        AOT_TEST_CHECK(containsRegister(summary.clobbered, reg));
+    };
     for (size_t i = 0; i < markedFPRs.size(); ++i) {
-        if (!containsRegister(summary.clobbered, markedFPRs[i]) && !namesRegister(signature, markedFPRs[i]))
-            AOT_TEST_CHECK(environment.numbersAfterCall[i] == environment.numbers[i]);
+        if (!namesRegister(signature, markedFPRs[i]) && environment.numbersAfterCall[i] != environment.numbers[i])
+            checkIsAnnounced(markedFPRs[i]);
     }
     RegisterSet changedRegisters;
     for (size_t i = 0; i < allocatableGPRs.size() && !signature.usesCallConvention; ++i) {
@@ -608,6 +640,7 @@ inline StubRun StubRunner::run(StubKey key, const StubSignature& signature, std:
         if (environment.registersAfterCall[i] != valueInFrontOfCall)
             changedRegisters.add(reg, IgnoreVectors);
     }
+    changedRegisters.forEach(checkIsAnnounced);
     return { environment.result, !!environment.numberOfOperationCalls, environment.numberOfRecordedCalls, environment.recordedArguments, environment.landedCall, instructionsInStubs, changedRegisters };
 }
 

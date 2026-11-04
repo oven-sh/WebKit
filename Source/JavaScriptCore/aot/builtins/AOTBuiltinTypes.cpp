@@ -291,7 +291,10 @@ static TypeID typeOfBuiltinTypePartRead(const BuiltinTypeReading& reading, const
         if (!slot.contentsSlot)
             return typeOfBuiltinTypeRead({ context, nullptr, reading.role, reading.writesContents }, slot.holds);
         return typeFromBuiltinOperand(reading, *part.operand, anyValueWrittenByTable(reading), [&](TypeID container) {
-            return typeOfContentsRead(typingContextOfBuiltinTypes(context), container, *slot.contentsSlot);
+            TypingContext typing = typingContextOfBuiltinTypes(context);
+            TypeID read = typeOfContentsRead(typing, container, *slot.contentsSlot);
+            TypeID proven = types.at(read).isAnything() ? typing.positions.contentsBeingTyped(typing.level) : TypeID();
+            return proven ? proven : read;
         });
     }
     case BuiltinTypePartKind::IteratedValues:

@@ -2,6 +2,7 @@
 # The control of text-that-the-program-writes-is-a-name-that-it-spells.ir: no event hangs under the text that the program writes, and a key that nobody knows finds none. So the image admits no text.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: image
+# REQUIRES: entries-of-bun
 # CHECK: flags
 # CHECK-NOT: AdmitsUnknownJavaScript
 

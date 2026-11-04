@@ -410,19 +410,6 @@ bool BuiltinTable::mayDefineOnNewInstances(BuiltinClassID builtinClass, BuiltinN
     return false;
 }
 
-// A class below defines what the classes above define. The lowest class that lists the name says what its constructor leaves there.
-BuiltinTypeID BuiltinTable::typeOfNameDefinedOnNewInstances(BuiltinClassID builtinClass, BuiltinName name) const
-{
-    for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {
-        const BuiltinClass& entry = at(current);
-        if (const BuiltinResultProperty* found = findRecord(entry.typesOfNamesDefinedOnNewInstances, &BuiltinResultProperty::name, name))
-            return found->type;
-        if (std::ranges::binary_search(entry.namesDefinedOnNewInstances, name))
-            return { };
-    }
-    return { };
-}
-
 bool BuiltinTable::definesCharactersOnNewInstances(BuiltinClassID builtinClass) const
 {
     for (BuiltinClassID current = builtinClass; current; current = at(current).parent) {

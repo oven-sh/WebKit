@@ -680,6 +680,7 @@ BuiltinCallEmitter::DirectOperands BuiltinCallEmitter::directOperandsOf(const Va
     }
     if (binding.takesReceiver())
         operands.keptAlive.append(boxedOperand(value, value->receiverOperand()).value());
+    build().statistics().count(StatisticID::NativeFunctionsCalledDirectly);
     return operands;
 }
 

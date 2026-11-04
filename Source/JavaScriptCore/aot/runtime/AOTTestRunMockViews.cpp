@@ -213,7 +213,7 @@ void Modules::linkAnewWhoeverReadsEndedMockBelow(ModuleID root)
         for (const ModuleRequestData& request : m_table.imports(module)) {
             ModuleID target = moduleLoadedBy(request);
             if (isLoaded && endedMockSeenAt(m_table.fileBehindFace(target).value_or(target), momentLinked(module)))
-                m_momentsLoadedAnew.set(module, FirstMockInTestFile { ++state.momentOfLoads, state.momentOfTestFile });
+                m_momentsLoadedAnew.set(module, MomentLoadedAnew { ++state.momentOfLoads, state.momentOfTestFile, root });
             if (!request.isHoisted && !request.isDeferred && !seen.quickSet(target.index()))
                 work.append(target);
         }
@@ -284,7 +284,8 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
     uint32_t momentLoaded = m_momentsOfLoads[importer.index()];
     if (!momentLoaded || momentLoaded > mock->value.momentLaid)
         return true;
-    return !m_loadedInPreload.get(importer.index()) && momentLoaded < mock->value.momentOfTestFile;
+    // What an earlier test file left is loaded again. What `bun test` has loaded anew in this one was linked then, and is one of this file's importers.
+    return !m_loadedInPreload.get(importer.index()) && momentLinked(importer) < mock->value.momentOfTestFile;
 }
 
 // A mock that comes into the place of one that stands reaches whoever reads that one, and goes from them again when it ends.

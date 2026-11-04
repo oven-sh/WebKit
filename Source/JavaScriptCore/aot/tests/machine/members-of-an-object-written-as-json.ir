@@ -1,6 +1,7 @@
 # The emitters of JSON text that compiled code writes, by themselves. No walk runs: the Code is written out.
 # Room is reserved once. A key with its brace or comma, its quotes and its colon is one constant that is stored where the cursor stands; the cursor is a value, and Commit stores the position that it has reached.
 # RUN: emit-code
+# REQUIRES: entries-of-bun
 # CHECK: unit f1:Body
 # CHECK: = Store({{*}}offset = 0, stringBuilderBytes, origin = 7)
 # CHECK: = Store({{*}}offset = 0, stringBuilderBytes, origin = 9)

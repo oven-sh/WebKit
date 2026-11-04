@@ -88,6 +88,8 @@ public:
         return { };
     }
 
+    TypeID contentsBeingTyped(TypeLevel level) const final { return resultOfReadBeingTyped(level); }
+
     // What the walk got for the call stands among the facts that its record leans on. A call with several results is not typed by its rule.
     TypeID resultOfCallBeingTyped(TypeLevel level, uint32_t resultIndex) const final
     {
@@ -139,8 +141,6 @@ private:
     bool collectTypesOfOperands(BlockID, ValueID user, const Instruction&, Vector<TypeID, 16>&);
     ObjectID objectMadeBy(const Operation&) const;
     TypeID typeOfNewTargetBehind(ValueID prototype) const;
-    const SplitResult* fieldsHandedBackBy(const Operation& call) const;
-    TypeID typeOfResultOfSplitCall(const SplitResult&, uint32_t resultIndex) const;
     TypeID typeOfResultAskedFor(const Operation& resultAt);
     TypeID typeByResultRule(ValueID, const Operation&);
     void verifyTypeReadFromPayload(BlockID, ValueID, const Operation&);
@@ -470,26 +470,6 @@ TypeID CodeTypeVerifier::typeOfNewTargetBehind(ValueID prototype) const
     return m_derivedTypes[read.newTargetOperand().index()];
 }
 
-// Null: the call gives what the function returns. One field that is handed back in place of the object is read by a ResultAt like any other.
-const SplitResult* CodeTypeVerifier::fieldsHandedBackBy(const Operation& call) const
-{
-    if (call.opcode != Opcode::CallDirect)
-        return nullptr;
-    return m_conventions.splitResultOf(m_conventions.unitEnteredBy(call));
-}
-
-// Null: the call has no such result.
-TypeID CodeTypeVerifier::typeOfResultOfSplitCall(const SplitResult& split, uint32_t resultIndex) const
-{
-    if (resultIndex < split.numberOfParts())
-        return split.types[resultIndex];
-    if (split.whole && resultIndex == split.resultOfWhole())
-        return split.whole;
-    if (split.hasMark() && resultIndex == split.resultOfMark())
-        return split.markIsTag() ? m_types.integer(split.rangeOfTag()) : TypeTable::boolean;
-    return resultIndex < split.numberOfResults() ? split.typeOfResult(resultIndex) : TypeID();
-}
-
 TypeID CodeTypeVerifier::typeOfResultAskedFor(const Operation& resultAt)
 {
     if (!resultAt.resultsOperand())
@@ -497,9 +477,6 @@ TypeID CodeTypeVerifier::typeOfResultAskedFor(const Operation& resultAt)
     const Operation& producer = m_code.at(resultAt.resultsOperand());
     if (!isTypedByResultRuleForTypeVerifier(producer.opcode))
         return { };
-    // PositionTypes::result() speaks of what the function returns, which is the object.
-    if (const SplitResult* split = fieldsHandedBackBy(producer))
-        return typeOfResultOfSplitCall(*split, resultAt.index());
     std::optional<uint32_t> numberOfResults = numberOfResultsOf(m_program, producer);
     if (numberOfResults && resultAt.index() >= *numberOfResults)
         return { };
@@ -514,7 +491,7 @@ TypeID CodeTypeVerifier::typeOfResultAskedFor(const Operation& resultAt)
 TypeID CodeTypeVerifier::typeByResultRule(ValueID id, const Operation& operation)
 {
     // The record holds none of the results: each ResultAt asks the producer's rule for its own.
-    if (opcodesThatMayHaveSeveralResults.contains(operation.opcode) && (numberOfResultsOf(m_program, operation) || fieldsHandedBackBy(operation)))
+    if (opcodesThatMayHaveSeveralResults.contains(operation.opcode) && numberOfResultsOf(m_program, operation))
         return TypeTable::undefined;
 
     m_positions.setFactsOfRecordBeingTyped(factsUsedBy(id));

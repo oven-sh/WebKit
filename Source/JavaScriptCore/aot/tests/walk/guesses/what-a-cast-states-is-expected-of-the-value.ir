@@ -1,0 +1,88 @@
+# `const node = flow.node`: the maker of flow nodes takes `unknown`, so the layout writes nothing of the field and nothing is expected of the read. The value is handed to a parameter that declares a node: the front end states that there, in a Convert.
+# It is one value wherever it is used: what is stated of it at one use is expected of it at every other, so `node.parent.kind` is read behind tests and not by name.
+# function kindAbove(flow, reference) { const node = flow.node; if (matches(reference, <Node> node)) return 0; return node.parent.kind + node.kind; }
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: [[above]]: {{*}} = GetSlot {{*}} key="parent" receivers=[L1] level=Expected
+# CHECK: = GetSlot [[above]] key="kind" receivers=[L1] level=Expected
+# CHECK-NOT: = PropGet
+# RUN(WITHHELD): walk f4 mechanisms=-Guesses
+# WITHHELD-NOT: = GetSlot {{*}} key="parent"
+# WITHHELD: = PropGet {{*}} key="parent"
+# A number that a parameter declares an int32 is none for that: f5.
+# RUN(NUMBER): walk f5 mechanisms=all
+# NUMBER-LABEL: code f5:Body
+# NUMBER-NOT: TypeTest {{*}} testedType=i32
+
+layout L0 module=m0 fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="node" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="parent" declared={type=undefined|null|L1 flags=[OmitsNull]} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="matches" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewClosure function=f4
+    v3 = NewClosure function=f5
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v5, -, v0, v1, v6, v2, v3 calleeName="sink"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="matches" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
+  b0(v0: undefined|null|L1, v1: undefined|null|L1):
+    v2 = StrictEq v0, v1
+    v3 = Convert v2 declared={type=boolean}
+    Return v3
+}
+function f2 name="makeFlow" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=anything}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] {
+  b0(v0: number, v1: anything):
+    v2 = Convert v0 declared={type=number}
+    v3 = NewObject -, v2, v1 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    Return v5
+}
+function f3 name="makeNode" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|L1 flags=[OmitsNull]}] results=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] {
+  b0(v0: number, v1: undefined|null|L1):
+    v2 = Convert v0 declared={type=number}
+    v3 = Convert v1 declared={type=undefined|null|L1 flags=[OmitsNull]}
+    v4 = NewObject -, v2, v3 layout=L1 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Convert v5 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    Return v6
+}
+function f4 name="kindAbove" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L1):
+    v2 = PropGet v0 key="node"
+    v3 = GetModuleVariable variable=g0
+    v4 = Convert v2 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v5 = Call v3, -, v1, v4 calleeName="matches"
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Integer
+    Return v7
+  b2():
+    v8 = PropGet v2 key="parent"
+    v9 = PropGet v8 key="kind"
+    v10 = PropGet v2 key="kind"
+    v11 = Add v9, v10
+    v12 = Convert v11 declared={type=number}
+    Return v12
+}
+function f5 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="node"
+    v2 = Convert v1 declared={type=i32}
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v2 calleeName="sink"
+    v6 = Integer integer=1
+    v7 = Add v1, v6
+    v8 = Mul v1, v7
+    Return v8
+}

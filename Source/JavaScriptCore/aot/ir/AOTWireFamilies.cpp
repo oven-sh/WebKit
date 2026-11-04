@@ -12,6 +12,7 @@
 #include "AOTBuildContext.h"
 #include "AOTIRProgram.h"
 #include "AOTPhaseTimes.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTSort.h"
 #include <functional>
 #include <optional>
@@ -200,7 +201,8 @@ struct NamesOfLayoutFamilies {
 };
 
 struct LayoutFamilies {
-    Vector<Vector<LayoutID>> members;
+    // By layout of the wire. Null: nobody.
+    Vector<LayoutSetID> members;
     BitVector hasMembersWithoutLayout;
 };
 
@@ -211,7 +213,8 @@ struct LayoutConversion {
 
 struct LayoutConversions {
     const Wire::Sections& checkedSections;
-    Vector<Vector<uint32_t>> typesMetByNames;
+    // findLayoutsThatMeetWireTypesByNames().
+    Vector<Vector<LayoutID>> layoutsThatMeetTypesByNames;
     const TellingFields& tellingFields;
     NamesOfLayoutFamilies names;
     std::span<const TaggedFamily> taggedFamilies;
@@ -359,6 +362,20 @@ static void appendNamesAlongWireBases(const Wire::Sections& checkedSections, uin
     }
 }
 
+// The same for every layout, where most layouts of a row bring no name that is wanted: a walk stops at those alone that bring one, not at each class of the row.
+static void appendNamesAlongWireBases(const Wire::Sections& checkedSections, std::span<const LayoutID> nearestAboveWithWantedName, uint32_t layout, Vector<uint32_t>& names, NOESCAPE const Invocable<bool(uint32_t)> auto& isWanted)
+{
+    std::span<const Wire::Layout> layouts = checkedSections.layouts;
+    // Stops at a cycle of bases.
+    size_t remainingBases = layouts.size();
+    for (LayoutID current(layout); current && remainingBases--; current = nearestAboveWithWantedName[current.index()]) {
+        for (const Wire::Field& field : wireFieldsOf(checkedSections, layouts[current.index()])) {
+            if (isWireFieldNamedByProgram(field) && isWanted(field.key))
+                names.append(field.key);
+        }
+    }
+}
+
 static void appendNamesAlongWireBases(const Wire::Sections& checkedSections, uint32_t layout, Vector<uint32_t>& names)
 {
     appendNamesAlongWireBases(checkedSections, layout, names, [](uint32_t) {
@@ -430,8 +447,8 @@ static void addNamesOfTaggedFamilies(NamesOfLayoutFamilies& names, const Wire::S
     }
 }
 
-// By layout, ascending: the structural types whose required names its objects have.
-static Vector<Vector<uint32_t>> findWireTypesMetByNames(const BuildContext& build, const Wire::Sections& checkedSections, const TellingFields& tellingFields)
+// By structural type, ascending: the layouts whose objects have the names that it requires.
+static Vector<Vector<LayoutID>> findLayoutsThatMeetWireTypesByNames(const BuildContext& build, const Wire::Sections& checkedSections, const TellingFields& tellingFields)
 {
     const ParallelLoops& loops = build.parallelLoops();
     StepTimes steps(build, "ReadAndVerify: types met by names"_s);
@@ -456,13 +473,21 @@ static Vector<Vector<uint32_t>> findWireTypesMetByNames(const BuildContext& buil
 
     steps.didFinish("names that some type requires"_s);
 
+    auto isWantedName = [&](uint32_t name) {
+        return name < numberOfKeys && isRequiredBySomeType.quickGet(name);
+    };
+    Vector<LayoutID> nearestAboveWithWantedName = findNearestWantedAbove(numberOfLayouts, [&](LayoutID id) {
+        return layouts[id.index()].base == Wire::none ? LayoutID() : LayoutID(layouts[id.index()].base);
+    }, [&](LayoutID id) {
+        return std::ranges::any_of(wireFieldsOf(checkedSections, layouts[id.index()]), [&](const Wire::Field& field) {
+            return isWireFieldNamedByProgram(field) && isWantedName(field.key);
+        });
+    });
     NamesByWireLayout names(loops, numberOfLayouts, [&](uint32_t index, Vector<uint32_t>& found) {
         const Wire::Layout& layout = layouts[index];
         if (!isWireLayoutOfObjects(layout) || has(layout, LayoutFlags::IsNeverAllocated) || has(layout, LayoutFlags::IsWrittenUnderDictionaryType))
             return;
-        appendNamesAlongWireBases(checkedSections, index, found, [&](uint32_t name) {
-            return name < numberOfKeys && isRequiredBySomeType.quickGet(name);
-        });
+        appendNamesAlongWireBases(checkedSections, nearestAboveWithWantedName.span(), index, found, isWantedName);
     });
     steps.didFinish("names of layouts"_s);
     Vector<uint64_t> layoutsByName = collectInParallel<uint64_t>(loops, numberOfLayouts, [&](unsigned index, Vector<uint64_t>& found) {
@@ -474,10 +499,19 @@ static Vector<Vector<uint32_t>> findWireTypesMetByNames(const BuildContext& buil
     listSecondsByFirst(loops, singleElementSpan(layoutsByName), layoutsWithName);
     steps.didFinish("layouts by name"_s);
 
+    // `{ kind: 0, source, target }` is one of a union that its tag tells apart. `interface Edge { source: Node; target: Node }` lists no such name: it was not written for it, and names alone make no family of the two:
+    // a family of those two cuts across the union, which then is none. What the program says itself (a base, a supertype) stands.
+    auto isToldByNameThatTypeLacks = [&](uint32_t layout, uint32_t type) {
+        bool lacksOne = false;
+        tellingFields.forEachKeyOfOwnTellingField(layout, [&](uint32_t key) {
+            lacksOne = lacksOne || !std::ranges::contains(wireFieldsOf(checkedSections, layouts[type]), key, &Wire::Field::key);
+        });
+        return lacksOne;
+    };
     // A list for each type, not for each few hundred: one type may have tens of thousands of layouts to look at and its neighbors as many.
-    Vector<Vector<uint64_t>> typesByLayout(numberOfLayouts);
+    Vector<Vector<LayoutID>> layoutsThatMeetTypes(numberOfLayouts);
     forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned type) {
-        Vector<uint64_t>& found = typesByLayout[type];
+        Vector<LayoutID>& found = layoutsThatMeetTypes[type];
         if (!isStructuralWireType(layouts[type]))
             return;
         bool isDeclaredNowhere = layouts[type].name == Wire::none && layouts[type].module == Wire::none;
@@ -503,18 +537,14 @@ static Vector<Vector<uint32_t>> findWireTypesMetByNames(const BuildContext& buil
             if (layout == type)
                 continue;
             std::span<const uint32_t> required = wireLayoutDeclaresEveryName(layouts[layout]) ? requiredOfRecords.span() : requiredOfInstances.span();
-            if (std::ranges::includes(names.of(layout), required) && !tellingFields.tellApart(layout, type))
-                found.append(pairOfWireIndexes(layout, type));
+            if (std::ranges::includes(names.of(layout), required) && !tellingFields.tellApart(layout, type) && !isToldByNameThatTypeLacks(layout, type))
+                found.append(LayoutID(layout));
         }
     });
-    steps.didFinish("pairs of layout and type"_s);
-    Vector<Vector<uint32_t>> typesMetByNames(numberOfLayouts);
-    listSecondsByFirst(loops, typesByLayout.span(), typesMetByNames);
-    steps.didFinish("types by layout"_s);
-    destroyLists(loops, typesByLayout);
+    steps.didFinish("layouts by type"_s);
     destroyLists(loops, layoutsWithName);
     steps.didFinish("free the lists"_s);
-    return typesMetByNames;
+    return layoutsThatMeetTypes;
 }
 
 static void forEachWireConversionTarget(const Wire::Sections& checkedSections, uint32_t source, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
@@ -532,90 +562,151 @@ static bool wireTypeRequiresNoName(const LayoutConversions& conversions, uint32_
 }
 
 // Every object converts to a type that requires no name. A member that reached such a type only by that conversion is not passed on to a type above it that requires names.
+static bool passesEveryMemberOnToFamily(const LayoutConversions& conversions, LayoutConversion conversion)
+{
+    return !wireTypeRequiresNoName(conversions, conversion.source) || wireTypeRequiresNoName(conversions, conversion.target);
+}
+
 static bool passesOnToFamily(const LayoutConversions& conversions, LayoutConversion conversion, LayoutID member)
 {
-    if (!wireTypeRequiresNoName(conversions, conversion.source) || wireTypeRequiresNoName(conversions, conversion.target))
+    if (passesEveryMemberOnToFamily(conversions, conversion))
         return true;
     return member.index() == conversion.source && !has(conversions.checkedSections.layouts[conversion.source], LayoutFlags::IsNeverAllocated);
 }
 
-static LayoutFamilies collectLayoutFamilies(const BuildContext& build, const LayoutConversions& conversions)
+// A member of a type is a member of every type that the type converts to, but for what is turned away on the way. So A FAMILY IS MADE OF THE FAMILIES OF ALL THAT CONVERTS TO ITS TYPE, each type behind all of those, by one union:
+// a walk upward from every member takes a step for each pair of classes in a row of classes that extend one another. A member is looked at by itself only where something can turn it away.
+static LayoutFamilies collectLayoutFamilies(const BuildContext& build, const LayoutConversions& conversions, ArenasOfWorkers& arenas)
 {
-    const ParallelLoops& loops = build.parallelLoops();
     StepTimes steps(build, "ReadAndVerify: collect families"_s);
-    constexpr uint32_t layoutsPerTask = 64;
     const Wire::Sections& checkedSections = conversions.checkedSections;
     std::span<const Wire::Layout> layouts = checkedSections.layouts;
     uint32_t numberOfLayouts = static_cast<uint32_t>(layouts.size());
+
+    auto forEachTargetOfObjects = [&](uint32_t source, NOESCAPE const Invocable<void(uint32_t)> auto& functor) {
+        if (isWireEnvironment(layouts[source]))
+            return;
+        forEachWireConversionTarget(checkedSections, source, [&](uint32_t target) {
+            if (!isWireEnvironment(layouts[target]))
+                functor(target);
+        });
+    };
+    // By type: what converts to it.
+    constexpr uint32_t layoutsPerTask = 512;
     unsigned numberOfTasks = (numberOfLayouts + layoutsPerTask - 1) / layoutsPerTask;
-
-    Vector<Vector<uint32_t>> stampsOfWorkers(loops.width());
-    Vector<Vector<uint64_t>> membersByTask(numberOfTasks);
-    Vector<Vector<uint32_t>> typesOfMembersWithoutLayoutByTask(numberOfTasks);
-    forEachIndexInParallel(loops, numberOfTasks, [&](unsigned task, unsigned worker) {
-        Vector<uint32_t>& stamps = stampsOfWorkers[worker];
-        if (stamps.isEmpty())
-            stamps.fill(0u, numberOfLayouts);
-        Vector<uint64_t>& members = membersByTask[task];
-        Vector<uint32_t>& typesOfMembersWithoutLayout = typesOfMembersWithoutLayoutByTask[task];
-        Vector<uint32_t, 16> reachedTypes;
+    Vector<Vector<uint64_t>> sourcesOfTargets(numberOfTasks);
+    forEachIndexInParallel(build.parallelLoops(), numberOfTasks, [&](unsigned task) {
         for (uint32_t index = task * layoutsPerTask, end = std::min(numberOfLayouts, index + layoutsPerTask); index < end; ++index) {
-            if (isWireEnvironment(layouts[index])) {
-                members.append(pairOfWireIndexes(index, index));
-                continue;
-            }
-
-            bool hasMembersWithoutLayout = has(layouts[index], LayoutFlags::HasMembersWithoutLayout);
-            uint32_t stamp = index + 1;
-            auto visit = [&](uint32_t type) {
-                if (std::exchange(stamps[type], stamp) != stamp && !isWireEnvironment(layouts[type]) && !conversions.tellingFields.tellApart(index, type))
-                    reachedTypes.append(type);
-            };
-            visit(index);
-            // `{ kind: 0, source, target }` is one of a union that its tag tells apart. `interface Edge { source: Node; target: Node }` lists no such name: it was not written for it, and names alone make no family of the two:
-            // a family of those two cuts across the union, which then is none. What the program says itself (a base, a supertype) stands.
-            auto isToldByNameThatTypeLacks = [&](uint32_t type) {
-                bool lacksOne = false;
-                conversions.tellingFields.forEachKeyOfOwnTellingField(index, [&](uint32_t key) {
-                    lacksOne = lacksOne || !std::ranges::contains(wireFieldsOf(checkedSections, layouts[type]), key, &Wire::Field::key);
-                });
-                return lacksOne;
-            };
-            for (uint32_t type : conversions.typesMetByNames[index]) {
-                if (!isToldByNameThatTypeLacks(type))
-                    visit(type);
-            }
-            while (!reachedTypes.isEmpty()) {
-                uint32_t reached = reachedTypes.takeLast();
-                members.append(pairOfWireIndexes(reached, index));
-                if (hasMembersWithoutLayout)
-                    typesOfMembersWithoutLayout.append(reached);
-                forEachWireConversionTarget(checkedSections, reached, [&](uint32_t target) {
-                    if (passesOnToFamily(conversions, { reached, target }, LayoutID(index)))
-                        visit(target);
-                });
-            }
+            forEachTargetOfObjects(index, [&](uint32_t target) {
+                sourcesOfTargets[task].append(pairOfWireIndexes(target, index));
+            });
         }
     });
+    Vector<Vector<uint32_t>> sources(numberOfLayouts);
+    listSecondsByFirst(build.parallelLoops(), sourcesOfTargets.span(), sources);
+    const Vector<Vector<LayoutID>>& metByNames = conversions.layoutsThatMeetTypesByNames;
+    Vector<uint32_t> numberOfSourcesLeft(numberOfLayouts, [&](size_t index) {
+        return static_cast<uint32_t>(sources[index].size());
+    });
+    steps.didFinish("what converts to each type"_s);
 
-    steps.didFinish("pairs of type and member"_s);
-    LayoutFamilies families { Vector<Vector<LayoutID>>(numberOfLayouts), BitVector(numberOfLayouts) };
-    listSecondsByFirst(loops, membersByTask.span(), families.members);
-    steps.didFinish("members by type"_s);
-    for (const Vector<uint32_t>& types : typesOfMembersWithoutLayoutByTask) {
-        for (uint32_t type : types)
-            families.hasMembersWithoutLayout.quickSet(type);
+    LayoutFamilies families { Vector<LayoutSetID>(numberOfLayouts), BitVector(numberOfLayouts) };
+    // By type with a telling field: who has been held against it. A ring brings a type round several times, and each member is asked once.
+    Vector<LayoutSetID> membersAsked(numberOfLayouts);
+    auto makeFamilyOf = [&](uint32_t type, LayoutSets& sets) {
+        // Most layouts: nothing converts to them.
+        bool standsAlone = sources[type].isEmpty() && metByNames[type].isEmpty() && conversions.tellingFields.tellsNothingApartFrom(type);
+        if (standsAlone || isWireEnvironment(layouts[type]))
+            return LayoutSets::of(LayoutID(type));
+        Vector<LayoutSetID, 8> wholeFamilies;
+        Vector<LayoutID, 8> membersByThemselves;
+        membersByThemselves.append(LayoutID(type));
+        membersByThemselves.append(metByNames[type].span());
+        for (uint32_t source : sources[type]) {
+            // Else the source alone may pass.
+            if (passesEveryMemberOnToFamily(conversions, { source, type }))
+                wholeFamilies.append(families.members[source]);
+            else if (passesOnToFamily(conversions, { source, type }, LayoutID(source)) && sets.contains(families.members[source], LayoutID(source)))
+                membersByThemselves.append(LayoutID(source));
+        }
+        wholeFamilies.append(sets.ofUnsorted(membersByThemselves.span()));
+        LayoutSetID all = sets.unionOf(wholeFamilies.span());
+        if (conversions.tellingFields.tellsNothingApartFrom(type))
+            return all;
+        LayoutSetID notAskedYet = sets.differenceOf(all, std::exchange(membersAsked[type], all));
+        return sets.unionOf(families.members[type], sets.filtered(notAskedYet, [&](LayoutID member) {
+            return !conversions.tellingFields.tellApart(member.index(), type);
+        }));
+    };
+
+    Vector<uint32_t> ready;
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (!numberOfSourcesLeft[index])
+            ready.append(index);
     }
+    // Those that wait for nobody wait for one another neither: they are made side by side. Most layouts are among the first of them.
+    constexpr size_t typesPerTask = 64;
+    Vector<uint32_t> readyNext;
+    while (!ready.isEmpty()) {
+        forEachIndexInParallel(build.parallelLoops(), static_cast<unsigned>((ready.size() + typesPerTask - 1) / typesPerTask), [&](unsigned task, unsigned worker) {
+            LayoutSets& sets = arenas.of(worker).layoutSets();
+            for (size_t place = task * typesPerTask, end = std::min(ready.size(), place + typesPerTask); place < end; ++place)
+                families.members[ready[place]] = makeFamilyOf(ready[place], sets);
+        });
+        for (uint32_t type : ready) {
+            forEachTargetOfObjects(type, [&](uint32_t target) {
+                if (!--numberOfSourcesLeft[target])
+                    readyNext.append(target);
+            });
+        }
+        std::swap(ready, readyNext);
+        readyNext.shrink(0);
+    }
+    LayoutSets& sets = arenas.of(0).layoutSets();
+    // `class A extends B {}` beside `class B extends A {}` compiles, and two types may each be written as the other. What stands in such a ring, or above one, is made, and made again whenever somebody has joined what converts to it.
+    Vector<uint32_t> waiting;
+    BitVector isWaiting(numberOfLayouts);
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (numberOfSourcesLeft[index]) {
+            waiting.append(index);
+            isWaiting.quickSet(index);
+        }
+    }
+    for (size_t place = 0; place < waiting.size(); ++place) {
+        uint32_t type = waiting[place];
+        isWaiting.quickClear(type);
+        LayoutSetID family = makeFamilyOf(type, sets);
+        if (std::exchange(families.members[type], family) == family)
+            continue;
+        forEachTargetOfObjects(type, [&](uint32_t target) {
+            if (!isWaiting.quickSet(target))
+                waiting.append(target);
+        });
+    }
+    steps.didFinish("families"_s);
+
+    Vector<LayoutID> layoutsWithMembersWithoutLayout;
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (!isWireEnvironment(layouts[index]) && has(layouts[index], LayoutFlags::HasMembersWithoutLayout))
+            layoutsWithMembersWithoutLayout.append(LayoutID(index));
+    }
+    if (LayoutSetID all = sets.ofSorted(layoutsWithMembersWithoutLayout.span())) {
+        for (uint32_t type = 0; type < numberOfLayouts; ++type) {
+            if (sets.overlap(families.members[type], all))
+                families.hasMembersWithoutLayout.quickSet(type);
+        }
+    }
+    destroyLists(build.parallelLoops(), sources);
     return families;
 }
 
-static void removeFamilyMembersThatLackRequiredNames(const ParallelLoops& loops, const NamesOfLayoutFamilies& names, LayoutFamilies& families)
+static void removeFamilyMembersThatLackRequiredNames(const ParallelLoops& loops, ArenasOfWorkers& arenas, const NamesOfLayoutFamilies& names, LayoutFamilies& families)
 {
-    forEachIndexInParallel(loops, static_cast<unsigned>(families.members.size()), [&](unsigned type) {
+    forEachIndexInParallel(loops, static_cast<unsigned>(families.members.size()), [&](unsigned type, unsigned worker) {
         if (names.required.of(type).empty())
             return;
-        families.members[type].removeAllMatching([&](LayoutID member) {
-            return names.lacksRequiredName(member, type);
+        families.members[type] = arenas.of(worker).layoutSets().filtered(families.members[type], [&](LayoutID member) {
+            return !names.lacksRequiredName(member, type);
         });
     });
 }
@@ -639,35 +730,21 @@ static bool canPassForWireType(const LayoutConversions& conversions, LayoutID me
     });
 }
 
-// Both ascending. A type that every part of a program converts to lists as many members as the program has parts, and each part brings a few: those few are looked up, and the list is not gone through.
-static bool listsAllMembersOfFamily(std::span<const LayoutID> listed, std::span<const LayoutID> converted)
+static LayoutID findMemberOutsideFamily(const TypeTable& types, const LayoutConversions& conversions, const LayoutFamilies& families, LayoutConversion conversion)
 {
-    if (converted.size() > listed.size())
-        return false;
-    if (converted.size() * WTF::fastLog2(static_cast<unsigned>(listed.size() + 1)) >= listed.size())
-        return std::ranges::includes(listed, converted);
-    for (LayoutID member : converted) {
-        listed = listed.subspan(std::ranges::lower_bound(listed, member) - listed.begin());
-        if (listed.empty() || listed.front() != member)
-            return false;
-    }
-    return true;
-}
-
-static LayoutID findMemberOutsideFamily(const LayoutConversions& conversions, const LayoutFamilies& families, LayoutConversion conversion)
-{
-    const Vector<LayoutID>& converted = families.members[conversion.source];
-    const Vector<LayoutID>& listed = families.members[conversion.target];
-    if (listsAllMembersOfFamily(listed.span(), converted.span()))
+    IDSetView converted = types.at(families.members[conversion.source]).untyped();
+    IDSetView listed = types.at(families.members[conversion.target]).untyped();
+    if (isSubset(converted, listed))
         return { };
-    for (LayoutID member : converted) {
-        if (!std::ranges::binary_search(listed, member) && passesOnToFamily(conversions, conversion, member) && canPassForWireType(conversions, member, conversion.target))
-            return member;
-    }
-    return { };
+    LayoutID outside;
+    forEachAddedMember(converted, listed, [&](uint32_t member) {
+        if (!outside && passesOnToFamily(conversions, conversion, LayoutID(member)) && canPassForWireType(conversions, LayoutID(member), conversion.target))
+            outside = LayoutID(member);
+    });
+    return outside;
 }
 
-static Vector<MemberOutsideFamily> findConversionsOutsideFamilies(const ParallelLoops& loops, const LayoutConversions& conversions, const LayoutFamilies& families)
+static Vector<MemberOutsideFamily> findConversionsOutsideFamilies(const ParallelLoops& loops, const TypeTable& types, const LayoutConversions& conversions, const LayoutFamilies& families)
 {
     std::span<const Wire::Layout> layouts = conversions.checkedSections.layouts;
     return collectInParallel<MemberOutsideFamily>(loops, static_cast<unsigned>(layouts.size()), [&](unsigned source, Vector<MemberOutsideFamily>& found) {
@@ -676,19 +753,19 @@ static Vector<MemberOutsideFamily> findConversionsOutsideFamilies(const Parallel
         forEachWireConversionTarget(conversions.checkedSections, source, [&](uint32_t target) {
             if (isWireEnvironment(layouts[target]))
                 return;
-            if (LayoutID member = findMemberOutsideFamily(conversions, families, { source, target }))
+            if (LayoutID member = findMemberOutsideFamily(types, conversions, families, { source, target }))
                 found.append({ member, target });
         });
     });
 }
 
-static BitVector findTypeParametersWithoutFamily(std::span<const Wire::Layout> layouts, const LayoutFamilies& families)
+static BitVector findTypeParametersWithoutFamily(const TypeTable& types, std::span<const Wire::Layout> layouts, const LayoutFamilies& families)
 {
     BitVector result(layouts.size());
     for (uint32_t index = 0; index < layouts.size(); ++index) {
         if (!has(layouts[index], LayoutFlags::IsTypeParameter))
             continue;
-        bool hasArgumentWithLayout = std::ranges::any_of(families.members[index], [&](LayoutID member) {
+        bool hasArgumentWithLayout = types.at(families.members[index]).anyOf([&](LayoutID member) {
             return member.index() >= layouts.size() || !has(layouts[member.index()], LayoutFlags::IsTypeParameter);
         });
         if (!hasArgumentWithLayout || families.hasMembersWithoutLayout.quickGet(index))
@@ -718,18 +795,20 @@ bool WireTypeReader::computeDeclaredMembers()
 
     TellingFields tellingFields(loops, m_sections);
     steps.didFinish("telling fields"_s);
-    Vector<Vector<uint32_t>> typesMetByNames = findWireTypesMetByNames(m_build, m_sections, tellingFields);
+    Vector<Vector<LayoutID>> layoutsThatMeetTypesByNames = findLayoutsThatMeetWireTypesByNames(m_build, m_sections, tellingFields);
     steps.didFinish("types met by names"_s);
-    LayoutConversions conversions { m_sections, WTF::move(typesMetByNames), tellingFields, collectNamesOfLayoutFamilies(loops, m_sections), { } };
+    LayoutConversions conversions { m_sections, WTF::move(layoutsThatMeetTypesByNames), tellingFields, collectNamesOfLayoutFamilies(loops, m_sections), { } };
     steps.didFinish("names of families"_s);
-    LayoutFamilies families = collectLayoutFamilies(m_build, conversions);
+    // The id of a set follows arrival, here as where readTypes() unites these sets: it is only compared for equality.
+    ArenasOfWorkers arenas(m_program.types, loops);
+    LayoutFamilies families = collectLayoutFamilies(m_build, conversions, arenas);
     steps.didFinish("collect families"_s);
     // Numbers the tagged layouts after the derived layouts counted so far, and adds them to that count.
-    planTaggedLayouts(families.members, tellingFields);
+    planTaggedLayouts(arenas, families.members, tellingFields);
     steps.didFinish("plan tagged layouts"_s);
     conversions.taggedFamilies = m_program.taggedFamilies.span();
     addNamesOfTaggedFamilies(conversions.names, m_sections, conversions.taggedFamilies);
-    removeFamilyMembersThatLackRequiredNames(loops, conversions.names, families);
+    removeFamilyMembersThatLackRequiredNames(loops, arenas, conversions.names, families);
     steps.didFinish("remove members that lack names"_s);
 
     if (std::optional<InternalError> error = findWireTypeWithInvalidLists(loops, m_sections, numberOfLayouts + m_numberOfDerivedLayouts)) {
@@ -737,27 +816,37 @@ bool WireTypeReader::computeDeclaredMembers()
         return false;
     }
     steps.didFinish("lists of types are valid"_s);
-    Vector<MemberOutsideFamily> outside = findConversionsOutsideFamilies(loops, conversions, families);
+    Vector<MemberOutsideFamily> outside = findConversionsOutsideFamilies(loops, m_program.types, conversions, families);
     steps.didFinish("families are closed"_s);
     if (!outside.isEmpty()) {
         MemberOutsideFamily first = outside.first();
         m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::FamilyNotClosed, .layout = first.member, .count = first.type, .detail = makeString("the type is L"_s, first.type) });
         return false;
     }
-    m_typeParametersWithoutFamily = findTypeParametersWithoutFamily(layouts, families);
+    m_typeParametersWithoutFamily = findTypeParametersWithoutFamily(m_program.types, layouts, families);
 
+    Vector<LayoutID> layoutsNeverAllocated;
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (has(layouts[index], LayoutFlags::IsNeverAllocated))
+            layoutsNeverAllocated.append(LayoutID(index));
+    }
+    LayoutSetID allNeverAllocated = arenas.of(0).layoutSets().ofSorted(layoutsNeverAllocated.span());
     Vector<uint8_t> isViewWithoutLayouts;
     isViewWithoutLayouts.fill(static_cast<uint8_t>(0), numberOfLayouts);
-    forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
-        Vector<LayoutID>& members = families.members[index];
-        members.removeAllMatching([&](LayoutID member) {
+    forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index, unsigned worker) {
+        LayoutSetID& members = families.members[index];
+        LayoutSets& sets = arenas.of(worker).layoutSets();
+        // Most families are a few layouts, all of them allocated.
+        LayoutSets::View before = sets.at(members);
+        bool holdsOneNeverAllocated = !before.isList() || before.anyOf([&](LayoutID member) {
             return member.index() < numberOfLayouts && has(layouts[member.index()], LayoutFlags::IsNeverAllocated);
         });
-        if (members.isEmpty()) {
+        if (holdsOneNeverAllocated)
+            members = sets.differenceOf(members, allNeverAllocated);
+        if (!members) {
             isViewWithoutLayouts[index] = 1;
-            members.append(LayoutID(index));
+            members = LayoutSets::of(LayoutID(index));
         }
-        ASSERT(std::ranges::adjacent_find(members, std::ranges::greater_equal { }) == members.end());
     });
     m_viewsWithoutLayouts = BitVector(numberOfLayouts);
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
@@ -773,20 +862,11 @@ bool WireTypeReader::computeDeclaredMembers()
     // The layout of closures comes last. No type of the wire names it.
     ++m_numberOfDerivedLayouts;
 
-    // The id of a set follows arrival, here as where readTypes() unites these sets: it is only compared for equality.
-    constexpr uint32_t familiesPerTask = 64;
-    ArenasOfWorkers arenas(m_program.types, loops);
+    m_declaredMembers = WTF::move(families.members);
     m_declaredMembers.grow(numberOfLayouts + m_numberOfDerivedLayouts);
-    forEachIndexInParallel(loops, (numberOfLayouts + familiesPerTask - 1) / familiesPerTask, [&](unsigned task, unsigned worker) {
-        LayoutSets& layoutSets = arenas.of(worker).layoutSets();
-        for (uint32_t index = task * familiesPerTask, end = std::min(numberOfLayouts, index + familiesPerTask); index < end; ++index)
-            m_declaredMembers[index] = layoutSets.ofSorted(families.members[index].span());
-    });
     for (uint32_t index = 0; index < m_numberOfDerivedLayouts; ++index)
         m_declaredMembers[numberOfLayouts + index] = LayoutSets::of(LayoutID(numberOfLayouts + index));
-    steps.didFinish("intern the families"_s);
-    destroyLists(loops, families.members);
-    destroyLists(loops, conversions.typesMetByNames);
+    destroyLists(loops, conversions.layoutsThatMeetTypesByNames);
     steps.didFinish("free the lists"_s);
     return true;
 }

@@ -3,6 +3,7 @@
 # Each call by itself makes members x calls: 166,689 edges and 164,003 observers here, and four times that with twice the classes.
 # class A { m() {} static make() {} }  class B1 extends A { m() {} static make() {} } ..  function f(x) { return x.m(); } f(new B7); f(new B1); ..  function g(C) { return C.make(); } g(B7); g(B1); ..
 # RUN: link counts mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: counts flow | nodes {{*}} | edges 8292 | observers 4008 |
 # CHECK: counts who may name a function | groups 1 | referrers 2409 |
 

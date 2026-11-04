@@ -95,16 +95,26 @@ String quotedTextOfFailedExpression(VM& vm)
     return quoted;
 }
 
-// `spelled` stands where the engine quotes the source text of the expression that failed, unless the image holds that text.
+// `spelled` stands where the engine quotes the source text of the expression that failed, unless the image holds that text. Null: nothing is spelled.
 static JSObject* createTypeErrorQuoting(JSGlobalObject* globalObject, JSValue value, const String& description, ASCIILiteral complaint, ErrorInstance::SourceAppender appender, const String& spelled)
 {
     String expression = quotedTextOfFailedExpression(globalObject->vm());
     if (expression.isNull())
         expression = spelled;
     String message = tryMakeString(description, ' ', complaint);
-    if (description.isNull() || expression.isNull() || message.isNull()) [[unlikely]]
+    if (description.isNull() || message.isNull()) [[unlikely]]
         return createOutOfMemoryError(globalObject);
+    if (expression.isNull())
+        return createTypeError(globalObject, message);
     return createTypeError(globalObject, appender(message, expression, runtimeTypeForValue(value), ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource));
+}
+
+// The engine quotes a call that failed whatever Error.stackTraceLimit is, and anything else only in an error whose trace has a frame: ErrorInstance::finishCreation().
+static JSObject* createNotAnObjectErrorQuoting(JSGlobalObject* globalObject, JSValue base, const String& description, const String& spelled)
+{
+    if (!globalObject->stackTraceLimit().value_or(0))
+        return JSC::createNotAnObjectError(globalObject, base);
+    return createTypeErrorQuoting(globalObject, base, description, "is not an object"_s, defaultSourceAppender, spelled);
 }
 
 // `o.name`, `o.#name`. Any other key goes in brackets: `o["two words"]`.
@@ -130,7 +140,7 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, Str
     if (member.isNull())
         return JSC::createNotAnObjectError(globalObject, base);
     String description = describeForErrorMessage(globalObject, base);
-    return createTypeErrorQuoting(globalObject, base, description, "is not an object"_s, defaultSourceAppender, spellMemberInErrorMessage(description, member));
+    return createNotAnObjectErrorQuoting(globalObject, base, description, spellMemberInErrorMessage(description, member));
 }
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier& member)
@@ -140,7 +150,7 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, con
     if (!member.isSymbol())
         return createNotAnObjectError(globalObject, base, StringView(member.impl()));
     String description = describeForErrorMessage(globalObject, base);
-    return createTypeErrorQuoting(globalObject, base, description, "is not an object"_s, defaultSourceAppender, tryMakeString(description, "[Symbol("_s, StringView(member.impl()), ")]"_s));
+    return createNotAnObjectErrorQuoting(globalObject, base, description, tryMakeString(description, "[Symbol("_s, StringView(member.impl()), ")]"_s));
 }
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSValue key)
@@ -152,7 +162,7 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSV
     String descriptionOfKey = describeForErrorMessage(globalObject, key);
     if (descriptionOfKey.isNull())
         return JSC::createNotAnObjectError(globalObject, base);
-    return createTypeErrorQuoting(globalObject, base, description, "is not an object"_s, defaultSourceAppender, tryMakeString(description, '[', descriptionOfKey, ']'));
+    return createNotAnObjectErrorQuoting(globalObject, base, description, tryMakeString(description, '[', descriptionOfKey, ']'));
 }
 
 JSObject* createKeyTestOfNonObjectError(JSGlobalObject* globalObject, JSValue base)
@@ -184,14 +194,12 @@ JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue 
 {
     if (!member || member->isNull() || member->isSymbol())
         return JSC::createNotAnObjectError(globalObject, base);
-    return createTypeErrorQuoting(globalObject, base, describeForErrorMessage(globalObject, base), "is not an object"_s, defaultSourceAppender, spellMemberInErrorMessage("super"_s, StringView(member->impl())));
+    return createNotAnObjectErrorQuoting(globalObject, base, describeForErrorMessage(globalObject, base), spellMemberInErrorMessage("super"_s, StringView(member->impl())));
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
-    if (name.isEmpty())
-        return JSC::createNotAFunctionError(globalObject, callee);
-    return createTypeErrorQuoting(globalObject, callee, describeForErrorMessage(globalObject, callee), "is not a function"_s, notAFunctionSourceAppender, tryMakeString(name, "()"_s));
+    return createTypeErrorQuoting(globalObject, callee, describeForErrorMessage(globalObject, callee), "is not a function"_s, notAFunctionSourceAppender, name.isEmpty() ? String() : tryMakeString(name, "()"_s));
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, const Identifier& name)
@@ -201,14 +209,13 @@ JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, 
 
 JSObject* createParentNotAConstructorError(JSGlobalObject* globalObject, JSValue parent)
 {
-    return JSC::createNotAConstructorError(globalObject, parent);
+    // So reads the constructor that the engine gives a derived class without one. The image has no text for it.
+    return createTypeErrorQuoting(globalObject, parent, describeForErrorMessage(globalObject, parent), "is not a constructor"_s, defaultSourceAppender, "super(...args)"_str);
 }
 
 JSObject* createNotAConstructorError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
-    if (name.isEmpty())
-        return JSC::createNotAConstructorError(globalObject, callee);
-    return createTypeErrorQuoting(globalObject, callee, describeForErrorMessage(globalObject, callee), "is not a constructor"_s, defaultSourceAppender, tryMakeString("new "_s, name));
+    return createTypeErrorQuoting(globalObject, callee, describeForErrorMessage(globalObject, callee), "is not a constructor"_s, defaultSourceAppender, name.isEmpty() ? String() : tryMakeString("new "_s, name));
 }
 
 void throwNotAConstructorErrorInFrameOf(JSGlobalObject* globalObject, JSFunction* function, StringView, bool)

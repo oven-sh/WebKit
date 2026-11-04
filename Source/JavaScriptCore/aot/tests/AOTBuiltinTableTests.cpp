@@ -648,8 +648,18 @@ static void testMutabilityFollowsTheLock()
 
 static void testLockedObjects()
 {
-    for (BuiltinID id : std::initializer_list<BuiltinID> { Builtins::ObjectPrototype, Builtins::RegExpPrototype, Builtins::PromisePrototype, Builtins::GeneratorPrototype, hostBuiltin("RequestPrototype"_s), hostBuiltin("ResponsePrototype"_s), hostBuiltin("BlobPrototype"_s), hostBuiltin("URLPrototype"_s), hostBuiltin("URLSearchParamsPrototype"_s), hostBuiltin("HeadersPrototype"_s) })
-        AOT_TEST_CHECK(table().at(id).flags.contains(BuiltinFlag::IsLockedObject));
+    // Nothing can be added to Object.prototype. Any other built-in object takes a new name, and keeps what it has.
+    AOT_TEST_CHECK(table().at(Builtins::ObjectPrototype).flags.contains(BuiltinFlag::IsLockedObject));
+    for (BuiltinID id : table().lockedObjects())
+        AOT_TEST_CHECK(table().canonicalID(id) == table().canonicalID(Builtins::ObjectPrototype));
+    for (BuiltinID id : std::initializer_list<BuiltinID> { Builtins::RegExpPrototype, Builtins::PromisePrototype, Builtins::GeneratorPrototype, Builtins::AsyncGeneratorPrototype, hostBuiltin("RequestPrototype"_s), hostBuiltin("ResponsePrototype"_s), hostBuiltin("BlobPrototype"_s), hostBuiltin("URLPrototype"_s), hostBuiltin("URLSearchParamsPrototype"_s), hostBuiltin("HeadersPrototype"_s) }) {
+        AOT_TEST_CHECK(table().at(id).flags.contains(BuiltinFlag::HasLockedMembers) && !table().at(id).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::IsClosedToOtherNames }));
+        AOT_TEST_CHECK(table().hasLockedPrototypeLink(id) && table().closesIndexKeys(id));
+        for (BuiltinID member : table().membersOf(id))
+            AOT_TEST_CHECK(table().at(member).mutability == BuiltinMutability::AlwaysLocked || table().at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances));
+        for (BuiltinName name : std::initializer_list<BuiltinName> { BuiltinNames::then, table().nameOf(WellKnownSymbol::ToPrimitive) })
+            AOT_TEST_CHECK(table().findOwnMember(id, name) || table().isClosedKey(id, name));
+    }
     AOT_TEST_CHECK(table().at(Builtins::ObjectPrototype).flags.contains(BuiltinFlag::ListsAllMembers) && table().at(Builtins::ArrayPrototype).flags.contains(BuiltinFlag::ListsAllMembers));
     for (BuiltinID id : std::initializer_list<BuiltinID> { Builtins::GlobalThis, Builtins::Math, Builtins::Array, Builtins::ArrayPrototype, Builtins::Object, Builtins::Map, Builtins::MapPrototype, Builtins::Promise, Builtins::Symbol, Builtins::IteratorPrototype, Builtins::ArrayIteratorPrototype, Builtins::Bun, hostBuiltin("Request"_s) })
         AOT_TEST_CHECK(!table().at(id).flags.contains(BuiltinFlag::IsLockedObject));

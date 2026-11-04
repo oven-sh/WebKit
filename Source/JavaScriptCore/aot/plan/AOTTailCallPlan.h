@@ -39,10 +39,9 @@ JS_EXPORT_PRIVATE BitVector findFunctionsThatEndTheirTailCalls(const Program&, c
 // For results-in-parts. Each call that the function makes in tail position is written as a direct call of the function itself or enters what ends its tail calls:
 // so it may return in a form that its tail callees do not return in, because each of those calls comes back. False claims nothing.
 JS_EXPORT_PRIVATE bool makesOnlyTailCallsThatEnd(const Program&, const Facts&, const BitVector& functionsThatEndTheirTailCalls, FunctionID);
-// No row of calls of the built-in returns what a callback gives, so nothing that it calls stands in its place: a call of it comes back. False claims nothing.
-bool callsOfBuiltinComeBack(const Program&, BuiltinID);
-// linked() or held() lists a call of the function by itself in tail position. AN EXPECTATION: it opens the head of a body that comes round and proves nothing. False: no head.
-JS_EXPORT_PRIVATE bool callsItselfInTailPosition(const Facts&, FunctionID);
+// checkPlan(), where the build validates. By a graph of its own, off linked() and the summaries: round a ring of calls in tail position that each name their one callee all bodies return in one form,
+// and in a raw one only where each of those calls is written as a direct one: a unit that returns a raw value cannot leave by a call of a value. Else InternalErrorKind::PlacementCheckFailed, with the caller and the call.
+void checkFormsRoundRingsOfTailCalls(const Program&, const Facts&, const Plan&, BuildContext&);
 // TailCallPlan::functionsThatSaveRegistersOfCallers. The conventions are whole: guards are set. It asks stackWordsReservedByCallersOf().
 BitVector findFunctionsThatSaveRegistersOfCallers(const Program&, const Facts&, const CallingConventions&);
 // planProgram(), behind the guards and in front of the fused entries. In this order: ends of tail calls > registers > stack tests. With DirectCalls withheld: nothing.

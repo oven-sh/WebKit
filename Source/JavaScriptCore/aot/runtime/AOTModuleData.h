@@ -55,6 +55,7 @@ struct ModuleData {
         IsEntryPoint = 1 << 6,
         KeepsError = 1 << 7,
         HasDeferredRequest = 1 << 8,
+        IsModuleToImports = 1 << 8,
         HasValue = 1 << 9,
         NeedsEvaluation = 1 << 10,
         IsLinkedWithEntryPoint = 1 << 11,
@@ -117,7 +118,9 @@ struct ModuleData {
     bool keepsError() const { return has(Flag::KeepsError); }
     // The build found an error in the text of the file, and the body throws it. A load that comes to the file ends with that error and loads nothing that the file imports.
     bool throwsAtLoad() const { return bodyThrowsAtLoad; }
-    bool hasDeferredRequest() const { return has(Flag::HasDeferredRequest); }
+    bool hasDeferredRequest() const { return kind != ModuleKind::CommonJs && has(Flag::HasDeferredRequest); }
+    // A require() reads the file as CommonJS by its name. Its text does not say what it is, and to the loader behind `import` it is an ES module: where a statement imports it, it runs in its turn among the modules.
+    bool isModuleToImports() const { return kind == ModuleKind::CommonJs && has(Flag::IsModuleToImports); }
     bool hasValue() const { return has(Flag::HasValue); }
     bool needsEvaluation() const { return has(Flag::NeedsEvaluation); }
     bool isLinkedWithEntryPoint() const { return has(Flag::IsLinkedWithEntryPoint); }
@@ -580,6 +583,7 @@ private:
     v(evaluationRequests, uint16_t) \
     v(entryPointLinkPlan, LinkPlanStepData) \
     v(moduleExports, ModuleExportData) \
+    v(modulesThatDeclareExports, uint32_t) \
     v(indirectExports, IndirectExportData) \
     v(syntheticExports, SyntheticExportData) \
     v(requiredNames, RequiredNameData) \

@@ -212,7 +212,6 @@ private:
 };
 
 struct BindingOfStars {
-    Object* sourceOfGetter { nullptr };
     Object* holderOfField { nullptr };
     const FieldData* field { nullptr };
 };
@@ -237,6 +236,29 @@ static Vector<Star, 8> starsInOrderUpTo(Star last)
     return stars;
 }
 
+// What is made for the stars of a target is made of what was made for the stars of their sources, so those come first. By a list, not by calls: a chain of barrels may be longer than the stack.
+static void makeForSourcesFirst(Star last, const LayoutData& layoutOfTarget, const Invocable<bool(Star)> auto& isMade, const Invocable<void(Star, const LayoutData&)> auto& make)
+{
+    struct Pending {
+        Star last;
+        const LayoutData* layoutOfTarget;
+        bool hasListedSources { false };
+    };
+    Vector<Pending, 8> pending { Pending { last, &layoutOfTarget } };
+    while (!pending.isEmpty()) {
+        Pending current = pending.last();
+        if (!current.last || isMade(current.last) || current.hasListedSources) {
+            pending.removeLast();
+            if (current.last && !isMade(current.last))
+                make(current.last, *current.layoutOfTarget);
+            continue;
+        }
+        pending.last().hasListedSources = true;
+        for (Star star = current.last; star && !isMade(star); star = star.previous())
+            pending.append(Pending { star.lastStarOfSource(), &star.source().layout() });
+    }
+}
+
 static UniquedStringImpl* nameOfBindingKey(JSString* key)
 {
     return static_cast<UniquedStringImpl*>(key->tryGetValueImpl());
@@ -247,8 +269,6 @@ static void forEachBindingOfStar(JSCellButterfly* bindings, const Invocable<void
     for (unsigned i = 0; i < bindings->length() && bindings->get(i); i += 2)
         functor(asString(bindings->get(i)), uncheckedDowncast<GetterSetter>(bindings->get(i + 1)));
 }
-
-static void bindStarsUpTo(VM&, State&, JSGlobalObject* realm, Star last, const LayoutData& layoutOfTarget);
 
 static GetterSetter* createAccessorOfStar(VM& vm, State& state, JSGlobalObject* realm, Star star, JSString* key)
 {
@@ -265,7 +285,6 @@ static JSCellButterfly* bindStar(VM& vm, State& state, JSGlobalObject* realm, St
 {
     RuntimeLayoutTable& layouts = state.objects->layouts;
     const LayoutData& layout = star.source().layout();
-    bindStarsUpTo(vm, state, realm, star.lastStarOfSource(), layout);
     Vector<std::pair<JSString*, GetterSetter*>, 32> bindingsOfSource;
     for (Star starOfSource : starsInOrderUpTo(star.lastStarOfSource())) {
         forEachBindingOfStar(starOfSource.bindings(), [&](JSString* key, GetterSetter* accessor) {
@@ -309,10 +328,8 @@ static JSCellButterfly* bindStar(VM& vm, State& state, JSGlobalObject* realm, St
     return bindings;
 }
 
-static void bindStarsUpTo(VM& vm, State& state, JSGlobalObject* realm, Star last, const LayoutData& layoutOfTarget)
+static void bindStarsWhoseSourcesAreBound(VM& vm, State& state, JSGlobalObject* realm, Star last, const LayoutData& layoutOfTarget)
 {
-    if (!last || last.bindings())
-        return;
     RuntimeLayoutTable& layouts = state.objects->layouts;
     NamesOfStarTarget namesOfTarget;
     for (const FieldData& field : layoutOfTarget.fields()) {
@@ -329,6 +346,15 @@ static void bindStarsUpTo(VM& vm, State& state, JSGlobalObject* realm, Star last
             namesOfTarget.add(nameOfBindingKey(key));
         });
     }
+}
+
+static void bindStarsUpTo(VM& vm, State& state, JSGlobalObject* realm, Star last, const LayoutData& layoutOfTarget)
+{
+    makeForSourcesFirst(last, layoutOfTarget, [](Star star) {
+        return !!star.bindings();
+    }, [&](Star upTo, const LayoutData& layout) {
+        bindStarsWhoseSourcesAreBound(vm, state, realm, upTo, layout);
+    });
 }
 
 static InternalFieldTuple* pendingStarsOf(const Object& object)
@@ -457,33 +483,9 @@ static bool orderListsField(State& state, const LayoutData& layout, uint32_t ord
 }
 
 static PropertyTable* listNamesOfStarsUpTo(VM&, State&, Star last, const LayoutData& layoutOfTarget);
-static BindingOfStars findBindingOfStars(VM&, State&, Star last, const LayoutData& layoutOfTarget, UniquedStringImpl* name);
 
-// What the star binds the name to if the target lacks the name.
-static BindingOfStars findBindingOfStar(VM& vm, State& state, Star star, UniquedStringImpl* name)
-{
-    RuntimeLayoutTable& layouts = state.objects->layouts;
-    Object& source = star.source();
-    const LayoutData& layout = source.layout();
-    const FieldData* field = layouts.field(vm, layout, name);
-    if (field && !field->isPrivate() && orderListsField(state, layout, star.orderAndCountOfSource(), *field)) {
-        if (field->flags & fieldIsNotEnumerable || !layouts.hasStringKey(*field))
-            return { };
-        return { &source, &source, field };
-    }
-    BindingOfStars found = findBindingOfStars(vm, state, star.lastStarOfSource(), layout, name);
-    if (found.field && (star.rule() & starRulesOfReuse) != starRulesOfReuse)
-        found.sourceOfGetter = &source;
-    return found;
-}
-
-static bool starBindsName(VM& vm, State& state, Star star, UniquedStringImpl* name)
-{
-    return name != vm.propertyNames->defaultKeyword.impl() && findBindingOfStar(vm, state, star, name).field;
-}
-
-// The list of the names says which star binds the name, so the search goes down one road. Barrels that share their sources have more roads than anybody can walk.
-static BindingOfStars findBindingOfStars(VM& vm, State& state, Star last, const LayoutData& layoutOfTarget, UniquedStringImpl* name)
+// The list of the names says which star binds the name, so a search goes down one road. Barrels that share their sources have more roads than anybody can walk.
+static Star starThatBindsName(VM& vm, State& state, Star last, const LayoutData& layoutOfTarget, UniquedStringImpl* name)
 {
     if (!last)
         return { };
@@ -493,7 +495,35 @@ static BindingOfStars findBindingOfStars(VM& vm, State& state, Star last, const 
     Star star = last;
     for (Star previous = star.previous(); previous && entry <= previous.numberOfNamesUpToHere(); previous = star.previous())
         star = previous;
-    return findBindingOfStar(vm, state, star, name);
+    return star;
+}
+
+// What the star binds the name to if the target lacks the name.
+static BindingOfStars findBindingOfStar(VM& vm, State& state, Star star, UniquedStringImpl* name)
+{
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    while (star) {
+        Object& source = star.source();
+        const LayoutData& layout = source.layout();
+        const FieldData* field = layouts.field(vm, layout, name);
+        if (field && !field->isPrivate() && orderListsField(state, layout, star.orderAndCountOfSource(), *field)) {
+            if (field->flags & fieldIsNotEnumerable || !layouts.hasStringKey(*field))
+                return { };
+            return { &source, field };
+        }
+        star = starThatBindsName(vm, state, star.lastStarOfSource(), layout, name);
+    }
+    return { };
+}
+
+static bool starBindsName(VM& vm, State& state, Star star, UniquedStringImpl* name)
+{
+    return name != vm.propertyNames->defaultKeyword.impl() && findBindingOfStar(vm, state, star, name).field;
+}
+
+static BindingOfStars findBindingOfStars(VM& vm, State& state, Star last, const LayoutData& layoutOfTarget, UniquedStringImpl* name)
+{
+    return findBindingOfStar(vm, state, starThatBindsName(vm, state, last, layoutOfTarget, name), name);
 }
 
 // A field that the target gets later is listed behind the names of the star: the run time lists a field that an object with extra properties gets, and asks numberOfKeysOfPendingStars() for it.
@@ -606,9 +636,12 @@ using CellsSeen = UncheckedKeyHashSet<JSCell*>;
 // Each star once. Whoever has seen a star has seen the stars before it and all that lies behind them.
 static void forEachStarUpToAndBehind(Star last, CellsSeen& seen, const Invocable<void(Star)> auto& functor)
 {
-    for (Star star = last; star && seen.add(star.record()).isNewEntry; star = star.previous()) {
-        functor(star);
-        forEachStarUpToAndBehind(star.lastStarOfSource(), seen, functor);
+    Vector<Star, 8> pending { last };
+    while (!pending.isEmpty()) {
+        for (Star star = pending.takeLast(); star && seen.add(star.record()).isNewEntry; star = star.previous()) {
+            functor(star);
+            pending.append(star.lastStarOfSource());
+        }
     }
 }
 
@@ -676,7 +709,7 @@ static void forEachNameOfSourceOfStar(VM& vm, State& state, Star star, const Inv
     RuntimeLayoutTable& layouts = state.objects->layouts;
     const LayoutData& layout = star.source().layout();
     Star lastStarOfSource = star.lastStarOfSource();
-    PropertyTable* namesOfStars = lastStarOfSource ? listNamesOfStarsUpTo(vm, state, lastStarOfSource, layout) : nullptr;
+    PropertyTable* namesOfStars = lastStarOfSource ? lastStarOfSource.namesOfStars() : nullptr;
     size_t numberOfNamesOfStars = lastStarOfSource ? lastStarOfSource.numberOfNamesUpToHere() : 0;
     auto nameOfStars = [&](size_t index) {
         functor(namesOfStars->keyOfEntry(static_cast<unsigned>(index) + 1));
@@ -693,10 +726,8 @@ static void forEachNameOfSourceOfStar(VM& vm, State& state, Star star, const Inv
 }
 
 // The names that bindStarsUpTo() binds, in its order. What a star binds is settled at the star, so each star is listed once, behind the stars before it.
-static PropertyTable* listNamesOfStarsUpTo(VM& vm, State& state, Star last, const LayoutData& layoutOfTarget)
+static void listNamesOfStarsWhoseSourcesAreListed(VM& vm, State& state, Star last, const LayoutData& layoutOfTarget)
 {
-    if (PropertyTable* names = last.namesOfStars())
-        return names;
     Vector<Star, 8> starsToList;
     Star lastListed = last;
     for (; lastListed && !lastListed.namesOfStars(); lastListed = lastListed.previous())
@@ -716,7 +747,18 @@ static PropertyTable* listNamesOfStarsUpTo(VM& vm, State& state, Star last, cons
         });
         star.setNamesOfStars(vm, names);
     }
-    return names;
+}
+
+static PropertyTable* listNamesOfStarsUpTo(VM& vm, State& state, Star last, const LayoutData& layoutOfTarget)
+{
+    if (PropertyTable* names = last.namesOfStars())
+        return names;
+    makeForSourcesFirst(last, layoutOfTarget, [](Star star) {
+        return !!star.namesOfStars();
+    }, [&](Star upTo, const LayoutData& layout) {
+        listNamesOfStarsWhoseSourcesAreListed(vm, state, upTo, layout);
+    });
+    return last.namesOfStars();
 }
 
 std::optional<uint32_t> numberOfKeysOfPendingStars(VM& vm, const Object& target)
@@ -789,7 +831,7 @@ std::optional<Object*> sourceOfPendingBinding(VM& vm, const Object& target, Uniq
     pendingStars->putInternalField(vm, searchesLeftField, jsNumber(searchesLeft - 1));
     if (name == vm.propertyNames->defaultKeyword.impl())
         return nullptr;
-    return findBindingOfStars(vm, target.state(), last, target.layout(), name).sourceOfGetter;
+    return findBindingOfStars(vm, target.state(), last, target.layout(), name).holderOfField;
 }
 
 JSObject* extraPropertiesIfMade(const Object& object)

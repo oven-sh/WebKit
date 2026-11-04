@@ -3,6 +3,7 @@
 # function sum(o: Box, n: number) { let s = 0; for (let i = 0; i < n; i++) s = (s + o.x) | 0; return s; }
 # console.log(sum(new Box(2), 5));
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: [[read]]: {{*}} = GetSlot {{*}}key="x"
 # CHECK-NEXT: [[number]]: {{*}} @OptionalDouble = Box [[read]]
@@ -11,6 +12,7 @@
 # CHECK: = Add {{*}}, [[number]] form=Numbers
 # With loop invariants withheld each turn reads.
 # RUN(WITHHELD): walk f1 mechanisms=all-LoopInvariants
+# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-LABEL: code f1:Body
 # WITHHELD-NOT: GetSlot
 # WITHHELD: isLoopHead=true

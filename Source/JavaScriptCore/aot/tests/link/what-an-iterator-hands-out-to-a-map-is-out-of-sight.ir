@@ -22,6 +22,7 @@
 # -- end of source
 # records of 270f3fabad82501f
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: function f2 cycle=
 # CHECK: function f3 cycle=
 

@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBarrierEmitter.h"
 #include "AOTCellFormat.h"
 #include "AOTClosure.h"
 #include "AOTCodeRecords.h"
@@ -133,11 +132,6 @@ void HintEmitter::release(ValueID operand)
             jit.move(CCallHelpers::TrustedImm32(0), reg.gpr());
         });
     });
-}
-
-void HintEmitter::generateRememberOwner(const ValueContext& value)
-{
-    emitter<BarrierEmitter>().barrierBehindStores(value, value->objectOperand());
 }
 
 // The header names no cell, nor do the order word and the shape word of an object. The stores go by the heaps of the fields, so they stay behind whatever reads a field back.

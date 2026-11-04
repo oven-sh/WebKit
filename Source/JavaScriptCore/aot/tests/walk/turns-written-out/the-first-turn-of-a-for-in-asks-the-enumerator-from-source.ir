@@ -7,11 +7,11 @@
 # CHECK: = HasKeyOrder {{*}} layout=L0 fields=[0, 1, 2]
 # CHECK: [[none]]: {{*}} = HasNoExtraProperties
 # CHECK-NEXT: Branch [[none]] -> taken
-# CHECK: [[current]]: {{*}} = IsEnumeratorCurrent
+# CHECK: [[current]]: {{*}} = GreaterEq {{*}} form=Integers
 # CHECK-NEXT: Branch [[current]] -> taken
-# One question for all the turns: nothing in them changes a key.
+# The open has counted the names that are current where it answers, none where it has entered the run time: one compare, and no turn asks the enumerator: nothing in them changes a key.
 # RUN(ONCE): walk f2 mechanisms=all
-# ONCE-COUNT-1: = IsEnumeratorCurrent
+# ONCE-COUNT-1: = GreaterEq
 # ONCE-NOT: = IsEnumeratorCurrent
 # -- source: the-first-turn-of-a-for-in-asks-the-enumerator-from-source.ts
 # declare function sink(...values: unknown[]): void;

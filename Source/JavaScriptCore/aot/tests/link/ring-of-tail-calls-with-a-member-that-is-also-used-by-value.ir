@@ -1,6 +1,6 @@
 # round a ring of calls in tail position all members return in one form, or no call of the ring can be a jump. `odd` is also handed to `map`: a call of it is not listed, so it returns boxed values: then `even` does too.
 # with a raw Int32 out of `even` alone each turn of the ring left two frames: even(4000000) threw a RangeError, where plain Bun answers 1.
-# a ring of which no member is used by value keeps its raw form: `up` and `down`.
+# `up` and `down`, of which neither is used by value, return boxed values too: their calls are calls of values: ring-of-tail-calls-returns-raw-values-only-where-each-call-is-written-direct.ir
 # f1 = even, f2 = odd, f3 = up, f4 = down
 # -- source: ring-of-tail-calls-with-a-member-that-is-also-used-by-value.ts
 # declare function sink(...values: unknown[]): void;
@@ -14,14 +14,13 @@
 # RUN: link functions mechanisms=all
 # CHECK: function f1 {{*}}ring-by-value
 # CHECK: function f2 {{*}}ring-by-value
-# RUN(LISTED): link functions mechanisms=all
-# LISTED-NOT: function f3 {{*}}ring-by-value
-# LISTED-NOT: function f4 {{*}}ring-by-value
+# CHECK: function f3 {{*}}ring-by-value
+# CHECK: function f4 {{*}}ring-by-value
 # RUN(PLAN): plan units mechanisms=all
 # PLAN: unit f1:Body ({{*}}) -> (JSValue)
 # PLAN: unit f2:Body ({{*}}) -> (JSValue)
-# PLAN: unit f3:Body ({{*}}) -> (Int32)
-# PLAN: unit f4:Body ({{*}}) -> (Int32)
+# PLAN: unit f3:Body ({{*}}) -> (JSValue)
+# PLAN: unit f4:Body ({{*}}) -> (JSValue)
 # RUN(WALK): walk f1 f2 f3 f4 mechanisms=all
 # WALK-LABEL: code f1:Body
 # WALK: ReturnCall

@@ -14,12 +14,13 @@
 # if (which === 4) print(readsField(new Holder()));
 # if (which === 5) print(storesVariable(), readsVariable());
 # if (which === 6) print(captures()());
-# if (which === 7) print([id(7), id(8)].sort(compares).join());
+# if (which === 7) print(new Map().getOrInsertComputed(id(7), compares));
 # print("went on");
 # testing=CheckProofsAtRunTime: what Link has proven of a place is held against the values that go into it, or that come out of it where others than compiled code fill it, and the process ends there and says where.
 # THE RED CONTROL OF THAT NET. The lie, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so it proves too much of every place that the value flows to.
-# Without the net, and with nothing copied in line, every one of the first six prints "undefined" for a number or a text and goes on, and the seventh sorts the wrong way round, and nothing shows it.
+# Without the net, and with nothing copied in line, every one of the first six prints "undefined" for a number or a text and goes on, and the seventh prints 0 for NaN, and nothing shows it.
 # The seventh: native code enters the function by value, through the few moves that the emitter lays in front of the body, for which no operation stands.
+# Map.prototype.getOrInsertComputed is native code whatever its operands are. A sort is not: a list as made and a comparator that is a function enter the sort of the library, and compiled code calls the comparator.
 # OPTIONS: testing=CheckProofsAtRunTime,UnseenCodeAnswersUndefined
 # RUN(ENDS): run-in-shell mechanisms=-Inlining globalThis.which = 1;
 # ENDS: AOT: f{{*}} at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
@@ -192,28 +193,23 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b14():
     v85 = Builtin builtin=GlobalThis @827
     v86 = PropGet v85 key="print" [isFreeName] @827
-    v87 = Builtin builtin=GlobalThis @834
-    v88 = PropGet v87 key="id" [isFreeName] @834
-    v89 = Integer integer=7 @837
-    v90 = Call v88, -, v89 calleeName="id" @834
-    v91 = Builtin builtin=GlobalThis @841
-    v92 = PropGet v91 key="id" [isFreeName] @841
-    v93 = Integer integer=8 @844
-    v94 = Call v92, -, v93 calleeName="id" @841
-    v95 = NewArray v90, v94 contents=anything @833
-    v96 = PropGet v95 key="sort" @833
-    v97 = Call v96, v95, v15 calleeKey="sort" calleeName="sort" @848
-    v98 = PropGet v97 key="join" @861
-    v99 = Call v98, v97 calleeKey="join" calleeName="join" @863
-    v100 = Call v86, -, v99 calleeName="print" @827
+    v87 = Builtin builtin=Map @833
+    v88 = Construct v87 calleeName="Map" @833
+    v89 = PropGet v88 key="getOrInsertComputed" @833
+    v90 = Builtin builtin=GlobalThis @834
+    v91 = PropGet v90 key="id" [isFreeName] @834
+    v92 = Integer integer=7 @837
+    v93 = Call v91, -, v92 calleeName="id" @834
+    v94 = Call v89, v88, v93, v15 calleeKey="getOrInsertComputed" calleeName="getOrInsertComputed" @848
+    v95 = Call v86, -, v94 calleeName="print" @827
     Jump -> next b15() @827
   b15():
-    v101 = Builtin builtin=GlobalThis @872
-    v102 = PropGet v101 key="print" [isFreeName] @872
-    v103 = String string="went on" @878
-    v104 = Call v102, -, v103 calleeName="print" @872
-    v105 = Undefined @872
-    Return v105 @872
+    v96 = Builtin builtin=GlobalThis @872
+    v97 = PropGet v96 key="print" [isFreeName] @872
+    v98 = String string="went on" @878
+    v99 = Call v97, -, v98 calleeName="print" @872
+    v100 = Undefined @872
+    Return v100 @872
 }
 function f1 name="endsInIt" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():

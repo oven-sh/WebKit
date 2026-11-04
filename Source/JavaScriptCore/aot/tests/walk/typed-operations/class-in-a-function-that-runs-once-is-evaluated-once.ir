@@ -2,10 +2,9 @@
 # The function object is made in a function and not in the body of the module. Link proves that the function runs at most once (one call may enter it, outside of loops, in the body of a module that the loader enters once),
 # so the class is evaluated at most once: it has one prototype object. The clock of the order of start follows that one call in place, so the name is laid ahead of every object: no guard of the name, and no read.
 # function run(n) { var t = 0; for (var i = 0; i < n; i++) t += new Point(i).get(); return t; }
+# SINCE 11-04 (R257) THE CLOCK OF START SAYS OF NO NAME THAT IT IS LAID AHEAD: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no program that we are judged by. What this test told apart by `laid-ahead` it no longer tells.
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
-# CHECK-NOT: AreMembersUnchanged
-# CHECK-NOT: = PropGet {{*}}key="get"
 # CHECK: Return
 # function make() { function Twice(x) { this.y = x; } Twice.prototype.get = function () { return this.y; }; return Twice; }  var A = make(), B = make(): two function objects, two prototype objects: no guard speaks for both.
 # RUN(TWICE): walk f3 mechanisms=all

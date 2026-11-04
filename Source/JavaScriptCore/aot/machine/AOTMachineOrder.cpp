@@ -92,6 +92,88 @@ void Order::replaceJumpWithBranch(Block* from, const Operation* phi, bool isInve
     end->m_children[0] = tested;
 }
 
+void Order::makePhiOfTruncationBehindJoin(Block* join, Operation* truncation)
+{
+    Block* passing = truncation->owner();
+    Procedure& procedure = join->procedure();
+    Arena& arena = procedure.arena();
+    Operation* wide = truncation->m_children[0];
+    RELEASE_ASSERT(truncation->opcode() == Trunc && truncation->type() == Int32 && truncation->useCount());
+    RELEASE_ASSERT(wide->opcode() == Phi && wide->owner() == join && passing != join && passing->m_phis.isEmpty() && passing->numberOfIncomingEdges() == 1);
+
+    Operation* end = join->m_operations.takeLast();
+    Operation* own = arena.create<Operation>(Trunc, Int32, truncation->origin());
+    own->m_auxiliary = 1;
+    own->m_children[0] = wide;
+    // As gainUse() would: the Upsilon below reads it, and is no Trunc.
+    own->m_useCount = 1;
+    own->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfIsRead);
+    own->m_owner = join;
+    own->m_indexInBlock = join->m_operations.size();
+    procedure.didCreate(own);
+    join->m_operations.append(arena, own);
+    end->m_indexInBlock = join->m_operations.size();
+    join->m_operations.append(arena, end);
+
+    uint32_t size = passing->m_operations.size();
+    for (uint32_t index = truncation->m_indexInBlock + 1; index < size; ++index) {
+        Operation* moved = passing->m_operations[index];
+        moved->m_indexInBlock = index - 1;
+        passing->m_operations[index - 1] = moved;
+    }
+    passing->m_operations.shrink(size - 1);
+
+    // A Trunc leaves above the word whatever lies there.
+    truncation->m_opcode = Phi;
+    truncation->m_auxiliary = 0;
+    truncation->m_children[0] = nullptr;
+    truncation->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
+    truncation->m_indexInBlock = 0;
+    passing->m_phis.append(arena, truncation);
+
+    Operation* upsilon = arena.create<Operation>(Upsilon, Void, truncation->origin());
+    upsilon->m_auxiliary = 1;
+    upsilon->m_children[0] = own;
+    upsilon->m_payload.phi = truncation;
+    upsilon->m_owner = join;
+    upsilon->m_indexInBlock = join->m_upsilons.size();
+    procedure.didCreate(upsilon);
+    join->m_upsilons.append(arena, upsilon);
+}
+
+void Order::passJoinBy(Block* from, Block* target, Operation* phi, Operation* value)
+{
+    RELEASE_ASSERT(from->last()->opcode() == Jump && from->numSuccessors() == 1 && !phi == !value);
+    Block* join = from->successor(0).block();
+    Procedure& procedure = from->procedure();
+    Arena& arena = procedure.arena();
+
+    Vector<Operation*, 4> handedToJoin;
+    for (Operation* upsilon : from->upsilons()) {
+        if (upsilon->phi() && upsilon->phi()->owner() == join)
+            handedToJoin.append(upsilon->child(0));
+    }
+    retarget(from, 0, target);
+
+    // In front of the reads that end: the value may be read by what is read no longer.
+    if (phi) {
+        RELEASE_ASSERT(phi->opcode() == Phi && phi->owner() == target && phi->type() == value->type());
+        Operation* upsilon = arena.create<Operation>(Upsilon, Void, from->last()->origin());
+        upsilon->m_auxiliary = 1;
+        upsilon->m_children[0] = value;
+        upsilon->m_payload.phi = phi;
+        upsilon->m_owner = from;
+        upsilon->m_indexInBlock = from->m_upsilons.size();
+        procedure.didCreate(upsilon);
+        from->m_upsilons.append(arena, upsilon);
+        value->gainUse();
+        if (!handsOnClearUpperHalf(value, phi))
+            phi->m_flags |= static_cast<uint16_t>(OperationFlag::UpperHalfMayBeSet);
+    }
+    for (Operation* handed : handedToJoin)
+        handed->loseUse();
+}
+
 Block* Order::split(Block* from, unsigned successorIndex)
 {
     ASSERT(from->isTerminated());
@@ -220,6 +302,7 @@ public:
     ArenaVector<Block*> m_blocksInLayout;
     ArenaVector<BlockPlace> m_places;
     ArenaVector<Loop> m_loops;
+    uint32_t m_numberOfLoopsRotated { 0 };
     ArenaVector<RareRegion> m_rareRegions;
     unsigned m_numberOfBlocksOutsideRareRegions { 0 };
     Position m_end { 0 };
@@ -1508,6 +1591,7 @@ void BlockOrderBuilder::rotateLoops(uint32_t& beginOfMovedBlocks, uint32_t& endO
             continue;
         Block** loopBlocks = blocksInLayout + begin;
         std::rotate(loopBlocks, loopBlocks + (indexOfBest + 1 - begin), loopBlocks + (end - begin));
+        ++m_numberOfLoopsRotated;
         beginOfMovedBlocks = std::min(beginOfMovedBlocks, begin);
         endOfMovedBlocks = std::max(endOfMovedBlocks, end);
     }
@@ -1661,6 +1745,7 @@ Order* orderBlocks(Procedure& procedure)
     order->m_blocksInLayout = builder.m_blocksInLayout;
     order->m_places = builder.m_places;
     order->m_loops = builder.m_loops;
+    order->m_numberOfLoopsRotated = builder.m_numberOfLoopsRotated;
     order->m_rareRegions = builder.m_rareRegions;
     order->m_numberOfBlocksOutsideRareRegions = builder.m_numberOfBlocksOutsideRareRegions;
     order->m_end = builder.m_end;

@@ -14,6 +14,7 @@
 #include "AOTTestRuns.h"
 #include "AOTUnitedFamilies.h"
 #include <memory>
+#include <set>
 #include <span>
 #include <utility>
 #include <wtf/threads/BinarySemaphore.h>
@@ -351,6 +352,8 @@ public:
     // With its family.
     void escape(SiteID);
     bool hasEscaped(SiteID site) const { return m_sites[m_familiesOfSites.representativeOf(site.index())].hasEscaped; }
+    // What every site of the family answers with. Behind run(): a family that merges answers with another number.
+    SiteID familyOf(SiteID site) const { return SiteID(m_familiesOfSites.representativeOf(site.index())); }
     // Unseen code: what flows in escapes, what flows out is anything.
     FlowNodeID unseen() const;
     // A node of a summary. Those seen from outside answer with the nodes above, the local ones have numbers of their own behind the function's base.
@@ -376,11 +379,31 @@ public:
         uint32_t index { 0 };
         MethodKind kind { MethodKind::Method };
     };
+    // What findMembers() answers. IT HAS NO isEmpty(): for whoever asks what else may answer the lookup, "no member" and "a member that the lookup may not come to" are one case.
+    class FoundMembers {
+    public:
+        const FoundMember* begin() const LIFETIME_BOUND { return m_members.begin(); }
+        const FoundMember* end() const LIFETIME_BOUND { return m_members.end(); }
+        size_t size() const { return m_members.size(); }
+        const FoundMember& operator[](size_t index) const LIFETIME_BOUND { return m_members[index]; }
+        // Some class of the row has a member under the key.
+        bool mayAnswer() const { return !m_members.isEmpty(); }
+        // THE LOOKUP GOES ON ABOVE THE CLASSES OF THE PROGRAM: none has a member under the key, or the lookup may not come to the one that has: mayNotBeLinkedYetBelow().
+        bool lookupGoesOnAboveClasses() const { return m_lookupGoesOnAboveClasses; }
+
+    private:
+        friend class LinkFlow;
+        Vector<FoundMember, 2> m_members;
+        bool m_lookupGoesOnAboveClasses { true };
+    };
     // The member that `key` names on an instance of the layout (Prototype) or on its class object (Static): its own class's, else the nearest base's (Layout::base). A getter and a setter of one key are two members.
-    Vector<FoundMember, 2> findMembers(LayoutID, ClassSide, PropertyKeyID) const;
+    FoundMembers findMembers(LayoutID, ClassSide, PropertyKeyID) const;
     // The class or a base has a member under a computed key, or a base that is no class of the program: a lookup by name that finds nothing may still find something at run time.
     // So too, on the side of the instances, where the layout lists a field under a computed key (Field::computedKey). Such a field answers to a name that nobody knows: it holds anything, and what is stored there escapes.
     bool namesMayBeIncomplete(LayoutID, ClassSide) const;
+    // WHAT A READ UNDER `__proto__` FINDS. It is a name like any other until the lookup comes to the engine's accessor on Object.prototype: a member of the row that has the name answers in front of that.
+    // The accessor answers for `this`. Of `super.__proto__` that is the receiver and not the object that is looked at, and it may be a proxy, whose trap runs. A null layout: no class stands above the subject.
+    bool findsPrototypeLinkOfSubject(LayoutID layout, ClassSide side, PropertyKeyID key, bool hasOtherReceiver) const { return !hasOtherReceiver && !findMembers(layout, side, key).mayAnswer(); }
     // A read under a number off an instance may find something in the classes above: `get 0() {}`, `1() {}`, or a name that nobody lists.
     bool classesAnswerReadsUnderNumbers(LayoutID layout) const { return m_layoutsBelowMembersUnderNumbers.get(layout.index()) || namesMayBeIncomplete(layout, ClassSide::Prototype); }
     // A read of `key` off an instance sees the data field if the object has it by then, else the member: where a layout has both, both flow.
@@ -501,10 +524,15 @@ public:
     // Under a computed key: every field of every member.
     FlowNodeID anyFieldReadThrough(LinkType::Objects, LayoutID, FamilyID, bool keyIsNumber = false);
     FlowNodeID anyFieldStoredThrough(LinkType::Objects, LayoutID, FamilyID);
+    // `{ ...source }` on a record that lists no accessor, under a key that nobody knows: it lands in any field or beside the fields. A definition asks no setter and leaves the link to the prototype as it is.
+    // IT SAYS NOTHING OF WHAT THE LAYOUT GAINS: whoever asks for the node says that, by what he knows of the keys.
+    FlowNodeID anyFieldDefinedOn(LayoutID);
     // What calls of a lost closure pass and get.
     FlowNodeID parameterOfLostFunctions(uint32_t positionalArgument);
     FlowNodeID receiverOfLostFunctions();
     FlowNodeID resultOfLostFunctions();
+    // What a construction through a lost closure makes for a function that has no class. It goes on to `this` of each such function.
+    FlowNodeID madeForLostFunctionsWithoutClass();
 
     // A node that was made while several threads tell observers gets its place behind them. Nothing has arrived there.
     const LinkType& typeAt(FlowNodeID id) const LIFETIME_BOUND
@@ -663,7 +691,7 @@ public:
     };
     BuiltinsInReachUnderLock builtinsInReachUnderLock() { return BuiltinsInReachUnderLock(*this); }
     // WHAT IS MADE ON DEMAND STAYS WHAT IT IS: whoever asks again with the same words gets the same node. So each thread keeps what it was given, and takes the lock once for each.
-    enum class MadeOnDemand : uint8_t { Contents, ContentsOfFamily, SiteOfMaker, TakenForConstant, FieldReadThroughLost, FieldStoredThroughLost, FieldReadThrough, FieldStoredThrough, FoundOnPrototypesAbove, FoundBesideFieldsUnder, FoundBesideFieldsOf, StoredBesideFieldsOf, FoundWhereFieldIsEmpty, AppendedField, FoundOnClosuresOf, LaidOnClosuresOf, WrittenAtMember, ParameterOfLostFunctions, ReceiverOfLostFunctions, ResultOfLostFunctions, ResultOfOperator };
+    enum class MadeOnDemand : uint8_t { Contents, ContentsOfFamily, SiteOfMaker, TakenForConstant, FieldReadThroughLost, FieldStoredThroughLost, FieldReadThrough, FieldStoredThrough, FoundOnPrototypesAbove, FoundBesideFieldsUnder, FoundBesideFieldsOf, StoredBesideFieldsOf, FoundWhereFieldIsEmpty, AppendedField, FoundOnClosuresOf, LaidOnClosuresOf, WrittenAtMember, ParameterOfLostFunctions, ReceiverOfLostFunctions, ResultOfLostFunctions, NameAddedByTests, ResultOfOperator };
     static constexpr size_t numberOfKindsMadeOnDemand = static_cast<size_t>(MadeOnDemand::ResultOfOperator) + 1;
     uint32_t askedOnceByLane(MadeOnDemand kind, uint64_t words, const Invocable<uint32_t()> auto& make) const
     {
@@ -788,14 +816,20 @@ public:
         LinkType other;
         // Something lies there, or nobody lists what the source has: whatever else arrives beside the fields changes nothing.
         bool waitsForNothingBesideFields { false };
+        // Of a copy that defines: the proving reading has been told that the target gains. Only what is SEEN to lie beside the fields of a source says more.
+        bool waitsForWhatIsSeenAlone { false };
     };
     HashMap<uint64_t, CopyLookedAt, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> copiesLookedAt;
     BitVector escapedFunctions;
     // At some node the layout has met another one that a declared family holds with it. Of any other layout that is neither lost nor escaped every object is known by its layout, wherever it goes: no value that is known by a family is one.
     mutable BitVector layoutsMetInFamilies;
     bool mayBeKnownByFamily(LayoutID layout) const { return layoutsMetInFamilies.get(layout.index()) || lostLayouts.get(layout.index()); }
+    // It was told lost, or it has escaped: catchUpWithFamiliesAbove().
+    void noteSomethingBefell(FamilyID family) const { m_outermostFamiliesWhereSomethingBefell.quickSet(m_outermostFamilies[family.index()].index()); }
     // Unseen code stores into them. One that it only reads is not among them.
     BitVector escapedVariables;
+    // Unseen code reads them: a namespace object that shows them has come to it, or it may load the module. AOTLinkReach.cpp, escapeExportsOf().
+    BitVector variablesReadByUnseenCode;
     // Nobody ever finds in them what they held at first: AOTLinkReach.cpp, findVariablesStoredFirst().
     BitVector variablesStoredFirst;
     OrderOfScopes orderOfScopes;
@@ -927,6 +961,8 @@ public:
     // What the proving reading alone says of layouts and fields: what an escape allows, and what a store through a lost value adds. Whoever writes tables asks possibleChangesOf() and isWrittenAfterConstruction().
     BitVector layoutsThatUnseenCodeMayChange;
     BitVector layoutsThatGainPropertiesThroughLost;
+    // A copy that defines, out of a source of which only unseen code may have made more than is listed. Written by the observer of changes alone.
+    BitVector layoutsThatGainWhatUnseenCodeGaveSources;
     BitVector fieldsThatUnseenCodeMayWrite;
     OptionSet<LayoutChange> possibleChangesOf(size_t layout) const
     {
@@ -935,7 +971,7 @@ public:
             return changes;
         if (layoutsThatUnseenCodeMayChange.get(layout))
             changes.add({ LayoutChange::IsFrozen, LayoutChange::GainsProperty, LayoutChange::LosesProperty, LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor });
-        if (layoutsThatGainPropertiesThroughLost.get(layout))
+        if (layoutsThatGainPropertiesThroughLost.get(layout) || layoutsThatGainWhatUnseenCodeGaveSources.get(layout))
             changes.add(LayoutChange::GainsProperty);
         return changes;
     }
@@ -1123,6 +1159,10 @@ private:
     // A type that climbs from a layout to a family to Lost then lets go what it let go before, and more: whatever reaches unseen code early does nothing that its last type would not do.
     bool hasEscapedAsFamily(FamilyID) const;
     void catchUpWithFamiliesAbove(LayoutID) const;
+    // The families are a forest. By family: the outermost that holds it. Of those, the ones in which something has befallen a family: a layout in any other has nothing to catch up with,
+    // and in a row of classes that extend one another each class would go up through a family for each class above it to hear that.
+    Vector<FamilyID> m_outermostFamilies;
+    mutable BitVector m_outermostFamiliesWhereSomethingBefell;
     PropertyKeyID symbolNotedAt(FlowNodeID) const;
     std::pair<FlowNodeID, LinkType> takeNode(Lane&);
     std::pair<FlowObserver, FlowNodeID> takeNewObserver();
@@ -1208,7 +1248,7 @@ private:
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfMembersWritten;
 
     // ---- AOTLinkFlow.cpp alone.
-    enum class NodeOnDemand : uint8_t { ReadThroughFamily, StoredThroughFamily, StoredInConstructionThroughFamily, AnyFieldReadOfLayout, AnyFieldStoredOfLayout, AnyFieldReadOfFamily, AnyFieldStoredOfFamily, FoundBesideFieldsUnderKey, LaidOnClosuresUnderKey };
+    enum class NodeOnDemand : uint8_t { ReadThroughFamily, StoredThroughFamily, StoredInConstructionThroughFamily, AnyFieldReadOfLayout, AnyFieldStoredOfLayout, AnyFieldReadOfFamily, AnyFieldStoredOfFamily, FoundBesideFieldsUnderKey, LaidOnClosuresUnderKey, AnyFieldDefinedOnLayout };
     enum class AggregateAccess : uint8_t { Read, Store };
 
     struct MemberOfClass {
@@ -1261,8 +1301,8 @@ private:
         uint32_t firstKey { UINT32_MAX };
         Vector<uint32_t> keysThatTieEveryMember;
         bool reachesUnseen { false };
-        // By declared family: how many of the members it holds. loseFamiliesOfMembersThatMeet().
-        HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> membersInDeclaredFamilies;
+        // Where its members stand in the forest of declared families: placeInForestOfFamilies(). Those that no declared family holds are not among them. loseFamiliesOfMembersThatMeet().
+        std::set<uint32_t> placesInForestOfFamilies;
     };
 
     struct HolderOfLostKey {
@@ -1277,6 +1317,7 @@ private:
     std::span<const MemberOfClass> membersOf(LayoutID, ClassSide) const LIFETIME_BOUND;
     // As findMembers().
     std::span<const MemberOfClass> membersFoundUnder(LayoutID, ClassSide, PropertyKeyID) const LIFETIME_BOUND;
+    bool lookupGoesOnAboveClasses(LayoutID from, std::span<const MemberOfClass> members) const { return members.empty() || mayNotBeLinkedYetBelow(from, members[0].classLayout); }
 
     LinkType joined(const LinkType&, const LinkType&) const;
     // True: the type that stops naming it says holdsLostBuiltins.
@@ -1294,6 +1335,11 @@ private:
     LayoutID memberStandingFor(const LinkType&) const;
     void uniteLost(LayoutID, LayoutID);
     void loseFamiliesOfMembersThatMeet(uint32_t kept, uint32_t absorbed);
+    // UINT32_MAX: no declared family holds it.
+    uint32_t placeInForestOfFamilies(LayoutID);
+    // By layout, and the other way round. Made when the first layout is lost.
+    Vector<uint32_t> m_placesInForestOfFamilies;
+    Vector<LayoutID> m_layoutsByPlaceInForestOfFamilies;
     void mergeLostFamilies(uint32_t kept, uint32_t absorbed);
     Vector<LayoutID> membersOfLostFamily(uint32_t representative) const;
     void deferLoss(FamilyID) const;
@@ -1321,6 +1367,7 @@ private:
     bool tieAppendedFieldsOfLostLayouts();
     void noteLostLayoutsGainingProperties();
 
+    static uint64_t wordOfNodeOnDemand(NodeOnDemand, uint32_t number, PropertyKeyID);
     std::pair<FlowNodeID, bool> nodeOnDemand(NodeOnDemand, uint32_t number, PropertyKeyID);
     Vector<NameOnClosures> m_namesOnClosures;
     // By function: its newest name. Empty until the first name is asked for.
@@ -1367,6 +1414,14 @@ private:
     BitVector m_layoutsBelowMembersUnderNumbers;
     void findLayoutsBelowMembersUnderNumbers();
     BitVector m_layoutsWithFieldsUnderComputedKeys;
+    // AOTLinkLayouts.cpp. By layout: what the constructors of its row of classes fill, as places in the lists, which are sorted.
+    struct KeysThatRowOfConstructorsFills {
+        uint32_t untilFirstSight { 0 };
+        uint32_t untilEnds { 0 };
+    };
+    Vector<KeysThatRowOfConstructorsFills> m_keysThatRowsOfConstructorsFill;
+    Vector<Vector<PropertyKeyID>> m_listsOfKeysThatRowsOfConstructorsFill;
+    void findWhatRowsOfConstructorsFill();
 
     // What has been handed to m_deferred once.
     mutable BitVector m_layoutsToldLost;

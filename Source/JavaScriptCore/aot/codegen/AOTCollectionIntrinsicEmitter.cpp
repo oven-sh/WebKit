@@ -277,6 +277,8 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     const Operation& origin = operationAt(entryToBeginAt);
     const bool mayBeFirstStep = (origin.opcode == Opcode::Integer && !origin.integer()) || origin.opcode == Opcode::GetInternalField;
     const std::optional<CellPointer> ownerOfFirstStep = mayBeFirstStep ? std::optional { owner } : std::nullopt;
+    if (mayBeFirstStep)
+        build().statistics().count(StatisticID::StepsThatKnowTheDeletedPrefix);
 
     LBasicBlock isCurrent = newBlock();
     LBasicBlock isCompact = newBlock();

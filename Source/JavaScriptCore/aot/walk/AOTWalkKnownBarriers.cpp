@@ -22,49 +22,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The run time allocates nothing behind the cell of any of them.
-static constexpr OpcodeSet allocationsThatLeaveYoungCellInKnownBarriers = opcodesWhere([](Opcode opcode) {
-    return allocatesAfterLastSafepointOf(opcode) && interpretedOf(opcode) == Interpretation::Allocation && effectRuleOf(opcode) == EffectRule::Declared;
-}) | OpcodeSet { Opcode::NewHeapWords };
-
-// Whatever the effects say: an operation that writes nothing may retain.
-static constexpr OperandUses usesThatPublishInKnownBarriers { OperandUse::Retains, OperandUse::Calls, OperandUse::PassesToUserCode };
-static constexpr OperandUses usesThatPublishOrGiveAnotherNameInKnownBarriers { OperandUse::Retains, OperandUse::Calls, OperandUse::PassesToUserCode, OperandUse::Returns };
-
-static bool mayHoldCellInKnownBarriers(Walker& walker, Reference stored)
-{
-    TypeID type = walker.typeOf(stored);
-    return !type || walker.types().at(type).hasCells();
-}
-
-Reference nameOfCellBehindForms(const Code& code, Reference name)
-{
-    if (!name || !name.isValue())
-        return name;
-    ValueID value = name.id();
-    while (conversionsOfForm.contains(code.at(value).opcode))
-        value = code.at(value).operand(0);
-    return code.isConstant(value) ? Reference::constant(value) : Reference::value(value);
-}
-
-std::optional<uint32_t> ownerOperandOfStoreOfCells(Walker& walker, const Draft& store)
-{
-    // A store that makes room for its value lays the Extension in the owner, whatever the value is.
-    bool laysCellInOwner = store.opcode == Opcode::PutSlotOrAdd;
-    std::optional<uint32_t> owner;
-    for (uint32_t operandIndex = 0; operandIndex < store.numberOfOperands(); ++operandIndex) {
-        Reference stored = store.operand(operandIndex);
-        if (!stored || retainedInOf(store.opcode, operandIndex) != RetainedIn::Operand)
-            continue;
-        std::optional<uint8_t> retaining = retainingOperandOf(store.opcode, operandIndex);
-        if (!retaining || (owner && *owner != *retaining))
-            return std::nullopt;
-        owner = *retaining;
-        laysCellInOwner |= mayHoldCellInKnownBarriers(walker, stored);
-    }
-    return laysCellInOwner ? owner : std::nullopt;
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

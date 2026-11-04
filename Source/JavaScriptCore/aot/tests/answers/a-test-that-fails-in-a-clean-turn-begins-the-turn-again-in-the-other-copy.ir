@@ -14,9 +14,9 @@
 # FORM: [[called]]():
 # FORM: = IsSlotFilled {{*}}key="bias"
 # FORM-LABEL: code f5:Body
-# A deed stands in front of the test: the turn may not begin again, so the arm stays, with the read by name in it.
+# A deed stands in front of the test: the turn may not begin again, so the closed read stays. The turn itself makes the box: the read is one operation, with the read by name inside it.
 # FORM: = PutModuleVariable
-# FORM: = PropGet {{*}}key="value"
+# FORM: = GetSlot{{*}}key="value" {{*}}level=Expected
 # FORM-LABEL: code f6:Body
 # What a turn expects of a parameter of the head is asked of what enters, once, and the sum goes round as a number.
 # FORM: [[isNumber]]: boolean @Boolean = TypeTest {{*}}testedType=number

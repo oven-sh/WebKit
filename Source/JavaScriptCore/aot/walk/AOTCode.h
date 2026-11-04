@@ -476,6 +476,8 @@ enum class SweepMark : uint8_t {
     PollsForNothing = 1 << 4,
     // An allocation behind which every way comes to the fence of a later allocation before a cell is handed on to where the collector finds it.
     LaterFenceCovers = 1 << 5,
+    // A store into a cell that its own block has made, with nothing between the two that may collect, run other code or take the cell to keep it: the collector cannot have marked the cell.
+    OwnerIsYoung = 1 << 7,
 };
 
 // What the walk learns of a LoopHint when the loop is closed. The record stands in front of the loop's body and never changes, so the sweep is told beside it.
@@ -737,14 +739,6 @@ public:
     std::span<const FactUse> factsUsedBy(ValueID) const LIFETIME_BOUND;
     // In the order in which loops were closed. No poll is listed twice.
     std::span<const PollWithFate> pollsWithFates() const LIFETIME_BOUND { return m_pollsWithFates.span(); }
-    // `list`: FactCallSite::callees of a row of the operation as written. `function`: the type of a called operand names it. Neither: the call may enter any closure.
-    // `call` is null where no record stands for the call: a terminator, an operation that was taken away while it waited.
-    struct CalleesOfIndirectCall {
-        ValueID call;
-        CalleeListID list;
-        FunctionID function;
-    };
-    std::span<const CalleesOfIndirectCall> calleesOfIndirectCalls() const LIFETIME_BOUND { return m_calleesOfIndirectCalls.span(); }
 
     bool hasHandlers() const { return m_hasHandlers; }
     bool hasSuspensions() const { return m_hasSuspensions; }
@@ -832,7 +826,6 @@ public:
     void reserveFrameWords(uint32_t numberOfWords) { m_numberOfFrameWords = std::max(m_numberOfFrameWords, numberOfWords); }
     void noteCallThatPlanHasNotCounted() { m_holdsCallThatPlanHasNotCounted = true; }
     void noteThatCallsOfFunctionNeverCollect() { m_callsOfFunctionNeverCollect = true; }
-    void addCalleesOfIndirectCall(const CalleesOfIndirectCall& callees) { m_calleesOfIndirectCalls.append(callees); }
 
     // Cutting back. Everything appended since the mark goes: records, blocks, edges, side words, inline frames, entries, uses of facts, fates of polls.
     // A block older than the mark gets back the last operation, the terminator and the handler it had. `openBlocks` are the blocks older than the mark that may have grown since.
@@ -851,7 +844,6 @@ public:
         uint32_t numberOfFrameWords { 0 };
         uint32_t numberOfFactUses { 0 };
         uint32_t numberOfPollsWithFates { 0 };
-        uint32_t numberOfCalleesOfIndirectCalls { 0 };
         SideWords::Mark sideWords;
         bool hasHandlers { false };
     };
@@ -873,7 +865,6 @@ private:
     Vector<EntryOfCode, 2> m_entries;
     Vector<FactUse> m_factUses;
     Vector<PollWithFate> m_pollsWithFates;
-    Vector<CalleesOfIndirectCall> m_calleesOfIndirectCalls;
     OpcodeSet m_opcodesOfValues;
     uint32_t m_numberOfFrameWords { 0 };
     bool m_hasHandlers { false };

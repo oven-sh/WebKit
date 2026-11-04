@@ -1,0 +1,29 @@
+# function copy(s) { return { ...s }; }  copy({ x: "a", z: 1 });   where the record that is made lists `x` alone.
+# If every key counted as a field of the target, the record would be proven to gain nothing while it has a `z` beside its fields. It stays below what it stands below: a definition relinks nothing.
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L1.0 "x" proven={{*}}string{{*}} writers-known
+# CHECK: layout L0 {{*}}changes=[]
+# CHECK: layout L1 {{*}}changes=[GainsProperty]
+
+layout L0 module=m0 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="z" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="x" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = Integer integer=1
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v3 calleeName="copy"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="copy" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L1
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+}

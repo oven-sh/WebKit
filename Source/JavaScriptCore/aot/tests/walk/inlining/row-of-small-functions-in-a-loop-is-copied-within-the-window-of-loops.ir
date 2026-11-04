@@ -1,0 +1,659 @@
+# -- source: row-of-small-functions-in-a-loop-is-copied-within-the-window-of-loops.js
+# function a0(x) { return x + 1; }
+# function a1(x) { return a0(x) + 1; }
+# function a2(x) { return a1(x) + 1; }
+# function a3(x) { return a2(x) + 1; }
+# function a4(x) { return a3(x) + 1; }
+# function a5(x) { return a4(x) + 1; }
+# function a6(x) { return a5(x) + 1; }
+# function a7(x) { return a6(x) + 1; }
+# function a8(x) { return a7(x) + 1; }
+# function a9(x) { return a8(x) + 1; }
+# function a10(x) { return a9(x) + 1; }
+# function a11(x) { return a10(x) + 1; }
+# function a12(x) { return a11(x) + 1; }
+# function a13(x) { return a12(x) + 1; }
+# function a14(x) { return a13(x) + 1; }
+# function a15(x) { return a14(x) + 1; }
+# function a16(x) { return a15(x) + 1; }
+# function a17(x) { return a16(x) + 1; }
+# function a18(x) { return a17(x) + 1; }
+# function a19(x) { return a18(x) + 1; }
+# function a20(x) { return a19(x) + 1; }
+# function a21(x) { return a20(x) + 1; }
+# function a22(x) { return a21(x) + 1; }
+# function a23(x) { return a22(x) + 1; }
+# function a24(x) { return a23(x) + 1; }
+# function a25(x) { return a24(x) + 1; }
+# function a26(x) { return a25(x) + 1; }
+# function a27(x) { return a26(x) + 1; }
+# function a28(x) { return a27(x) + 1; }
+# function a29(x) { return a28(x) + 1; }
+# function a30(x) { return a29(x) + 1; }
+# function a31(x) { return a30(x) + 1; }
+# function a32(x) { return a31(x) + 1; }
+# function a33(x) { return a32(x) + 1; }
+# function a34(x) { return a33(x) + 1; }
+# function a35(x) { return a34(x) + 1; }
+# function a36(x) { return a35(x) + 1; }
+# function a37(x) { return a36(x) + 1; }
+# function a38(x) { return a37(x) + 1; }
+# function a39(x) { return a38(x) + 1; }
+# function a40(x) { return a39(x) + 1; }
+# function a41(x) { return a40(x) + 1; }
+# function a42(x) { return a41(x) + 1; }
+# function a43(x) { return a42(x) + 1; }
+# function a44(x) { return a43(x) + 1; }
+# function a45(x) { return a44(x) + 1; }
+# function a46(x) { return a45(x) + 1; }
+# function a47(x) { return a46(x) + 1; }
+# function a48(x) { return a47(x) + 1; }
+# function a49(x) { return a48(x) + 1; }
+# function a50(x) { return a49(x) + 1; }
+# function a51(x) { return a50(x) + 1; }
+# function a52(x) { return a51(x) + 1; }
+# function a53(x) { return a52(x) + 1; }
+# function a54(x) { return a53(x) + 1; }
+# function a55(x) { return a54(x) + 1; }
+# function a56(x) { return a55(x) + 1; }
+# function a57(x) { return a56(x) + 1; }
+# function a58(x) { return a57(x) + 1; }
+# function a59(x) { return a58(x) + 1; }
+# function once(x) { return a59(x); }
+# function often(n) { let total = 0; for (let i = 0; i < n; i++) total += a59(i); return total; }
+# print(once(1), often(3));
+# -- end of source
+# each adds four operations: ten fit into the window of a written call, thirty into that of a call in a loop
+# RUN: walk f61 mechanisms=all
+# CHECK: frame 10 callee=
+# CHECK-NOT: frame 11 callee=
+# RUN(LOOP): walk f62 mechanisms=all
+# LOOP: frame 30 callee=
+# LOOP-NOT: frame 31 callee=
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same
+
+module m0 path="row-of-small-functions-in-a-loop-is-copied-within-the-window-of-loops.js" displayPath="row-of-small-functions-in-a-loop-is-copied-within-the-window-of-loops.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="a0" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="a1" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="a2" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="a3" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="a4" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="a5" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="a6" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="a7" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+variable g8 name="a8" module=m0 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+variable g9 name="a9" module=m0 declared={type=f10 flags=[IsFromCompiler]} initialization=Function function=f10 flags=[IsImmutable]
+variable g10 name="a10" module=m0 declared={type=f11 flags=[IsFromCompiler]} initialization=Function function=f11 flags=[IsImmutable]
+variable g11 name="a11" module=m0 declared={type=f12 flags=[IsFromCompiler]} initialization=Function function=f12 flags=[IsImmutable]
+variable g12 name="a12" module=m0 declared={type=f13 flags=[IsFromCompiler]} initialization=Function function=f13 flags=[IsImmutable]
+variable g13 name="a13" module=m0 declared={type=f14 flags=[IsFromCompiler]} initialization=Function function=f14 flags=[IsImmutable]
+variable g14 name="a14" module=m0 declared={type=f15 flags=[IsFromCompiler]} initialization=Function function=f15 flags=[IsImmutable]
+variable g15 name="a15" module=m0 declared={type=f16 flags=[IsFromCompiler]} initialization=Function function=f16 flags=[IsImmutable]
+variable g16 name="a16" module=m0 declared={type=f17 flags=[IsFromCompiler]} initialization=Function function=f17 flags=[IsImmutable]
+variable g17 name="a17" module=m0 declared={type=f18 flags=[IsFromCompiler]} initialization=Function function=f18 flags=[IsImmutable]
+variable g18 name="a18" module=m0 declared={type=f19 flags=[IsFromCompiler]} initialization=Function function=f19 flags=[IsImmutable]
+variable g19 name="a19" module=m0 declared={type=f20 flags=[IsFromCompiler]} initialization=Function function=f20 flags=[IsImmutable]
+variable g20 name="a20" module=m0 declared={type=f21 flags=[IsFromCompiler]} initialization=Function function=f21 flags=[IsImmutable]
+variable g21 name="a21" module=m0 declared={type=f22 flags=[IsFromCompiler]} initialization=Function function=f22 flags=[IsImmutable]
+variable g22 name="a22" module=m0 declared={type=f23 flags=[IsFromCompiler]} initialization=Function function=f23 flags=[IsImmutable]
+variable g23 name="a23" module=m0 declared={type=f24 flags=[IsFromCompiler]} initialization=Function function=f24 flags=[IsImmutable]
+variable g24 name="a24" module=m0 declared={type=f25 flags=[IsFromCompiler]} initialization=Function function=f25 flags=[IsImmutable]
+variable g25 name="a25" module=m0 declared={type=f26 flags=[IsFromCompiler]} initialization=Function function=f26 flags=[IsImmutable]
+variable g26 name="a26" module=m0 declared={type=f27 flags=[IsFromCompiler]} initialization=Function function=f27 flags=[IsImmutable]
+variable g27 name="a27" module=m0 declared={type=f28 flags=[IsFromCompiler]} initialization=Function function=f28 flags=[IsImmutable]
+variable g28 name="a28" module=m0 declared={type=f29 flags=[IsFromCompiler]} initialization=Function function=f29 flags=[IsImmutable]
+variable g29 name="a29" module=m0 declared={type=f30 flags=[IsFromCompiler]} initialization=Function function=f30 flags=[IsImmutable]
+variable g30 name="a30" module=m0 declared={type=f31 flags=[IsFromCompiler]} initialization=Function function=f31 flags=[IsImmutable]
+variable g31 name="a31" module=m0 declared={type=f32 flags=[IsFromCompiler]} initialization=Function function=f32 flags=[IsImmutable]
+variable g32 name="a32" module=m0 declared={type=f33 flags=[IsFromCompiler]} initialization=Function function=f33 flags=[IsImmutable]
+variable g33 name="a33" module=m0 declared={type=f34 flags=[IsFromCompiler]} initialization=Function function=f34 flags=[IsImmutable]
+variable g34 name="a34" module=m0 declared={type=f35 flags=[IsFromCompiler]} initialization=Function function=f35 flags=[IsImmutable]
+variable g35 name="a35" module=m0 declared={type=f36 flags=[IsFromCompiler]} initialization=Function function=f36 flags=[IsImmutable]
+variable g36 name="a36" module=m0 declared={type=f37 flags=[IsFromCompiler]} initialization=Function function=f37 flags=[IsImmutable]
+variable g37 name="a37" module=m0 declared={type=f38 flags=[IsFromCompiler]} initialization=Function function=f38 flags=[IsImmutable]
+variable g38 name="a38" module=m0 declared={type=f39 flags=[IsFromCompiler]} initialization=Function function=f39 flags=[IsImmutable]
+variable g39 name="a39" module=m0 declared={type=f40 flags=[IsFromCompiler]} initialization=Function function=f40 flags=[IsImmutable]
+variable g40 name="a40" module=m0 declared={type=f41 flags=[IsFromCompiler]} initialization=Function function=f41 flags=[IsImmutable]
+variable g41 name="a41" module=m0 declared={type=f42 flags=[IsFromCompiler]} initialization=Function function=f42 flags=[IsImmutable]
+variable g42 name="a42" module=m0 declared={type=f43 flags=[IsFromCompiler]} initialization=Function function=f43 flags=[IsImmutable]
+variable g43 name="a43" module=m0 declared={type=f44 flags=[IsFromCompiler]} initialization=Function function=f44 flags=[IsImmutable]
+variable g44 name="a44" module=m0 declared={type=f45 flags=[IsFromCompiler]} initialization=Function function=f45 flags=[IsImmutable]
+variable g45 name="a45" module=m0 declared={type=f46 flags=[IsFromCompiler]} initialization=Function function=f46 flags=[IsImmutable]
+variable g46 name="a46" module=m0 declared={type=f47 flags=[IsFromCompiler]} initialization=Function function=f47 flags=[IsImmutable]
+variable g47 name="a47" module=m0 declared={type=f48 flags=[IsFromCompiler]} initialization=Function function=f48 flags=[IsImmutable]
+variable g48 name="a48" module=m0 declared={type=f49 flags=[IsFromCompiler]} initialization=Function function=f49 flags=[IsImmutable]
+variable g49 name="a49" module=m0 declared={type=f50 flags=[IsFromCompiler]} initialization=Function function=f50 flags=[IsImmutable]
+variable g50 name="a50" module=m0 declared={type=f51 flags=[IsFromCompiler]} initialization=Function function=f51 flags=[IsImmutable]
+variable g51 name="a51" module=m0 declared={type=f52 flags=[IsFromCompiler]} initialization=Function function=f52 flags=[IsImmutable]
+variable g52 name="a52" module=m0 declared={type=f53 flags=[IsFromCompiler]} initialization=Function function=f53 flags=[IsImmutable]
+variable g53 name="a53" module=m0 declared={type=f54 flags=[IsFromCompiler]} initialization=Function function=f54 flags=[IsImmutable]
+variable g54 name="a54" module=m0 declared={type=f55 flags=[IsFromCompiler]} initialization=Function function=f55 flags=[IsImmutable]
+variable g55 name="a55" module=m0 declared={type=f56 flags=[IsFromCompiler]} initialization=Function function=f56 flags=[IsImmutable]
+variable g56 name="a56" module=m0 declared={type=f57 flags=[IsFromCompiler]} initialization=Function function=f57 flags=[IsImmutable]
+variable g57 name="a57" module=m0 declared={type=f58 flags=[IsFromCompiler]} initialization=Function function=f58 flags=[IsImmutable]
+variable g58 name="a58" module=m0 declared={type=f59 flags=[IsFromCompiler]} initialization=Function function=f59 flags=[IsImmutable]
+variable g59 name="a59" module=m0 declared={type=f60 flags=[IsFromCompiler]} initialization=Function function=f60 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f61 @0
+    v1 = Convert v0 declared={type=f61 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f62 @0
+    v3 = Convert v2 declared={type=f62 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @2447
+    v5 = PropGet v4 key="print" [isFreeName] @2447
+    v6 = Integer integer=1 @2458
+    v7 = Call v1, -, v6 calleeName="once" @2453
+    v8 = Integer integer=3 @2468
+    v9 = Call v3, -, v8 calleeName="often" @2462
+    v10 = Call v5, -, v7, v9 calleeName="print" @2447
+    v11 = Undefined @2447
+    Return v11 @2447
+}
+function f1 name="a0" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=1 @28
+    v2 = Add v0, v1 @28
+    Return v2 @28
+}
+function f2 name="a1" module=m0 position=33 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0 @57
+    v2 = Call v1, -, v0 calleeName="a0" @57
+    v3 = Integer integer=1 @65
+    v4 = Add v2, v3 @65
+    Return v4 @65
+}
+function f3 name="a2" module=m0 position=70 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1 @94
+    v2 = Call v1, -, v0 calleeName="a1" @94
+    v3 = Integer integer=1 @102
+    v4 = Add v2, v3 @102
+    Return v4 @102
+}
+function f4 name="a3" module=m0 position=107 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g2 @131
+    v2 = Call v1, -, v0 calleeName="a2" @131
+    v3 = Integer integer=1 @139
+    v4 = Add v2, v3 @139
+    Return v4 @139
+}
+function f5 name="a4" module=m0 position=144 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3 @168
+    v2 = Call v1, -, v0 calleeName="a3" @168
+    v3 = Integer integer=1 @176
+    v4 = Add v2, v3 @176
+    Return v4 @176
+}
+function f6 name="a5" module=m0 position=181 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g4 @205
+    v2 = Call v1, -, v0 calleeName="a4" @205
+    v3 = Integer integer=1 @213
+    v4 = Add v2, v3 @213
+    Return v4 @213
+}
+function f7 name="a6" module=m0 position=218 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g5 @242
+    v2 = Call v1, -, v0 calleeName="a5" @242
+    v3 = Integer integer=1 @250
+    v4 = Add v2, v3 @250
+    Return v4 @250
+}
+function f8 name="a7" module=m0 position=255 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g6 @279
+    v2 = Call v1, -, v0 calleeName="a6" @279
+    v3 = Integer integer=1 @287
+    v4 = Add v2, v3 @287
+    Return v4 @287
+}
+function f9 name="a8" module=m0 position=292 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g7 @316
+    v2 = Call v1, -, v0 calleeName="a7" @316
+    v3 = Integer integer=1 @324
+    v4 = Add v2, v3 @324
+    Return v4 @324
+}
+function f10 name="a9" module=m0 position=329 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g8 @353
+    v2 = Call v1, -, v0 calleeName="a8" @353
+    v3 = Integer integer=1 @361
+    v4 = Add v2, v3 @361
+    Return v4 @361
+}
+function f11 name="a10" module=m0 position=366 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g9 @391
+    v2 = Call v1, -, v0 calleeName="a9" @391
+    v3 = Integer integer=1 @399
+    v4 = Add v2, v3 @399
+    Return v4 @399
+}
+function f12 name="a11" module=m0 position=404 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g10 @429
+    v2 = Call v1, -, v0 calleeName="a10" @429
+    v3 = Integer integer=1 @438
+    v4 = Add v2, v3 @438
+    Return v4 @438
+}
+function f13 name="a12" module=m0 position=443 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g11 @468
+    v2 = Call v1, -, v0 calleeName="a11" @468
+    v3 = Integer integer=1 @477
+    v4 = Add v2, v3 @477
+    Return v4 @477
+}
+function f14 name="a13" module=m0 position=482 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g12 @507
+    v2 = Call v1, -, v0 calleeName="a12" @507
+    v3 = Integer integer=1 @516
+    v4 = Add v2, v3 @516
+    Return v4 @516
+}
+function f15 name="a14" module=m0 position=521 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g13 @546
+    v2 = Call v1, -, v0 calleeName="a13" @546
+    v3 = Integer integer=1 @555
+    v4 = Add v2, v3 @555
+    Return v4 @555
+}
+function f16 name="a15" module=m0 position=560 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g14 @585
+    v2 = Call v1, -, v0 calleeName="a14" @585
+    v3 = Integer integer=1 @594
+    v4 = Add v2, v3 @594
+    Return v4 @594
+}
+function f17 name="a16" module=m0 position=599 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g15 @624
+    v2 = Call v1, -, v0 calleeName="a15" @624
+    v3 = Integer integer=1 @633
+    v4 = Add v2, v3 @633
+    Return v4 @633
+}
+function f18 name="a17" module=m0 position=638 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g16 @663
+    v2 = Call v1, -, v0 calleeName="a16" @663
+    v3 = Integer integer=1 @672
+    v4 = Add v2, v3 @672
+    Return v4 @672
+}
+function f19 name="a18" module=m0 position=677 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g17 @702
+    v2 = Call v1, -, v0 calleeName="a17" @702
+    v3 = Integer integer=1 @711
+    v4 = Add v2, v3 @711
+    Return v4 @711
+}
+function f20 name="a19" module=m0 position=716 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g18 @741
+    v2 = Call v1, -, v0 calleeName="a18" @741
+    v3 = Integer integer=1 @750
+    v4 = Add v2, v3 @750
+    Return v4 @750
+}
+function f21 name="a20" module=m0 position=755 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g19 @780
+    v2 = Call v1, -, v0 calleeName="a19" @780
+    v3 = Integer integer=1 @789
+    v4 = Add v2, v3 @789
+    Return v4 @789
+}
+function f22 name="a21" module=m0 position=794 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g20 @819
+    v2 = Call v1, -, v0 calleeName="a20" @819
+    v3 = Integer integer=1 @828
+    v4 = Add v2, v3 @828
+    Return v4 @828
+}
+function f23 name="a22" module=m0 position=833 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g21 @858
+    v2 = Call v1, -, v0 calleeName="a21" @858
+    v3 = Integer integer=1 @867
+    v4 = Add v2, v3 @867
+    Return v4 @867
+}
+function f24 name="a23" module=m0 position=872 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g22 @897
+    v2 = Call v1, -, v0 calleeName="a22" @897
+    v3 = Integer integer=1 @906
+    v4 = Add v2, v3 @906
+    Return v4 @906
+}
+function f25 name="a24" module=m0 position=911 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g23 @936
+    v2 = Call v1, -, v0 calleeName="a23" @936
+    v3 = Integer integer=1 @945
+    v4 = Add v2, v3 @945
+    Return v4 @945
+}
+function f26 name="a25" module=m0 position=950 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g24 @975
+    v2 = Call v1, -, v0 calleeName="a24" @975
+    v3 = Integer integer=1 @984
+    v4 = Add v2, v3 @984
+    Return v4 @984
+}
+function f27 name="a26" module=m0 position=989 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g25 @1014
+    v2 = Call v1, -, v0 calleeName="a25" @1014
+    v3 = Integer integer=1 @1023
+    v4 = Add v2, v3 @1023
+    Return v4 @1023
+}
+function f28 name="a27" module=m0 position=1028 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g26 @1053
+    v2 = Call v1, -, v0 calleeName="a26" @1053
+    v3 = Integer integer=1 @1062
+    v4 = Add v2, v3 @1062
+    Return v4 @1062
+}
+function f29 name="a28" module=m0 position=1067 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g27 @1092
+    v2 = Call v1, -, v0 calleeName="a27" @1092
+    v3 = Integer integer=1 @1101
+    v4 = Add v2, v3 @1101
+    Return v4 @1101
+}
+function f30 name="a29" module=m0 position=1106 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g28 @1131
+    v2 = Call v1, -, v0 calleeName="a28" @1131
+    v3 = Integer integer=1 @1140
+    v4 = Add v2, v3 @1140
+    Return v4 @1140
+}
+function f31 name="a30" module=m0 position=1145 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g29 @1170
+    v2 = Call v1, -, v0 calleeName="a29" @1170
+    v3 = Integer integer=1 @1179
+    v4 = Add v2, v3 @1179
+    Return v4 @1179
+}
+function f32 name="a31" module=m0 position=1184 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g30 @1209
+    v2 = Call v1, -, v0 calleeName="a30" @1209
+    v3 = Integer integer=1 @1218
+    v4 = Add v2, v3 @1218
+    Return v4 @1218
+}
+function f33 name="a32" module=m0 position=1223 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g31 @1248
+    v2 = Call v1, -, v0 calleeName="a31" @1248
+    v3 = Integer integer=1 @1257
+    v4 = Add v2, v3 @1257
+    Return v4 @1257
+}
+function f34 name="a33" module=m0 position=1262 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g32 @1287
+    v2 = Call v1, -, v0 calleeName="a32" @1287
+    v3 = Integer integer=1 @1296
+    v4 = Add v2, v3 @1296
+    Return v4 @1296
+}
+function f35 name="a34" module=m0 position=1301 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g33 @1326
+    v2 = Call v1, -, v0 calleeName="a33" @1326
+    v3 = Integer integer=1 @1335
+    v4 = Add v2, v3 @1335
+    Return v4 @1335
+}
+function f36 name="a35" module=m0 position=1340 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g34 @1365
+    v2 = Call v1, -, v0 calleeName="a34" @1365
+    v3 = Integer integer=1 @1374
+    v4 = Add v2, v3 @1374
+    Return v4 @1374
+}
+function f37 name="a36" module=m0 position=1379 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g35 @1404
+    v2 = Call v1, -, v0 calleeName="a35" @1404
+    v3 = Integer integer=1 @1413
+    v4 = Add v2, v3 @1413
+    Return v4 @1413
+}
+function f38 name="a37" module=m0 position=1418 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g36 @1443
+    v2 = Call v1, -, v0 calleeName="a36" @1443
+    v3 = Integer integer=1 @1452
+    v4 = Add v2, v3 @1452
+    Return v4 @1452
+}
+function f39 name="a38" module=m0 position=1457 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g37 @1482
+    v2 = Call v1, -, v0 calleeName="a37" @1482
+    v3 = Integer integer=1 @1491
+    v4 = Add v2, v3 @1491
+    Return v4 @1491
+}
+function f40 name="a39" module=m0 position=1496 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g38 @1521
+    v2 = Call v1, -, v0 calleeName="a38" @1521
+    v3 = Integer integer=1 @1530
+    v4 = Add v2, v3 @1530
+    Return v4 @1530
+}
+function f41 name="a40" module=m0 position=1535 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g39 @1560
+    v2 = Call v1, -, v0 calleeName="a39" @1560
+    v3 = Integer integer=1 @1569
+    v4 = Add v2, v3 @1569
+    Return v4 @1569
+}
+function f42 name="a41" module=m0 position=1574 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g40 @1599
+    v2 = Call v1, -, v0 calleeName="a40" @1599
+    v3 = Integer integer=1 @1608
+    v4 = Add v2, v3 @1608
+    Return v4 @1608
+}
+function f43 name="a42" module=m0 position=1613 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g41 @1638
+    v2 = Call v1, -, v0 calleeName="a41" @1638
+    v3 = Integer integer=1 @1647
+    v4 = Add v2, v3 @1647
+    Return v4 @1647
+}
+function f44 name="a43" module=m0 position=1652 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g42 @1677
+    v2 = Call v1, -, v0 calleeName="a42" @1677
+    v3 = Integer integer=1 @1686
+    v4 = Add v2, v3 @1686
+    Return v4 @1686
+}
+function f45 name="a44" module=m0 position=1691 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g43 @1716
+    v2 = Call v1, -, v0 calleeName="a43" @1716
+    v3 = Integer integer=1 @1725
+    v4 = Add v2, v3 @1725
+    Return v4 @1725
+}
+function f46 name="a45" module=m0 position=1730 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g44 @1755
+    v2 = Call v1, -, v0 calleeName="a44" @1755
+    v3 = Integer integer=1 @1764
+    v4 = Add v2, v3 @1764
+    Return v4 @1764
+}
+function f47 name="a46" module=m0 position=1769 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g45 @1794
+    v2 = Call v1, -, v0 calleeName="a45" @1794
+    v3 = Integer integer=1 @1803
+    v4 = Add v2, v3 @1803
+    Return v4 @1803
+}
+function f48 name="a47" module=m0 position=1808 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g46 @1833
+    v2 = Call v1, -, v0 calleeName="a46" @1833
+    v3 = Integer integer=1 @1842
+    v4 = Add v2, v3 @1842
+    Return v4 @1842
+}
+function f49 name="a48" module=m0 position=1847 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g47 @1872
+    v2 = Call v1, -, v0 calleeName="a47" @1872
+    v3 = Integer integer=1 @1881
+    v4 = Add v2, v3 @1881
+    Return v4 @1881
+}
+function f50 name="a49" module=m0 position=1886 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g48 @1911
+    v2 = Call v1, -, v0 calleeName="a48" @1911
+    v3 = Integer integer=1 @1920
+    v4 = Add v2, v3 @1920
+    Return v4 @1920
+}
+function f51 name="a50" module=m0 position=1925 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g49 @1950
+    v2 = Call v1, -, v0 calleeName="a49" @1950
+    v3 = Integer integer=1 @1959
+    v4 = Add v2, v3 @1959
+    Return v4 @1959
+}
+function f52 name="a51" module=m0 position=1964 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g50 @1989
+    v2 = Call v1, -, v0 calleeName="a50" @1989
+    v3 = Integer integer=1 @1998
+    v4 = Add v2, v3 @1998
+    Return v4 @1998
+}
+function f53 name="a52" module=m0 position=2003 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g51 @2028
+    v2 = Call v1, -, v0 calleeName="a51" @2028
+    v3 = Integer integer=1 @2037
+    v4 = Add v2, v3 @2037
+    Return v4 @2037
+}
+function f54 name="a53" module=m0 position=2042 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g52 @2067
+    v2 = Call v1, -, v0 calleeName="a52" @2067
+    v3 = Integer integer=1 @2076
+    v4 = Add v2, v3 @2076
+    Return v4 @2076
+}
+function f55 name="a54" module=m0 position=2081 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g53 @2106
+    v2 = Call v1, -, v0 calleeName="a53" @2106
+    v3 = Integer integer=1 @2115
+    v4 = Add v2, v3 @2115
+    Return v4 @2115
+}
+function f56 name="a55" module=m0 position=2120 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g54 @2145
+    v2 = Call v1, -, v0 calleeName="a54" @2145
+    v3 = Integer integer=1 @2154
+    v4 = Add v2, v3 @2154
+    Return v4 @2154
+}
+function f57 name="a56" module=m0 position=2159 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g55 @2184
+    v2 = Call v1, -, v0 calleeName="a55" @2184
+    v3 = Integer integer=1 @2193
+    v4 = Add v2, v3 @2193
+    Return v4 @2193
+}
+function f58 name="a57" module=m0 position=2198 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g56 @2223
+    v2 = Call v1, -, v0 calleeName="a56" @2223
+    v3 = Integer integer=1 @2232
+    v4 = Add v2, v3 @2232
+    Return v4 @2232
+}
+function f59 name="a58" module=m0 position=2237 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g57 @2262
+    v2 = Call v1, -, v0 calleeName="a57" @2262
+    v3 = Integer integer=1 @2271
+    v4 = Add v2, v3 @2271
+    Return v4 @2271
+}
+function f60 name="a59" module=m0 position=2276 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g58 @2301
+    v2 = Call v1, -, v0 calleeName="a58" @2301
+    v3 = Integer integer=1 @2310
+    v4 = Add v2, v3 @2310
+    Return v4 @2310
+}
+function f61 name="once" module=m0 position=2315 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g59 @2341
+    v2 = Call v1, -, v0 calleeName="a59" @2341
+    ReturnCall v2 @2341
+}
+function f62 name="often" module=m0 position=2351 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer @2383
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @2383
+    v3 = Integer @2399
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @2399
+    Jump -> next b1(v2, v4) @2395
+  b1(v5, v6):
+    LoopHint @2395
+    v8 = Less v6, v0 @2406
+    Branch v8 -> taken b2(), notTaken b3() @2406
+  b2():
+    v9 = GetModuleVariable variable=g59 @2423
+    v10 = Call v9, -, v6 calleeName="a59" @2423
+    v11 = Add v5, v10 @2423
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @2414
+    v13 = Increment v6 @2409
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @2409
+    Jump -> next b1(v12, v14) @2409
+  b3():
+    Return v5 @2438
+}

@@ -11,6 +11,7 @@
 #include "AOTIRProgram.h"
 #include <algorithm>
 #include <tuple>
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -27,6 +28,38 @@ uint64_t bitOfLayoutInKnownEffects(const Program& program, LayoutID layout)
     }
     std::optional<uint8_t> bit = program.locationBitOf(top);
     return bit ? uint64_t { 1 } << (*bit & 63) : objectsOfAnyLayout;
+}
+
+Vector<uint64_t> bitsOfLayoutsInKnownEffects(const Program& program)
+{
+    uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
+    // Every layout has a bit at least: nothing says that nobody has come to it.
+    Vector<uint64_t> bits;
+    bits.fill(0, numberOfLayouts);
+    BitVector isOnTheWay(numberOfLayouts);
+    Vector<uint32_t, 32> row;
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        uint64_t found = 0;
+        for (LayoutID current(index); !found;) {
+            LayoutID above = writtenBaseOf(program.at(current));
+            if (bits[current.index()])
+                found = bits[current.index()];
+            // `class A extends B {}` beside `class B extends A {}` compiles.
+            else if (isOnTheWay.quickSet(current.index()))
+                found = objectsOfAnyLayout;
+            else {
+                row.append(current.index());
+                if (above)
+                    current = above;
+                else
+                    found = bitOfLayoutInKnownEffects(program, current);
+            }
+        }
+        for (uint32_t layout : row)
+            bits[layout] = found;
+        row.shrink(0);
+    }
+    return bits;
 }
 
 uint64_t LinkKnownEffects::layoutsWrittenBy(FunctionID function) const

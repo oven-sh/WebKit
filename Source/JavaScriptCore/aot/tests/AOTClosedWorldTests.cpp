@@ -164,6 +164,40 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 )IR"_s;
 
+static constexpr ASCIILiteral handsOnGlobalObject = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="listed"
+    v2 = Call v1, v0
+    Return
+}
+)IR"_s;
+
+static constexpr ASCIILiteral handsOnGlobalObjectBesideWorkerWithName = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="listed"
+    v2 = Call v1, v0
+    v3 = Builtin builtin=Worker
+    v4 = String string="./other.js"
+    v5 = Construct v3, -, v4
+    Return
+}
+)IR"_s;
+
+static constexpr ASCIILiteral startsWorkerFromUnknownValue = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = Builtin builtin=Worker
+    v3 = Construct v2, -, v1
+    Return
+}
+)IR"_s;
+
 static constexpr ASCIILiteral callsUnknownFunction = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -679,6 +713,25 @@ static void testCodeThatNobodyHasReadIsNoWorkerStartedWithoutName()
     AOT_TEST_CHECK(startsWithoutName(handsOnConstructorOfWorkers, { "exclude=CodeOutsideImage"_s }) == 1);
 }
 
+// `globalThis.listed()` got "The build can't tell which file this Worker starts from". The call hands on a holder above the constructor: the record stays, and names a place, which is what the build warns at, only where the constructor itself was seen.
+static void testStartOfWorkerHasPlaceOnlyWhereConstructorWasSeen()
+{
+    auto startHasPlace = [](ASCIILiteral program) -> std::optional<bool> {
+        std::unique_ptr<CompileOutput> output;
+        runOnBuildThread([&] {
+            output = compileForShellOnThisThread(program, { });
+        });
+        std::span<const Wire::WorkerStartRecord> starts = output->records<Wire::WorkerStartRecord>(Wire::ResultSection::WorkerStartsWithoutName);
+        if (starts.empty())
+            return std::nullopt;
+        return starts[0].witness.function != Wire::none;
+    };
+    AOT_TEST_CHECK(startHasPlace(handsOnGlobalObject) == false);
+    AOT_TEST_CHECK(startHasPlace(handsOnGlobalObjectBesideWorkerWithName) == false);
+    AOT_TEST_CHECK(startHasPlace(handsOnConstructorOfWorkers) == true);
+    AOT_TEST_CHECK(startHasPlace(startsWorkerFromUnknownValue) == true);
+}
+
 static void testLoadByUnknownNameOnlyExposesModules()
 {
     checkFlags({
@@ -889,6 +942,7 @@ std::span<const NativeTest> closedWorldTests()
         { "closed-world/flags/uncompiled-module-opens-the-program"_s, testUncompiledModuleOpensTheProgram },
         { "closed-world/flags/option-that-admits-code-opens-the-program"_s, testOptionThatAdmitsCodeOpensTheProgram },
         { "closed-world/flags/code-that-nobody-has-read-is-no-worker-started-without-a-name"_s, testCodeThatNobodyHasReadIsNoWorkerStartedWithoutName },
+        { "closed-world/flags/start-of-worker-has-place-only-where-constructor-was-seen"_s, testStartOfWorkerHasPlaceOnlyWhereConstructorWasSeen },
         { "closed-world/flags/load-by-unknown-name-only-exposes-modules"_s, testLoadByUnknownNameOnlyExposesModules, noFlagsOfClosedWorld },
         { "closed-world/flags/loader-called-as-value-loads-by-name"_s, testLoaderCalledAsValueLoadsByName, noFlagsOfClosedWorld },
         { "closed-world/flags/load-by-name-in-library-function-leaves-the-program-closed"_s, testLoadByNameInLibraryFunctionLeavesTheProgramClosed, noFlagsOfClosedWorld },
@@ -910,7 +964,8 @@ std::span<const NativeTest> closedWorldTests()
         { "closed-world/evaluation/every-realm-of-closed-program-refuses-evaluation"_s, testEveryRealmOfClosedProgramRefusesEvaluation },
         { "closed-world/declarations/script-shadows-no-constant-of-compiled-code"_s, testScriptShadowsNoConstantOfCompiledCode },
         { "closed-world/modules/closed-program-finds-no-module-by-name"_s, testClosedProgramFindsNoModuleByName },
-        { "closed-world/modules/evaluated-text-finds-no-module-by-name"_s, testEvaluatedTextFindsNoModuleByName, noRefusals },
+        // A hardened engine runs only the code of the image, whatever the program's flags say, and refuses the load as the test expects.
+        { "closed-world/modules/evaluated-text-finds-no-module-by-name"_s, testEvaluatedTextFindsNoModuleByName, runsOnlyCodeOfImage ? ASCIILiteral { } : noRefusals },
         { "closed-world/modules/program-that-loads-by-name-finds-entry-points"_s, testProgramThatLoadsByNameFindsEntryPoints },
         { "closed-world/modules/library-function-of-closed-program-finds-no-module-by-name"_s, testLibraryFunctionOfClosedProgramFindsNoModuleByName },
         { "closed-world/modules/every-image-takes-a-hook-and-refuses-an-entry-of-the-cache"_s, testEveryImageTakesHookAndRefusesEntryOfCache },

@@ -128,6 +128,8 @@ struct ModuleHost {
     void (*didStartImport)(JSGlobalObject*, JSPromise*, const String& path);
     // No text of the program is read at run time. Null in a host that reads them, or that has none to read.
     bool (*holdsTextsOfProgram)(JSGlobalObject*);
+    // Whoever asks was called from the factory of the mock of the module, which has returned a promise that has yet to settle. Null in a host without such factories.
+    bool (*isCalledFromFactoryThatWaits)(JSGlobalObject*, ModuleID);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -319,6 +321,11 @@ JS_EXPORT_PRIVATE Vector<ModuleID, 2> formsThatAttributesAskFor(JSGlobalObject*,
 // error: the next load asks the factory again, and whoever imports the module loads then.
 enum class AfterFailure : bool { KeepsError, AsksAgain };
 JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID, AfterFailure = AfterFailure::KeepsError);
+// The factory was called by a load, and has failed behind an await; or a require() has come to a mock that waits over a module, and does not call its factory. The mock waits again, as runMock() leaves it
+// where the factory fails at once. Nothing else moves.
+JS_EXPORT_PRIVATE void letMockWaitBehindLateFailure(JSGlobalObject*, ModuleID);
+// vi.resetModules() and jest.resetModules(): the loader of `bun test` forgets the loads that failed with all the others. A module whose load a factory ended has never run, so nothing else takes it out.
+JS_EXPORT_PRIVATE void dropErrorsOfLoadsEndedByMocks(JSGlobalObject*);
 // The mock has ended: its test file is over, or the program has taken it back. The next load finds the module itself, and whoever has imported a module of the library reads its own names again.
 JS_EXPORT_PRIVATE void didEndMock(JSGlobalObject*, ModuleID);
 // Through any number of modules, by `import` and `export .. from` statements alone.
@@ -373,6 +380,8 @@ JS_EXPORT_PRIVATE bool isLeftAloneByMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didBeginTestFile(JSGlobalObject*);
 // A mock stands in place of the module. The next mock of the module replaces that mock.
 JS_EXPORT_PRIVATE bool hasMockInPlace(JSGlobalObject*, ModuleID);
+// A require() of compiled code has run the mock that waited for a CommonJS file that never ran. `bun test` holds the file as loaded from there on: the next mock is laid over its exports, whole.
+JS_EXPORT_PRIVATE bool wasRequiredUnderMockInPlace(JSGlobalObject*, ModuleID);
 // The `mock` that the namespace object of a compiled module asks now. Null: no mock stands in place of its module, or the cell is no such object.
 JS_EXPORT_PRIVATE JSObject* mockInPlaceBehind(JSCell* moduleNamespace);
 // The build has seen that a mock may name the module, and its importers look for one. No mock stands in place of any other module: setMock() is not for it.

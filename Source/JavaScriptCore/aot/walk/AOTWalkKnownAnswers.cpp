@@ -796,7 +796,7 @@ static bool isOutcomeOfValueInKnownAnswers(KnownNote kind, Reference holder, Ref
 
 void noteKnown(Walker& walker, KnownNote kind, Reference subject, Reference other, uint32_t word, const LocationMasks& restsOn, uint64_t noted, bool endsAtSuspension)
 {
-    // No heap says that something may collect, so no note could end where a young cell grows old, and one that did would send every allocation through all that rests on a heap. KnownBarriers of part (b) has the cell.
+    // No heap says that something may collect, so no note could end where a young cell grows old, and one that did would send every allocation through all that rests on a heap. The sweep finds the cell: Sweep::lookForBirthOfOwner().
     RELEASE_ASSERT(kind != KnownNote::YoungCell);
     if (!walker.has(Mechanism::Folding))
         return;
@@ -885,6 +885,11 @@ static constexpr AbstractHeapSet heapsThatNoAnswerRestsOnInKnownAnswers { Abstra
 static bool givesSameAgainInKnownAnswers(const Effects& effects)
 {
     return !effects.mayRunOtherCode() && !effects.mayBeTerminated && effects.writes.containsOnly(heapsWhoseWritesNobodySees) && !effects.reads.containsAny(bookkeepingHeaps);
+}
+
+static bool givesNewAnswerUnaskedInKnownAnswers(const Walker& walker, const Draft& draft)
+{
+    return draft.opcode == Opcode::GetTypedArrayLength && viewMayFollowSharedMemoryThatGrows(walker, draft.viewOperand());
 }
 
 // The key leaves out what the engine has chosen: the form of an operator says how it is computed, not what.
@@ -998,7 +1003,7 @@ Reference findEqualOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft
             return length;
     }
 
-    if (!doesNothingAgainInKnownAnswers(walker, draft) && !givesSameAgainInKnownAnswers(effects))
+    if ((!doesNothingAgainInKnownAnswers(walker, draft) && !givesSameAgainInKnownAnswers(effects)) || givesNewAnswerUnaskedInKnownAnswers(walker, draft))
         return { };
     AnswersOfWalk::WordsOfKey& words = table->keyAskedLast();
     if (!collectKeyOfOperationInKnownAnswers(walker.code(), draft, words))
@@ -1040,7 +1045,7 @@ void noteOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft, const Ef
         return;
 
     bool doesNothingAgain = doesNothingAgainInKnownAnswers(walker, draft);
-    if (!doesNothingAgain && !givesSameAgainInKnownAnswers(effects))
+    if ((!doesNothingAgain && !givesSameAgainInKnownAnswers(effects)) || givesNewAnswerUnaskedInKnownAnswers(walker, draft))
         return;
     const Code& code = walker.code();
     AnswersOfWalk::WordsOfKey& words = table->keyAskedLast();

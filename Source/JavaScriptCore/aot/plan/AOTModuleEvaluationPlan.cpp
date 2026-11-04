@@ -1186,7 +1186,7 @@ void ModuleEvaluationPlanner::run()
     planStarts();
 }
 
-ModuleEvaluationPlan planModuleEvaluation(const Program& program, const Facts& facts, const ParallelLoops& loops)
+ModuleEvaluationPlan planModuleEvaluation(const Program& program, const Facts& facts, const ParallelLoops& loops, Statistics& statistics)
 {
     uint32_t numberOfModules = static_cast<uint32_t>(program.modules.size());
     ModuleEvaluationParts plan;
@@ -1200,8 +1200,10 @@ ModuleEvaluationPlan planModuleEvaluation(const Program& program, const Facts& f
     for (uint32_t index = 0; index < numberOfModules; ++index) {
         if (planner.recordsNothingThatIsSeen(index))
             plan.modulesWhoseRequiresRecordNothingThatIsSeen.quickSet(index);
-        if (planner.hasNoState.quickGet(index) && planner.has(index, ModuleEvaluationPlanner::HasCode))
+        if (planner.hasNoState.quickGet(index) && planner.has(index, ModuleEvaluationPlanner::HasCode)) {
             plan.modulesEvaluatedByCodeAlone.quickSet(index);
+            statistics.count(StatisticID::ModulesWithoutState);
+        }
         if (planner.isWalkedByCode.quickGet(index) && planner.has(index, ModuleEvaluationPlanner::HasCode)) {
             FunctionID body = program.modules[index].body;
             Effects effects = facts.effectsOnReturn(body);
@@ -1221,11 +1223,14 @@ ModuleEvaluationPlan planModuleEvaluation(const Program& program, const Facts& f
         case FoundModuleSiteKind::Late:
             if (!planner.isCalledWhereRequired.quickGet(site.target.index()))
                 plan.modulesWhosePathNoSiteNames.quickClear(site.target.index());
+            else
+                statistics.count(StatisticID::RequireSitesBound);
             break;
         case FoundModuleSiteKind::Record:
             if (!planner.recordsNothingThatIsSeen(site.target.index())) {
                 plan.modulesWhosePathNoSiteNames.quickClear(site.target.index());
                 plan.modulesWhosePathNoSiteNames.quickClear(site.referrer.index());
+                statistics.count(StatisticID::RequiresRecorded);
             }
             break;
         case FoundModuleSiteKind::Required:

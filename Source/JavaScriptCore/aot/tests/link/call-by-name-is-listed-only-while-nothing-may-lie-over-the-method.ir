@@ -19,8 +19,10 @@
 # const e = new E(); e.__proto__ = other;
 # console.log(callA(new A()), callB(b), callC(c), callD(d), callE(e));
 # RUN: link calls mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: call f1 v2 -> f8
 # RUN(OTHERS): link calls mechanisms=all
+# REQUIRES(OTHERS): entries-of-bun
 # OTHERS-NOT: call f2 
 # OTHERS-NOT: call f3 
 # OTHERS-NOT: call f4 

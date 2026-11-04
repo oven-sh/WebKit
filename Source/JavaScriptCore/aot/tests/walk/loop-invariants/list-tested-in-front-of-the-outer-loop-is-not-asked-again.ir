@@ -2,10 +2,10 @@
 # f1 = sumsAgainAndAgain
 # -- source: list-tested-in-front-of-the-outer-loop-is-not-asked-again.ts
 # declare function sink(...values: unknown[]): void;
-# function sumsAgainAndAgain(list: number[], rounds: number) { let s = 0; for (let k = 0; k < rounds; k++) { for (let i = 0; i < list.length; i++) s += list[i] + list[k & 1]; } return s; }
+# function sumsAgainAndAgain(list: number[] | null | undefined, rounds: number) { let s = 0; for (let k = 0; k < rounds; k++) { for (let i = 0; i < list.length; i++) s += list[i] + list[k & 1]; } return s; }
 # sink(sumsAgainAndAgain, [1, 2, 3]);
 # -- end of source
-# records of 6a7e621695aa938f
+# records of 24e7db3b08752731
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = HasArrayStorage {{*}}arrayStorage=Double
@@ -30,71 +30,59 @@ entry module=m0
 data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1() @0
-  b1():
     v0 = NewClosure function=f1 @0
     v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
-    v2 = Builtin builtin=GlobalThis @238
-    v3 = PropGet v2 key="sink" [isFreeName] @238
-    v4 = Data data=d0 @262
-    v5 = Call v3, -, v1, v4 calleeName="sink" @238
-    v6 = Undefined @238
-    Return v6 @238
+    v2 = Builtin builtin=GlobalThis @257
+    v3 = PropGet v2 key="sink" [isFreeName] @257
+    v4 = Data data=d0 @281
+    v5 = Call v3, -, v1, v4 calleeName="sink" @257
+    v6 = Undefined @257
+    Return v6 @257
 }
-function f1 name="sumsAgainAndAgain" module=m0 position=51 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="sumsAgainAndAgain" module=m0 position=51 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number>}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<number>, v1: number):
-    Jump -> next b1() @51
-  b1():
-    v2 = Integer @120
-    v3 = Convert v2 declared={type=number} @120
-    v4 = Integer @136
-    v5 = Convert v4 declared={type=number} @136
-    Jump -> next b2(v3, v5) @132
-  b2(v6: number, v7: number):
-    LoopHint @132
-    v9 = Less v7, v1 @143
-    Branch v9 -> taken b3(), notTaken b9() @143
-  b3():
-    v10 = Integer @171
-    v11 = Convert v10 declared={type=number} @171
-    Jump -> next b4(v6, v11) @167
-  b4(v12: number, v13: number):
-    LoopHint @167
-    v15 = PropGet v0 key="length" @178
-    v16 = Less v13, v15 @178
-    Branch v16 -> taken b5(), notTaken b7() @178
+    v2 = Integer @139
+    v3 = Convert v2 declared={type=number} @139
+    v4 = Integer @155
+    v5 = Convert v4 declared={type=number} @155
+    Jump -> next b1(v3, v5) @151
+  b1(v6: number, v7: number):
+    LoopHint @151
+    v9 = Less v7, v1 @162
+    Branch v9 -> taken b2(), notTaken b6() @162
+  b2():
+    v10 = Integer @190
+    v11 = Convert v10 declared={type=number} @190
+    Jump -> next b3(v6, v11) @186
+  b3(v12: number, v13: number):
+    LoopHint @186
+    v15 = PropGet v0 key="length" @197
+    v16 = Less v13, v15 @197
+    Branch v16 -> taken b4(), notTaken b5() @197
+  b4():
+    v17 = ElemGet v0, v13 @220
+    v18 = Integer integer=1 @239
+    v19 = BitAnd v7, v18 @239
+    v20 = ElemGet v0, v19 @230
+    v21 = Add v17, v20 @230
+    v22 = Add v12, v21 @230
+    v23 = Convert v22 declared={type=number} @215
+    v24 = Increment v13 @210
+    v25 = Convert v24 declared={type=number} @210
+    Jump -> next b3(v23, v25) @210
   b5():
-    v17 = ElemGet v0, v13 @201
-    v18 = Integer integer=1 @220
-    v19 = BitAnd v7, v18 @220
-    v20 = ElemGet v0, v19 @211
-    v21 = Add v17, v20 @211
-    v22 = Add v12, v21 @211
-    v23 = Convert v22 declared={type=number} @196
-    Jump -> next b6() @196
+    v26 = Increment v7 @170
+    v27 = Convert v26 declared={type=number} @170
+    Jump -> next b1(v12, v27) @170
   b6():
-    v24 = Increment v13 @191
-    v25 = Convert v24 declared={type=number} @191
-    Jump -> next b4(v23, v25) @191
-  b7():
-    Jump -> next b8() @191
-  b8():
-    v26 = Increment v7 @151
-    v27 = Convert v26 declared={type=number} @151
-    Jump -> next b2(v12, v27) @151
-  b9():
-    Return v6 @233
+    Return v6 @252
 }
 function f2 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
-    Jump -> next b1() @25
-  b1():
     v1 = HasJSType v0 first=5 last=5 @78
     v2 = ToBoolean v1 @78
-    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
-  b2(v3):
-    Jump -> next b3() @78
-  b3():
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
     v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
     v5 = StepArrayIterator v4 @229
     v6 = ResultAt v5 index=1 @286
@@ -102,28 +90,21 @@ function f2 name="next" module=m1 position=25 kind=Method role=Library flags=[Ha
     v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
     v9 = CreateIteratorResult v6, v8 @266
     Return v9 @266
-  b4(v10):
-    Jump -> next b5() @78
-  b5():
+  b2(v10):
     v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
     Unreachable @110
 }
 function f3 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
-    Jump -> next b1() @14610
-  b1():
     v1 = Undefined @14610
     v2 = PropGet v0 key="return" @14680
     v3 = TypeTest v2 testedType=undefined|null @14702
-    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @14702
-  b2(v4):
-    Jump -> next b5() @14702
-  b3(v5):
-    Jump -> next b4() @14702
-  b4():
-    v6 = Call v2, v0 @14744
-    Jump -> next b5() @14744
-  b5():
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
     v7 = Undefined @14744
     Return v7 @14744
 }

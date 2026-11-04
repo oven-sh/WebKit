@@ -278,8 +278,6 @@ static bool addCodeRunOnObjectsOfForKnownEffects(const Walker& walker, LayoutID 
     bool standsBelowObjectPrototypeAlone = layout.kind == LayoutKind::Record && !layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction);
     if (!standsBelowObjectPrototypeAlone)
         found = linked.findMember(program, id, ClassSide::Prototype, key);
-    if (found.kind == MemberFound::Kind::Unknown && linked.findMethodLaidAheadOfObjectsOf(program, id, key))
-        found.kind = MemberFound::Kind::Method;
     switch (found.kind) {
     case MemberFound::Kind::Unknown:
         return false;

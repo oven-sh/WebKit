@@ -128,17 +128,6 @@ CallEmitter::PlacedArguments CallEmitter::placeConventionArguments(const Convent
     return placed;
 }
 
-void CallEmitter::markArgumentsLetGoByCallee(Machine::PatchOperation* call, const PlacedArguments& placed)
-{
-    if (placed.letGoByCallee.isEmpty())
-        return;
-    std::span<LValue const> operands = call->operands();
-    for (unsigned child = 0; child < operands.size(); ++child) {
-        if (placed.letGoByCallee.contains(operands[child]))
-            call->markChildAsLetGoByCallee(child);
-    }
-}
-
 void CallEmitter::emitClearOfReleasedRegisters(CCallHelpers& jit, const Machine::PatchParameters& params, const RegisterSet& among)
 {
     RegisterSet released = params.value()->registersToRelease();
@@ -185,7 +174,6 @@ Machine::PatchOperation* CallEmitter::emitCall(const OperationContext& context, 
         if (LValue argument = placed.onStack[stackIndex])
             patchpoint->append(Machine::ConstrainedValue(argument, callStackWordRep(stackIndex)));
     }
-    markArgumentsLetGoByCallee(patchpoint, placed);
 
     uint32_t stackWordsToReserve = placed.stackWordsToReserve;
     Vector<Machine::ValueRep, 2> resultConstraints;

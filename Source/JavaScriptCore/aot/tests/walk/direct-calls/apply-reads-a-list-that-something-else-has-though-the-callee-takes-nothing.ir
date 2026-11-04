@@ -32,7 +32,7 @@
 # with escape analysis withheld nothing is known to be as it was made, so the rest parameter and the literal are read by the stub too
 # RUN(WITHHELD): walk f2 f3 f4 f5 f6 mechanisms=all-EscapeAnalysis
 # WITHHELD-NOT: = CallDirect
-# RUN(FRESH): walk f5 f6 mechanisms=all
+# RUN(FRESH): walk f5 f6 mechanisms=all-Inlining
 # FRESH-LABEL: code f5:Body
 # FRESH: = CallDirect function=f1
 # FRESH-LABEL: code f6:Body

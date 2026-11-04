@@ -167,9 +167,18 @@ static KnowledgeLevel levelOfArrayReadOfTypedElements(const AccessOfTypedElement
 }
 
 // A guess, for the forms that test the kind that they name. Other: they go by the kind that they find.
+// `function first(nodes: Node[]) { return nodes[0]; }`: a test for Array proves nothing of the elements. What is written of them stands in what is expected of the value, as findListsReadInLoop() asks it.
 static ArrayStorage storageDeclaredForTypedElements(const AccessOfTypedElements& access)
 {
-    return arrayStorageDeclaredBy(access.walker.program(), access.walker.types(), access.typeOfBase).predicted();
+    Walker& walker = access.walker;
+    TypeArena& types = walker.types();
+    ArrayStorage declared = arrayStorageDeclaredBy(walker.program(), types, access.typeOfBase).predicted();
+    if (declared != ArrayStorage::Other || access.isOnlyAskedAbout)
+        return declared;
+    TypeID expected = findExpectation(walker, access.value.objectOperand()).type;
+    ArrayStorage written = expected ? arrayStorageDeclaredBy(walker.program(), types, types.withoutNullish(expected)).predicted() : ArrayStorage::Other;
+    // A read that names no kind finds an int32 in storage that holds boxed values by one test. Named, the kind is asked for behind storage for doubles.
+    return written == ArrayStorage::Int32 && access.value.opcode() != Opcode::ElemSet ? ArrayStorage::Other : written;
 }
 
 // A value that the kind refuses gives the array another kind, and the test would fail from then on. A value that holds a cell ends up in storage for any value.
@@ -207,6 +216,18 @@ static bool buildArrayReadUnderAnyKeyOfTypedElements(const AccessOfTypedElements
     markBaseAsPassedInTypedElements(walker, access.base);
     walker.bind(access.value.id(), walker.build(WTF::move(read)));
     return true;
+}
+
+Reference buildReadOfElementOffExpectedList(Walker& walker, const BodyValue& read)
+{
+    Reference base = walker.referenceOf(read.objectOperand());
+    Draft draft = draftOfTypedElements(walker, read, Opcode::GetArrayElement);
+    draft.setArrayOperand(base);
+    draft.setPositionOperand(walker.referenceOf(read.propertyOperand()));
+    draft.setArrayStorage(ArrayStorage::Other);
+    draft.setLevel(KnowledgeLevel::Expected);
+    markBaseAsPassedInTypedElements(walker, base);
+    return walker.build(WTF::move(draft));
 }
 
 // Tests on the way here have found storage that holds numbers alone and an element at the position, the element was read, and nothing has written the list since. openGuessAtElementOfNumbers().
@@ -335,12 +356,37 @@ static bool buildArrayReadOfTypedElements(const AccessOfTypedElements& access)
     return true;
 }
 
+// The twin of buildArrayReadUnderAnyKeyOfTypedElements(). `marks[count] = on`, `count` a variable that closures share: the store asks the key for its tag, replaces an element inside the length by itself,
+// and does the closed store, whole and once, for whatever else it meets: an object among the keys is made a key of behind the value, as the closed store does it.
+static bool buildArrayStoreUnderAnyKeyOfTypedElements(const AccessOfTypedElements& access)
+{
+    Walker& walker = access.walker;
+    if (!(access.typeOfKey.primitives & Primitive::Integer))
+        return false;
+    if (access.isOnlyAskedAbout)
+        return answerAheadOfTypedElements(access, Opcode::PutArrayElement, KnowledgeLevel::Expected);
+
+    ECMAMode mode = access.value.mode();
+    Draft put = draftOfTypedElements(walker, access.value, Opcode::PutArrayElement);
+    put.setArrayOperand(access.base);
+    put.setPositionOperand(access.key);
+    put.setValueOperand(access.stored);
+    put.setArrayStorage(storageGuessedForStoreOfTypedElements(access));
+    put.setMode(mode);
+    put.setLevel(KnowledgeLevel::Expected);
+    markBaseAsPassedInTypedElements(walker, access.base);
+    Reference store = walker.build(WTF::move(put));
+    noteStoredElementInTypedElements(walker, access.base, access.key, { });
+    walker.bind(access.value.id(), store);
+    return true;
+}
+
 static bool buildArrayStoreOfTypedElements(const AccessOfTypedElements& access)
 {
     Walker& walker = access.walker;
     KnowledgeLevel level = levelOfArrayAccessOfTypedElements(access);
     if (level == KnowledgeLevel::Unknown)
-        return false;
+        return buildArrayStoreUnderAnyKeyOfTypedElements(access);
     if (access.isOnlyAskedAbout)
         return answerAheadOfTypedElements(access, Opcode::PutArrayElement, level);
 
@@ -389,6 +435,17 @@ static bool buildArrayTestOfTypedElements(const AccessOfTypedElements& access)
 
 // ---- Typed arrays
 
+static void nameVectorOfViewInTypedElements(Walker& walker, Draft& access, Reference view, TypedArrayType typedArrayType)
+{
+    if (!access.isInsideView() || !hasInlineElementAccess(typedArrayType))
+        return;
+    Draft vector(Opcode::GetTypedArrayVector, access.origin());
+    walker.chooseConservativeFields(vector);
+    vector.setViewOperand(view);
+    if (Reference built = walker.build(WTF::move(vector)))
+        access.setVectorOperand(built);
+}
+
 // A view answers for every number by itself: what is no index inside it is undefined, whatever the prototypes hold.
 static bool buildViewReadOfTypedElements(const AccessOfTypedElements& access, TypedArrayType typedArrayType)
 {
@@ -403,6 +460,7 @@ static bool buildViewReadOfTypedElements(const AccessOfTypedElements& access, Ty
     read.setIsInsideView(positionIsKnownToLieInsideList(walker, access.base, access.key));
     read.setLevel(KnowledgeLevel::Proven);
     read.setKeyIsIntegral(access.typeOfKey.isNumberWithoutFraction());
+    nameVectorOfViewInTypedElements(walker, read, access.base, typedArrayType);
     walker.bind(access.value.id(), walker.build(WTF::move(read)));
     return true;
 }
@@ -442,6 +500,7 @@ static bool buildViewStoreOfTypedElements(const AccessOfTypedElements& access, T
     put.setKeyIsIntegral(access.typeOfKey.isNumberWithoutFraction());
     if (level == KnowledgeLevel::Expected)
         markBaseAsPassedInTypedElements(walker, access.base);
+    nameVectorOfViewInTypedElements(walker, put, access.base, typedArrayType);
     // Nothing is ever noted of the elements of a view: it holds the value as converted, in bytes that another view may share.
     walker.bind(access.value.id(), walker.build(WTF::move(put)));
     return true;
@@ -586,6 +645,8 @@ static bool buildReadOfTypedElements(const AccessOfTypedElements& access)
 static bool buildStoreOfTypedElements(const AccessOfTypedElements& access)
 {
     BaseOfTypedElements base = classifyBaseOfTypedElements(access.walker, access.typeOfBase);
+    if (!access.typeOfKey.isNumber())
+        return base.kind == KindOfBaseOfTypedElements::Array && buildArrayStoreUnderAnyKeyOfTypedElements(access);
     switch (base.kind) {
     case KindOfBaseOfTypedElements::Array:
         if (buildArrayStoreOfTypedElements(access))
@@ -704,7 +765,7 @@ bool buildTypedElementAccess(Walker& walker, const BodyValue& value, const Input
         return buildLengthOfTypedElements(walker, value, inputs);
 
     Type typeOfKey = walker.types().at(inputs.typeOf(value.propertyOperand()));
-    if (!typeOfKey.isNumber() && opcode != Opcode::ElemGet)
+    if (!typeOfKey.isNumber() && opcode == Opcode::ElemHas)
         return false;
 
     bool isOnlyAskedAbout = inputs.areOnlyTypes();

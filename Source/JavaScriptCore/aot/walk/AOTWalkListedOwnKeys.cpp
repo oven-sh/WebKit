@@ -266,9 +266,10 @@ bool buildOwnKeyListOfItsOpcodes(Walker& walker, const BodyValue& value)
     Origin origin = draft.origin();
     origin.isTailCall = false;
     CallOfOwnKeyList asked { value, *list, origin, draft.expected };
-    if (buildListOfObjectInSightInListedOwnKeys(walker, asked, source))
-        return true;
-    return buildListBehindTestsInListedOwnKeys(walker, asked, written, source);
+    if (!buildListOfObjectInSightInListedOwnKeys(walker, asked, source) && !buildListBehindTestsInListedOwnKeys(walker, asked, written, source))
+        return false;
+    walker.count(StatisticID::OwnKeyWalksExpanded);
+    return true;
 }
 
 } } } // namespace JSC::AOT::Typed

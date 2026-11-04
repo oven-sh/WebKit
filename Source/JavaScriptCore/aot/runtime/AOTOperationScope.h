@@ -132,6 +132,16 @@ struct CallWithoutCollection<operation, Result(Arguments...) noexcept(isNoexcept
     static_assert((entry) == JSC::AOT::Entry::operationAOTThrow || (entry) == JSC::AOT::Entry::operationAOTThrowAfterCleanup); \
     AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry)
 
+void collectInPlaceOfPollBehindOperation(VM&, JSCell* madeByOperation);
+
+// For the operation of whatever the schema gives allocatesAfterLastSafepoint: the poll behind it would collect with the cell already handed on as a new one.
+ALWAYS_INLINE JSCell* newCellForCompiledCode(VM& vm, JSCell* cell)
+{
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]]
+        collectInPlaceOfPollBehindOperation(vm, cell);
+    return cell;
+}
+
 ALWAYS_INLINE Identifier identifierAt(Instance* instance, unsigned number) { return identifiersOf(*instance).identifier(number); }
 
 template<typename CellType>

@@ -2,16 +2,19 @@
 # so one comparison with the cell of the built-in stands between the two: behind it the call goes by the row, and where it fails the value is called as it is written.
 # function replace(mine) { isNaN = mine; }   function asked(value) { return isNaN(value | 0) ? 1 : 0; }
 # RUN: walk f2 mechanisms=all-Inlining
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f2:Body
 # CHECK: [[found]]: anything{{*}} = GetGlobalBinding key="isNaN" level=Expected [seesScriptBindings]
 # CHECK: = TypeTest [[found]] testedType=builtin(IsNaN)
 # CHECK: = Call [[found]], -,
 # A function of the host without code of its own behind the test is called by value as ever: function waited(run) { return setTimeout(run, 1); }
 # RUN(HOST): walk f4 mechanisms=all-Inlining
+# REQUIRES(HOST): entries-of-bun
 # HOST-LABEL: code f4:Body
 # HOST-NOT: TypeTest
 # With guesses withheld the value is called.
 # RUN(WITHHELD): walk f2 mechanisms=all-Inlining-Guesses
+# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-LABEL: code f2:Body
 # WITHHELD-NOT: TypeTest
 

@@ -5,9 +5,11 @@
 # The control: holder-that-the-program-lets-go-hands-out-what-hangs-below-it.ir.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: image
+# REQUIRES: entries-of-bun
 # CHECK: flags
 # CHECK-NOT: AdmitsUnknownJavaScript
 # RUN(CLOSED): image mechanisms=none
+# REQUIRES(CLOSED): entries-of-bun
 # CLOSED: flags
 # CLOSED-NOT: AdmitsUnknownJavaScript
 

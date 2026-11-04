@@ -1,0 +1,90 @@
+# -- source: data-descriptor-that-is-kept-is-no-store.js
+# function K(v) { this.v = v; }
+# const kept = { value: function m() { return this.v; }, enumerable: false, configurable: true, writable: true };
+# Object.defineProperty(K.prototype, "m", kept);
+# sink(kept);
+# sink(new K(1).m());
+# -- end of source
+# Whoever else gets the descriptor reads the function off it. So it lies in the field of the descriptor's layout, and goes where that goes.
+# RUN: link members functions mechanisms=all
+# CHECK-NOT: on-prototype L0 "m" function=
+# CHECK-NOT: function f2 callers-known
+
+module m0 path="data-descriptor-that-is-kept-is-no-store.js" displayPath="data-descriptor-that-is-kept-is-no-store.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="K" module=m0 constructor=f1 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 module=m0 position=43 fields=[{key="configurable" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}, {key="writable" declared={type=anything} flags=[IsRequired]}] declaredOrder=[2, 1, 0, 3] ownFieldCount=4
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @52
+    v3 = Boolean @97
+    v4 = Boolean boolean=true @118
+    v5 = Boolean boolean=true @134
+    v6 = NewObject -, v2, v3, v4, v5 layout=L1 fields=[2, 1, 0, 3] @43
+    v7 = FinishObject v6 @43
+    v8 = Builtin builtin=Object @142
+    v9 = Builtin builtin=ObjectDefineProperty @142
+    v10 = PropGet v1 key="prototype" @164
+    v11 = String string="m" @177
+    v12 = Call v9, v8, v10, v11, v7 calleeName="Object.defineProperty" @149
+    v13 = Builtin builtin=GlobalThis @189
+    v14 = PropGet v13 key="sink" [isFreeName] @189
+    v15 = Call v14, -, v7 calleeName="sink" @189
+    v16 = Builtin builtin=GlobalThis @201
+    v17 = PropGet v16 key="sink" [isFreeName] @201
+    v18 = Integer integer=1 @212
+    v19 = Construct v1, -, v18 calleeName="K" @210
+    v20 = PropGet v19 key="m" @213
+    v21 = Call v20, v19 calleeKey="m" calleeName="m" @215
+    v22 = Call v17, -, v21 calleeName="sink" @201
+    v23 = Undefined @201
+    Return v23 @201
+}
+function f1 name="K" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="v" @16
+    v3 = Undefined @16
+    Return v3 @16
+}
+function f2 name="m" module=m0 position=52 flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="v" @74
+    Return v1 @74
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f4 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f4
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

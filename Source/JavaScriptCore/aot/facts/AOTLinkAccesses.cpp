@@ -249,11 +249,11 @@ private:
     bool findsCodeToRunAboveClosures();
 
     // A getter and a setter under one key are one property: a read of it runs the getter. One with a setter alone reads as undefined.
-    static bool findsGetterAmong(const Vector<LinkFlow::FoundMember, 2>& members) { return std::ranges::contains(members, MethodKind::Getter, &LinkFlow::FoundMember::kind); }
+    static bool findsGetterAmong(const LinkFlow::FoundMembers& members) { return std::ranges::contains(members, MethodKind::Getter, &LinkFlow::FoundMember::kind); }
     void enterAccessorAt(FlowNodeID member);
     void enterAccessor(FunctionID);
     // `super.x = v`, where the lookup from the subject upward comes to no accessor: the property is laid on the receiver, which nobody follows from here.
-    void layOnReceiverUnlessAccessorAnswers(const Vector<LinkFlow::FoundMember, 2>&);
+    void layOnReceiverUnlessAccessorAnswers(const LinkFlow::FoundMembers&);
 
     void resolveOnPrimitives(uint16_t);
     void resolveOnClasses(const LinkType& instances);
@@ -266,6 +266,7 @@ private:
     void resolveOnBuiltin(BuiltinID);
     BuiltinID prototypeOfInstancesOf(BuiltinClassID) const;
     bool indexesAreAbsentFrom(BuiltinID start) const;
+    bool membersOfObjectPrototypeAreWhatTableLists();
     LookupInLinkAccesses lookUpFrom(BuiltinID start, BuiltinID& member) const;
     LookupInLinkAccesses lookUpInTableFrom(BuiltinID start, BuiltinID& member) const;
     // Whether it could tell.
@@ -507,6 +508,9 @@ void AccessInLinkAccesses::resolve()
         if (!m_shared)
             m_flow.noteSiteOfWrite(m_function, m_access.site, m_subject);
     }
+    // A key that nobody knows may name a member of Object.prototype, and what a test has laid over it may be an accessor, which gets the object as `this`.
+    if (!isNamed() && !m_keyIsOnlyNumbers && m_access.kind != Kind::Define && !membersOfObjectPrototypeAreWhatTableLists())
+        m_flow.addEdge(m_subject, m_flow.unseen());
     if ((subject.holdsUnseen && !m_before.holdsUnseen) || (subject.holdsUnseenInSight() && !m_before.holdsUnseenInSight()))
         cannotTell(subject.holdsUnseenInSight() ? UnknownIs::InSight : UnknownIs::ByEscapeAlone);
     // What the read finds on one of them is lost in turn.
@@ -651,7 +655,7 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id)
         return;
     }
 
-    Vector<LinkFlow::FoundMember, 2> members = m_flow.findMembers(id, ClassSide::Prototype, m_access.key);
+    LinkFlow::FoundMembers members = m_flow.findMembers(id, ClassSide::Prototype, m_access.key);
     bool findsAccessor = false;
     bool findsGetter = findsGetterAmong(members);
     for (const LinkFlow::FoundMember& found : members) {
@@ -681,7 +685,7 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id)
 
     // A private name is found on the object itself, or the access throws.
     bool isPrivateName = m_program.at(m_access.key).kind == PropertyKeyKind::PrivateName;
-    bool goesOnAboveClasses = (members.isEmpty() || m_flow.mayNotBeLinkedYetBelow(id, members[0].classLayout)) && !isPrivateName;
+    bool goesOnAboveClasses = members.lookupGoesOnAboveClasses() && !isPrivateName;
     FlowNodeID foundOnPrototypes;
     if (isRead() && !isPrivateName)
         foundOnPrototypes = m_flow.foundOnPrototypesAbove(id, m_access.key);
@@ -726,9 +730,10 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id)
             noteWrittenAfterConstruction(*field);
         return;
     }
-    if (findsAccessor && !isDefinition)
+    // An object that was made in front of `Object.setPrototypeOf(Sub.prototype, Base.prototype)` finds no setter: the store lays a property of its own.
+    if (findsAccessor && !isDefinition && !goesOnAboveClasses)
         return;
-    if (findsAccessor)
+    if (findsAccessor && isDefinition)
         m_flow.escape(id);
     storeBesideFieldsOf(id);
 }
@@ -737,6 +742,11 @@ void AccessInLinkAccesses::resolvePrototypeLinkOfLayout(LayoutID id, const Layou
 {
     switch (m_access.kind) {
     case Kind::Read:
+        if (!m_flow.findsPrototypeLinkOfSubject(id, ClassSide::Prototype, m_access.key, m_receiver != m_subject)) {
+            m_flow.escape(id);
+            cannotTell();
+            return;
+        }
         if (layout.kind == LayoutKind::Instance)
             give(prototypeForLinkAccesses(id));
         else
@@ -745,10 +755,10 @@ void AccessInLinkAccesses::resolvePrototypeLinkOfLayout(LayoutID id, const Layou
         giveFrom(m_flow.appendedField(id, m_access.key));
         return;
     case Kind::Store:
-        // From now on a name is looked for in an object that nobody tracks.
+        // From now on a name is looked for in an object that nobody tracks. `super.__proto__ = x` changes the link of the receiver.
         noteChange(id, LayoutChange::ChangesPrototype);
         m_flow.escape(id);
-        storeIntoUnseen();
+        cannotTell();
         return;
     case Kind::Define:
         storeBesideFieldsOf(id);
@@ -762,10 +772,12 @@ void AccessInLinkAccesses::resolvePrototypeLinkOfLayout(LayoutID id, const Layou
 // The fields of such a layout stand for the exports of the module, in their order. The values lie in variables.
 void AccessInLinkAccesses::resolveOnNamespace(const Layout& layout)
 {
-    // A store is refused.
-    if (!isRead())
-        return;
     mayThrow();
+    // A store is refused, unless a mock stands in place of the module: ModuleNamespace::put() hands it to the object of the factory.
+    if (!isRead()) {
+        storeIntoUnseen();
+        return;
+    }
     if (!layout.namespaceOf) {
         giveAnything();
         return;
@@ -795,6 +807,9 @@ void AccessInLinkAccesses::giveExport(ModuleID module, uint32_t index)
             giveAnything();
             return;
         }
+        // Another `export *` of the module, whose names show in the run, may bring the name too. Then the module exports nothing under it: Modules::isExportAmbiguous().
+        if (isNamed() && entry.isFromStarExport && m_program.at(module).requests.containsIf([](const ModuleRequest& request) { return request.isDynamicStarExport; }))
+            givePrimitives(Primitive::Undefined);
         switch (entry.kind) {
         case ModuleExportKind::Variable:
             if (entry.variable)
@@ -893,18 +908,25 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
     }
 
     if (m_nameClass == NameClass::Proto) {
+        if (isRead() && !m_flow.findsPrototypeLinkOfSubject(id, ClassSide::Prototype, m_access.key, m_receiver != m_subject)) {
+            letPrototypeEscape(id);
+            cannotTell();
+            return;
+        }
         if (isRead()) {
             // The node beside the fields holds anything once the class has escaped or the link may have changed. Nothing else would tell this read.
             if (layout.base) {
                 give(prototypeForLinkAccesses(layout.base));
                 giveFrom(foundBesideFieldsOf(id));
-            } else
+            }
+            // Until the statement has run that lays the function below the class, Object.prototype stands there.
+            if (!layout.base || m_flow.mayNotBeLinkedYetBelow(id, layout.base))
                 giveAnything();
             return;
         }
         noteChange(id, LayoutChange::ChangesPrototype);
         letPrototypeEscape(id);
-        storeIntoUnseen();
+        cannotTell();
         return;
     }
 
@@ -914,7 +936,7 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
         cannotTell();
     }
 
-    Vector<LinkFlow::FoundMember, 2> members = m_flow.findMembers(id, ClassSide::Prototype, m_access.key);
+    LinkFlow::FoundMembers members = m_flow.findMembers(id, ClassSide::Prototype, m_access.key);
     layOnReceiverUnlessAccessorAnswers(members);
     bool isPrivateName = m_program.at(m_access.key).kind == PropertyKeyKind::PrivateName;
     if (isRead() && !isPrivateName) {
@@ -927,7 +949,7 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
         bool findsAccessor = std::ranges::any_of(members, [](const LinkFlow::FoundMember& found) {
             return found.kind != MethodKind::Method;
         });
-        if (!isDefinition && (findsAccessor || (members.isEmpty() && mayRunCodeFoundFrom(Builtins::ObjectPrototype)))) {
+        if (!isDefinition && (findsAccessor || (members.lookupGoesOnAboveClasses() && mayRunCodeFoundFrom(Builtins::ObjectPrototype)))) {
             letPrototypeEscape(id);
             storeIntoUnseen();
             return;
@@ -939,26 +961,24 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
             storeInto(m_flow.storedOnPrototypeOf(id, m_access.key));
         return;
     }
-    if (members.isEmpty()) {
-        if (isRead()) {
-            giveFrom(foundBesideFieldsOf(id));
-            if (isPrivateName)
-                return;
-            if (m_nameClass == NameClass::Constructor && m_flow.isBelowConstructorFunction(id))
-                giveConstructorsOfRowAbove(id);
-            if (m_nameClass != NameClass::Constructor || m_flow.isBelowConstructorFunction(id)) {
-                if (!giveWhatIsFoundFrom(Builtins::ObjectPrototype))
-                    letPrototypeEscape(id);
-            } else if (layout.constructor)
-                give(closureForLinkAccesses(layout.constructor));
-            else
-                giveAnything();
-            return;
-        }
+    // As resolveOnLayout(). What the members give beside that, the loop below says.
+    bool goesOnAboveClasses = members.lookupGoesOnAboveClasses();
+    if (goesOnAboveClasses && isRead())
+        giveFrom(foundBesideFieldsOf(id));
+    if (goesOnAboveClasses && isRead() && !isPrivateName) {
+        if (m_nameClass == NameClass::Constructor && m_flow.isBelowConstructorFunction(id))
+            giveConstructorsOfRowAbove(id);
+        if (m_nameClass != NameClass::Constructor || m_flow.isBelowConstructorFunction(id)) {
+            if (!giveWhatIsFoundFrom(Builtins::ObjectPrototype))
+                letPrototypeEscape(id);
+        } else if (layout.constructor)
+            give(closureForLinkAccesses(layout.constructor));
+        else
+            giveAnything();
+    } else if (goesOnAboveClasses && !isRead()) {
         // Nobody tracks a member that no DefineMethod made.
         letPrototypeEscape(id);
         storeIntoUnseen();
-        return;
     }
 
     bool findsGetter = findsGetterAmong(members);
@@ -1106,12 +1126,13 @@ void AccessInLinkAccesses::resolveOnClosure(FunctionID function)
     }
 
     if (m_nameClass == NameClass::Proto) {
-        if (!isRead()) {
+        LayoutID classOfClassObject = isClassConstructorOf(record.kind) ? classLayout : LayoutID();
+        if (!isRead() || !m_flow.findsPrototypeLinkOfSubject(classOfClassObject, ClassSide::Static, m_access.key, m_receiver != m_subject)) {
             letClassObjectEscape(function, classLayout);
-            storeIntoUnseen();
+            cannotTell();
             return;
         }
-        LayoutID base = classLayout && isClassConstructorOf(record.kind) ? m_program.at(classLayout).base : LayoutID();
+        LayoutID base = classOfClassObject ? m_program.at(classOfClassObject).base : LayoutID();
         // As on a prototype object: a class object that escapes takes its layout along.
         if (base && m_program.at(base).constructor) {
             give(closureForLinkAccesses(m_program.at(base).constructor));
@@ -1132,8 +1153,12 @@ void AccessInLinkAccesses::resolveOnClosure(FunctionID function)
         giveFrom(foundBesideFieldsUnderKey());
     if (mayRunCodeFoundAboveClosures())
         m_flow.escape(function);
-    storeInto(foundBesideFieldsUnderKey());
-    if (m_access.kind != Kind::Has && m_flow.followsNamesOnClosuresOf(function, m_access.key)) {
+    // A name that is followed lies on the closures of this function and nowhere else. Whoever reads it off them comes by here, by callMemberOfClosure() or by mayFind(); under a computed key the function escapes;
+    // and once the function is lost or has escaped what is laid goes to unseen code: tieNamesOnLostClosuresOf().
+    bool nameIsFollowed = m_access.kind != Kind::Has && m_flow.followsNamesOnClosuresOf(function, m_access.key);
+    if (!nameIsFollowed)
+        storeInto(foundBesideFieldsUnderKey());
+    if (nameIsFollowed) {
         FlowNodeID laid = m_flow.laidOnClosuresOf(function, m_access.key);
         if (!isRead()) {
             storeInto(laid);
@@ -1201,8 +1226,8 @@ void AccessInLinkAccesses::resolveOnClassObject(FunctionID function, LayoutID cl
         return findsField || isHiddenByEveryClass;
     });
 
-    Vector<LinkFlow::FoundMember, 2> members = m_flow.findMembers(classLayout, ClassSide::Static, m_access.key);
-    layOnReceiverUnlessAccessorAnswers(findsField ? Vector<LinkFlow::FoundMember, 2>() : members);
+    LinkFlow::FoundMembers members = m_flow.findMembers(classLayout, ClassSide::Static, m_access.key);
+    layOnReceiverUnlessAccessorAnswers(findsField ? LinkFlow::FoundMembers() : members);
     bool findsAccessor = false;
     bool findsGetter = findsGetterAmong(members);
     for (const LinkFlow::FoundMember& found : members) {
@@ -1232,11 +1257,12 @@ void AccessInLinkAccesses::resolveOnClassObject(FunctionID function, LayoutID cl
         givePrimitives(Primitive::Undefined);
         return;
     }
-    if (members.isEmpty() && mayRunCodeFoundAboveClosures())
+    if (members.lookupGoesOnAboveClasses() && mayRunCodeFoundAboveClosures())
         m_flow.escape(function);
     if (isRead()) {
-        if (members.isEmpty())
-            giveAnything();
+        // As off any other closure: `C.constructor` is Function.
+        if (members.lookupGoesOnAboveClasses())
+            cannotTell();
         return;
     }
     if (findsAccessor && !isDefinition)
@@ -1300,7 +1326,7 @@ bool AccessInLinkAccesses::mayRunCodeFoundAboveClosures()
     if (m_flow.testRuns().isTestRun()) {
         if (FlowNodeID added = m_flow.testRuns().nodeOfNameAdded(m_access.key)) {
             tellAgainOnceClimbs(added);
-            if (m_flow.testRuns().isNameAdded(m_access.key))
+            if (m_flow.testRuns().isNameAdded(added))
                 return true;
         }
         // Only the first asker of the list below watches the members that the answer went by. In a test run those above a closure are the program's to lock, so each asker looks and watches for itself.
@@ -1387,14 +1413,14 @@ void AccessInLinkAccesses::enterAccessorAt(FlowNodeID member)
     }
 }
 
-void AccessInLinkAccesses::layOnReceiverUnlessAccessorAnswers(const Vector<LinkFlow::FoundMember, 2>& members)
+void AccessInLinkAccesses::layOnReceiverUnlessAccessorAnswers(const LinkFlow::FoundMembers& members)
 {
     if (isRead() || m_receiver == m_subject)
         return;
     bool findsAccessor = std::ranges::any_of(members, [](const LinkFlow::FoundMember& member) {
         return member.kind != MethodKind::Method;
     });
-    if (findsAccessor)
+    if (findsAccessor && !members.lookupGoesOnAboveClasses())
         return;
     m_flow.addEdge(m_receiver, m_flow.unseen());
     storeIntoUnseen();
@@ -1545,8 +1571,8 @@ void AccessInLinkAccesses::resolveOnClasses(const LinkType& instances)
         resolveUnderNameOnClass(instances);
         return;
     }
-    // The key may be any name, and what is stored hides what the class has under it.
-    if (!isRead() && !isElement)
+    // The key may be any name: what is stored hides what the class has under it, and what is read may be an accessor that somebody has laid above the class, which gets the object as `this`.
+    if (!isElement)
         m_flow.addEdge(m_subject, m_flow.unseen());
     // What a row has laid under a name has not escaped.
     if (isRead() && !isElement)
@@ -1750,8 +1776,8 @@ bool AccessInLinkAccesses::settlesPromiseThatCallHasJustMade()
         LayoutID layout = receiver.layout;
         if (m_flow.namesMayBeIncomplete(layout, ClassSide::Prototype) || m_flow.escapedLayouts.get(layout.index()) || findField(m_program, layout, call.key))
             return false;
-        Vector<LinkFlow::FoundMember, 2> members = m_flow.findMembers(layout, ClassSide::Prototype, call.key);
-        return members.size() == 1 && members[0].kind == MethodKind::Method && isClosureOfSuchFunctionAt(m_flow.member(members[0].classLayout, ClassSide::Prototype, members[0].index));
+        LinkFlow::FoundMembers members = m_flow.findMembers(layout, ClassSide::Prototype, call.key);
+        return members.size() == 1 && members[0].kind == MethodKind::Method && !members.lookupGoesOnAboveClasses() && isClosureOfSuchFunctionAt(m_flow.member(members[0].classLayout, ClassSide::Prototype, members[0].index));
     }
     case SummaryCall::Callee::Builtin:
         return false;
@@ -1836,6 +1862,23 @@ BuiltinID AccessInLinkAccesses::prototypeOfInstancesOf(BuiltinClassID builtinCla
     return prototype;
 }
 
+// As CallInLinkCalls::membersAboveInstancesAreWhatTableLists(): an executable has each of them locked. In a test run each is taken for what the table lists, and watched.
+bool AccessInLinkAccesses::membersOfObjectPrototypeAreWhatTableLists()
+{
+    if (!m_program.admitsReplacedBuiltins)
+        return true;
+    for (BuiltinID member : m_table.membersOf(m_table.canonicalID(Builtins::ObjectPrototype))) {
+        if (m_program.isUnlocked(member) || m_program.isUnlocked(m_table.canonicalID(member)))
+            return false;
+        if (!m_program.isLockLeftToProgram(member))
+            continue;
+        if (!m_flow.takeForConstant(member))
+            return false;
+        tellAgainOnceClimbs(m_flow.writtenAtMember(member));
+    }
+    return true;
+}
+
 bool AccessInLinkAccesses::indexesAreAbsentFrom(BuiltinID start) const
 {
     BuiltinID holder = m_table.canonicalID(start);
@@ -1860,7 +1903,7 @@ LookupInLinkAccesses AccessInLinkAccesses::lookUpFrom(BuiltinID start, BuiltinID
     if (FlowNodeID added = m_flow.testRuns().nodeOfNameAdded(m_access.key)) {
         if (m_laysObservers)
             m_flow.observe(added, observerOfWhatWasLookedUp());
-        if (m_flow.testRuns().isNameAdded(m_access.key))
+        if (m_flow.testRuns().isNameAdded(added))
             return LookupInLinkAccesses::Unknown;
     }
     auto& lookups = m_parts.state.lookups[m_flow.indexOfLaneAtWork()];

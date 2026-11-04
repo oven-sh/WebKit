@@ -55,6 +55,8 @@ struct WalkNote {
 struct WalkNotes {
     CodeUnit unit;
     Vector<WalkNote> notes;
+    // StatisticID::ValuesInDouble, of the unit: the records that are kept, parameters of blocks too, in a form that holds a double.
+    uint32_t numberOfValuesInDouble { 0 };
 };
 
 inline Wire::SourceLocation locationOf(const Program& program, const WalkNotes&, const WalkNote& note) { return program.at(note.writtenIn).locationAt(note.origin.position); }

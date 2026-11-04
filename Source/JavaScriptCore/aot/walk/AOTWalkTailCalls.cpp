@@ -32,23 +32,6 @@ static bool calleeComesBackInTailCalls(const Walker& walker, FunctionID callee)
     return !walker.program().at(callee).hasBody() || walker.plan().endsItsTailCalls(callee);
 }
 
-bool tailCallMayKeepFrame(const Walker& walker, const BodyValue& call, FunctionID calleeOfDirectCall)
-{
-    if (calleeOfDirectCall)
-        return calleeComesBackInTailCalls(walker, calleeOfDirectCall);
-    if (FunctionID listed = walker.facts().linked().calleeAt(walker.currentFunction(), call.id()))
-        return calleeComesBackInTailCalls(walker, listed);
-
-    if (call.opcode() != Opcode::Call && call.opcode() != Opcode::CallList)
-        return false;
-    Reference callee = walker.referenceOf(call.calleeOperand());
-    TypeID proven = callee ? walker.typeOf(callee) : TypeID();
-    if (!proven || !walker.types().at(proven).isObject())
-        return false;
-    BuiltinID builtin = singleBuiltinOf(walker.types(), walker.types().at(proven));
-    return builtin && callsOfBuiltinComeBack(walker.program(), builtin);
-}
-
 // A callee that ends its own tail calls costs one frame where the caller keeps its own. Whatever is entered by value may go on without end.
 TailCallRequirement requirementOfTailCall(const Walker& walker, Reference call)
 {
@@ -58,18 +41,6 @@ TailCallRequirement requirementOfTailCall(const Walker& walker, Reference call)
     if (record.opcode != Opcode::CallDirect)
         return TailCallRequirement::Required;
     return calleeComesBackInTailCalls(walker, record.function()) ? TailCallRequirement::Allowed : TailCallRequirement::Required;
-}
-
-// `return node.visit(x)`: each arm of a guess at the receiver ends in a return of its own, so nothing meets behind the call.
-bool readIsForCallReturnedAtOnce(const Walker& walker, const BodyValue& read)
-{
-    const BodyIndex& index = walker.currentBodyIndex();
-    ValueID user = index.onlyUsingValue(read.id());
-    if (!user || index.opcodeOf(user) != Opcode::Call || index.value(user).as<Opcode::Call>().calleeOperand() != read.id())
-        return false;
-    BlockID block = index.blockOf(user);
-    BodyTerminator end = index.terminator(block);
-    return block == index.blockOf(read.id()) && end.kind() == TerminatorKind::ReturnCall && end.operand(0) == user;
 }
 
 // ---- The head

@@ -16,6 +16,7 @@
 #include "AOTFoldingOfConstants.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkTables.h"
+#include "AOTPlan.h"
 #include "AOTStringTable.h"
 #include "AOTTypeNarrowing.h"
 #include "AOTTypeRelations.h"
@@ -42,7 +43,7 @@ static constexpr OpcodeSet testsThatTypesDecideInFolding = opcodesWhere([](Opcod
 });
 static_assert(testsThatTypesDecideInFolding == OpcodeSet { Opcode::TypeTest, Opcode::IsClosureOf, Opcode::ToBoolean, Opcode::Eq, Opcode::StrictEq, Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq });
 
-static constexpr OpcodeSet readsOfFolding { Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture, Opcode::PropGet, Opcode::ElemGet };
+static constexpr OpcodeSet readsOfFolding { Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::PropGet, Opcode::ElemGet };
 static constexpr OpcodeSet storesThatStateFollowsForFolding { Opcode::PutModuleVariable, Opcode::PutEnvironmentField };
 static constexpr OpcodeSet placesThatStateFollowsForFolding = storesThatStateFollowsForFolding | OpcodeSet { Opcode::GetModuleVariable, Opcode::GetEnvironmentField };
 // An object is its own object, and a length is its own length.
@@ -689,26 +690,6 @@ static LinkedCell cellOfVariableInFolding(const Walker& walker, VariableID varia
     return variable.index() < linked.variables.size() ? linked.variable(variable) : LinkedCell { };
 }
 
-static LinkedCell cellOfFieldInFolding(const Walker& walker, FieldReference field)
-{
-    const LinkTables& linked = walker.facts().linked();
-    const Vector<uint32_t>& first = linked.firstFieldOfLayout;
-    size_t layout = field.layout.index();
-    if (layout + 1 >= first.size() || field.field >= first[layout + 1] - first[layout])
-        return { };
-    return linked.field(field);
-}
-
-static LinkedCell cellOfCaptureInFolding(const Walker& walker, FunctionID function, uint32_t capture)
-{
-    const LinkTables& linked = walker.facts().linked();
-    const Vector<uint32_t>& first = linked.firstCaptureOfFunction;
-    size_t index = function.index();
-    if (index + 1 >= first.size() || capture >= first[index + 1] - first[index])
-        return { };
-    return linked.capture(function, capture);
-}
-
 static bool isStoredBeforeEveryReadInFolding(const LocationFacts& location)
 {
     return location.initialization != InitializationState::Unknown;
@@ -738,20 +719,6 @@ static bool holdsAccessorInFolding(Walker& walker, FieldReference field)
     return fieldAt(walker.program(), field).form.contains(FieldForm::IsAccessor) || facts.formOfValue.contains(FieldForm::IsAccessor) || facts.facts.contains(FieldFact::IsAccessor);
 }
 
-// Every read of the field by name, of any object of the layout that is made, finds a value of the object's own. An object that this code is still filling is not made yet.
-static bool isOwnValueForLifeInFolding(Walker& walker, Reference object, const Type& typeOfObject, LayoutID layout, FieldReference field)
-{
-    // Undefined and null throw. Only a field that the layout itself lists has a place in its objects.
-    if (!typeOfObject.isJavaScriptValue() || typeOfObject.primitives || !typeOfObject.hasOnlyLayouts() || field.layout != layout)
-        return false;
-    const LinkTables& linked = walker.facts().linked();
-    if (!isFoundByShapeTest(walker.program().at(layout)) || layout.index() >= linked.layouts.size() || walker.state().isFresh(object))
-        return false;
-    if (linked.layout(layout).possibleChanges.containsAny({ LayoutChange::LosesProperty, LayoutChange::GetsAccessor }))
-        return false;
-    return walker.facts().field(field).occupancy == Occupancy::AlwaysFilled;
-}
-
 // Whoever noted the slot had the object in hand with the field in its slot, so the read finds an own data property and neither throws nor runs code.
 static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<Opcode::PropGet>& read)
 {
@@ -762,16 +729,14 @@ static Reference answerOfNamedReadInFolding(Walker& walker, const BodyOperation<
     if (!type)
         return { };
     TypeArena& types = walker.types();
-    Type typeOfObject = types.at(type);
-    LayoutID layout = singleLayoutOf(types, typeOfObject);
+    LayoutID layout = singleLayoutOf(types, types.at(type));
     if (!layout)
         return { };
     std::optional<FieldReference> field = findField(walker.program(), layout, read.key());
     if (!field || holdsAccessorInFolding(walker, *field))
         return { };
-    if (Reference held = walker.state().slot(object, *field))
-        return unlessAbsentInFolding(walker, held);
-    return onlyValueOfCellInFolding(walker, cellOfFieldInFolding(walker, *field), isOwnValueForLifeInFolding(walker, object, typeOfObject, layout, *field));
+    Reference held = walker.state().slot(object, *field);
+    return held ? unlessAbsentInFolding(walker, held) : Reference();
 }
 
 // An index that is a number is converted without code.
@@ -784,26 +749,17 @@ static Reference elementAnsweredByStateInFolding(Walker& walker, const BodyOpera
     return unlessAbsentInFolding(walker, walker.state().element(walker.referenceOf(read.objectOperand()), index));
 }
 
-// A closure keeps the captures that it was made with, so the state has no place for them: they are read off the NewClosure.
-static Reference captureOfClosureMadeHereInFolding(Walker& walker, const BodyOperation<Opcode::GetCapture>& read)
-{
-    Reference closure = walker.referenceOf(read.closureOperand());
-    if (!closure || !closure.isRecord())
-        return { };
-    const Code& code = walker.code();
-    const Operation& made = code.at(closure.id());
-    if (made.opcode != Opcode::NewClosure || made.function() != read.function() || read.index() >= made.numberOfVariadicOperands())
-        return { };
-    ValueID capture = made.variadicOperands()[read.index()];
-    Reference captured = code.isConstant(capture) ? Reference::constant(capture) : Reference::value(capture);
-    return typeToJudgeByInFolding(walker, captured) ? captured : Reference();
-}
-
 static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
 {
     switch (value.opcode()) {
     case Opcode::GetModuleVariable: {
         VariableID variable = value.as<Opcode::GetModuleVariable>().variable();
+        if (walker.plan().variable(variable).encoding == VariableEncoding::FunctionAsZero) {
+            Draft read = walker.draftOf(value);
+            walker.chooseConservativeFields(read);
+            if (Reference closure = walker.cellThatRunTimeKeeps(read))
+                return closure;
+        }
         if (Reference held = walker.state().variable(variable))
             return held;
         if (Reference kept = valueOfStableBinding(walker, value))
@@ -817,16 +773,7 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
         FieldReference field { read.layout(), read.field() };
         if (Reference held = walker.state().environmentField(walker.referenceOf(read.environmentOperand()), field))
             return held;
-        if (Reference kept = valueOfStableBinding(walker, value))
-            return kept;
-        return onlyValueOfCellInFolding(walker, cellOfFieldInFolding(walker, field), isStoredBeforeEveryReadInFolding(walker.facts().field(field).location));
-    }
-    case Opcode::GetCapture: {
-        auto read = value.as<Opcode::GetCapture>();
-        if (Reference captured = captureOfClosureMadeHereInFolding(walker, read))
-            return captured;
-        // A closure is made with its captures.
-        return onlyValueOfCellInFolding(walker, cellOfCaptureInFolding(walker, read.function(), read.index()), true);
+        return valueOfStableBinding(walker, value);
     }
     case Opcode::PropGet:
         if (Reference earlier = walker.tagReadInFrontOfTest(value))
@@ -839,36 +786,61 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
     }
 }
 
+// `for (..) sum = table.handler(sum)`, `table` a constant of the module: no turn writes it, so its read stands in front of the typed copy of the loop, and what the check finds of it there it finds in every turn.
+// A check throws, so it stays where it is written, and whatever looks at what it hands on stays in the turn with it. So it is a look like the others, asked once in front:
+// where the place is empty the way leads into the other copy, which checks in its turn and throws where the program does. Null: the walk stands in no such turn, or the read stands in it.
+static Reference lookAtCellInFrontOfTypedCopyInFolding(Walker& walker, const BodyValue& check, Reference checked)
+{
+    if (!walker.standsInFrontOfTypedCopy(checked))
+        return { };
+    Origin origin = walker.originOf(check);
+    origin.isTailCall = false;
+    Reference isEmpty;
+    {
+        Walker::InFrontOfTypedCopy inFront(walker, true);
+        Draft test(Opcode::TypeTest, origin);
+        test.setValueOperand(checked);
+        test.setTestedType(TypeArena::fromPrimitives(Primitive::Absent));
+        isEmpty = walker.build(WTF::move(test));
+    }
+    if (!walker.branchInFrontOfTypedCopy(isEmpty, false))
+        return { };
+    walker.noteGuessOpened();
+    Walker::InFrontOfTypedCopy inFront(walker, true);
+    Draft filled(Opcode::Narrowed, origin);
+    filled.setValueOperand(checked);
+    filled.setTestOperand(isEmpty);
+    filled.setOperandIndex(OperandIndex::TypeTest::value);
+    filled.setIsOnTakenEdge(false);
+    return walker.build(WTF::move(filled));
+}
+
 // The check is built as it was written. Whoever reads the place again while the state still has it finds what has passed, so a second check turns nothing away.
-// `const debug = false`, read where its store may not have run yet: the cell is empty or holds the one value, so what passes is known.
 static bool buildCheckOfCellInFolding(Walker& walker, const BodyValue& check)
 {
     Reference checked = walker.referenceOf(check.operand(OperandIndex::CheckInitialized::value));
     if (!typeToJudgeByInFolding(walker, checked) || !checked.isValue())
         return false;
 
-    LinkedCell cell;
     VariableID variable;
     Reference environment;
     FieldReference field;
     const Code& code = walker.code();
     const Operation& read = code.at(checked.id());
-    if (read.opcode == Opcode::GetModuleVariable) {
+    if (read.opcode == Opcode::GetModuleVariable)
         variable = read.variable();
-        cell = cellOfVariableInFolding(walker, variable);
-    } else if (read.opcode == Opcode::GetEnvironmentField) {
+    else if (read.opcode == Opcode::GetEnvironmentField) {
         ValueID holder = read.operand(OperandIndex::GetEnvironmentField::environment);
         environment = code.isConstant(holder) ? Reference::constant(holder) : Reference::value(holder);
         field = FieldReference { read.layout(), read.field() };
-        cell = cellOfFieldInFolding(walker, field);
     }
-    Reference known = onlyValueOfCellInFolding(walker, cell, true);
 
-    Draft draft = walker.draftOf(check);
-    walker.chooseConservativeFields(draft);
-    Reference passed = walker.build(WTF::move(draft));
-    if (known)
-        passed = known;
+    Reference passed = lookAtCellInFrontOfTypedCopyInFolding(walker, check, checked);
+    if (!passed) {
+        Draft draft = walker.draftOf(check);
+        walker.chooseConservativeFields(draft);
+        passed = walker.build(WTF::move(draft));
+    }
     walker.bind(check.id(), passed);
     if (!passed || walker.isUnreachable())
         return true;

@@ -26,7 +26,7 @@ static constexpr uint8_t leavesOwedErrorMarkOfSweep = static_cast<uint8_t>(Sweep
 static constexpr uint8_t pollsForNothingMarkOfSweep = static_cast<uint8_t>(SweepMark::PollsForNothing);
 // The parameters of reached blocks, and each operation that the way has come by. Whatever is found needed with its bit set goes through the worklist. sweepBackward() takes the bit away again.
 static constexpr uint8_t passedByMarkOfSweep = 1 << 6;
-static_assert(!OptionSet<SweepMark> { SweepMark::IsNeeded, SweepMark::ReleasesOperand, SweepMark::LaterBarrierCovers, SweepMark::LeavesOwedError, SweepMark::PollsForNothing, SweepMark::LaterFenceCovers }.containsAny(OptionSet<SweepMark>::fromRaw(passedByMarkOfSweep)));
+static_assert(!OptionSet<SweepMark> { SweepMark::IsNeeded, SweepMark::ReleasesOperand, SweepMark::LaterBarrierCovers, SweepMark::LeavesOwedError, SweepMark::PollsForNothing, SweepMark::LaterFenceCovers, SweepMark::OwnerIsYoung }.containsAny(OptionSet<SweepMark>::fromRaw(passedByMarkOfSweep)));
 
 // Kept whatever their traits say: coverage counters are never removed, a loop without a poll cannot be interrupted, and what was decided by a proof has left nobody else who looks at the value.
 static constexpr OpcodeSet operationsThatSweepNeverDrops { Opcode::LoopHint, Opcode::CountExecution, Opcode::CheckProof };
@@ -390,8 +390,6 @@ void Sweep::sweepBackward()
     countUsesAtEndsOfBlocks();
     if (m_coverageIsOutOfDate)
         lookForCoverageAgain();
-    if (m_looksForCoveredBarriers)
-        dropBarriersThatNoStoreWaitsFor();
     sortFactUses();
     finishLiveness();
 }
@@ -448,6 +446,8 @@ ALWAYS_INLINE void Sweep::visitOperationsOf(BlockID id)
             noteNeededOperation(value, operation);
         if (looksForCoveredBarriers && (!m_coveredOwners.isEmpty() || sweptOperationsWithOwnerBarriers.contains(opcode)))
             lookForCoveredBarrier(value, operation);
+        if (looksForCoveredBarriers && (!m_storesThatAwaitBirth.isEmpty() || sweptOperationsWithOwnerBarriers.contains(opcode)))
+            lookForBirthOfOwner(value, operation);
         if (looksForCoveredFences && (m_laterFenceCovers || sweptAllocationsWithFences.contains(opcode)))
             lookForCoveredFence(value, operation);
     }
@@ -456,6 +456,8 @@ ALWAYS_INLINE void Sweep::visitOperationsOf(BlockID id)
     m_totals.operationsDropped += numberOfOperationsVisited;
     if (looksForCoveredBarriers && !m_coveredOwners.isEmpty())
         endCoverageAtHeadOf(id);
+    if (!m_storesThatAwaitBirth.isEmpty())
+        forgetStoresThatAwaitBirth();
     if (looksForCoveredFences && m_laterFenceCovers)
         endFenceCoverageAtHeadOf(id);
     uint32_t numberInOrder = static_cast<uint32_t>(code.m_order.size()) - firstInOrder;

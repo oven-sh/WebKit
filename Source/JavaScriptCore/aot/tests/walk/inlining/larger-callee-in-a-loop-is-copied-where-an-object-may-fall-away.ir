@@ -1,0 +1,154 @@
+# -- source: larger-callee-in-a-loop-is-copied-where-an-object-may-fall-away.js
+# function short(o) { return o.a + o.b + o.c + o.d + o.e + o.f + o.g; }
+# function long(o) { return o.a + o.b + o.c + o.d + o.e + o.f + o.g + o.h + o.i + o.j + o.k + o.l + o.m + o.n; }
+# function sumOfFields(list) { let total = 0; for (let i = 0; i < list.length; i++) total += short(list[i]) + long(list[i]); return total; }
+# function sumOfLiterals(n) { let total = 0; for (let i = 0; i < n; i++) total += long({ a: i, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14 }); return total; }
+# print(sumOfFields([{ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14 }]), sumOfLiterals(3));
+# -- end of source
+# `short` has 13 operations and `long` 27
+# RUN: walk f3 mechanisms=all
+# CHECK: frame 1 callee=f1
+# CHECK: CallDirect {{*}}function=f2
+# RUN(NEVER): walk f3 mechanisms=all
+# NEVER-NOT: callee=f2
+# RUN(LITERAL): walk f4 mechanisms=all
+# LITERAL: frame 1 callee=f2
+# LITERAL-NOT: CallDirect
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same
+
+module m0 path="larger-callee-in-a-loop-is-copied-where-an-object-may-fall-away.js" displayPath="larger-callee-in-a-loop-is-copied-where-an-object-may-fall-away.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=405 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=anything} flags=[IsRequired]}, {key="f" declared={type=anything} flags=[IsRequired]}, {key="g" declared={type=anything} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}, {key="i" declared={type=anything} flags=[IsRequired]}, {key="j" declared={type=anything} flags=[IsRequired]}, {key="k" declared={type=anything} flags=[IsRequired]}, {key="l" declared={type=anything} flags=[IsRequired]}, {key="m" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}] ownFieldCount=14
+data d0 root=Array{contents=anything elements=[Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=2}}, {key="c" value=Number{value=3}}, {key="d" value=Number{value=4}}, {key="e" value=Number{value=5}}, {key="f" value=Number{value=6}}, {key="g" value=Number{value=7}}, {key="h" value=Number{value=8}}, {key="i" value=Number{value=9}}, {key="j" value=Number{value=10}}, {key="k" value=Number{value=11}}, {key="l" value=Number{value=12}}, {key="m" value=Number{value=13}}, {key="n" value=Number{value=14}}]}]} module=m0
+variable g0 name="short" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="long" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=GlobalThis @515
+    v5 = PropGet v4 key="print" [isFreeName] @515
+    v6 = Data data=d0 @533
+    v7 = Call v1, -, v6 calleeName="sumOfFields" @521
+    v8 = Integer integer=3 @643
+    v9 = Call v3, -, v8 calleeName="sumOfLiterals" @629
+    v10 = Call v5, -, v7, v9 calleeName="print" @515
+    v11 = Undefined @515
+    Return v11 @515
+}
+function f1 name="short" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="a" @27
+    v2 = PropGet v0 key="b" @33
+    v3 = Add v1, v2 @33
+    v4 = PropGet v0 key="c" @39
+    v5 = Add v3, v4 @39
+    v6 = PropGet v0 key="d" @45
+    v7 = Add v5, v6 @45
+    v8 = PropGet v0 key="e" @51
+    v9 = Add v7, v8 @51
+    v10 = PropGet v0 key="f" @57
+    v11 = Add v9, v10 @57
+    v12 = PropGet v0 key="g" @63
+    v13 = Add v11, v12 @63
+    Return v13 @63
+}
+function f2 name="long" module=m0 position=70 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="a" @96
+    v2 = PropGet v0 key="b" @102
+    v3 = Add v1, v2 @102
+    v4 = PropGet v0 key="c" @108
+    v5 = Add v3, v4 @108
+    v6 = PropGet v0 key="d" @114
+    v7 = Add v5, v6 @114
+    v8 = PropGet v0 key="e" @120
+    v9 = Add v7, v8 @120
+    v10 = PropGet v0 key="f" @126
+    v11 = Add v9, v10 @126
+    v12 = PropGet v0 key="g" @132
+    v13 = Add v11, v12 @132
+    v14 = PropGet v0 key="h" @138
+    v15 = Add v13, v14 @138
+    v16 = PropGet v0 key="i" @144
+    v17 = Add v15, v16 @144
+    v18 = PropGet v0 key="j" @150
+    v19 = Add v17, v18 @150
+    v20 = PropGet v0 key="k" @156
+    v21 = Add v19, v20 @156
+    v22 = PropGet v0 key="l" @162
+    v23 = Add v21, v22 @162
+    v24 = PropGet v0 key="m" @168
+    v25 = Add v23, v24 @168
+    v26 = PropGet v0 key="n" @174
+    v27 = Add v25, v26 @174
+    Return v27 @174
+}
+function f3 name="sumOfFields" module=m0 position=181 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>):
+    v1 = Integer @222
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @222
+    v3 = Integer @238
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @238
+    Jump -> next b1(v2, v4) @234
+  b1(v5, v6):
+    LoopHint @234
+    v8 = PropGet v0 key="length" @245
+    v9 = Less v6, v8 @245
+    Branch v9 -> taken b2(), notTaken b3() @245
+  b2():
+    v10 = GetModuleVariable variable=g0 @272
+    v11 = ElemGet v0, v6 @278
+    v12 = Call v10, -, v11 calleeName="short" @272
+    v13 = GetModuleVariable variable=g1 @289
+    v14 = ElemGet v0, v6 @294
+    v15 = Call v13, -, v14 calleeName="long" @289
+    v16 = Add v12, v15 @289
+    v17 = Add v5, v16 @289
+    v18 = Convert v17 declared={type=number flags=[IsExpected]} @263
+    v19 = Increment v6 @258
+    v20 = Convert v19 declared={type=i32 flags=[IsExpected]} @258
+    Jump -> next b1(v18, v20) @258
+  b3():
+    Return v5 @311
+}
+function f4 name="sumOfLiterals" module=m0 position=320 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer @360
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @360
+    v3 = Integer @376
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @376
+    Jump -> next b1(v2, v4) @372
+  b1(v5, v6):
+    LoopHint @372
+    v8 = Less v6, v0 @383
+    Branch v8 -> taken b2(), notTaken b3() @383
+  b2():
+    v9 = GetModuleVariable variable=g1 @400
+    v10 = Integer integer=2 @416
+    v11 = Integer integer=3 @422
+    v12 = Integer integer=4 @428
+    v13 = Integer integer=5 @434
+    v14 = Integer integer=6 @440
+    v15 = Integer integer=7 @446
+    v16 = Integer integer=8 @452
+    v17 = Integer integer=9 @458
+    v18 = Integer integer=10 @464
+    v19 = Integer integer=11 @471
+    v20 = Integer integer=12 @478
+    v21 = Integer integer=13 @485
+    v22 = Integer integer=14 @492
+    v23 = NewObject -, v6, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] @405
+    v24 = FinishObject v23 @405
+    v25 = Call v9, -, v24 calleeName="long" @400
+    v26 = Add v5, v25 @400
+    v27 = Convert v26 declared={type=number flags=[IsExpected]} @391
+    v28 = Increment v6 @386
+    v29 = Convert v28 declared={type=number flags=[IsExpected]} @386
+    Jump -> next b1(v27, v29) @386
+  b3():
+    Return v5 @506
+}

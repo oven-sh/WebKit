@@ -617,9 +617,14 @@ static bool everyMemberKeepsFieldAtSlotKey(const Program& program, const Plan& p
 // One stub asks whether the field is missing, gives a slot out of line its granule, lists the key, stores and runs the barrier.
 bool SlotAccessEmitter::tryPutSlotOrAddByStub(const ValueContext& value, CellPointer cell, const FieldAccess& access, ValueID stored)
 {
+    return tryPutSlotOrAddByStub(value, cell, access, get(stored));
+}
+
+bool SlotAccessEmitter::tryPutSlotOrAddByStub(const ValueContext& value, CellPointer cell, const FieldAccess& access, Operand stored)
+{
     const PlacedSlot& slot = access.slot;
     SlotRepresentation representation = slot.representation;
-    Operand operand = get(stored);
+    Operand operand = stored;
     Representation formOfStoredValue = representation == SlotRepresentation::DeferredClosure ? Representation::Cell32 : Typed::representationOf(representation);
     if (!canLeaveSlot(representation) || operand.representation != formOfStoredValue)
         return false;
@@ -659,7 +664,12 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
     MemoryLocation location = locationOfSlotAccess(access);
     bool needsStorage = needsStorageFor(access.slot, typeOf(stored));
     markCellIfMarkerReplacesRawValue(cell, access, stored);
-    bool isWrittenInLine = generator().takesOpenForm(value);
+    BlockFrequency frequency = generator().code().at(value.block()).frequency;
+    Place coldPlace = frequency == BlockFrequency::Rare ? Place::RareBlock : frequency == BlockFrequency::Unlikely ? Place::UnlikelyBlock : Place::Anywhere;
+    StateOfKnowledge slotState = access.slot.isOutOfLine() ? StateOfKnowledge::FieldInExtension : StateOfKnowledge::Always;
+    bool isWrittenInLine = coldPlace == Place::Anywhere && generator().takesOpenForm(value, slotState);
+    if (coldPlace != Place::Anywhere)
+        m_out.noteForm(Form::Closed, slotState, coldPlace);
     if (!isWrittenInLine && needsStorage && mayCreateListedField(access) && !value->orderWordAfter() && !isDeferredClosure(stored) && tryPutSlotOrAddByStub(value, cell, access, stored))
         return;
     if (access.slot.isOutOfLine() && needsStorage)
@@ -817,17 +827,17 @@ bool SlotAccessEmitter::mayCreateListedField(const FieldAccess& access) const
     return m_plan.slots().storeMayListKey(access);
 }
 
-// The places in the orders of the member where the created fields come next. None where the member lacks one of the fields.
-static KeyOrders::Continuations continuationsCreatingSlots(const Program& program, const Plan& plan, LayoutID member, std::span<const PropertyKeyID> createdKeys)
+// The first place in the orders of the member where the created fields come next. None where the member lacks one of the fields.
+static std::optional<KeyOrderContinuation> firstContinuationCreatingSlots(const Program& program, const Plan& plan, LayoutID member, std::span<const PropertyKeyID> createdKeys)
 {
     Vector<FieldIndex, 4> fields;
     for (PropertyKeyID key : createdKeys) {
         std::optional<FieldIndex> field = plan.slots().findField(program, member, key);
         if (!field || !plan.slot(member, *field).hasStorage())
-            return { };
+            return std::nullopt;
         fields.append(*field);
     }
-    return plan.keyOrders().continuationsCreating(member, fields.span());
+    return plan.keyOrders().firstContinuationCreating(member, fields.span());
 }
 
 uint64_t SlotAccessEmitter::granuleBitsWithFieldsBehind(const FieldAccess& access) const
@@ -837,13 +847,13 @@ uint64_t SlotAccessEmitter::granuleBitsWithFieldsBehind(const FieldAccess& acces
     // What every member is likely to need: a granule that an object never fills is room lost.
     std::optional<uint64_t> bitsBehind;
     for (LayoutID member : access.membersWithField) {
-        KeyOrders::Continuations continuations = continuationsCreatingSlots(m_program, m_plan, member, singleElementSpan(access.key));
+        std::optional<KeyOrderContinuation> continuation = firstContinuationCreatingSlots(m_program, m_plan, member, singleElementSpan(access.key));
         const PlannedLayout& layout = m_plan.layout(member);
         bool hasExtensionWordOfAccess = layout.slots[layout.extensionWordIndex()].hasLocationOf(access.extensionWord);
         // The store may be the first that asks for an Extension.
         uint64_t bitsOfMember = hasExtensionWordOfAccess ? layout.granulesOfFirstExtension : 0;
-        if (!continuations.isEmpty() && hasExtensionWordOfAccess) {
-            uint32_t orderWordAfter = continuations[0].orderWordAfter;
+        if (continuation && hasExtensionWordOfAccess) {
+            uint32_t orderWordAfter = continuation->orderWordAfter;
             std::span<const FieldIndex> order = orders.order(member, orderOf(orderWordAfter));
             std::span<const KeyOrderSource> sources = orders.sourcesOfFields(member, orderOf(orderWordAfter));
             // From the first field on that stands there only because the layout declares it, nobody has seen an object get the fields one behind the other.
@@ -868,10 +878,10 @@ static std::optional<KeyOrderContinuation> findSlotContinuationOfEveryMember(con
         // An order is numbered within its shape.
         if (plan.layout(member).keysAreNeverEnumerated || plan.shapes().shapesOf(member).count != 1)
             return std::nullopt;
-        KeyOrders::Continuations continuations = continuationsCreatingSlots(program, plan, member, createdKeys);
-        if (continuations.isEmpty() || (common && *common != continuations[0]))
+        std::optional<KeyOrderContinuation> continuation = firstContinuationCreatingSlots(program, plan, member, createdKeys);
+        if (!continuation || (common && *common != *continuation))
             return std::nullopt;
-        common = continuations[0];
+        common = continuation;
     }
     return common;
 }
@@ -889,12 +899,12 @@ std::optional<KeyOrderStep> SlotAccessEmitter::testLikeliestKeyOrderStep(CellPoi
     for (LayoutID member : members) {
         if (m_plan.layout(member).keysAreNeverEnumerated)
             continue;
-        KeyOrders::Continuations continuations = continuationsCreatingSlots(m_program, m_plan, member, createdKeys);
-        if (continuations.isEmpty())
+        std::optional<KeyOrderContinuation> continuation = firstContinuationCreatingSlots(m_program, m_plan, member, createdKeys);
+        if (!continuation)
             continue;
-        uint64_t wordsBefore = static_cast<uint64_t>(AOT::shapeWordOf(shapes.generalShapeOf(member))) << 32 | continuations[0].orderWordBefore;
+        uint64_t wordsBefore = static_cast<uint64_t>(AOT::shapeWordOf(shapes.generalShapeOf(member))) << 32 | continuation->orderWordBefore;
         Integer words(m_out.load64(m_out.address(m_heaps.AOTObject_orderWord, cell.value(), offsetOfOrderWord)));
-        return KeyOrderStep { equal(words, integer(static_cast<int64_t>(wordsBefore))), word32(static_cast<int32_t>(continuations[0].orderWordAfter)) };
+        return KeyOrderStep { equal(words, integer(static_cast<int64_t>(wordsBefore))), word32(static_cast<int32_t>(continuation->orderWordAfter)) };
     }
     return std::nullopt;
 }

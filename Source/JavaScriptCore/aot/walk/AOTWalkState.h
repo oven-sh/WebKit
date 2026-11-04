@@ -12,7 +12,6 @@
 #include "AOTLayout.h"
 #include "AOTSharedArray.h"
 #include "AOTWalkKnownAnswers.h"
-#include "AOTWalkKnownBarriers.h"
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -158,13 +157,12 @@ enum class FactOfCell : uint8_t {
 // What holds at the present point of the walk beyond the proven type of each value, which Code has.
 // An entry lives until an operation's declared effects write what it rests on. Nothing else ends one, and nothing brings one back.
 // On an edge the state is copied. At a join only what is equal on every incoming edge is kept. At the head of a loop what the loop may write is dropped first.
-// All but the answers and the barriers lies behind one pointer: a state that holds nothing has none, a move is a word, and a copy shares it with the original until either writes.
+// All but the answers lies behind one pointer: a state that holds nothing has none, a move is a word, and a copy shares it with the original until either writes.
 class WalkState {
 public:
     WalkState() = default;
     WalkState(const WalkState& other)
         : m_held(other.holdsNothing() ? nullptr : other.m_held)
-        , m_barriers(other.m_barriers)
         , m_program(other.m_program)
     {
         if (m_held)
@@ -175,7 +173,6 @@ public:
     }
     WalkState(WalkState&& other)
         : m_held(std::exchange(other.m_held, nullptr))
-        , m_barriers(std::exchange(other.m_barriers, { }))
         , m_program(other.m_program)
     {
         if (!other.m_answers.isEmpty())
@@ -193,7 +190,6 @@ public:
             shareWhatIsHeldBy(other);
         if (!m_answers.isEmpty() || !other.m_answers.isEmpty())
             m_answers = other.m_answers;
-        m_barriers = other.m_barriers;
         m_turnInWhichNothingWasDone = other.m_turnInWhichNothingWasDone;
         return *this;
     }
@@ -205,7 +201,6 @@ public:
         std::swap(m_held, other.m_held);
         if (!m_answers.isEmpty() || !other.m_answers.isEmpty())
             m_answers.swap(other.m_answers);
-        std::swap(m_barriers, other.m_barriers);
         std::swap(m_turnInWhichNothingWasDone, other.m_turnInWhichNothingWasDone);
         return *this;
     }
@@ -403,7 +398,6 @@ public:
                 endWhatIsWritten(effects);
             m_answers.endWhatIsWritten(effects, *this);
         }
-        m_barriers.endWhatOperationEnds(effects);
     }
     // AOTWalkKnownWriters.cpp. Of an operation that runs no other code. Whatever hangs on a holder and rests on a heap of perObjectHeaps ends only where `mayBeWritten` says so of the holder, a guard only where `mayEndGuard` says so of its class.
     void invalidate(const Effects&, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard)>& mayEndGuard);
@@ -414,7 +408,6 @@ public:
         if (!holdsNoRecord())
             endWhatIsNotFresh();
         m_answers.endWhatIsNotFresh(*this);
-        m_barriers.clear();
     }
     void clear()
     {
@@ -422,12 +415,10 @@ public:
         if (m_held)
             dropWhatIsHeld();
         m_answers.clear();
-        m_barriers.clear();
     }
 
     // Keeps what `other` holds too, equal. An object stays fresh if it is fresh in both. The state of a join is the first incoming edge's, met with each of the others.
     void meetWith(const WalkState& other);
-    KnownBarriers& barriers() { return m_barriers; }
     // AOTWalkKnownHandlers.cpp. Of the objects that are not fresh: each place and element whose value the lambda names is known no longer.
     void endPlacesHolding(NOESCAPE const ScopedLambda<bool(Reference value)>& isEnded);
 
@@ -750,7 +741,6 @@ private:
 
     Held* m_held { nullptr };
     KnownAnswers m_answers;
-    KnownBarriers m_barriers;
     // Zero: something was done, or nobody has said.
     uint32_t m_turnInWhichNothingWasDone { 0 };
     ProgramOfState m_program;

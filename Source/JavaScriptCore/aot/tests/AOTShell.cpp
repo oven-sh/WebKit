@@ -35,6 +35,7 @@
 #include "Options.h"
 #include "PropertyNameArray.h"
 #include "ScriptArguments.h"
+#include "ScriptFetchParameters.h"
 #include "Symbol.h"
 #include <array>
 #include <atomic>
@@ -831,6 +832,17 @@ static JSObject* createAsyncModuleRequiredError(JSGlobalObject* globalObject, co
     return createTypeError(globalObject, makeString("require() async module \""_s, path, "\" is unsupported. use \"await import()\" instead."_s));
 }
 
+// A test names each form of a file by the path, a question mark and the type.
+static std::optional<ModuleID> findModuleWithAttributes(JSGlobalObject* globalObject, const String& path, const ScriptFetchParameters& attributes)
+{
+    String pathOfForm = makeString(path, '?', attributes.hostDefinedImportType());
+    for (ModuleID form : formsThatAttributesAskFor(globalObject, path)) {
+        if (modulePath(form) == pathOfForm)
+            return form;
+    }
+    return std::nullopt;
+}
+
 constinit const ModuleHost moduleHost {
     .createModuleObject = createModuleObject,
     .createRequirer = createRequirer,
@@ -843,6 +855,7 @@ constinit const ModuleHost moduleHost {
     .requireExtensions = nullptr,
     .createAsyncModuleRequiredError = createAsyncModuleRequiredError,
     .createLoadError = nullptr,
+    .findModuleWithAttributes = findModuleWithAttributes,
 };
 
 } // namespace JSC::AOT::Shell

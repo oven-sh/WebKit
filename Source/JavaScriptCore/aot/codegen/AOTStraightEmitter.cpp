@@ -68,7 +68,7 @@ bool StraightEmitter::covers(const CodeGenerationInputs& inputs, CodeUnit unit, 
     const CallingConventions& conventions = inputs.plan.conventions();
     if (conventions.entryConventionOf(unit) != EntryConvention::Direct || conventions.numberOfResults(unit) != 1 || conventions.savesRegistersOfCallers(unit))
         return false;
-    if (conventions.of(unit.function).hasSplitResult || conventions.isCoroutine(unit.function))
+    if (conventions.isCoroutine(unit.function))
         return false;
     if (inputs.plan.entersFile(unit.function) || inputs.plan.moduleEvaluation().moduleThatBeginsIn(unit.function))
         return false;
@@ -327,6 +327,9 @@ bool StraightEmitter::isReadByNextCodeAlone(const BodyValue& value) const
         if (user->kind == BodyUseKind::Operand) {
             if (!m_block.holds(user->value) || user->value == m_returnedCall)
                 return false;
+            // Such a reader gets no code, so nothing would ever take the value out of the register.
+            if (isReadByNobody(user->value) || m_index.opcodeOf(user->value) == Opcode::ReleaseHint)
+                return false;
             reader = user->value.index();
         } else if (user->kind != BodyUseKind::TerminatorOperand || user->block != m_block.id())
             return false;
@@ -504,6 +507,11 @@ void StraightEmitter::storeInScratchArea(ValueID value, uint32_t word)
 
 void StraightEmitter::define(const BodyValue& value, GPRReg boxed)
 {
+    // Whoever writes the result register stores what waits there first. What still waits here has been written over, and to bring it into its boxed form would change the new value.
+    if (m_valueInRegister && boxed == resultGPR) {
+        fail(value);
+        return;
+    }
     storeWhatWaitsInRegister();
     if (m_index.isUnused(value.id()))
         return;
@@ -546,6 +554,10 @@ void StraightEmitter::throwIfEmpty(const BodyValue& check, ValueID checked, cons
 
 void StraightEmitter::defineBoolean(const BodyValue& value, GPRReg zeroOrOne)
 {
+    if (m_valueInRegister && zeroOrOne == resultGPR) {
+        fail(value);
+        return;
+    }
     storeWhatWaitsInRegister();
     if (m_index.isUnused(value.id()))
         return;
@@ -655,10 +667,10 @@ void StraightEmitter::unboxIntoForm(Representation representation, GPRReg word)
     case Representation::Cell:
         return;
     case Representation::Int32: {
-        // The engine boxes an element of a list of doubles as a double even where it is an int32.
+        // What is read out of a slot of doubles comes boxed as a double even where it is an int32. A call converts its integers behind its numbers, which lie in the argument FPRs by then: resultFPR is the first of them.
         CCallHelpers::Jump isInt32 = m_jit->branchIfInt32(word);
-        m_jit->unboxDoubleWithoutAssertions(word, word, resultFPR);
-        m_jit->truncateDoubleToInt32(resultFPR, word);
+        m_jit->unboxDoubleWithoutAssertions(word, word, CCallHelpers::fpTempRegister);
+        m_jit->truncateDoubleToInt32(CCallHelpers::fpTempRegister, word);
         isInt32.link(m_jit);
         m_jit->zeroExtend32ToWord(word, word);
         return;
@@ -1192,10 +1204,23 @@ bool StraightEmitter::leavesDefinitionToFirstRead(const BodyValue& value)
     return true;
 }
 
+template<typename OperationOrTerminator>
+bool StraightEmitter::readsWhatWaitsInRegister(const OperationOrTerminator& reader) const
+{
+    bool reads = false;
+    reader.forEachOperand([&](ValueID operand, uint32_t) {
+        reads = reads || (operand && waitsInRegister(operand));
+    });
+    return reads;
+}
+
 void StraightEmitter::generateOperation(const BodyValue& value)
 {
     if (isReadByNobody(value.id()) || leavesDefinitionToFirstRead(value))
         return;
+    // A value waits in the result register for the next operation that gets code. Where that operation does not read it, it is stored first: no emitter has to know what it is about to write over.
+    if (m_valueInRegister && !inputOperationsThatOnlyHandOn.contains(value.opcode()) && !opcodesWithoutCodeOfTheirOwn.contains(value.opcode()) && value.opcode() != Opcode::ReleaseHint && !readsWhatWaitsInRegister(value))
+        storeWhatWaitsInRegister();
     switch (familyOf(value.opcode())) {
     case OperationFamily::Constant:
         generateConstant(value);
@@ -1403,6 +1428,8 @@ void StraightEmitter::returnToCaller()
 
 void StraightEmitter::generateTerminator(BodyBlock block, const BodyTerminator& terminator)
 {
+    if (m_valueInRegister && !readsWhatWaitsInRegister(terminator) && !(m_returnedCall && readsWhatWaitsInRegister(m_index.value(m_returnedCall))))
+        storeWhatWaitsInRegister();
     switch (terminator.kind()) {
     case TerminatorKind::Jump:
         passArguments(terminator, 0, terminator.next());

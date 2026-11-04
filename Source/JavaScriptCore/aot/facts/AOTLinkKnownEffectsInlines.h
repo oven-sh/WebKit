@@ -67,16 +67,9 @@ uint64_t CalleeSummarizerForLinkEffects::bitsOfLayoutsAt(const LinkType& type)
     case LinkType::Objects::None:
         return 0;
     case LinkType::Objects::Layout:
-        return bitOfLayoutInKnownEffects(m_program, type.layout);
-    case LinkType::Objects::Family: {
-        // A member brings a bit at least, so nothing there says that nobody has asked.
-        uint64_t& bits = m_bitsOfFamilies[type.family.index()];
-        if (!bits) {
-            for (LayoutID member : membersOf(m_program, m_flow.families.layoutsOf(type.family)))
-                bits |= bitOfLayoutInKnownEffects(m_program, member);
-        }
-        return bits;
-    }
+        return m_bitsOfLayouts[type.layout.index()];
+    case LinkType::Objects::Family:
+        return m_bitsOfFamilies[type.family.index()];
     case LinkType::Objects::Prototype:
     case LinkType::Objects::Prototypes:
     case LinkType::Objects::Lost:
@@ -441,7 +434,7 @@ bool CalleeSummarizerForLinkEffects::judgeAccessGivenArguments(FunctionID id, co
     if (!expected || access.receiver != noSummaryNode)
         return false;
     CodeFound found;
-    findCodeBehindLookup(*expected, key, access.kind, false, found);
+    findCodeBehindLookup(*expected, key, access.kind, false, false, found);
     if (!mergeKnownEffectsOfCodeFound(found, component, way, effects))
         return false;
     addEffectsOfAccessItself(id, summary, access, *expected, key, way, effects);
@@ -478,7 +471,7 @@ bool CalleeSummarizerForLinkEffects::judgeCallGivenArguments(FunctionID id, cons
         if (!expected || !call.key || findOwnMember(m_program, m_builtins.canonicalID(Builtins::ObjectPrototype), call.key))
             return false;
         CodeFound found;
-        findCodeBehindLookup(*expected, call.key, SummaryAccess::Kind::Read, true, found);
+        findCodeBehindLookup(*expected, call.key, SummaryAccess::Kind::Read, false, true, found);
         addFunctionsCalledUnder(expected->layout, call.key, found);
         if (!mergeKnownEffectsOfCodeFound(found, component, way, effects))
             return false;
@@ -657,7 +650,18 @@ void CalleeSummarizerForLinkEffects::summarizeKnownEffects()
     const ComponentsOfLinkEffects& components = m_components;
     m_layoutsWrittenByFunction.fill(objectsOfAnyLayout, m_numberOfFunctions);
     m_knownEffectsOfSharedCalls.fill(knownEffectsOfUnknownCode(), m_flow.calleesOfSharedCalls.size());
-    m_bitsOfFamilies.fill(0, m_flow.families.size());
+    m_bitsOfLayouts = bitsOfLayoutsInKnownEffects(m_program);
+    const Families& families = m_flow.families;
+    m_bitsOfFamilies.fill(0, families.size());
+    for (uint32_t layout = 0; layout < m_bitsOfLayouts.size(); ++layout) {
+        if (FamilyID nearest = families.nearestFamilyOf(LayoutID(layout)))
+            m_bitsOfFamilies[nearest.index()] |= m_bitsOfLayouts[layout];
+    }
+    // What holds a family has a higher number.
+    for (uint32_t family = 0; family < families.size(); ++family) {
+        if (FamilyID above = families.nearestFamilyAbove(FamilyID(family)))
+            m_bitsOfFamilies[above.index()] |= m_bitsOfFamilies[family];
+    }
     findLayoutsOfPlainObjects();
 
     uint32_t componentOfLostFunctions = components.componentOfFunction[nodeOfLostFunctions()];

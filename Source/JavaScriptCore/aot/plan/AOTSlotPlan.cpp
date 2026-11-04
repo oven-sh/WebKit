@@ -117,8 +117,44 @@ static void meetWithSlotOfMemberInSlotPlan(PlacedSlot& merged, const PlacedSlot&
 
 FieldAccess SlotPlan::fieldAccess(const Program& program, PropertyKeyID key, LayoutSetID set, std::span<const LayoutID> members, bool isStore) const
 {
-    if (!m_fieldAccessesOfSets || !set || holdsOneMember(set) || liesInThread(set) || liesInThread(key))
+    if (!m_fieldAccessesOfSets || !set || holdsOneMember(set) || liesInThread(key))
         return fieldAccess(program, key, members, isStore);
+    // `location.locals`, behind a test for the sixty kinds of nodes that have the name: the walk, its rules of forms and each emitter ask about the sixty, at every such read, and the set dies with each function.
+    if (liesInThread(set)) {
+        static constexpr size_t fewestMembersWhoseAnswerIsKept = 8;
+        if (members.size() < fewestMembersWhoseAnswerIsKept)
+            return fieldAccess(program, key, members, isStore);
+        uint64_t hash = key.bits();
+        for (LayoutID member : members)
+            hash = (hash ^ member.index()) * 0x9e3779b97f4a7c15ull;
+        // Neither the empty key of the table nor the deleted one.
+        hash = (hash | 1) & ~(1ull << 63);
+        FieldAccessesOfSets::Part& part = m_fieldAccessesOfSets->parts[(hash >> 32) % m_fieldAccessesOfSets->parts.size()];
+        auto findIn = [&](const Vector<std::unique_ptr<FieldAccessesOfSets::Part::OfMembers>, 1>& kept) -> const FieldAccess* {
+            for (const auto& entry : kept) {
+                if (entry->key == key && std::ranges::equal(entry->members, members))
+                    return &entry->access;
+            }
+            return nullptr;
+        };
+        {
+            Locker locker { part.lock };
+            if (auto known = part.accessesOfMembers[isStore].find(hash); known != part.accessesOfMembers[isStore].end()) {
+                if (const FieldAccess* access = findIn(known->value))
+                    return *access;
+            }
+        }
+        auto entry = makeUniqueWithoutFastMallocCheck<FieldAccessesOfSets::Part::OfMembers>();
+        entry->key = key;
+        entry->members.append(members);
+        entry->access = fieldAccess(program, key, members, isStore);
+        FieldAccess access = entry->access;
+        Locker locker { part.lock };
+        auto& kept = part.accessesOfMembers[isStore].add(hash, Vector<std::unique_ptr<FieldAccessesOfSets::Part::OfMembers>, 1>()).iterator->value;
+        if (!findIn(kept))
+            kept.append(WTF::move(entry));
+        return access;
+    }
 
     uint64_t asked = static_cast<uint64_t>(set.bits()) << 32 | key.bits();
     FieldAccessesOfSets::Part& part = m_fieldAccessesOfSets->parts[WTF::intHash(asked) % m_fieldAccessesOfSets->parts.size()];
@@ -517,6 +553,9 @@ static BitVector findLayoutsWithHiddenWordsForSlotPlan(const Program& program, c
             groups.unite(index, base.index());
     }
     for (uint32_t number = 0; link && families && number < families->size(); ++number) {
+        // Any two families are nested or apart: what another holds adds nothing to what that one unites.
+        if (families->nearestFamilyAbove(FamilyID(number)))
+            continue;
         LayoutID first;
         program.at(families->layoutsOf(FamilyID(number))).forEach([&](LayoutID member) {
             if (!first)
@@ -551,11 +590,27 @@ static void forEachFieldInDeclaredOrderForSlotPlan(const Layout& layout, const F
     }
 }
 
+// The families in which findMembersThatAgreeOnSlotsForSlotPlan() can find anybody: some member has cells, and each that has them is free.
+// Who asks every family goes through the members of these alone: in a row of classes that extend one another each class has a family of all below it, and none of them is one of these.
+static BitVector findFamiliesThatMayAgreeOnSlotsForSlotPlan(const Program& program, const Families& families, std::span<const StorageOfLayoutInSlotPlan> storage)
+{
+    auto hasCells = [&](LayoutID member) {
+        return storage[member.index()].storage == LayoutStorage::CompiledObject && storage[member.index()].hasCells();
+    };
+    BitVector result = families.familiesWithSomeMemberThat(hasCells);
+    result.exclude(families.familiesWithSomeMemberThat([&](LayoutID member) {
+        return hasCells(member) && (!isFoundByShapeTest(program.at(member)) || writtenBaseOf(program.at(member)));
+    }));
+    return result;
+}
+
 // The members whose objects a test of the family lets through and whose slots nothing else decides. Empty: they are fewer than two, or one of them has its fields where the layout above it has them.
 // A class and what extends it share what is inherited.
-static void findMembersThatAgreeOnSlotsForSlotPlan(const Program& program, const Families& families, FamilyID family, std::span<const StorageOfLayoutInSlotPlan> storage, Vector<LayoutID, 16>& members)
+static void findMembersThatAgreeOnSlotsForSlotPlan(const Program& program, const Families& families, const BitVector& familiesThatMayAgree, FamilyID family, std::span<const StorageOfLayoutInSlotPlan> storage, Vector<LayoutID, 16>& members)
 {
     members.shrink(0);
+    if (!familiesThatMayAgree.quickGet(family.index()))
+        return;
     bool everyMemberIsFree = true;
     program.at(families.layoutsOf(family)).forEach([&](LayoutID member) {
         if (storage[member.index()].storage != LayoutStorage::CompiledObject || !storage[member.index()].hasCells())
@@ -598,8 +653,9 @@ static void chooseListedFieldsOutOfLineForSlotPlan(const Program& program, const
 
     Vector<LayoutID, 16> members;
     Vector<uint32_t, 16> rows;
+    BitVector familiesThatMayAgree = findFamiliesThatMayAgreeOnSlotsForSlotPlan(program, families, storage);
     for (uint32_t number = families.size(); number--;) {
-        findMembersThatAgreeOnSlotsForSlotPlan(program, families, FamilyID(number), storage, members);
+        findMembersThatAgreeOnSlotsForSlotPlan(program, families, familiesThatMayAgree, FamilyID(number), storage, members);
         if (members.isEmpty())
             continue;
         const Layout& first = program.at(members[0]);
@@ -655,8 +711,9 @@ static void placeFieldsSharedByFamiliesForSlotPlan(const Program& program, const
 {
     Vector<LayoutID, 16> members;
     Vector<uint32_t, 16> rows;
+    BitVector familiesThatMayAgree = findFamiliesThatMayAgreeOnSlotsForSlotPlan(program, families, storage);
     for (uint32_t number = families.size(); number--;) {
-        findMembersThatAgreeOnSlotsForSlotPlan(program, families, FamilyID(number), storage, members);
+        findMembersThatAgreeOnSlotsForSlotPlan(program, families, familiesThatMayAgree, FamilyID(number), storage, members);
         if (members.isEmpty())
             continue;
         uint64_t end = std::max(result.ends[members[0].index()], result.offsetOfFirstSlotOf(members[0]));
@@ -726,8 +783,9 @@ static void placeAppendedFieldsForSlotPlan(const Program& program, const LinkTab
     Vector<uint8_t*, 16> granules;
     Vector<size_t, 16> placesInMembers;
     Vector<uint32_t, 16> rows;
+    BitVector familiesThatMayAgree = families ? findFamiliesThatMayAgreeOnSlotsForSlotPlan(program, *families, storage) : BitVector();
     for (uint32_t number = families ? families->size() : 0; number--;) {
-        findMembersThatAgreeOnSlotsForSlotPlan(program, *families, FamilyID(number), storage, members);
+        findMembersThatAgreeOnSlotsForSlotPlan(program, *families, familiesThatMayAgree, FamilyID(number), storage, members);
         if (members.isEmpty())
             continue;
         const Layout& first = program.at(members[0]);
@@ -1115,8 +1173,9 @@ static void chooseFormsOfPlacesForSlotPlan(Program& program, const Facts& facts,
 
     // An appended field has no place. The smallest family first, so that what a larger one unites holds what a smaller one has united.
     Vector<LayoutID, 16> members;
+    BitVector familiesThatMayAgree = families ? findFamiliesThatMayAgreeOnSlotsForSlotPlan(program, *families, storage) : BitVector();
     for (uint32_t number = 0; families && number < families->size(); ++number) {
-        findMembersThatAgreeOnSlotsForSlotPlan(program, *families, FamilyID(number), storage, members);
+        findMembersThatAgreeOnSlotsForSlotPlan(program, *families, familiesThatMayAgree, FamilyID(number), storage, members);
         if (members.isEmpty())
             continue;
         for (PropertyKeyID key : link.appendedKeysOfPlan(members[0])) {
@@ -1332,6 +1391,12 @@ SlotPlanParts computeSlotPlanParts(Program& program, const Facts& facts, BuildCo
     planEnvironmentsHandedBack(program, facts, build, parts);
     chooseStorageOfFields(program, facts, build, parts);
     dropTypesOfNumbersLeftBoxedInSlotPlan(program, parts);
+    uint64_t numberOfFieldsOutOfLine = 0;
+    for (const PlannedLayout& planned : parts.layouts) {
+        for (const PlacedSlot& slot : planned.slots)
+            numberOfFieldsOutOfLine += slot.isOutOfLine();
+    }
+    build.statistics().count(StatisticID::FieldsOutOfLine, numberOfFieldsOutOfLine);
     planNames(program, mentions, build, parts);
     return parts;
 }

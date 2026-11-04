@@ -43,6 +43,8 @@ namespace AOT {
 
 enum class GuardsOfNameToEnd : uint8_t;
 
+class ChainDependentOwner;
+enum class ChainDependentOwnerID : uint8_t;
 class ClassPrototype;
 class Closure;
 class CompiledStructure;
@@ -111,6 +113,19 @@ public:
     JSObject* classPrototypeIfExists(const LayoutData&) const;
     JSObject* createClassPrototype(VM&, const LayoutData&, JSObject* parent);
     void registerClassPrototype(const LayoutData&, JSObject*);
+    // A guard of the prototype side of a class may hang on objects of which no record speaks: ChainDependent { name or null, the index of the class, this owner }. AOTClassGuards.cpp.
+    ChainDependentOwnerID ownerOfGuardsThatHangOnChains();
+    void endGuardThatHangsOnChain(uint32_t classIndex, UniquedStringImpl* uidOrNull);
+    bool guardThatHangsOnChainHolds(uint32_t classIndex, UniquedStringImpl* uidOrNull) const;
+    // An object of the class of what one Object.create() makes is being linked below `parent`. The first such parent is the prototype of the class for good: AOTClassGuards.cpp.
+    void willLinkCreatedObject(VM& vm, const LayoutData& instanceLayout, JSObject* parent)
+    {
+        if (isClassOfCreatedObjects(instanceLayout) && !classPrototypeIfExists(instanceLayout)) [[unlikely]]
+            defineClassOfCreatedObjects(vm, instanceLayout, parent);
+    }
+    void defineClassOfCreatedObjects(VM&, const LayoutData&, JSObject* parent);
+    // `Object.setPrototypeOf(request, app.request)`, where app.request stands below the prototype object of the request's class: AOTClassGuards.cpp.
+    bool takesObjectsLaidBelowPrototype(VM&, const LayoutData& instanceLayout, JSObject* firstAbove);
     Structure* lazyClassObjectStructureInheritingFrom(VM&, JSObject* parent);
     Structure* classObjectStructureInheritingFrom(VM&, JSObject* parent);
     size_t removeDeadEntries(VM&, CollectionScope);
@@ -322,6 +337,10 @@ private:
     // The numbers of the bits of the guards of names that have ended, so that no guard begins anew.
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_endedGuardsOfNames;
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_classesWithInstanceBelowOtherPrototype;
+    // Made with the first guard that hangs on a chain.
+    struct OwnerOfGuardsThatHangOnChains;
+    std::unique_ptr<ChainDependentOwner> m_ownerOfGuardsThatHangOnChains;
+    ChainDependentOwnerID m_numberOfOwnerOfGuardsThatHangOnChains { };
     // One more object of the layout that gets the field has nothing to tell: the guards that it would end have ended, or no prototype object above has the name and each of them reports what it gets.
     // Every report of a prototype object empties the set.
     SetOfFieldRecords m_fieldsWhoseCreationEndsNoGuard;

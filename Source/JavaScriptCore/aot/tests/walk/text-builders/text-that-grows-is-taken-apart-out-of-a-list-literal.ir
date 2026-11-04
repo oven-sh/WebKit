@@ -1,0 +1,72 @@
+# `const [before, k] = [line, i]; line += "k" + k;`: a step of the pattern goes back to the element of the literal by its value of the body, which is bound to the builder again by then. Such a literal is not iterated in place.
+# f1 = gather
+# -- source: text-that-grows-is-taken-apart-out-of-a-list-literal.js
+# function gather(count) { let line = ""; let seen = 0; for (let i = 0; i < count; i++) { const [before, k] = [line, i]; line += "k" + k; seen += before.length; } return line + "/" + seen; }
+# let turns = 3; print(gather(turns));
+# -- end of source
+# records of 20f9f5d8412e444f
+# RUN(ANSWERS): run-in-shell
+# REQUIRES(ANSWERS): entries-of-bun
+# ANSWERS: k0k1k2/6
+
+module m0 path="text-that-grows-is-taken-apart-out-of-a-list-literal.js" displayPath="text-that-grows-is-taken-apart-out-of-a-list-literal.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Integer integer=3 @201
+    v3 = Builtin builtin=GlobalThis @204
+    v4 = PropGet v3 key="print" [isFreeName] @204
+    v5 = Call v1, -, v2 calleeName="gather" @210
+    v6 = Call v4, -, v5 calleeName="print" @204
+    v7 = Undefined @204
+    Return v7 @204
+}
+function f1 name="gather" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="" @36
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @36
+    v3 = Integer @51
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @51
+    v5 = Integer @67
+    v6 = Convert v5 declared={type=number flags=[IsExpected]} @67
+    Jump -> next b1(v2, v4, v6) @63
+  b1(v7, v8, v9):
+    LoopHint @63
+    v11 = Less v9, v0 @74
+    Branch v11 -> taken b2(), notTaken b6() @74
+  b2():
+    v12 = NewArray v7, v9 contents=anything @108
+    v13 = IteratorOpen v12 elementCount=2 [isDestructuring] @94
+    Jump -> next b3() @94
+  b3() handler=b5():
+    v14 = IteratorResume v13 stepIndex=0 @94
+    v15 = ResultAt v14 @94
+    v16 = ResultAt v14 index=1 @94
+    v17 = IteratorResume v13 stepIndex=1 @94
+    v18 = ResultAt v17 @94
+    v19 = ResultAt v17 index=1 @94
+    Jump -> next b4() @103
+  b4():
+    IteratorClose v13 @94
+    v21 = String string="k" @127
+    v22 = Add v21, v19 @133
+    v23 = Add v7, v22 @133
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]} @119
+    v25 = PropGet v16 key="length" @144
+    v26 = Add v8, v25 @144
+    v27 = Convert v26 declared={type=number flags=[IsExpected]} @136
+    v28 = Increment v9 @81
+    v29 = Convert v28 declared={type=number flags=[IsExpected]} @81
+    Jump -> next b1(v24, v27, v29) @81
+  b5() role=IterationCleanup subject=v13:
+    v30 = CatchException @94
+    IteratorClose v13 completion=Throw @94
+    Rethrow v30 @94
+  b6():
+    v32 = String string="/" @175
+    v33 = Add v7, v32 @175
+    v34 = Add v33, v8 @181
+    Return v34 @181
+}

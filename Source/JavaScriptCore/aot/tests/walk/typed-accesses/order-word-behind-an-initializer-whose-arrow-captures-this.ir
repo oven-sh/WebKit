@@ -3,8 +3,8 @@
 # If the test in front of `this.path = path` asked for the word that lists `path` and `code` alone, it would fail in every construction, and the store would go by a stub.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:
-# CHECK: HasKeyOrder {{*}} layout=L0 traits
-# CHECK: HasKeyOrder {{*}} layout=L0 fields=[0, 1, 2, 3] traits
+# CHECK: HasKeyOrder {{*}} layout=L0 [hasNoFlags] traits
+# CHECK: HasKeyOrder {{*}} layout=L0 fields=[0, 1, 2, 3] [hasNoFlags] traits
 
 layout L0 kind=Instance name="Context" module=m0 constructor=f1 fields=[{key="path" declared={type=anything} flags=[IsRequired]}, {key="code" declared={type=anything} flags=[IsRequired]}, {key="status" declared={type=anything} flags=[IsRequired]}, {key="last" declared={type=anything} flags=[IsRequired]}] ownFieldCount=4
 variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]

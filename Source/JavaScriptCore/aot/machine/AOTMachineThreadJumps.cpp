@@ -192,6 +192,16 @@ private:
     static NEVER_INLINE void askTestBehindNextThatImpliesIt(Block* first);
     NEVER_INLINE void askTestsBehindNextThatImplyThem();
 
+    // A join that passTestOfUpperHalfBy() has led an edge past.
+    struct JoinPassedBy {
+        Block* join;
+        Block* passing;
+        // The Phi of `passing` that was the Trunc of the Phi of the join. Null: nothing there reads the Phi of the join.
+        Operation* lowerHalf;
+    };
+    static Operation* wordAddedTo(int64_t upperHalf, const Operation* sum);
+    NEVER_INLINE void passTestOfUpperHalfBy(Block* from);
+
     Procedure& m_proc;
     Arena& m_arena;
     ArenaVector<uint8_t> m_flags;
@@ -202,6 +212,7 @@ private:
     ArenaVector<Block*> m_chain;
     ArenaVector<Block*> m_joinsThatJump;
     ArenaVector<Block*> m_unreachedBlocks;
+    ArenaVector<JoinPassedBy> m_joinsPassedBy;
     bool m_hasFoundLoopHeads { false };
     // Block::index() of the block that run() has come to.
     uint32_t m_indexOfBlockInTurn { 0 };
@@ -549,6 +560,114 @@ void JumpThreader::threadThroughJoin(Block* from, unsigned successorIndex)
     markUnreached(join);
 }
 
+// ---- `node.kind === 80`, where the read is a guess: its typed arm has an int32 and adds the tag to it, to meet what the stub of the closed arm hands back, and the join asks the word for the tag and takes the int32 out again.
+// In the words of this file: C has a clear lower half. C + ZExt32(x) does not wrap, so it is no less than C, and its lower half is x. The arm goes straight to where the test passes, and hands x over.
+
+Operation* JumpThreader::wordAddedTo(int64_t upperHalf, const Operation* sum)
+{
+    if (sum->opcode() != Add || !sum->owner())
+        return nullptr;
+    const Operation* extension = sum->child(0);
+    if (!sum->child(1)->isInt64(upperHalf)) {
+        if (!extension->isInt64(upperHalf))
+            return nullptr;
+        extension = sum->child(1);
+    }
+    return extension->opcode() == ZExt32 ? extension->child(0) : nullptr;
+}
+
+// A Jump ends `from`.
+// The join holds its one Phi, `Phi >= C` or `Phi < C`, and the Branch on that. Beside the test the Phi is read by one Trunc at most in the block where the test passes, which nothing else enters,
+// and in the block where it fails, which then nothing else enters either: every read is found, so none lies where the way that passes the join by comes to, on which the Phi is missing.
+void JumpThreader::passTestOfUpperHalfBy(Block* from)
+{
+    ASSERT(from->last()->opcode() == Jump && from->numSuccessors() == 1);
+    Block* join = from->successor(0).block();
+    if (join->phis().size() != 1 || join->isEmpty() || join->last()->opcode() != Branch || join->numSuccessors() != 2 || join->isLandingPad())
+        return;
+    Operation* phi = join->phis().data()[0];
+    const Operation* handed = incomingValue(phi, from);
+    if (!handed || handed->opcode() != Add || phi->type() != Int64)
+        return;
+    const Operation* branch = join->last();
+    const Operation* test = branch->child(0);
+    if ((test->opcode() != AboveEqual && test->opcode() != Below) || test->child(0) != phi || !test->child(1)->hasInt64())
+        return;
+    int64_t bound = test->child(1)->asInt64();
+    if (static_cast<uint32_t>(bound))
+        return;
+    Operation* word = wordAddedTo(bound, handed);
+    if (!word)
+        return;
+
+    for (size_t index = m_joinsPassedBy.size(); index--;) {
+        const JoinPassedBy& known = m_joinsPassedBy[index];
+        if (known.join != join)
+            continue;
+        if (!has(from, IsVisited))
+            return;
+        Order::passJoinBy(from, known.passing, known.lowerHalf, known.lowerHalf ? word : nullptr);
+        ++m_reachedIncomingEdgeCounts[known.passing->index()];
+        return;
+    }
+
+    unsigned passingSuccessor = test->opcode() == AboveEqual ? 0 : 1;
+    Block* passing = join->successor(passingSuccessor).block();
+    const Block* failing = join->successor(1 - passingSuccessor).block();
+    if (passing == failing || passing == join || failing == join || passing->isLandingPad() || passing->isEntry())
+        return;
+    if (!join->upsilons().empty() || !passing->phis().empty() || passing->numberOfIncomingEdges() != 1)
+        return;
+    if (test->owner() != join || test->useCount() != 1)
+        return;
+    for (const Operation* operation : join->operations()) {
+        if (operation != branch && operation != test && (operation->useCount() || operation->mustStay()))
+            return;
+    }
+
+    auto readsCounted = [&](const Operation* operation) {
+        // A pure operation that nothing reads has counted nothing.
+        if (countsChildrenAtFirstUse(operation->opcode()) && !operation->useCount())
+            return 0u;
+        unsigned reads = 0;
+        for (const Operation* child : operation->children())
+            reads += child == phi;
+        return reads;
+    };
+    unsigned reads = 1;
+    Operation* truncation = nullptr;
+    for (Operation* operation : passing->operations()) {
+        if (!readsCounted(operation))
+            continue;
+        if (operation->opcode() != Trunc || truncation)
+            return;
+        truncation = operation;
+        ++reads;
+    }
+    for (const Operation* upsilon : passing->upsilons()) {
+        if (upsilon->child(0) == phi)
+            return;
+    }
+    unsigned readsAheadOfFailingSide = reads;
+    for (const Operation* operation : failing->operations())
+        reads += readsCounted(operation);
+    for (const Operation* upsilon : failing->upsilons())
+        reads += upsilon->child(0) == phi;
+    if (reads != phi->useCount())
+        return;
+    // `list[i]`: whatever fails behind the test of the tag, the bound or the hole, goes where the tag's failing goes, with the index in its box.
+    if (reads != readsAheadOfFailingSide && failing->numberOfIncomingEdges() != 1)
+        return;
+    if (isLoopHead(join) || !has(from, IsVisited))
+        return;
+
+    if (truncation)
+        Order::makePhiOfTruncationBehindJoin(join, truncation);
+    m_joinsPassedBy.append(m_arena, JoinPassedBy { join, passing, truncation });
+    Order::passJoinBy(from, passing, truncation, truncation ? word : nullptr);
+    ++m_reachedIncomingEdgeCounts[passing->index()];
+}
+
 // `from` has Upsilons for the Phis of the target. They hand each Phi what those of the skipped block hand it.
 bool JumpThreader::handsPhisWhatSkippedBlockHandsThem(const Block* from, const Block* skipped, const Block* target)
 {
@@ -561,8 +680,11 @@ bool JumpThreader::handsPhisWhatSkippedBlockHandsThem(const Block* from, const B
 }
 
 // Another edge of `from` leads to the target, which few blocks have, so `from` has Upsilons for the Phis there.
+// A block that a Switch ends has an Upsilon for a Phi only where one of its edges leads to the block of the Phi, so the Upsilons answer, and nobody goes through its edges once for each of them.
 ALWAYS_INLINE bool JumpThreader::bringsWhatSkippedBlockBrings(const Block* from, const Block* skipped, const Block* target)
 {
+    if (from->last()->opcode() == Switch && !target->phis().empty())
+        return !target->isLandingPad() && handsPhisWhatSkippedBlockHandsThem(from, skipped, target);
     const Edge* edge = from->successors().data();
     const Edge* end = edge + from->numSuccessors();
     while (edge != end && edge->block() != target)
@@ -1114,6 +1236,8 @@ void JumpThreader::run()
                     continue;
                 }
             }
+            if (block->upsilons().size() == 1 && block->upsilons().data()[0]->child(0)->opcode() == Add) [[unlikely]]
+                passTestOfUpperHalfBy(block);
         } else if (opcode == Branch) {
             if (block->numSuccessors() == 2)
                 listTestOfBranch(indexOfBlock, last);

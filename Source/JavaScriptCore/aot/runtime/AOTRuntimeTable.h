@@ -444,7 +444,6 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(OperationsOfErrors, Catch) \
     v(OperationsOfErrors, CatchException) \
     v(OperationsOfErrors, CatchValueAndException) \
-    v(OperationsOfErrors, NewFunctionThatThrows) \
     v(OperationsOfErrors, NewRuntimeError) \
     v(OperationsOfErrors, NewRuntimeErrorWithName) \
     v(OperationsOfErrors, NewSuppressedError) \

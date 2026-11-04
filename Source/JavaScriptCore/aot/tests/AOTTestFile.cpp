@@ -10,6 +10,7 @@
 
 #include "AOTCodeSites.h"
 #include "AOTCompileOptions.h"
+#include "AOTHostEntriesTestSupport.h"
 #include "AOTProgramFile.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -83,6 +84,7 @@ private:
         bool requiresTestedReadsOffNoCell { false };
         bool requiresCodeOutsideImage { false };
         bool requiresTargetWithoutJSCVT { false };
+        bool requiresEntriesOfBun { false };
     };
 
     struct OpenSection {
@@ -726,6 +728,8 @@ static constexpr ASCIILiteral testedReadsOffNoCell = "tested-reads-off-no-cell"_
 static constexpr ASCIILiteral codeOutsideImage = "code-outside-image"_s;
 // ARM64 with FEAT_JSCVT converts a number to an int32 in one instruction. Other targets truncate, test the result and have a slow path.
 static constexpr ASCIILiteral noJSCVT = "no-jscvt"_s;
+// The text names entries of Bun, or the lines expect what follows from them. A program that is linked with the table of the stand-in host leaves the run out: hasStandInHost().
+static constexpr ASCIILiteral entriesOfBun = "entries-of-bun"_s;
 #if ASAN_ENABLED
 static constexpr bool isBuiltWithAddressSanitizer = true;
 #else
@@ -752,12 +756,12 @@ void TestFileParser::parseRequires(const DirectiveLine& directive)
         return;
     }
     for (StringView word : words) {
-        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == windows ? group->requiresWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == callingLoopPolls ? group->requiresCallingLoopPolls : word == faultingReadsOffNoCell ? group->requiresFaultingReadsOffNoCell : word == testedReadsOffNoCell ? group->requiresTestedReadsOffNoCell : word == codeOutsideImage ? group->requiresCodeOutsideImage : word == noJSCVT ? group->requiresTargetWithoutJSCVT : group->hasRequiredArchitecture;
+        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == windows ? group->requiresWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == callingLoopPolls ? group->requiresCallingLoopPolls : word == faultingReadsOffNoCell ? group->requiresFaultingReadsOffNoCell : word == testedReadsOffNoCell ? group->requiresTestedReadsOffNoCell : word == codeOutsideImage ? group->requiresCodeOutsideImage : word == noJSCVT ? group->requiresTargetWithoutJSCVT : word == entriesOfBun ? group->requiresEntriesOfBun : group->hasRequiredArchitecture;
         if (std::exchange(isGiven, true)) {
             addError(directive.line, "REQUIRES is given twice for "_s, prefix);
             return;
         }
-        if (word == unsanitizedCode || word == notWindows || word == windows || word == faultingLoopPolls || word == callingLoopPolls || word == faultingReadsOffNoCell || word == testedReadsOffNoCell || word == codeOutsideImage || word == noJSCVT)
+        if (word == unsanitizedCode || word == notWindows || word == windows || word == faultingLoopPolls || word == callingLoopPolls || word == faultingReadsOffNoCell || word == testedReadsOffNoCell || word == codeOutsideImage || word == noJSCVT || word == entriesOfBun)
             continue;
         group->requiredArchitecture = findNamedValue(targetArchitectures, word);
         if (!group->requiredArchitecture) {
@@ -899,7 +903,7 @@ void TestFileParser::finishCheckGroups()
     for (PendingCheckGroup& group : m_checkGroups) {
         if (!group.hasMalformedLine)
             validateCheckGroup(group);
-        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && isBuiltWithAddressSanitizer) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresWindows && !isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls) || (group.requiresCallingLoopPolls && hasFaultingLoopPolls) || (group.requiresFaultingReadsOffNoCell && !readsOffNoCellFault) || (group.requiresTestedReadsOffNoCell && readsOffNoCellFault) || (group.requiresCodeOutsideImage && runsOnlyCodeOfImage) || (group.requiresTargetWithoutJSCVT && targetHasJSCVT)) {
+        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && isBuiltWithAddressSanitizer) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresWindows && !isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls) || (group.requiresCallingLoopPolls && hasFaultingLoopPolls) || (group.requiresFaultingReadsOffNoCell && !readsOffNoCellFault) || (group.requiresTestedReadsOffNoCell && readsOffNoCellFault) || (group.requiresCodeOutsideImage && runsOnlyCodeOfImage) || (group.requiresTargetWithoutJSCVT && targetHasJSCVT) || (group.requiresEntriesOfBun && hasStandInHost())) {
             m_file.runs.removeAllMatching([&](const RunDirective& run) {
                 return run.prefix == group.prefix;
             });

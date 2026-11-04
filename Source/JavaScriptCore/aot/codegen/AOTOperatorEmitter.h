@@ -83,6 +83,8 @@ private:
     template<typename T, typename Functor> T passingOrConverted(Boxed, const TypeTestPlan&, Form formOfConversion, const Functor& convert);
 
     LValue callBinaryStub(const ValueContext&, BinaryOperator, Boxed left, Boxed right);
+    // The closed arm of a guess, the way of what is no number: it is there for what a test in line would turn away, so nothing stands in line in front of the stub.
+    bool standsInRareBlock(const ValueContext& value) const { return m_code.at(value.block()).frequency == BlockFrequency::Rare; }
     Operand arithmeticOnIntegers(const ValueContext&, ArithmeticOperator);
     Operand arithmeticOnCheckedIntegers(const ValueContext&, ArithmeticOperator);
     Number arithmeticOnNumbers(ArithmeticOperator, Number, Number);
@@ -106,6 +108,7 @@ private:
     // False, and nothing generated: no operand is a written integer that an int32 holds, or the other can be no int32.
     bool generateRelationOfIntegerAndValue(const ValueContext&, Relation);
     bool generateRelationOfBoxedNumberAndValue(const ValueContext&, Relation);
+    bool generateRelationOfValuesThatAreLikelyInt32s(const ValueContext&, Relation);
 };
 
 } } } // namespace JSC::AOT::Typed

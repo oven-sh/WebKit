@@ -241,7 +241,6 @@ void Code::reset(CodeUnit unit)
     m_entries.shrink(0);
     m_factUses.shrink(0);
     m_pollsWithFates.shrink(0);
-    m_calleesOfIndirectCalls.shrink(0);
     m_opcodesOfValues = { };
     m_numberOfFrameWords = 0;
     m_hasHandlers = false;
@@ -600,7 +599,6 @@ Code::Mark Code::mark() const
     sizes.numberOfFrameWords = m_numberOfFrameWords;
     sizes.numberOfFactUses = static_cast<uint32_t>(m_factUses.size());
     sizes.numberOfPollsWithFates = static_cast<uint32_t>(m_pollsWithFates.size());
-    sizes.numberOfCalleesOfIndirectCalls = static_cast<uint32_t>(m_calleesOfIndirectCalls.size());
     sizes.hasHandlers = m_hasHandlers;
     sizes.sideWords = m_sideWords.mark();
     return sizes;
@@ -679,8 +677,6 @@ void Code::cutBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks)
     m_factUses.shrink(mark.numberOfFactUses);
     RELEASE_ASSERT(mark.numberOfPollsWithFates <= m_pollsWithFates.size());
     m_pollsWithFates.shrink(mark.numberOfPollsWithFates);
-    RELEASE_ASSERT(mark.numberOfCalleesOfIndirectCalls <= m_calleesOfIndirectCalls.size());
-    m_calleesOfIndirectCalls.shrink(mark.numberOfCalleesOfIndirectCalls);
 }
 
 } } } // namespace JSC::AOT::Typed

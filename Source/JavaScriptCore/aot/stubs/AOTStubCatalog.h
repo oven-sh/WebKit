@@ -94,10 +94,8 @@ public:
     const StubRecording& recordingOf(StubKey body) const;
     bool hasRecordingOf(StubKey body) const;
     StubRecording dryRun(StubKey body) const;
-#if ASSERT_ENABLED || ASAN_ENABLED
     // Of a body that dryRun served: whether what is said here of its entries holds of the body and of all that it refers to.
     bool answersCover(const StubRecording&) const;
-#endif
 
 private:
     struct Node;
@@ -118,9 +116,7 @@ private:
     const Node& closedNodeAt(unsigned index) const;
     void generateAndClose(unsigned index) const;
     static void checkDeclarations(std::span<Node* const>);
-#if ASSERT_ENABLED || ASAN_ENABLED
     const Node* tryFindNode(StubKey body) const;
-#endif
     const Node& nodeOf(StubKey body) const;
     const Answer* tryFindOwnAnswer(StubKey) const;
     const Answer& answerFor(StubKey) const;

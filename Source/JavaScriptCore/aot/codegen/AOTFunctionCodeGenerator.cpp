@@ -284,8 +284,10 @@ CompiledCode FunctionCodeGenerator::emitCode()
     // Order appends too: a Jump for each edge that it splits, and the Upsilons of that edge again.
     statistics.count(StatisticID::MachineOperationsAppended, m_procedure.numberOfOperations());
     statistics.count(StatisticID::MachineOperationsScanned, countMachineOperationsInOrder(m_procedure.order()));
+    statistics.count(StatisticID::LoopsRotated, m_procedure.order().numberOfLoopsRotated());
     statistics.count(StatisticID::MachineOperationsAllocated, allocation.numberOfOperationsAllocated());
     statistics.count(StatisticID::ValuesSpilled, allocation.spills().size());
+    statistics.count(StatisticID::InnerPointersAcrossSafepoints, m_procedure.numberOfInnerPointersAcrossSafepoints());
 
     enterStepOfCodeGeneration("encode"_s);
     readTagsFromInstance(m_jit);
@@ -298,17 +300,18 @@ CompiledCode FunctionCodeGenerator::emitCode()
         reportFailureOfMachineProcedure(build, m_inputs.program, m_code, m_procedure);
         return { };
     }
-    // The preamble that spills the argument registers falls through to the primary entry, and so do the secondary entries and a fused call entry, but that of a guard.
+    // The preamble that spills the argument registers falls through to the primary entry, and so does a fused call entry, but that of a guard.
     const CallingConventions& conventions = m_inputs.plan.conventions();
     bool holdsFusedCallEntry = conventions.holdsFusedCallEntry(m_code.unit());
     bool isGuard = m_code.unit().role == CodeRole::ParameterGuard;
-    bool preambleFallsThrough = m_records.frame.spillsArgumentRegisters || !conventions.secondaryEntriesOf(m_code.unit()).empty() || (holdsFusedCallEntry && !isGuard);
+    bool preambleFallsThrough = m_records.frame.spillsArgumentRegisters || (holdsFusedCallEntry && !isGuard);
     RELEASE_ASSERT(!preambleFallsThrough || !CCallHelpers::differenceBetween(bodyStart, m_procedure.entrypointLabel(0)));
     if (fromFusedCallEntry.isSet())
         fromFusedCallEntry.linkTo(m_procedure.entrypointLabel(0), &m_jit);
     else if (holdsFusedCallEntry && isGuard)
         m_records.entries.append(RecordedEntry { fusedCallEntry, m_procedure.entrypointLabel(0) });
     statistics.count(StatisticID::MachineOperationsEncoded, m_procedure.numberOfOperationsEncoded());
+    statistics.count(StatisticID::NullChecksFoldedIntoAccesses, m_procedure.numberOfTrapsTakenOver());
 
     emitStackOverflowPaths(m_jit, m_records, m_stackChecks);
     // The return address of a call at the very end would lie in the code that follows.

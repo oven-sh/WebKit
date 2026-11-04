@@ -22,9 +22,11 @@
 # -- end of source
 # records of dca72b584675a2da
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: function f2 cycle=
 # CHECK: function f3 cycle=
 # RUN(LAYOUTS): link layouts mechanisms=all
+# REQUIRES(LAYOUTS): entries-of-bun
 # LAYOUTS-NOT: layout L0 {{*}}stays-with-compiled-code
 # LAYOUTS: layout L1
 

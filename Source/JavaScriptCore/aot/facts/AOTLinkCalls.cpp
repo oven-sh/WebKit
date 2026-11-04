@@ -154,7 +154,7 @@ struct SharedCallInLinkCalls {
     // they are code of the library, or none of them is. By that a built-in is lost in sight or out of it: LinkFlow::CodeAtWork.
     FunctionID firstCaller;
     uint32_t firstCall { 0 };
-    // The call as a summary would have it. Its nodes are numbers into `nodes`: 0 is LinkFlow::unseen(), 1 the receiver, the arguments follow, and behind them the list of those at places that nobody knows.
+    // The call as a summary would have it. Its nodes are numbers into `nodes`: 0 is LinkFlow::unseen(), 1 the receiver, the arguments follow, behind them the list of those at places that nobody knows, and last the new.target.
     SummaryCall call;
     ThinSummary summary;
     Vector<FlowNodeID, 6> nodes;
@@ -720,6 +720,7 @@ private:
     // ---- Functions of the program
     void enter(FunctionID callee, const Passed&);
     void enterByBinding(FunctionID callee);
+    bool handsOnOwnNewTarget(const Passed&);
     bool handsNewTargetUpRowOfClasses(FunctionID callee, const Passed&);
     Entry passTo(FunctionID callee, const Passed&, Values& constructed);
     Values objectsConstructed(const Passed&, FunctionID callee);
@@ -781,6 +782,7 @@ private:
     void storeInSlot(const Values& holders, BuiltinSlotID, const Values&);
     bool mayBeMissingAt(const BuiltinPlace&) const;
     bool isFollowed(BuiltinClassID) const;
+    bool mayBeListWithLayout(const LinkType&);
 
     // False: the result may also be an object that nobody follows. `list.map(f)` reads `constructor` off the list, which takes any name, and what it finds there makes the result.
     // The functor is handed the site of each part of the result that makes an object, and the part.
@@ -836,7 +838,8 @@ private:
     void addKeys(Questions&, std::span<const BuiltinName>);
     void addKeysAnsweredByProgramAlone(Questions&, std::span<const BuiltinName>);
     void addConversion(Questions&);
-    void ask(const Values&, const Questions&);
+    bool ask(const Values&, const Questions&);
+    bool isDataDescriptorInSight(const Source*) const;
     bool mayAnswer(const LinkType&, const Source*, const Questions&, bool ownValuesAreFollowed);
     bool ownValuesAreListed(const LinkType&);
     bool mayFindUnderNumbersAbove(const LinkType&, const Source*);
@@ -934,6 +937,8 @@ const PassedInLinkCalls& CallInLinkCalls::passedByCall()
         if (m_shared->hasList)
             passed.list = valuesAtNode(m_summary.arguments.last());
         passed.isConstruction = m_call.isConstruction;
+        if (m_call.newTarget != noSummaryNode)
+            passed.newTarget = valuesAtNode(m_call.newTarget);
         return passed;
     }
     // What finds a function of the program under a name is an object.
@@ -1248,8 +1253,8 @@ void CallInLinkCalls::callBuiltinOfCall()
         callUnseen();
         return;
     }
-    // The walk puts the symbol in the place of the call: keyOfSymbolMadeOnce().
-    if (m_call.key && (!m_call.isInLoop || m_flow.program.at(m_call.key).kind == PropertyKeyKind::RegisteredSymbol)) {
+    // The walk puts the symbol in the place of the call, and asks the same: keyOfSymbolMadeOnce().
+    if (keyOfSymbolMadeOnceBy(m_flow.program, m_call)) {
         LinkType symbol;
         symbol.primitives = LinkType::oneSymbol;
         for (const ResultInLinkCalls& result : results())
@@ -1375,8 +1380,8 @@ void CallInLinkCalls::callName()
 ValuesInLinkCalls CallInLinkCalls::callThroughSharedCall(SharedCall::Subjects subjects, FamilyID family, const Passed& passed)
 {
     LinkFlow::LockerOfWhatIsShared locker(m_flow);
-    // No node takes a new.target: what a construction makes goes by its type.
-    if (passed.newTarget) {
+    // `super()`: whether the new.target escapes hangs on who hands it on, and to whom: handsNewTargetUpRowOfClasses(). Any other new.target escapes whoever is entered, and goes by a node like every operand.
+    if (passed.newTarget && handsOnOwnNewTarget(passed)) {
         Values answers;
         RELEASE_ASSERT(subjects == SharedCall::Subjects::CalledClassObjects);
         forEachConstructorOf(family, [&](FunctionID constructor) {
@@ -1399,7 +1404,7 @@ ValuesInLinkCalls CallInLinkCalls::callThroughSharedCall(SharedCall::Subjects su
     uint32_t numberOfArguments = static_cast<uint32_t>(passed.arguments.size());
     std::pair<uint64_t, uint32_t> place {
         static_cast<uint64_t>(family.index()) << 32 | (isByName ? m_call.key.index() : 0),
-        static_cast<uint32_t>(subjects) | !!passed.list << 2 | passed.isConstruction << 3 | !!passed.receiver << 4 | isLibraryCode(m_program, m_program.at(m_caller)) << 5 | numberOfArguments << 6,
+        static_cast<uint32_t>(subjects) | !!passed.list << 2 | passed.isConstruction << 3 | !!passed.receiver << 4 | isLibraryCode(m_program, m_program.at(m_caller)) << 5 | !!passed.newTarget << 6 | numberOfArguments << 7,
     };
     auto found = m_state.indexesOfSharedCalls.add(place, static_cast<uint32_t>(m_state.sharedCalls.size()));
     uint32_t index = found.iterator->value;
@@ -1423,6 +1428,10 @@ ValuesInLinkCalls CallInLinkCalls::callThroughSharedCall(SharedCall::Subjects su
         made->call.numberOfArguments = numberOfArguments + made->hasList;
         for (uint32_t argument = 0; argument < made->call.numberOfArguments; ++argument) {
             made->summary.arguments.append(static_cast<uint32_t>(made->nodes.size()));
+            made->nodes.append(m_flow.makeSharedNode());
+        }
+        if (passed.newTarget) {
+            made->call.newTarget = static_cast<uint32_t>(made->nodes.size());
             made->nodes.append(m_flow.makeSharedNode());
         }
         made->result = m_flow.makeSharedNode();
@@ -1451,7 +1460,9 @@ ValuesInLinkCalls CallInLinkCalls::callThroughSharedCall(SharedCall::Subjects su
     for (uint32_t argument = 0; argument < numberOfArguments; ++argument)
         flowInto(passed.arguments[argument], shared.nodes[2 + argument]);
     if (passed.list)
-        flowInto(*passed.list, shared.nodes.last());
+        flowInto(*passed.list, shared.nodes[2 + numberOfArguments]);
+    if (passed.newTarget)
+        flowInto(*passed.newTarget, shared.nodes[shared.call.newTarget]);
     m_flow.addEdge(shared.thrown, thrownNode());
 
     Values answers;
@@ -1525,7 +1536,7 @@ void CallInLinkCalls::callMemberOfInstance(LayoutID id)
         }
     }
 
-    Vector<LinkFlow::FoundMember, 2> members = m_flow.findMembers(id, ClassSide::Prototype, m_call.key);
+    LinkFlow::FoundMembers members = m_flow.findMembers(id, ClassSide::Prototype, m_call.key);
     for (const LinkFlow::FoundMember& member : members) {
         switch (member.kind) {
         case MethodKind::Method:
@@ -1548,7 +1559,7 @@ void CallInLinkCalls::callMemberOfInstance(LayoutID id)
     bool isPrivateName = m_program.at(m_call.key).kind == PropertyKeyKind::PrivateName;
     if (FlowNodeID foundOnPrototypes = isPrivateName ? FlowNodeID() : m_flow.foundOnPrototypesAbove(id, m_call.key))
         callValueAt(foundOnPrototypes, passed);
-    bool isAnsweredByClass = !members.isEmpty() && !m_flow.mayNotBeLinkedYetBelow(id, members[0].classLayout);
+    bool isAnsweredByClass = !members.lookupGoesOnAboveClasses();
     if (isAnsweredByClass || isPrivateName || m_flow.isAbsentAboveClasses(m_call.key))
         return;
     // An instance finds its class there.
@@ -1564,10 +1575,10 @@ void CallInLinkCalls::callMemberOfInstance(LayoutID id)
 // A node that holds a prototype object does not climb when the class escapes. A Member node does.
 void CallInLinkCalls::callMemberOfPrototype(LayoutID id)
 {
-    Vector<LinkFlow::FoundMember, 2> members = m_flow.findMembers(id, ClassSide::Prototype, m_call.key);
+    LinkFlow::FoundMembers members = m_flow.findMembers(id, ClassSide::Prototype, m_call.key);
     FlowNodeID foundOnPrototypes = m_flow.foundOnPrototypesAbove(id, m_call.key);
     // Where no class answers for sure the lookup goes on above the classes.
-    bool isAnsweredByProgram = !members.isEmpty() || (foundOnPrototypes && m_flow.isAbsentAboveClasses(m_call.key));
+    bool isAnsweredByProgram = !members.lookupGoesOnAboveClasses() || ((members.mayAnswer() || foundOnPrototypes) && m_flow.isAbsentAboveClasses(m_call.key));
     if (!isAnsweredByProgram || m_flow.escapedLayouts.get(id.index()) || m_flow.namesMayBeIncomplete(id, ClassSide::Prototype)) {
         bool givesUpInSight = !isAnsweredByProgram || m_flow.namesMayBeIncomplete(id, ClassSide::Prototype);
         callUnseen(givesUpInSight ? UnknownIs::InSight : UnknownIs::ByEscapeAlone);
@@ -1671,7 +1682,7 @@ void CallInLinkCalls::callMemberOfClosure(FunctionID function)
         callValueAt(m_flow.variable(record.staticFields[*field].variable), passed);
         break;
     }
-    Vector<LinkFlow::FoundMember, 2> members;
+    LinkFlow::FoundMembers members;
     if (layout)
         members = m_flow.findMembers(layout, ClassSide::Static, m_call.key);
     for (const LinkFlow::FoundMember& member : members) {
@@ -1751,7 +1762,7 @@ CallInLinkCalls::MemberOfTable CallInLinkCalls::findOnce(uint64_t question, cons
     }
     if (found.outcome != Lookup::Unknown) {
         PropertyKeyID key(static_cast<uint32_t>(question));
-        if (FlowNodeID added = m_flow.testRuns().nodeOfNameAdded(key); added && (!watch(added, 0) || m_flow.testRuns().isNameAdded(key)))
+        if (FlowNodeID added = m_flow.testRuns().nodeOfNameAdded(key); added && (!watch(added, 0) || m_flow.testRuns().isNameAdded(added)))
             return { };
     }
     if (found.outcome != Lookup::FoundWhereProgramMayWrite)
@@ -1907,15 +1918,21 @@ void CallInLinkCalls::enterByBinding(FunctionID callee)
 }
 
 // `super()`: the constructor of a derived class hands its own new.target to the constructor of the class that it is written below.
-bool CallInLinkCalls::handsNewTargetUpRowOfClasses(FunctionID callee, const Passed& passed)
+bool CallInLinkCalls::handsOnOwnNewTarget(const Passed& passed)
 {
     const Function& caller = m_program.at(m_caller);
     std::optional<unsigned> ownNewTarget = caller.newTargetParameterIndex();
-    if (&passed != &passedByCall() || caller.kind != FunctionKind::DerivedConstructor || !caller.constructedClass || !ownNewTarget || m_call.newTarget == noSummaryNode)
+    // Who came first to a shared call says nothing of the others.
+    if (m_shared || &passed != &passedByCall() || caller.kind != FunctionKind::DerivedConstructor || !caller.constructedClass || !ownNewTarget || m_call.newTarget == noSummaryNode)
         return false;
-    if (m_summary.nodes[m_call.newTarget] != SummaryNode { SummaryNode::Kind::Parameter, *ownNewTarget, 0 })
+    return m_summary.nodes[m_call.newTarget] == SummaryNode { SummaryNode::Kind::Parameter, *ownNewTarget, 0 };
+}
+
+bool CallInLinkCalls::handsNewTargetUpRowOfClasses(FunctionID callee, const Passed& passed)
+{
+    if (!handsOnOwnNewTarget(passed))
         return false;
-    LayoutID base = m_program.at(caller.constructedClass).base;
+    LayoutID base = m_program.at(m_program.at(m_caller).constructedClass).base;
     return base && m_program.at(base).constructor == callee;
 }
 
@@ -2127,7 +2144,10 @@ ValuesInLinkCalls CallInLinkCalls::passToLostFunctions(const Passed& passed, con
     }
 
     callees().mayEnterLost = true;
-    if (!passed.isConstruction)
+    // For a function with a class tieInLostFunction() lays what a construction makes at `this` and among the results. For any other nobody has seen the object, as on the road of one callee: objectsThatNoNodeHolds().
+    if (passed.isConstruction)
+        flowInto(valuesOf(unseenObjectsForLinkCalls()), m_flow.madeForLostFunctionsWithoutClass());
+    else
         flowInto(passed.receiver ? *passed.receiver : valuesOf(primitivesForLinkCalls(Primitive::Undefined)), m_flow.receiverOfLostFunctions());
     for (uint32_t position = 0; position < passed.arguments.size(); ++position)
         flowInto(passed.arguments[position], m_flow.parameterOfLostFunctions(position));
@@ -2135,6 +2155,8 @@ ValuesInLinkCalls CallInLinkCalls::passToLostFunctions(const Passed& passed, con
 
     Values answers;
     add(answers, m_flow.resultOfLostFunctions(), beyond(source));
+    if (passed.isConstruction)
+        add(answers, unseenObjectsForLinkCalls());
     return answers;
 }
 
@@ -2788,6 +2810,12 @@ void CallInLinkCalls::applyCallback(RowCall& call, const BuiltinCallback& callba
         forEachType(answers, [&](const LinkType& answer, const Source* source) {
             if (answer.classes != LinkType::Classes::None)
                 add(stored, m_flow.contentsOf(answer, ContentsSlot::Element), beyond(source));
+            // No site stands for a list that nobody follows, nor for a proxy of a list, whose traps run. What is taken out of one is marked as the list is.
+            bool mayBeListInSight = answer.holdsUnseenInSight() || answer.builtin || mayBeListWithLayout(answer);
+            if (mayBeListInSight || answer.holdsUnseen) {
+                throwAnything();
+                add(stored, mayBeListInSight ? LinkType::anything() : LinkType::anything().byEscapeAlone());
+            }
         });
         storeAt(call, callback.resultTo, stored);
         break;
@@ -3398,6 +3426,16 @@ void CallInLinkCalls::settle(Values& values)
     ofPromise.membersOfTableAnswerNothing = true;
 
     Values settled;
+    // What answers to `then` is entered with functions that nobody has seen, and what it hands to them is what the promise holds.
+    auto askForThen = [&](const Values& subjects, const Questions& asked) {
+        if (ask(subjects, asked))
+            add(settled, LinkType::anything());
+    };
+    // An object that nobody has seen may be a promise, or answer to `then`. What it gives is marked as it is.
+    auto settleWhatNobodyHasSeen = [&](const LinkType& type) {
+        if (type.holdsUnseen)
+            add(settled, type.holdsUnseenInSight() ? LinkType::anything() : LinkType::anything().byEscapeAlone());
+    };
     forEachType(values, [&](const LinkType& type, const Source* source) {
         bool mayBePromise = type.classes == LinkType::Classes::Mixed || (type.builtinClass && m_builtins.isSameOrSubclassOf(type.builtinClass, BuiltinClasses::Promise));
         if (!mayBePromise) {
@@ -3405,7 +3443,8 @@ void CallInLinkCalls::settle(Values& values)
                 add(settled, source->node, source->distance, source->passes);
             else
                 add(settled, type);
-            ask(source ? valuesAtSource(*source) : valuesOf(type), questions);
+            askForThen(source ? valuesAtSource(*source) : valuesOf(type), questions);
+            settleWhatNobodyHasSeen(type);
             return;
         }
 
@@ -3417,11 +3456,12 @@ void CallInLinkCalls::settle(Values& values)
             others.builtinClass = { };
             others.site = { };
             // Native code takes the value of a promise of its own class by its own `then`.
-            ask(valuesOf(instancesAmongForLinkCalls(type)), ofPromise);
+            askForThen(valuesOf(instancesAmongForLinkCalls(type)), ofPromise);
         }
         // Laid down, and by no edge, which would bring the promise along. The call is told when the type climbs.
         add(settled, others);
-        ask(valuesOf(others), questions);
+        askForThen(valuesOf(others), questions);
+        settleWhatNobodyHasSeen(others);
     });
     values = WTF::move(settled);
 }
@@ -3539,6 +3579,37 @@ bool CallInLinkCalls::mayBeMissingAt(const BuiltinPlace& place) const
 bool CallInLinkCalls::isFollowed(BuiltinClassID builtinClass) const
 {
     return !m_builtins.at(builtinClass).hasClosureInstances && !isFunctionClass(m_builtins, builtinClass);
+}
+
+// `class Stack extends Array`: an object of the layout is a list. Which layouts have got lost nobody says one by one, and what lies under `prototype` of a constructor function is whatever the program has laid there.
+bool CallInLinkCalls::mayBeListWithLayout(const LinkType& type)
+{
+    auto isWrittenBelowArray = [&](LayoutID layout) {
+        BuiltinClassID base = m_program.at(layout).writtenBuiltinBase;
+        return base && m_builtins.isSameOrSubclassOf(base, BuiltinClasses::Array);
+    };
+    bool mayBe = false;
+    switch (type.objects) {
+    case LinkType::Objects::None:
+        break;
+    case LinkType::Objects::Layout:
+        mayBe = isWrittenBelowArray(type.layout);
+        break;
+    case LinkType::Objects::Family:
+        forEachLayoutOf(type.family, [&](LayoutID member) {
+            mayBe |= isWrittenBelowArray(member);
+        });
+        break;
+    case LinkType::Objects::Prototype:
+    case LinkType::Objects::Prototypes:
+        mayBe = true;
+        break;
+    case LinkType::Objects::Lost:
+        for (uint32_t index = 0; index < m_program.layouts.size() && !mayBe; ++index)
+            mayBe = isWrittenBelowArray(LayoutID(index));
+        break;
+    }
+    return mayBe;
 }
 
 // ---- What native code asks of an operand
@@ -3696,6 +3767,9 @@ bool CallInLinkCalls::mayAnswer(const LinkType& type, const Source* source, cons
             return true;
     }
     LinkType converted = questions.onlyBoxedPrimitivesAreConverted ? instancesAmongForLinkCalls(type) : type;
+    // The native code that converts an instance of one of the engine's classes looks members up by name: Array.prototype.toString() calls the `join` that it finds. As isAsClassMakesIt().
+    if (questions.convertToPrimitive && converted.classes == LinkType::Classes::Site && !membersAboveInstancesAreWhatTableLists(converted.builtinClass))
+        return true;
     for (PropertyKeyID key : questions.keysOfConversion) {
         if (mayFind(converted, key, distance, true))
             return true;
@@ -3703,13 +3777,29 @@ bool CallInLinkCalls::mayAnswer(const LinkType& type, const Source* source, cons
     return false;
 }
 
-void CallInLinkCalls::ask(const Values& subjects, const Questions& questions)
+// SummaryChange::laysValueInSight, of the change that this call makes.
+bool CallInLinkCalls::isDataDescriptorInSight(const Source* source) const
+{
+    if (!source || m_shared)
+        return false;
+    return std::ranges::any_of(m_summary.changes, [&](const SummaryChange& change) {
+        return change.site == m_call.site && change.laysValueInSight && change.other != noSummaryNode && m_flow.nodeOf(m_caller, change.other) == source->node;
+    });
+}
+
+// True: one of them may answer.
+bool CallInLinkCalls::ask(const Values& subjects, const Questions& questions)
 {
     if (questions.isEmpty())
-        return;
+        return false;
+    bool someMayAnswer = false;
     forEachType(subjects, [&](const LinkType& type, const Source* source) {
+        // What the call reads off it the scan has read: the observer of the change says where the value goes, and lets the descriptor go wherever it does not take the definition for a store.
+        if (isDataDescriptorInSight(source))
+            return;
         if (mayAnswer(type, source, questions, false)) {
             escape(type, source);
+            someMayAnswer = true;
             return;
         }
         // `String(list)`: the engine's own conversion of a list, an error or a pattern converts what the object holds.
@@ -3721,6 +3811,7 @@ void CallInLinkCalls::ask(const Values& subjects, const Questions& questions)
             ask(contents, ofContents);
         }
     });
+    return someMayAnswer;
 }
 
 // ---- What native code only looks at, however deep
@@ -3898,7 +3989,7 @@ bool CallInLinkCalls::mayFind(const LinkType& objects, PropertyKeyID key, uint8_
         bool isConstructorFunction = layout && m_flow.isOfConstructorFunction(layout);
         if (isConstructorFunction)
             layout = { };
-        if (layout && (m_flow.namesMayBeIncomplete(layout, ClassSide::Static) || !m_flow.findMembers(layout, ClassSide::Static, key).isEmpty()))
+        if (layout && (m_flow.namesMayBeIncomplete(layout, ClassSide::Static) || m_flow.findMembers(layout, ClassSide::Static, key).mayAnswer()))
             return true;
         uint32_t stepsLeft = static_cast<uint32_t>(m_program.layouts.size());
         for (LayoutID current = layout; current && stepsLeft--; current = m_program.at(current).base) {
@@ -3930,8 +4021,18 @@ bool CallInLinkCalls::mayFind(const LinkType& objects, PropertyKeyID key, uint8_
         return false;
     // The nodes tell of a store, a change or an escape that comes later.
     case LinkType::Objects::Layout: {
-        if (findField(m_program, objects.layout, key) || !m_flow.findMembers(objects.layout, ClassSide::Prototype, key).isEmpty() || m_flow.namesMayBeIncomplete(objects.layout, ClassSide::Prototype))
+        if (findField(m_program, objects.layout, key) || m_flow.findMembers(objects.layout, ClassSide::Prototype, key).mayAnswer() || m_flow.namesMayBeIncomplete(objects.layout, ClassSide::Prototype))
             return true;
+        // What Object.prototype holds under the key is native code, which hands the object to nobody: unless a test run has laid the name there, or may write the member. The aggregates of the two arms below say so, through tieRead().
+        if (!m_flow.isAbsentAboveClasses(key)) {
+            BuiltinClassID objectClass = BuiltinClasses::Object;
+            BuiltinID above = m_builtins.at(objectClass).prototype;
+            Lookup outcome = findOnce(static_cast<uint64_t>(above.index()) << 32 | key.index(), [&] {
+                return findAbove(above, key, MembersUnderKey(m_program, key));
+            }).outcome;
+            if (outcome == Lookup::Unknown)
+                return true;
+        }
         FlowNodeID foundOnPrototypes = m_flow.foundOnPrototypesAbove(objects.layout, key);
         return (foundOnPrototypes && holdsWhatAnswers(foundOnPrototypes)) || holdsWhatAnswers(m_flow.foundBesideFieldsOf(objects.layout)) || holdsWhatAnswers(m_flow.foundBesideFieldsUnder(key));
     }

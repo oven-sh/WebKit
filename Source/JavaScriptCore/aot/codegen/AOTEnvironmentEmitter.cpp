@@ -37,10 +37,10 @@ void EnvironmentEmitter::generateGetCapture(const ValueContext& value)
         RELEASE_ASSERT(access.hasLocation && !access.findsOffsetByShape && !access.slot.isOutOfLine());
         static_assert(!uncreatedDeferredClosure);
         Word32 made(m_out.load32(m_out.address(m_heaps.AOTObject_scopeAndClosuresOfSlots, holder.value(), access.slot.offset)));
-        define(value, either<CellPointer>(isNotZero(made), [&] {
-            return closureCapture(decode(NarrowReference(made.value())), value->function(), value->index()).as<CellPointer>();
-        }, [&] {
+        define(value, either<CellPointer>(isZero(made), [&] {
             return decode(NarrowReference(m_out.load32(m_out.address(m_heaps.AOTObject_scopeAndClosuresOfSlots, holder.value(), scope->offset))));
+        }, [&] {
+            return closureCapture(decode(NarrowReference(made.value())), value->function(), value->index()).as<CellPointer>();
         }));
         return;
     }
@@ -80,10 +80,10 @@ void EnvironmentEmitter::generateReleaseEnvironment(const ValueContext& value)
     ValueID environment = value->environmentOperand();
     LayoutID layout = typeOf(environment).environment;
     Word32 isEscaped(m_out.load8ZeroExt32(escapeMarkOf(environment)));
-    ifElse(notEqual(isEscaped, word32(0)), [] { }, [&] {
+    ifElse(equal(isEscaped, word32(0)), [&] {
         CellPointer cell = in<CellPointer>(environment);
         m_out.store64(cell.value(), emitter<StaticsEmitter>().wordOfEnvironmentHandedBack(layout));
-    });
+    }, [] { });
 }
 
 } } } // namespace JSC::AOT::Typed

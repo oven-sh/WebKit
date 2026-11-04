@@ -17,7 +17,7 @@ namespace JSC { namespace AOT { namespace Machine {
 //
 //     return address                               return address
 //     frame pointer of the caller                  callee saves                    the last of the run at the place of the record
-//     what SlotAssignment lays out                 what SlotAssignment lays out    one word at most
+//     what SlotAssignment lays out                 what SlotAssignment lays out
 //     one unused word, where needed                one unused word, where needed
 //     callee saves            <- the stack pointer outgoing words                  <- the stack pointer
 //
@@ -35,7 +35,7 @@ struct FormOfFrame {
 
 // For planFrame(), once the coverage and the saves are settled.
 //  - No record where ProcedureTraits::mayOmitFrameRecord, the frame is not set up at entry by its traits, no Patch counts on the record, nothing names the FramePointer or a StackSlot,
-//    and SlotAssignment lays out nothing, or one word that comes to lie where the stack pointer stands: an address off the stack pointer with an offset is a byte longer than one off the frame pointer.
+//    and the setup allocates the frame in front of its stack check. An address off the stack pointer with an offset is a byte longer than one off the frame pointer; the record is two instructions at every entry.
 //  - Else the saves at the bottom where there are saves and slots and no outgoing words, in a function that does not save its frame, and one byte of offset reaches every slot whichever form the frame has.
 FormOfFrame chooseFormOfFrame(const Procedure&, FrameCoverage, RegisterMask saves);
 

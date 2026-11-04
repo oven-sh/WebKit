@@ -3,6 +3,7 @@
 # They are no starts: what they need is the same in every build, and a build whose own code asks for nothing makes no realm.
 # LIBRARY: own
 # RUN: regexp-texts realms mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: realms 0
 # CHECK-NOT: text /
 

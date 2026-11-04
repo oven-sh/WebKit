@@ -17,9 +17,10 @@
 # -- end of source
 # If what is stored under a name on a function went where whatever is stored under that name on anything goes, Ok.of and Err.of would meet, and both would be handed to unseen code with all that they make.
 # What the program lays under a name on a function of its own lies at a node of that function and that name.
+# SINCE 11-04 (R257) THE CLOCK OF START SAYS OF NO NAME THAT IT IS LAID AHEAD: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no program that we are judged by. What this test told apart by `laid-ahead` it no longer tells.
 # RUN: link members layouts mechanisms=all
-# CHECK: on-function f1 "of" function=f{{*}} laid-ahead
-# CHECK: on-function f2 "of" function=f{{*}} laid-ahead
+# CHECK: on-function f1 "of" function=f{{*}}
+# CHECK: on-function f2 "of" function=f{{*}}
 # CHECK: layout L0 {{*}}changes=[]
 # CHECK: layout L1 {{*}}changes=[]
 # Read above the store . two functions arrive . something else is done to the holder.

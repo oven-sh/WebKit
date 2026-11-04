@@ -94,6 +94,14 @@ CodeGenerator::CodeGenerator(const FunctionInputs& inputs, Machine::Procedure& p
         m_out.noteFormsIn(records.formsSaid);
     }
     m_notesForms = records.formsSaid.areNoted();
+    // No check of the back end sees a numbered load that a write should have ended: the operations are well formed and the word is stale. So the program itself asks, where a block takes such a load from the blocks above it.
+    if (build().options().recorded.validates) [[unlikely]] {
+        m_out.verifyInheritedLoads(heaps().collectorState.index(), [this](LValue readSameBits) {
+            m_out.check(m_out.isZero32(readSameBits))->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters&) {
+                jit.breakpoint();
+            });
+        });
+    }
 }
 
 CodeGenerator::~CodeGenerator()

@@ -4,18 +4,23 @@
 # nobody asks for the module, and `helper` lies in a variable of a file of which no function is reached.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: function f1 unreached
 # CHECK: function f2 unreached
 # CHECK: function f3 unreached
 # CHECK: function f4 unreached
 # RUN(NONE): link functions mechanisms=none
+# REQUIRES(NONE): entries-of-bun
 # NONE-COUNT-4: unreached
 # NONE-NOT: unreached
 # RUN(UNITS): units-with-code
+# REQUIRES(UNITS): entries-of-bun
 # UNITS: units 1,
 # RUN(CLOSED): units-with-code mechanisms=none
+# REQUIRES(CLOSED): entries-of-bun
 # CLOSED: units 1,
 # RUN(IMAGE): image ProgramTables
+# REQUIRES(IMAGE): entries-of-bun
 # IMAGE-NOT: compiledRuntimeFunction
 
 variable g0 name="helper" module=m1 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]

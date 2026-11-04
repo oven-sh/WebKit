@@ -235,6 +235,7 @@ void Encoder::recordTrappingAccess(const Operation* access, const AddressForm& a
     if (m_liveness.of(access).has(ValueFlag::TakesOverTrap)) {
         RELEASE_ASSERT(!access->traps());
         trappingLoad = m_liveness.trapTakenOverBy(access);
+        ++m_proc.m_numberOfTrapsTakenOver;
         ASSERT(trappingLoad && m_liveness.isDropped(trappingLoad) && trappingLoad->lastChild() == access->lastChild());
     }
     RELEASE_ASSERT(trappingLoad && trappingLoad->traps());

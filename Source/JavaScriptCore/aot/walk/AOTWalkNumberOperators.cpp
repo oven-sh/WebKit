@@ -137,6 +137,9 @@ static bool bindWhatIsNegatedTwice(Walker& walker, const BodyValue& negation)
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID inner = index.valueBehindCasts(negation.valueOperand());
+    // `!x` is written LogicalNot(ToBoolean(x)), and the truth of a negation is the negation.
+    if (inner && !index.isParameter(inner) && index.opcodeOf(inner) == Opcode::ToBoolean)
+        inner = index.valueBehindCasts(index.value(inner).valueOperand());
     if (!inner || index.isParameter(inner) || index.opcodeOf(inner) != Opcode::LogicalNot)
         return false;
     Reference negatedTwice = walker.referenceOf(index.value(inner).valueOperand());

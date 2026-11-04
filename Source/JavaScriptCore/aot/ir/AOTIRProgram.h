@@ -26,6 +26,7 @@
 #include <span>
 #include <utility>
 #include <wtf/BitVector.h>
+#include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
@@ -72,8 +73,9 @@ public:
     // AOTBuiltinTableOfTestRuns.cpp. Behind Link, on one thread: a name that the flow has brought to the object. The table of a test run has every such object locked by its names.
     void openNameForTestRun(BuiltinID canonicalHolder, StringID name);
     // A test run adds a property of this name to the object, which takes no other new name.
-    bool isOpened(BuiltinID canonicalHolder, StringID name) const { return std::ranges::contains(openedNames, OpenedName { canonicalHolder, name }); }
+    bool isOpened(BuiltinID canonicalHolder, StringID name) const { return m_namesOpened.contains(static_cast<uint64_t>(canonicalHolder.index()) << 32 | name.index()); }
     bool isOpenedSomewhere(StringID name) const { return m_namesOpenedSomewhere.get(name.index()); }
+    bool isSomeNameOpenedOn(BuiltinID canonicalHolder) const { return m_holdersOfOpenedNames.get(canonicalHolder.index()); }
     bool testsReplaceBuiltins() const { return m_testsReplaceBuiltins; }
     std::span<const uint8_t> buffer() const { return m_bytes.borrowed; }
     void borrowBuffer(std::span<const uint8_t> bytes) { m_bytes.borrowed = bytes; }
@@ -104,6 +106,7 @@ public:
     Vector<Entry> entries;
     Vector<RuntimeFunctionEntry> runtimeFunctions;
     Vector<WebAssemblyModule> webAssemblyModules;
+    // What the front end says of members of built-in objects, each once. staysLocked: a test run could open the member, but the front end has folded by it: it has left a lookup out because no file spells a store to it.
     Vector<ReplaceableBuiltin> replaceableBuiltins;
     Vector<OpenedName> openedNames;
     // CompileOptions::excludedCode of the build that read the program.
@@ -244,6 +247,9 @@ private:
 
     const BuiltinTable& m_builtins;
     BitVector m_namesOpenedSomewhere;
+    BitVector m_holdersOfOpenedNames;
+    // `openedNames`, for isOpened(): a large test run opens names by the hundred thousand.
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesOpened;
     bool m_testsReplaceBuiltins { false };
     BitVector m_builtinsThatMayBeTrimmed;
     std::optional<BitVector> m_keysThatNameAccessors;

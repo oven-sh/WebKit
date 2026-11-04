@@ -259,6 +259,20 @@ static bool rowsTakeArgumentAsPositionInNumberExpectations(Walker& walker, const
     if (call.opcode() != Opcode::Call || operandIndex < numberOfNamedOperandsOf(Opcode::Call))
         return false;
     TypeID typeOfCallee = provenTypeInNumberExpectations(walker, call.calleeOperand());
+    // `text.charCodeAt(pos)`, asked ahead of the walk: nothing is built for the read of the method yet. What is expected of `text` says which member the read would find. No proof, as all here.
+    if (saysNothingInNumberExpectations(walker.types(), typeOfCallee)) {
+        const BodyIndex& index = walker.currentBodyIndex();
+        ValueID read = index.valueBehindCasts(call.calleeOperand());
+        typeOfCallee = { };
+        if (read && !index.isParameter(read) && index.opcodeOf(read) == Opcode::PropGet && !index.value(read).isFreeName()) {
+            TypeID expected = findExpectation(walker, index.value(read).objectOperand()).type;
+            if (expected && !isNeverType(walker.types().withoutNullish(expected))) {
+                typeOfCallee = typeByRowInNumberExpectations(walker.typing(), index.value(read), [&](ValueID, uint32_t) {
+                    return walker.types().withoutNullish(expected);
+                });
+            }
+        }
+    }
     if (!typeOfCallee)
         return false;
     TypeArena& types = walker.types();
@@ -327,6 +341,70 @@ bool usesSpeakForInt32(Walker& walker, ValueID input)
     return speaksForInt32 && !speaksAgainstInt32;
 }
 
+static ValueID readOfEnvironmentFieldBehindNamesInNumberExpectations(const BodyIndex& index, ValueID value)
+{
+    while (value && !index.isParameter(value)) {
+        value = index.valueBehindCasts(value);
+        if (index.isParameter(value) || index.opcodeOf(value) != Opcode::CheckInitialized)
+            break;
+        value = index.value(value).operand(0);
+    }
+    return value && !index.isParameter(value) && index.opcodeOf(value) == Opcode::GetEnvironmentField ? value : ValueID();
+}
+
+static bool turnsStepOrUseEnvironmentFieldAsInt32(Walker& walker, const BodyIndex& index, LoopID loop, LayoutID layout, uint32_t field)
+{
+    auto isReadOfField = [&](ValueID value) {
+        ValueID read = readOfEnvironmentFieldBehindNamesInNumberExpectations(index, value);
+        return read && index.value(read).layout() == layout && index.value(read).field() == field;
+    };
+    for (BlockID member : index.membersOf(loop)) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (operation.opcode() == Opcode::GetEnvironmentField && operation.layout() == layout && operation.field() == field) {
+                ValueID name = operation.id();
+                if (ValueID user = index.onlyUsingValue(name); user && index.opcodeOf(user) == Opcode::CheckInitialized)
+                    name = user;
+                if (usesSpeakForInt32(walker, name))
+                    return true;
+            }
+            if (operation.opcode() != Opcode::PutEnvironmentField || operation.layout() != layout || operation.field() != field)
+                continue;
+            ValueID stored = index.valueBehindCasts(operation.valueOperand());
+            if (!stored || index.isParameter(stored))
+                continue;
+            BodyValue step = index.value(stored);
+            if ((step.opcode() == Opcode::Increment || step.opcode() == Opcode::Decrement) && isReadOfField(step.operand(0)))
+                return true;
+            // `pos += charSize(ch)`
+            if ((step.opcode() == Opcode::Add || step.opcode() == Opcode::Sub) && (isReadOfField(step.operand(0)) || (step.opcode() == Opcode::Add && isReadOfField(step.operand(1)))))
+                return true;
+        }
+    }
+    return false;
+}
+
+bool turnsTakeEnvironmentFieldForInt32(Walker& walker, LoopID loop, LayoutID layout, uint32_t field)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (turnsStepOrUseEnvironmentFieldAsInt32(walker, index, loop, layout, field))
+        return true;
+    // `pos < end`
+    for (BlockID member : index.membersOf(loop)) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (!allRelations.contains(operation.opcode()))
+                continue;
+            for (uint32_t side = 0; side < 2; ++side) {
+                ValueID read = readOfEnvironmentFieldBehindNamesInNumberExpectations(index, operation.operand(side));
+                ValueID other = readOfEnvironmentFieldBehindNamesInNumberExpectations(index, operation.operand(1 - side));
+                if (!read || !other || index.value(read).layout() != layout || index.value(read).field() != field)
+                    continue;
+                if (turnsStepOrUseEnvironmentFieldAsInt32(walker, index, loop, index.value(other).layout(), index.value(other).field()))
+                    return true;
+            }
+        }
+    }
+    return false;
+}
 // ---- Numbers among what is expected
 
 static bool holdsNumbersBesideNullishAlone(const Type& type)
@@ -544,6 +622,61 @@ static bool isLeftAsFoundInNumberExpectations(const Walker::RememberedExpectatio
     return !remembered.isKnown && remembered.isHeld;
 }
 
+// ---- A slot that the turns of a loop step
+
+static ValueID readOfSlotBehindNamesInNumberExpectations(const BodyIndex& index, ValueID value)
+{
+    if (value)
+        value = index.valueBehindCasts(value);
+    return value && !index.isParameter(value) && index.opcodeOf(value) == Opcode::PropGet && !index.value(value).isFreeName() ? value : ValueID();
+}
+
+static bool turnsTakeSlotForInt32(Walker& walker, LoopID loop, ValueID object, PropertyKeyID key)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    auto isReadOfSlot = [&](ValueID value) {
+        ValueID read = readOfSlotBehindNamesInNumberExpectations(index, value);
+        return read && index.value(read).key() == key && index.valueBehindCasts(index.value(read).objectOperand()) == object;
+    };
+    for (BlockID member : index.membersOf(loop)) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (operation.opcode() == Opcode::PropGet && isReadOfSlot(operation.id()) && usesSpeakForInt32(walker, operation.id()))
+                return true;
+            if (operation.opcode() != Opcode::PropSet || operation.isFreeName() || operation.key() != key || index.valueBehindCasts(operation.objectOperand()) != object)
+                continue;
+            ValueID stored = index.valueBehindCasts(operation.valueOperand());
+            if (!stored || index.isParameter(stored))
+                continue;
+            BodyValue step = index.value(stored);
+            if ((step.opcode() == Opcode::Increment || step.opcode() == Opcode::Decrement) && isReadOfSlot(step.operand(0)))
+                return true;
+        }
+    }
+    return false;
+}
+
+ExpectationOfNumber numbersExpectedOfSlotThatTurnsStep(Walker& walker, ValueID input, ExpectationOfNumber found)
+{
+    if (!found.type || !walker.has(Mechanism::TypedOperations) || !walker.has(Mechanism::UnboxedNumbers))
+        return found;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID read = readOfSlotBehindNamesInNumberExpectations(index, input);
+    LoopID loop = read ? index.loopOf(index.blockOf(read)) : LoopID();
+    if (!loop)
+        return found;
+    TypeArena& types = walker.types();
+    Type expected = types.at(found.type);
+    if (!holdsNumbersBesideNullishAlone(expected) || expected.isInt32OrNullish())
+        return found;
+    TypeID cut = withNumbersCutToInt32(types, expected);
+    TypeID proven = provenTypeInNumberExpectations(walker, input);
+    if (!cut || (proven && !types.overlap(proven, cut)))
+        return found;
+    if (!turnsTakeSlotForInt32(walker, loop, index.valueBehindCasts(index.value(read).objectOperand()), index.value(read).key()))
+        return found;
+    return { cut, found.isDeclared, found.isHeld };
+}
+
 // ---- The one function
 
 ExpectationOfNumber numbersExpectedOf(Walker& walker, ValueID input, ExpectationOfNumber found)
@@ -569,6 +702,13 @@ ExpectationOfNumber numbersExpectedOf(Walker& walker, ValueID input, Expectation
             return { cut, found.isDeclared, found.isHeld };
         if (TypeID held = typeHeldAtPositionOf(walker, input); held && !isNeverType(held) && holdsOnlyInt32InNumberExpectations(types.at(held)))
             return { cut, found.isDeclared, true };
+        // `pos < end`, `pos++`, `pos += size`: each mention of a variable that closures share is a read of its own, and none of them says much alone. What the turns of the loop do with the variable is asked of all of them.
+        if (ValueID read = readOfEnvironmentFieldBehindNamesInNumberExpectations(walker.currentBodyIndex(), input)) {
+            const BodyIndex& index = walker.currentBodyIndex();
+            LoopID loop = index.loopOf(index.blockOf(read));
+            if (loop && turnsTakeEnvironmentFieldForInt32(walker, loop, index.value(read).layout(), index.value(read).field()))
+                return { cut, found.isDeclared, found.isHeld };
+        }
         if (usesSpeakForInt32(walker, input))
             return { cut, found.isDeclared, found.isHeld };
         return found;

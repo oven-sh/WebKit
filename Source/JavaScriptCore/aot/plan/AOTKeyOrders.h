@@ -52,14 +52,12 @@ struct KeyOrderParts {
 // An object has the number of the first order that begins with its keys, and the count of them: AOTCellFormat.h, orderWordOf().
 class KeyOrders {
 public:
-    static constexpr unsigned maxContinuations = 2;
-    using Continuations = Vector<KeyOrderContinuation, maxContinuations>;
-
     KeyOrders() = default;
     explicit KeyOrders(KeyOrderParts&& parts)
         : m_parts(WTF::move(parts))
     {
         RELEASE_ASSERT(m_parts.sourceOfField.size() == m_parts.fields.size());
+        indexFirstContinuations();
     }
 
     uint32_t numberOfOrdersOf(LayoutID layout) const
@@ -85,8 +83,8 @@ public:
     JS_EXPORT_PRIVATE std::optional<uint32_t> findOrderWord(LayoutID, std::span<const FieldIndex> fieldsWithStorage) const;
     // How many of the fields, from the first on, have a word together. It may be 0, and Plan::allocation() has an answer for 0 fields. The walk asks in front of each NewObject.
     JS_EXPORT_PRIVATE size_t lengthOfLongestBeginningWithOrderWord(LayoutID, std::span<const FieldIndex> fieldsWithStorage) const;
-    // The places in the orders of the layout where exactly these fields come next, one behind the other, by order. A function of the orders and the fields alone.
-    JS_EXPORT_PRIVATE Continuations continuationsCreating(LayoutID, std::span<const FieldIndex> createdFieldsWithStorage) const;
+    // The first place, by order, where exactly these fields come next, one behind the other. A function of the orders and the fields alone.
+    JS_EXPORT_PRIVATE std::optional<KeyOrderContinuation> firstContinuationCreating(LayoutID, std::span<const FieldIndex> createdFieldsWithStorage) const;
     // Of all such places, the one with the fewest keys in front of it; of several, the first. What a constructor creates only on some way stands in some orders and not in others: the shortest beginning is what every way creates.
     JS_EXPORT_PRIVATE std::optional<KeyOrderContinuation> continuationCreatingBehindFewestKeys(LayoutID, std::span<const FieldIndex> createdFieldsWithStorage) const;
     // The same among the places in front of which the order lists every one of `fieldsInFront`, in whatever order.
@@ -95,7 +93,13 @@ public:
     JS_EXPORT_PRIVATE std::optional<uint32_t> findOrderWordOfShortestBeginningThatLists(LayoutID, std::span<const FieldIndex> fieldsWithStorage) const;
 
 private:
+    JS_EXPORT_PRIVATE void indexFirstContinuations();
+
     KeyOrderParts m_parts;
+    // One entry more than there are layouts.
+    Vector<uint32_t> m_firstContinuationOfLayout;
+    // By field index. No word after: no order lists the field.
+    Vector<KeyOrderContinuation> m_firstContinuationCreatingField;
 };
 
 } } } // namespace JSC::AOT::Typed

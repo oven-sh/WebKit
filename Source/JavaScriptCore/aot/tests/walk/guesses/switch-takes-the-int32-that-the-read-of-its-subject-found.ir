@@ -1,0 +1,251 @@
+# `switch (shape.tag)`, nothing proven of `shape`, the slot of `tag` held to an int32, and the Switch alone takes what is read. What the closed read finds is anything, so the typed run boxed its int32 where the arms met,
+# and the Switch asked the box for its tag, widened it, and kept an arm with a call for doubles. Here the closed arm finds the int32 by itself: what is an int32 is unboxed, -0 is 0 where 0 is a case,
+# and whatever takes no case becomes an int32 that no case names. The arms meet on an Int32, which goes into the Switch as it lies.
+# pickAndTell() reads the subject again where no case takes it: there a box stands for it as before.
+# f1 = pick, f2 = pickAndTell
+# -- source: tags.ts
+# const enum Tag { MinusOne = -1, Zero, One, Two, Three, Seven = 7 }
+# class Shape {
+#   tag: Tag;
+#   weight: number;
+#   constructor(tag: Tag, weight: number) { this.tag = tag; this.weight = weight; }
+# }
+# function pick(shape: Shape): string {
+#   switch (shape.tag) {
+#     case Tag.Zero: return "zero";
+#     case Tag.One: return "one";
+#     case Tag.Two:
+#     case Tag.Three: return "two or three";
+#     case Tag.Seven: return "seven";
+#     case Tag.MinusOne: return "minus one";
+#     default: return "none";
+#   }
+# }
+# function pickAndTell(shape: Shape): string {
+#   const tag = shape.tag;
+#   switch (tag) {
+#     case Tag.Zero: return "zero";
+#     case Tag.One: return "one";
+#     case Tag.Two: return "two";
+#     default: return "none: " + String(tag);
+#   }
+# }
+# (globalThis as any).pick = pick;
+# (globalThis as any).pickAndTell = pickAndTell;
+# let said = "";
+# for (let tag = -2; tag < 9; tag++) {
+#   const shape = new Shape(tag, tag * 2);
+#   (globalThis as any).kept = shape;
+#   said += pick(shape) + pickAndTell(shape);
+# }
+# console.log(said);
+# -- end of source
+# records of bcfba0d0f8c774db
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: = PropGet {{*}}key="tag"
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: @Int32 = GetSlot {{*}}key="tag"
+# CHECK: ([[subject]]: i32 @Int32
+# CHECK-NEXT: Switch [[subject]] cases=[0, 1, 2, 3, 7, -1]
+# CHECK: = StrictEq {{*}}form=Int32AndValue
+# CHECK-NOT: = Box
+# RUN(READ): walk f2 mechanisms=all
+# REQUIRES(READ): entries-of-bun
+# READ-LABEL: code f2:Body
+# READ-NOT: = TypeTest {{*}}testedType=i32
+# READ: @JSValue
+# READ: Switch
+# RUN(WITHHELD): walk f1 mechanisms=-Guesses
+# REQUIRES(WITHHELD): entries-of-bun
+# WITHHELD: [[read]]: {{*}} = PropGet {{*}}key="tag"
+# WITHHELD: Switch [[read]]
+
+module m0 path="tags.ts" displayPath="tags.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Shape" module=m0 position=73 constructor=f3 fields=[{key="tag" declared={type=i32} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="Tag" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined @0
+    v1 = NewClosure function=f1 @0
+    v2 = Convert v1 declared={type=f1 flags=[IsFromCompiler]} @0
+    v3 = NewClosure function=f2 @0
+    v4 = Convert v3 declared={type=f2 flags=[IsFromCompiler]} @0
+    v5 = NewClosure function=f3 @67
+    v6 = NewClass v5 layout=L0 @67
+    PutModuleVariable v6 variable=g1 @67
+    v8 = FinishClass v6 layout=L0 @67
+    v9 = Convert v8 declared={type=f3 flags=[IsFromCompiler]} @67
+    v10 = Convert v8 declared={type=f3 flags=[IsFromCompiler]} @67
+    v11 = Builtin builtin=GlobalThis @732
+    v12 = PropGet v11 key="globalThis" [isFreeName] @732
+    v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]} @732
+    PropSet v13, v2 key="pick" @732
+    v15 = Builtin builtin=GlobalThis @765
+    v16 = PropGet v15 key="globalThis" [isFreeName] @765
+    v17 = Convert v16 declared={type=builtin(GlobalThis) flags=[IsExpected]} @765
+    PropSet v17, v4 key="pickAndTell" @765
+    v19 = String string="" @822
+    v20 = Convert v19 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @822
+    v21 = Integer integer=-2 @841
+    v22 = Convert v21 declared={type=number} @841
+    Jump -> next b1(v20, v22) @835
+  b1(v23: undefined|null|string, v24: number):
+    LoopHint @835
+    v26 = Integer integer=9 @851
+    v27 = Less v24, v26 @851
+    Branch v27 -> taken b2(), notTaken b3() @851
+  b2():
+    v28 = Integer integer=2 @900
+    v29 = Mul v24, v28 @900
+    v30 = Construct v10, -, v24, v29 calleeName="Shape" @883
+    v31 = Builtin builtin=GlobalThis @907
+    v32 = PropGet v31 key="globalThis" [isFreeName] @907
+    v33 = Convert v32 declared={type=builtin(GlobalThis) flags=[IsExpected]} @907
+    PropSet v33, v30 key="kept" @907
+    v35 = Call v2, -, v30 calleeName="pick" @950
+    v36 = Call v4, -, v30 calleeName="pickAndTell" @964
+    v37 = Add v35, v36 @964
+    v38 = Add v23, v37 @964
+    v39 = Convert v38 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @942
+    v40 = Increment v24 @854
+    v41 = Convert v40 declared={type=number} @854
+    Jump -> next b1(v39, v41) @854
+  b3():
+    v42 = Builtin builtin=GlobalThis @986
+    v43 = PropGet v42 key="console" [isFreeName] @986
+    v44 = Convert v43 declared={type=builtin(Console) flags=[IsExpected]} @986
+    v45 = PropGet v44 key="log" @986
+    v46 = Convert v45 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @986
+    v47 = Call v46, v44, v23 calleeKey="log" calleeName="console.log" @994
+    v48 = Undefined @986
+    Return v48 @986
+}
+function f1 name="pick" module=m0 position=195 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="tag" @243
+    Switch v1 cases=[0, 1, 2, 3, 7, -1] -> case b1(| 0), case b2(| 0), case b3(| 0), case b4(| 0), case b6(| 0), case b7(| 0), otherwise b8() @265
+  b1(v2):
+    v3 = NarrowByField v0, v2 key="tag" @265
+    v4 = String string="zero" @282
+    v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @282
+    Return v5 @282
+  b2(v6):
+    v7 = NarrowByField v0, v6 key="tag" @265
+    v8 = String string="one" @315
+    v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @315
+    Return v9 @315
+  b3(v10):
+    v11 = NarrowByField v0, v10 key="tag" @265
+    Jump -> next b5() @265
+  b4(v12):
+    v13 = NarrowByField v0, v12 key="tag" @265
+    Jump -> next b5() @265
+  b5():
+    v14 = String string="two or three" @367
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @367
+    Return v15 @367
+  b6(v16):
+    v17 = NarrowByField v0, v16 key="tag" @265
+    v18 = String string="seven" @410
+    v19 = Convert v18 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @410
+    Return v19 @410
+  b7(v20):
+    v21 = NarrowByField v0, v20 key="tag" @265
+    v22 = String string="minus one" @449
+    v23 = Convert v22 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @449
+    Return v23 @449
+  b8():
+    v24 = String string="none" @482
+    v25 = Convert v24 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @482
+    Return v25 @482
+}
+function f2 name="pickAndTell" module=m0 position=496 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="tag" @555
+    Switch v1 cases=[0, 1, 2] -> case b1(| 0), case b2(| 0), case b3(| 0), otherwise b4() @592
+  b1(v2):
+    v3 = String string="zero" @609
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @609
+    Return v4 @609
+  b2(v5):
+    v6 = String string="one" @642
+    v7 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @642
+    Return v7 @642
+  b3(v8):
+    v9 = String string="two" @674
+    v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @674
+    Return v10 @674
+  b4():
+    v11 = String string="none: " @701
+    v12 = Builtin builtin=String @712
+    v13 = Call v12, -, v1 calleeName="String" @712
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @712
+    v15 = Add v11, v14 @712
+    v16 = Convert v15 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @712
+    Return v16 @712
+}
+function f3 name="Shape" module=m0 position=124 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: i32, v2: number):
+    v3 = GetConstructPrototype v0 layout=L0 @124
+    v4 = NewObject v3 layout=L0 @124
+    v5 = Convert v4 declared={type=L0} @124
+    v6 = CallDirect v5 function=f4 @124
+    PropSet v5, v1 key="tag" @153
+    PropSet v5, v2 key="weight" @169
+    v9 = Undefined @169
+    v10 = TypeTest v9 testedType=object @169
+    Branch v10 -> taken b1(| 0), notTaken b2(v5) @169
+  b1(v11):
+    Jump -> next b2(v11) @169
+  b2(v12):
+    Return v12 @169
+}
+function f4 module=m0 position=73 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @73
+    v2 = Undefined @73
+    PropDefine v1, v2 key="tag" @83
+    v4 = Undefined @73
+    PropDefine v1, v4 key="weight" @95
+    v6 = Undefined @73
+    Return v6 @73
+}
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f6 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f6
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private

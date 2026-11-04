@@ -784,6 +784,16 @@ void Allocator::settleFramedPart()
     for (Allocation::HeadOfFramedPart& head : m_allocation.m_headsOfFramedPart) {
         Position position = m_order.headOf(head.block);
         head.beginOfSteps = m_allocation.m_steps.size();
+        // A Phi that got no register is stored by the edges that lead to it, and those run where the frame of the head is not set up yet.
+        for (const Operation* phi : head.block->phis()) {
+            if (m_liveness.isDropped(phi) || !m_allocation.isSpilled(phi) || m_allocation.registerAtDefinitionOf(phi).isSet())
+                continue;
+            m_allocation.m_steps.shrink(begin);
+            for (Allocation::HeadOfFramedPart& other : m_allocation.m_headsOfFramedPart)
+                other.beginOfSteps = other.endOfSteps = 0;
+            setUpFrameAtEntryAfterAll();
+            return;
+        }
         for (const RegisterBinding& binding : m_allocation.registersAtHeadOf(head.block)) {
             // A way out of the framed part has fixed the head.
             if (maskOf(binding.reg) & m_file.calleeSaved) {

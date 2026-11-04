@@ -131,16 +131,8 @@ bool isHandedEnvironmentWithByte(const Walker& walker, FunctionID function)
 void markEnvironmentsThatOperationKeeps(Walker& walker, const Draft& draft)
 {
     Opcode opcode = draft.opcode;
-    const Plan& plan = walker.plan();
-    if (opcode == Opcode::ResultAt) {
-        Reference results = draft.resultsOperand();
-        if (!results.isValue())
-            return;
-        const Operation& call = walker.code().at(results.id());
-        if (call.opcode == Opcode::CallDirect && plan.conventions().handsBackPartsAtEveryReturn(call))
-            walker.environmentCellsOfUnit().hasMadeSome = true;
+    if (opcode == Opcode::ResultAt)
         return;
-    }
     // No cell is made of it: whoever calls it takes it apart, and names what it lists.
     if (opcode == Opcode::NewClosure && draft.closureForm() == ClosureForm::Deferred)
         return;

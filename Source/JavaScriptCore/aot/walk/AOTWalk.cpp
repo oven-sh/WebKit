@@ -121,7 +121,7 @@ public:
     // `believesTables` is false for Walker::checkProof() alone: what is left is what holds whatever Link says, because somebody enforces it: the run time, a guard, the making of the thing,
     // or, of a place that compiled code alone fills (a result, a variable, a capture, a field of an environment), the checks that stand where a value goes into it: Walker::checkProofsOfWhatIsStoredBy().
     // Such a check says nothing of the order of things: that no read comes in front of the first store is believed of no place. It keeps no round.
-    PositionsOfWalk(const Program& program, const Facts& facts, const LinkTables& tables, const Plan& plan, TypeArena& types, bool readsTables, bool believesTables = true, const TypeID* resultOfCallBeingTyped = nullptr, const TypeID* resultOfReadBeingTyped = nullptr)
+    PositionsOfWalk(const Program& program, const Facts& facts, const LinkTables& tables, const Plan& plan, TypeArena& types, bool readsTables, bool believesTables = true, const TypeID* resultOfCallBeingTyped = nullptr, const TypeID* resultOfReadBeingTyped = nullptr, const TypeID* contentsBeingTyped = nullptr)
         : m_program(program)
         , m_facts(facts)
         , m_linked(tables)
@@ -132,6 +132,7 @@ public:
         , m_whoAnswers(static_cast<WhoAnswersInWalk>((&tables == &facts.held() ? 2 : 0) + (readsTables ? 1 : 0)))
         , m_resultOfCallBeingTyped(resultOfCallBeingTyped)
         , m_resultOfReadBeingTyped(resultOfReadBeingTyped)
+        , m_contentsBeingTyped(contentsBeingTyped)
     {
     }
 
@@ -267,6 +268,7 @@ public:
     TypeID capture(TypeLevel level, FunctionID function, uint32_t capture) const final { return filledByCompiledCode(level, cellAt(m_linked.firstCaptureOfFunction, m_linked.captures, function.index(), capture)); }
     TypeID resultOfCallBeingTyped(TypeLevel level, uint32_t resultIndex) const final { return m_resultOfCallBeingTyped && level == TypeLevel::Proven && !resultIndex ? *m_resultOfCallBeingTyped : TypeID(); }
     TypeID resultOfReadBeingTyped(TypeLevel level) const final { return m_resultOfReadBeingTyped && level == TypeLevel::Proven ? *m_resultOfReadBeingTyped : TypeID(); }
+    TypeID contentsBeingTyped(TypeLevel level) const final { return m_contentsBeingTyped && level == TypeLevel::Proven ? *m_contentsBeingTyped : TypeID(); }
 
 private:
     // A method: its closures. An accessor: what Link has proven of the getter's result, and undefined where there is no getter.
@@ -313,6 +315,7 @@ private:
     // Null: nobody hands these positions the type of a call. So in a slow body, for what is held and where a proof is checked.
     const TypeID* m_resultOfCallBeingTyped;
     const TypeID* m_resultOfReadBeingTyped;
+    const TypeID* m_contentsBeingTyped;
 };
 
 } // anonymous namespace
@@ -470,32 +473,6 @@ TypeID typeOfNarrowed(const TypingContext& context, const Code& code, ValueID na
 
 // ---- What the rows say
 
-// `f.call(o)`: a built-in that is called may call a value in its turn. Every other call names the unit that it enters.
-static constexpr OpcodeSet opcodesThatMayCallThroughClosureWordInWalk = []() consteval {
-    OpcodeSet opcodes;
-    for (Opcode opcode : allMembersOf<Opcode>) {
-        switch (accessClassOf(opcode)) {
-        case AccessClass::IndirectCall:
-            opcodes.add(opcode);
-            break;
-        case AccessClass::DirectCall:
-            if (opcode != Opcode::CallDirect && opcode != Opcode::AwaitCallBySavingFrame)
-                opcodes.add(opcode);
-            break;
-        case AccessClass::None:
-        case AccessClass::Slot:
-        case AccessClass::ByName:
-            break;
-        }
-    }
-    return opcodes;
-}();
-
-static ALWAYS_INLINE bool mayCallThroughClosureWordInWalk(Opcode opcode)
-{
-    return opcodesThatMayCallThroughClosureWordInWalk.contains(opcode);
-}
-
 static constexpr std::array<ResultRule, numberOfOpcodes> resultRulesByOpcodeInWalk = []() consteval {
     std::array<ResultRule, numberOfOpcodes> rules { };
     for (Opcode opcode : allMembersOf<Opcode>)
@@ -512,21 +489,11 @@ static_assert(!EffectTraits(Effects::none()).bits());
 
 static constexpr OpcodeSet opcodesWithEffectsOfOperatorsInWalk = opcodesWhere([](Opcode opcode) { return effectRuleOf(opcode) == EffectRule::Operator; });
 
-template<typename Record>
-static const SplitResult* partsHandedBackInWalk(const Plan& plan, const Record& call)
-{
-    if (call.opcode != Opcode::CallDirect)
-        return nullptr;
-    return plan.conventions().splitResultOf(plan.conventions().unitEnteredBy(call));
-}
-
 // The record has a type all the same, so that it is a value that ResultAt can name.
 template<typename Record>
-static bool holdsNoneOfItsResultsInWalk(const Program& program, const Plan& plan, const Record& record)
+static bool holdsNoneOfItsResultsInWalk(const Program& program, const Record& record)
 {
-    if (!opcodesThatMayHaveSeveralResults.contains(record.opcode))
-        return false;
-    return numberOfResultsOf(program, record) || partsHandedBackInWalk(plan, record);
+    return opcodesThatMayHaveSeveralResults.contains(record.opcode) && numberOfResultsOf(program, record);
 }
 
 // ---- The unit
@@ -537,7 +504,7 @@ Walker::Walker(const WalkInputs& inputs, TypeArena& types, Arrivals& arrivals)
     , m_arrivals(arrivals)
     , m_mechanismsOfBuild(withoutMechanismsMissingDependencies(inputs.options.mechanisms))
     , m_mechanisms(m_mechanismsOfBuild)
-    , m_positionsOfBuild(makeUniqueWithoutFastMallocCheck<PositionsOfWalk>(inputs.program, inputs.facts, inputs.facts.linked(), inputs.plan, types, m_mechanismsOfBuild.contains(Mechanism::TypedOperations), true, &m_resultOfCallBeingTyped, &m_resultOfReadBeingTyped))
+    , m_positionsOfBuild(makeUniqueWithoutFastMallocCheck<PositionsOfWalk>(inputs.program, inputs.facts, inputs.facts.linked(), inputs.plan, types, m_mechanismsOfBuild.contains(Mechanism::TypedOperations), true, &m_resultOfCallBeingTyped, &m_resultOfReadBeingTyped, &m_contentsBeingTyped))
     , m_positionsOfSlowBody(makeUniqueWithoutFastMallocCheck<PositionsOfWalk>(inputs.program, inputs.facts, inputs.facts.linked(), inputs.plan, types, false))
     , m_positions(m_positionsOfBuild.get())
     , m_positionsKnowingNothing(makeUniqueWithoutFastMallocCheck<PositionsKnowingNothingInWalk>(types))
@@ -553,6 +520,22 @@ Walker::Walker(const WalkInputs& inputs, TypeArena& types, Arrivals& arrivals)
 }
 
 Walker::~Walker() = default;
+
+void Walker::noteThatCopyMakesNewList(FunctionID callee, Reference receiver)
+{
+    m_copyThatMakesNewList = receiver && receiver.isValue() ? callee : FunctionID();
+    if (!m_copyThatMakesNewList)
+        return;
+    m_receiverOfCopyThatMakesNewList = rootOfCellInSweptCode(m_code, receiver.id());
+    m_depthOfCopyThatMakesNewList = m_frames.size() + 1;
+}
+
+bool Walker::takeWordThatCopyMakesNewList(Reference receiver)
+{
+    FunctionID copied = std::exchange(m_copyThatMakesNewList, FunctionID());
+    return copied && copied == currentFunction() && m_frames.size() == m_depthOfCopyThatMakesNewList && receiver && receiver.isValue()
+        && rootOfCellInSweptCode(m_code, receiver.id()) == m_receiverOfCopyThatMakesNewList;
+}
 
 void Walker::beginUnit(CodeUnit unit)
 {
@@ -573,12 +556,19 @@ void Walker::beginUnit(CodeUnit unit)
     m_liveness.forget();
     m_block = { };
     m_frames.shrink(0);
+    m_copyThatMakesNewList = { };
     m_opensGuesses = true;
     m_numberOfGuessesOpened = 0;
     m_numberOfLoopsBuiltTwice = 0;
+    m_numberOfAssignmentsWrittenOut = 0;
+    m_numberOfJoinsWalkedForEachWay = 0;
     m_numberOfTurnsThatBeginAgain = 0;
+    m_numberOfEmptySlotsTakenAsCases = 0;
     m_fillersOfAllocations.clear();
     m_numberOfTypedResultsSelected = 0;
+    m_numberOfSlicesMadeOfElementsInSight = 0;
+    m_countsOfUnit.shrink(0);
+    m_numberOfValuesWalked = 0;
     m_keptByStrings = nullptr;
     m_numbersOfProofsChecked.fill(0);
     m_functionsInReachOfUnit.clear();
@@ -597,6 +587,7 @@ void Walker::beginUnit(CodeUnit unit)
     m_numberOfClosedArms = 0;
     m_sharedConstants.shrink(0);
     m_numberOfSharedConstants = 0;
+    m_holdsReadsOfVariablesAsConstants = false;
     m_narrowedTypedLast = { };
     m_copiesOfConstants.shrink(0);
     m_numberOfCopiesOfConstants = 0;
@@ -614,6 +605,7 @@ void Walker::beginUnit(CodeUnit unit)
     m_numberOfCopiesBuiltForSize = 0;
     m_coroutineState = { };
     m_loopsOverGenerators = { };
+    m_makesProxyInUnit = false;
     m_environmentCellsOfUnit = { };
     m_environmentCellsOfUnit.mayNameSome = isHandedEnvironmentWithByte(*this, unit.function);
     m_textsInStringBuilders.shrink(0);
@@ -731,7 +723,7 @@ bool Walker::walkBody()
         return false;
     if (has(Mechanism::Arrivals))
         takeArrivals(*this);
-    if (checksProofs())
+    if (checksProofsOf(ProofSource::EntryParameter) && (unit().role == CodeRole::Body || unit().role == CodeRole::CoroutineBody))
         checkProofsOfWhatComesThroughFusedEntry();
     beginModuleInBody();
 
@@ -810,6 +802,25 @@ void Walker::takeEntryParameters()
 // An entry parameter is filled by a direct call, and by the entries and the guard of its function for whoever calls by value, native code among them; a unit that holds its own entry by value asks for itself.
 // A variable, a capture and a field of an environment are filled by the operation that stores.
 // A result is filled by a return: endWithReturn().
+TypeID Walker::typeThatStoreTakesOnWordOfWalk(const Draft& store)
+{
+    static_assert(OperandIndex::PutSlot::value == OperandIndex::PutSlotOrAdd::value);
+    if (store.level() == KnowledgeLevel::Proven)
+        return requiredTypeOfOperand(typing(), store, OperandIndex::PutSlot::value);
+    Reference value = store.valueOperand();
+    TypeID claimed = value && value.isValue() ? typeAsBuilt(value) : TypeID();
+    TypeID taken;
+    for (LayoutID member : membersOf(m_types, store.receivers())) {
+        std::optional<FieldIndex> field = plan().slots().findField(program(), member, store.key());
+        TypeID type = field ? plan().slots().slot(member, *field).type : TypeID();
+        if (!claimed || !field || (type && !m_types.isSubset(claimed, type)))
+            return { };
+        if (type)
+            taken = taken ? m_types.intersectionOf(taken, type) : type;
+    }
+    return taken;
+}
+
 void Walker::checkProofsOfWhatIsStoredBy(const Draft& draft)
 {
     Origin origin = draft.origin();
@@ -824,7 +835,7 @@ void Walker::checkProofsOfWhatIsStoredBy(const Draft& draft)
         if (draft.level() == KnowledgeLevel::Proven)
             checkFactsRememberedOfCell(draft.objectOperand(), origin);
         if (draft.opcode == Opcode::PutSlotOrAdd)
-            checkThatSlotTakes(draft.valueOperand(), requiredTypeOfOperand(typing(), draft, OperandIndex::PutSlotOrAdd::value), origin);
+            checkThatSlotTakes(draft.valueOperand(), typeThatStoreTakesOnWordOfWalk(draft), origin);
         return;
     case Opcode::GetSlot:
     case Opcode::PutSlot:
@@ -832,7 +843,7 @@ void Walker::checkProofsOfWhatIsStoredBy(const Draft& draft)
             checkFactsRememberedOfCell(draft.objectOperand(), origin);
         checkProofThatSlotIsFilled(draft);
         if (draft.opcode == Opcode::PutSlot)
-            checkThatSlotTakes(draft.valueOperand(), requiredTypeOfOperand(typing(), draft, OperandIndex::PutSlot::value), origin);
+            checkThatSlotTakes(draft.valueOperand(), typeThatStoreTakesOnWordOfWalk(draft), origin);
         return;
     case Opcode::GetDeferredClosureSlot:
     case Opcode::GetSlotGetter:
@@ -1017,7 +1028,7 @@ void Walker::checkProofOfRecord(ValueID record, const Draft& draft, TypeID prove
     case ResultRule::Results:
         return;
     }
-    if (draft.opcode == Opcode::Narrowed || holdsNoneOfItsResultsInWalk(program(), plan(), draft))
+    if (draft.opcode == Opcode::Narrowed || holdsNoneOfItsResultsInWalk(program(), draft))
         return;
     // Nothing stands behind a call that returns in place of the unit. Whoever called the unit looks at what comes back.
     if (unitReturnsAtOnce(draft))
@@ -1047,7 +1058,8 @@ void Walker::checkProofOfRecord(ValueID record, const Draft& draft, TypeID prove
 
 void Walker::checkThatReadGivesValue(Reference value, ProofSource source, Origin origin)
 {
-    if (!value || !value.isValue() || isUnreachable())
+    // A read that claims nothing: the whole word alone asks it.
+    if (!checksProofs() || !value || !value.isValue() || isUnreachable())
         return;
     TypeID claimed = typeAsBuilt(value);
     Representation representation = representationOf(value);
@@ -1092,6 +1104,8 @@ void Walker::checkProofOfCopy(Reference value, TypeID proven, ProofSource source
 
 void Walker::checkProof(Reference value, TypeID proven, TypeID withoutProof, ProofSource source, Origin origin)
 {
+    if (!checksProofsOf(source))
+        return;
     // The emitter tests a boxed value, a cell, or the answer of a test. A narrow reference is made a boxed value first; of any other raw word no test tells anything.
     switch (representationOf(value)) {
     case Representation::JSValue:
@@ -1400,14 +1414,6 @@ TypeID Walker::typeOfResultAskedFor(const Draft& resultAt)
     const Operation& producer = m_code.at(results.id());
     uint32_t index = resultAt.index();
 
-    // PositionTypes::result() speaks of what the function returns, which is the object.
-    if (const SplitResult* split = partsHandedBackInWalk(plan(), producer)) {
-        if (index >= split->numberOfResults())
-            return { };
-        if (split->hasMark() && index == split->resultOfMark())
-            return split->markIsTag() ? m_types.integer(split->rangeOfTag()) : TypeID(TypeTable::boolean);
-        return split->typeOfResult(index);
-    }
     std::optional<uint32_t> numberOfResults = numberOfResultsOf(program(), producer);
     if (numberOfResults && index >= *numberOfResults)
         return { };
@@ -1465,7 +1471,7 @@ TypeID Walker::resultTypeOf(const Draft& draft, bool& listsOwnTypes)
         }
         return type;
     }
-    if (holdsNoneOfItsResultsInWalk(program(), plan(), draft))
+    if (holdsNoneOfItsResultsInWalk(program(), draft))
         return TypeTable::undefined;
 
     // The two places in which the rules are promised another type than the operand's own.
@@ -1644,10 +1650,10 @@ Reference Walker::tryBuildConversionOnStraightRoad(Opcode opcode, Representation
 {
     constexpr OpcodeSet conversionsOnStraightRoad { Opcode::Box, Opcode::Unbox, Opcode::Compress };
     static_assert((conversionsOnStraightRoad | conversionsOfForm) == conversionsOfForm && (conversionsOnStraightRoad | opcodesThatGiveSameCell) == opcodesThatGiveSameCell);
-    static_assert(!conversionsOnStraightRoad.intersects(opcodesThatMayCallThroughClosureWordInWalk) && !conversionsOnStraightRoad.intersects(opcodesThatStateTypes));
+    static_assert(!conversionsOnStraightRoad.intersects(opcodesThatStateTypes));
     if (!conversionsOnStraightRoad.contains(opcode) || !operand.isRecord() || isUnreachable())
         return { };
-    if (!m_openLoops.isEmpty() || hasTextsInStringBuilders() || m_positionsWithoutProofs || !m_state.barriers().isEmpty() || m_state.barriers().severalStoresHaveMet())
+    if (hasTextsInStringBuilders() || m_positionsWithoutProofs)
         return { };
     if (!opcodesWithPureDeclaredBound().contains(opcode) || opcodesWithoutEmitter().contains(opcode) || opcodesThatTakeTextsAsKeys.contains(opcode)
         || howOperandsAreTakenBy(opcode) != OperandsAreTaken::AsBuilt || operandKindOf(opcode, 0) != OperandKind::Convertible)
@@ -1667,6 +1673,8 @@ Reference Walker::tryBuildConversionOnStraightRoad(Opcode opcode, Representation
     }
     if (!hasRegister(to) || to == Representation::RawWord || !isLegalRepresentation(m_types, proven, to))
         return { };
+    if (!m_openLoops.isEmpty())
+        return appendConversionAmongOpenLoops(opcode, to, operand, proven, origin);
     return Reference::value(m_code.appendConversion(m_block, opcode, operand.id(), to, proven, origin));
 }
 
@@ -1879,8 +1887,6 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
     // The test is built without such a function: its closures fail the test. No rule derives more from a test than the test asks, on either edge, so whoever has built it claims no more than that.
     if (draft.opcode == Opcode::TypeTest)
         draft.setTestedType(withoutFunctionsThatMayNotBeMentioned(draft.testedType()));
-    if (m_state.barriers().severalStoresHaveMet()) [[unlikely]]
-        buildBarrierWhereStoresHaveMet(*this, &draft);
     if (opcodesThatStateTypes.contains(draft.opcode) || opcodesWithoutEmitter().contains(draft.opcode)) {
         fail("an operation that no emitter stands behind is built"_s);
         return { };
@@ -1893,6 +1899,12 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         if (!operand.isRecord()) {
             fail("an operand names no record of Code"_s);
             return { };
+        }
+        if (m_holdsReadsOfVariablesAsConstants && operand.isConstant()) [[unlikely]] {
+            operand = readVariableWhereItIsTaken(operand, draft.origin());
+            if (!operand || isUnreachable())
+                return { };
+            draft.setOperand(operandIndex, operand);
         }
         // No proof is a value in Code.
         OperandKind kind = draft.operandKind(operandIndex);
@@ -2028,13 +2040,15 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
     noteOperationBuilt(*this, draft, effects, Reference::value(id));
     if (m_resultOfReadBeingTyped && readsTypedByWhatIsProvenOfInput.contains(draft.opcode) && m_positions == m_positionsOfBuild.get())
         m_code.addFactUse(FactUse { .record = id, .kind = FactKind::ProvenContents, .subjectKind = FactSubject::Kind::Operation, .type = m_resultOfReadBeingTyped });
+    if (m_contentsBeingTyped && recordsTypedByWhatIsProvenOfContents.contains(draft.opcode) && m_positions == m_positionsOfBuild.get())
+        m_code.addFactUse(FactUse { .record = id, .kind = FactKind::ProvenContents, .subjectKind = FactSubject::Kind::Operation, .type = m_contentsBeingTyped });
     if (standsInFrontOfLoop)
         noteBuiltInFrontOfLoop(m_numberOfLoopsThatMayBeLeft, id);
     if (draft.opcode == Opcode::CallDirect || draft.opcode == Opcode::AwaitCallBySavingFrame || draft.opcode == Opcode::Construct)
         noteDirectCallForStackTests(draft);
-    if (mayCallThroughClosureWordInWalk(draft.opcode))
-        m_code.addCalleesOfIndirectCall({ id, { }, { } });
-    if (checksProofs() && holdsValue)
+    // Under a thin word only what a call gives, and what a read of a field gives, is asked; a Narrowed is the proof of a test.
+    bool checksRecord = checksProofs() || (draft.opcode != Opcode::Narrowed && (unit().role == CodeRole::Body || unit().role == CodeRole::CoroutineBody) && checksProofsOf(sourceOfProofInWalk(draft.opcode)));
+    if (checksRecord && holdsValue)
         checkProofOfRecord(id, draft, proven);
 
     if (!hasNoEffects)
@@ -2114,6 +2128,73 @@ Reference Walker::constant(Draft&& draft)
     return Reference::constant(added);
 }
 
+Reference Walker::cellThatRunTimeKeeps(Draft& draft)
+{
+    static constexpr OpcodeSet cellsThatRunTimeKeeps { Opcode::Builtin, Opcode::GetModuleVariable };
+    static_assert(!cellsThatRunTimeKeeps.intersects(constantsInFormOfUses));
+    // Where proofs are checked the read is built, so that what it finds can be held against the proof.
+    if (m_hasFailed || !cellsThatRunTimeKeeps.contains(draft.opcode) || m_positionsWithoutProofs || hasTextsInStringBuilders())
+        return { };
+    FunctionID born;
+    if (draft.opcode == Opcode::GetModuleVariable) {
+        PlannedVariable planned = plan().variable(draft.variable());
+        if (planned.encoding != VariableEncoding::FunctionAsZero || !planned.function)
+            return { };
+        born = planned.function;
+    }
+
+    unsigned hash = hashOfWordsOfConstantInWalk(draft);
+    if (!m_sharedConstants.isEmpty()) {
+        size_t mask = m_sharedConstants.size() - 1;
+        for (size_t place = hash & mask; m_sharedConstants[place] != noSharedConstantInWalk; place = (place + 1) & mask) {
+            ValueID id(m_sharedConstants[place] & ~hasFormOfItsTypeInWalk);
+            if (haveSameWordsInWalk(m_code.at(id), draft))
+                return Reference::constant(id);
+        }
+    }
+
+    TypeID proven = resultTypeOf(draft);
+    if (!proven || isNeverType(proven))
+        return { };
+    // BindingEmitter::generateGetModuleVariable(): closures of the function that the variable is born as and nothing else, no undefined and no null: no store has put anything else there, and the word of the variable is not asked.
+    // `function current() { .. }   const before = current; current = other; before()`: a variable that is stored into is read where the read is written.
+    if (born) {
+        Type read = m_types.at(proven);
+        if (read.primitives || !read.isJavaScriptValue() || singleFunctionOf(m_types, read) != born)
+            return { };
+    }
+    Representation form = resultRepresentationOf(*this, draft, proven);
+    if (!hasRegister(form) || !isLegalRepresentation(m_types, proven, form))
+        return { };
+    draft.representation = form;
+    ValueID added = m_code.addConstant(draft, proven);
+    addSharedConstant(hash, added.index() | hasFormOfItsTypeInWalk);
+    m_holdsReadsOfVariablesAsConstants |= !!born;
+    return Reference::constant(added);
+}
+
+Reference Walker::readVariableWhereItIsTaken(Reference constant, Origin origin)
+{
+    if (m_code.at(constant.id()).opcode != Opcode::GetModuleVariable)
+        return constant;
+    VariableID variable = m_code.at(constant.id()).variable();
+    TypeID type = m_code.at(constant.id()).type;
+    if (Reference held = m_state.variable(variable); held && held.isValue() && typeOf(held) == type)
+        return held;
+    if (Reference kept = valueOfStableVariable(*this, variable, type); kept && kept.isValue())
+        return kept;
+    origin.isTailCall = false;
+    Draft read(Opcode::GetModuleVariable, origin);
+    read.setVariable(variable);
+    read.flags = m_code.at(constant.id()).flags;
+    Reference built = build(WTF::move(read));
+    if (!built)
+        return { };
+    m_state.noteVariable(variable, built);
+    noteValueOfStableBinding(*this, variable, built);
+    return built;
+}
+
 static constexpr uint32_t bitsOfFormOfCopyInWalk = 4;
 static_assert(numberOfEnumerators<Representation> <= 1u << bitsOfFormOfCopyInWalk);
 
@@ -2170,8 +2251,16 @@ bool Walker::copy(const BodyValue& value)
     chooseConservativeFields(draft);
     if (draft.opcode == Opcode::Call && has(Mechanism::BuiltinCalls))
         nameMethodOfReceiverAsMade(*this, value, draft);
+    if (draft.opcode == Opcode::StrictEq && has(Mechanism::Guesses) && m_opensGuesses)
+        sayWhatIsExpectedOfComparedOperands(*this, value, draft);
     bool givesResult = resultRuleOf(draft.opcode) != ResultRule::None;
     // TODO(known-state-and-effects-1b): buildAsWrittenWithWhatIsKnown() (E9 E10 E15) stood here. It cost virtual calls on one receiver 8 to 13% of their instructions (rows f16, f61, f62) and gave TypeScript 6 nothing.
+    if (draft.opcode == Opcode::Builtin && has(Mechanism::Folding)) {
+        if (Reference cell = cellThatRunTimeKeeps(draft)) {
+            bind(value.id(), cell);
+            return true;
+        }
+    }
     Reference built = constantsInFormOfUses.contains(draft.opcode) ? constant(WTF::move(draft)) : build(WTF::move(draft));
     if (built && givesResult)
         bind(value.id(), built);
@@ -2375,8 +2464,6 @@ Reference Walker::tryCallInline(TerminatorDraft&& terminator, BlockID done, Bloc
     m_code.end(from, terminator, 2);
     m_code.closeEdge(m_code.at(from).terminator.done(), done, { });
     m_code.closeEdge(m_code.at(from).terminator.miss(), miss, { });
-    // A built-in that is called may call a value in its turn, and no record stands for this call.
-    m_code.addCalleesOfIndirectCall({ { }, { }, { } });
     arriveAt(done, WalkState(m_state));
     arriveAt(miss, WTF::move(m_state));
     m_state.clear();
@@ -3579,7 +3666,6 @@ void Walker::enterLoopHead(BlockID inputHead)
         endWithJumpInto(head, entering.span());
     if (!m_hasFailed)
         m_block = head;
-    m_state.barriers().enterHead();
     noteHeadOfTurn(inputHead);
 }
 
@@ -3700,7 +3786,7 @@ void Walker::walkBlock(BlockID inputBlock)
                 standAtHeadOfTurnOfForIn(inputBlock);
         } else if (index.isLoopHead(inputBlock))
             enterLoopHead(inputBlock);
-        else if (walkBlockApartFromClosedWays(inputBlock))
+        else if (walkBlockApartFromClosedWays(inputBlock) || walkBlockForEachWayThatBringsObjectInSight(inputBlock))
             return;
         else
             enterJoin(inputBlock);
@@ -3734,6 +3820,11 @@ void Walker::walkStretch(BlockID inputBlock, uint32_t begin, uint32_t end)
     standIn(inputBlock);
     const BodyIndex& index = *m_frames[frameIndex].index;
     uint32_t firstValue = index.block(inputBlock).firstValue().index();
+    // The numbers of values run on through the blocks: behind the last value of this one stands the first parameter of the next.
+    if (end > index.block(inputBlock).numberOfValues()) {
+        fail("a stretch ends behind the last operation of its block"_s);
+        return;
+    }
 
     // A link of the chain may walk a stretch that begins at its operation and goes on past it.
     uint32_t walkedBefore = std::exchange(m_frames[frameIndex].walkedUpTo, std::max(begin, std::exchange(m_frames[frameIndex].headWalkedForEachWay, 0u)));
@@ -3751,10 +3842,7 @@ void Walker::walkStretch(BlockID inputBlock, uint32_t begin, uint32_t end)
 
 bool Walker::endArmWithReturnOf(BlockID inputBlock)
 {
-    size_t frameIndex = m_frames.size() - 1;
-    if (frameIndex && !m_frames[frameIndex].returnsInPlaceOfUnit)
-        return false;
-    walkTerminator(m_frames[frameIndex].index->block(inputBlock).terminator());
+    walkTerminator(m_frames.last().index->block(inputBlock).terminator());
     return true;
 }
 
@@ -3792,6 +3880,9 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         || (has(Mechanism::Guesses) && m_opensGuesses && buildArmsInFrontOfTypedForms(*this, value))
         || (has(Mechanism::Guesses) && m_opensGuesses && openGuessAtElementOfNumbers(*this, value))
         || (has(Mechanism::BuiltinCalls) && buildOwnKeyList(*this, value))
+        || buildCopyOrKeyOrderForm(*this, value)
+        || (m_makesProxyInUnit && buildAccessThroughProxyMadeInUnit(*this, value))
+        || buildCopyWithWhatFollows(*this, value)
         || (has(Mechanism::BuiltinCalls) && callBuiltin(*this, value))
         || (has(Mechanism::Inlining) && inlineCalleeAsLinkOfChain(value))
         || (has(Mechanism::DirectCalls) && callDirectly(*this, value))
@@ -3926,6 +4017,7 @@ void Walker::noteClosuresThatAllocationAloneTakes(const BodyValue& allocation)
 
 void Walker::walkOperation(const BodyValue& value)
 {
+    ++m_numberOfValuesWalked;
     m_opcodeBeingWalked = value.opcode();
     // No loop, no poll.
     if (value.opcode() == Opcode::LoopHint && m_frames.last().headOfTurnsWrittenOut == m_frames.last().block)
@@ -4037,8 +4129,6 @@ void Walker::walkTerminator(const BodyTerminator& terminator)
     if (hasTextsInStringBuilders())
         takeTextsOutOfStringBuildersAtEndOfWay(*this, terminator);
 
-    if (m_state.barriers().severalStoresHaveMet())
-        buildBarrierWhereStoresHaveMet(*this, nullptr);
     if (terminator.kind() == TerminatorKind::ReturnCall) {
         for (TailCast cast : terminator.as<TerminatorKind::ReturnCall>().casts())
             checkInt32Promise(*this, cast.declared, terminator.operand(0), m_origin);
@@ -4062,6 +4152,8 @@ void Walker::walkTerminator(const BodyTerminator& terminator)
         // Of any other callee: the block stays open, and walkInline() goes on behind the call.
         if (!frameIndex || m_frames[frameIndex].returnsInPlaceOfUnit)
             walkReturn(terminator);
+        else
+            noteReturnOfCopy(terminator);
         return;
     case TerminatorKind::TryCallInline:
     case TerminatorKind::TestAndBranch:
@@ -4213,7 +4305,7 @@ bool Walker::staysTailCall(Reference call) const
     Representation returned = Representation::JSValue;
     if (record.opcode == Opcode::CallDirect) {
         CodeUnit entered = conventions.unitEnteredBy(record);
-        if (conventions.numberOfResults(entered) != 1 || conventions.splitResultOf(entered))
+        if (conventions.numberOfResults(entered) != 1)
             return false;
         returned = conventions.resultRepresentation(entered);
     }
@@ -4235,6 +4327,26 @@ void Walker::walkReturn(const BodyTerminator& terminator)
         returnAtOnce(returned);
     else
         returnFromUnit(returned);
+}
+
+void Walker::noteReturnOfCopy(const BodyTerminator& terminator)
+{
+    Frame& frame = m_frames.last();
+    Reference value;
+    if (ValueID returned = terminator.operand(0)) {
+        value = referenceOf(returned);
+        if (!value) {
+            fail("a return hands on a value of the body that nothing was built for"_s);
+            return;
+        }
+    }
+    if (!frame.returnsOfCopy) {
+        fail("a return of a callee is walked where nobody goes on behind the call"_s);
+        return;
+    }
+    frame.returnsOfCopy->append(Frame::ReturnOfCopy { m_block, value, WTF::move(m_state), frame.index->block(terminator.block()).hasHandler(), !m_opensGuesses });
+    m_block = { };
+    m_state.clear();
 }
 
 void Walker::returnAtOnce(Reference call)
@@ -4298,7 +4410,7 @@ void Walker::returnFromUnit(Reference returned)
 // Code has no way to state a type. So the type is tested for, and the failing side traps: it is no guess and has no closed arm, and only a false claim of Link takes it. Null: no run comes here.
 static Reference proveFormOfResultOrTrapInWalk(Walker& walker, Reference value, Representation form, Origin origin)
 {
-    constexpr RepresentationSet rawFormsOfResults { Representation::Boolean, Representation::Int32, Representation::Double };
+    constexpr RepresentationSet rawFormsOfResults { Representation::Boolean, Representation::Int32, Representation::Double, Representation::OptionalInt64, Representation::OptionalDouble };
     if (!rawFormsOfResults.contains(form) || isLegalRepresentation(walker.types().at(walker.typeOf(value)), form))
         return value;
 

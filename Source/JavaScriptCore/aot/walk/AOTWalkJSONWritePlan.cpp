@@ -769,7 +769,8 @@ struct JSONSerializersCalled {
 } // anonymous namespace
 
 // The members of an object in a list are written in every turn. A member whose slot proves no plan stands behind a test of its own or goes to the run time, which looks at the value: the host, which writes an object slot by slot, is the shorter way.
-static bool slotsProvePlansOfListedJSONObjects(const AccessContext& context, const JSONValuePlan& plan, Vector<LayoutID, 4>& layoutsAround)
+// `type Row = { a: Cell; b: Cell }`: a layout is asked once, however many members and lists hold it. What it answers hangs on nothing around it, and the first no ends the whole question.
+static bool slotsProvePlansOfListedJSONObjects(const AccessContext& context, const JSONValuePlan& plan, BitVector& layoutsAsked)
 {
     switch (plan.kind) {
     case JSONValueKind::Generic:
@@ -777,17 +778,17 @@ static bool slotsProvePlansOfListedJSONObjects(const AccessContext& context, con
     case JSONValueKind::Scalar:
         return true;
     case JSONValueKind::Array:
-        return slotsProvePlansOfListedJSONObjects(context, planJSONValue(context, plan.element, { }), layoutsAround);
+        return slotsProvePlansOfListedJSONObjects(context, planJSONValue(context, plan.element, { }), layoutsAsked);
     case JSONValueKind::ObjectParts:
         return std::ranges::all_of(plan.parts, [&](const JSONValuePlan& part) {
-            return slotsProvePlansOfListedJSONObjects(context, part, layoutsAround);
+            return slotsProvePlansOfListedJSONObjects(context, part, layoutsAsked);
         });
     case JSONValueKind::Objects:
         break;
     }
 
     return std::ranges::all_of(plan.layouts, [&](LayoutID layout) {
-        if (layoutsAround.contains(layout))
+        if (!layoutsAsked.add(layout.index()))
             return true;
         std::optional<JSONObjectPlan> object = planJSONObject(context, layout);
         if (!object)
@@ -798,16 +799,12 @@ static bool slotsProvePlansOfListedJSONObjects(const AccessContext& context, con
                 if (hasNoJSONText(context, proven))
                     return true;
                 JSONValuePlan memberPlan = planJSONValue(context, proven, { });
-                return memberPlan.kind != JSONValueKind::Generic && slotsProvePlansOfListedJSONObjects(context, memberPlan, layoutsAround);
+                return memberPlan.kind != JSONValueKind::Generic && slotsProvePlansOfListedJSONObjects(context, memberPlan, layoutsAsked);
             });
         };
-        layoutsAround.append(layout);
-        bool proveAll = std::ranges::all_of(object->orders, [&](const JSONKeyOrderPlan& order) {
+        return std::ranges::all_of(object->orders, [&](const JSONKeyOrderPlan& order) {
             return slotsProvePlans(order.members.span());
-        });
-        proveAll = proveAll && (!object->membersInAnyOrder || slotsProvePlans(object->membersInAnyOrder->span()));
-        layoutsAround.removeLast();
-        return proveAll;
+        }) && (!object->membersInAnyOrder || slotsProvePlans(object->membersInAnyOrder->span()));
     });
 }
 
@@ -835,9 +832,9 @@ static bool listsFoundInJSONListNeverEnd(const AccessContext& context, TypeID li
     return false;
 }
 
-static bool writesWholeJSONValueInUnit(const AccessContext&, const JSONValuePlan&, TypeID typeOfPlan, JSONUnitGoneThrough&, JSONSerializersCalled&);
+static bool writesWholeJSONValueInUnit(const AccessContext&, const JSONValuePlan&, TypeID typeOfPlan, JSONUnitGoneThrough&, JSONSerializersCalled&, BitVector& layoutsAskedInLists);
 
-static bool writesMembersOfJSONObjectInUnit(const AccessContext& context, const JSONObjectPlan& object, JSONUnitGoneThrough& unit, JSONSerializersCalled& serializers)
+static bool writesMembersOfJSONObjectInUnit(const AccessContext& context, const JSONObjectPlan& object, JSONUnitGoneThrough& unit, JSONSerializersCalled& serializers, BitVector& layoutsAskedInLists)
 {
     auto writesMembers = [&](std::span<const JSONMemberPlan> members) {
         return std::ranges::all_of(members, [&](const JSONMemberPlan& member) {
@@ -846,7 +843,7 @@ static bool writesMembersOfJSONObjectInUnit(const AccessContext& context, const 
                 return true;
             TypeID written = writtenTypeOfJSONMember(context, object.layout, member.field);
             JSONValuePlan memberPlan = planJSONValue(context, proven, written);
-            return writesWholeJSONValueInUnit(context, memberPlan, memberPlan.isExpected ? written : proven, unit, serializers);
+            return writesWholeJSONValueInUnit(context, memberPlan, memberPlan.isExpected ? written : proven, unit, serializers, layoutsAskedInLists);
         });
     };
     unit.layoutsAround.append(object.layout);
@@ -858,7 +855,7 @@ static bool writesMembersOfJSONObjectInUnit(const AccessContext& context, const 
     return writesAll;
 }
 
-static bool writesWholeJSONValueInUnit(const AccessContext& context, const JSONValuePlan& plan, TypeID typeOfPlan, JSONUnitGoneThrough& unit, JSONSerializersCalled& serializers)
+static bool writesWholeJSONValueInUnit(const AccessContext& context, const JSONValuePlan& plan, TypeID typeOfPlan, JSONUnitGoneThrough& unit, JSONSerializersCalled& serializers, BitVector& layoutsAskedInLists)
 {
     TypeArena& types = context.types;
     // JSON.stringify throws on a BigInt.
@@ -875,17 +872,16 @@ static bool writesWholeJSONValueInUnit(const AccessContext& context, const JSONV
         return true;
     case JSONValueKind::Array: {
         JSONValuePlan element = planJSONValue(context, plan.element, { });
-        Vector<LayoutID, 4> layoutsAround;
-        if (!slotsProvePlansOfListedJSONObjects(context, element, layoutsAround))
+        if (!slotsProvePlansOfListedJSONObjects(context, element, layoutsAskedInLists))
             return false;
         // `items: number[]` in a slot that is proven a list and no more: the plan has the elements from what is written, and the writer goes down by the plan.
         if (listsFoundInJSONListNeverEnd(context, plan.element, plan.tested))
             return false;
-        return writesWholeJSONValueInUnit(context, element, plan.element, unit, serializers);
+        return writesWholeJSONValueInUnit(context, element, plan.element, unit, serializers, layoutsAskedInLists);
     }
     case JSONValueKind::ObjectParts:
         return std::ranges::all_of(plan.parts, [&](const JSONValuePlan& part) {
-            return writesWholeJSONValueInUnit(context, part, typeCoveredByJSONPlan(context, part), unit, serializers);
+            return writesWholeJSONValueInUnit(context, part, typeCoveredByJSONPlan(context, part), unit, serializers, layoutsAskedInLists);
         });
     case JSONValueKind::Objects:
         break;
@@ -903,7 +899,7 @@ static bool writesWholeJSONValueInUnit(const AccessContext& context, const JSONV
             continue;
         }
         unit.membersLeft -= members;
-        if (!writesMembersOfJSONObjectInUnit(context, *object, unit, serializers))
+        if (!writesMembersOfJSONObjectInUnit(context, *object, unit, serializers, layoutsAskedInLists))
             return false;
     }
     return true;
@@ -913,7 +909,8 @@ bool writesWholeJSONValue(const AccessContext& context, const JSONValuePlan& pla
 {
     JSONSerializersCalled serializers;
     JSONUnitGoneThrough unitOfCall;
-    if (!writesWholeJSONValueInUnit(context, plan, typeOfPlan, unitOfCall, serializers))
+    BitVector layoutsAskedInLists;
+    if (!writesWholeJSONValueInUnit(context, plan, typeOfPlan, unitOfCall, serializers, layoutsAskedInLists))
         return false;
     // The list grows while it is gone through.
     for (size_t index = 0; index < serializers.layouts.size(); ++index) {
@@ -921,7 +918,7 @@ bool writesWholeJSONValue(const AccessContext& context, const JSONValuePlan& pla
         if (!object)
             return false;
         JSONUnitGoneThrough serializer { { }, roomForJSONMembersInsideObjectOfSerializer(context, *object) };
-        if (!writesMembersOfJSONObjectInUnit(context, *object, serializer, serializers))
+        if (!writesMembersOfJSONObjectInUnit(context, *object, serializer, serializers, layoutsAskedInLists))
             return false;
     }
     callsSerializers = !serializers.layouts.isEmpty();

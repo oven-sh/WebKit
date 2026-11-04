@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-// Branches and relations that need no test, for Folding with TypedOperations: a branch on a test whose operands have narrower names by now, a relation of a value with itself or with what compares as NaN, and a relation that a branch above has answered.
+// Branches and relations that need no test, for Folding with TypedOperations: a branch on a test whose operands have narrower names by now, and a relation of a value with itself or with what compares as NaN.
 // At a suspension and at a throw: nothing. Each answer follows from values that are primitives, or from what a value is, and neither changes.
 // Withheld: every branch keeps both sides, and every relation is compared.
 
@@ -43,38 +43,12 @@ static bool relationAdmitsEqualityInBranches(Opcode relation)
     return relation == Opcode::LessEq || relation == Opcode::GreaterEq;
 }
 
-static bool relationAsksForLesserOnLeftInBranches(Opcode relation)
-{
-    return relation == Opcode::Less || relation == Opcode::LessEq;
-}
-
 static bool convertsQuietlyInBranches(const Type& type)
 {
     return !type.isNever() && type.hasOnlyPrimitives(primitivesComparedQuietlyInBranches);
 }
 
-static uint64_t keyOfRelationInBranches(ValueID lesser, ValueID greater)
-{
-    return static_cast<uint64_t>(lesser.index()) << 32 | greater.index();
-}
-
 // ---- Relations
-
-std::optional<bool> Walker::outcomeOfRelationAnsweredAbove(bool admitsEquality, ValueID lesser, ValueID greater) const
-{
-    const Frame& frame = m_frames.last();
-    if (frame.answeredRelations.isEmpty() || !frame.index || !frame.block)
-        return std::nullopt;
-    auto found = frame.newestAnsweredRelations.find(keyOfRelationInBranches(lesser, greater));
-    if (found == frame.newestAnsweredRelations.end())
-        return std::nullopt;
-    for (uint32_t place = found->value; place != UINT32_MAX; place = frame.answeredRelations[place].older) {
-        const Frame::AnsweredRelation& answered = frame.answeredRelations[place];
-        if (answered.admitsEquality == admitsEquality && frame.index->dominates(answered.block, frame.block))
-            return answered.answer;
-    }
-    return std::nullopt;
-}
 
 std::optional<bool> answerOfRelationWithoutCompare(Walker& walker, const BodyValue& relation)
 {
@@ -103,33 +77,12 @@ std::optional<bool> answerOfRelationWithoutCompare(Walker& walker, const BodyVal
     ValueID rootOfRight = valueBehindNamesInBranches(code, right.id());
     if (!rootOfLeft || !rootOfRight)
         return std::nullopt;
-    bool admitsEquality = relationAdmitsEqualityInBranches(opcode);
     // No value is less than itself, and each is at most itself unless it compares as NaN. Two strings are compared as strings.
-    if (rootOfLeft == rootOfRight) {
-        if (!admitsEquality)
-            return false;
-        if (typeOfLeft.hasOnlyPrimitives(primitivesInTotalOrderInBranches | Primitive::AnyString))
-            return true;
+    if (rootOfLeft != rootOfRight)
         return std::nullopt;
-    }
-
-    ValueID lesser = relationAsksForLesserOnLeftInBranches(opcode) ? rootOfLeft : rootOfRight;
-    ValueID greater = relationAsksForLesserOnLeftInBranches(opcode) ? rootOfRight : rootOfLeft;
-    if (std::optional<bool> same = walker.outcomeOfRelationAnsweredAbove(admitsEquality, lesser, greater))
-        return same;
-    if (admitsEquality) {
-        if (walker.outcomeOfRelationAnsweredAbove(false, lesser, greater) == true)
-            return true;
-    } else if (walker.outcomeOfRelationAnsweredAbove(true, lesser, greater) == false)
+    if (!relationAdmitsEqualityInBranches(opcode))
         return false;
-
-    std::optional<bool> reverse = walker.outcomeOfRelationAnsweredAbove(false, greater, lesser);
-    std::optional<bool> reverseOrEqual = walker.outcomeOfRelationAnsweredAbove(true, greater, lesser);
-    if (reverse == true || (!admitsEquality && reverseOrEqual == true))
-        return false;
-    // A relation that does not hold says nothing of its reverse where either side may be NaN.
-    bool areInTotalOrder = typeOfLeft.hasOnlyPrimitives(primitivesInTotalOrderInBranches) && typeOfRight.hasOnlyPrimitives(primitivesInTotalOrderInBranches);
-    if (areInTotalOrder && (reverseOrEqual == false || (admitsEquality && reverse == false)))
+    if (typeOfLeft.hasOnlyPrimitives(primitivesInTotalOrderInBranches | Primitive::AnyString))
         return true;
     return std::nullopt;
 }

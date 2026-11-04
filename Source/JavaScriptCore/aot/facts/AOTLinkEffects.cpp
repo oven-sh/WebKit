@@ -15,6 +15,8 @@
 #include "AOTIRProgram.h"
 #include "AOTLinkCoroutines.h"
 #include "AOTLinkUnions.h"
+#include "AOTOpcodeSets.h"
+#include "AOTRowsOfLayouts.h"
 #include "AOTThreads.h"
 #include <algorithm>
 #include <optional>
@@ -253,11 +255,11 @@ private:
     void indexHolders();
     void findLayoutsThatMayFindAnything();
     bool mayFindAnything(const LinkType& subject);
-    bool readsFixedPartOfClass(const LinkType& subject, PropertyKeyID);
+    bool readsFixedPartOfClass(const LinkType& subject, PropertyKeyID, bool hasOtherReceiver);
     bool objectPrototypeNeverAnswers(PropertyKeyID);
     void addFunctionsAt(const LinkType& held, CodeFound&) const;
     void lookInLayout(LayoutID, bool hasOwnFields, PropertyKeyID, MethodKind wanted, bool callsWhatIsFound, CodeFound&) const;
-    void findCodeBehindLookup(const LinkType& subject, PropertyKeyID, SummaryAccess::Kind, bool callsWhatIsFound, CodeFound&);
+    void findCodeBehindLookup(const LinkType& subject, PropertyKeyID, SummaryAccess::Kind, bool hasOtherReceiver, bool callsWhatIsFound, CodeFound&);
     Effects effectsOfLookupItself(SummaryAccess::Kind, PropertyKeyID) const;
 
     // ---- What the rows of a built-in say
@@ -266,6 +268,7 @@ private:
     bool rowSaysAllOfCallsOf(const BuiltinOverload&, BuiltinOperand callee) const;
     bool addEffectsOnOperand(const BuiltinOverload&, BuiltinOperand, const LinkType&, CodeFound&, Effects&) const;
     bool addEffectsOfRow(const BuiltinOverload&, FunctionID, const ThinSummary&, const SummaryCall&, CodeFound&, Effects&) const;
+    bool passesNoIterable(FunctionID, const ThinSummary&, const SummaryCall&) const;
     bool addEffectsOfRows(BuiltinID, FunctionID, const ThinSummary&, const SummaryCall&, CodeFound&, Effects&) const;
     bool rowsHandOperandToNobody(BuiltinID, const SummaryCall&, BuiltinOperand) const;
     bool rowsGiveFreshResult(BuiltinID, const SummaryCall&) const;
@@ -290,7 +293,6 @@ private:
         ModuleID entry;
         Vector<StateOfModule> modules;
         Vector<uint32_t> modulesStarted;
-        BitVector modulesThatWaitForOthers;
         // By function, with the node of the lost functions behind them: the earliest tick at which anything may enter it.
         Vector<uint32_t> firstEntry;
         Vector<uint32_t> nodesEntered;
@@ -382,6 +384,7 @@ private:
     void findModulesThatMayWait();
     void walkStart(StartOfProgram&, const BodyIndexTable&, ModuleID entry, std::span<const uint32_t> firstVariableOfModule, std::span<const uint32_t> variablesOfModules) const;
     void makeAvailableAtStart(StartOfProgram&, FunctionID namer) const;
+    void makeFunctionsBornBehindNamespaceAvailableAtStart(StartOfProgram&, ModuleID) const;
     void enterAtStart(StartOfProgram&, uint32_t function) const;
     void enterAtStart(StartOfProgram&, const CodeEntered&) const;
     enum class HandedToUnseenCode : uint8_t { Nothing, WhatProgramMade };
@@ -389,7 +392,7 @@ private:
     HandedToUnseenCode handedOverBy(FunctionID, const ThinSummary&, const SummaryCall&) const;
     HandedToUnseenCode handedOverBy(FunctionID, const SummaryAccess&) const;
     void evaluateSometimeFrom(StartOfProgram&, ModuleID) const;
-    bool evaluateAtStart(StartOfProgram&, const BodyIndexTable&, ModuleID) const;
+    void evaluateAtStart(StartOfProgram&, const BodyIndexTable&, ModuleID) const;
     void followBodyAtStart(StartOfProgram&, const BodyIndexTable&, const BodyIndex&, FunctionID body) const;
     // A BODY THAT ONE CALL ENTERS ONCE IS PART OF THE START. `(function () { .. })()`, `function setUp() { .. }  setUp();`: every caller of the function is known, one site in the whole program may enter it,
     // that site is a plain call of the function itself, and it stands where the start passes once: in a block of a followed body that every way to a Return passes, outside of loops and handlers.
@@ -481,7 +484,8 @@ private:
     EffectsOfComponentInKnownEffects m_knownEffectsOfLostFunctions;
     // By shared call.
     Vector<EffectsOfComponentInKnownEffects> m_knownEffectsOfSharedCalls;
-    // By family: the bits of its members. 0: nobody has asked.
+    // bitsOfLayoutsInKnownEffects(), and by family the bits of its members.
+    Vector<uint64_t> m_bitsOfLayouts;
     Vector<uint64_t> m_bitsOfFamilies;
     // By layout: holdsOnlyPlainObjectsOfOneLayout().
     BitVector m_layoutsOfPlainObjects;
@@ -523,7 +527,7 @@ private:
     // By layout: a lookup on an object of it may come to an accessor, a trap or an object that nobody has listed.
     BitVector m_layoutsThatMayFindAnything;
     bool m_lostLayoutsMayFindAnything { false };
-    Vector<Answer> m_familiesThatMayFindAnything;
+    BitVector m_familiesThatMayFindAnything;
     Vector<Answer> m_keysThatObjectPrototypeNeverAnswers;
 
     // In the order of LinkFlow::calleesOfCalls.
@@ -542,8 +546,12 @@ private:
     ComponentsOfLinkEffects m_components;
     // Empty where the program has one entry, and until somebody has to know.
     LedTo m_ledTo;
-    // It has a top-level await, or imports a module that has.
+    // It has a top-level await, or something below it has. WHETHER A MODULE WAITS IS READ OFF THE IMPORTS AS THEY ARE WRITTEN, NEVER OFF THE ORDER IN WHICH A START COMES TO THEM:
+    // whoever imports a member of a cycle waits for the root of the cycle, and a module that a site has evaluated at a time that nobody knows makes its importers wait as any other.
+    // A member of a cycle below whose root something suspends runs at once, and counts as waiting: it is not followed.
     BitVector m_modulesThatMayWait;
+    // `export function f() { .. }`: the variable is born as the function at the link, and no operation of any body names it. Those that unseen code finds on a namespace object (LinkFlow::variablesReadByUnseenCode).
+    Vector<uint32_t> m_functionsBornInSightOfUnseenCode;
 
     // By node of the summary at hand.
     Vector<OptionSet<Fate>> m_fates;
@@ -656,28 +664,19 @@ void CalleeSummarizerForLinkEffects::findLayoutsThatMayFindAnything()
     }
 
     // What is laid on the prototype object of a class is found from every class below it.
-    m_layoutsThatMayFindAnything.ensureSize(numberOfLayouts);
-    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        // `class A extends B {}` beside `class B extends A {}` compiles.
-        uint32_t stepsLeft = numberOfLayouts;
-        for (LayoutID current(index); current && stepsLeft; current = writtenBaseOf(m_program.at(current)), --stepsLeft) {
-            if (!byItself.quickGet(current.index()))
-                continue;
-            m_layoutsThatMayFindAnything.quickSet(index);
-            break;
-        }
-    }
+    m_layoutsThatMayFindAnything = answerAlongRows(numberOfLayouts, false, [&](LayoutID id) -> StepAlongRow {
+        if (byItself.quickGet(id.index()))
+            return { true, { } };
+        LayoutID above = writtenBaseOf(m_program.at(id));
+        if (!above)
+            return { false, { } };
+        return { std::nullopt, above };
+    });
 
     for (size_t index : m_flow.lostLayouts)
         m_lostLayoutsMayFindAnything |= m_layoutsThatMayFindAnything.get(index);
-    m_familiesThatMayFindAnything.fill(Answer::NotAsked, m_flow.families.size());
-    forEachRangeOfIndicesInParallel(m_flow.loops, m_flow.families.size(), [&](size_t first, size_t end) {
-        LinkType objects;
-        objects.objects = LinkType::Objects::Family;
-        for (size_t family = first; family < end; ++family) {
-            objects.family = FamilyID(family);
-            mayFindAnything(objects);
-        }
+    m_familiesThatMayFindAnything = m_flow.families.familiesWithSomeMemberThat([&](LayoutID member) {
+        return m_layoutsThatMayFindAnything.get(member.index());
     });
 }
 
@@ -690,16 +689,8 @@ bool CalleeSummarizerForLinkEffects::mayFindAnything(const LinkType& subject)
     case LinkType::Objects::Prototype:
         return m_layoutsThatMayFindAnything.get(subject.layout.index());
     case LinkType::Objects::Prototypes:
-    case LinkType::Objects::Family: {
-        Answer& answer = m_familiesThatMayFindAnything[subject.family.index()];
-        if (answer == Answer::NotAsked) {
-            bool someMemberMay = std::ranges::any_of(membersOf(m_program, m_flow.families.layoutsOf(subject.family)), [&](LayoutID member) {
-                return m_layoutsThatMayFindAnything.get(member.index());
-            });
-            answer = someMemberMay ? Answer::Yes : Answer::No;
-        }
-        return answer == Answer::Yes;
-    }
+    case LinkType::Objects::Family:
+        return m_familiesThatMayFindAnything.get(subject.family.index());
     case LinkType::Objects::Lost:
         return m_lostLayoutsMayFindAnything;
     }
@@ -772,7 +763,7 @@ void CalleeSummarizerForLinkEffects::lookInLayout(LayoutID layout, bool hasOwnFi
 
 // `prototype` of a class is a value of the class object's own that nobody can define anew.
 // `__proto__` off a prototype object that is as it was written comes to the engine's getter on Object.prototype, and the link above the home object of `super` is read without any lookup.
-bool CalleeSummarizerForLinkEffects::readsFixedPartOfClass(const LinkType& subject, PropertyKeyID key)
+bool CalleeSummarizerForLinkEffects::readsFixedPartOfClass(const LinkType& subject, PropertyKeyID key, bool hasOtherReceiver)
 {
     constexpr uint16_t primitivesWithoutMembers = Primitive::UndefinedOrNull | Primitive::Absent;
     if (mayBeOtherCallableForLinkEffects(subject) || (subject.primitives & ~primitivesWithoutMembers))
@@ -781,7 +772,7 @@ bool CalleeSummarizerForLinkEffects::readsFixedPartOfClass(const LinkType& subje
     bool holdsNoFunction = subject.functions == LinkType::Functions::None;
     LayoutID classOfOnlyClassObject = subject.functions == LinkType::Functions::Closure && isClassConstructorOf(m_program.at(subject.function).kind) ? m_program.at(subject.function).constructedClass : LayoutID();
     auto staysAsWrittenWithoutTheName = [&](LayoutID classLayout, ClassSide side) {
-        return !m_layoutsThatMayFindAnything.get(classLayout.index()) && !m_flow.namesMayBeIncomplete(classLayout, side) && m_flow.findMembers(classLayout, side, key).isEmpty();
+        return !m_layoutsThatMayFindAnything.get(classLayout.index()) && !m_flow.namesMayBeIncomplete(classLayout, side) && m_flow.findsPrototypeLinkOfSubject(classLayout, side, key, hasOtherReceiver);
     };
     switch (m_program.nameClassOf(key)) {
     case NameClass::Prototype:
@@ -796,11 +787,11 @@ bool CalleeSummarizerForLinkEffects::readsFixedPartOfClass(const LinkType& subje
 }
 
 // Less than everything is claimed only of objects of the program's own layouts, under a written key. Of an array, a string, a function or a built-in nobody here knows what was laid on it or above it.
-void CalleeSummarizerForLinkEffects::findCodeBehindLookup(const LinkType& subject, PropertyKeyID key, SummaryAccess::Kind kind, bool callsWhatIsFound, CodeFound& found)
+void CalleeSummarizerForLinkEffects::findCodeBehindLookup(const LinkType& subject, PropertyKeyID key, SummaryAccess::Kind kind, bool hasOtherReceiver, bool callsWhatIsFound, CodeFound& found)
 {
     if (subject.isNothing())
         return;
-    if (kind == SummaryAccess::Kind::Read && key && !callsWhatIsFound && readsFixedPartOfClass(subject, key))
+    if (kind == SummaryAccess::Kind::Read && key && !callsWhatIsFound && readsFixedPartOfClass(subject, key, hasOtherReceiver))
         return;
     // A lookup on one of these throws.
     constexpr uint16_t primitivesWithoutMembers = Primitive::UndefinedOrNull | Primitive::Absent;
@@ -1016,6 +1007,15 @@ bool CalleeSummarizerForLinkEffects::addEffectsOfRow(const BuiltinOverload& row,
     return true;
 }
 
+bool CalleeSummarizerForLinkEffects::passesNoIterable(FunctionID id, const ThinSummary& summary, const SummaryCall& call) const
+{
+    std::span<const uint32_t> arguments = argumentsOf(summary, call);
+    if (arguments.empty())
+        return true;
+    LinkType first = typeAt(id, arguments[0]);
+    return !first.isNothing() && !mayBeObjectForLinkEffects(first) && !(first.primitives & ~Primitive::UndefinedOrNull);
+}
+
 bool CalleeSummarizerForLinkEffects::addEffectsOfRows(BuiltinID named, FunctionID id, const ThinSummary& summary, const SummaryCall& call, CodeFound& found, Effects& effects) const
 {
     // The rows of a construction have the callee as new.target.
@@ -1034,8 +1034,8 @@ bool CalleeSummarizerForLinkEffects::addEffectsOfRows(BuiltinID named, FunctionI
     // The rows behind the first that surely takes what is passed say nothing of the call.
     if (std::optional<bool> answer = addEffectsOfRowsUpToOneThatSurelyTakes(builtin, id, summary, call, found, effects))
         return *answer;
-    // `new Map(pairs)` calls the `set` that it finds on the new map, and no row names that member.
-    if (call.isConstruction && entry.instanceClass && m_builtins.at(entry.instanceClass).constructorAdder)
+    // `new Map(pairs)` calls the `set` that it finds on the new map, and no row names that member. Without an iterable the constructor never reads it.
+    if (call.isConstruction && entry.instanceClass && m_builtins.at(entry.instanceClass).constructorAdder && !passesNoIterable(id, summary, call))
         return false;
     return forEachRowOf(builtin, call, [&](const BuiltinOverload& row) {
         return addEffectsOfRow(row, id, summary, call, found, effects);
@@ -1096,7 +1096,7 @@ void CalleeSummarizerForLinkEffects::findCodeEnteredByCall(FunctionID id, const 
         receiver.builtin = { };
         if (membersOfInstancesAreAsTableLists(receiver, call.key))
             break;
-        findCodeBehindLookup(receiver, call.key, SummaryAccess::Kind::Read, true, found);
+        findCodeBehindLookup(receiver, call.key, SummaryAccess::Kind::Read, false, true, found);
         break;
     }
     case SummaryCall::Callee::Value: {
@@ -1149,7 +1149,7 @@ void CalleeSummarizerForLinkEffects::findCodeEntered()
                 CodeFound found;
                 // ThinSummary::ownEffects has what an access to contents does.
                 if (!summary.accesses[access].isToContents())
-                    findCodeBehindLookup(typeAt(id, summary.accesses[access].subject), m_flow.keyOf(id, summary.accesses[access]), summary.accesses[access].kind, false, found);
+                    findCodeBehindLookup(typeAt(id, summary.accesses[access].subject), m_flow.keyOf(id, summary.accesses[access]), summary.accesses[access].kind, summary.accesses[access].receiver != noSummaryNode, false, found);
                 m_codeOfAccesses[m_firstAccessOfFunction[index] + access] = keep(found, functionsEntered);
             }
         }
@@ -2016,7 +2016,7 @@ void CalleeSummarizerForLinkEffects::forEachFunctionWhosePrototypeIsReadBy(Funct
 // The subject is the prototype object of that one function and nothing else, and the store stands in the body of the module of the function.
 void CalleeSummarizerForLinkEffects::endDeadZoneOfNameLaidBy(StartOfProgram& start, FunctionID body, const SummaryAccess& access) const
 {
-    if (access.kind != SummaryAccess::Kind::Store || access.isToContents())
+    if (!access.laysValueInSightUnderName())
         return;
     PropertyKeyID key = m_flow.keyOf(body, access);
     LinkType subject = typeAt(body, access.subject);
@@ -2105,6 +2105,12 @@ void CalleeSummarizerForLinkEffects::findWhatEntriesLeadTo()
             toModule(request.target.index());
         if (module.body && m_flow.reached.get(module.body.index()))
             toNode(module.body.index());
+        // Whoever has loaded the module has its namespace object.
+        for (const ModuleExport& exported : module.exports) {
+            FunctionID born = exported.variable ? m_program.at(exported.variable).function : FunctionID();
+            if (born && m_flow.reached.get(born.index()) && !m_tables.functions[born.index()].everyCallerIsKnown)
+                toNode(born.index());
+        }
     }
 
     m_ledTo.moduleOfNode.fill(LedTo::byNothing, numberOfNodes);
@@ -2181,7 +2187,8 @@ void CalleeSummarizerForLinkEffects::findModulesThatMayWait()
     auto forEachModuleAwaited = [&](const auto& functor) {
         for (uint32_t index = 0; index < numberOfModules; ++index) {
             for (const ModuleRequest& request : m_program.at(ModuleID(index)).requests) {
-                if (request.kind == ModuleRequestKind::Import && request.phase == ImportPhase::Evaluation)
+                // `import defer * as space from "./slow.mjs"`: what suspends below a module that is deferred is evaluated at once, and the importer waits for it.
+                if (request.kind == ModuleRequestKind::Import)
                     functor(index, request.target.index());
             }
         }
@@ -2233,13 +2240,45 @@ bool CalleeSummarizerForLinkEffects::isEnteredByOtherEntries(const StartOfProgra
     return start.modules[module] == StartOfProgram::StateOfModule::NotStarted && otherEntriesLeadTo(start, m_ledTo.entryOfModule[module]);
 }
 
+// Whoever names a module may hold its namespace object, and has what that shows, whoever has run: `hub[key]`, `cond ? hub.f : other`. What is read there meets what nobody knows, and a settled type no longer names it.
+// As escapeExportsOf() goes: an export may be the namespace object of another module, and a star may hand on what only the run tells.
+void CalleeSummarizerForLinkEffects::makeFunctionsBornBehindNamespaceAvailableAtStart(StartOfProgram& start, ModuleID first) const
+{
+    Vector<ModuleID, 8> modules { first };
+    auto add = [&](ModuleID id) {
+        if (id && !modules.contains(id))
+            modules.append(id);
+    };
+    for (size_t place = 0; place < modules.size(); ++place) {
+        const Module& module = m_program.at(modules[place]);
+        for (const ModuleExport& exported : module.exports) {
+            add(exported.module);
+            FunctionID born = exported.variable ? m_program.at(exported.variable).function : FunctionID();
+            if (!born || !m_flow.reached.get(born.index()) || m_tables.functions[born.index()].everyCallerIsKnown || start.isAvailable.set(born.index()))
+                continue;
+            start.functionsMadeAvailable.append(born.index());
+            if (start.lastTickOfUnseenCode == start.clock)
+                enterAtStart(start, born.index());
+            else
+                start.availableToUnseenCode.append(born.index());
+        }
+        for (const ModuleRequest& request : module.requests) {
+            if (request.isDynamicStarExport)
+                add(request.target);
+        }
+    }
+}
+
 void CalleeSummarizerForLinkEffects::makeAvailableAtStart(StartOfProgram& start, FunctionID namer) const
 {
     for (FunctionID named : m_flow.summaries.at(namer).functionsNamed) {
+        const Function& function = m_program.at(named);
+        // In front of the question below: a body that asks for the namespace object of its own module is available by then.
+        if (function.isModuleBody() && function.module)
+            makeFunctionsBornBehindNamespaceAvailableAtStart(start, function.module);
         if (start.isAvailable.set(named.index()))
             continue;
         start.functionsMadeAvailable.append(named.index());
-        const Function& function = m_program.at(named);
         // A site evaluates the module at a time that nobody knows.
         if (function.isModuleBody()) {
             if (function.module && named != namer)
@@ -2349,22 +2388,28 @@ void CalleeSummarizerForLinkEffects::evaluateSometimeFrom(StartOfProgram& start,
         letUnseenCodeRunAtStart(start, HandedToUnseenCode::Nothing);
 }
 
-// True: its body waits for a module that suspends, so the loop of events turns in front of it.
-bool CalleeSummarizerForLinkEffects::evaluateAtStart(StartOfProgram& start, const BodyIndexTable& bodies, ModuleID id) const
+void CalleeSummarizerForLinkEffects::evaluateAtStart(StartOfProgram& start, const BodyIndexTable& bodies, ModuleID id) const
 {
     if (start.modules[id.index()] != StartOfProgram::StateOfModule::NotStarted)
-        return start.modulesThatWaitForOthers.get(id.index());
+        return;
+    // Its body waits for a module that suspends, so the loop of events turns in front of it, and whatever does not wait overtakes it.
+    bool waits = m_modulesThatMayWait.get(id.index());
     // Nobody says that unseen code has loaded it: the loader may evaluate it here and now.
     if (stateAtStart(start, id) != StartOfProgram::StateOfModule::NotStarted) {
-        bool mayWait = m_modulesThatMayWait.get(id.index());
-        start.someModuleIsLeftOpen |= mayWait && start.otherEntriesLeadToEverything;
-        return mayWait;
+        start.someModuleIsLeftOpen |= waits && start.otherEntriesLeadToEverything;
+        return;
     }
     const Module& module = m_program.at(id);
     // Unseen code that finds the file by its name may have evaluated it, caught what it threw and gone on.
     if (module.flags.contains(ModuleFlags::IsFoundByName) && start.lastTickOfUnseenCode) {
         evaluateSometimeFrom(start, id);
-        return false;
+        return;
+    }
+    // The loader of the run time loads such a graph in steps, and an imported CommonJS file runs in one of them: what it requires is evaluated ahead of what Module::requests lists in front of the file. No prefix is written for it.
+    // Whatever leads to such a module is one itself, so the whole graph goes without an order.
+    if (module.flags.contains(ModuleFlags::IsLoadedByLoader)) {
+        evaluateSometimeFrom(start, id);
+        return;
     }
     const BodyIndex* index = isFollowedAtStart(id) ? bodies.find(module.body) : nullptr;
     if (index && index->hasIrreducibleFlow())
@@ -2373,33 +2418,29 @@ bool CalleeSummarizerForLinkEffects::evaluateAtStart(StartOfProgram& start, cons
     // The loader evaluates what it imports here and now, whatever its own body is like.
     start.modules[id.index()] = StartOfProgram::StateOfModule::Followed;
     start.modulesStarted.append(id.index());
-    bool waits = module.flags.contains(ModuleFlags::HasTopLevelAwait);
     for (const ModuleRequest& request : module.requests) {
         if (request.kind != ModuleRequestKind::Import)
             continue;
         if (request.phase == ImportPhase::Evaluation)
-            waits |= evaluateAtStart(start, bodies, request.target);
+            evaluateAtStart(start, bodies, request.target);
         else
             evaluateSometimeFrom(start, request.target);
     }
     if (waits || !index) {
-        if (waits)
-            start.modulesThatWaitForOthers.set(id.index());
         start.modules[id.index()] = StartOfProgram::StateOfModule::NotFollowed;
         ++start.clock;
         if (waits || !module.body || !m_flow.reached.get(module.body.index()))
             letUnseenCodeRunAtStart(start, HandedToUnseenCode::Nothing);
         if (module.body && m_flow.reached.get(module.body.index()))
             enterAtStart(start, module.body.index());
-        return waits;
+        return;
     }
     // A site in what ran meanwhile may have evaluated it.
     if (start.firstEntry[module.body.index()] != StartOfProgram::never) {
         start.modules[id.index()] = StartOfProgram::StateOfModule::NotFollowed;
-        return false;
+        return;
     }
     followBodyAtStart(start, bodies, *index, module.body);
-    return false;
 }
 
 void CalleeSummarizerForLinkEffects::countSitesThatEnter()
@@ -2456,6 +2497,22 @@ const BodyIndex* CalleeSummarizerForLinkEffects::bodyFollowedInPlaceOf(const Sta
     return index && !index->hasIrreducibleFlow() ? index : nullptr;
 }
 
+// `o.m(args)`: the operation that looks `m` up. The scan leaves one record of the two, at the call. Null: the call looks no name up in an operation of its own.
+static ValueID lookupOfCallByNameForLinkEffects(const BodyIndex& index, const SummaryCall& call)
+{
+    if (call.callee != SummaryCall::Callee::Name || call.isMadeByProtocol)
+        return { };
+    BodyValue site = index.value(call.site);
+    ValueID callee;
+    site.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+        if (site.operandUses(operandIndex).contains(OperandUse::Calls))
+            callee = operand;
+    });
+    while (callee && inputOperationsThatHandOn.contains(index.opcodeOf(callee)))
+        callee = index.value(callee).operand(0);
+    return callee && index.opcodeOf(callee) == Opcode::PropGet ? callee : ValueID();
+}
+
 void CalleeSummarizerForLinkEffects::followBodyAtStart(StartOfProgram& start, const BodyIndexTable& bodies, const BodyIndex& index, FunctionID body) const
 {
     const ThinSummary& summary = m_flow.summaries.at(body);
@@ -2472,8 +2529,17 @@ void CalleeSummarizerForLinkEffects::followBodyAtStart(StartOfProgram& start, co
     bool unseenCodeRunsAnywhere = !isSummarized(body.index()) || keepsDefaults(body, summary, { SummaryTrait::Suspends, SummaryTrait::HasDirectEval }) || someInspectionMayRunCode(m_flow, m_tables, body) || handsObjectToCodeNobodyNames(body, summary);
 
     Vector<RecordAtSite> records;
-    for (uint32_t call = 0; call < summary.calls.size(); ++call)
+    for (uint32_t call = 0; call < summary.calls.size(); ++call) {
         records.append(RecordAtSite { summary.calls[call].site.index(), RecordAtSite::Kind::Call, call });
+        // The name is looked up in front of the arguments: what the lookup runs finds nothing that they lay. Such a call is never followed in place, so whoever is entered here too is only entered earlier.
+        if (ValueID lookup = lookupOfCallByNameForLinkEffects(index, summary.calls[call]))
+            records.append(RecordAtSite { lookup.index(), RecordAtSite::Kind::Call, call });
+    }
+    uint32_t callsOfConversion = static_cast<uint32_t>(m_builtins.keysReadBy(Protocol::ToPrimitive).size());
+    for (const ThinSummary::FurtherConversion& further : summary.furtherConversions) {
+        for (uint32_t call = further.firstCall; call < further.firstCall + callsOfConversion; ++call)
+            records.append(RecordAtSite { further.site.index(), RecordAtSite::Kind::Call, call });
+    }
     for (uint32_t access = 0; access < summary.accesses.size(); ++access)
         records.append(RecordAtSite { summary.accesses[access].site.index(), RecordAtSite::Kind::Access, access });
     for (uint32_t change = 0; change < summary.changes.size(); ++change)
@@ -2510,7 +2576,7 @@ void CalleeSummarizerForLinkEffects::followBodyAtStart(StartOfProgram& start, co
                     endDeadZoneOfNameLaidBy(start, body, summary.accesses[record.index]);
                 lookAtPrototypePropertyAtStart(start, body, summary.accesses[record.index], endsDeadZones);
                 if (const SummaryAccess& access = summary.accesses[record.index]; !access.isToContents() && access.key && m_keysOfNamesOnFunctions.get(access.key.index()))
-                    lookAtNameOnFunctionAtStart(start, body, typeAt(body, access.subject), access.key, access.kind == SummaryAccess::Kind::Store, endsDeadZones);
+                    lookAtNameOnFunctionAtStart(start, body, typeAt(body, access.subject), access.key, access.laysValueInSightUnderName(), endsDeadZones);
                 break;
             case RecordAtSite::Kind::Change:
                 if (changeMayRunCode(body, summary.changes[record.index]))
@@ -2596,6 +2662,12 @@ void CalleeSummarizerForLinkEffects::followBodyAtStart(StartOfProgram& start, co
 void CalleeSummarizerForLinkEffects::walkStart(StartOfProgram& start, const BodyIndexTable& bodies, ModuleID entry, std::span<const uint32_t> firstVariableOfModule, std::span<const uint32_t> variablesOfModules) const
 {
     start.entry = entry;
+    // They are there from the link on, whoever has run.
+    for (uint32_t function : m_functionsBornInSightOfUnseenCode) {
+        start.isAvailable.set(function);
+        start.functionsMadeAvailable.append(function);
+        start.availableToUnseenCode.append(function);
+    }
     evaluateAtStart(start, bodies, entry);
 
     for (uint32_t function : start.nodesEntered) {
@@ -2649,10 +2721,8 @@ void CalleeSummarizerForLinkEffects::walkStart(StartOfProgram& start, const Body
             ++start.startsThatCameFirst[module];
     }
 
-    for (uint32_t module : start.modulesStarted) {
+    for (uint32_t module : start.modulesStarted)
         start.modules[module] = StartOfProgram::StateOfModule::NotStarted;
-        start.modulesThatWaitForOthers.clear(module);
-    }
     for (uint32_t node : start.nodesEntered) {
         start.firstEntry[node] = StartOfProgram::never;
         if (isFunction(node))
@@ -2686,6 +2756,11 @@ void CalleeSummarizerForLinkEffects::findVariablesInitializedAtEveryRead()
         if (name.function)
             m_keysOfNamesOnFunctions.set(name.key.index());
     }
+    for (size_t variable : m_flow.variablesReadByUnseenCode) {
+        FunctionID born = m_program.variables[variable].function;
+        if (born && m_flow.reached.get(born.index()) && !m_tables.functions[born.index()].everyCallerIsKnown)
+            m_functionsBornInSightOfUnseenCode.append(born.index());
+    }
     size_t numberOfVariables = numberOfVariablesAndNames();
     size_t numberOfModules = m_program.modules.size();
 
@@ -2700,8 +2775,7 @@ void CalleeSummarizerForLinkEffects::findVariablesInitializedAtEveryRead()
     bool unseenCodeMayLoadOtherFiles = entries.size() > 1;
     for (size_t index = 0; index < numberOfModules && !unseenCodeMayLoadOtherFiles; ++index)
         unseenCodeMayLoadOtherFiles = !isEntry.get(index) && m_program.modules[index].flags.contains(ModuleFlags::IsFoundByName);
-    if (unseenCodeMayLoadOtherFiles)
-        findModulesThatMayWait();
+    findModulesThatMayWait();
 
     Vector<uint32_t> firstVariableOfModule;
     firstVariableOfModule.fill(0, numberOfModules + 1);
@@ -2738,7 +2812,6 @@ void CalleeSummarizerForLinkEffects::findVariablesInitializedAtEveryRead()
             if (start.modules.isEmpty()) {
                 start.otherEntriesLeadToEverything = otherEntriesLeadToEverything;
                 start.modules.fill(StartOfProgram::StateOfModule::NotStarted, numberOfModules);
-                start.modulesThatWaitForOthers.ensureSize(numberOfModules);
                 start.firstEntry.fill(StartOfProgram::never, numberOfNodesOfCallees());
                 start.bodiesFollowed.ensureSize(m_numberOfFunctions);
                 start.isAvailable.ensureSize(m_numberOfFunctions);
@@ -2819,7 +2892,7 @@ void CalleeSummarizerForLinkEffects::findVariablesInitializedAtEveryRead()
             m_typesFound.namesLaidAheadOfEveryEntry.append(static_cast<uint32_t>(variable - m_program.variables.size()));
             continue;
         }
-        m_typesFound.variablesInitializedAtEveryRead.append(static_cast<uint32_t>(variable));
+        // Of a variable the clock claims nothing: a hole in it would be the empty word read raw, and the check that it spared is a compare. In the body that stores, the state of the walk holds what was stored.
     }
 }
 
@@ -2849,10 +2922,6 @@ void writeTypesFoundOfCallees(const LinkFlow& flow, LinkTables& tables)
         if (type != TypeTable::anything)
             tables.known.callsOfSeveral[result.place].result = type;
     }
-    for (uint32_t variable : flow.typesFoundOfCallees.variablesInitializedAtEveryRead) {
-        LinkedCell& cell = tables.variables[variable];
-        cell.proven = types.withoutPrimitives(cell.proven, Primitive::Absent);
-    }
     // The clock says when. That nothing else comes to lie under the name, on the prototype object, in front of it on an object, or in the place of the prototype object, the tables say.
     auto placeOf = [](const LinkedNameOnPrototype& laid) {
         return std::pair { laid.layout, laid.key };
@@ -2871,16 +2940,6 @@ void writeTypesFoundOfCallees(const LinkFlow& flow, LinkTables& tables)
             || (function.prototypePropertyIsStoredOnceWithObjectMadeForIt && std::ranges::binary_search(flow.typesFoundOfCallees.prototypeObjectsStoredAheadOfEveryEntry, static_cast<uint32_t>(index)));
         layout.isLinkedBelowBaseAheadOfEveryObject = layout.prototypeObjectIsSettledAheadOfEveryObject && std::ranges::binary_search(flow.typesFoundOfCallees.linksLaidAheadOfEveryEntry, static_cast<uint32_t>(index));
     }
-    for (uint32_t place : flow.typesFoundOfCallees.namesLaidAheadOfEveryEntry) {
-        LinkedNameOnPrototype& name = tables.namesOnPrototypes[place];
-        if (!name.function || !tables.layouts[name.layout.index()].prototypeObjectIsSettledAheadOfEveryObject)
-            continue;
-        if (flow.program.nameClassOf(name.key) == NameClass::Constructor || std::ranges::contains(tables.appendedKeysOf(name.layout), name.key))
-            continue;
-        name.isLaidAheadOfEveryObject = true;
-    }
-    for (uint32_t place : flow.typesFoundOfCallees.namesOnFunctionsLaidAheadOfEveryRead)
-        tables.namesOnFunctions[place].isLaidAheadOfEveryRead = !!tables.namesOnFunctions[place].function;
     flow.typesFoundOfCallees = { };
 }
 

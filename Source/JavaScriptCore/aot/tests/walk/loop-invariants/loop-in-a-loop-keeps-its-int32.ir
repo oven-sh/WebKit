@@ -3,12 +3,13 @@
 # It was int up to 2^53 @Int64 at both heads of the closed copy and `number` @Double at both of the typed one: a checked product, a sum of numbers and a conversion of a double in every turn.
 # f1 = digestRows, f2 = digestRowsUnsigned
 # -- source: loop-in-a-loop-keeps-its-int32.ts
-# function digestRows(s: string, rows: number): number { let h = 0; for (let row = 0; row < rows; row++) { for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; } return h; }
-# function digestRowsUnsigned(s: string, rows: number): number { let h = 0; for (let row = 0; row < rows; row++) { for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; } return h; }
+# function digestRows(s: string | null | undefined, rows: number): number { let h = 0; for (let row = 0; row < rows; row++) { for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; } return h; }
+# function digestRowsUnsigned(s: string | null | undefined, rows: number): number { let h = 0; for (let row = 0; row < rows; row++) { for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; } return h; }
 # (globalThis as any).kept = [digestRows, digestRowsUnsigned];
 # console.log(digestRows("abcdefghij", 3), digestRowsUnsigned("abcdefghij", 3));
 # -- end of source
 # RUN: walk f1 f2 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: CheckedIntegers
 # CHECK: ({{*}}: i32 @Int32, {{*}}) frequency=Rare isLoopHead=true
@@ -54,7 +55,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v21 = Undefined @451
     Return v21 @451
 }
-function f1 name="digestRows" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="digestRows" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: number):
     Jump -> next b1() @0
   b1():
@@ -101,7 +102,7 @@ function f1 name="digestRows" module=m0 flags=[IsChecked, HasExplicitName] lengt
     v30 = Convert v6 declared={type=number} @185
     Return v30 @185
 }
-function f2 name="digestRowsUnsigned" module=m0 position=190 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f2 name="digestRowsUnsigned" module=m0 position=190 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: number):
     Jump -> next b1() @190
   b1():

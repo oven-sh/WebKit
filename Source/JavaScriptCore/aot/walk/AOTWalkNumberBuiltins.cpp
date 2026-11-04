@@ -448,10 +448,6 @@ Reference buildCallOnNumbers(Walker& walker, const CallByOneRow& call)
         return converted;
     if (Reference charCode = buildCharCode(walker, call))
         return charCode;
-#if __has_include("AOTWalkNumberGuesses.h")
-    if (Reference folded = foldCallInRealm(walker, call))
-        return folded;
-#endif
     return { };
 }
 

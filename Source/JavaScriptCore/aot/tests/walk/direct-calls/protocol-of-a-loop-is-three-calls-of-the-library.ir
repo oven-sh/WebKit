@@ -6,28 +6,37 @@
 # function each(things) { for (const thing of things) { if (keep(thing)) break; } }
 # function eachOfList(things: number[]) { for (const thing of things) { if (keep(thing)) break; } }
 # RUN: walk f1 mechanisms=none+DirectCalls
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: [[iterator]]: {{*}} = CallDirect {{*}}function=f2
 # CHECK: = TypeTest [[iterator]] testedType=undefined
 # CHECK: = PropGet [[iterator]] key="next"
 # CHECK: key="done"
 # RUN(CLOSES): walk f1 mechanisms=none+DirectCalls
+# REQUIRES(CLOSES): entries-of-bun
 # CLOSES: = CallDirect {{*}}function=f4
 # RUN(CLEANUP): walk f1 mechanisms=none+DirectCalls
+# REQUIRES(CLEANUP): entries-of-bun
 # CLEANUP: = CallDirect {{*}}function=f5
 # RUN(NEVER): walk f1 mechanisms=none+DirectCalls
+# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: key="return"
 # NEVER-NOT: function=f3
 # RUN(LIST): walk f6 mechanisms=all
+# REQUIRES(LIST): entries-of-bun
 # LIST: [[handedOut]]: {{*}} = CallDirect {{*}}function=f3
 # LIST: = IsCollectionIteratorClosedMark [[handedOut]]
 # RUN(ODD): walk f6 mechanisms=all
+# REQUIRES(ODD): entries-of-bun
 # ODD-NOT: key="done"
 # RUN(WITHHELD): walk f1 mechanisms=none
+# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-NOT: CallDirect
 # RUN(WRITTEN): walk f1 mechanisms=none
+# REQUIRES(WRITTEN): entries-of-bun
 # WRITTEN: key="return"
 # RUN(LINK): link functions mechanisms=all
+# REQUIRES(LINK): entries-of-bun
 # LINK: function f3
 # LINK: referrers anybody
 

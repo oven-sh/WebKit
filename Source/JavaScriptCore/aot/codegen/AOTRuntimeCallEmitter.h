@@ -66,7 +66,6 @@ public:
     StubCallResult callStubWithoutSite(StubKey, std::span<const LValue> operands, const CallOptions& = { });
     void callStubAndBranch(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions&, BranchTargets);
     void callStubWithoutSiteAndBranch(StubKey, std::span<const LValue> operands, const CallOptions&, BranchTargets);
-    StubCallResult callStubForTwoReads(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions&, Origin firstRead);
     // Of what the stub declares that it reads, this call reads the location and what lies beside its buckets. The options name a function of memory:
     // a later call with the same operands is this one until something writes there, as a load of the location would be.
     LValue callStubThatReads(StubKey, std::span<const LValue> operands, const MemoryLocation&, const CallOptions&);

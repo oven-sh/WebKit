@@ -5,12 +5,13 @@
 # second.js:  import { early, late } from "./shared.js";  early + late;
 # Followed from the one entry, the import() comes behind both stores. `late` keeps the mark of emptiness all the same: `host` may have loaded second.js. `early` was stored by then.
 # If `late` lost the mark, the walk would fold the test away, and second.js would hand on a value that is none where a ReferenceError is due.
+# SINCE 11-04 (R244) THE CLOCK TAKES THE MARK OUT OF NO VARIABLE: five holes in it ended in the empty word read raw, and what the proof spared is a compare. `early` keeps it too.
 # RUN: link variables mechanisms=all
-# CHECK: variable g0 proven=string writers-known
+# CHECK: variable g0 proven=string|absent
 # CHECK: variable g1 proven=string|absent
 # RUN(WALK): walk f1 mechanisms=none+TypedOperations+Folding
 # WALK-LABEL: code f1:
-# WALK-COUNT-1: CheckInitialized
+# WALK-COUNT-2: CheckInitialized
 # WALK-NOT: CheckInitialized
 
 variable g0 name="early" module=m2 declared={type=anything|absent}

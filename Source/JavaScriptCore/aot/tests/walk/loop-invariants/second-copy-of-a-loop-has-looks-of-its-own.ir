@@ -3,11 +3,12 @@
 # the looks at the closed copy, which assumed less on their way, do not stand around the typed one, and a preview is held to the looks around by what it hands the walk.
 # f1 = digest
 # -- source: second-copy-of-a-loop-has-looks-of-its-own.ts
-# function digest(s: string): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+# function digest(s: string | null | undefined): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
 # (globalThis as any).kept = digest;
 # console.log(digest("abcdefghij"));
 # -- end of source
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: ({{*}}: i32 @Int32, {{*}}: int[0, 2147483647] @Int32) frequency=Rare isLoopHead=true
 # CHECK: ({{*}}: i32 @Int32, {{*}}: int[0, 2147483647] @Int32) isInLoop=true isLoopHead=true
@@ -41,7 +42,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v14 = Undefined @166
     Return v14 @166
 }
-function f1 name="digest" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f1 name="digest" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
     Jump -> next b1() @0
   b1():

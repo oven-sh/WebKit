@@ -12,18 +12,40 @@
 #include "AOTPlan.h"
 #include "AOTType.h"
 #include "AOTTypeTable.h"
+#include <algorithm>
 #include <optional>
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// For a store that tests its own guess: GuessedAccessEmitter::generateSlotStore(). A yes, or a type that holds anything, lets a value into a slot: each is a claim.
-// What the slots of the field take in every receiver. Milestone one: never. Nothing is said to fit.
-inline TypeID storedTypeOf(const AccessContext&, LayoutSetID, PropertyKeyID) { return TypeTable::never; }
-// What a value of the type `stored` is tested for so that it fits `fieldType`. Never: no test says so. Milestone one: never.
-inline TypeID testableStoredTypeOf(const AccessContext&, TypeID, TypeID) { return TypeTable::never; }
-// Milestone one: no. The store goes by name.
-inline bool storedValueFits(const AccessContext&, TypeID, LayoutSetID, PropertyKeyID) { return false; }
+inline TypeID storedTypeOf(const AccessContext& context, LayoutSetID receivers, PropertyKeyID key)
+{
+    const SlotPlan& slots = context.plan.slots();
+    TypeID taken;
+    for (LayoutID member : membersOf(context.types, receivers)) {
+        std::optional<FieldIndex> field = slots.findField(context.program, member, key);
+        if (!field)
+            return TypeTable::never;
+        if (TypeID type = slots.slot(member, *field).type)
+            taken = taken ? context.types.intersectionOf(taken, type) : type;
+    }
+    return taken;
+}
+inline TypeID testableStoredTypeOf(const AccessContext& context, TypeID stored, TypeID fieldType)
+{
+    return fieldType && context.types.overlap(stored, fieldType) ? fieldType : TypeID(TypeTable::never);
+}
+inline bool storedValueFits(const AccessContext& context, TypeID stored, LayoutSetID receivers, PropertyKeyID key)
+{
+    const SlotPlan& slots = context.plan.slots();
+    return std::ranges::all_of(membersOf(context.types, receivers), [&](LayoutID member) {
+        std::optional<FieldIndex> field = slots.findField(context.program, member, key);
+        if (!field)
+            return false;
+        TypeID taken = slots.slot(member, *field).type;
+        return !taken || context.types.isSubset(stored, taken);
+    });
+}
 
 // The types of the operands of a DefineOwnProperty. Null for a part that the descriptor leaves out.
 struct DefinitionByDescriptor {

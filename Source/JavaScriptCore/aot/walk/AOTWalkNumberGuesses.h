@@ -26,6 +26,11 @@ ExpectationOfNumber numbersExpectedOf(Walker&, ValueID input, ExpectationOfNumbe
 TypeID typeHeldAtPositionOf(Walker&, ValueID input);
 // By the body: behind casts and sums every mention of the value leads to a bit operator, an index, or a position or a count of a row of the table.
 bool usesSpeakForInt32(Walker&, ValueID input);
+// By the body: what the turns of the loop do with the variable speaks for an int32: usesSpeakForInt32() of one of its reads, a step (`pos++`, `pos += size`), a relation with a variable that is so stepped.
+bool turnsTakeEnvironmentFieldForInt32(Walker&, LoopID, LayoutID, uint32_t field);
+// `source.position < source.text.length`, `source.text.charCodeAt(source.position)`, `source.position++`: of a read by name in a loop. Each mention of the slot is a read of its own, as of a variable that closures share.
+// By the body alone: the turns step the slot by one, or usesSpeakForInt32() of one of its reads. `found` wherever they do not: what was seen to arrive in a slot says little of what data will bring, and `particle.x += particle.speed` says nothing.
+ExpectationOfNumber numbersExpectedOfSlotThatTurnsStep(Walker&, ValueID input, ExpectationOfNumber found);
 
 // ---- AOTWalkNumberArms.cpp
 struct TestOfNumber {
@@ -35,12 +40,6 @@ struct TestOfNumber {
 // The tests in a row > operations [begin, end) of the block with every proof bound > ONE other arm, walked under Walker::ClosedArm with the values as they stand > the two meet.
 // What the stretch defines and later code reads becomes a parameter. False: no test could be built, and nothing is walked. True: both arms have walked the stretch.
 bool walkStretchBehindTestsOfNumbers(Walker&, std::span<const TestOfNumber>, BlockID inputBlock, uint32_t begin, uint32_t end, BlockFrequency ofOtherArm);
-// For openGuessAt(), among the guesses that build their own arms: `x !== x`, `step(s) | 0`.
-bool openGuessOfNumbers(Walker&, const BodyValue&);
-// The same, a term of its own: `arguments[k]` with any key.
-bool openGuessAtReadOfArguments(Walker&, const BodyValue&);
-// For findStretchOfGuess(): an arithmetic or a bit operator whose form in the closed arm is Generic.
-bool closedOperatorCallsStub(Walker&, const BodyValue&, const TypesOfInputs& inClosedArm);
 // For the files of this package. Among the operations of the block: no stretch goes on to this place or past it.
 uint32_t limitOfStretchOfNumbers(const Walker&, const BodyBlock&);
 Reference buildTestOfNumber(Walker&, Reference value, TypeID tested, Origin);
@@ -65,12 +64,6 @@ bool isTaggedNumber(Walker&, Reference);
 bool sumStaysBoxed(Walker&, const BodyValue& written, const Draft& sum);
 // For buildOperatorOnNumbers(), of a bit operator in the form Numbers: `x | 0`, `x >>> 0` on a boxed number. True: the conversion is built and bound.
 bool buildTruncationOfBoxedNumber(Walker&, const BodyValue&);
-
-// ---- Struck by RULINGS.md, and kept as what gives the default: AOTWalkNumberArms.cpp.
-// known-state-and-effects-1 E14 types the result of a call by the arguments at hand.
-TypeID resultOfCallByArgumentsAtHand(const Walker&, TypeLevel, uint32_t resultIndex);
-// strings-2 K8 answers a deterministic built-in in a realm of the build.
-Reference foldCallInRealm(Walker&, const CallByOneRow&);
 
 } } } // namespace JSC::AOT::Typed
 

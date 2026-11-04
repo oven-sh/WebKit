@@ -228,7 +228,6 @@ void CallEmitter::jumpAfterFrameTeardown(const CallTarget& target, const PlacedA
         emitJumpTo(jit, *records, destination);
     });
     // The frame of the callee lies where this one was.
-    markArgumentsLetGoByCallee(patchpoint, placed);
     // The stack check is part of the frame setup.
     patchpoint->setFollowsFrameSetup(m_records.frame.needsStackCheckForTailCalls && !pollsWithoutFrame(conventions(), m_unit, target));
 }
@@ -375,15 +374,12 @@ void ControlEmitter::generateReturn(const TerminatorContext& terminator)
 {
     ValueID value = terminator->valueOperand();
     unsigned numberOfResults = conventions().numberOfResults(m_unit);
-    // A generic entry makes the object of the fields that its function hands back, and returns it boxed.
-    bool handsBackFields = !isGenericEntry(m_unit.role) && !isTableRole(m_unit.role) && conventions().of(m_unit.function).hasSplitResult;
     // A constant has no form of its own, and a cell and its boxed form are one word: each value is asked for in the form of its place.
     Vector<Operand, 4> operands;
     if (!value) {
         RELEASE_ASSERT(numberOfResults == 1);
         operands.append(emitter<ConstantEmitter>().constantOf(jsUndefined(), conventions().resultRepresentation(m_unit)));
     } else if (opcodeOf(value) == Opcode::Results) {
-        // The one field that is handed back in place of its object is listed too.
         std::span<const ValueID> listed = operationAt(value).valuesOperands();
         RELEASE_ASSERT(listed.size() == numberOfResults);
         // A word that says nothing is handed back all the same, as zero: the caller keeps it where the collector reads until it has asked the word that tells,
@@ -393,7 +389,7 @@ void ControlEmitter::generateReturn(const TerminatorContext& terminator)
             Representation form = conventions().resultRepresentation(m_unit, index);
             operands.append(form == Representation::Void ? Operand { } : generator().getIn(listed[index], form));
         }
-    } else if (numberOfResults == 1 && !handsBackFields)
+    } else if (numberOfResults == 1)
         operands.append(generator().getIn(value, conventions().resultRepresentation(m_unit)));
     else {
         // The results of a call, in the forms in which its callee returns them.

@@ -1,0 +1,89 @@
+# A statement lays the prototype object of a constructor function below that of a class, and it may not have run yet: a read off that object may find nothing of the class and go on to Object.prototype. So the method of the class is not all that the read gives, and neither is what its getter answers.
+# f1 = Sub, f2 = read, f3 = size
+# -- source: member-off-the-prototype-object-of-a-function-that-may-not-be-linked-yet.js
+# class Base { hello() { return 1; } get size() { return 7; } }
+# function Sub() { this.a = 1; }
+# function read(p) { return p.hello; }
+# function size(p) { return p.size; }
+# read(Sub.prototype); size(Sub.prototype);
+# Object.setPrototypeOf(Sub.prototype, Base.prototype);
+# read(Sub.prototype); size(Sub.prototype);
+# -- end of source
+# records of 49d9ec75594ec76d
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f2 {{*}} result=undefined|
+# LINK: function f3 {{*}} result=undefined|
+
+module m0 path="member-off-the-prototype-object-of-a-function-that-may-not-be-linked-yet.js" displayPath="member-off-the-prototype-object-of-a-function-that-may-not-be-linked-yet.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 position=6 constructor=f4
+layout L1 kind=Instance name="Sub" module=m0 position=62 base=L0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = NewClass v6 layout=L0 @0
+    PutModuleVariable v7 variable=g0 @0
+    v9 = NewClosure function=f5 @13
+    DefineMethod v7, v9 layout=L0 key="hello" @13
+    v11 = NewClosure function=f6 @39
+    DefineMethod v7, v11 layout=L0 methodKind=Getter index=1 key="size" @39
+    v13 = FinishClass v7 layout=L0 @0
+    v14 = Convert v13 declared={type=f4 flags=[IsFromCompiler]} @0
+    v15 = Convert v13 declared={type=f4 flags=[IsFromCompiler]} @0
+    v16 = PropGet v1 key="prototype" @171
+    v17 = Call v3, -, v16 calleeName="read" @166
+    v18 = PropGet v1 key="prototype" @192
+    v19 = Call v5, -, v18 calleeName="size" @187
+    v20 = Builtin builtin=Object @208
+    v21 = Builtin builtin=ObjectSetPrototypeOf @208
+    v22 = PropGet v1 key="prototype" @230
+    v23 = PropGet v15 key="prototype" @245
+    v24 = Call v21, v20, v22, v23 calleeName="Object.setPrototypeOf" @215
+    v25 = PropGet v1 key="prototype" @267
+    v26 = Call v3, -, v25 calleeName="read" @262
+    v27 = PropGet v1 key="prototype" @288
+    v28 = Call v5, -, v27 calleeName="size" @283
+    v29 = Undefined @283
+    Return v29 @283
+}
+function f1 name="Sub" module=m0 position=62 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Integer integer=1 @88
+    PropSet v0, v1 key="a" @79
+    v3 = Undefined @79
+    Return v3 @79
+}
+function f2 name="read" module=m0 position=93 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="hello" @119
+    Return v1 @119
+}
+function f3 name="size" module=m0 position=130 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="size" @156
+    Return v1 @156
+}
+function f4 name="Base" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @6
+    v2 = NewObject v1 layout=L0 @6
+    v3 = Convert v2 declared={type=L0} @6
+    Return v3 @6
+}
+function f5 name="hello" module=m0 position=13 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1 @30
+    Return v0 @30
+}
+function f6 name="size" module=m0 position=35 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=7 @55
+    Return v0 @55
+}

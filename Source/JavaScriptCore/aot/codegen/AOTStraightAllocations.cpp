@@ -40,7 +40,7 @@ OpcodeSet StraightEmitter::opcodesOfAllocations()
 {
     return {
         Opcode::NewObject, Opcode::NewDictionary, Opcode::FinishObject, Opcode::NewRegExp, Opcode::NewTemplateObject,
-        Opcode::NewRuntimeError, Opcode::NewFunctionThatThrows, Opcode::NewSuppressedError,
+        Opcode::NewRuntimeError, Opcode::NewSuppressedError,
     };
 }
 
@@ -321,12 +321,6 @@ void StraightEmitter::generateAllocation(const BodyValue& value)
     case Opcode::NewRuntimeError:
         generateNewRuntimeError(*this, value);
         return;
-    case Opcode::NewFunctionThatThrows: {
-        auto operation = value.as<Opcode::NewFunctionThatThrows>();
-        callOperation(value, RuntimeOperation::NewFunctionThatThrows, { operation.getterOperand(), StraightArgument::number(mentions().add(NumberSpace::ShownString, operation.name())) });
-        define(value);
-        return;
-    }
     case Opcode::NewSuppressedError: {
         auto operation = value.as<Opcode::NewSuppressedError>();
         callOperation(value, RuntimeOperation::NewSuppressedError, { operation.errorOperand(), operation.suppressedOperand() }, { .capturesStackTrace = true });

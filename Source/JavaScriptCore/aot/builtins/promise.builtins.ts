@@ -102,8 +102,7 @@ export default b.declarations(
     constructorOnlyReadsPrototypeOfNewTarget: true,
     // The row of RejectPromise names the reason by that number.
     slots: { value: b.contents("Value", promiseState), reason: b.internalField(1, promiseState) },
-    lockedObjects: ["prototype"],
-    lockedMembers: ["constructor"],
+    lockedMembers: ["constructor", "prototype"],
     types: [b.viewType("Promise", "value"), b.viewType("PromiseLike", "value")],
     constructorTable: b.staticTable("runtime/JSPromiseConstructor.cpp", "promiseConstructorTable"),
     prototypeTable: b.staticTable("runtime/JSPromisePrototype.cpp", "promisePrototypeTable"),
@@ -221,7 +220,8 @@ export default b.declarations(
     proto: {
       then: [
         { ...pristineThen(b.callable, b.callable, { value: eitherHandlerResult }), privateAlias: true },
-        pristineThen(b.callable, b.any.optional, { value: b.callbackResult("onFulfilled"), reason: settledReason }),
+        // What onFulfilled throws, and what a promise that it returns is rejected with, is a reason of the new promise too: no reason is listed.
+        pristineThen(b.callable, b.any.optional, { value: b.callbackResult("onFulfilled") }),
         pristineThen(b.any, b.callable, { value: valueOrHandlerResult }),
         pristineThen(b.any.optional, b.any.optional, { value: settledValue, reason: settledReason }),
         {
@@ -253,7 +253,7 @@ export default b.declarations(
           ...operandCodeEffects,
           this: pristinePromise,
           args: { onFinally: b.any.optional },
-          returns: newPromiseHolding({ value: settledValue, reason: settledReason }),
+          returns: newPromiseHolding({ value: settledValue }),
           uses: {
             this: contentsUpdate,
             onFinally: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.undefined, args: [], result: "Stored", resultTo: b.resultSlot("value") })],

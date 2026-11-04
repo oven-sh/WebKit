@@ -21,9 +21,10 @@ namespace {
 class MachineValidator {
     WTF_MAKE_NONCOPYABLE(MachineValidator);
 public:
-    explicit MachineValidator(Procedure& procedure)
+    MachineValidator(Procedure& procedure, bool isBehindBlockPasses)
         : m_proc(procedure)
         , m_arena(procedure.arena())
+        , m_isBehindBlockPasses(isBehindBlockPasses)
     {
     }
 
@@ -47,6 +48,10 @@ private:
     bool isInProcedure(const Block*) const;
     static std::span<Operation* const> listHolding(const Block*, Opcode);
     bool listsItsOwnOperations(const Block*, std::span<Operation* const>);
+
+    bool findWhatIsLeft();
+    bool isLeft(const Block* block) const { return !m_isBehindBlockPasses || m_blockIsLeft.get(block->index()); }
+    bool isLeft(const Operation* operation) const { return !m_isBehindBlockPasses || !operation->owner() || m_operationIsLeft.get(operation->index()); }
 
     // Each leans on what the ones ahead of it have found to hold.
     bool checkMembership();
@@ -72,6 +77,11 @@ private:
 
     Procedure& m_proc;
     Arena& m_arena;
+    const bool m_isBehindBlockPasses;
+
+    // Behind the block passes: the blocks that the entrypoints lead to, by Block::index(), and what they list, by Operation::index().
+    BitSpan m_blockIsLeft;
+    BitSpan m_operationIsLeft;
 
     // By Block::index().
     ArenaVector<uint32_t> m_numberOfIncomingEdges;
@@ -86,7 +96,42 @@ private:
 
 bool MachineValidator::run()
 {
-    return checkMembership() && checkEdges() && checkTerminators() && checkOperations() && checkUpsilons() && checkDominance();
+    return (!m_isBehindBlockPasses || findWhatIsLeft()) && checkMembership() && checkEdges() && checkTerminators() && checkOperations() && checkUpsilons() && checkDominance();
+}
+
+bool MachineValidator::findWhatIsLeft()
+{
+    m_blockIsLeft = BitSpan::create(m_arena, m_proc.numberOfBlocks());
+    m_operationIsLeft = BitSpan::create(m_arena, m_proc.numberOfOperations());
+    ArenaVector<const Block*> reached;
+    auto reach = [&](const Block* block) {
+        if (!isInProcedure(block))
+            return false;
+        if (!m_blockIsLeft.get(block->index())) {
+            m_blockIsLeft.set(block->index());
+            reached.append(m_arena, block);
+        }
+        return true;
+    };
+    for (const Entrypoint& entrypoint : m_proc.entrypoints()) {
+        if (!reach(entrypoint.block))
+            return fail();
+    }
+    while (!reached.isEmpty()) {
+        const Block* block = reached.takeLast();
+        for (std::span<Operation* const> list : { block->phis(), block->operations(), block->upsilons() }) {
+            for (const Operation* operation : list) {
+                if (!isInProcedure(operation))
+                    return fail();
+                m_operationIsLeft.set(operation->index());
+            }
+        }
+        for (const Edge& edge : block->successors()) {
+            if (!reach(edge.block()))
+                return fail();
+        }
+    }
+    return true;
 }
 
 bool MachineValidator::fail(const Operation* operation)
@@ -145,7 +190,7 @@ bool MachineValidator::checkMembership()
         if (!isInProcedure(owner))
             return fail(operation);
         std::span<Operation* const> list = listHolding(owner, operation->opcode());
-        if (operation->indexInBlock() >= list.size() || list[operation->indexInBlock()] != operation)
+        if (isLeft(operation) && (operation->indexInBlock() >= list.size() || list[operation->indexInBlock()] != operation))
             return fail(operation);
     }
 
@@ -153,6 +198,8 @@ bool MachineValidator::checkMembership()
         const Block* block = m_proc.blockAt(index);
         if (!block || block->index() != index)
             return fail();
+        if (!isLeft(block))
+            continue;
         if (!listsItsOwnOperations(block, block->phis()) || !listsItsOwnOperations(block, block->operations()) || !listsItsOwnOperations(block, block->upsilons()))
             return false;
     }
@@ -174,6 +221,8 @@ bool MachineValidator::checkEdges()
     }
 
     for (const Block* block : m_proc.blocks()) {
+        if (!isLeft(block))
+            continue;
         for (const Edge& edge : block->successors()) {
             if (!isInProcedure(edge.block()) || m_isEntrypoint.get(edge.block()->index()))
                 return failAtEndOf(block);
@@ -182,7 +231,7 @@ bool MachineValidator::checkEdges()
     }
 
     for (const Block* block : m_proc.blocks()) {
-        if (block->hasOnlyOnePredecessor() && m_numberOfIncomingEdges[block->index()] != 1)
+        if (isLeft(block) && block->hasOnlyOnePredecessor() && m_numberOfIncomingEdges[block->index()] != 1)
             return failAtEndOf(block);
     }
     return true;
@@ -206,6 +255,8 @@ bool MachineValidator::terminatorHasExpectedSuccessorCount(const Block* block)
 bool MachineValidator::checkTerminators()
 {
     for (const Block* block : m_proc.blocks()) {
+        if (!isLeft(block))
+            continue;
         std::span<Operation* const> operations = block->operations();
         for (size_t index = 0; index + 1 < operations.size(); ++index) {
             if (operations[index]->endsBlock())
@@ -517,6 +568,8 @@ bool MachineValidator::checkOperations()
 
     for (uint32_t index = 0; index < numberOfOperations; ++index) {
         const Operation* operation = m_proc.operationAt(index);
+        if (!isLeft(operation))
+            continue;
         if (!hasLegalChildren(operation) || !hasLegalPosition(operation) || !hasLegalTypes(operation) || !hasLegalFlags(operation) || !hasInstructionOnTarget(operation))
             return fail(operation);
         // A pure operation that nothing reads has counted nothing.
@@ -548,7 +601,7 @@ bool MachineValidator::checkUpsilons()
     lastBlockHandingTo.fill(m_arena, m_proc.numberOfOperations(), 0);
 
     for (const Block* block : m_proc.blocks()) {
-        if (!block->isTerminated())
+        if (!block->isTerminated() || !isLeft(block))
             continue;
         uint32_t stamp = block->index() + 1;
         for (const Edge& edge : block->successors())
@@ -616,14 +669,24 @@ void MachineValidator::computeDominators()
     for (const Entrypoint& entrypoint : m_proc.entrypoints())
         dominator[m_placeOf[entrypoint.block->index()]] = 0;
 
-    auto intersect = [&](uint32_t first, uint32_t second) {
-        while (first != second) {
-            if (first > second)
-                first = dominator[first];
-            else
-                second = dominator[second];
+    // The merge that climbed past a place last. Every place that a merge has climbed past leads to what its predecessors have in common so far, so the next predecessor stops there.
+    // Without it a block that two long rows lead to climbs one of them anew from each of its blocks.
+    ArenaVector<uint32_t> lastMergeAt;
+    lastMergeAt.fill(m_arena, numberReached + 1, 0);
+    uint32_t merge = 0;
+    auto intersect = [&](uint32_t common, uint32_t from) {
+        while (common != from) {
+            if (common > from) {
+                lastMergeAt[common] = merge;
+                common = dominator[common];
+                continue;
+            }
+            if (lastMergeAt[from] == merge)
+                break;
+            lastMergeAt[from] = merge;
+            from = dominator[from];
         }
-        return first;
+        return common;
     };
 
     // The places that lead to each place, in rising order. Place zero leads to the entrypoints.
@@ -656,6 +719,7 @@ void MachineValidator::computeDominators()
         for (uint32_t place = 1; place <= numberReached; ++place) {
             // The last one first: then what they have in common is never far above the next one, however many blocks of one long row lead here.
             uint32_t next = notReached;
+            ++merge;
             for (uint32_t index = firstPredecessorOf[place + 1]; index-- > firstPredecessorOf[place];) {
                 uint32_t from = predecessors[index];
                 if (dominator[from] == notReached)
@@ -699,7 +763,10 @@ bool MachineValidator::checkDominance()
     for (uint32_t index = 0; index < m_proc.numberOfOperations(); ++index) {
         const Operation* user = m_proc.operationAt(index);
         const Block* block = user->owner();
-        if (!block)
+        if (!block || !isLeft(user))
+            continue;
+        // A pure operation that nothing reads has counted nothing and is never encoded. Where two blocks were merged that differ in such an operation alone, the one that stays may name what stands above one of them alone.
+        if (m_isBehindBlockPasses && countsChildrenAtFirstUse(user->opcode()) && !user->useCount())
             continue;
         // Behind a call that never returns the emitters go on in a block that nothing leads to. No block dominates it, and it is never ordered.
         bool isReached = m_placeOf[block->index()] != notReached;
@@ -723,7 +790,12 @@ bool MachineValidator::checkDominance()
 
 bool validate(Procedure& procedure)
 {
-    return MachineValidator(procedure).run();
+    return MachineValidator(procedure, false).run();
+}
+
+bool validateBehindBlockPasses(Procedure& procedure)
+{
+    return MachineValidator(procedure, true).run();
 }
 
 } } } // namespace JSC::AOT::Machine

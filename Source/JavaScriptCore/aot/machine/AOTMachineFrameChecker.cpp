@@ -244,6 +244,10 @@ bool FrameChecker::checkFramedPart()
         const BlockPlace& placeOfHead = m_order.of(head);
         if (head->isEntry() || head->isLandingPad() || !placeOfHead.isReached() || placeOfHead.isRare() || placeOfHead.loop != noLoop || !m_frame.isSetUpAtHeadOf(head) || !m_allocation.isHeadOfFramedPart(head))
             return fail(FailureKind::NeedsFrameWhereNoneIsSetUp, head->last());
+        for (const Operation* phi : head->phis()) {
+            if (!m_liveness.isDropped(phi) && m_allocation.isSpilled(phi) && !m_allocation.registerAtDefinitionOf(phi).isSet())
+                return fail(FailureKind::SpillSlotLacksItsValue, phi);
+        }
     }
 
     for (const Block* block : m_order.blocksInOrder()) {

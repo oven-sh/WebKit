@@ -117,7 +117,7 @@ public:
     };
 
     InvokeStubFunction invoke() const { return m_invoke; }
-    unsigned numberOfCallbackEntriesInBlock() const { return m_callbackEntries.offsets.size(); }
+    unsigned numberOfCallbackEntriesInBlock() const { return static_cast<unsigned>(m_callbackEntries.offsets.size()); }
     void* callbackEntry(const BlockOfCallbackEntries& block, unsigned index) const { return block.code + m_callbackEntries.offsets[index]; }
     // `callbacks` has a word for each entry of a block and stays where it is. Nothing: the process may not map the code once more, or may not write the context.
     [[nodiscard]] std::optional<BlockOfCallbackEntries> tryMakeBlockOfCallbackEntries(std::atomic<JSFFICallback*>* callbacks, bool isFirst) const;

@@ -2,6 +2,7 @@
 # What nobody lets go keeps its locks: TextDecoder. name-that-stands-in-a-text-alone.ir: so does what lies under a name that no operation of the program reads
 # keep(TextEncoder); function below(value) { return value.prototype; }  new TextEncoder().encode(""); new TextDecoder().decode();
 # RUN: locks
+# REQUIRES: entries-of-bun
 # CHECK: locked TextDecoderPrototypeDecode constant
 # CHECK-NOT: TextEncoderPrototypeEncode
 

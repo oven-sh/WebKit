@@ -51,6 +51,8 @@ void prepareForGeneration(Procedure& procedure)
     mergeIdenticalBlocks(procedure);
     if (procedure.failure())
         return;
+    if (runsChecks && !runCheckBeforeGeneration(procedure, validateBehindBlockPasses))
+        return;
 
     procedure.m_order = orderBlocks(procedure);
     if (procedure.failure())

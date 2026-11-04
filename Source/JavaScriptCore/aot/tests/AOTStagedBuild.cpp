@@ -313,9 +313,8 @@ struct StagedBuild::State {
     std::unique_ptr<TypeArena> typesWithoutWorker;
     std::unique_ptr<CompileWorker> compileWorker;
     Vector<CompiledCode, 2> finished;
-    // Both ascending, of ensureCompiled(). compiledCode() makes the code of the second as a build does.
+    // Ascending, of ensureCompiled().
     Vector<CodeUnit> unitsWithCode;
-    Vector<CodeUnit> closedGenericEntries;
     Machine::Arena machineArena;
     std::unique_ptr<MachineOperationsOfStagedBuild> machine;
 };
@@ -410,13 +409,9 @@ bool StagedBuild::State::ensureCompiled()
         return false;
     }
 
-    for (const CompiledCode& code : compiled.functions) {
+    for (const CompiledCode& code : compiled.functions)
         unitsWithCode.append(code.unit);
-        if (code.isClosedGenericEntry)
-            closedGenericEntries.append(code.unit);
-    }
     AOT::sort(unitsWithCode);
-    AOT::sort(closedGenericEntries);
     isCompiled = true;
     return true;
 }
@@ -586,8 +581,7 @@ const CompiledCode* StagedBuild::compiledCode(CodeUnit unit)
     if (!worker || !state.ensureArrivals())
         return nullptr;
 
-    bool isClosed = std::ranges::binary_search(state.closedGenericEntries, unit);
-    if (!(isClosed ? worker->compileClosedGenericEntry(unit, state.finished) : worker->compile(unit, state.finished))) {
+    if (!worker->compile(unit, state.finished)) {
         state.hasFailed = true;
         return nullptr;
     }

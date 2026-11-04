@@ -3,6 +3,7 @@
 # it has its word from the head of its block on, not from its first read: a value made in the handler in front of that read took the same word, and `said + sum` read the name of the error for the sum.
 # OPTIONS: testing=WritesBodiesStraight
 # RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
+# REQUIRES(STRAIGHT): faulting-loop-polls
 # STRAIGHT: statistic UnitsWrittenStraight 5
 # function fails(at: any, n: any) { if (n === at) throw new RangeError("at " + n); return n; }
 # function carries(at: any) { let sum = 0; try { for (let n = 1; n < 6; n++) { sum = sum + fails(at, n); } } catch (e) { const name = (e as Error).constructor.name; const said = name + " after "; return said + sum; } return "whole " + sum; }

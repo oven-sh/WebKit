@@ -1507,6 +1507,98 @@ static void testMachinePatchReleasesRegisterThatAnotherArmReads()
     }
 }
 
+// The first release asks whether its cell is read on some way on, and the list of such searches is made, by the index of the block. The edge from `joined` straight to `behind` gets moves and so a block,
+// whose index lies above every index of then. The second release asks of another cell, and its search goes back through that block.
+static void testMachinePatchSearchesForWaysThroughBlockSplitLate()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    RegisterMask free = callerSavedRegistersOfPatchTest(test) & registerFileOfPatchTest(test).allocatableIn(Bank::GP);
+    AOT_TEST_CHECK(std::popcount(free) >= 2);
+    Reg first = Reg::fromIndex(static_cast<unsigned>(std::countr_zero(free)));
+    Reg second = Reg::fromIndex(static_cast<unsigned>(std::countr_zero(free & (free - 1))));
+    auto appendReader = [&](Operation* left, Reg placeOfLeft, Operation* right, Reg placeOfRight) {
+        PatchOperation* reader = out.patch(Void);
+        reader->append(left, ValueRep::reg(placeOfLeft));
+        reader->append(right, ValueRep::reg(placeOfRight));
+        reader->effects = Effects::none();
+        reader->effects.writesLocalState = true;
+        reader->setGenerator([](CCallHelpers&, const PatchParameters&) { });
+    };
+    Block* made = out.newBlock();
+    Block* waited = out.newBlock();
+    Block* joined = out.newBlock();
+    Block* arm = out.newBlock();
+    Block* behind = out.newBlock();
+    Block* madeAgain = out.newBlock();
+    Block* waitedAgain = out.newBlock();
+    Block* joinedAgain = out.newBlock();
+    Block* done = out.newBlock();
+
+    Operation* a = test.argumentGPR(0);
+    Operation* firstCell = out.opaque(out.add(a, 5));
+    Operation* secondCell = out.opaque(out.add(a, 6));
+    PatchOperation* call = out.patch(Void);
+    call->clobberLate(allocatableRegistersOfPatchTest(test));
+    call->setGenerator([](CCallHelpers&, const PatchParameters&) { });
+    out.branch(out.testNonZero64(a, 1), normalEdge(made), normalEdge(waited));
+
+    out.appendTo(made);
+    ValueFromBlock fromMade = out.anchor(out.opaque(out.add(a, 100)));
+    out.jump(joined);
+    out.appendTo(waited);
+    ValueFromBlock fromWaited = out.anchor(firstCell);
+    out.jump(joined);
+
+    out.appendTo(joined);
+    PatchTestObservation seenFirst;
+    RegisterMask clearedFirst = 0;
+    PatchOperation* firstHint = appendPatchTestReleaseHint(out, out.phi(Int64, fromMade, fromWaited), seenFirst, clearedFirst);
+    Operation* left = out.opaque(out.add(a, 7));
+    Operation* right = out.opaque(out.add(a, 8));
+    appendReader(left, first, right, second);
+    out.branch(out.testNonZero64(a, 2), normalEdge(arm), normalEdge(behind));
+
+    // The arm exchanges the two and fixes the head of `behind`.
+    out.appendTo(arm);
+    appendReader(left, second, right, first);
+    out.jump(behind);
+
+    out.appendTo(behind);
+    Operation* mixed = out.opaque(out.add(left, out.add(right, right)));
+    out.branch(out.testNonZero64(a, 1), normalEdge(madeAgain), normalEdge(waitedAgain));
+    out.appendTo(madeAgain);
+    ValueFromBlock fromMadeAgain = out.anchor(out.opaque(out.add(a, 200)));
+    out.jump(joinedAgain);
+    out.appendTo(waitedAgain);
+    ValueFromBlock fromWaitedAgain = out.anchor(secondCell);
+    out.jump(joinedAgain);
+
+    out.appendTo(joinedAgain);
+    PatchTestObservation seenSecond;
+    RegisterMask clearedSecond = 0;
+    PatchOperation* secondHint = appendPatchTestReleaseHint(out, out.phi(Int64, fromMadeAgain, fromWaitedAgain), seenSecond, clearedSecond);
+    out.jump(done);
+
+    out.appendTo(done);
+    out.ret(out.add(out.add(firstCell, secondCell), mixed));
+
+    compileOrFail(test);
+    Procedure& proc = test.procedure();
+    const Order& order = proc.order();
+    const Allocation& allocation = proc.allocation();
+    Block* middle = joined->successor(1).block();
+    AOT_TEST_CHECK(middle != behind && order.of(middle).wasSplitLate && middle->index() > done->index());
+    AOT_TEST_CHECK(std::ranges::find(order.of(behind).predecessors, middle) != order.of(behind).predecessors.end());
+    AOT_TEST_CHECK(order.latePositionOf(firstHint) < order.headOf(middle) && order.headOf(middle) < order.latePositionOf(secondHint));
+    // Each is asked about: it has a spill, and is read further on and in no block that releases.
+    AOT_TEST_CHECK(allocation.isSpilled(firstCell) && proc.liveness().of(firstCell).lastUse > order.endOf(joined));
+    AOT_TEST_CHECK(allocation.isSpilled(secondCell) && proc.liveness().of(secondCell).lastUse > order.endOf(joinedAgain));
+    AOT_TEST_CHECK(seenFirst.runs == 1 && seenSecond.runs == 1 && !numberOfStepsInPatchTest(allocation, StepKind::ClearSpill));
+    for (int64_t argument : { 0, 1, 2, 3 })
+        AOT_TEST_CHECK(test.call<int64_t>(argument) == 5 * argument + 34);
+}
+
 static Location placeOfOnlyOperandInPatchTest(const Allocation& allocation, const PatchOperation* patch)
 {
     const PatchAssignment& assignment = allocation.patchAssignment(allocation.step(indexOfExecuteStepInPatchTest(allocation, patch)).patchAssignment);
@@ -1649,6 +1741,7 @@ static std::span<const NativeTest> listOfMachinePatchTests()
         { "machine/patch/releases-register-of-another-name"_s, testMachinePatchReleasesRegisterOfAnotherName },
         { "machine/patch/clears-spill-that-another-arm-reads"_s, testMachinePatchClearsSpillThatAnotherArmReads },
         { "machine/patch/releases-register-that-another-arm-reads"_s, testMachinePatchReleasesRegisterThatAnotherArmReads },
+        { "machine/patch/searches-for-ways-through-block-split-late"_s, testMachinePatchSearchesForWaysThroughBlockSplitLate },
         { "machine/patch/only-keeps-children-alive"_s, testMachinePatchThatOnlyKeepsChildrenAlive },
         { "machine/patch/generator-that-wraps-another"_s, testMachinePatchGeneratorThatWrapsAnother },
         { "machine/patch/without-effects-and-unread-is-dropped"_s, testMachinePatchWithoutEffectsThatNothingReadsIsDropped },

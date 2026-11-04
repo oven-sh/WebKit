@@ -32,8 +32,6 @@ public:
 private:
     void switchOnInteger(const TerminatorContext&, LValue subject, LType, BlockEdge otherwise);
     void switchOnBoxedInteger(const TerminatorContext&, Boxed subject, BlockEdge otherwise);
-    // AOTUnionSwitchEmitter.cpp. switchOnInteger(), in front of m_out.switchOn(). The cases lead to few blocks and lie close together: a range test and one test of a bit of a constant for each block. False: nothing was emitted.
-    bool trySwitchByBitsOfConstants(LValue subject, LType, std::span<const SwitchTarget>, BlockEdge otherwise);
 };
 
 } } } // namespace JSC::AOT::Typed

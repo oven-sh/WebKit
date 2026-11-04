@@ -212,21 +212,6 @@ EntryDescription describeEntry(const CodeGenerationInputs& inputs, CodeUnit unit
     };
 }
 
-// Each entry fills the registers up to those that the next one fills, and the last falls through to the primary entry.
-static void emitSecondaryEntries(CCallHelpers& jit, std::span<const SecondaryEntry> entries, unsigned numberOfGPRs, CodeRecords& records)
-{
-    RELEASE_ASSERT(numberOfGPRs <= numberOfDirectArgumentGPRs);
-    for (size_t index = 0; index < entries.size(); ++index) {
-        const SecondaryEntry& entry = entries[index];
-        unsigned endOfOmittedGPRs = index + 1 < entries.size() ? entries[index + 1].firstOmittedGPR : numberOfGPRs;
-        RELEASE_ASSERT(entry.id != primaryEntry && entry.firstOmittedGPR < endOfOmittedGPRs);
-
-        records.entries.append(RecordedEntry { entry.id, jit.label() });
-        for (unsigned gpr = entry.firstOmittedGPR; gpr < endOfOmittedGPRs; ++gpr)
-            jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), directArgumentGPR(gpr));
-    }
-}
-
 static void emitArgumentRegisterSpill(CCallHelpers& jit, CodeRecords& records)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -344,11 +329,8 @@ static bool emitFusedCallEntry(CCallHelpers& jit, const CodeGenerationInputs& in
 CCallHelpers::Jump emitEntryPreambles(CCallHelpers& jit, const CodeGenerationInputs& inputs, CodeUnit unit, CodeRecords& records)
 {
     const CallingConventions& conventions = inputs.plan.conventions();
-    std::span<const SecondaryEntry> secondaryEntries = conventions.secondaryEntriesOf(unit);
     bool spillsArgumentRegisters = conventions.spillsArgumentRegisters(unit);
-    RELEASE_ASSERT(secondaryEntries.empty() || !spillsArgumentRegisters);
 
-    // The secondary entries fall through to the primary entry, so the fused call entry lies in front of them and jumps over them.
     bool holdsFusedCallEntry = conventions.holdsFusedCallEntry(unit);
     RELEASE_ASSERT(!holdsFusedCallEntry || !spillsArgumentRegisters);
     CCallHelpers::Label startOfFusedCallEntry = jit.label();
@@ -357,14 +339,10 @@ CCallHelpers::Jump emitEntryPreambles(CCallHelpers& jit, const CodeGenerationInp
     CCallHelpers::Jump toPrimaryEntry;
     if (fusedCallEntryMoves) {
         records.entries.append(RecordedEntry { fusedCallEntry, startOfFusedCallEntry });
-        if (!secondaryEntries.empty() || !primaryEntryFollows)
+        if (!primaryEntryFollows)
             toPrimaryEntry = jit.jump();
     }
 
-    if (!secondaryEntries.empty()) {
-        ArgumentLocations locations = conventions.locationsOf(inputs.program, unit);
-        emitSecondaryEntries(jit, secondaryEntries, static_cast<unsigned>(std::ranges::count(locations.parameters, ArgumentLocation::Kind::GPR, &ArgumentLocation::kind)), records);
-    }
     if (spillsArgumentRegisters)
         emitArgumentRegisterSpill(jit, records);
 

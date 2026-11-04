@@ -204,10 +204,18 @@ bool WireTypeReader::readsAsAnything(std::span<const uint32_t> namedLayouts) con
     });
 }
 
-TypeParts WireTypeReader::readPartsWithoutClasses(TypeArena& arena, uint32_t index) const
+TypeParts WireTypeReader::readPartsWithoutClasses(TypeArena& arena, uint32_t index, ViewsWithoutLayouts views) const
 {
     const Wire::Type& wire = m_sections.types[index];
     std::span<const uint32_t> namedLayouts = wordsListedByWireType(m_sections, wire.layouts);
+    Vector<uint32_t, 8> layoutsThatSomebodyMakes;
+    if (views == ViewsWithoutLayouts::AreLeftOut) {
+        for (uint32_t layout : namedLayouts) {
+            if (!m_viewsWithoutLayouts.get(layout))
+                layoutsThatSomebodyMakes.append(layout);
+        }
+        namedLayouts = layoutsThatSomebodyMakes.span();
+    }
 
     TypeParts parts;
     parts.primitives = fromWire(static_cast<Wire::Primitives>(wire.primitives));
@@ -292,6 +300,23 @@ void WireTypeReader::readTypes()
             return partsOf(first + offset, arena);
         });
         first = end;
+    }
+
+    // One thread, in the order of the list: the positions of these types depend on the program alone too.
+    TypeArena& arenaOfCaller = arenas.of(0);
+    for (uint32_t index = 0; index < numberOfTypes; ++index) {
+        std::span<const uint32_t> namedLayouts = wordsListedByWireType(m_sections, m_sections.types[index].layouts);
+        if (!readsAsAnything(namedLayouts) || std::ranges::any_of(namedLayouts, [&](uint32_t layout) { return m_typeParametersWithoutFamily.get(layout); }))
+            continue;
+        TypeParts parts = readPartsWithoutClasses(arenaOfCaller, index, ViewsWithoutLayouts::AreLeftOut);
+        if (!parts.anyObject)
+            parts.unnamedClasses = readClassPartsOfWireType(arenaOfCaller, m_sections, index, types);
+        bool namesSomethingElse = (parts.primitives & ~(Primitive::UndefinedOrNull | Primitive::Absent)) || parts.stringLiterals || parts.objects || parts.unnamedLayouts || parts.unnamedClasses || parts.anyFunction;
+        if (!namesSomethingElse || parts.anyObject)
+            continue;
+        if (m_typesExpectedBesideViews.isEmpty())
+            m_typesExpectedBesideViews.fill(TypeID(), numberOfTypes);
+        m_typesExpectedBesideViews[index] = arenaOfCaller.intern(parts);
     }
 
     m_program.types.setTypesOfWireIndexes(WTF::move(types));

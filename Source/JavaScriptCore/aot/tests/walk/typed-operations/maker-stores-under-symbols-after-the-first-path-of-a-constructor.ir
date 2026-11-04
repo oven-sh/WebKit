@@ -1,0 +1,194 @@
+# -- source: maker-stores-under-symbols-after-the-first-path-of-a-constructor.ts
+# declare function report(value: unknown): void;
+# const kPort = Symbol("port"), kClosed = Symbol("closed"), kOwner = Symbol("owner"), kFast = Symbol("fast");
+# interface Channel { name: string; depth: number; items: unknown[]; slow?: boolean; [kFast]?: boolean; [kPort]: number; [kClosed]: boolean; [kOwner]: string; touched?: number; }
+# function Channel(this: Channel, name: string, mode?: symbol) {
+#   if (mode === kFast) { this.name = name; this[kFast] = true; this.depth = 0; this.items = []; return; }
+#   this.items = []; this.name = name; this.slow = true; this.depth = 1;
+# }
+# function open(name: string, mode: symbol | undefined, port: number, touch?: (channel: Channel) => void): Channel {
+#   const channel = new (Channel as any)(name, mode) as Channel;
+#   channel[kPort] = port; channel[kClosed] = false;
+#   if (touch) touch(channel);
+#   channel[kOwner] = "owner" + port; channel.depth = 5;
+#   return channel;
+# }
+# for (let i = 0; i < 8; i++) {
+#   const channel = open("n" + i, i % 4 === 3 ? undefined : kFast, i, i % 2 ? c => { c.touched = i; } : undefined);
+#   report(channel);
+#   report(Reflect.ownKeys(channel).map(String).join() + " " + channel.depth + " " + channel[kOwner] + " " + channel[kClosed]);
+# }
+# -- end of source
+# records of b60b34842fa9f2c0
+# RUN: plan orders mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: orders L0
+# CHECK: "name" symbol("fast"){{*}} "depth" "items" | symbol("port"){{*}} symbol("closed"){{*}} symbol("owner")
+
+module m0 path="maker-stores-under-symbols-after-the-first-path-of-a-constructor.ts" displayPath="maker-stores-under-symbols-after-the-first-path-of-a-constructor.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Channel" module=m0 position=332 constructor=f1 fields=[{key="name" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} originLayout=L1 originField=2}, {key=symbol("fast")@m0:3 declared={type=undefined|boolean} originLayout=L1 originField=8}, {key="depth" declared={type=number} originLayout=L1 originField=0}, {key="items" declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} originLayout=L1 originField=1}, {key="slow" declared={type=undefined|boolean} originLayout=L1 originField=3}] supertypes=[L1] flags=[IsConstructorFunction] ownFieldCount=5
+layout L1 module=m0 position=165 fields=[{key="depth" declared={type=number} flags=[IsRequired]}, {key="items" declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="slow" declared={type=undefined|boolean}}, {key="touched" declared={type=undefined|number}}, {key=symbol("port")@m0:0 declared={type=number} flags=[IsRequired]}, {key=symbol("closed")@m0:1 declared={type=boolean} flags=[IsRequired]}, {key=symbol("owner")@m0:2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key=symbol("fast")@m0:3 declared={type=undefined|boolean}}] flags=[IsNeverAllocated] declaredOrder=[2, 0, 1, 3, 8, 5, 6, 7, 4] ownFieldCount=9
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything} module=m0
+variable g0 name="Channel" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="kPort" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="kClosed" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g3 name="kOwner" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g4 name="kFast" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=Symbol @61
+    v3 = String string="port" @68
+    v4 = Call v2, -, v3 calleeName="Symbol" callNumber=0 @61
+    v5 = Convert v4 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @61
+    PutModuleVariable v5 variable=g1 @53
+    v7 = Builtin builtin=Symbol @87
+    v8 = String string="closed" @94
+    v9 = Call v7, -, v8 calleeName="Symbol" callNumber=1 @87
+    v10 = Convert v9 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @87
+    PutModuleVariable v10 variable=g2 @77
+    v12 = Builtin builtin=Symbol @114
+    v13 = String string="owner" @121
+    v14 = Call v12, -, v13 calleeName="Symbol" callNumber=2 @114
+    v15 = Convert v14 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @114
+    PutModuleVariable v15 variable=g3 @105
+    v17 = Builtin builtin=Symbol @139
+    v18 = String string="fast" @146
+    v19 = Call v17, -, v18 calleeName="Symbol" callNumber=3 @139
+    v20 = Convert v19 declared={type=undefined|null|symbol flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @139
+    PutModuleVariable v20 variable=g4 @131
+    v22 = Integer @919
+    v23 = Convert v22 declared={type=number} @919
+    Jump -> next b1(v23) @915
+  b1(v24: number):
+    LoopHint @915
+    v26 = Integer integer=8 @926
+    v27 = Less v24, v26 @926
+    Branch v27 -> taken b2(), notTaken b8() @926
+  b2():
+    v28 = String string="n" @959
+    v29 = Add v28, v24 @965
+    v30 = Integer integer=4 @972
+    v31 = Mod v24, v30 @972
+    v32 = Integer integer=3 @978
+    v33 = StrictEq v31, v32 @978
+    Branch v33 -> taken b3(), notTaken b4(v20) @978
+  b3():
+    v34 = Undefined @982
+    Jump -> next b4(v34) @982
+  b4(v35):
+    v36 = Integer integer=2 @1008
+    v37 = Mod v24, v36 @1008
+    v38 = ToBoolean v37 @1004
+    Branch v38 -> taken b5(| 0), notTaken b6(| 0) @1004
+  b5(v39):
+    v40 = NewClosure v24 function=f3 @1012
+    Jump -> next b7(v40) @1012
+  b6(v41):
+    v42 = Undefined @1038
+    Jump -> next b7(v42) @1038
+  b7(v43):
+    v44 = Call v1, -, v29, v35, v24, v43 calleeName="open" @954
+    v45 = Convert v44 declared={type=undefined|null|L0 flags=[IsExpected]} @954
+    v46 = Builtin builtin=GlobalThis @1052
+    v47 = PropGet v46 key="report" [isFreeName] @1052
+    v48 = Call v47, -, v45 calleeName="report" @1052
+    v49 = Builtin builtin=GlobalThis @1071
+    v50 = PropGet v49 key="report" [isFreeName] @1071
+    v51 = Builtin builtin=Reflect @1078
+    v52 = Builtin builtin=ReflectOwnKeys @1078
+    v53 = Call v52, v51, v45 calleeName="Reflect.ownKeys" @1086
+    v54 = Convert v53 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1078
+    v55 = PropGet v54 key="map" @1101
+    v56 = Builtin builtin=String @1107
+    v57 = Call v55, v54, v56 calleeKey="map" calleeName="map" @1103
+    v58 = Convert v57 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1078
+    v59 = PropGet v58 key="join" @1113
+    v60 = Call v59, v58 calleeKey="join" calleeName="join" @1115
+    v61 = Convert v60 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1078
+    v62 = String string=" " @1124
+    v63 = Add v61, v62 @1124
+    v64 = PropGet v45 key="depth" @1130
+    v65 = Add v63, v64 @1130
+    v66 = String string=" " @1146
+    v67 = Add v65, v66 @1146
+    v68 = ElemGet v45, v15 @1152
+    v69 = Add v67, v68 @1152
+    v70 = String string=" " @1170
+    v71 = Add v69, v70 @1170
+    v72 = ElemGet v45, v10 @1176
+    v73 = Add v71, v72 @1176
+    v74 = Call v50, -, v73 calleeName="report" @1071
+    v75 = Increment v24 @929
+    v76 = Convert v75 declared={type=number} @929
+    Jump -> next b1(v76) @929
+  b8():
+    v77 = Undefined @929
+    Return v77 @929
+}
+function f1 name="Channel" module=m0 position=332 flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|symbol flags=[OmitsNull]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: undefined|null|L0, v1: undefined|null|string, v2: undefined|null|symbol):
+    v3 = GetModuleVariable variable=g4 @410
+    v4 = CheckInitialized v3 name="kFast" @410
+    v5 = StrictEq v2, v4 @410
+    Branch v5 -> taken b1(), notTaken b2() @410
+  b1():
+    PropSet v0, v1 key="name" @419
+    v7 = GetModuleVariable variable=g4 @442
+    v8 = CheckInitialized v7 name="kFast" @442
+    v9 = Boolean boolean=true @451
+    ElemSet v0, v8, v9 @437
+    v11 = Integer @470
+    PropSet v0, v11 key="depth" @457
+    v13 = Data data=d0 @486
+    PropSet v0, v13 key="items" @473
+    v15 = Undefined @490
+    Return v15 @490
+  b2():
+    v16 = Data data=d1 @515
+    PropSet v0, v16 key="items" @502
+    PropSet v0, v1 key="name" @519
+    v19 = Boolean boolean=true @549
+    PropSet v0, v19 key="slow" @537
+    v21 = Integer integer=1 @568
+    PropSet v0, v21 key="depth" @555
+    v23 = Undefined @555
+    Return v23 @555
+}
+function f2 name="open" module=m0 position=573 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|symbol flags=[OmitsNull]}, {type=number}, {type=undefined|null|function flags=[OmitsNull]}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|symbol, v2: number, v3: undefined|null|function):
+    v4 = GetModuleVariable variable=g0 @711
+    v5 = Construct v4, -, v0, v1 calleeName="Channel" @711
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @706
+    v7 = GetModuleVariable variable=g1 @761
+    v8 = CheckInitialized v7 name="kPort" @761
+    ElemSet v6, v8, v2 @753
+    v10 = GetModuleVariable variable=g2 @784
+    v11 = CheckInitialized v10 name="kClosed" @784
+    v12 = Boolean @795
+    ElemSet v6, v11, v12 @776
+    v14 = ToBoolean v3 @808
+    Branch v14 -> taken b1(| 0), notTaken b2() @808
+  b1(v15):
+    v16 = Call v3, -, v6 calleeName="touch" @815
+    Jump -> next b2() @815
+  b2():
+    v17 = GetModuleVariable variable=g3 @841
+    v18 = CheckInitialized v17 name="kOwner" @841
+    v19 = String string="owner" @851
+    v20 = Add v19, v2 @861
+    ElemSet v6, v18, v20 @833
+    v22 = Integer integer=5 @883
+    PropSet v6, v22 key="depth" @867
+    Return v6 @895
+}
+function f3 module=m0 position=1012 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number variableName="i"}] thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|L0):
+    PropSet v1, v0 key="touched" @1019
+    v3 = Undefined @1019
+    Return v3 @1019
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

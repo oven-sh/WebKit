@@ -375,7 +375,7 @@ static NEVER_INLINE bool isDeadOnEveryPathFromBlockOutsideRareRegions(Allocator&
     // The walk only goes on in the order. A head that an edge fixes stands further on than the walk, and what is out of its reach may be within reach of a block in between.
     if (block == allocator.m_block) {
         if (firstReadsNotKnownOutOfReach.isEmpty()) {
-            const uint32_t numberOfOperations = allocator.m_proc.numberOfOperations();
+            const uint32_t numberOfOperations = allocator.m_order.mostOperations();
             firstReadsNotKnownOutOfReach.growWithoutInitializing(allocator.m_arena, numberOfOperations);
             memset(firstReadsNotKnownOutOfReach.begin(), 0, static_cast<size_t>(numberOfOperations) * sizeof(uint32_t));
         }

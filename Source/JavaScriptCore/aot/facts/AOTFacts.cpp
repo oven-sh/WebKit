@@ -308,11 +308,15 @@ static void layKeysThatHeldAloneAppendsOver(LinkTables& linked, const LinkTables
         LayoutID id(static_cast<uint32_t>(index));
         std::span<const PropertyKeyID> proven = linked.appendedKeysOf(id);
         size_t room = maxAppendedFieldsOutOfLine - std::min<size_t>(maxAppendedFieldsOutOfLine, proven.size());
-        for (PropertyKeyID key : held.appendedKeysOf(id)) {
+        std::span<const PropertyKeyID> keysOfHeld = held.appendedKeysOf(id);
+        for (size_t place = 0; place < keysOfHeld.size(); ++place) {
+            PropertyKeyID key = keysOfHeld[place];
             if (!room)
                 break;
             if (std::ranges::find(proven, key) != proven.end())
                 continue;
+            if (held.appendedFieldsThatTypeOfThisRequires.get(held.firstAppendedFieldOfLayout[index] + place))
+                linked.keysAppendedByHeldAloneThatLieInCell.set(linked.keysAppendedByHeldAlone.size());
             linked.keysAppendedByHeldAlone.append(key);
             --room;
         }
@@ -748,6 +752,7 @@ static void fillTablesOfFieldsLayoutsAndClassesForFacts(const Program& program, 
     StepTimes steps(build, "facts"_s);
     if (parts.mechanisms.contains(Mechanism::Guesses))
         layKeysThatHeldAloneAppendsOver(parts.linked, parts.held, program.layouts.size());
+    build.statistics().count(StatisticID::FlowAppendedFields, parts.linked.appendedKeys.size() + parts.linked.keysAppendedByHeldAlone.size());
     fillFieldTablesForFacts(program, parts.linked, parts.mechanisms, parts.tables);
     fillLayoutTablesForFacts(program, parts.linked, parts.held, parts.tables);
     fillTablesOfStringsForFacts(program, *parts.summaries, parts.linked, parts.held, parts.tables);
@@ -814,6 +819,12 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
                 workOutRegExpTexts(program, *parts.bodies, *parts.summaries, parts.tables.program);
         },
     });
+    const SizeOfLinkFlow& sizeOfFlow = parts.linked.sizeOfFlow;
+    build.statistics().count(StatisticID::FactNodes, sizeOfFlow.nodes);
+    build.statistics().count(StatisticID::FactEdges, sizeOfFlow.edges);
+    build.statistics().count(StatisticID::FactsCarriedOverEdges, sizeOfFlow.nodesTakenOffWorklist);
+    build.statistics().count(StatisticID::FactRuleCalls, sizeOfFlow.observersTold);
+    build.statistics().count(StatisticID::FactRounds, sizeOfFlow.rounds);
     parts.held = WTF::move(turns.held);
     finishReadingsOfLink(program, parts.mechanisms, turns, parts.linked, parts.held);
     // The flow is gone, and it was half as large as all that the build holds beside it.

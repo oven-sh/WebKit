@@ -1,0 +1,91 @@
+# Every operation that converts the value stands behind the store that lays `read`: the name is laid ahead of every object, in a loop whose way out is numbered first too.
+# f1 = Gauge, f2 = tell
+# -- source: conversions-behind-the-store-leave-the-name-laid-ahead.js
+# const limit = JSON.parse("1");
+# function Gauge() { this.n = 1; }
+# function tell() { return new Gauge().read(); }
+# const box = { toString() { tell(); return "box"; } };
+# Gauge.prototype.read = function () { return this.n; };
+# let turns = 0;
+# let got = "";
+# for (;;) {
+#   if (turns === limit) break;
+#   turns++;
+#   got = "a" + box;
+# }
+# got = got + box;
+# -- end of source
+# records of d545e6d13a2cba73
+# SINCE 11-04 (R257) THE CLOCK OF START SAYS OF NO NAME THAT IT IS LAID AHEAD: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no program that we are judged by. What this test told apart by `laid-ahead` it no longer tells.
+# RUN(LINK): link members mechanisms=all
+# LINK: on-prototype {{*}} "read"
+
+module m0 path="conversions-behind-the-store-leave-the-name-laid-ahead.js" displayPath="conversions-behind-the-store-leave-the-name-laid-ahead.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Gauge" module=m0 position=31 constructor=f1 fields=[{key="n" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 module=m0 position=123 fields=[{key="toString" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+variable g0 name="Gauge" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="tell" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON @14
+    v1 = PropGet v0 key="parse" @14
+    v2 = Convert v1 declared={type=builtin(JSONParse) flags=[IsExpected]} @14
+    v3 = String string="1" @25
+    v4 = Call v2, v0, v3 calleeKey="parse" calleeName="JSON.parse" @19
+    v5 = NewClosure function=f3 @125
+    v6 = NewObject -, v5 layout=L1 fields=[0] @123
+    v7 = FinishObject v6 @123
+    v8 = GetModuleVariable variable=g0 @165
+    v9 = PropGet v8 key="prototype" @165
+    v10 = NewClosure function=f4 @188
+    PropSet v9, v10 key="read" @171
+    v12 = Integer @232
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @232
+    v14 = String string="" @245
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]} @245
+    Jump -> next b1(v13, v15) @249
+  b1(v16, v17):
+    LoopHint @249
+    v19 = StrictEq v16, v4 @276
+    Branch v19 -> taken b2(), notTaken b3() @276
+  b2():
+    v20 = Add v17, v7 @334
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]} @322
+    v22 = Undefined @322
+    Return v22 @322
+  b3():
+    v23 = Increment v16 @292
+    v24 = Convert v23 declared={type=number flags=[IsExpected]} @292
+    v25 = String string="a" @309
+    v26 = Add v25, v7 @315
+    v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]} @303
+    Jump -> next b1(v24, v27) @303
+}
+function f1 name="Gauge" module=m0 position=31 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1 @59
+    PropSet v0, v1 key="n" @50
+    v3 = Undefined @50
+    Return v3 @50
+}
+function f2 name="tell" module=m0 position=64 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @93
+    v1 = Construct v0 calleeName="Gauge" @93
+    v2 = PropGet v1 key="read" @99
+    v3 = Call v2, v1 calleeKey="read" calleeName="read" @101
+    ReturnCall v3 @101
+}
+function f3 name="toString" module=m0 position=125 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g1 @138
+    v1 = Call v0 calleeName="tell" @138
+    v2 = String string="box" @153
+    Return v2 @153
+}
+function f4 module=m0 position=188 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="n" @209
+    Return v1 @209
+}

@@ -7,22 +7,26 @@
 # function timeLog(v) { const a = n; console.timeLog("%j", "%j", v); return a + " " + n; }
 # console.log(table(1n), tableOfNumber(2), dir(3n), timeLog(4n), n);
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = GetModuleVariable variable=g0
 # CHECK: = CallBuiltin {{*}}overload=ConsoleTable/1 {{*}}mayCallUnknownCode
 # CHECK: = GetModuleVariable variable=g0
 # no other primitive is asked for a toJSON
 # RUN(NUMBER): walk f2 mechanisms=all
+# REQUIRES(NUMBER): entries-of-bun
 # NUMBER-LABEL: code f2:Body
 # NUMBER: = GetModuleVariable variable=g0
 # NUMBER: = CallBuiltin {{*}}overload=ConsoleTable/0
 # NUMBER-NOT: GetModuleVariable
 # console.dir prints its first operand alone, and console.timeLog each operand by itself: neither reads a text for directives
 # RUN(DIR): walk f3 mechanisms=all
+# REQUIRES(DIR): entries-of-bun
 # DIR-LABEL: code f3:Body
 # DIR: = CallBuiltin {{*}}overload=ConsoleDir/0
 # DIR-NOT: GetModuleVariable
 # RUN(TIMELOG): walk f4 mechanisms=all
+# REQUIRES(TIMELOG): entries-of-bun
 # TIMELOG-LABEL: code f4:Body
 # TIMELOG: = CallBuiltin {{*}}overload=ConsoleTimeLog/0
 # TIMELOG-NOT: GetModuleVariable

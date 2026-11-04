@@ -480,6 +480,26 @@ void ArrayIntrinsicEmitter::generateTryPutElements(const ValueContext& value)
     define(value, join.finish());
 }
 
+// The library has just allocated `array` with holes up to its length, and nothing else can reach it yet. False, with nothing stored, if its storage does not hold boxed values.
+// No barrier: nothing has run since `array` was allocated, so the collector has not marked it.
+void ArrayIntrinsicEmitter::generateTryFillNewArray(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    Boxed filler = in<Boxed>(value->valueOperand());
+    LBasicBlock otherwise = newBlock();
+    Join<Condition> join(m_out);
+    branchUnless(elements().hasWritableShape(elements().indexingMode(array, IndexingShapeAndWritabilityMask), contiguous), otherwise);
+    ArrayElements storage = elements().elementsOf(array);
+    forEachPositionBelow(elements().publicLength(storage), [&](Integer position) {
+        m_out.store64(filler.value(), elements().elementOfUnknownForm(storage, position));
+    });
+    join.add(boolean(true));
+
+    m_out.appendTo(otherwise);
+    join.add(boolean(false));
+    define(value, join.finish());
+}
+
 void ArrayIntrinsicEmitter::generateGrowNewArray(const ValueContext& value)
 {
     callVoidOperation(value, RuntimeOperation::GrowNewArray, { in<CellPointer>(value->arrayOperand()), integerOperand(value->lengthOperand()) });

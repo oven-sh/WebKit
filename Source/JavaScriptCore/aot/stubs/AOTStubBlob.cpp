@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTSort.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubCatalog.h"
@@ -51,7 +52,7 @@ static void forEachStubEnteredByRuntime(const Functor& functor)
     });
 }
 
-static ReachedStubs findReachedStubs(const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
+static ReachedStubs findReachedStubs(const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions, bool checksAnswers)
 {
     ReachedStubs reached;
     EntrySet used = entriesUsedByFunctions;
@@ -95,11 +96,11 @@ static ReachedStubs findReachedStubs(const StubCatalog& catalog, std::span<const
         }
     } while (!worklist.isEmpty());
     reached.entriesUsed = used;
-#if ASSERT_ENABLED || ASAN_ENABLED
     // The callers of such a body were compiled by what the catalog says of the stub without an immediate.
-    for (const std::unique_ptr<StubRecording>& dryRun : ownDryRuns)
-        RELEASE_ASSERT(catalog.answersCover(*dryRun));
-#endif
+    if (checksAnswers) {
+        for (const std::unique_ptr<StubRecording>& dryRun : ownDryRuns)
+            RELEASE_ASSERT(catalog.answersCover(*dryRun));
+    }
     // The worklist follows the order of calledKeys, and the bodies lie in the blob in the order of this list.
     // The bodies that have a thing of the program for an immediate come last. Their number grows with the program, and stubs take addresses only of and from the others, which so stay close together.
     AOT::sortInLine(reached.bodies, { }, [](StubKey body) {
@@ -188,7 +189,8 @@ static std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context,
 
 std::expected<StubBlob, LinkFailure> buildStubBlob(BuildContext& context, const StubCatalog& catalog, std::span<const StubKey> calledKeys, const EntrySet& entriesUsedByFunctions)
 {
-    ReachedStubs reached = findReachedStubs(catalog, calledKeys, entriesUsedByFunctions);
+    const bool checksAnswers = ASSERT_ENABLED || ASAN_ENABLED || context.options().verifiesMachineCode;
+    ReachedStubs reached = findReachedStubs(catalog, calledKeys, entriesUsedByFunctions, checksAnswers);
 
     // A near address reaches 1 MB on ARM64.
     auto blob = buildStubBlob(context, catalog, reached, PCRelativeReach::Near);

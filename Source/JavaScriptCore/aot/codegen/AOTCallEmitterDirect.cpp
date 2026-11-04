@@ -27,19 +27,17 @@ CodeUnit CallEmitter::calleeOf(const ValueContext& callDirect) const
     return conventions().unitEnteredBy(callDirect.value());
 }
 
-CallEmitter::PlacedArguments CallEmitter::placeArguments(CodeUnit callee, uint16_t entry, const ArgumentLocations& locations, std::span<const Operand> arguments, OmittedArguments omitted)
+CallEmitter::PlacedArguments CallEmitter::placeArguments(CodeUnit callee, const ArgumentLocations& locations, std::span<const Operand> arguments)
 {
     RELEASE_ASSERT(arguments.size() == locations.parameters.size() && locations.convention == EntryConvention::Direct);
 
     PlacedArguments placed;
-    placed.entry = entry;
     placed.onStack.fill(nullptr, locations.numberOfStackArguments);
     // By place among the argument GPRs of the callee. Null: nothing is put there.
     std::array<LValue, numberOfDirectArgumentGPRs> inGPRs { };
     unsigned numberOfGPRs = 0;
     // The plan counts the stack words of entry 0 of each unit.
     placed.stackWordsToReserve = std::max(conventions().stackWordsReservedByCallersOf(m_program, callee), locations.numberOfStackWords());
-    bool takesEntryParametersOfFunction = entry == primaryEntry && returnsResultOfFunction(callee.role);
     for (size_t i = 0; i < arguments.size(); ++i) {
         const ArgumentLocation& location = locations.parameters[i];
         if (location.kind == ArgumentLocation::Kind::GPR) {
@@ -51,10 +49,6 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(CodeUnit callee, uint16
             continue;
         RELEASE_ASSERT(isPassedAs(arguments[i].representation, location.representation));
         LValue argument = arguments[i].value;
-        // A number, a boolean or a narrow reference is nothing that the collector takes for a pointer.
-        bool mayKeepCellAlive = location.kind != ArgumentLocation::Kind::None && argument->type() == Machine::Int64 && !argument->hasInt64();
-        if (mayKeepCellAlive && takesEntryParametersOfFunction && conventions().letsGoOfParameter(callee.function, static_cast<unsigned>(i)))
-            placed.letGoByCallee.append(argument);
         switch (location.kind) {
         case ArgumentLocation::Kind::None:
             break;
@@ -70,17 +64,7 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(CodeUnit callee, uint16
         }
     }
 
-    unsigned numberOfGPRsPassed = numberOfGPRs;
-    if (omitted == OmittedArguments::MayBeOmitted && entry == primaryEntry) {
-        unsigned firstUndefined = numberOfGPRs;
-        while (firstUndefined && inGPRs[firstUndefined - 1] && isUndefinedConstant(inGPRs[firstUndefined - 1]))
-            --firstUndefined;
-        SecondaryEntry entered = conventions().findEntryOmittingArguments(callee, firstUndefined, numberOfGPRs);
-        RELEASE_ASSERT(firstUndefined <= entered.firstOmittedGPR && entered.firstOmittedGPR <= numberOfGPRs);
-        placed.entry = entered.id;
-        numberOfGPRsPassed = entered.firstOmittedGPR;
-    }
-    for (unsigned index = 0; index < numberOfGPRsPassed; ++index) {
+    for (unsigned index = 0; index < numberOfGPRs; ++index) {
         if (inGPRs[index])
             placed.inRegisters.append(Machine::ConstrainedValue(inGPRs[index], Machine::ValueRep::reg(directArgumentGPR(index))));
     }
@@ -101,8 +85,8 @@ Vector<Operand, 2> CallEmitter::callEntry(const OperationContext& context, CodeU
     const Function& calledFunction = m_program.at(callee.function);
     RELEASE_ASSERT(calledFunction.hasBody() || (calledFunction.role == FunctionRole::Parser && conventions().exists(callee)));
     std::span<const ArgumentLocation> results = locations.results.span();
-    PlacedArguments placed = placeArguments(callee, entry, locations, arguments, OmittedArguments::MayBeOmitted);
-    Machine::PatchOperation* call = emitCall(context, CallTarget::unit(callee, placed.entry), placed, results, options);
+    PlacedArguments placed = placeArguments(callee, locations, arguments);
+    Machine::PatchOperation* call = emitCall(context, CallTarget::unit(callee, entry), placed, results, options);
 
     // emitCall() returns the result itself where one result is passed, and a tuple where several are.
     auto isPassed = [](const ArgumentLocation& result) {
@@ -123,7 +107,7 @@ Vector<Operand, 2> CallEmitter::callEntry(const OperationContext& context, CodeU
 void CallEmitter::tailCallEntry(const OperationContext& context, CodeUnit callee, uint16_t entry, const ArgumentLocations& locations, std::span<const Operand> arguments)
 {
     RELEASE_ASSERT(m_program.at(callee.function).hasBody());
-    emitTailCall(context, CallTarget::unit(callee, entry), placeArguments(callee, entry, locations, arguments));
+    emitTailCall(context, CallTarget::unit(callee, entry), placeArguments(callee, locations, arguments));
 }
 
 void CallEmitter::callStartOfModule(const ValueContext& value, CodeUnit start, const ArgumentLocations& locations)
@@ -174,8 +158,8 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
     bool entersConstructEntry = callee.role == CodeRole::AllocatingConstructEntry || callee.role == CodeRole::GenericConstructEntry;
     if (options.constructs && calledFunction.kind == FunctionKind::Plain && !entersConstructEntry)
         options.constructedCallee = callee.function;
-    PlacedArguments placed = placeArguments(callee, primaryEntry, locations, arguments.span(), OmittedArguments::MayBeOmitted);
-    Machine::PatchOperation* call = emitCall(value, CallTarget::unit(callee, placed.entry), placed, locations.results.span(), options);
+    PlacedArguments placed = placeArguments(callee, locations, arguments.span());
+    Machine::PatchOperation* call = emitCall(value, CallTarget::unit(callee, primaryEntry), placed, locations.results.span(), options);
     defineResultsOfCall(value, locations.results.span(), call);
 }
 
@@ -232,7 +216,7 @@ void CallEmitter::callThroughMethodTable(const ValueContext& value, uint32_t pla
     Pointer entry = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(image.code)), zeroExtended(codeOffset), WTF::fastLog2(static_cast<unsigned>(codeOffsetUnit)));
 
     CallTarget target = CallTarget::address(entry.value(), takesAndReturnsAlike);
-    PlacedArguments placed = placeArguments(takesAndReturnsAlike, primaryEntry, locations, arguments.span());
+    PlacedArguments placed = placeArguments(takesAndReturnsAlike, locations, arguments.span());
     if (value.returnCall()) {
         emitTailCall(value, target, placed);
         return;

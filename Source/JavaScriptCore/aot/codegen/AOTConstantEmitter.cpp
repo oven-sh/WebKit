@@ -471,6 +471,7 @@ CellPointer ConstantEmitter::builtinCell(BuiltinID id)
 // A boxed cell is its address. No value has the bits of a word that is still empty, so whether the cell has been made matters only where the two differ.
 void ConstantEmitter::branchOnIsBuiltinCell(LValue boxedValueOrCell, BuiltinID id, BranchTargets targets)
 {
+    build().statistics().count(StatisticID::NativeFunctionTestsEmitted);
     BuiltinCellKey key = BuiltinCellKey::object(id);
     RELEASE_ASSERT(key.hasCell(m_builtins));
     // Where the scope holds the cell it has been made, so the one comparison answers.

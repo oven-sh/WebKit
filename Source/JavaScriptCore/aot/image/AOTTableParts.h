@@ -229,6 +229,8 @@ struct AnswersAboutModules {
     Vector<OptionSet<Answer>> ofModules;
     // [ModuleID]. Null: none.
     Vector<VariableID> variablesThatHoldMocks;
+    // A test run, or a program with a module that may be mocked.
+    bool mayMocksStandInPlaceOfModules { false };
     // A directory stands behind the one above it, and the directories stand in the order in which the paths of the modules come to them.
     Vector<Directory> directories;
     // [ModuleID]. In `directories`. Number24::max: the path is one string.

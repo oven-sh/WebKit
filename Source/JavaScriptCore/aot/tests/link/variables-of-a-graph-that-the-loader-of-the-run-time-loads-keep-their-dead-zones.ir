@@ -1,0 +1,69 @@
+# main.mjs: import { seen } from "./x.mjs"; import done from "./k.cjs"   x.mjs: import { readLate } from "./y.mjs"; export let seen = readLate()   y.mjs: import "./x.mjs"; export function readLate() { return late } const late = 5
+# other.mjs: import "./y.mjs"; import "./k.cjs"   k.cjs: require("./other.mjs")
+# By Module::requests as they are written the start goes main > x > y: y's body runs ahead of x's, and `late` is stored when readLate() is first entered.
+# k.cjs requires an ES module that leads back to it, so the loader of the run time loads every graph that leads there (ModuleFlags::IsLoadedByLoader), in steps, and runs k.cjs in one of them: other > y > x: x's body runs ahead of y's.
+# No prefix is written for such a graph. Link took `absent` out of the variable, and the empty word was read as a number: -9223372036854776000; as a cell: a crash.
+# x.mjs and y.mjs bear no flag: whatever leads to the cycle does, up to the entry.
+# RUN: link variables mechanisms=all
+# CHECK: variable g1 proven=i32|absent
+
+variable g0 name="readLate" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="late" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="seen" module=m1 declared={type=anything|absent}
+variable g3 name="exports" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="y.mjs" displayPath="y.mjs" flags=[KeepsError] body=f0 requests=[{target=m1 completes=true}] namespaceLayout=L(m0)
+module m1 path="x.mjs" displayPath="x.mjs" flags=[KeepsError] body=f2 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+module m2 path="other.mjs" displayPath="other.mjs" flags=[KeepsError, IsLoadedByLoader, IsRequiredDuringLoad] body=f3 requests=[{target=m0 completes=true}, {target=m4 completes=true}] namespaceLayout=L(m2)
+module m3 path="k.cjs" displayPath="k.cjs" kind=CommonJs flags=[KeepsError, IsLoadedByLoader, MayBeImportedWhileItRuns] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g3
+module m4 path="#4" displayPath="k.cjs" flags=[KeepsError] exportRule=CommonJs body=f5 requests=[{target=m3 kind=Require}] namespaceLayout=L(m4)
+module m5 path="main.mjs" displayPath="main.mjs" flags=[KeepsError, IsLoadedByLoader] body=f6 requests=[{target=m1 completes=true}, {target=m4 completes=true}] namespaceLayout=L(m5)
+entry module=m5
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    PutModuleVariable v0 variable=g1
+    v2 = Undefined
+    Return v2
+}
+function f1 name="readLate" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="late"
+    Return v1
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="readLate"
+    v2 = Call v1 calleeName="readLate"
+    PutModuleVariable v2 variable=g2
+    v4 = Undefined
+    Return v4
+}
+function f3 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 module=m3 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m2 referrer=m3 specifier="./other.mjs"
+    v1 = Undefined
+    PutModuleVariable v1 variable=g3
+    Return v1
+}
+function f5 module=m3 kind=Module flags=[IsHiddenInStackTraces] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m3 referrer=m4 [isBare]
+    v1 = Undefined
+    Return v1
+}
+function f6 module=m5 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="seen"
+    v2 = Builtin builtin=GlobalThis
+    PropSet v2, v1 key="answer"
+    v4 = Undefined
+    Return v4
+}

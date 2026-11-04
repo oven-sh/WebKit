@@ -565,8 +565,8 @@ StructureTable::StructureTable(State& state)
     state.caches->add(CacheKind::WeakByKey, "structures of layouts that have ended"_s, *this);
     state.caches->add(CacheKind::StrongRoots, "variants of the structures of layouts"_s, *m_variants);
     state.caches->addClearedEachCollection("recent structures by extra properties"_s, asWritableBytes(std::span { m_variants->recentByExtraProperties }));
-    state.instance.objects.prototypeTransitions = state.tableArena.allocate<PrototypeTransition>(numberOfPrototypeTransitions);
-    state.caches->addClearedEachCollection("prototype transitions"_s, asWritableBytes(std::span { state.instance.objects.prototypeTransitions, numberOfPrototypeTransitions }));
+    state.instance.objects.prototypeTransitions = state.tableArena.allocate<PrototypeTransition>(2 * numberOfPrototypeTransitions);
+    state.caches->addClearedEachCollection("prototype transitions"_s, asWritableBytes(std::span { state.instance.objects.prototypeTransitions, 2 * numberOfPrototypeTransitions }));
     state.instance.objects.copiesWithNames = state.tableArena.allocate<uint8_t>(sizeOfCopiesWithNames);
     state.caches->addClearedEachCollection("copies with names"_s, std::span { state.instance.objects.copiesWithNames, sizeOfCopiesWithNames });
 }
@@ -830,7 +830,17 @@ CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested
     Variant usual = usualStructure ? variantOf(*usualStructure) : usualVariantOf(vm, layout);
     Variant variant = requested;
     // Compiled code tests the flag after the read that relies on it, so an object that had it keeps it.
-    variant.hasOtherPrototype |= usual.hasOtherPrototype || usual.prototype != variant.prototype;
+    if (!variant.hasOtherPrototype && !usual.hasOtherPrototype && usual.prototype != variant.prototype) {
+        // A Structure without the flag below another object than the usual one: the class has taken what lies between.
+        if (CompiledStructure* existing = find(variant))
+            return existing;
+        JSObject* firstAbove = variant.prototype.getObject();
+        variant.hasOtherPrototype = true;
+        if (CompiledStructure* existing = find(variant))
+            return existing;
+        variant.hasOtherPrototype = !firstAbove || !m_state.objects->classes.takesObjectsLaidBelowPrototype(vm, layout, firstAbove);
+    }
+    variant.hasOtherPrototype |= usual.hasOtherPrototype;
     if (CompiledStructure* existing = find(variant))
         return existing;
     ASSERT(layout.shape == usual.layout->shape);
@@ -853,9 +863,13 @@ CompiledStructure* StructureTable::withPrototype(VM& vm, const CompiledStructure
 {
     EncodedJSValue encodedPrototype = JSValue::encode(prototype);
     uint32_t before = current.id().bits();
-    PrototypeTransition& recent = std::span { m_state.instance.objects.prototypeTransitions, numberOfPrototypeTransitions }[indexOfPrototypeTransition(before, encodedPrototype)];
+    std::span transitions { m_state.instance.objects.prototypeTransitions, 2 * numberOfPrototypeTransitions };
+    PrototypeTransition& recent = transitions[indexOfPrototypeTransition(before, encodedPrototype)];
     if (recent.before == before && recent.prototype == encodedPrototype)
         return VariantMaps::decode(std::bit_cast<StructureID>(recent.after));
+    PrototypeTransition& recentBelowLaidObjects = transitions[numberOfPrototypeTransitions + indexOfPrototypeTransition(before, encodedPrototype)];
+    if (recentBelowLaidObjects.before == before && recentBelowLaidObjects.prototype == encodedPrototype)
+        return VariantMaps::decode(std::bit_cast<StructureID>(recentBelowLaidObjects.after));
 
     Variant variant = variantWithKeyOrderOf(current);
     variant.prototype = prototype;
@@ -864,6 +878,8 @@ CompiledStructure* StructureTable::withPrototype(VM& vm, const CompiledStructure
     constexpr uint32_t pristineBitInBlob = IsPristine << 16;
     if (structure->isPristine() && structure->typeInfoBlob() == (current.typeInfoBlob() | pristineBitInBlob) && !current.mayBePrototype() && !belongsToOneObject(variant))
         recent = { encodedPrototype, before, structure->id().bits() };
+    else if (!structure->isPristine() && structure->typeInfoBlob() == current.typeInfoBlob() && !current.mayBePrototype() && !belongsToOneObject(variant))
+        recentBelowLaidObjects = { encodedPrototype, before, structure->id().bits() };
     return structure;
 }
 

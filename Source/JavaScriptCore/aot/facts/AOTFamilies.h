@@ -9,6 +9,7 @@
 
 #include "AOTLayout.h"
 #include "AOTTypeArena.h"
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
 
@@ -43,6 +44,23 @@ public:
     {
         for (FamilyID family = nearestFamilyOf(id); family; family = m_waysUp[family.index()].above)
             functor(family);
+    }
+    // The families that hold a layout of which the answer is yes. Each layout is asked once at most, and each family tells the nearest that holds it.
+    // Whoever goes through the members of every family takes a step for each pair of classes in a row of classes that extend one another.
+    BitVector familiesWithSomeMemberThat(NOESCAPE const Invocable<bool(LayoutID)> auto& matches) const
+    {
+        BitVector found(size());
+        for (uint32_t layout = 0; layout < m_nearestFamilyOfLayout.size(); ++layout) {
+            FamilyID nearest = m_nearestFamilyOfLayout[layout];
+            if (nearest && !found.quickGet(nearest.index()) && matches(LayoutID(layout)))
+                found.quickSet(nearest.index());
+        }
+        // What holds a family has a higher number.
+        for (uint32_t family = 0; family < size(); ++family) {
+            if (FamilyID above = m_waysUp[family].above; above && found.quickGet(family))
+                found.quickSet(above.index());
+        }
+        return found;
     }
 
 private:

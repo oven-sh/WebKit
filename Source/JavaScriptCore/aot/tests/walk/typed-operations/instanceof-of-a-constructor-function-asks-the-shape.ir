@@ -1,0 +1,176 @@
+# -- source: instanceof-of-a-constructor-function-asks-the-shape.js
+# function Ok(v) { this.v = v; }
+# function Err(e) { this.e = e; }
+# function Base(a) { this.a = a; }
+# function Below(a) { Base.call(this, a); }
+# Below.prototype = Object.create(Base.prototype);
+# function Tagged(t) { this.t = t; }
+# Object.defineProperty(Tagged, Symbol.hasInstance, { value: function () { return true; } });
+# function unwrap(r) { if (r instanceof Ok) return r.v; if (r instanceof Err) return -r.e; return 0; }
+# function isBase(r) { return r instanceof Base; }
+# function isTagged(r) { return r instanceof Tagged; }
+# sink(unwrap(new Ok(1)) + unwrap(new Err(2)), isBase(new Below(1)), isBase(new Base(1)), isBase(new Ok(1)), isTagged(new Tagged(1)));
+# -- end of source
+# `r instanceof Ok`: Ok gets no name of its own but `prototype`, so the lookup of Symbol.hasInstance comes to Function.prototype's, and its prototype object is settled ahead of every object: an object of its shape is an instance, with no guard.
+# What else may arrive here nobody knows, so the other arm has the operation as written.
+# f6 = unwrap, f7 = isBase, f8 = isTagged
+# RUN: walk f6 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# The function is read where the operation as written takes it: the way of the shape test reads nothing.
+# CHECK: frequency=Rare
+# CHECK-NEXT: = GetModuleVariable
+# CHECK-NEXT: = InstanceOf
+# CHECK: = ShapeTest {{*}}layouts=[L1]
+# RUN(GUARD): walk f6 f7 mechanisms=all
+# REQUIRES(GUARD): entries-of-bun
+# GUARD-NOT: AreMembersUnchanged
+# A row of functions: which objects are made in front of the store and the link of `Below.prototype` nobody can tell (R299): the operation as written answers.
+# RUN(ROW): walk f7 mechanisms=all
+# REQUIRES(ROW): entries-of-bun
+# ROW: = InstanceOf
+# Tagged has a Symbol.hasInstance of its own.
+# RUN(OWN): walk f8 mechanisms=all
+# REQUIRES(OWN): entries-of-bun
+# OWN-NOT: ShapeTest
+# OWN: = InstanceOf
+
+module m0 path="instanceof-of-a-constructor-function-asks-the-shape.js" displayPath="instanceof-of-a-constructor-function-asks-the-shape.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Ok" module=m0 constructor=f1 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Err" module=m0 position=31 constructor=f2 fields=[{key="e" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 kind=Instance name="Base" module=m0 position=63 constructor=f3 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L3 kind=Instance name="Below" module=m0 position=96 base=L2 constructor=f5 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L4 kind=Instance name="Tagged" module=m0 position=187 constructor=f4 fields=[{key="t" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L5 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+variable g0 name="Ok" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Err" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="Base" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="Tagged" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f5 @0
+    v1 = Convert v0 declared={type=f5 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f6 @0
+    v3 = Convert v2 declared={type=f6 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f7 @0
+    v5 = Convert v4 declared={type=f7 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f8 @0
+    v7 = Convert v6 declared={type=f8 flags=[IsFromCompiler]} @0
+    v8 = Builtin builtin=Object @156
+    v9 = Builtin builtin=ObjectCreate @156
+    v10 = GetModuleVariable variable=g2 @170
+    v11 = PropGet v10 key="prototype" @170
+    v12 = Call v9, v8, v11 calleeName="Object.create" @163
+    PropSet v1, v12 key="prototype" @138
+    v14 = Builtin builtin=Object @222
+    v15 = Builtin builtin=ObjectDefineProperty @222
+    v16 = GetModuleVariable variable=g3 @244
+    v17 = Builtin builtin=SymbolHasInstance @252
+    v18 = NewClosure function=f9 @281
+    v19 = NewObject -, v18 layout=L5 fields=[4] @272
+    v20 = FinishObject v19 @272
+    v21 = Call v15, v14, v16, v17, v20 calleeName="Object.defineProperty" @229
+    v22 = Builtin builtin=GlobalThis @517
+    v23 = PropGet v22 key="sink" [isFreeName] @517
+    v24 = GetModuleVariable variable=g0 @533
+    v25 = Integer integer=1 @536
+    v26 = Construct v24, -, v25 calleeName="Ok" @533
+    v27 = Call v3, -, v26 calleeName="unwrap" @522
+    v28 = GetModuleVariable variable=g1 @553
+    v29 = Integer integer=2 @557
+    v30 = Construct v28, -, v29 calleeName="Err" @553
+    v31 = Call v3, -, v30 calleeName="unwrap" @542
+    v32 = Add v27, v31 @542
+    v33 = Integer integer=1 @579
+    v34 = Construct v1, -, v33 calleeName="Below" @573
+    v35 = Call v5, -, v34 calleeName="isBase" @562
+    v36 = GetModuleVariable variable=g2 @595
+    v37 = Integer integer=1 @600
+    v38 = Construct v36, -, v37 calleeName="Base" @595
+    v39 = Call v5, -, v38 calleeName="isBase" @584
+    v40 = GetModuleVariable variable=g0 @616
+    v41 = Integer integer=1 @619
+    v42 = Construct v40, -, v41 calleeName="Ok" @616
+    v43 = Call v5, -, v42 calleeName="isBase" @605
+    v44 = GetModuleVariable variable=g3 @637
+    v45 = Integer integer=1 @644
+    v46 = Construct v44, -, v45 calleeName="Tagged" @637
+    v47 = Call v7, -, v46 calleeName="isTagged" @624
+    v48 = Call v23, -, v32, v35, v39, v43, v47 calleeName="sink" @517
+    v49 = Undefined @517
+    Return v49 @517
+}
+function f1 name="Ok" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="v" @17
+    v3 = Undefined @17
+    Return v3 @17
+}
+function f2 name="Err" module=m0 position=31 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    PropSet v0, v1 key="e" @49
+    v3 = Undefined @49
+    Return v3 @49
+}
+function f3 name="Base" module=m0 position=63 flags=[HasThis, HasExplicitName] length=1 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: L2, v1: anything):
+    PropSet v0, v1 key="a" @82
+    v3 = Undefined @82
+    Return v3 @82
+}
+function f4 name="Tagged" module=m0 position=187 flags=[HasThis, HasExplicitName] length=1 thisType={type=L4 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+  b0(v0: L4, v1: anything):
+    PropSet v0, v1 key="t" @208
+    v3 = Undefined @208
+    Return v3 @208
+}
+function f5 name="Below" module=m0 position=96 flags=[HasThis, HasExplicitName] length=1 thisType={type=L3 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: L3, v1: anything):
+    v2 = GetModuleVariable variable=g2 @116
+    v3 = PropGet v2 key="call" @116
+    v4 = Call v3, v2, v0, v1 calleeKey="call" calleeName="Base.call" @121
+    v5 = Undefined @116
+    Return v5 @116
+}
+function f6 name="unwrap" module=m0 position=314 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0 @352
+    v2 = InstanceOf v0, v1 @341
+    v3 = ToBoolean v2 @339
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0) @339
+  b1(v4):
+    v5 = PropGet v0 key="v" @363
+    Return v5 @363
+  b2(v6):
+    v7 = GetModuleVariable variable=g1 @385
+    v8 = InstanceOf v0, v7 @374
+    v9 = ToBoolean v8 @372
+    Branch v9 -> taken b3(| 0), notTaken b4(| 0) @372
+  b3(v10):
+    v11 = PropGet v0 key="e" @398
+    v12 = Negate v11 @398
+    Return v12 @398
+  b4(v13):
+    v14 = Integer @410
+    Return v14 @410
+}
+function f7 name="isBase" module=m0 position=415 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g2 @456
+    v2 = InstanceOf v0, v1 @445
+    Return v2 @445
+}
+function f8 name="isTagged" module=m0 position=464 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3 @507
+    v2 = InstanceOf v0, v1 @496
+    Return v2 @496
+}
+function f9 name="value" module=m0 position=281 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Boolean boolean=true @302
+    Return v0 @302
+}
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

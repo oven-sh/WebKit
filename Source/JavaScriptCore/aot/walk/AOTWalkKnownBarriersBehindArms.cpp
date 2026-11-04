@@ -20,56 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-void buildBarrierBehindArms(Walker& walker, Reference owner)
-{
-    if (!walker.has(Mechanism::TypedOperations) || walker.isUnreachable() || !owner || !owner.isValue())
-        return;
-    // hasKind() passes by a word that may be unspecified, and build() does not.
-    TypeID type = walker.typeOf(owner);
-    if (!type || !hasKind(walker.types(), type, OperandKind::Object) || walker.types().at(type).mayBeUnspecified())
-        return;
-
-    const Code& code = walker.code();
-    ValueID cell = rootOfCellInSweptCode(code, owner.id());
-    // Two uses of one constant may make two cells.
-    if (code.isConstant(cell))
-        return;
-    // No store into a cell of the frame runs a barrier, nor does one into a cell that cannot be marked.
-    const Operation& made = code.at(cell);
-    if (PayloadWord::storage(made.opcode) && made.storage() != AllocationStorage::Heap)
-        return;
-    KnownBarriers& barriers = walker.state().barriers();
-    if (barriers.youngCell() == Reference::value(cell))
-        return;
-
-    Origin origin = walker.originOfOperation();
-    origin.isTailCall = false;
-    Draft barrier(Opcode::RememberOwner, origin);
-    barrier.setObjectOperand(owner);
-    walker.build(WTF::move(barrier));
-    if (walker.hasFailed() || walker.isUnreachable())
-        return;
-    // Where this join is an arm of another, the barrier behind that one does for this one too.
-    barriers.noteStore(owner, Reference::value(code.lastOperationOf(walker.currentBlock())));
-}
-
-void buildBarrierWhereStoresHaveMet(Walker& walker, const Draft* next)
-{
-    KnownBarriers& barriers = walker.state().barriers();
-    Reference owner = barriers.owner();
-    if (next) {
-        // A Narrowed stands at the head of its block, among conversions and in front of all else.
-        if (opcodesThatGiveSameCell.contains(next->opcode))
-            return;
-        // Its own barrier does for the stores that have met.
-        std::optional<uint32_t> ownerOfNext = remembersOwnerOf(next->opcode) ? ownerOperandOfStoreOfCells(walker, *next) : std::nullopt;
-        if (ownerOfNext && nameOfCellBehindForms(walker.code(), next->operand(*ownerOfNext)) == owner)
-            return;
-    }
-    barriers.endStores();
-    buildBarrierBehindArms(walker, owner);
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

@@ -138,29 +138,59 @@ std::optional<uint32_t> KeyOrders::findOrderWordOfShortestBeginningThatLists(Lay
     return best;
 }
 
-KeyOrders::Continuations KeyOrders::continuationsCreating(LayoutID layout, std::span<const FieldIndex> createdFields) const
+std::optional<KeyOrderContinuation> KeyOrders::firstContinuationCreating(LayoutID layout, std::span<const FieldIndex> createdFields) const
 {
-    Continuations continuations;
-    if (createdFields.empty())
-        return continuations;
-
     uint32_t numberOfOrders = numberOfOrdersOf(layout);
-    for (uint32_t number = 0; number < numberOfOrders; ++number) {
-        std::optional<size_t> place = findPlaceInKeyOrder(order(layout, number), createdFields);
-        if (!place)
-            continue;
-        // Orders that share the keys up to the last created field name the same place.
-        KeyOrderContinuation continuation {
-            wordOfBeginningOfKeyOrder(*this, layout, number, *place),
-            wordOfBeginningOfKeyOrder(*this, layout, number, *place + createdFields.size()),
-        };
-        if (continuations.contains(continuation))
-            continue;
-        continuations.append(continuation);
-        if (continuations.size() == maxContinuations)
-            break;
+    if (createdFields.empty() || !numberOfOrders)
+        return std::nullopt;
+
+    if (createdFields.size() == 1) {
+        uint32_t first = m_firstContinuationOfLayout[layout.index()];
+        FieldIndex field = createdFields.front();
+        if (field >= m_firstContinuationOfLayout[layout.index() + 1] - first || !m_firstContinuationCreatingField[first + field].orderWordAfter)
+            return std::nullopt;
+        return m_firstContinuationCreatingField[first + field];
     }
-    return continuations;
+
+    for (uint32_t number = 0; number < numberOfOrders; ++number) {
+        if (std::optional<size_t> place = findPlaceInKeyOrder(order(layout, number), createdFields)) {
+            return KeyOrderContinuation {
+                wordOfBeginningOfKeyOrder(*this, layout, number, *place),
+                wordOfBeginningOfKeyOrder(*this, layout, number, *place + createdFields.size()),
+            };
+        }
+    }
+    return std::nullopt;
+}
+
+void KeyOrders::indexFirstContinuations()
+{
+    size_t numberOfLayouts = m_parts.firstOrderOfLayout.isEmpty() ? 0 : m_parts.firstOrderOfLayout.size() - 1;
+    m_firstContinuationOfLayout.reserveInitialCapacity(numberOfLayouts + 1);
+    Vector<uint32_t, 64> firstOrderWithBeginning;
+    for (size_t index = 0; index < numberOfLayouts; ++index) {
+        LayoutID layout(static_cast<uint32_t>(index));
+        size_t firstOfLayout = m_firstContinuationCreatingField.size();
+        m_firstContinuationOfLayout.append(static_cast<uint32_t>(firstOfLayout));
+        uint32_t numberOfOrders = numberOfOrdersOf(layout);
+        for (uint32_t number = 0; number < numberOfOrders; ++number) {
+            std::span<const FieldIndex> listed = order(layout, number);
+            size_t shared = number ? lengthSharedByKeyOrders(order(layout, number - 1), listed) : 0;
+            firstOrderWithBeginning.shrink(shared);
+            while (firstOrderWithBeginning.size() < listed.size())
+                firstOrderWithBeginning.append(number);
+            for (size_t place = shared; place < listed.size(); ++place) {
+                while (m_firstContinuationCreatingField.size() <= firstOfLayout + listed[place])
+                    m_firstContinuationCreatingField.append(KeyOrderContinuation { });
+                KeyOrderContinuation& first = m_firstContinuationCreatingField[firstOfLayout + listed[place]];
+                if (first.orderWordAfter)
+                    continue;
+                first.orderWordBefore = place ? orderWordOf(firstOrderWithBeginning[place - 1], static_cast<uint32_t>(place)) : unorderedOrderWord;
+                first.orderWordAfter = orderWordOf(firstOrderWithBeginning[place], static_cast<uint32_t>(place + 1));
+            }
+        }
+    }
+    m_firstContinuationOfLayout.append(static_cast<uint32_t>(m_firstContinuationCreatingField.size()));
 }
 
 namespace {
@@ -188,7 +218,7 @@ public:
     void addOrdersOfData();
     void addOrdersOfMakers(const LinkTables&);
     void addOrdersOfMembersMadeByTag(const LinkTables&, const BodyIndexTable&);
-    void addOrdersOfConstructorFunctions(const LinkTables&, const ThinSummaries&);
+    void addOrdersOfConstructorFunctions(const LinkTables&, const ThinSummaries&, const BodyIndexTable&);
     void addOrdersBehindWhatConstructorFunctionsAlwaysCreate(const LinkTables&, const ThinSummaries&);
     void addOrdersOfAllocations(const LinkTables&, const ThinSummaries&);
     void addOrdersOfCopies(const LinkTables&, const ThinSummaries&, const KeyOrders& ordersOfSources);
@@ -443,6 +473,8 @@ void CollectorOfKeyOrders::addOrdersBehindWhatConstructorFunctionsAlwaysCreate(c
             if (!created.contains(*field))
                 created.append(*field);
         }
+        if (created.isEmpty())
+            continue;
         auto beginWithWhatIsCreated = [&] {
             size_t firstField = m_fields.size();
             m_isListed.clearAll();
@@ -471,13 +503,30 @@ void CollectorOfKeyOrders::addOrdersBehindWhatConstructorFunctionsAlwaysCreate(c
 // `function Request(socket) { this.aborted = false; this.url = ""; .. this._events = makeEvents(); }` below `Readable`: the body need not begin with what the classes above declare.
 // It creates what it stores on `this`, each name once, in the order in which the stores are written: that is the order of the way through the body that stands first in the text.
 // It ends at a store under a key that nobody knows, and at one under a name without a field.
-void CollectorOfKeyOrders::addOrdersOfConstructorFunctions(const LinkTables& link, const ThinSummaries& summaries)
+static bool isReachableInBody(const BodyIndex& body, BlockID from, BlockID to)
+{
+    BitVector visited(body.numberOfBlocks());
+    Vector<BlockID, 16> worklist { from };
+    visited.quickSet(from.index());
+    while (!worklist.isEmpty()) {
+        for (BodyTarget target : body.block(worklist.takeLast()).terminator().targets()) {
+            if (target.block() == to)
+                return true;
+            if (!visited.quickSet(target.block().index()))
+                worklist.append(target.block());
+        }
+    }
+    return false;
+}
+
+void CollectorOfKeyOrders::addOrdersOfConstructorFunctions(const LinkTables& link, const ThinSummaries& summaries, const BodyIndexTable& bodies)
 {
     struct StoreOnThis {
         ValueID site;
         PropertyKeyID key;
     };
     Vector<StoreOnThis, 32> stores;
+    Vector<FieldIndex, 32> firstPath;
     for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
         LayoutID id(index);
         FunctionID constructor = m_program.layouts[index].constructor;
@@ -510,6 +559,38 @@ void CollectorOfKeyOrders::addOrdersOfConstructorFunctions(const LinkTables& lin
                 m_fields.append(*field);
         }
         finishCandidate(id, firstField);
+
+        const BodyIndex& body = bodies.at(constructor);
+        firstPath.shrink(0);
+        BlockID lastBlock;
+        for (const StoreOnThis& store : stores) {
+            std::optional<FieldIndex> field = store.key ? m_slots.findField(m_program, id, store.key) : std::nullopt;
+            if (!field || !isListedInOrders(planned, *field))
+                break;
+            BlockID block = body.blockOf(store.site);
+            if (lastBlock && block != lastBlock && !isReachableInBody(body, lastBlock, block))
+                continue;
+            lastBlock = block;
+            if (!firstPath.contains(*field))
+                firstPath.append(*field);
+        }
+        link.forEachRunOfMakers(id, [&](std::span<const PropertyKeyID> run) {
+            if (m_numbersOfCandidates[index] >= maxKeyOrdersPerLayout)
+                return;
+            size_t firstFieldOfRun = m_fields.size();
+            m_isListed.clearAll();
+            for (FieldIndex field : firstPath) {
+                m_isListed.set(field);
+                m_fields.append(field);
+            }
+            for (PropertyKeyID key : run) {
+                std::optional<FieldIndex> field = m_slots.findField(m_program, id, key);
+                if (!field || !isListedInOrders(planned, *field) || m_isListed.set(*field))
+                    break;
+                m_fields.append(*field);
+            }
+            finishCandidate(id, firstFieldOfRun, firstPath.size());
+        });
     }
 }
 
@@ -746,7 +827,7 @@ KeyOrders computeKeyOrders(const Program& program, const LinkTables& link, const
     collector.addOrdersOfData();
     collector.addOrdersOfMakers(link);
     collector.addOrdersOfMembersMadeByTag(link, bodies);
-    collector.addOrdersOfConstructorFunctions(link, summaries);
+    collector.addOrdersOfConstructorFunctions(link, summaries, bodies);
     collector.addOrdersBehindWhatConstructorFunctionsAlwaysCreate(link, summaries);
     if (mechanisms.contains(Mechanism::TypedSlots)) {
         collector.addOrdersOfAllocations(link, summaries);

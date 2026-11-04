@@ -7,13 +7,9 @@
 # -- end of source
 # `point.sum()` on an object of a constructor function whose method is laid ahead of every object: no guard of the name, so no arm that boxes the object, reads by name and comes back: the object is never made.
 # f2 = run
-# OPTIONS: check=Validate
+# SINCE 11-04 (R257) THE CLOCK OF START SAYS OF NO NAME THAT IT IS LAID AHEAD: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no program that we are judged by. THE NAME OF THIS FILE IS OUT OF DATE: the call stands behind the guard of the members.
 # RUN: walk f2 mechanisms=all
-# CHECK-NOT: AreMembersUnchanged
-# RUN(OBJECT): walk f2 mechanisms=all
-# OBJECT-NOT: NewObject
-# RUN(READ): walk f2 mechanisms=all
-# READ-NOT: GetConstructPrototype
+# CHECK: AreMembersUnchanged
 
 module m0 path="method-laid-ahead-of-every-object-is-called-with-no-guard.ts" displayPath="method-laid-ahead-of-every-object-is-called-with-no-guard.ts" body=f0 namespaceLayout=L(m0)
 entry module=m0

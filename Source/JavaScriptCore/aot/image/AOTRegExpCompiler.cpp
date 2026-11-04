@@ -480,6 +480,7 @@ CompiledRegExps compileRegExps(const Typed::Program& program, const RegExpReques
         if (result.reason)
             reportRegExpDecline(request, *result.reason, context);
         countRegExpResult(context.statistics(), result);
+        context.statistics().count(StatisticID::RegExpCandidatesCompiled, request.origin != RegExpRequestOrigin::Literal && result.form == RegExpRecordForm::Code);
 
         const RegExpSummary* summary = summaries.summaryIfComputed(request.pattern, request.flags);
         RELEASE_ASSERT(summary);

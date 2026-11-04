@@ -1,0 +1,264 @@
+# As constructor-read-through-a-family-may-be-any-function-of-the-row.ir, with the name in a variable: `o[k]` through a family is answered by the aggregate under any key, which named the nearest constructor alone too.
+# f1 = Base, f2 = Sub, f3 = Sub2, f4 = maker, f5 = markIt, f6 = markOf
+# -- source: constructor-read-under-a-computed-key-may-be-any-function-of-the-row.js
+# function Base(v) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; this.v = v; }
+# function Sub(v) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; this.v = v; this.s = work; }
+# function Sub2(v) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; this.v = v; this.t = work; }
+# Sub.prototype = Object.create(Base.prototype);
+# Sub2.prototype = Object.create(Sub.prototype);
+# function maker(o, k) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return o[k]; }
+# function markIt(C) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; C.mark = "text"; }
+# function markOf(f) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return f.mark; }
+# const first = new Base(1);
+# let out = "";
+# for (let i = 0; i < 300; i++) markIt(maker(i & 1 ? new Sub(i) : new Sub2(i), globalThis.which));
+# for (let i = 0; i < 300; i++) out = typeof markOf(Base);
+# print(out, String(first.v));
+# -- end of source
+# records of 32ff76bbcc20bb98
+# RUN: link functions mechanisms=all
+# CHECK: function f6 {{*}}result=undefined|string
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f1 callers-known
+# RUN(ANSWERS): run-in-shell globalThis.which = "constructor";
+# ANSWERS: string 1
+
+module m0 path="constructor-read-under-a-computed-key-may-be-any-function-of-the-row.js" displayPath="constructor-read-under-a-computed-key-may-be-any-function-of-the-row.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Sub" module=m0 position=98 base=L0 constructor=f2 fields=[{key="v" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L2 kind=Instance name="Sub2" module=m0 position=210 base=L1 constructor=f3 fields=[{key="v" declared={type=anything} flags=[IsRequired]}, {key="t" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L1 originField=1}] flags=[IsConstructorFunction] ownFieldCount=2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} @0
+    v12 = Builtin builtin=Object @339
+    v13 = Builtin builtin=ObjectCreate @339
+    v14 = PropGet v1 key="prototype" @353
+    v15 = Call v13, v12, v14 calleeName="Object.create" @346
+    PropSet v3, v15 key="prototype" @323
+    v17 = Builtin builtin=Object @387
+    v18 = Builtin builtin=ObjectCreate @387
+    v19 = PropGet v3 key="prototype" @401
+    v20 = Call v18, v17, v19 calleeName="Object.create" @394
+    PropSet v5, v20 key="prototype" @370
+    v22 = Integer integer=1 @751
+    v23 = Construct v1, -, v22 calleeName="Base" @746
+    v24 = String string="" @765
+    v25 = Convert v24 declared={type=undefined|null|string flags=[IsExpected]} @765
+    v26 = Integer @782
+    v27 = Convert v26 declared={type=i32 flags=[IsExpected]} @782
+    Jump -> next b1(v27) @778
+  b1(v28):
+    LoopHint @778
+    v30 = Integer integer=300 @789
+    v31 = Less v28, v30 @789
+    Branch v31 -> taken b2(), notTaken b6() @789
+  b2():
+    v32 = Integer integer=1 @816
+    v33 = BitAnd v28, v32 @816
+    v34 = ToBoolean v33 @812
+    Branch v34 -> taken b3(| 0), notTaken b4(| 0) @812
+  b3(v35):
+    v36 = Construct v3, -, v28 calleeName="Sub" @824
+    Jump -> next b5(v36) @820
+  b4(v37):
+    v38 = Construct v5, -, v28 calleeName="Sub2" @837
+    Jump -> next b5(v38) @833
+  b5(v39):
+    v40 = Builtin builtin=GlobalThis @846
+    v41 = PropGet v40 key="globalThis" [isFreeName] @846
+    v42 = Convert v41 declared={type=builtin(GlobalThis) flags=[IsExpected]} @846
+    v43 = PropGet v42 key="which" @846
+    v44 = Call v7, -, v39, v43 calleeName="maker" @806
+    v45 = Call v9, -, v44 calleeName="markIt" @799
+    v46 = Increment v28 @794
+    v47 = Convert v46 declared={type=i32 flags=[IsExpected]} @794
+    Jump -> next b1(v47) @794
+  b6():
+    v48 = Integer @879
+    v49 = Convert v48 declared={type=number flags=[IsExpected]} @879
+    Jump -> next b7(v25, v49) @875
+  b7(v50, v51):
+    LoopHint @875
+    v53 = Integer integer=300 @886
+    v54 = Less v51, v53 @886
+    Branch v54 -> taken b8(), notTaken b9() @886
+  b8():
+    v55 = Call v11, -, v1 calleeName="markOf" @909
+    v56 = TypeOf v55 @902
+    v57 = Convert v56 declared={type=undefined|null|string flags=[IsExpected]} @896
+    v58 = Increment v51 @891
+    v59 = Convert v58 declared={type=number flags=[IsExpected]} @891
+    Jump -> next b7(v57, v59) @891
+  b9():
+    v60 = Builtin builtin=GlobalThis @923
+    v61 = PropGet v60 key="print" [isFreeName] @923
+    v62 = Builtin builtin=String @934
+    v63 = PropGet v23 key="v" @941
+    v64 = Call v62, -, v63 calleeName="String" @934
+    v65 = Call v61, -, v50, v64 calleeName="print" @923
+    v66 = Undefined @923
+    Return v66 @923
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: anything):
+    v2 = Integer @30
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @30
+    v4 = Integer @46
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @46
+    Jump -> next b1(v3, v5) @42
+  b1(v6, v7):
+    LoopHint @42
+    v9 = Integer integer=2 @53
+    v10 = Less v7, v9 @53
+    Branch v10 -> taken b2(), notTaken b3() @53
+  b2():
+    v11 = Add v6, v7 @76
+    v12 = Integer @81
+    v13 = BitOr v11, v12 @81
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @61
+    v15 = Increment v7 @56
+    v16 = Convert v15 declared={type=i32 flags=[IsExpected]} @56
+    Jump -> next b1(v14, v16) @56
+  b3():
+    PropSet v0, v1 key="v" @84
+    v18 = Undefined @84
+    Return v18 @84
+}
+function f2 name="Sub" module=m0 position=98 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    v2 = Integer @127
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @127
+    v4 = Integer @143
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @143
+    Jump -> next b1(v3, v5) @139
+  b1(v6, v7):
+    LoopHint @139
+    v9 = Integer integer=2 @150
+    v10 = Less v7, v9 @150
+    Branch v10 -> taken b2(), notTaken b3() @150
+  b2():
+    v11 = Add v6, v7 @173
+    v12 = Integer @178
+    v13 = BitOr v11, v12 @178
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @158
+    v15 = Increment v7 @153
+    v16 = Convert v15 declared={type=i32 flags=[IsExpected]} @153
+    Jump -> next b1(v14, v16) @153
+  b3():
+    PropSet v0, v1 key="v" @181
+    PropSet v0, v6 key="s" @193
+    v19 = Undefined @193
+    Return v19 @193
+}
+function f3 name="Sub2" module=m0 position=210 flags=[HasThis, HasExplicitName] length=1 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: L2, v1: anything):
+    v2 = Integer @240
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @240
+    v4 = Integer @256
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @256
+    Jump -> next b1(v3, v5) @252
+  b1(v6, v7):
+    LoopHint @252
+    v9 = Integer integer=2 @263
+    v10 = Less v7, v9 @263
+    Branch v10 -> taken b2(), notTaken b3() @263
+  b2():
+    v11 = Add v6, v7 @286
+    v12 = Integer @291
+    v13 = BitOr v11, v12 @291
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @271
+    v15 = Increment v7 @266
+    v16 = Convert v15 declared={type=i32 flags=[IsExpected]} @266
+    Jump -> next b1(v14, v16) @266
+  b3():
+    PropSet v0, v1 key="v" @294
+    PropSet v0, v6 key="t" @306
+    v19 = Undefined @306
+    Return v19 @306
+}
+function f4 name="maker" module=m0 position=417 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: anything):
+    v2 = Integer @451
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]} @451
+    v4 = Integer @467
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @467
+    Jump -> next b1(v3, v5) @463
+  b1(v6, v7):
+    LoopHint @463
+    v9 = Integer integer=2 @474
+    v10 = Less v7, v9 @474
+    Branch v10 -> taken b2(), notTaken b3() @474
+  b2():
+    v11 = Add v6, v7 @497
+    v12 = Integer @502
+    v13 = BitOr v11, v12 @502
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]} @482
+    v15 = Increment v7 @477
+    v16 = Convert v15 declared={type=i32 flags=[IsExpected]} @477
+    Jump -> next b1(v14, v16) @477
+  b3():
+    v17 = ElemGet v0, v1 @512
+    Return v17 @512
+}
+function f5 name="markIt" module=m0 position=520 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer @552
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @552
+    v3 = Integer @568
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @568
+    Jump -> next b1(v2, v4) @564
+  b1(v5, v6):
+    LoopHint @564
+    v8 = Integer integer=2 @575
+    v9 = Less v6, v8 @575
+    Branch v9 -> taken b2(), notTaken b3() @575
+  b2():
+    v10 = Add v5, v6 @598
+    v11 = Integer @603
+    v12 = BitOr v10, v11 @603
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]} @583
+    v14 = Increment v6 @578
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]} @578
+    Jump -> next b1(v13, v15) @578
+  b3():
+    v16 = String string="text" @615
+    PropSet v0, v16 key="mark" @606
+    v18 = Undefined @606
+    Return v18 @606
+}
+function f6 name="markOf" module=m0 position=625 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer @657
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @657
+    v3 = Integer @673
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @673
+    Jump -> next b1(v2, v4) @669
+  b1(v5, v6):
+    LoopHint @669
+    v8 = Integer integer=2 @680
+    v9 = Less v6, v8 @680
+    Branch v9 -> taken b2(), notTaken b3() @680
+  b2():
+    v10 = Add v5, v6 @703
+    v11 = Integer @708
+    v12 = BitOr v10, v11 @708
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]} @688
+    v14 = Increment v6 @683
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]} @683
+    Jump -> next b1(v13, v15) @683
+  b3():
+    v16 = PropGet v0 key="mark" @718
+    Return v16 @718
+}

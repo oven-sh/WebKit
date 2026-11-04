@@ -31,12 +31,12 @@
 # What the body of a module makes out of the text alone and only stores in a variable of the module is made at the first read of the variable.
 # Left as they are: a closure (g16), a variable that is assigned to (g19), an object that the body itself goes on to use (g20), a closure that captures (g22), what a loop makes (g23), and a variable that a record hands to the run time (g12).
 # RUN: plan deferred mechanisms=all
-# CHECK: deferred g13 made-by f0 v15 NewRegExp mark=absent from-birth
-# CHECK-NEXT: deferred g14 made-by f0 v17 Data mark=absent from-birth
-# CHECK-NEXT: deferred g15 made-by f0 v19 Data mark=absent from-birth
+# CHECK: deferred g13 made-by f0 v15 NewRegExp mark=undefined at-declaration
+# CHECK-NEXT: deferred g14 made-by f0 v17 Data mark=undefined at-declaration
+# CHECK-NEXT: deferred g15 made-by f0 v19 Data mark=undefined at-declaration
 # CHECK-NEXT: deferred g17 made-by f0 v23 NewRegExp mark=undefined at-declaration
 # CHECK-NEXT: deferred g18 made-by f0 v25 NewRegExp mark=null at-declaration
-# CHECK-NEXT: deferred g21 made-by f0 v36 Data mark=absent from-birth
+# CHECK-NEXT: deferred g21 made-by f0 v36 Data mark=undefined at-declaration
 # CHECK-NOT: deferred
 # RUN(WITHHELD): plan deferred mechanisms=-Deferral
 # WITHHELD-NOT: deferred
@@ -49,14 +49,14 @@
 # SCAN-NOT: defines g23
 # RUN(READ): walk f7 mechanisms=all
 # READ-LABEL: code f7:Body
-# READ: [[held]]: absent|RegExp {{*}} = GetModuleVariable variable=g13
-# READ-NEXT: [[test]]: boolean {{*}} = TypeTest [[held]] testedType=absent
+# READ: [[held]]: undefined|absent|RegExp {{*}} = GetModuleVariable variable=g13
+# READ-NEXT: [[test]]: boolean {{*}} = TypeTest [[held]] testedType=undefined
 # READ-NEXT: Branch [[test]] -> taken [[makes]](), notTaken [[finds]]()
 # READ-NEXT: [[makes]]() frequency=Rare:
 # READ-NEXT: = NewRegExp pattern="a+" regExpFlags=[Global]
 # READ: PutModuleVariable {{*}}variable=g13
 # READ: [[finds]]():
-# READ-NEXT: : RegExp {{*}} = Narrowed [[held]], [[test]]
+# READ-NEXT: : absent|RegExp {{*}} = Narrowed [[held]], [[test]]
 # RUN(VAR): walk f6 mechanisms=all
 # VAR-LABEL: code f6:Body
 # VAR: : undefined|null|RegExp {{*}} = GetModuleVariable variable=g18

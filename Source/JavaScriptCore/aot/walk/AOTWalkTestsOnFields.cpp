@@ -51,6 +51,8 @@ struct CaseInTestsOnFields {
     // The block whose Branch compares, and the block on the taken edge of that.
     BlockID asks;
     BlockID equal;
+    // What the holder is read under where the comparison stands.
+    ValueID nameOfHolder;
 };
 
 // The block on the edge that is taken where nothing has matched so far, the block that compares next, and its read of the field.
@@ -186,16 +188,18 @@ public:
     // `n.kind === A || n.kind === B`: every case that is left goes on through a block that only narrows the holder, to one block, with the same values behind casts. So does what matches nothing, to wherever it goes.
     bool comesToTwoPlaces() const
     {
-        if (!narrowsHolderAlone(m_index.block(m_differs)))
+        if (!narrowsHolderAlone(m_index.block(m_differs), m_nameAtLastComparison))
             return false;
         std::optional<BodyTarget> first;
+        ValueID nameGivenByFirst;
         for (const CaseInTestsOnFields& listed : m_cases) {
             BodyBlock onEdge = m_index.block(listed.equal);
-            if (!narrowsHolderAlone(onEdge))
+            if (!narrowsHolderAlone(onEdge, listed.nameOfHolder))
                 return false;
             BodyTarget arrival = onEdge.terminator().next();
             if (!first) {
                 first = arrival;
+                nameGivenByFirst = onEdge.firstValue();
                 continue;
             }
             std::span<const ValueID> brought = arrival.arguments();
@@ -203,6 +207,10 @@ public:
             if (arrival.block() != first->block() || brought.size() != broughtByFirst.size())
                 return false;
             for (size_t position = 0; position < brought.size(); ++position) {
+                // The name that each of the two blocks gives is a name of the holder, and nobody goes down the row of names: comparisons x comparisons.
+                bool bothBringHolder = brought[position] == onEdge.firstValue() && broughtByFirst[position] == nameGivenByFirst;
+                if (bothBringHolder || brought[position] == broughtByFirst[position])
+                    continue;
                 if (m_index.valueBehindCasts(brought[position]) != m_index.valueBehindCasts(broughtByFirst[position]))
                     return false;
             }
@@ -273,8 +281,9 @@ private:
 
     void take(const Question& question, BlockID asks)
     {
-        m_cases.append(CaseInTestsOnFields { question.constant.number, question.constant.string, asks, question.equal });
+        m_cases.append(CaseInTestsOnFields { question.constant.number, question.constant.string, asks, question.equal, m_nameOfHolder });
         m_blockOfLastComparison = asks;
+        m_nameAtLastComparison = m_nameOfHolder;
         m_differs = question.differs;
     }
 
@@ -309,31 +318,31 @@ private:
         if (!isOperationOfBlockInTestsOnFields(m_index, block, value) || m_index.opcodeOf(value) != Opcode::PropGet || m_index.useCount(value) != 3)
             return false;
         BodyOperation<Opcode::PropGet> read = m_index.value(value).as<Opcode::PropGet>();
-        return !read.isFreeName() && read.key() == m_key && isHolder(read.objectOperand());
+        return !read.isFreeName() && read.key() == m_key && isHolder(read.objectOperand(), m_nameOfHolder);
     }
 
     // `f(q): m = NarrowByField n, q key   Jump -> ..`, and nothing else reads the proof.
-    bool narrowsHolderAlone(BodyBlock onEdge) const
+    bool narrowsHolderAlone(BodyBlock onEdge, ValueID nameOfHolder) const
     {
         if (onEdge.numberOfValues() != 1)
             return false;
         BodyTerminator end = onEdge.terminator();
         if (end.kind() != TerminatorKind::Jump || !end.next().proofs().empty())
             return false;
-        return narrowsHolderAtHead(onEdge);
+        return narrowsHolderAtHead(onEdge, nameOfHolder);
     }
 
-    // Each name is written over the one in front of it, so the holder is known by the last name, and nobody goes down the row of names: comparisons x comparisons. Whatever else is written is asked behind its casts.
-    bool isHolder(ValueID value) const
+    // Each name is written over the one in front of it, so the holder is known by the name that it has where the question stands, and nobody goes down the row of names: comparisons x comparisons. Whatever else is written is asked behind its casts.
+    bool isHolder(ValueID value, ValueID nameOfHolder) const
     {
-        if (value == m_nameOfHolder)
+        if (value == nameOfHolder)
             return true;
         if (!m_holder)
             m_holder = m_index.valueBehindCasts(m_nameOfHolder);
         return m_index.valueBehindCasts(value) == m_holder;
     }
 
-    bool narrowsHolderAtHead(BodyBlock onEdge) const
+    bool narrowsHolderAtHead(BodyBlock onEdge, ValueID nameOfHolder) const
     {
         if (!mayBePassedByInTestsOnFields(m_index, m_head, onEdge) || onEdge.numberOfParameters() != 1 || !onEdge.numberOfValues())
             return false;
@@ -341,7 +350,7 @@ private:
         if (operation.opcode() != Opcode::NarrowByField || !m_index.hasOneUse(onEdge.parameter(0)))
             return false;
         BodyOperation<Opcode::NarrowByField> narrowed = operation.as<Opcode::NarrowByField>();
-        return narrowed.readOperand() == onEdge.parameter(0) && narrowed.key() == m_key && isHolder(narrowed.valueOperand());
+        return narrowed.readOperand() == onEdge.parameter(0) && narrowed.key() == m_key && isHolder(narrowed.valueOperand(), nameOfHolder);
     }
 
     // The comparison that is reached where nothing has matched so far. False, and nothing has changed: the row ends in front of it.
@@ -350,8 +359,8 @@ private:
         // `if (n.kind === A) return ..; if (n.kind === B) return ..`: f(q): m = NarrowByField n, q key   r' = PropGet m key   ..   Branch ..: the block on the edge compares next itself.
         BodyBlock onEdge = m_index.block(m_differs);
         BodyBlock asks = onEdge;
-        bool blockOnEdgeAsks = !narrowsHolderAlone(onEdge);
-        if (blockOnEdgeAsks && !narrowsHolderAtHead(onEdge))
+        bool blockOnEdgeAsks = !narrowsHolderAlone(onEdge, m_nameOfHolder);
+        if (blockOnEdgeAsks && !narrowsHolderAtHead(onEdge, m_nameOfHolder))
             return false;
         m_nameOfHolder = onEdge.firstValue();
         if (!blockOnEdgeAsks) {
@@ -411,6 +420,7 @@ private:
     mutable ValueID m_holder;
     // What it is read under where the row has come to.
     ValueID m_nameOfHolder;
+    ValueID m_nameAtLastComparison;
     PropertyKeyID m_key;
     Vector<CaseInTestsOnFields, 16> m_cases;
     Vector<LinkInTestsOnFields, 16> m_links;

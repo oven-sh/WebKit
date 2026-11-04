@@ -27,7 +27,7 @@ bool namesFieldBelowPrimitivesLaidAbove(const LinkFlow& flow, LayoutID layout, P
     if (!flow.isBelowConstructorFunction(layout) || !program.types.hasStableNumber(key) || program.at(key).kind != PropertyKeyKind::Text)
         return false;
     NameClass nameClass = program.nameClassOf(key);
-    if (mayBeElementKey(nameClass) || nameClass == NameClass::Proto || !flow.findMembers(layout, ClassSide::Prototype, key).isEmpty())
+    if (mayBeElementKey(nameClass) || nameClass == NameClass::Proto || flow.findMembers(layout, ClassSide::Prototype, key).mayAnswer())
         return false;
 
     bool isLaidAbove = false;

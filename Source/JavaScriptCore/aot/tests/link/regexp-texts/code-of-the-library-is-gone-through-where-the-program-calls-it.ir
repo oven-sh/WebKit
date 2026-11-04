@@ -3,12 +3,15 @@
 # The function of the program is a start, and what it calls is gone through with what it hands over, whoever wrote it.
 # LIBRARY: own
 # RUN: regexp-texts realms mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: realms 1
 # CHECK-COUNT-2: text /
 # CHECK-NOT: text /
 # RUN(INNER): regexp-texts mechanisms=all
+# REQUIRES(INNER): entries-of-bun
 # INNER: text /\./
 # RUN(OUTER): regexp-texts mechanisms=all
+# REQUIRES(OUTER): entries-of-bun
 # OUTER: text /\.+/
 
 variable g0 name="escaped" module=m0 declared={type=anything} initialization=Function function=f1 flags=[IsImmutable]

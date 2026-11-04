@@ -7,32 +7,39 @@
 # function eachOfOwn() { for (const thing of { v: 1 }) { if (keep(thing)) break; } }
 # function eachOfDeclared(things: { v: number }) { for (const thing of things) { if (keep(thing)) break; } }     declared, and proven by nobody: no list is expected, so the protocol alone opens the iteration
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: [[next]]: {{*}} = PropGet {{*}}key="next"
 # CHECK: = TypeTest {{*}}testedType=builtin(ArrayIteratorPrototypeNext)|builtin(CompilerHelpersNextOfStepsOverText)|builtin(GeneratorPrototypeNext)|builtin(MapIteratorPrototypeNext)|builtin(SetIteratorPrototypeNext)
 # CHECK: [[handedOut]]: {{*}} = CallDirect {{*}}function=f3
 # CHECK: = IsCollectionIteratorClosedMark [[handedOut]]
 # RUN(WRITTEN): walk f1 mechanisms=all
+# REQUIRES(WRITTEN): entries-of-bun
 # WRITTEN: key="done"
 # WRITTEN: key="value"
 # the state in memory
 # RUN(MEMORY): walk f7 mechanisms=all
+# REQUIRES(MEMORY): entries-of-bun
 # MEMORY: [[state]]: {{*}} = NewHeapWords numberOfWords=4
 # MEMORY: [[verdict]]: {{*}} = TypeTest {{*}}testedType=builtin(ArrayIteratorPrototypeNext)|builtin(CompilerHelpersNextOfStepsOverText)|builtin(GeneratorPrototypeNext)|builtin(MapIteratorPrototypeNext)|builtin(SetIteratorPrototypeNext)
 # MEMORY: = PutHeapFrameWord [[state]], {{*}}index=3
 # MEMORY: = GetHeapFrameWord [[state]] index=3
 # MEMORY: = CallDirect {{*}}function=f3
 # RUN(ONCE): walk f7 mechanisms=all
+# REQUIRES(ONCE): entries-of-bun
 # ONCE-COUNT-1: testedType=builtin(ArrayIteratorPrototypeNext)
 # ONCE-NOT: testedType=builtin(ArrayIteratorPrototypeNext)
 # an object of the program's own
 # RUN(OWN): walk f6 mechanisms=all
+# REQUIRES(OWN): entries-of-bun
 # OWN: = NewHeapWords numberOfWords=3
 # RUN(NOTHING): walk f6 mechanisms=all
+# REQUIRES(NOTHING): entries-of-bun
 # NOTHING-NOT: index=3
 # NOTHING-NOT: function=f3
 # NOTHING-NOT: builtin(MapIteratorPrototypeNext)
 # RUN(WITHHELD): walk f1 mechanisms=none+DirectCalls
+# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-NOT: function=f3
 # WITHHELD-NOT: numberOfWords=4
 

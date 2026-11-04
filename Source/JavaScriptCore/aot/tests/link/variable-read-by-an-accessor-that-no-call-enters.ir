@@ -17,9 +17,10 @@
 # A read, a store or a copy enters an accessor, and no call is written there. The flow knows every place that enters one which an operation lays on a literal or on a class object, so it has every caller known,
 # but no list of callees has those places. In the order in which a program starts such a function is entered by whoever looks a name up where nobody can say what answers.
 # If `lateForGetter` lost the mark of emptiness, the getter would go through the empty word: it did, and the process died by a signal.
-# `behind` is stored in front of the first call of its reader and keeps its proof.
+# `behind` is stored in front of the first call of its reader. Since 11-04 (R244) THE CLOCK TAKES THE MARK OUT OF NO VARIABLE: five holes in it ended in the empty word read raw, and what the proof spared is a compare.
 # RUN: link variables mechanisms=all
-# CHECK: variable g3 proven=L2 writers-known
+# REQUIRES: entries-of-bun
+# CHECK: variable g3 proven=absent|L2
 # CHECK: variable g4 proven=absent|L2
 # CHECK: variable g5 proven=absent|L2
 # CHECK: variable g6 proven=absent|L2

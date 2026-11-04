@@ -16,6 +16,7 @@
 #include <array>
 #include <compare>
 #include <span>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/StringView.h>
@@ -76,6 +77,19 @@ public:
     // A new string moves the lists of the table: no other thread may read the table meanwhile.
     StringID intern(std::span<const uint8_t>);
     StringID intern(StringView);
+    // TEXTS THAT SHARE THEIR BYTES: each is the front of a longer one. keep() copies the bytes once, and they stay where they are as long as the table lives.
+    // internKept() is intern() of a canonical program string that lies among them, and copies nothing. What it has done for a text it does not do again for a longer one that begins at the same address:
+    // handed over from the shortest to the longest, all of them together cost what the longest holds. In any other order the answers are the same.
+    struct FrontOfKeptTexts {
+        uint64_t hashOfWords { 0 };
+        size_t numberOfWords { 0 };
+        size_t numberOfBytesLookedAt { 0 };
+    };
+    using FrontsOfKeptTexts = HashMap<const uint8_t*, FrontOfKeptTexts>;
+    std::span<const uint8_t> keep(std::span<const uint8_t>);
+    StringID internKept(std::span<const uint8_t>, FrontsOfKeptTexts&);
+    // From here on the strings are those that somebody has interned. Only these share bytes.
+    size_t numberOfStringsAsRead() const { return m_numberOfStringsAsRead; }
 
 private:
     struct Shard {
@@ -85,6 +99,8 @@ private:
     static constexpr unsigned numberOfShards = 16;
 
     static uint64_t hashOf(std::span<const uint8_t>);
+    static uint64_t hashGoingOnFrom(FrontOfKeptTexts&, std::span<const uint8_t>);
+    uint64_t hashOf(StringID) const;
     static unsigned shardIndexOf(uint64_t hash) { return static_cast<unsigned>(hash % numberOfShards); }
     static size_t firstSlotOf(const Shard& shard, uint64_t hash) { return (hash / numberOfShards) & (shard.slots.size() - 1); }
     static size_t nextSlotOf(const Shard& shard, size_t slot) { return (slot + 1) & (shard.slots.size() - 1); }
@@ -99,7 +115,8 @@ private:
     using CodeUnitSet = std::array<uint64_t, 1024>;
     static void addCodeUnitsOf(std::span<const uint8_t>, CodeUnitSet&);
     void internCodeUnitsIn(const CodeUnitSet&);
-    void internCodeUnitsOf(std::span<const uint8_t>);
+    // All of the text, of which the first `numberOfBytesLookedAt` hold no code unit that the table lacks.
+    void internCodeUnitsOf(std::span<const uint8_t>, size_t numberOfBytesLookedAt = 0);
     StringID internCodeUnit(char16_t);
 
     const BuiltinTable* m_builtins { nullptr };
@@ -108,6 +125,9 @@ private:
     Vector<BuiltinName> m_builtinNames;
     Vector<StringID> m_builtinNameStrings;
     Vector<Vector<uint8_t>> m_ownStrings;
+    size_t m_numberOfStringsAsRead { 0 };
+    // [StringID - m_numberOfStringsAsRead] A shard that grows asks for the hash of each of its strings.
+    Vector<uint64_t> m_hashesOfInternedStrings;
     CodeUnitSet m_internedCodeUnits { };
     std::array<Shard, numberOfShards> m_shards;
     StringID m_emptyString;

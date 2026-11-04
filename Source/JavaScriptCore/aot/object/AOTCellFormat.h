@@ -28,17 +28,20 @@ static constexpr uint32_t compiledObjectShapeBit = 1u << 31;
 static constexpr uint32_t shapeBlockMarker = 0xffu << 16;
 static constexpr uint16_t blockTestHalfword(uint8_t blockByte) { return static_cast<uint16_t>(shapeBlockMarker >> 8 | blockByte); }
 static constexpr uint32_t closureWordMarker = 1u << 30;
-static constexpr uint32_t bigIntHashMask = 0x3f7fffff;
+static constexpr uint32_t bigIntHashMask = 0x3f3fffff;
 
 #if ENABLE(AOT)
 
 static_assert(OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH) > 32 && OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH) <= 48);
 static constexpr uint32_t pointerUpperHalfBits = (1u << (OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH) - 32)) - 1;
 
+// A test that lets marked objects pass takes the word without the mark (shapeWordWithoutMark()), so the bit of the mark counts as set in whatever lies here.
+static constexpr uint32_t shapeBlockMarkerBesideMark = shapeBlockMarker & ~(1u << 23);
 static constexpr bool canPassShapeTest(uint32_t wordAtShapeOffset)
 {
-    return (wordAtShapeOffset & compiledObjectShapeBit) || (wordAtShapeOffset & shapeBlockMarker) == shapeBlockMarker;
+    return (wordAtShapeOffset & compiledObjectShapeBit) || (wordAtShapeOffset & shapeBlockMarkerBesideMark) == shapeBlockMarkerBesideMark;
 }
+static_assert(canPassShapeTest(shapeBlockMarkerBesideMark) && !canPassShapeTest(bigIntHashMask) && !canPassShapeTest(bigIntHashMask | 1u << 23));
 
 // A slim closure that is as it was created has the upper half of its closure word where other cells have these words.
 static constexpr bool mayBeUpperHalfOfSlimClosureWord(uint32_t wordAtShapeOffset)

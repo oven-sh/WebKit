@@ -8,7 +8,7 @@
 # -- end of source
 # records of c449a7a8df4e5336
 # If a callee were judged by the number of its operations, `isLetter` would be called: eleven, of which four are constants and three turn a boolean into a boolean: in a copy it is four compares
-# a callee without loops that calls nobody goes by what a copy pays for, 14 and its operands, where the place repeats: `count` may be entered again from below itself. `first` repeats nothing and calls
+# a callee without loops that calls nobody goes by what a copy pays for, 12 and its operands, where the place repeats: `count` may be entered again from below itself. `first` repeats nothing and calls
 # `busy` is a leaf as well, and weighs more: it is called
 # RUN: walk f2 mechanisms=all
 # CHECK: frame 1 callee=f1

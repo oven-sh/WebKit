@@ -2,6 +2,7 @@
 # The control of read-of-the-environment-brings-no-warning-printer.ir: the object is written, so it may warn, and native code calls the two functions of the library.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-NOT: function f1 unreached
 # CHECK-NOT: function f2 unreached
 

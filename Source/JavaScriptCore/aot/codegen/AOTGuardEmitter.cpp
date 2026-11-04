@@ -258,7 +258,7 @@ void GuardEmitter::generateHasKeyOrder(const ValueContext& value)
     }
     defineTestOfCompiledObject(value, [&] {
         Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(in<CellPointer>(value->objectOperand()));
-        return equal(bitAnd(orderWord, orderAndCountMask), static_cast<int32_t>(*expected));
+        return equal(value->hasNoFlags() ? orderWord : bitAnd(orderWord, orderAndCountMask), static_cast<int32_t>(*expected));
     });
 }
 

@@ -33,8 +33,8 @@ void LinkFlow::noteBirthsOf(FunctionID id)
         cells.append(m_firstFieldOfLayout[field.layout.index()] + field.field);
 
     LayoutID made = program.at(id).constructedClass;
-    if (made && program.at(made).constructor == id) {
-        Vector<PropertyKeyID, 32> filled = RowOfConstructorsInLinkLayouts(*this, made).findKeysFilledAtEnds();
+    if (made && program.at(made).constructor == id && !program.at(made).fields.isEmpty()) {
+        const Vector<PropertyKeyID>& filled = m_listsOfKeysThatRowsOfConstructorsFill[m_keysThatRowsOfConstructorsFill[made.index()].untilEnds];
         const Layout& layout = program.at(made);
         for (uint32_t field = 0; field < layout.fields.size(); ++field) {
             if (!layout.fields[field].key || !std::ranges::binary_search(filled, layout.fields[field].key))

@@ -784,6 +784,11 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
             if (!*source)
                 return false;
             if (slot.internalMethodType() == PropertySlot::InternalMethodType::Get) {
+                // What had the name as its own at the star may have lost it since, and have it from a star now.
+                if (!vm.isSafeToRecurse()) [[unlikely]] {
+                    throwStackOverflowError(globalObject, scope);
+                    return false;
+                }
                 JSValue value = (*source)->get(globalObject, name);
                 RETURN_IF_EXCEPTION(scope, false);
                 slot.setValue(object, 0, value);

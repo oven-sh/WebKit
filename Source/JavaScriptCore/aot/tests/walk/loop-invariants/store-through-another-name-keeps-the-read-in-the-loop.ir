@@ -4,6 +4,7 @@
 # const box = new Box(2);
 # console.log(sum(box, box, 5), sum(box, new Box(1), 5));
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: GetSlot
 # CHECK: isLoopHead=true

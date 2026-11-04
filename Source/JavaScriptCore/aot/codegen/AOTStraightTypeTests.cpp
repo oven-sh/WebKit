@@ -97,6 +97,7 @@ void StraightEmitter::testType(GPRReg boxed, TypeID tested, GPRReg zeroOrOne)
         fail(Opcode::TypeTest);
         return;
     }
+    storeWhatWaitsInRegister();
     CCallHelpers& jit = *m_jit;
     if (tryTestWordInStraightForm(jit, boxed, tested, zeroOrOne))
         return;

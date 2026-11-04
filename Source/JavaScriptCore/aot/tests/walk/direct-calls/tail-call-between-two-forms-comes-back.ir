@@ -1,5 +1,5 @@
 # whoever is jumped to returns in place of the caller, so a jump needs one form on both sides. Between two forms the call is still direct: it comes back, and what it gave is brought into the caller's form.
-# No ring of calls in tail position has such a pair: in a ring each result holds the next, so all are one type
+# No ring of calls in tail position has such a pair: a ring of calls of values returns boxed values throughout
 # function small(n) { return n | 0 }  function wide(n) { return n > 0 ? small(n) : 0.5 }  function loose(n) { return n > 1 ? wide(n) : undefined }
 # function even(n) { return n === 0 ? true : odd(n - 1) }  function odd(n) { return n === 0 ? false : even(n - 1) }  sink(loose(3.5), even(3), small(3.5), wide(3.5))
 # RUN: walk f2 mechanisms=-Inlining
@@ -10,11 +10,11 @@
 # RUN(BOXES): walk f3 mechanisms=-Inlining
 # BOXES-LABEL: code f3:Body
 # BOXES: [[call]]: {{*}} @Double = CallDirect {{*}}function=f2
-# BOXES-NEXT: [[boxed]]: {{*}} @JSValue = Box [[call]]
+# BOXES-NEXT: [[boxed]]: {{*}} @OptionalDouble = Box [[call]]
 # BOXES-NEXT: Return [[boxed]]
 # RUN(RING): walk f4 mechanisms=-Inlining
 # RING-LABEL: code f4:Body
-# RING: [[call]]: boolean @Boolean = CallDirect {{*}}function=f5
+# RING: [[call]]: boolean @JSValue = CallDirect {{*}}function=f5
 # RING-NEXT: ReturnCall [[call]]
 
 variable g0 name="small" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]

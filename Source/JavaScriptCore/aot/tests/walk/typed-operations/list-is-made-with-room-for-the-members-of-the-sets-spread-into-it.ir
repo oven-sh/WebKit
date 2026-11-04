@@ -5,10 +5,10 @@
 # sink(behind, twice);
 # -- end of source
 # records of 87e4769011f9a196
-# `[i, ...numbers]`: behind the test of the set the list is made once more, with room for what is written and for as many members as the set has, so the stub that walks the table never asks the run time for more.
+# `[i, ...numbers]`: the list is made once more, with room for what is written and for as many members as the set has, so the stub that walks the table never asks the run time for more.
+# Nobody but these functions gets hold of the set, so Link's word stands for the test of it.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = IsPristine
 # CHECK: = CallInline {{*}}inlineBuiltin=SetSize
 # CHECK: [[list]]: {{*}} = NewArray {{*}}capacity=
 # CHECK-NEXT: AppendMembers [[list]],

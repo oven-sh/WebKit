@@ -316,6 +316,73 @@ static void stringTableFillsShardsInParallel()
     }
 }
 
+// Each text is the front of the next. Whatever the order in which they are handed over, each is the string that intern() makes of its bytes, with the same number, and lies where it was kept.
+static void stringTableInternsKeptTextsAsAnyOther()
+{
+    // `~` and the letters behind `p` are in no other string. The last characters take two, three and four bytes, and half a pair takes three.
+    constexpr std::array<uint8_t, 28> run { '~', 'q', 'r', 'n', 'u', 'l', 'l', 's', 't', 'q', 'u', 'v', 'w', 'x', 'y', 'z', 0xc3, 0xa9, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80, 0xed, 0xa0, 0xbd };
+    constexpr std::array<size_t, 12> ends { 1, 2, 3, 7, 8, 9, 16, 18, 21, 25, 28, 15 };
+    Vector<size_t> ascending(std::span<const size_t> { ends });
+    std::ranges::sort(ascending);
+    Vector<size_t> descending = ascending;
+    std::ranges::reverse(descending);
+    for (std::span<const size_t> order : { ascending.span(), descending.span(), std::span<const size_t> { ends } }) {
+        TestStrings copied;
+        TestStrings kept;
+        std::span<const uint8_t> bytes = kept.strings.keep(run);
+        AOT_TEST_CHECK(bytes.data() != run.data() && std::ranges::equal(bytes, run));
+        StringTable::FrontsOfKeptTexts fronts;
+        for (size_t end : order) {
+            StringID expected = copied.strings.intern(std::span<const uint8_t> { run }.first(end));
+            StringID id = kept.strings.internKept(bytes.first(end), fronts);
+            AOT_TEST_CHECK(id == expected && kept.strings.size() == copied.strings.size());
+            // The one character is a code unit of the longer texts, which have brought it where they came first.
+            AOT_TEST_CHECK((end == 1 || kept.strings[id].data() == bytes.data()) && kept.strings[id].size() == end);
+            AOT_TEST_CHECK(kept.strings.internKept(bytes.first(end), fronts) == id && kept.strings.find(std::span<const uint8_t> { run }.first(end)) == id && kept.strings.intern(std::span<const uint8_t> { run }.first(end)) == id);
+            AOT_TEST_CHECK(kept.strings.nameClass(id) == copied.strings.nameClass(expected));
+        }
+        for (size_t index = 0; index < kept.strings.size(); ++index)
+            AOT_TEST_CHECK(std::ranges::equal(kept.strings[StringID(index)], copied.strings[StringID(index)]));
+        StringID longest = kept.strings.find(run);
+        size_t numberOfCodeUnits = decodeProgramString(run).size();
+        for (size_t position = 0; position < numberOfCodeUnits; ++position)
+            AOT_TEST_CHECK(kept.strings.codeUnitAt(longest, position));
+        AOT_TEST_CHECK(!kept.strings.codeUnitAt(longest, numberOfCodeUnits));
+    }
+}
+
+// A kept text that the table has is that string, and its bytes are left alone.
+static void stringTableFindsKeptTextThatItHas()
+{
+    TestStrings test({ asRead("abc"_s), asRead("abcdefghijkl"_s) });
+    AOT_TEST_CHECK(test.strings.numberOfStringsAsRead() == 2);
+    std::span<const uint8_t> bytes = test.strings.keep(bytesOf("abcdefghijklmnop"_s));
+    StringTable::FrontsOfKeptTexts fronts;
+    AOT_TEST_CHECK(test.strings.internKept(bytes.first(3), fronts) == StringID(0u));
+    AOT_TEST_CHECK(test.strings.internKept(bytes.first(12), fronts) == StringID(1u));
+    StringID whole = test.strings.internKept(bytes, fronts);
+    AOT_TEST_CHECK(whole.index() >= test.strings.numberOfStringsAsRead() && test.strings[whole].data() == bytes.data());
+    for (size_t position = 0; position < bytes.size(); ++position)
+        AOT_TEST_CHECK(test.strings.codeUnitAt(whole, position));
+}
+
+// The shards grow many times while the texts come, and each growth asks for the hash of every string: it is remembered, so nobody goes through the bytes again.
+static void stringTableFindsKeptTextsBehindGrowthOfShards()
+{
+    constexpr size_t count = 20000;
+    Vector<uint8_t> run;
+    for (size_t index = 0; index < count; ++index)
+        run.append(static_cast<uint8_t>('a' + index * 7 % 26));
+    TestStrings test;
+    std::span<const uint8_t> bytes = test.strings.keep(run.span());
+    StringTable::FrontsOfKeptTexts fronts;
+    Vector<StringID> ids;
+    for (size_t end = 2; end <= count; ++end)
+        ids.append(test.strings.internKept(bytes.first(end), fronts));
+    for (size_t end = 2; end <= count; end += 97)
+        AOT_TEST_CHECK(test.strings.find(run.span().first(end)) == ids[end - 2]);
+}
+
 static void nameClassOfEveryWord()
 {
     unsigned numberOfWords = 0;
@@ -410,6 +477,9 @@ std::span<const NativeTest> stringTableTests()
         { "string-table/holds-every-code-unit"_s, stringTableHoldsEveryCodeUnit },
         { "string-table/grows-shards"_s, stringTableGrowsShards },
         { "string-table/fills-shards-in-parallel"_s, stringTableFillsShardsInParallel },
+        { "string-table/interns-kept-texts-as-any-other"_s, stringTableInternsKeptTextsAsAnyOther },
+        { "string-table/finds-a-kept-text-that-it-has"_s, stringTableFindsKeptTextThatItHas },
+        { "string-table/finds-kept-texts-behind-the-growth-of-shards"_s, stringTableFindsKeptTextsBehindGrowthOfShards },
         { "name-class/every-word"_s, nameClassOfEveryWord },
         { "name-class/other-words"_s, nameClassOfOtherWords },
         { "name-class/numbers"_s, nameClassOfNumbers },

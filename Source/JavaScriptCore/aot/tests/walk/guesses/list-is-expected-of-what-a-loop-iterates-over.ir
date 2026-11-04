@@ -4,6 +4,7 @@
 # globalThis.kept = joined;
 # console.log(joined(JSON.parse('{"a":[1,2]}'), "a"));
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: [[iterable]]: {{*}} = ElemGet
 # CHECK: = TypeTest [[iterable]] testedType=Array
@@ -14,6 +15,7 @@
 # CHECK: = GetArrayElement
 # Without guesses: the protocol alone.
 # RUN(CLOSED): walk f1 mechanisms=all-Guesses
+# REQUIRES(CLOSED): entries-of-bun
 # CLOSED-LABEL: code f1:Body
 # CLOSED-NOT: IsPristine
 # CLOSED: = PropGet {{*}}key="next"

@@ -248,6 +248,7 @@ public:
     StringID internText(std::span<const uint8_t> programString);
     // The text of `left` with the text of `right` behind it, as internText() would make it. Neither is empty. A made text costs the same to join however long it is:
     // the new text is kept as its two pieces, and its bytes are laid down when somebody first asks for them. So `a + b + c + ..` costs what its last text holds, and not that of every text on the way.
+    // Where somebody asks for each text on the way, each is laid down behind the one that it adds to while there is room: they begin at one address, and all of them together cost what the last one holds.
     StringID internJoinedTexts(StringID left, StringID right);
     // False: the one ends in the first half of a pair and the other begins with the second, so the joined text spells one character where the two spell two halves. It lays down no bytes of a made text.
     bool joinedTextIsSpelledAsItsPieces(StringID left, StringID right) const;
@@ -323,6 +324,8 @@ private:
 
     // Asking for the bytes of a made text lays them down, which changes no answer of the arena.
     mutable Vector<uint8_t> m_bytesOfTexts;
+    // Where a text ends that nothing has been added to: the bytes behind it that are left for whatever adds to it.
+    mutable HashMap<uint32_t, uint32_t> m_roomBehindTexts;
     mutable Vector<MadeText> m_madeTexts;
     Vector<uint32_t> m_textIndex;
     // `left` above `right`: the position of what internJoinedTexts() has answered. Two arms of a guess walk one chain of joins.

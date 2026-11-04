@@ -513,6 +513,8 @@ void AllocationEmitter::storeFieldsInExtension(const ValueContext& value, CellPo
 
     // A fresh cell has no Extension, and NewObject declares no read of a field: nothing is tested in front of the call.
     const PlacedSlot& extensionWord = m_plan.slots().extensionWord(layout);
+    if (value->storage() == AllocationStorage::Heap && AOT::hasFlag(generator().build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime))
+        emitter<BarrierEmitter>().stopIfCellIsOldAndNotRemembered(value, cell);
     unsigned size = extensionCellSizeFor(std::popcount(granuleBits));
     if (size <= maxExtensionSizeFromStub)
         callStub(value, allocateExtension(size), { cell.value(), m_out.constIntPtr(extensionWord.offset), m_out.constInt64(static_cast<int64_t>(granuleBits)) });
@@ -640,7 +642,6 @@ CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, con
         emitter<BarrierEmitter>().fenceAfterInitialization();
     else if (storage == AllocationStorage::Heap)
         emitter<BarrierEmitter>().fenceAfterInitialization(value);
-    // Nothing collects between the allocation of a cell and that of its Extension.
     storeFieldsInExtension(value, cell, layoutID, initialFields);
     return cell;
 }

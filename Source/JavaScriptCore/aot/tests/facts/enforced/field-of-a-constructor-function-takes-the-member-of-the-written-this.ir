@@ -12,13 +12,16 @@
 # -- end of source
 # records of 7bbc3e73412a98e7
 # RUN: facts enforced mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: field {{*}} "flags" source=written type=i32 {{*}}slot=OptionalInt32
 # CHECK-NEXT: field {{*}} "symbol" source=written type=undefined|null|
 # CHECK-NEXT: field {{*}} "objectFlags" appended source=family type=i32 {{*}}slot=OptionalInt32
 # CHECK-NEXT: field {{*}} "size" appended source=family type=number {{*}}slot=JSValue
 # RUN(NEVER): facts enforced mechanisms=all
+# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: differs-from-table
 # RUN(PLAN): plan layouts mechanisms=all
+# REQUIRES(PLAN): entries-of-bun
 # PLAN: slot {{*}} "symbol" {{*}} type=undefined|null|
 
 module m0 path="field-of-a-constructor-function-takes-the-member-of-the-written-this.ts" displayPath="field-of-a-constructor-function-takes-the-member-of-the-written-this.ts" body=f0 namespaceLayout=L(m0)

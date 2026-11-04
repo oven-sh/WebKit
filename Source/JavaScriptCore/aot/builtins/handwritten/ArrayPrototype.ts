@@ -328,7 +328,9 @@ export function filter(callback /*, thisArg */)
     }
     if (i >= length)
         return result;
-    return $filterFrom(array, length, callback, thisArg, result, i, nextIndex);
+    // What is returned is what was made above, on either road: whoever copies the text knows it for that.
+    $filterFrom(array, length, callback, thisArg, result, i, nextIndex);
+    return result;
 }
 
 export function mapOfList(callback /*, thisArg */)
@@ -390,7 +392,8 @@ export function map(callback /*, thisArg */)
     }
     if (i >= length)
         return result;
-    return $mapFrom(array, length, callback, thisArg, result, i);
+    $mapFrom(array, length, callback, thisArg, result, i);
+    return result;
 }
 
 export function someOfList(callback /*, thisArg */)

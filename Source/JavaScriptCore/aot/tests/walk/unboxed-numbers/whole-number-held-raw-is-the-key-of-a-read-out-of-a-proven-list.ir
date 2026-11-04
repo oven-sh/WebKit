@@ -23,6 +23,7 @@
 # -- end of source
 # records of ecb4a886202961a0
 # RUN(FORM): walk f2 mechanisms=all-Inlining
+# REQUIRES(FORM): entries-of-bun
 # FORM-LABEL: code f2:Body
 # FORM: int|whole @Double
 # FORM-NOT: int|whole @JSValue = Box

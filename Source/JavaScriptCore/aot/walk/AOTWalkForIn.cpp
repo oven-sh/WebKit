@@ -356,6 +356,8 @@ static bool stepInWalkForIn(Walker& walker, const BodyValue& step)
     bool looksAtStorage = iteration.builtinClass == BuiltinClasses::Array && object.isValue() && walker.has(Mechanism::Guesses) && walker.opensGuesses()
         && isExpectedToBeListInWalkForIn(walker, step.objectOperand(), object, isDeclared)
         && shouldOpenGuess(walker, object, walker.types().builtinClass(BuiltinClasses::Array), isDeclared, closedOperationsOfStepOverListInWalkForIn);
+    if (looksAtStorage)
+        walker.count(StatisticID::OwnKeyWalksExpanded);
     StepInWalkForIn built = looksAtStorage ? buildStepOverListInWalkForIn(walker, iteration, object, origin) : buildStepFromInWalkForIn(walker, iteration, object, iteration.position, origin);
     if (!built.done || !built.key || !built.foundAt || !built.next)
         return true;

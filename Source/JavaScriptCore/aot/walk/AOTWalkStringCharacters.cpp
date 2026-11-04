@@ -343,7 +343,7 @@ static bool indexesAreAbsentAboveStringsForStringCharacters(const Walker& walker
     const BuiltinTable& builtins = program.builtins();
     BuiltinID holder = builtins.canonicalID(Builtins::StringPrototype);
     while (true) {
-        if (!builtins.closesIndexKeys(holder) || !builtins.hasLockedPrototypeLink(holder) || std::ranges::contains(program.openedNames, holder, &OpenedName::holder))
+        if (!builtins.closesIndexKeys(holder) || !builtins.hasLockedPrototypeLink(holder) || program.isSomeNameOpenedOn(holder))
             return false;
         const Builtin& object = builtins.at(holder);
         switch (object.prototypeLink) {

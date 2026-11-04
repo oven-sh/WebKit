@@ -66,32 +66,25 @@ static void sumCountsOfUnitQueue(Vector<uint32_t>& firstRowOfOwner)
         firstRowOfOwner[owner] += firstRowOfOwner[owner - 1];
 }
 
-UnitQueue::UnitQueue(const Typed::CallingConventions& conventions, const Typed::FactCallGraph& calls, unsigned numberOfThreads)
-    : UnitQueue(conventions, calls, nullptr, nullptr, numberOfThreads)
+UnitQueue::UnitQueue(const Typed::CallingConventions& conventions, unsigned numberOfThreads)
+    : UnitQueue(conventions, nullptr, nullptr, numberOfThreads)
 {
 }
 
-UnitQueue::UnitQueue(const Typed::CallingConventions& conventions, const Typed::FactCallGraph& calls, const Typed::LinkTables& link, Typed::Arrivals& arrivals, unsigned numberOfThreads)
-    : UnitQueue(conventions, calls, &link, &arrivals, numberOfThreads)
+UnitQueue::UnitQueue(const Typed::CallingConventions& conventions, const Typed::LinkTables& link, Typed::Arrivals& arrivals, unsigned numberOfThreads)
+    : UnitQueue(conventions, &link, &arrivals, numberOfThreads)
 {
 }
 
-UnitQueue::UnitQueue(const Typed::CallingConventions& conventions, const Typed::FactCallGraph& calls, const Typed::LinkTables* link, Typed::Arrivals* arrivals, unsigned numberOfThreads)
+UnitQueue::UnitQueue(const Typed::CallingConventions& conventions, const Typed::LinkTables* link, Typed::Arrivals* arrivals, unsigned numberOfThreads)
     : m_conventions(conventions)
-    , m_calls(calls)
     , m_link(link)
     , m_arrivals(arrivals)
     , m_cycles(numberOfCyclesOfUnitQueue(link))
-    , m_closureStates(conventions.numberOfFunctions())
-    , m_isCalleeListMentioned((static_cast<size_t>(calls.functionsOfList.numberOfOwners()) + bitsInWordOfUnitQueue - 1) / bitsInWordOfUnitQueue)
     , m_isMentioned((static_cast<size_t>(conventions.numberOfUnits()) + bitsInWordOfUnitQueue - 1) / bitsInWordOfUnitQueue)
     , m_unitsOfThreads(numberOfThreads)
 {
     RELEASE_ASSERT(numberOfThreads);
-    for (std::atomic<uint8_t>& state : m_closureStates)
-        state.store(0, std::memory_order_relaxed);
-    for (std::atomic<uint32_t>& word : m_isCalleeListMentioned)
-        word.store(0, std::memory_order_relaxed);
     for (std::atomic<uint32_t>& word : m_isMentioned)
         word.store(0, std::memory_order_relaxed);
     for (Cycle& cycle : m_cycles) {
@@ -191,79 +184,6 @@ void UnitQueue::checkMentionByTakenUnit(unsigned thread, Typed::CodeUnit unit) c
         crashOnMentionWithoutReferrer(unit, m_conventions.unitAt(unitsOfThread.takenUnit));
 }
 
-void UnitQueue::addClosureState(unsigned thread, FunctionID function, ClosureState added)
-{
-    // Which of those who add a state is the one to open the entries is a matter of time. So each of them is asked.
-    checkMentionByTakenUnit(thread, m_conventions.closureEntryOf(function));
-
-    std::atomic<uint8_t>& state = m_closureStates[function.index()];
-    if (state.load(std::memory_order_relaxed) & added)
-        return;
-    uint8_t before = state.fetch_or(added, std::memory_order_relaxed);
-    if (opensGenericEntries(before) || !opensGenericEntries(before | added))
-        return;
-
-    Typed::CodeUnit entry = m_conventions.closureEntryOf(function);
-    mention(thread, entry);
-    if (Typed::CodeUnit constructEntry = m_conventions.genericEntry(entry).constructEntry)
-        mention(thread, constructEntry);
-}
-
-void UnitQueue::mentionClosureEntry(unsigned thread, Typed::CodeUnit unit)
-{
-    RELEASE_ASSERT(Typed::isGenericEntry(unit.role));
-    if (Typed::isBoundRole(unit.role) || !m_conventions.indirectCallersAreAllListed(unit.function)) {
-        mention(thread, unit);
-        return;
-    }
-    if (!m_conventions.exists(unit)) [[unlikely]]
-        crashOnMentionOfUnplannedUnit(unit);
-    addClosureState(thread, unit.function, ClosureMayExist);
-}
-
-void UnitQueue::mentionIndirectCalls(unsigned thread, const CalleesOfIndirectCalls& callees)
-{
-    if (callees.numberOfCallsThatMayEnterAnyClosure && !m_anyClosureMayBeEntered.exchange(true, std::memory_order_relaxed)) {
-        for (uint32_t index = 0; index < m_closureStates.size(); ++index) {
-            if (m_conventions.indirectCallersAreAllListed(FunctionID(index)))
-                addClosureState(thread, FunctionID(index), IsListedByIndirectCall);
-        }
-    }
-    for (FunctionID function : callees.functions) {
-        if (m_conventions.indirectCallersAreAllListed(function))
-            addClosureState(thread, function, IsListedByIndirectCall);
-    }
-    for (uint32_t list : callees.lists) {
-        std::atomic<uint32_t>& word = m_isCalleeListMentioned[list / bitsInWordOfUnitQueue];
-        uint32_t bit = 1u << (list % bitsInWordOfUnitQueue);
-        if (word.load(std::memory_order_relaxed) & bit || word.fetch_or(bit, std::memory_order_relaxed) & bit)
-            continue;
-        for (FunctionID function : m_calls.functionsOfList.of(list)) {
-            if (m_conventions.indirectCallersAreAllListed(function))
-                addClosureState(thread, function, IsListedByIndirectCall);
-        }
-    }
-}
-
-Vector<Typed::CodeUnit> UnitQueue::closedGenericEntries() const
-{
-    RELEASE_ASSERT(!m_numberOfOpenUnits.load(std::memory_order_acquire));
-    Vector<Typed::CodeUnit> entries;
-    auto addUnlessCodeNamesIt = [&](Typed::CodeUnit entry) {
-        if (!isMentioned(m_conventions.indexOf(entry)))
-            entries.append(entry);
-    };
-    for (uint32_t index = 0; index < m_closureStates.size(); ++index) {
-        if (m_closureStates[index].load(std::memory_order_relaxed) != ClosureMayExist)
-            continue;
-        Typed::CodeUnit entry = m_conventions.closureEntryOf(FunctionID(index));
-        addUnlessCodeNamesIt(entry);
-        if (Typed::CodeUnit constructEntry = m_conventions.genericEntry(entry).constructEntry)
-            addUnlessCodeNamesIt(constructEntry);
-    }
-    return entries;
-}
-
 Vector<Typed::CodeUnit> UnitQueue::mentionedFusedCallEntries() const
 {
     RELEASE_ASSERT(!m_numberOfOpenUnits.load(std::memory_order_acquire));
@@ -274,25 +194,6 @@ Vector<Typed::CodeUnit> UnitQueue::mentionedFusedCallEntries() const
             entries.append(entry);
     }
     return entries;
-}
-
-void UnitQueue::countClosureStates(Statistics& statistics) const
-{
-    RELEASE_ASSERT(!m_numberOfOpenUnits.load(std::memory_order_acquire));
-    uint64_t numberOfFunctions = 0;
-    uint64_t numberOpenedByIndirectCalls = 0;
-    uint64_t numberOpenedBesideCompiledTarget = 0;
-    for (uint32_t index = 0; index < m_closureStates.size(); ++index) {
-        if (!m_conventions.indirectCallersAreAllListed(FunctionID(index)))
-            continue;
-        ++numberOfFunctions;
-        uint8_t state = m_closureStates[index].load(std::memory_order_relaxed);
-        if (opensGenericEntries(state))
-            ++(state & IsListedByIndirectCall ? numberOpenedByIndirectCalls : numberOpenedBesideCompiledTarget);
-    }
-    statistics.count(StatisticID::FunctionsWithAllIndirectCallersListed, numberOfFunctions);
-    statistics.count(StatisticID::GenericEntriesOpenedByIndirectCalls, numberOpenedByIndirectCalls);
-    statistics.count(StatisticID::GenericEntriesOpenedBesideCompiledTarget, numberOpenedBesideCompiledTarget);
 }
 
 void UnitQueue::push(unsigned thread, uint32_t unitIndex, Cycle* cycle)
@@ -362,10 +263,6 @@ void UnitQueue::mention(unsigned thread, Typed::CodeUnit unit)
     case CycleState::Done:
         crashOnMentionOfDroppedUnit(unit, m_conventions.unitAt(m_unitsOfThreads[thread].takenUnit));
     }
-
-    // Closing an entry in front of code that exists saves no unit, and a wrong fact would end the process there.
-    if (m_conventions.indirectCallersAreAllListed(unit.function) && unit == m_conventions.genericEntry(m_conventions.closureEntryOf(unit.function)).target)
-        addClosureState(thread, unit.function, TargetHasCode);
 }
 
 bool UnitQueue::beginCycle(unsigned thread, uint32_t number)

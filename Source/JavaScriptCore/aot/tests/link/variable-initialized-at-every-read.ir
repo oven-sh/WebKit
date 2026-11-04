@@ -3,15 +3,16 @@
 # function readFirst() { return first; }  function readEarly() { return early; }  function readMaybe() { return maybe; }  function readHanded() { return handed; }  function readLater() { return later; }
 # let first = "a";  readFirst();  readEarly();  let early = "b";  if (unknown) { var maybe_ = (maybe = "c"); }  readMaybe();  host(readHanded);  let handed = "d";  let later = "e";  host(readLater);
 # `first`: the only call stands behind the store. `early`: it stands in front. `maybe`: not every way through the body passes the store. `handed`: code that nobody knows has the reader before the store. `later`: it gets that reader behind the store, but it ran while the closure was there, and nobody follows what it was handed when.
+# SINCE 11-04 (R244) THE CLOCK TAKES THE MARK OUT OF NO VARIABLE: five holes in it ended in the empty word read raw, and what the proof spared is a compare. `first` keeps it too, and its reader checks.
 # RUN: link variables mechanisms=all
-# CHECK: variable g0 proven=string writers-known
+# CHECK: variable g0 proven=string|absent
 # CHECK: variable g1 proven=string|absent
 # CHECK: variable g2 proven=string|absent
 # CHECK: variable g3 proven=string|absent
 # CHECK: variable g4 proven=string|absent
 # RUN(WALK): walk f1 f2 mechanisms=none+TypedOperations+Folding
 # WALK-LABEL: code f1:Body
-# WALK-NOT: CheckInitialized
+# WALK: CheckInitialized
 # WALK-LABEL: code f2:Body
 # WALK: CheckInitialized
 

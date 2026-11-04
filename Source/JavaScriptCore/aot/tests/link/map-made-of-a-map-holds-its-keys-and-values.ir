@@ -12,6 +12,7 @@
 # -- end of source
 # records of 6b405553fa812bed
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: function f1 
 # CHECK-NEXT: parameter 0 {{*}}proven=undefined|object
 # CHECK-NEXT: parameter 1 {{*}}proven=undefined|object

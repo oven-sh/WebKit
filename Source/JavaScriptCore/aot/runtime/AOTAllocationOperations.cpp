@@ -45,7 +45,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlow, JSCell*, (Instance* 
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAllocateSlow);
     if (vm.traps().needsOutOfMemoryError()) [[unlikely]]
         vm.heap.cage().tryTakeBackOutOfMemoryError(vm);
-    OPERATION_RETURN(scope, instance->state->objects->structures.allocateAsCompiledCodeDoes(vm, allocation));
+    OPERATION_RETURN(scope, newCellForCompiledCode(vm, instance->state->objects->structures.allocateAsCompiledCodeDoes(vm, allocation)));
 }
 
 // The cell is as allocateCellFromTemplate() leaves it: compiled code goes on to store what it has values for, and nothing else.
@@ -59,7 +59,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlowFromTemplate, JSCell*,
     const AllocationData& row = state.tables.allocations()[allocation];
     size_t offsetOfBody = row.shape < state.tables.firstEnvironmentShape ? offsetOfFirstField : offsetOfFirstEnvironmentVariable;
     memcpySpan(std::span { reinterpret_cast<uint8_t*>(cell) + offsetOfBody, row.size() - offsetOfBody }, std::span { body, row.size() - offsetOfBody });
-    OPERATION_RETURN(scope, cell);
+    OPERATION_RETURN(scope, newCellForCompiledCode(vm, cell));
 }
 
 // For an object that lives in a frame. No cell is allocated: one that is dropped at once would lie in the heap with a header and without its fields.

@@ -1,6 +1,7 @@
 # a write counts where it is reached: nothing calls `never`, so Link goes by `Promise` and by `console.log`, and both are locked
 # new Promise(run); console.log(1); function never() { Promise = 1; console.log = 1; }
 # RUN: locks
+# REQUIRES: entries-of-bun
 # CHECK: locked Promise constant link
 # CHECK: locked Console constant link
 # CHECK: locked ConsoleLog constant link

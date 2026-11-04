@@ -474,14 +474,27 @@ static void emitObjectSetPrototypeOf(StubAssembler& jit, GPRReg scratch, JumpLis
     jit.and32(TrustedImm32(numberOfPrototypeTransitions - 1), transition);
     jit.lshift32(TrustedImm32(4), transition);
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.prototypeTransitions)), transition);
-    callsHostFunction.append(jit.branch64(CCallHelpers::NotEqual, Address(transition, OBJECT_OFFSETOF(PrototypeTransition, prototype)), prototype));
-    callsHostFunction.append(jit.branch32(CCallHelpers::NotEqual, Address(transition, OBJECT_OFFSETOF(PrototypeTransition, before)), structureID));
+    JumpList isNotInFirstHalf;
+    isNotInFirstHalf.append(jit.branch64(CCallHelpers::NotEqual, Address(transition, OBJECT_OFFSETOF(PrototypeTransition, prototype)), prototype));
+    isNotInFirstHalf.append(jit.branch32(CCallHelpers::NotEqual, Address(transition, OBJECT_OFFSETOF(PrototypeTransition, before)), structureID));
     callsHostFunction.append(jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordIsNotExtensible))));
     jit.load32(Address(transition, OBJECT_OFFSETOF(PrototypeTransition, after)), structureID);
     jit.store32(structureID, Address(object, JSCell::structureIDOffset()));
     jit.load8(Address(object, JSCell::typeInfoFlagsOffset()), structureID);
     jit.or32(TrustedImm32(IsPristine), structureID);
     jit.store8(structureID, Address(object, JSCell::typeInfoFlagsOffset()));
+    Jump isLinked = jit.jump();
+
+    // The second half: the flags stay.
+    isNotInFirstHalf.link(&jit);
+    jit.addPtr(TrustedImm32(numberOfPrototypeTransitions * sizeof(PrototypeTransition)), transition);
+    callsHostFunction.append(jit.branch64(CCallHelpers::NotEqual, Address(transition, OBJECT_OFFSETOF(PrototypeTransition, prototype)), prototype));
+    callsHostFunction.append(jit.branch32(CCallHelpers::NotEqual, Address(transition, OBJECT_OFFSETOF(PrototypeTransition, before)), structureID));
+    callsHostFunction.append(jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordIsNotExtensible))));
+    jit.load32(Address(transition, OBJECT_OFFSETOF(PrototypeTransition, after)), structureID);
+    jit.store32(structureID, Address(object, JSCell::structureIDOffset()));
+
+    isLinked.link(&jit);
     Jump needsBarrier = branchIfBarrierIsNeeded(jit, object, scratch);
     jit.move(object, jit.result());
     jit.returnToCaller();

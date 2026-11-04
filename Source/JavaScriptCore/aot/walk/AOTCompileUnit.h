@@ -32,6 +32,19 @@ class ScratchRealm;
 
 // Compile: walk > sweep > emit > allocate > encode, one unit from start to finish on one thread. A pure function of (function, facts, plan).
 
+inline constexpr uint16_t everySourceOfProofs = (1u << numberOfEnumerators<ProofSource>) - 1;
+constexpr uint16_t bitOfSourceOfProofs(ProofSource source) { return static_cast<uint16_t>(1u << static_cast<unsigned>(source)); }
+template<typename Switches>
+uint16_t sourcesOfProofsCheckedUnder(Switches testing)
+{
+    if (AOT::hasFlag(testing, Wire::TestingSwitch::CheckProofsAtRunTime))
+        return everySourceOfProofs;
+    uint16_t atEntries = bitOfSourceOfProofs(ProofSource::EntryParameter) | bitOfSourceOfProofs(ProofSource::ResultOfCall);
+    if (AOT::hasFlag(testing, Wire::TestingSwitch::CheckProofsAtEntriesAndFields))
+        return atEntries | bitOfSourceOfProofs(ProofSource::Field);
+    return AOT::hasFlag(testing, Wire::TestingSwitch::CheckProofsAtEntries) ? atEntries : 0;
+}
+
 struct WalkOptions {
     // --explain.
     bool takesNotes { false };
@@ -43,6 +56,8 @@ struct WalkOptions {
     Mechanisms mechanisms { allMechanisms };
     // TestingSwitch::CheckProofsAtRunTime. No option of a build.
     bool checksProofs { false };
+    // A bit for each ProofSource that is checked. TestingSwitch::CheckProofsAtRunTime: all. CheckProofsAtEntries, CheckProofsAtEntriesAndFields: two, three. checksProofs says whether there is any.
+    uint16_t sourcesOfProofsChecked { 0 };
     // TestingSwitch::WritesBodiesStraight: every body that has a straight form takes it. No option of a build.
     bool writesBodiesStraight { false };
     // Set only by `testaot why-closed`: explainClosedAccess() writes there.
@@ -91,14 +106,11 @@ public:
 
     // One unit gives one piece of code. Nothing after a failure, which the build's diagnostics hold.
     std::optional<CompiledCode> compile(CodeUnit);
-    // Of UnitQueue::closedGenericEntries(): the entry ends the process in place of going on to the function. CompiledCode::isClosedGenericEntry is set.
-    std::optional<CompiledCode> compileClosedGenericEntry(CodeUnit);
     // Walk and sweep alone. walker().code() holds the Code until the next call.
     bool walkAndSweep(CodeUnit);
 
     // The same, appended.
     bool compile(CodeUnit unit, Vector<CompiledCode, 2>& finished) { return append(compile(unit), finished); }
-    bool compileClosedGenericEntry(CodeUnit unit, Vector<CompiledCode, 2>& finished) { return append(compileClosedGenericEntry(unit), finished); }
 
     CodeGenerationTotals& totals() LIFETIME_BOUND { return m_totals; }
     Vector<WalkNotes>& notes() LIFETIME_BOUND { return m_notes; }
@@ -134,7 +146,6 @@ private:
     CodeGenerationTotals m_totals;
     Vector<WalkNotes> m_notes;
     InstructionsOfSteps m_instructionsOfSteps;
-    bool m_compilesClosedGenericEntry { false };
 };
 
 } } } // namespace JSC::AOT::Typed

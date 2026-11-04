@@ -52,6 +52,7 @@ struct PlacesInModuleLists {
     uint32_t displayPaths { 0 };
     uint32_t requests { 0 };
     uint32_t exports { 0 };
+    uint32_t modulesThatDeclareExports { 0 };
     uint32_t indirectExports { 0 };
     uint32_t syntheticExports { 0 };
     uint32_t requiredNames { 0 };
@@ -519,6 +520,9 @@ AnswersAboutModules askAboutModules(const TableInputs& inputs, const ParallelLoo
 
     markModulesNotWorthVisiting(program, componentsOfRequests, answers);
     numberDirectoriesOfModulePaths(modulesOutsideCyclesOfImports, piecesOfPaths.span(), answers);
+    answers.mayMocksStandInPlaceOfModules = program.admitsReplacedBuiltins || std::ranges::any_of(program.modules, [](const Typed::Module& module) {
+        return module.flags.contains(Typed::ModuleFlags::MayBeMocked);
+    });
     answers.variablesThatHoldMocks = Vector<VariableID>(numberOfModules);
     for (const Vector<uint32_t>& variables : variablesThatHoldMocksInRanges) {
         for (uint32_t index : variables) {
@@ -596,6 +600,7 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
         { module.kind == ModuleKind::CommonJs && module.syntheticExports.isEmpty(), Flag::CapturesOnDemand },
         { module.kind != ModuleKind::CommonJs && module.flags.contains(ModuleFlags::HasTopLevelAwait), Flag::HasTopLevelAwait },
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::RunsAgain), Flag::RunsAgainAfterThrow },
+        { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsModuleToImports), Flag::IsModuleToImports },
         { module.kind != ModuleKind::CommonJs || module.flags.contains(ModuleFlags::KeepsError), Flag::KeepsError },
         { isEntered && entry.bodyFunction() && entryOfModuleBodyLeadsToStart(inputs, module.body), Flag::EvaluatesItself },
         { hasValue, Flag::HasValue },
@@ -640,7 +645,7 @@ static bool isExportDescribedInModuleLists(const TableInputs& inputs, const Type
 }
 
 template<typename Numbers>
-static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, VariableID variableThatHoldsMock, const Numbers& numbers, ModuleLists& lists)
+static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, VariableID variableThatHoldsMock, bool mayMocksStandInPlaceOfModules, const Numbers& numbers, ModuleLists& lists)
 {
     const Typed::Program& program = inputs.program;
     for (const Typed::ModuleExport& moduleExport : program.at(id).exports) {
@@ -652,10 +657,12 @@ static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, V
         entry.isDeferred = moduleExport.phase == ImportPhase::Defer;
         entry.isFromStarExport = moduleExport.isFromStarExport;
         entry.isDroppedWhileEmpty = moduleExport.isDroppedWhileEmpty;
+        ModuleID declaring = id;
         switch (moduleExport.kind) {
         case ModuleExportKind::Variable:
             entry.variable = numbers.slotOfVariable(moduleExport.variable);
             entry.isReplaceable = program.at(moduleExport.variable).flags.contains(Typed::VariableFlags::IsReplaceable);
+            declaring = program.at(moduleExport.variable).module;
             break;
         case ModuleExportKind::Namespace:
             entry.module = moduleExport.module.index();
@@ -666,12 +673,16 @@ static void appendExportsToModuleLists(const TableInputs& inputs, ModuleID id, V
             break;
         }
         lists.exports.append(entry);
+        if (mayMocksStandInPlaceOfModules)
+            lists.modulesThatDeclareExports.append(declaring.index());
     }
     // ModuleTable::wordOfMock(). No program without such a module has such an entry.
     if (variableThatHoldsMock) {
         ModuleExportData entry { };
         entry.kindBits = ModuleExportData::kindBitsOfWordOfMock;
         entry.variable = numbers.slotOfVariable(variableThatHoldsMock);
+        if (mayMocksStandInPlaceOfModules)
+            lists.modulesThatDeclareExports.append(id.index());
         lists.exports.append(entry);
     }
 }
@@ -699,7 +710,7 @@ static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAb
             continue;
         lists.requests.append(ModuleRequestData::create(request.target.index(), request.phase == ImportPhase::Defer, request.isDynamicStarExport, isRequire, request.isHoisted));
     }
-    appendExportsToModuleLists(inputs, id, answers.variablesThatHoldMocks[id.index()], numbers, lists);
+    appendExportsToModuleLists(inputs, id, answers.variablesThatHoldMocks[id.index()], answers.mayMocksStandInPlaceOfModules, numbers, lists);
     for (const Typed::SyntheticExport& syntheticExport : module.syntheticExports) {
         SyntheticExportData entry { };
         entry.name = numbers.nameOfText(syntheticExport.name, "an export that the run time fills for"_s, id);
@@ -786,6 +797,7 @@ static void forEachListOfEntriesOfModules(const auto& functor)
     functor(&ModuleLists::displayPaths, &PlacesInModuleLists::displayPaths);
     functor(&ModuleLists::requests, &PlacesInModuleLists::requests);
     functor(&ModuleLists::exports, &PlacesInModuleLists::exports);
+    functor(&ModuleLists::modulesThatDeclareExports, &PlacesInModuleLists::modulesThatDeclareExports);
     functor(&ModuleLists::indirectExports, &PlacesInModuleLists::indirectExports);
     functor(&ModuleLists::syntheticExports, &PlacesInModuleLists::syntheticExports);
     functor(&ModuleLists::requiredNames, &PlacesInModuleLists::requiredNames);

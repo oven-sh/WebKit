@@ -26,11 +26,12 @@ namespace {
 
 class TaggedLayoutPlanner {
 public:
-    TaggedLayoutPlanner(const ParallelLoops& loops, const Wire::Sections& checkedSections, const ExternalFunctionBodies* externalBodies, Vector<Vector<LayoutID>>& members, const TellingFields& tellingFields, uint32_t firstLayout)
+    TaggedLayoutPlanner(const ParallelLoops& loops, const Wire::Sections& checkedSections, const ExternalFunctionBodies* externalBodies, ArenasOfWorkers& arenas, Vector<LayoutSetID>& members, const TellingFields& tellingFields, uint32_t firstLayout)
         : m_loops(loops)
         , m_sections(checkedSections)
         , m_externalBodies(externalBodies)
         , m_layouts(checkedSections.layouts)
+        , m_arenas(arenas)
         , m_members(members)
         , m_tellingFields(tellingFields)
         , m_nextLayout(firstLayout)
@@ -63,7 +64,7 @@ private:
     std::optional<LayoutTag> tagOf(uint32_t type, uint32_t key) const;
 
     void collectLiteralFields();
-    Vector<uint32_t> collectTypesWithLiterals(const Wire::Layout& maker) const;
+    Vector<uint32_t> collectTypesWithLiterals(const Wire::Layout& maker);
     uint32_t chooseTagKey(const Wire::Layout& maker, std::span<const uint32_t> types) const;
     Vector<uint32_t> collectDeclaredNames(const TaggedLayout&) const;
     void joinMembersWithSameNames(TaggedFamily&) const;
@@ -75,7 +76,8 @@ private:
     const Wire::Sections& m_sections;
     const ExternalFunctionBodies* m_externalBodies;
     std::span<const Wire::Layout> m_layouts;
-    Vector<Vector<LayoutID>>& m_members;
+    ArenasOfWorkers& m_arenas;
+    Vector<LayoutSetID>& m_members;
     const TellingFields& m_tellingFields;
     uint32_t m_nextLayout;
     Vector<LiteralField> m_literalFields;
@@ -330,14 +332,14 @@ void TaggedLayoutPlanner::collectLiteralFields()
     turnCountsOfLiteralFieldsIntoStarts(m_firstLiteralField);
 }
 
-Vector<uint32_t> TaggedLayoutPlanner::collectTypesWithLiterals(const Wire::Layout& maker) const
+Vector<uint32_t> TaggedLayoutPlanner::collectTypesWithLiterals(const Wire::Layout& maker)
 {
     Vector<uint32_t> types;
     for (uint32_t supertype : supertypesOf(maker)) {
-        for (LayoutID below : m_members[supertype]) {
+        m_arenas.of(0).layoutSets().at(m_members[supertype]).forEach([&](LayoutID below) {
             if (!literalFieldsOf(below.index()).empty())
                 types.append(below.index());
-        }
+        });
     }
     AOT::sort(types);
     removeRepeatedElements(types);
@@ -455,27 +457,33 @@ void TaggedLayoutPlanner::applyAdditions()
     Vector<Vector<const Addition*, 2>> addedBelow(m_layouts.size());
     for (const Addition& addition : m_additions)
         addedBelow[addition.type].append(&addition);
+    Vector<LayoutID> layoutsAddedBelow;
+    for (uint32_t index = 0; index < addedBelow.size(); ++index) {
+        if (!addedBelow[index].isEmpty())
+            layoutsAddedBelow.append(LayoutID(index));
+    }
+    LayoutSetID allAddedBelow = m_arenas.of(0).layoutSets().ofSorted(layoutsAddedBelow.span());
 
-    forEachIndexInParallel(m_loops, static_cast<unsigned>(m_members.size()), [&](unsigned type) {
-        Vector<LayoutID>& membersOfLayout = m_members[type];
-        size_t sizeBefore = membersOfLayout.size();
+    // Of a family only the members that something is added below are looked at.
+    forEachIndexInParallel(m_loops, static_cast<unsigned>(m_members.size()), [&](unsigned type, unsigned worker) {
+        LayoutSets& sets = m_arenas.of(worker).layoutSets();
+        Vector<LayoutID, 8> added;
         Vector<LayoutID, 4> makersToLeaveOut;
-        for (size_t position = 0; position < sizeBefore; ++position) {
-            uint32_t member = membersOfLayout[position].index();
-            for (const Addition* addition : addedBelow[member]) {
+        auto lookAt = [&](LayoutID member) {
+            for (const Addition* addition : addedBelow[member.index()]) {
                 if (!m_tellingFields.excludes(type, addition->tagKey, addition->tag))
-                    membersOfLayout.append(addition->member);
+                    added.append(addition->member);
             }
-            if (makesTaggedObjectsOf(type, addedBelow[member].span(), member))
-                makersToLeaveOut.append(LayoutID(member));
-        }
-        if (membersOfLayout.size() == sizeBefore)
+            if (makesTaggedObjectsOf(type, addedBelow[member.index()].span(), member.index()))
+                makersToLeaveOut.append(member);
+        };
+        if (LayoutSets::View members = sets.at(m_members[type]); members.isList())
+            members.forEach(lookAt);
+        else
+            sets.at(sets.intersectionOf(m_members[type], allAddedBelow)).forEach(lookAt);
+        if (added.isEmpty())
             return;
-        membersOfLayout.removeAllMatching([&](LayoutID member) {
-            return makersToLeaveOut.contains(member);
-        });
-        AOT::sort(membersOfLayout);
-        removeRepeatedElements(membersOfLayout);
+        m_members[type] = sets.unionOf(sets.differenceOf(m_members[type], sets.ofUnsorted(makersToLeaveOut.span())), sets.ofUnsorted(added.span()));
     });
 }
 
@@ -496,15 +504,15 @@ Vector<TaggedFamily> TaggedLayoutPlanner::plan()
     return WTF::move(m_families);
 }
 
-Vector<TaggedFamily> planTaggedFamilies(const ParallelLoops& loops, const Wire::Sections& checkedSections, const ExternalFunctionBodies* externalBodies, Vector<Vector<LayoutID>>& members, const TellingFields& tellingFields, uint32_t firstLayout)
+Vector<TaggedFamily> planTaggedFamilies(const ParallelLoops& loops, const Wire::Sections& checkedSections, const ExternalFunctionBodies* externalBodies, ArenasOfWorkers& arenas, Vector<LayoutSetID>& members, const TellingFields& tellingFields, uint32_t firstLayout)
 {
-    return TaggedLayoutPlanner(loops, checkedSections, externalBodies, members, tellingFields, firstLayout).plan();
+    return TaggedLayoutPlanner(loops, checkedSections, externalBodies, arenas, members, tellingFields, firstLayout).plan();
 }
 
-void WireTypeReader::planTaggedLayouts(Vector<Vector<LayoutID>>& members, const TellingFields& tellingFields)
+void WireTypeReader::planTaggedLayouts(ArenasOfWorkers& arenas, Vector<LayoutSetID>& members, const TellingFields& tellingFields)
 {
     uint32_t firstLayout = static_cast<uint32_t>(m_sections.layouts.size()) + m_numberOfDerivedLayouts;
-    m_program.taggedFamilies = planTaggedFamilies(m_build.parallelLoops(), m_sections, m_externalBodies, members, tellingFields, firstLayout);
+    m_program.taggedFamilies = planTaggedFamilies(m_build.parallelLoops(), m_sections, m_externalBodies, arenas, members, tellingFields, firstLayout);
     for (const TaggedFamily& family : m_program.taggedFamilies)
         m_numberOfDerivedLayouts += static_cast<uint32_t>(family.members.size());
 }

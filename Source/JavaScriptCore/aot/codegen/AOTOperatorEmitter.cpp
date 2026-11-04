@@ -176,7 +176,34 @@ Number OperatorEmitter::arithmeticOnNumberAndValue(const ValueContext& value, Ar
     Word32 typeAndNumberSide = word32(static_cast<int32_t>(NumberAndValueBits::encode(0, numberIsOnRight)));
     if (typeOf(otherID).primitives & Primitive::Number) {
         m_out.noteForm(Form::Closed, StateOfKnowledge::NumberAndValue);
-        return Number(callStub(value, binaryWithDouble(traits.stub, numberIsOnRight), { numberOperand.value(), otherOperand.value(), typeAndNumberSide.value() }).first);
+        auto byStub = [&] {
+            return Number(callStub(value, binaryWithDouble(traits.stub, numberIsOnRight), { numberOperand.value(), otherOperand.value(), typeAndNumberSide.value() }).first);
+        };
+        if (standsInRareBlock(value))
+            return byStub();
+        // `list.length - (hasRest ? 1 : 0)`, where the arms of a guess have met on the length: the value is an int32 wherever such code runs, or else a double. The stub takes what is no number.
+        auto withNumber = [&](Number otherNumber) {
+            return numberIsOnRight ? arithmeticOnNumbers(op, otherNumber, numberOperand) : arithmeticOnNumbers(op, numberOperand, otherNumber);
+        };
+        LBasicBlock int32Case = newBlock();
+        LBasicBlock noInt32Case = newBlock();
+        LBasicBlock doubleCase = newBlock();
+        LBasicBlock otherCase = newBlock();
+        Join<Number> join(m_out);
+        Condition holdsInt32 = isInt32(otherOperand);
+        ScopeFork fork = m_out.forkScope();
+        m_out.branch(holdsInt32.value(), normalEdge(int32Case), unlikelyEdge(noInt32Case));
+        m_out.appendToArm(int32Case, fork);
+        join.add(withNumber(toNumber(low32(otherOperand))));
+        m_out.appendToArm(noInt32Case, fork);
+        Condition holdsDouble = isNumber(otherOperand);
+        ScopeFork forkOfNoInt32 = m_out.forkScope();
+        m_out.branch(holdsDouble.value(), normalEdge(doubleCase), rareEdge(otherCase));
+        m_out.appendToArm(doubleCase, forkOfNoInt32);
+        join.add(withNumber(unboxDouble(otherOperand)));
+        m_out.appendToArm(otherCase, forkOfNoInt32);
+        join.add(byStub());
+        return join.finishBehind(fork);
     }
     m_out.noteForm(Form::Runtime, StateOfKnowledge::NumberAndOtherValue);
     return callOperation<Number>(value, *traits.onNumberAndValue, { otherOperand, typeAndNumberSide, numberOperand });

@@ -796,6 +796,7 @@ std::optional<Integer> ConversionEmitter::exactIntegerBehind(Number number)
     std::optional<ExactInteger> exact = findExactIntegerBehind(number.value(), ExactIntegerUse::Whole);
     if (!exact)
         return std::nullopt;
+    build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
     return Integer(exact->value);
 }
 
@@ -812,6 +813,7 @@ Word32 ConversionEmitter::toInt32(Number value, BitsOfInt32 bits)
     if (!exact)
         return toInt32OfAnyNumber(value, bits);
 
+    build().statistics().count(StatisticID::ExactIntegersBehindNumbers);
     Word32 word = exact->mayBeRounded ? low32(Integer(exact->value)) : Word32(exact->value);
     Condition isExact = exact->holdsWhile;
     if (exact->mayBeRounded) {

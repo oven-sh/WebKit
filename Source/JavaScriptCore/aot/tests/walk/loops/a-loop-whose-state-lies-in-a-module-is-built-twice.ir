@@ -11,10 +11,12 @@
 # -- end of source
 # As a-loop-whose-state-lies-in-an-environment-is-built-twice.ir, with the three in variables of a module. Each variable is asked by itself whether the typed turns write it: they write `at` alone.
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: isLoopHead=true
 # CHECK: isLoopHead=true
-# CHECK: [[at]]: {{*}} = GetModuleVariable variable=g1
+# CHECK: [[read]]: {{*}} = GetModuleVariable variable=g1
+# CHECK: [[at]]: {{*}} = CheckInitialized [[read]] name="at"
 # CHECK: TypeTest [[at]] testedType=i32|absent
 # CHECK-NOT: = GetModuleVariable
 # CHECK: Less {{*}}form=Integers

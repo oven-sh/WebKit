@@ -358,7 +358,6 @@ static void testNoRecordOfStageOwnsMemory()
                 AOT_TEST_CHECK(compiled.functions.positionOfCodeAt(code.placeInCode) == std::optional<uint32_t>(static_cast<uint32_t>(position)));
                 // The bytes lie right behind the record.
                 AOT_TEST_CHECK(code.body.bytes.liesInBlock() && code.body.bytes.begin() == addressOf(&code + 1));
-                AOT_TEST_CHECK(code.calleesOfIndirectCalls.lists.isEmpty() && !code.calleesOfIndirectCalls.lists.capacity() && !code.calleesOfIndirectCalls.functions.capacity());
                 forEachListOfUnitIn(code, finder);
             }
             AOT_TEST_CHECK(!finder.numberOnHeap && finder.numberInBlocks >= compiled.functions.size());

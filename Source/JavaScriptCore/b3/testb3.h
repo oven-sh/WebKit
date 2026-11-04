@@ -270,6 +270,9 @@ template<typename Func>
 void checkDisassembly(Compilation& compilation, NOESCAPE const Func& func, const UTF8CString& failText)
 {
     auto disassembly = compilation.disassembly();
+#if !ENABLE(DISASSEMBLER)
+    return;
+#endif
     if (func(disassembly))
         return;
     

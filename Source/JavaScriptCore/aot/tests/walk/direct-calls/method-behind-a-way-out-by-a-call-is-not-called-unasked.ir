@@ -9,13 +9,11 @@
 # sink(readGauge(10) + readMeter(10));
 # -- end of source
 # `return note();` leaves the body in front of Gauge's store: the name may never be laid, so the call asks whether the members are as the build knows them, and reads the name where they are not.
+# SINCE 11-04 (R257) THE CLOCK OF START SAYS OF NO NAME THAT IT IS LAID AHEAD: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no program that we are judged by. What this test told apart by `laid-ahead` it no longer tells.
 # RUN: walk f4 mechanisms=all
 # CHECK: AreMembersUnchanged conditions=[{layout=L0 key="next"}]
 # CHECK: PropGet {{*}}key="next"
 # Meter's store stands in front of the one way out, which ends in a call too: laid ahead of every object: no guard, no read.
-# RUN(STANDS): walk f5 mechanisms=all
-# STANDS-NOT: AreMembersUnchanged
-# STANDS-NOT: key="next"
 
 module m0 path="method-behind-a-way-out-by-a-call-is-not-called-unasked.js" displayPath="method-behind-a-way-out-by-a-call-is-not-called-unasked.js" body=f0 namespaceLayout=L(m0)
 entry module=m0

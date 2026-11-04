@@ -1,0 +1,196 @@
+# `isListed(shape.tag)`, nothing proven of `shape`: the read is a guess, and the callee is copied to where it is called. The typed run has the copy and the closed arm calls (Walker::walkInline()).
+# Where the arms met in front of the call the copy was handed a box of which nothing is known, and its Switch asked the box for its tag. The stretch goes on over the call:
+# the copy takes the int32 as the typed run has loaded it, and the closed arm hands what it has read to the function itself.
+# f1 = isListed, f2 = ask
+# -- source: listed.ts
+# const enum Tag { MinusOne = -1, Zero, One, Two, Three, Seven = 7, Far = 33 }
+# class Shape {
+#   tag: Tag;
+#   weight: number;
+#   constructor(tag: Tag, weight: number) { this.tag = tag; this.weight = weight; }
+# }
+# function isListed(tag: Tag): boolean {
+#   switch (tag) {
+#     case Tag.Zero: case Tag.Two: case Tag.Three: case Tag.Seven: case Tag.Far: return true;
+#     default: return false;
+#   }
+# }
+# function ask(shape: Shape): string {
+#   return isListed(shape.tag) ? "listed" : "none";
+# }
+# (globalThis as any).ask = ask;
+# let said = "";
+# for (let tag = -2; tag < 9; tag++) {
+#   const shape = new Shape(tag, tag * 2);
+#   (globalThis as any).kept = shape;
+#   said += ask(shape);
+# }
+# console.log(said);
+# -- end of source
+# records of 06354892d77fe894
+# RUN: walk f2 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f2:Body
+# CHECK: [[closed]]: {{*}} = PropGet {{*}}key="tag"
+# CHECK-NEXT: = CallDirect [[closed]] function=f1
+# CHECK: [[raw]]: {{*}}@Int32 = GetSlot {{*}}key="tag"
+# CHECK-NEXT: Switch [[raw]] cases=[0, 2, 3, 7, 33]
+# RUN(WITHHELD): walk f2 mechanisms=-Inlining
+# REQUIRES(WITHHELD): entries-of-bun
+# WITHHELD-NOT: Switch
+
+module m0 path="listed.ts" displayPath="listed.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Shape" module=m0 position=83 constructor=f3 fields=[{key="tag" declared={type=i32} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="isListed" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Tag" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined @0
+    v1 = NewClosure function=f2 @0
+    v2 = Convert v1 declared={type=f2 flags=[IsFromCompiler]} @0
+    v3 = NewClosure function=f3 @77
+    v4 = NewClass v3 layout=L0 @77
+    PutModuleVariable v4 variable=g2 @77
+    v6 = FinishClass v4 layout=L0 @77
+    v7 = Convert v6 declared={type=f3 flags=[IsFromCompiler]} @77
+    v8 = Convert v6 declared={type=f3 flags=[IsFromCompiler]} @77
+    v9 = Builtin builtin=GlobalThis @476
+    v10 = PropGet v9 key="globalThis" [isFreeName] @476
+    v11 = Convert v10 declared={type=builtin(GlobalThis) flags=[IsExpected]} @476
+    PropSet v11, v2 key="ask" @476
+    v13 = String string="" @517
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @517
+    v15 = Integer integer=-2 @536
+    v16 = Convert v15 declared={type=number} @536
+    Jump -> next b1(v14, v16) @530
+  b1(v17: undefined|null|string, v18: number):
+    LoopHint @530
+    v20 = Integer integer=9 @546
+    v21 = Less v18, v20 @546
+    Branch v21 -> taken b2(), notTaken b3() @546
+  b2():
+    v22 = Integer integer=2 @595
+    v23 = Mul v18, v22 @595
+    v24 = Construct v8, -, v18, v23 calleeName="Shape" @578
+    v25 = Builtin builtin=GlobalThis @602
+    v26 = PropGet v25 key="globalThis" [isFreeName] @602
+    v27 = Convert v26 declared={type=builtin(GlobalThis) flags=[IsExpected]} @602
+    PropSet v27, v24 key="kept" @602
+    v29 = Call v2, -, v24 calleeName="ask" @645
+    v30 = Add v17, v29 @645
+    v31 = Convert v30 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @637
+    v32 = Increment v18 @549
+    v33 = Convert v32 declared={type=number} @549
+    Jump -> next b1(v31, v33) @549
+  b3():
+    v34 = Builtin builtin=GlobalThis @659
+    v35 = PropGet v34 key="console" [isFreeName] @659
+    v36 = Convert v35 declared={type=builtin(Console) flags=[IsExpected]} @659
+    v37 = PropGet v36 key="log" @659
+    v38 = Convert v37 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @659
+    v39 = Call v38, v36, v17 calleeKey="log" calleeName="console.log" @667
+    v40 = Undefined @659
+    Return v40 @659
+}
+function f1 name="isListed" module=m0 position=205 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    Switch v0 cases=[0, 2, 3, 7, 33] -> case b1(| 0), case b2(| 0), case b3(| 0), case b4(| 0), case b5(| 0), otherwise b7() @270
+  b1(v1):
+    Jump -> next b6() @270
+  b2(v2):
+    Jump -> next b6() @270
+  b3(v3):
+    Jump -> next b6() @270
+  b4(v4):
+    Jump -> next b6() @270
+  b5(v5):
+    Jump -> next b6() @270
+  b6():
+    v6 = Boolean boolean=true @347
+    v7 = Convert v6 declared={type=boolean} @347
+    Return v7 @347
+  b7():
+    v8 = Boolean @373
+    v9 = Convert v8 declared={type=boolean} @373
+    Return v9 @373
+}
+function f2 name="ask" module=m0 position=386 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = GetModuleVariable variable=g0 @432
+    v2 = PropGet v0 key="tag" @441
+    v3 = Call v1, -, v2 calleeName="isListed" @432
+    v4 = ToBoolean v3 @432
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0) @432
+  b1(v5):
+    v6 = String string="listed" @454
+    Jump -> next b3(v6) @454
+  b2(v7):
+    v8 = String string="none" @465
+    Jump -> next b3(v8) @465
+  b3(v9):
+    v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @465
+    Return v10 @465
+}
+function f3 name="Shape" module=m0 position=134 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: i32, v2: number):
+    v3 = GetConstructPrototype v0 layout=L0 @134
+    v4 = NewObject v3 layout=L0 @134
+    v5 = Convert v4 declared={type=L0} @134
+    v6 = CallDirect v5 function=f4 @134
+    PropSet v5, v1 key="tag" @163
+    PropSet v5, v2 key="weight" @179
+    v9 = Undefined @179
+    v10 = TypeTest v9 testedType=object @179
+    Branch v10 -> taken b1(| 0), notTaken b2(v5) @179
+  b1(v11):
+    Jump -> next b2(v11) @179
+  b2(v12):
+    Return v12 @179
+}
+function f4 module=m0 position=83 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @83
+    v2 = Undefined @83
+    PropDefine v1, v2 key="tag" @93
+    v4 = Undefined @83
+    PropDefine v1, v4 key="weight" @105
+    v6 = Undefined @83
+    Return v6 @83
+}
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f6 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f6
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private

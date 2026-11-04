@@ -1,0 +1,135 @@
+# -- source: name-laid-in-the-arguments-of-a-call-is-not-laid-ahead-of-what-its-lookup-runs.ts
+# declare function report(value: unknown): void;
+# function Late(this: any, v: number) { this.v = v; }
+# function Ahead(this: any, v: number) { this.v = v; }
+# let seen: unknown = 0;
+# function makeHolder() {
+#   return {
+#     get run() {
+#       seen = typeof new (Late as any)(6).next + new (Ahead as any)(6).next();
+#       return function (laid: unknown) { return typeof laid; };
+#     },
+#   };
+# }
+# const late = Late.prototype;
+# const ahead = Ahead.prototype;
+# const holder = makeHolder();
+# ahead.next = function (this: any) { return this.v + 2; };
+# const kind = holder.run(late.next = function (this: any) { return this.v + 1; });
+# report(kind);
+# report(seen);
+# report(new (Late as any)(1).next());
+# -- end of source
+# records of a3a74a05205e8f34
+# f1 = Late, f2 = Ahead
+# `holder.run(late.next = ..)`: `run` is looked up in front of the arguments, so its getter makes an object of Late that finds no `next` yet. If the code behind the lookup ticked at the call, behind the store,
+# the name would count as laid ahead of every object, and the getter would find what is not there. What a statement in front of the call lays is laid ahead.
+# SINCE 11-04 (R257) THE CLOCK OF START SAYS OF NO NAME THAT IT IS LAID AHEAD: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no program that we are judged by. What this test told apart by `laid-ahead` it no longer tells.
+# RUN: link members mechanisms=all
+# CHECK: on-prototype L1 "next" function=f{{*}}
+# RUN(NOT): link members mechanisms=all
+# NOT-NOT: on-prototype L0 {{*}}laid-ahead
+
+module m0 path="name-laid-in-the-arguments-of-a-call-is-not-laid-ahead-of-what-its-lookup-runs.ts" displayPath="name-laid-in-the-arguments-of-a-call-is-not-laid-ahead-of-what-its-lookup-runs.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Late" module=m0 position=47 constructor=f1 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Ahead" module=m0 position=99 constructor=f2 fields=[{key="v" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L2 module=m0 position=208 fields=[{key="run" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="Late" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Ahead" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="seen" module=m0 declared={type=anything|absent}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = Integer @172
+    PutModuleVariable v2 variable=g2 @156
+    v4 = GetModuleVariable variable=g0 @394
+    v5 = PropGet v4 key="prototype" @394
+    v6 = GetModuleVariable variable=g1 @424
+    v7 = PropGet v6 key="prototype" @424
+    v8 = Call v1 calleeName="makeHolder" @456
+    v9 = Convert v8 declared={type=undefined|null|L2 flags=[IsExpected]} @456
+    v10 = NewClosure function=f4 @483
+    PropSet v7, v10 key="next" @470
+    v12 = PropGet v9 key="run" @541
+    v13 = NewClosure function=f5 @564
+    PropSet v5, v13 key="next" @552
+    v15 = Call v12, v9, v13 calleeKey="run" calleeName="holder.run" @548
+    v16 = Builtin builtin=GlobalThis @610
+    v17 = PropGet v16 key="report" [isFreeName] @610
+    v18 = Call v17, -, v15 calleeName="report" @610
+    v19 = Builtin builtin=GlobalThis @624
+    v20 = PropGet v19 key="report" [isFreeName] @624
+    v21 = GetModuleVariable variable=g2 @631
+    v22 = CheckInitialized v21 name="seen" @631
+    v23 = Call v20, -, v22 calleeName="report" @624
+    v24 = Builtin builtin=GlobalThis @638
+    v25 = PropGet v24 key="report" [isFreeName] @638
+    v26 = GetModuleVariable variable=g0 @650
+    v27 = Integer integer=1 @663
+    v28 = Construct v26, -, v27 calleeName="Late" @650
+    v29 = PropGet v28 key="next" @664
+    v30 = Call v29, v28 calleeKey="next" calleeName="next" @666
+    v31 = Call v25, -, v30 calleeName="report" @638
+    v32 = Undefined @638
+    Return v32 @638
+}
+function f1 name="Late" module=m0 position=47 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: L0, v1: number):
+    PropSet v0, v1 key="v" @85
+    v3 = Undefined @85
+    Return v3 @85
+}
+function f2 name="Ahead" module=m0 position=99 flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L1} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: number):
+    PropSet v0, v1 key="v" @138
+    v3 = Undefined @138
+    Return v3 @138
+}
+function f3 name="makeHolder" module=m0 position=175 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L2 @218
+    v1 = NewClosure function=f6 @218
+    DefineGetter v0, v1 key="run" @218
+    v3 = FinishObject v0 @208
+    Return v3 @208
+}
+function f4 module=m0 position=483 flags=[HasThis, IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="v" @513
+    v2 = Integer integer=2 @522
+    v3 = Add v1, v2 @522
+    Return v3 @522
+}
+function f5 module=m0 position=564 flags=[HasThis, IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="v" @594
+    v2 = Integer integer=1 @603
+    v3 = Add v1, v2 @603
+    Return v3 @603
+}
+function f6 name="run" module=m0 position=214 kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g2 @232
+    v1 = CheckInitialized v0 name="seen" @232
+    v2 = GetModuleVariable variable=g0 @251
+    v3 = Integer integer=6 @264
+    v4 = Construct v2, -, v3 calleeName="Late" @251
+    v5 = PropGet v4 key="next" @265
+    v6 = TypeOf v5 @239
+    v7 = GetModuleVariable variable=g1 @279
+    v8 = Integer integer=6 @293
+    v9 = Construct v7, -, v8 calleeName="Ahead" @279
+    v10 = PropGet v9 key="next" @294
+    v11 = Call v10, v9 calleeKey="next" calleeName="next" @296
+    v12 = Add v6, v11 @274
+    PutModuleVariable v12 variable=g2 @232
+    v14 = NewClosure function=f7 @317
+    Return v14 @317
+}
+function f7 module=m0 position=317 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = TypeOf v0 @351
+    Return v1 @351
+}

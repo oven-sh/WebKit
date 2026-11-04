@@ -24,6 +24,7 @@
 #include <span>
 #include <type_traits>
 #include <wtf/Atomics.h>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT {
 
@@ -333,60 +334,99 @@ static void forEachMadeTextAmongMentions(CodeBody& body, NOESCAPE const Invocabl
     }
 }
 
-static std::span<const uint8_t> madeTextOfCodeBody(const CodeBody& body, uint32_t place)
-{
-    uint32_t first = place ? body.endsOfMadeTexts[place - 1] : 0;
-    return body.bytesOfMadeTexts.subspan(first, body.endsOfMadeTexts[place] - first);
-}
-
 void copyMadeTextsMentionedBy(CodeBody& body, const Typed::TypeArena& types)
 {
     // [position in the arena]
     Vector<uint32_t, 8> placesInBodyPlusOne;
+    // [place in the body]
+    Vector<StringID, 8> texts;
     forEachMadeTextAmongMentions(body, [&](uint32_t& word) {
         StringID text = StringID::fromBits(word);
         while (placesInBodyPlusOne.size() <= Typed::positionOf(text))
             placesInBodyPlusOne.append(0);
         uint32_t& placePlusOne = placesInBodyPlusOne[Typed::positionOf(text)];
         if (!placePlusOne) {
-            body.bytesOfMadeTexts.append(types.bytesOf(text));
-            body.endsOfMadeTexts.append(static_cast<uint32_t>(body.bytesOfMadeTexts.size()));
-            placePlusOne = static_cast<uint32_t>(body.endsOfMadeTexts.size());
+            texts.append(text);
+            // The bytes are laid down, which may move those of the texts in front of it: nobody keeps an address yet.
+            types.bytesOf(text);
+            placePlusOne = static_cast<uint32_t>(texts.size());
         }
         word = Typed::idAt<StringID>(Typed::IDHome::Thread, placePlusOne - 1).bits();
     });
+    if (texts.isEmpty())
+        return;
+
+    struct TextsAtAddress {
+        size_t mostBytes { 0 };
+        std::optional<uint32_t> firstInBody;
+    };
+    HashMap<const uint8_t*, TextsAtAddress> textsAtAddresses;
+    for (StringID text : texts) {
+        std::span<const uint8_t> bytes = types.bytesOf(text);
+        size_t& mostBytes = textsAtAddresses.add(bytes.data(), TextsAtAddress { }).iterator->value.mostBytes;
+        mostBytes = std::max(mostBytes, bytes.size());
+    }
+    for (StringID text : texts) {
+        std::span<const uint8_t> bytes = types.bytesOf(text);
+        TextsAtAddress& atAddress = textsAtAddresses.find(bytes.data())->value;
+        if (!atAddress.firstInBody) {
+            atAddress.firstInBody = static_cast<uint32_t>(body.bytesOfMadeTexts.size());
+            body.bytesOfMadeTexts.append(std::span<const uint8_t>(bytes.data(), atAddress.mostBytes));
+        }
+        body.firstsOfMadeTexts.append(*atAddress.firstInBody);
+        body.endsOfMadeTexts.append(*atAddress.firstInBody + static_cast<uint32_t>(bytes.size()));
+    }
 }
 
 void internTextsMadeByFunctions(Typed::Program& program, LinkedFunctions& functions, BuildContext& context)
 {
-    Vector<std::span<const uint8_t>> texts;
-    for (const CompiledCode& code : functions) {
-        for (uint32_t place = 0; place < code.body.endsOfMadeTexts.size(); ++place)
-            texts.append(madeTextOfCodeBody(code.body, place));
+    struct MadeText {
+        std::span<const uint8_t> bytes;
+        // Among the texts of all functions, in the order of the functions.
+        uint32_t number;
+    };
+    Vector<MadeText> texts;
+    // [function]
+    Vector<uint32_t> numbersOfFirstTexts(functions.size());
+    for (size_t index = 0; index < functions.size(); ++index) {
+        const CodeBody& body = functions[index].body;
+        numbersOfFirstTexts[index] = static_cast<uint32_t>(texts.size());
+        if (body.endsOfMadeTexts.isEmpty())
+            continue;
+        // What shares bytes in the body shares them in the table.
+        std::span<const uint8_t> kept = program.strings.keep(body.bytesOfMadeTexts.span());
+        for (uint32_t place = 0; place < body.endsOfMadeTexts.size(); ++place)
+            texts.append({ kept.subspan(body.firstsOfMadeTexts[place], body.endsOfMadeTexts[place] - body.firstsOfMadeTexts[place]), static_cast<uint32_t>(texts.size()) });
     }
     if (texts.isEmpty())
         return;
 
-    // A text that the table lacks gets its number in the order of the texts, whichever function made it.
+    // A text that the table lacks gets its number in the order of the texts, whichever function made it. Of two that begin at one address the shorter is the front of the longer.
     const ParallelLoops& loops = context.parallelLoops();
-    sortAndRemoveDuplicates(loops, texts, [](std::span<const uint8_t> first, std::span<const uint8_t> second) {
-        return std::ranges::lexicographical_compare(first, second);
-    }, [](std::span<const uint8_t> first, std::span<const uint8_t> second) {
-        return std::ranges::equal(first, second);
+    parallelSort(loops, texts.mutableSpan(), [](const MadeText& first, const MadeText& second) {
+        if (first.bytes.data() == second.bytes.data())
+            return first.bytes.size() < second.bytes.size();
+        return std::ranges::lexicographical_compare(first.bytes, second.bytes);
     });
-    for (std::span<const uint8_t> text : texts)
-        program.strings.intern(text);
+    // [MadeText::number]
+    Vector<StringID> strings(texts.size());
+    Typed::StringTable::FrontsOfKeptTexts fronts;
+    for (size_t place = 0; place < texts.size(); ++place) {
+        std::span<const uint8_t> bytes = texts[place].bytes;
+        std::span<const uint8_t> before = place ? texts[place - 1].bytes : std::span<const uint8_t>();
+        bool isTextBefore = place && bytes.size() == before.size() && (bytes.data() == before.data() || equalSpans(bytes, before));
+        strings[texts[place].number] = isTextBefore ? strings[texts[place - 1].number] : program.strings.internKept(bytes, fronts);
+    }
 
     forEachIndexInParallel(loops, static_cast<unsigned>(functions.size()), [&](unsigned index) {
         CodeBody& body = functions[index].body;
         if (body.endsOfMadeTexts.isEmpty())
             return;
         forEachMadeTextAmongMentions(body, [&](uint32_t& word) {
-            StringID string = program.strings.find(madeTextOfCodeBody(body, Typed::positionOf(StringID::fromBits(word))));
-            RELEASE_ASSERT(string);
-            word = string.bits();
+            word = strings[numbersOfFirstTexts[index] + Typed::positionOf(StringID::fromBits(word))].bits();
         });
         body.bytesOfMadeTexts = { };
+        body.firstsOfMadeTexts = { };
         body.endsOfMadeTexts = { };
     });
 }

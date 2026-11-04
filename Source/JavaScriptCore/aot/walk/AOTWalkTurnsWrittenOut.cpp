@@ -11,6 +11,7 @@
 #include "AOTIRProgram.h"
 #include "AOTThinSummary.h"
 #include "AOTWalkCopies.h"
+#include "AOTWalkLoopsOverGeneratorsBuilder.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -591,6 +592,7 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
     m_frames[frameIndex].stepWhosePositionEdgesBring = { };
     // Every edge asks each listed value whether it is read behind it. Where ONE block takes all that leaves the loop, every edge into it is led by now, and it dominates whatever reads a value of the loop:
     // the join there gives each its name for good, and no later edge need bring it. So a body of many such loops lists a few values and not all of them.
+    // Whoever walks that block for some of its ways alone lists them again: KnownThreading::letTerminatorBeWalkedForEachWay().
     BlockID onlyWayOut;
     bool leavesByOneBlock = true;
     for (BlockID member : index.membersOf(loop)) {
@@ -629,15 +631,30 @@ void Walker::standAtHeadOfTurnOfForIn(BlockID inputHead)
 {
     TurnsOfForInWrittenOut& turns = *m_frames.last().turnsOfForIn;
     // No key of any object can have changed since the tests, or since the step of the turn before.
-    if (std::exchange(turns.enumeratorIsAsked, true) && m_state.factsOfCell(turns.enumerator).contains(FactOfCell::IsLikelyAsAllocated))
+    bool noKeyHasChangedSince = m_state.factsOfCell(turns.enumerator).contains(FactOfCell::IsLikelyAsAllocated);
+    bool isFirstTurn = !std::exchange(turns.enumeratorIsAsked, true);
+    if (!isFirstTurn && noKeyHasChangedSince)
         return;
-    // What a step asks before it hands out a name without entering the run time.
     Reference position = m_iterationsByIndex[turns.place].position;
-    Draft test(Opcode::IsEnumeratorCurrent, m_origin);
-    test.setEnumeratorOperand(turns.enumerator);
-    test.setObjectOperand(turns.object);
-    test.setPositionOperand(position);
-    Reference isCurrent = build(WTF::move(test));
+    Reference isCurrent;
+    if (isFirstTurn && noKeyHasChangedSince && turns.namesCountedByOpen) {
+        // So many names were current where the open answered, none where it has entered the run time, and no key has changed since.
+        Draft names(Opcode::Integer, m_origin);
+        names.setInteger(turns.numberOfNames);
+        Draft test(Opcode::GreaterEq, m_origin);
+        chooseConservativeFields(test);
+        test.setLeftOperand(turns.namesCountedByOpen);
+        test.setRightOperand(constant(WTF::move(names)));
+        test.setForm(formAllowedForTypedOperator(*this, test));
+        isCurrent = build(WTF::move(test));
+    } else {
+        // What a step asks before it hands out a name without entering the run time.
+        Draft test(Opcode::IsEnumeratorCurrent, m_origin);
+        test.setEnumeratorOperand(turns.enumerator);
+        test.setObjectOperand(turns.object);
+        test.setPositionOperand(position);
+        isCurrent = build(WTF::move(test));
+    }
     if (!isCurrent)
         return;
     BlockID current = addBlock();
@@ -745,7 +762,9 @@ bool Walker::writeOutTurnsOfForIn(BlockID inputHead, std::span<const Reference> 
         return true;
     m_iterationsByIndex[turns.place].takenAtOpen = names;
     // What comes round behind the turns is the position alone.
-    m_iterationsByIndex[turns.place].count = { };
+    turns.namesCountedByOpen = std::exchange(m_iterationsByIndex[turns.place].count, Reference());
+    turns.numberOfNames = numberOfNames;
+    count(StatisticID::OwnKeyWalksExpanded);
     walkTurnsWrittenOut(inputHead, entering, numberOfNames, &turns);
     return true;
 }

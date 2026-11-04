@@ -107,15 +107,8 @@ private:
     struct PlacedArguments {
         Vector<Machine::ConstrainedValue, 8> inRegisters;
         Vector<LValue, 4> onStack;
-        // CallingConventions::letsGoOfParameter().
-        Vector<LValue, 2> letGoByCallee;
         uint32_t stackWordsToReserve { 0 };
-        // What the call enters: the entry that was asked for, or in its place one that fills the registers which are left out here.
-        uint16_t entry { primaryEntry };
     };
-
-    // MayBeOmitted: of a call of the primary entry that is returned to. CallingConventions::findEntryOmittingArguments().
-    enum class OmittedArguments : bool { MustBePassed, MayBeOmitted };
 
     struct StackWord {
         uint32_t index;
@@ -128,10 +121,8 @@ private:
 
     // The unit that CallDirect or AwaitCallBySavingFrame enters: CallingConventions::unitEnteredBy().
     CodeUnit calleeOf(const ValueContext& callDirect) const;
-    PlacedArguments placeArguments(CodeUnit callee, uint16_t entry, const ArgumentLocations&, std::span<const Operand>, OmittedArguments = OmittedArguments::MustBePassed);
+    PlacedArguments placeArguments(CodeUnit callee, const ArgumentLocations&, std::span<const Operand>);
     PlacedArguments placeConventionArguments(const ConventionCall&);
-    // Once every operand of the call is appended.
-    void markArgumentsLetGoByCallee(Machine::PatchOperation*, const PlacedArguments&);
     // PatchOperation::childrenLetGoByCallee().
     static void emitClearOfReleasedRegisters(CCallHelpers&, const Machine::PatchParameters&, const RegisterSet& among);
     // A CallDirect of CodeRole::ModuleStart, which has no code: the stub StartModule with the number of the start. Whatever the call hands over is `this` of a module, which the stub knows to be undefined.

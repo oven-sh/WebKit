@@ -32,7 +32,7 @@ FormsOfSelector formsOfSelector(const Program& program, const LinkTables& linked
     for (FunctionID method : family.methods) {
         CodeUnit body { method, CodeRole::Body };
         // An object without fields is handed back as no word at all, and is no undefined.
-        if (conventions.splitResultOf(body) || program.at(method).isCoroutine() || conventions.numberOfResults(body) != 1)
+        if (program.at(method).isCoroutine() || conventions.numberOfResults(body) != 1)
             return forms;
         if (method.index() >= linked.functions.size() || !linked.function(method).result)
             return forms;

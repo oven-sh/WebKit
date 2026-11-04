@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTGrowthOfWork.h"
+#include "AOTMachineOrder.h"
 #include "AOTMachineTestSupport.h"
 #include <algorithm>
 #include <bit>
@@ -267,6 +268,58 @@ static void checkerRefusesEdgeWithoutUpsilonForPhi()
         Procedure& procedure = test.procedure();
         AOT_TEST_CHECK(validate(procedure) == rightHasUpsilon);
         AOT_TEST_CHECK(rightHasUpsilon ? !procedure.failure() : checkerReportedFailureAt(procedure, FailureKind::MalformedProcedure, { diamond.right->last() }));
+    }
+}
+
+static void checkerRefusesEdgeWithoutUpsilonForPhiBehindBlockPasses()
+{
+    for (bool rightHasUpsilon : { true, false }) {
+        TestProcedure test;
+        CheckerTestDiamond diamond = buildDiamondForCheckerTest(test, rightHasUpsilon);
+        Procedure& procedure = test.procedure();
+        AOT_TEST_CHECK(validateBehindBlockPasses(procedure) == rightHasUpsilon);
+        AOT_TEST_CHECK(rightHasUpsilon ? !procedure.failure() : checkerReportedFailureAt(procedure, FailureKind::MalformedProcedure, { diamond.right->last() }));
+    }
+}
+
+// Each arm hands the join a constant, and the join only branches on it. threadJumps() leads each arm to where its constant leads:
+// the Upsilons leave the lists of their blocks and go on naming the blocks, and the join stays in the procedure with its edges though nothing leads to it.
+static void checkerLooksOnlyAtWhatBlockPassesLeave()
+{
+    for (bool asksAsOfEmittedOperations : { true, false }) {
+        TestProcedure test;
+        Output& out = test.out();
+        Operation* argument = test.argumentGPR(0);
+        Block* left = out.newBlock();
+        Block* right = out.newBlock();
+        Block* join = out.newBlock();
+        Block* taken = out.newBlock();
+        Block* notTaken = out.newBlock();
+        Operation* phi = out.phiIn(join, Int32);
+        out.branch(out.testNonZero64(argument, 1), normalEdge(left), normalEdge(right));
+
+        out.appendTo(left);
+        out.upsilon(out.constInt32(1), phi);
+        out.jump(normalEdge(join));
+
+        out.appendTo(right);
+        out.upsilon(out.constInt32(0), phi);
+        out.jump(normalEdge(join));
+
+        out.appendTo(join);
+        out.branch(phi, normalEdge(taken), normalEdge(notTaken));
+
+        out.appendTo(taken);
+        out.ret(argument);
+
+        out.appendTo(notTaken);
+        out.ret(out.neg(argument));
+
+        Procedure& procedure = test.procedure();
+        AOT_TEST_CHECK(validate(procedure));
+        threadJumps(procedure);
+        AOT_TEST_CHECK(!procedure.failure() && left->upsilons().empty() && right->upsilons().empty());
+        AOT_TEST_CHECK(asksAsOfEmittedOperations ? !validate(procedure) : validateBehindBlockPasses(procedure));
     }
 }
 
@@ -588,6 +641,8 @@ std::span<const NativeTest> machineCheckerTests()
         { "machine-checker/read-that-no-definition-dominates"_s, Machine::checkerRefusesReadThatNoDefinitionDominates },
         { "machine-checker/work-grows-as-a-row-of-guards-into-one-block-does"_s, Machine::checkerWorkGrowsAsRowOfGuardsIntoOneBlockDoes },
         { "machine-checker/edge-without-an-upsilon-for-a-phi"_s, Machine::checkerRefusesEdgeWithoutUpsilonForPhi },
+        { "machine-checker/edge-without-an-upsilon-for-a-phi-behind-the-block-passes"_s, Machine::checkerRefusesEdgeWithoutUpsilonForPhiBehindBlockPasses },
+        { "machine-checker/only-what-the-block-passes-leave-is-looked-at"_s, Machine::checkerLooksOnlyAtWhatBlockPassesLeave },
         { "machine-checker/store-behind-a-stack-slot"_s, Machine::checkerRefusesStoreBehindStackSlot },
         { "machine-checker/changed-source-register"_s, Machine::checkerRefusesChangedSourceRegister },
         { "machine-checker/dropped-reload"_s, Machine::checkerRefusesDroppedReload },

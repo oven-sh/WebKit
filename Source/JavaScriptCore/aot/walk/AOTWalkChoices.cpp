@@ -733,6 +733,11 @@ static bool canLieInSharedStorageInChoices(const DataNode& element)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool tableOfImageHoldsData(Walker& walker, DataID data)
+{
+    return surveyDataInChoices(walker, walker.program().at(data).root).tableOfImageHoldsIt;
+}
+
 // Storage without cells lies in the image. Any other is created by the first array of the site and kept for those that follow.
 // Where the code runs once none follows, and the array has storage of its own.
 static bool sharesStorageOfArrayInChoices(Walker& walker, const DataNode::Array& array)

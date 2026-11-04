@@ -710,6 +710,22 @@ uint32_t IDSetView::first() const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// For the empty set, the bits of the null id.
+uint32_t IDSetView::last() const
+{
+    if (isEmpty())
+        return UINT32_MAX;
+    if (isList())
+        return list().back();
+    const IDSetChunkEntry& entry = chunkEntries().back();
+    const IDSetChunk& chunk = chunkAt(entry.chunk);
+    for (uint32_t word = static_cast<uint32_t>(chunk.bits.size()); word--;) {
+        if (chunk.bits[word])
+            return entry.firstMemberDividedBySize * membersPerSetChunk + word * 64 + 63 - static_cast<uint32_t>(std::countl_zero(chunk.bits[word]));
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 const IDSetChunk& IDSetView::chunkAt(uint32_t encodedChunk) const
 {
     switch (static_cast<IDHome>(encodedChunk >> idHomeShift)) {

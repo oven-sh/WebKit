@@ -252,7 +252,8 @@ static std::optional<ClassTestedByInstanceOf> describeClassTestedByInstanceOf(co
         return std::nullopt;
 
     bool isEvaluatedOnce = hasOneClassObjectForInstanceOf(walker, tested.layout);
-    if (tested.isConstructorFunction && !isEvaluatedOnce)
+    // One closure is all that is asked of a constructor function. That the run time can make it by itself, which takes a function without captures, is asked by the record of the class: below, where a guard is left.
+    if (tested.isConstructorFunction && !walker.facts().isEvaluatedAtMostOnce(tested.layout))
         return std::nullopt;
     if (!findsOrdinaryHasInstanceForInstanceOf(walker, tested, tested.conditions))
         return std::nullopt;
@@ -267,10 +268,10 @@ static std::optional<ClassTestedByInstanceOf> describeClassTestedByInstanceOf(co
             addConditionOfInstanceOf(tested.conditions, { MemberConditionKind::MemberUnchanged, tested.layout, ClassSide::Static, program.keyOf(BuiltinNames::prototype) });
     }
     // Each evaluation of a class has a prototype object of its own, and all of them share the layout.
-    if (!isEvaluatedOnce)
+    if (!walker.facts().isEvaluatedAtMostOnce(tested.layout))
         addConditionOfInstanceOf(tested.conditions, { MemberConditionKind::ClassEvaluatedOnce, tested.layout, ClassSide::Prototype, { } });
     // The run time ends a guard through the record of its class. Without a record the guard never holds.
-    if (!tested.conditions.isEmpty() && !walker.plan().hasClassRecord(tested.layout))
+    if (!tested.conditions.isEmpty() && (!walker.plan().hasClassRecord(tested.layout) || (tested.isConstructorFunction && !isEvaluatedOnce)))
         return std::nullopt;
     return tested;
 }

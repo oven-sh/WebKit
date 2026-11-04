@@ -3,6 +3,7 @@
 # If the binding answered nothing that anybody follows, Script would have no use at all, and node:vm would run only in a program that is open for another reason
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: image
+# REQUIRES: entries-of-bun
 # CHECK: flags {{*}}AdmitsUnknownJavaScript
 
 layout L0 module=m1 fields=[{key="run" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1

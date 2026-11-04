@@ -182,7 +182,7 @@ static LayoutID layoutOfValueInWalkNote(TypeReader types, const Code& code, Valu
 WalkNotes notesOfSweptCode(TypeReader types, const Code& code, bool notesResolvedOperations)
 {
     RELEASE_ASSERT(code.isSwept());
-    WalkNotes result { code.unit(), { } };
+    WalkNotes result { code.unit(), { }, 0 };
 
     for (uint32_t index = 0; index < code.numberOfValues(); ++index) {
         ValueID id(index);
@@ -190,6 +190,7 @@ WalkNotes notesOfSweptCode(TypeReader types, const Code& code, bool notesResolve
         BlockID block = operation.block();
         if (!block || !code.isReached(block))
             continue;
+        result.numberOfValuesInDouble += code.isNeeded(id) && (operation.representation == Representation::Double || operation.representation == Representation::OptionalDouble);
 
         WalkNote note;
         if (!placeWalkNote(code, operation, note.origin, note.writtenIn))

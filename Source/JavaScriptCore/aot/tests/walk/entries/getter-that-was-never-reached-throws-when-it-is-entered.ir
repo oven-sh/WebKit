@@ -17,11 +17,13 @@
 # -- end of source
 # records of f7ae0e3332272f6f
 # RUN: walk f2:GenericCallEntry mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f2:GenericCallEntry
 # CHECK-NOT: Return
 # CHECK: NewRuntimeError runtimeError=FunctionNotCompiled name="first"
 # CHECK: Throw
 # RUN(METHOD): walk f3:GenericCallEntry mechanisms=all
+# REQUIRES(METHOD): entries-of-bun
 # METHOD-LABEL: code f3:GenericCallEntry
 # METHOD: NewRuntimeError runtimeError=FunctionNotCompiled name="second"
 # METHOD: Throw

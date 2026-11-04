@@ -309,6 +309,13 @@ struct FieldAccessesOfSets {
         Lock lock;
         // By the set and the key: of reads, of stores.
         std::array<HashMap<uint64_t, std::unique_ptr<FieldAccess>>, 2> accesses;
+        // Of a set that lies in a thread, which has no number that lasts: by a hash of its members and the key. Whoever finds an entry holds the members against those that he asks about.
+        struct OfMembers {
+            PropertyKeyID key;
+            Vector<LayoutID> members;
+            FieldAccess access;
+        };
+        std::array<HashMap<uint64_t, Vector<std::unique_ptr<OfMembers>, 1>>, 2> accessesOfMembers;
     };
     std::array<Part, 64> parts;
 };

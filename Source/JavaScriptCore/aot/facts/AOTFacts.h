@@ -303,7 +303,7 @@ public:
         std::span<const PositionFacts> rows = m_tables.entryParameters.of(id);
         return entryParameter < rows.size() ? rows[entryParameter] : PositionFacts { };
     }
-    // Claims nothing: no site has a row and there is no list. Then CallingConventions::indirectCallersAreAllListed() holds of no function.
+    // Claims nothing: no site has a row and there is no list.
     const FactCallGraph& calls() const { return m_tables.calls; }
 
     // ---- Variables and fields

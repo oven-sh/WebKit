@@ -1,6 +1,7 @@
 # The control of loader-of-the-host-is-in-a-test-run-that-is-closed.ir: the same records as an executable. Nothing there is decided while it runs, so the loader of the host stays out of a program that names it nowhere.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: function f1 unreached
 # CHECK: function f2 unreached
 # CHECK: function f3 unreached

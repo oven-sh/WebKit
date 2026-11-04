@@ -556,8 +556,8 @@ static void testMachineFrameFormOneWordWithoutRecordLiesAtStackPointer()
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 70 }) == 76);
 }
 
-// Two words would be reached by addresses that are a byte longer than those off the frame pointer.
-static void testMachineFrameFormWithTwoWordsKeepsItsRecord()
+// Two words are reached by addresses that are a byte longer than those off the frame pointer. The record would be two instructions at every entry.
+static void testMachineFrameFormWithTwoWordsHasNoRecord()
 {
     TestProcedure test(traitsOfFrameFormTest(true, true));
     Output& out = test.out();
@@ -569,8 +569,34 @@ static void testMachineFrameFormWithTwoWordsKeepsItsRecord()
     compileOrFail(test);
     if (isX86_64())
         AOT_FRAME_FORM_TEST_CHECK(test, test.procedure().allocation().isSpilled(first) && test.procedure().allocation().isSpilled(second));
-    AOT_FRAME_FORM_TEST_CHECK(test, test.procedure().frame().hasFrameRecord());
+    AOT_FRAME_FORM_TEST_CHECK(test, test.procedure().frame().hasFrameRecord() == !isX86_64());
     AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 10 }) == 23);
+}
+
+// More words than one byte of offset reaches, beside callee saves: each word comes back as it was stored, across two calls.
+static void testMachineFrameFormWithManyWordsHasNoRecord()
+{
+    constexpr unsigned numberOfWords = 24;
+    TestProcedure test(traitsOfFrameFormTest(false, true));
+    Output& out = test.out();
+    Operation* seed = test.argumentGPR(0);
+    Operation* words[numberOfWords];
+    for (unsigned index = 0; index < numberOfWords; ++index)
+        words[index] = out.opaque(out.add(seed, out.constInt64(int64_t { 1 } << index)));
+    appendCallOfFrameFormTest(test);
+    Operation* sum = words[0];
+    for (unsigned index = 1; index < numberOfWords; index += 2)
+        sum = out.add(sum, words[index]);
+    sum = out.opaque(sum);
+    appendCallOfFrameFormTest(test);
+    for (unsigned index = 2; index < numberOfWords; index += 2)
+        sum = out.add(sum, words[index]);
+    out.ret(sum);
+    compileOrFail(test);
+    AOT_FRAME_FORM_TEST_CHECK(test, test.procedure().frame().hasFrameRecord() == !isX86_64());
+    if (isX86_64())
+        AOT_FRAME_FORM_TEST_CHECK(test, test.procedure().frame().bytesBelowFrameRecord() > 128);
+    AOT_FRAME_FORM_TEST_CHECK(test, test.call<uint64_t>(uint64_t { 3 }) == numberOfWords * 3 + (uint64_t { 1 } << numberOfWords) - 1);
 }
 
 static void buildFrameFormTestWithPatchThatReadsFramePointer(TestProcedure& test)
@@ -695,7 +721,8 @@ std::span<const NativeTest> machineFrameFormTests()
         { "machine/frame-forms/function-that-only-calls-has-no-record"_s, Machine::testMachineFrameFormOfFunctionThatOnlyCallsHasNoRecord },
         { "machine/frame-forms/saved-registers-without-a-record-come-back"_s, Machine::testMachineFrameFormSavedRegistersWithoutRecordComeBack },
         { "machine/frame-forms/one-word-without-a-record-lies-at-the-stack-pointer"_s, Machine::testMachineFrameFormOneWordWithoutRecordLiesAtStackPointer },
-        { "machine/frame-forms/two-words-keep-the-record"_s, Machine::testMachineFrameFormWithTwoWordsKeepsItsRecord },
+        { "machine/frame-forms/two-words-have-no-record"_s, Machine::testMachineFrameFormWithTwoWordsHasNoRecord },
+        { "machine/frame-forms/many-words-have-no-record"_s, Machine::testMachineFrameFormWithManyWordsHasNoRecord },
         { "machine/frame-forms/patch-that-needs-the-record-keeps-it"_s, Machine::testMachineFrameFormPatchThatNeedsRecordKeepsIt },
         { "machine/frame-forms/generator-told-of-a-place-in-the-frame-keeps-the-record"_s, Machine::testMachineFrameFormGeneratorToldOfPlaceInFrameKeepsRecord },
         { "machine/frame-forms/use-of-the-frame-pointer-keeps-the-record"_s, Machine::testMachineFrameFormUseOfFramePointerKeepsRecord },

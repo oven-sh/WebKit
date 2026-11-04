@@ -133,7 +133,6 @@ namespace {
 
 struct ProgramOfQueueTests {
     const Typed::CallingConventions& conventions;
-    const Typed::FactCallGraph& calls;
     const Typed::LinkTables& linked;
     Typed::Arrivals& arrivals;
 };
@@ -154,7 +153,7 @@ static void withProgramOfQueueTests(const String& text, NOESCAPE const Invocable
         Typed::StagedBuild stages(WTF::move(parsed), build);
         const PreparedProgram* prepared = stages.prepared();
         AOT_TEST_CHECK(prepared);
-        functor(ProgramOfQueueTests { prepared->plan->conventions(), prepared->facts->calls(), prepared->facts->linked(), *prepared->arrivals });
+        functor(ProgramOfQueueTests { prepared->plan->conventions(), prepared->facts->linked(), *prepared->arrivals });
     });
 }
 
@@ -230,15 +229,12 @@ static void testSeedsGoToSharedListInRuns()
             constexpr unsigned first = 0;
             constexpr unsigned second = 1;
             ParallelLoops loops(widthOfLoops);
-            UnitQueue queue(program.conventions, program.calls, 4);
+            UnitQueue queue(program.conventions, 4);
             Vector<Typed::CodeUnit> seeds;
             Vector<Typed::CodeUnit> queued;
             for (uint32_t index = 0; index < program.conventions.numberOfUnits(); ++index) {
                 Typed::CodeUnit unit = program.conventions.unitAt(index);
                 if (!program.conventions.exists(unit))
-                    continue;
-                // A mention of these brings other units along, or another unit in their place.
-                if (program.conventions.indirectCallersAreAllListed(unit.function))
                     continue;
                 if (unit.role == Typed::CodeRole::GenericCallEntry && program.conventions.hasFusedCallEntry(unit.function))
                     continue;
@@ -289,7 +285,7 @@ static void testTablesLeadFromReferrerToReferrer()
         static constexpr NamingInQueueTests namings[] { { 1, 2 }, { 2, 3 }, { 3, 4 }, { 2, 5 }, { 6, 5 }, { 5, 6 } };
         AOT_TEST_CHECK(program.linked.functions.size() >= std::size(cycles));
         Typed::LinkTables tables = tablesWithOrderForQueueTests(program.linked, cycles, ranks, namings);
-        UnitQueue queue(program.conventions, program.calls, tables, program.arrivals, 1);
+        UnitQueue queue(program.conventions, tables, program.arrivals, 1);
         auto leadsTo = [&](uint32_t referrer, uint32_t function) {
             return queue.leadsTo(FunctionID(referrer), FunctionID(function));
         };
@@ -331,7 +327,7 @@ static void testWhoMayNameAFunctionGrowsWithTheProgram()
         withProgramOfQueueTests(featuresUnderOneNameForQueueTests(numberOfFeatures), [&](const ProgramOfQueueTests& program) {
             sizes = { program.linked.referrers.size(), program.linked.cyclesAwaited.size() };
             // The order is there: a function under the name waits for the function that calls it, and for no other that looks the name up.
-            UnitQueue queue(program.conventions, program.calls, program.linked, program.arrivals, 1);
+            UnitQueue queue(program.conventions, program.linked, program.arrivals, 1);
             AOT_TEST_CHECK(queue.leadsTo(FunctionID(2u), FunctionID(1u)));
             AOT_TEST_CHECK(!queue.leadsTo(FunctionID(2u), FunctionID(2 * numberOfFeatures - 1)));
             AOT_TEST_CHECK(!queue.leadsTo(FunctionID(1u), FunctionID(2u)));
@@ -352,7 +348,7 @@ static void testWhoMayNameAFunctionGrowsWithTheProgram()
 static void testEveryFunctionLeadsToEveryOtherWithoutTables()
 {
     withProgramOfQueueTests([&](const ProgramOfQueueTests& program) {
-        UnitQueue queue(program.conventions, program.calls, 1);
+        UnitQueue queue(program.conventions, 1);
         AOT_TEST_CHECK(queue.leadsTo(FunctionID(0u), FunctionID(2u)));
         AOT_TEST_CHECK(queue.leadsTo(FunctionID(2u), FunctionID(0u)));
     });
@@ -379,7 +375,7 @@ static void testOnlyWhoeverTakesArrivalsWaits()
         AOT_TEST_CHECK(!prepared->arrivals->takesWhatWasLeft(ping.function));
 
         ParallelLoops loops(1);
-        UnitQueue queue(prepared->plan->conventions(), prepared->facts->calls(), prepared->facts->linked(), *prepared->arrivals, 2);
+        UnitQueue queue(prepared->plan->conventions(), prepared->facts->linked(), *prepared->arrivals, 2);
         Vector<Typed::CodeUnit> seeds = Typed::unitsNamedOutsideCode(*prepared->program, *prepared->facts, *prepared->plan);
         queue.addSeeds(seeds.span(), loops);
 
@@ -420,9 +416,6 @@ static void testThreadThatHoldsNothingTakesFromAnother()
             Typed::CodeUnit unit = program.conventions.unitAt(index);
             if (!program.conventions.exists(unit))
                 continue;
-            // A mention of these brings other units along, or another unit in their place.
-            if (program.conventions.indirectCallersAreAllListed(unit.function))
-                continue;
             if (unit.role == Typed::CodeRole::GenericCallEntry && program.conventions.hasFusedCallEntry(unit.function))
                 continue;
             units.append(unit);
@@ -430,7 +423,7 @@ static void testThreadThatHoldsNothingTakesFromAnother()
         AOT_TEST_CHECK(units.size() >= 4);
 
         ParallelLoops loops(1);
-        UnitQueue queue(program.conventions, program.calls, 2);
+        UnitQueue queue(program.conventions, 2);
         queue.addSeeds(units.span().first(1), loops);
         std::optional<Typed::CodeUnit> open = queue.take(busy);
         AOT_TEST_CHECK(open && *open == units[0]);
@@ -553,7 +546,7 @@ static void withMethodWithAGuard(NOESCAPE const Invocable<void(const PreparedPro
 static void testSlowVersionComesBehindTheOtherUnitsOfItsCycle()
 {
     withMethodWithAGuard([](const PreparedProgram& prepared, std::span<const Typed::CodeUnit> seeds) {
-        UnitQueue queue(prepared.plan->conventions(), prepared.facts->calls(), prepared.facts->linked(), *prepared.arrivals, 1);
+        UnitQueue queue(prepared.plan->conventions(), prepared.facts->linked(), *prepared.arrivals, 1);
         takeUnitsOfMethodWithAGuard(queue, seeds, prepared.program->functions.size(), false);
     });
 }
@@ -565,7 +558,7 @@ static void testUnitThatASlowVersionBringsIntoItsOwnCycleFindsThePointsClosed()
         constexpr uint32_t ranks[] { 0, 1, 1 };
         constexpr NamingInQueueTests namings[] { { 0, 1 }, { 0, 2 }, { 1, 2 } };
         Typed::LinkTables tables = tablesWithOrderForQueueTests(prepared.facts->linked(), cycles, ranks, namings);
-        UnitQueue queue(prepared.plan->conventions(), prepared.facts->calls(), tables, *prepared.arrivals, 1);
+        UnitQueue queue(prepared.plan->conventions(), tables, *prepared.arrivals, 1);
         takeUnitsOfMethodWithAGuard(queue, seeds, prepared.program->functions.size(), true);
     });
 }
@@ -573,7 +566,7 @@ static void testUnitThatASlowVersionBringsIntoItsOwnCycleFindsThePointsClosed()
 static void testSlowVersionsComeBehindAllOtherUnitsWithoutTables()
 {
     withMethodWithAGuard([](const PreparedProgram& prepared, std::span<const Typed::CodeUnit> seeds) {
-        UnitQueue queue(prepared.plan->conventions(), prepared.facts->calls(), 1);
+        UnitQueue queue(prepared.plan->conventions(), 1);
         takeUnitsOfMethodWithAGuard(queue, seeds, prepared.program->functions.size(), true);
     });
 }

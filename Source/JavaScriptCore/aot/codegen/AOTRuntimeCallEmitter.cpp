@@ -181,6 +181,15 @@ static Machine::RegisterMask registersToSaveForCCall(Machine::RegisterMask liveR
     return liveRegisters & callerSavedRegisters;
 }
 
+// A unit that saves the registers of its callers has saved those that it writes itself. The others still hold what a caller keeps in them, and a C function may write them.
+static Machine::RegisterMask registersToKeepAcrossCCall(const Machine::PatchParameters& params)
+{
+    Machine::RegisterMask held = params.usedRegistersMask();
+    if (params.proc().traits().savesRegistersOfCallers) [[unlikely]]
+        held |= Machine::maskOf(params.unavailableRegisters());
+    return registersToSaveForCCall(held);
+}
+
 static bool holdsFPR(Machine::RegisterMask registers)
 {
     static const Machine::RegisterMask allFPRs = Machine::maskOf(RegisterSet::allFPRs());
@@ -193,7 +202,7 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
     StubKey called = key;
     ArgumentMoves moves;
     if (preservingCall) {
-        Machine::RegisterMask live = registersToSaveForCCall(params.usedRegistersMask());
+        Machine::RegisterMask live = registersToKeepAcrossCCall(params);
         if (signature.firstResult)
             live &= ~Machine::maskOf(signature.firstResult);
         if (signature.secondResult)
@@ -206,7 +215,7 @@ void CallGenerator::generate(CCallHelpers& jit, const Machine::PatchParameters& 
     } else
         moves = bringOperands(params);
     if (keyWhereNoRegisterIsKept || keyWhereNoFPRIsKept) {
-        Machine::RegisterMask kept = registersToSaveForCCall(params.usedRegistersMask());
+        Machine::RegisterMask kept = registersToKeepAcrossCCall(params);
         if (resultIsInAnyRegister)
             kept &= ~Machine::maskOf(Reg(params[0].gpr()));
         else if (signature.firstResult)
@@ -989,13 +998,6 @@ void RuntimeCallEmitter::callStubWithoutSiteAndBranch(StubKey key, std::span<con
     CallRequest request;
     fillRequest(request, key, operands, options, targets);
     emitCall(nullptr, request);
-}
-
-StubCallResult RuntimeCallEmitter::callStubForTwoReads(const OperationContext& context, StubKey key, std::span<const LValue> operands, const CallOptions& options, Origin firstRead)
-{
-    CallRequest request;
-    fillRequest(request, key, operands, options, std::nullopt, firstRead);
-    return emitCall(&context, request);
 }
 
 LValue RuntimeCallEmitter::callStubThatReads(StubKey key, std::span<const LValue> operands, const MemoryLocation& location, const CallOptions& options)

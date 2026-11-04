@@ -9,8 +9,9 @@
 # sink(run(10));
 # -- end of source
 # `p.done()`, `p.peek()`: laid ahead of every object, inside the one call of the function round the class: no guard of the members, no arm that comes back.
+# SINCE 11-04 (R257) THE CLOCK OF START SAYS OF NO NAME THAT IT IS LAID AHEAD: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no program that we are judged by. THE NAME OF THIS FILE IS OUT OF DATE: the calls stand behind the guard of the members.
 # RUN: walk f1 mechanisms=all
-# CHECK-NOT: AreMembersUnchanged
+# CHECK: AreMembersUnchanged
 
 module m0 path="method-laid-inside-a-function-that-is-called-once-needs-no-guard.js" displayPath="method-laid-inside-a-function-that-is-called-once-needs-no-guard.js" body=f0 namespaceLayout=L(m0)
 entry module=m0

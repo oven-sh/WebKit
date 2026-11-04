@@ -108,9 +108,11 @@ struct CodeBody {
     ListOfUnit<JumpTable> jumpTables;
     ListOfUnit<Mention> mentions;
     ListOfUnit<uint32_t> mentionWords;
-    // The texts that the walk of the unit made and that a mention names, as canonical program strings one behind the other, in the order in which the mentions first name them.
-    // Until internTextsMadeByFunctions() such a text stands among mentionWords as a StringID that liesInThread(), whose position is its place here. From then on both lists are empty.
+    // The texts that the walk of the unit made and that a mention names, as canonical program strings, in the order in which the mentions first name them. Texts that began at one address in the arena begin at one byte here:
+    // each is the front of the longest of them, which alone is copied.
+    // Until internTextsMadeByFunctions() such a text stands among mentionWords as a StringID that liesInThread(), whose position is its place here. From then on the lists are empty.
     ListOfUnit<uint8_t> bytesOfMadeTexts;
+    ListOfUnit<uint32_t> firstsOfMadeTexts;
     ListOfUnit<uint32_t> endsOfMadeTexts;
 };
 
@@ -342,13 +344,6 @@ constexpr uint32_t placeInCodeOf(Typed::CodeUnit unit, uint32_t unitIndex)
     return unitIndex - (static_cast<unsigned>(unit.role) - firstRole) + rankInCodeOf(unit.role);
 }
 
-// Code::calleesOfIndirectCalls() of the calls that the sweep has kept. The lists and the functions ascend, each once. The queue of units reads them and lets them go.
-struct CalleesOfIndirectCalls {
-    Vector<uint32_t> lists;
-    Vector<FunctionID> functions;
-    uint32_t numberOfCallsThatMayEnterAnyClosure { 0 };
-};
-
 // All that is left of a unit once its thread goes on to the next.
 struct CompiledCode {
     Typed::CodeUnit unit;
@@ -369,12 +364,9 @@ struct CompiledCode {
     uint32_t bytesInFramesOfBuiltins { 0 };
     ListOfUnit<BytesOutsideOperations> bytesOutsideOperations;
     ListOfUnit<RangeOfCode> ranges;
-    CalleesOfIndirectCalls calleesOfIndirectCalls;
-    // CompileWorker::compileClosedGenericEntry() has made it.
-    bool isClosedGenericEntry { false };
 };
 
-// Every list but those of calleesOfIndirectCalls, which the queue lets go before the record is kept.
+// Every list.
 void forEachListOfUnitIn(CompiledCode& code, auto& visit)
 {
     auto visitEach = [&](auto&... lists) {
@@ -382,7 +374,7 @@ void forEachListOfUnitIn(CompiledCode& code, auto& visit)
     };
     CodeBody& body = code.body;
     SiteDescription& sites = code.sites;
-    visitEach(body.bytes, body.entries, body.relocations, body.returnSites, body.firstReadSites, body.callees, body.stubKeys, body.numberedStubKeys, body.argumentMoves, body.constants, body.jumpTables, body.mentions, body.mentionWords, body.bytesOfMadeTexts, body.endsOfMadeTexts);
+    visitEach(body.bytes, body.entries, body.relocations, body.returnSites, body.firstReadSites, body.callees, body.stubKeys, body.numberedStubKeys, body.argumentMoves, body.constants, body.jumpTables, body.mentions, body.mentionWords, body.bytesOfMadeTexts, body.firstsOfMadeTexts, body.endsOfMadeTexts);
     visitEach(code.frame.calleeSaveRegisters.list(), code.frame.frameRanges, code.frame.prologueChecks);
     visitEach(sites.positions, sites.inlineFrames, sites.flaggedSites, sites.calleesOfSites, sites.constructedCallees, sites.handlers, sites.faultingAccesses, sites.pollSites, sites.frameMapWords);
     visitEach(code.bytesByForm, code.bytesOutsideOperations, code.ranges);

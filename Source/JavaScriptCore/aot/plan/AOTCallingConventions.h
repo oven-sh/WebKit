@@ -47,8 +47,6 @@ struct FunctionConvention {
     bool callEntryTakesNewTarget : 1 { false };
     // An async function in which nothing suspends. Milestone one: false.
     bool coroutineNeverSuspends : 1 { false };
-    // Milestone one: false.
-    bool hasSplitResult : 1 { false };
     uint16_t numberOfEntryParameters { 0 };
     // Function::results.size(), and where their forms begin in CallingConventionParts::formsOfResults.
     uint16_t numberOfResults { 1 };
@@ -64,33 +62,6 @@ struct ParameterGuardPlan {
     FunctionID function;
     // By entry parameter: what the guard lets through. It is proven of the parameter in the whole of the fast version. Null: the guard does not look at the parameter.
     Vector<TypeID, 8> typesBehindGuard;
-};
-
-// The function returns an object that it has just made, and hands back the parts in its place: a result for each of `types`, then the value as it is where there is a `whole`,
-// then a mark that says which of them speak, then the parts that other shapes alone have. Milestone one: no function has one.
-struct SplitResult {
-    unsigned numberOfParts() const { return static_cast<unsigned>(types.size()); }
-    bool hasMark() const { return whole || mayBeNullish; }
-    bool markIsTag() const { return numberOfOtherShapes; }
-    unsigned resultOfWhole() const { return numberOfParts(); }
-    unsigned resultOfMark() const { return numberOfParts() + !!whole; }
-    unsigned firstOtherPart() const { return resultOfMark() + hasMark(); }
-    unsigned numberOfResults() const { return firstOtherPart() + static_cast<unsigned>(typesOfOtherParts.size()); }
-    // 0 where the value speaks, 1 and up for the shapes in their order.
-    Range rangeOfTag() const { return { mayBeNullish || (whole && !isNeverType(whole)) ? 0 : 1, static_cast<int64_t>(numberOfOtherShapes) + 1 }; }
-    // Of every result but the mark.
-    TypeID typeOfResult(unsigned result) const
-    {
-        if (result < numberOfParts())
-            return types[result];
-        return result < firstOtherPart() ? whole : typesOfOtherParts[result - firstOtherPart()];
-    }
-
-    TypeID whole;
-    bool mayBeNullish { false };
-    unsigned numberOfOtherShapes { 0 };
-    Vector<TypeID, 4> types;
-    Vector<TypeID, 0> typesOfOtherParts;
 };
 
 struct GenericEntryPlan {
@@ -129,14 +100,6 @@ struct BoundFunctionPlan {
     Vector<BoundCapture, 8> captures;
 };
 
-// An entry in front of the primary entry of a unit, which puts undefined into every argument GPR from the firstOmittedGPR-th on and falls through.
-struct SecondaryEntry {
-    FunctionID function;
-    CodeRole role { CodeRole::Body };
-    uint8_t firstOmittedGPR { 0 };
-    // Among the entries of the unit, from 1 on. The primary entry is 0.
-    uint16_t id { 0 };
-};
 
 // A generic call entry that only moves is emitted in front of the primary entry of its target, as this entry of that unit, and is never compiled as a unit.
 inline constexpr uint16_t fusedCallEntry = UINT16_MAX;
@@ -259,8 +222,6 @@ public:
     template<typename Call>
     CodeUnit unitEnteredBy(const Call& call) const { return { call.function(), call.role(), static_cast<uint16_t>(call.numberOfBoundArguments()) }; }
 
-    // Whoever enters the function through the word of a closure is an indirect call whose row in FactCallGraph lists the function, so UnitQueue may close its generic entries. Milestone one: false.
-    bool indirectCallersAreAllListed(FunctionID) const { return false; }
     // closureEntryOf(id) is fused into its target: planCallEntryMoves() has an answer.
     bool hasFusedCallEntry(FunctionID id) const { return m_functionsWithFusedCallEntry.get(id.index()); }
     // planProgram(), behind setParameterGuards(): an entry goes on to the guard where there is one.
@@ -313,13 +274,8 @@ public:
     //   Serializer           SerializerParameter: Cell, Cell, Int32
     Representation parameterRepresentation(const Program& program, CodeUnit unit, unsigned parameterIndex) const
     {
-        if (takesEntryParametersAsListed(unit.role) && !m_parts.formsOfEntryParameters.isEmpty()) {
-            const FunctionConvention& convention = m_parts.conventions[unit.function.index()];
-            RELEASE_ASSERT(parameterIndex < convention.numberOfEntryParameters);
-            Representation form = m_parts.formsOfEntryParameters[convention.firstEntryParameter + parameterIndex];
-            if (form != Representation::JSValue || unit.role != CodeRole::Body || !convention.has(CodeRole::ParameterGuard))
-                return form;
-        }
+        if (takesEntryParametersAsListed(unit.role) && !m_parts.formsOfEntryParameters.isEmpty())
+            return formOfEntryParameterAsListed(program, m_parts.conventions[unit.function.index()], unit.role, parameterIndex);
         return parameterRepresentationByRole(program, unit, parameterIndex);
     }
     // Milestone one: a result for each that the record declares. Of every unit that does not return as declared: 1.
@@ -350,30 +306,14 @@ public:
     // Milestone one: 0 for a generic entry. Else the most stack words that locationsOf() gives a Body, a CoroutineBody or the unit itself. A table role: never asked, as above.
     JS_EXPORT_PRIVATE uint32_t stackWordsReservedByCallersOf(const Program&, CodeUnit callee) const;
 
-    // The function sets the parameter to null while it still runs, so a caller that reads the argument no more keeps no copy of it across the call. Milestone one: false.
-    bool letsGoOfParameter(FunctionID, unsigned) const { return false; }
     // The unit saves every register that it writes but those of StubBodyConvention::registersClobberedByCalls(). Milestone one: false.
     bool savesRegistersOfCallers(CodeUnit unit) const { return m_tailCalls.savesRegistersOfCallers(unit); }
-    // Ascending by firstOmittedGPR. Milestone one: none.
-    std::span<const SecondaryEntry> secondaryEntriesOf(CodeUnit) const { return { }; }
-    // For a call that hands the constant undefined to every argument GPR from the firstUndefinedGPR-th on: the entry that fills the most of them. Milestone one: the primary entry, which fills none of the numberOfGPRs.
-    SecondaryEntry findEntryOmittingArguments(CodeUnit unit, unsigned, unsigned numberOfGPRs) const { return { unit.function, unit.role, static_cast<uint8_t>(numberOfGPRs), 0 }; }
 
     // CoveredByCallers: the unit tests the stack only where its frame is larger than maxFrameSizeWithoutStackCheck of AOTConvention.h.
     // Milestone one: a generic entry, a BoundFunction and a ParameterGuard are covered, because each goes on to a unit that tests. Every other unit tests, but for a small frame of a unit that calls nothing and jumps to nothing.
     StackCheck stackCheckOf(CodeUnit unit) const { return m_stackTests.isCoveredByCallers(isBodyOfCoroutine(unit.role, isCoroutine(unit.function)) ? CodeUnit(unit.function, CodeRole::CoroutineBody) : unit) ? StackCheck::CoveredByCallers : StackCheck::Required; }
     // A unit that tests the stack does so in front of a tail call too: the test is the poll of a cycle of tail calls. Milestone one: what stackCheckOf() says.
     bool testsStackInFrontOfTailCalls(CodeUnit unit) const { return unit.role != CodeRole::TableEntry && stackCheckOf(unit) == StackCheck::Required; }
-
-    // The parts that the unit hands back in place of an object. Null: it returns one value. Milestone one: null.
-    const SplitResult* splitResultOf(CodeUnit) const { return nullptr; }
-    // Of a CallDirect. Milestone one: false.
-    template<typename Call>
-    bool handsBackPartsAtEveryReturn(const Call& call) const
-    {
-        const SplitResult* split = splitResultOf(unitEnteredBy(call));
-        return split && !split->hasMark();
-    }
 
     // Of a unit for which isGenericEntry() holds.
     // Milestone one: the target is directEntryOf(), the ModuleStart where the function has one and the entry is for calls, and the BoundFunction of a GenericEntryOfBoundFunction.
@@ -417,6 +357,16 @@ private:
     static bool returnsAsDeclared(CodeRole role, const FunctionConvention& convention) { return (returnsResultOfFunction(role) || role == CodeRole::ModuleStart) && !convention.has(CodeRole::CoroutineBody); }
     static constexpr bool isRoleOfOneFunction(CodeRole role) { return static_cast<unsigned>(role) < numberOfCodeRolesOfOneFunction; }
     static constexpr bool takesEntryParametersAsListed(CodeRole role) { return role == CodeRole::Body || role == CodeRole::ModuleStart || role == CodeRole::ParameterGuard; }
+    // Of such a unit, once the forms are settled. THE ONE PLACE THAT SAYS IT: parameterRepresentation() and locationsOf() both ask here, so that the place of a parameter never parts from its form.
+    Representation formOfEntryParameterAsListed(const Program& program, const FunctionConvention& convention, CodeRole role, unsigned parameterIndex) const
+    {
+        RELEASE_ASSERT(parameterIndex < convention.numberOfEntryParameters);
+        Representation form = m_parts.formsOfEntryParameters[convention.firstEntryParameter + parameterIndex];
+        if (form != Representation::JSValue || role != CodeRole::Body || !convention.has(CodeRole::ParameterGuard))
+            return form;
+        return formBehindGuard(program, convention, parameterIndex);
+    }
+    JS_EXPORT_PRIVATE Representation formBehindGuard(const Program&, const FunctionConvention&, unsigned parameterIndex) const;
     JS_EXPORT_PRIVATE Representation parameterRepresentationByRole(const Program&, CodeUnit, unsigned parameterIndex) const;
     JS_EXPORT_PRIVATE bool existsBehindUnitsOfFunctions(CodeUnit) const;
     JS_EXPORT_PRIVATE uint32_t indexBehindUnitsOfFunctions(CodeUnit) const;

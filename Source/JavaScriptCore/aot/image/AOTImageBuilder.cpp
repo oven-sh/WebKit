@@ -1016,6 +1016,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     sections[ImageSection::CodeGranules] = WTF::move(functionTables.codeGranules);
     sections[ImageSection::Frames] = bytesOf(sideTables.frames);
     sections[ImageSection::FrameMaps] = bytesOf(sideTables.frameMapWords);
+    context.statistics().count(StatisticID::FrameMapBytesEmitted, sections[ImageSection::FrameMaps].size());
     sections[ImageSection::ClosureWords] = WTF::move(functionTables.closureWords);
     sections[ImageSection::MethodTable] = WTF::move(functionTables.methodTable);
     sections[ImageSection::Positions] = WTF::move(sideTables.positions);

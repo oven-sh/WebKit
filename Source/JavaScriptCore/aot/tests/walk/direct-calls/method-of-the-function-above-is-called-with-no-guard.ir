@@ -9,11 +9,9 @@
 # sink(run(10));
 # -- end of source
 # `this.first()` on an object of Below finds what is laid on the prototype object of Base: the row is linked, and both names are laid, ahead of every object. No guard of a name, so no arm that boxes the object: it is never made.
-# OPTIONS: check=Validate
+# SINCE 11-04 (R257) THE CLOCK OF START SAYS OF NO NAME THAT IT IS LAID AHEAD: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no program that we are judged by. THE NAME OF THIS FILE IS OUT OF DATE: the calls stand behind the guard of the members.
 # RUN: walk f3 mechanisms=all
-# CHECK-NOT: AreMembersUnchanged
-# RUN(OBJECT): walk f3 mechanisms=all
-# OBJECT-NOT: NewObject
+# CHECK: AreMembersUnchanged
 
 module m0 path="method-of-the-function-above-is-called-with-no-guard.js" displayPath="method-of-the-function-above-is-called-with-no-guard.js" body=f0 namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

@@ -96,7 +96,7 @@ BarrierEmitter::BarrierDecision BarrierEmitter::decide(const ValueContext& store
         return BarrierDecision::Emit;
     if (ownerIsInFrame(store.value()))
         return BarrierDecision::OwnerIsInFrame;
-    if (store->ownerCannotBeMarked())
+    if (m_generator.ownerIsYoung(store.id()))
         return BarrierDecision::OwnerCannotBeMarked;
     if (m_generator.laterBarrierCovers(store.id()))
         return BarrierDecision::LaterBarrierCovers;
@@ -108,8 +108,11 @@ bool BarrierEmitter::shouldEmitBarrier(const ValueContext& store, bool mayStoreC
     switch (decide(store, mayStoreCell)) {
     case BarrierDecision::Emit:
         return true;
-    case BarrierDecision::OwnerIsInFrame:
     case BarrierDecision::OwnerCannotBeMarked:
+        // While the collector marks, the barrier that is left out would have fenced. So the store stays in front of the store that hands the cell on, as the stores that fill a new cell do.
+        mutatorFence();
+        return false;
+    case BarrierDecision::OwnerIsInFrame:
     case BarrierDecision::LaterBarrierCovers:
     case BarrierDecision::StoresNoCell:
         return false;
@@ -119,8 +122,11 @@ bool BarrierEmitter::shouldEmitBarrier(const ValueContext& store, bool mayStoreC
 
 void BarrierEmitter::barrierAfterStore(const ValueContext& store, CellPointer owner, Operand stored, const Type& storedType)
 {
-    if (!shouldEmitBarrier(store, storedType.hasCells() && !storesOnlyStringsOfVM(store.value())))
+    if (!shouldEmitBarrier(store, storedType.hasCells() && !storesOnlyStringsOfVM(store.value()))) {
+        if (m_generator.ownerIsYoung(store.id()) && AOT::hasFlag(m_generator.build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime))
+            stopIfCellIsOldAndNotRemembered(store, owner);
         return;
+    }
     if (!storedType.hasLiteralStrings() || stored.representation != Representation::LiteralString || !hasSingleStoredCell(store.value())) {
         barrier(store, owner);
         return;
@@ -137,13 +143,22 @@ void BarrierEmitter::barrierAfterStore(const ValueContext& store, CellPointer ow
     m_out.appendToJoin(continuation, fork);
 }
 
-void BarrierEmitter::barrierAfterStores(const ValueContext& store, CellPointer owner, std::span<const ValueID> stored)
+// TestingSwitch::CheckProofsAtRunTime. A false mark is silent: it loses a cell at the rare collection that falls into the window. A cell that a collection has survived is PossiblyBlack, and one that the marker has reached is PossiblyGrey or PossiblyBlack:
+// so the look stops at the first collection that falls between the making and the store. A cell that is remembered is PossiblyGrey: newCellForCompiledCode().
+void BarrierEmitter::stopIfCellIsOldAndNotRemembered(const ValueContext& store, CellPointer owner)
 {
-    bool mayStoreCell = std::ranges::any_of(stored, [&](ValueID value) {
-        return typeOf(value).hasCells();
-    });
-    if (shouldEmitBarrier(store, mayStoreCell && !storesOnlyStringsOfVM(store.value())))
-        barrier(store, owner);
+    LBasicBlock stops = newBlock();
+    LBasicBlock continuation = newBlock();
+    LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, owner.value(), JSCell::cellStateOffset()));
+    ScopeFork fork = m_out.forkScope();
+    m_out.branch(m_out.notEqual(state, m_out.constInt32(static_cast<int32_t>(CellState::PossiblyBlack))), normalEdge(continuation), rareEdge(stops));
+    m_out.appendToArm(stops, fork);
+    FunctionID writtenIn = m_generator.code().inlineFrames()[store->inlineFrame].callee;
+    m_out.suspendDeclaredAccesses();
+    callVoidOperation(store, RuntimeOperation::StopAtFalseProof, { Boxed(m_out.constInt64(JSValue::encode(JSValue()))), word32(static_cast<int32_t>(writtenIn.index())), word32(static_cast<int32_t>(store->position)), word32(static_cast<int32_t>(ProofSource::WhatIsRemembered)) });
+    m_out.resumeDeclaredAccesses();
+    m_out.unreachable();
+    m_out.appendToArm(continuation, fork);
 }
 
 void BarrierEmitter::callBarrierStub(const OperationContext& context, StubKey key, std::initializer_list<LValue> operands, CallOptions options)
@@ -167,19 +182,11 @@ void BarrierEmitter::barrier(const OperationContext& context, CellPointer owner)
 }
 
 // The owner names its new Extension, which is a store like the one that needs the room.
-// The stores in front of it are marked as covered by a later barrier: this one. The sweep marks it too, where a later barrier covers it or no store waits for it.
-void BarrierEmitter::barrierBehindStores(const ValueContext& value, ValueID owner)
-{
-    const Operation& definition = operationAt(definitionOf(owner));
-    bool ownerLiesInFrame = Operation::opcodesWithStorage.contains(definition.opcode) && definition.storage() != AllocationStorage::Heap;
-    if (ownerLiesInFrame || liesOnlyInFrames(owner) || m_generator.laterBarrierCovers(value.id()))
-        return;
-    barrier(value, in<CellPointer>(owner));
-}
-
 OwnerBarrier BarrierEmitter::barrierOfExtension(const ValueContext& store) const
 {
-    return decide(store, true) == BarrierDecision::Emit ? OwnerBarrier::Emitted : OwnerBarrier::Omitted;
+    // The Extension is made here, behind its owner, so it is the younger of the two: Sweep::lookForBirthOfOwner() says why a young owner is no reason to leave its barrier out.
+    BarrierDecision decision = decide(store, true);
+    return decision == BarrierDecision::Emit || decision == BarrierDecision::OwnerCannotBeMarked ? OwnerBarrier::Emitted : OwnerBarrier::Omitted;
 }
 
 void BarrierEmitter::markCard(uint32_t cardMention)

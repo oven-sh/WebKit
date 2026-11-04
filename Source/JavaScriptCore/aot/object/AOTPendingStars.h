@@ -36,7 +36,7 @@ static constexpr uint32_t starRuleReusesDescriptors = 1 << 1;
 // False where the star has to be carried out now. Nothing has been done then. Runs no code of the program.
 bool tryAddPendingStar(VM&, Object& target, Object& source, FunctionID getter, uint32_t rule);
 bool hasPendingStars(const Object&);
-// A read of a name that a pending star binds gets what the getter of the binding would read: the name, from this object. Null for a name that no pending star binds: the object has no other extra property.
+// A read of a name that a pending star binds gets what the getter of the binding would read, be it through the getters of the stars below: the name, from this object, which has it as its own. Null for a name that no pending star binds: the object has no other extra property.
 // Nothing for an object without pending stars, and for one whose stars have been searched so often that they are better carried out.
 std::optional<Object*> sourceOfPendingBinding(VM&, const Object& target, UniquedStringImpl* name);
 // What a binding of a star has once it is made.

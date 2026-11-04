@@ -175,6 +175,8 @@ static NEVER_INLINE void applyCollectorRulesToMarkedValue(BackwardScan& scan, Op
         return;
 
     if (operation->has(OperationFlag::IsInnerPointer)) {
+        if (own.has(ValueFlag::LivesAcrossSafepoint))
+            scan.m_proc.noteInnerPointerAcrossSafepoint();
         switch (collectorRuleFormOf(operation->opcode())) {
         case CollectorRuleForm::Load:
             keepAliveForCollector(scan, operation->lastChild(), lastUse);

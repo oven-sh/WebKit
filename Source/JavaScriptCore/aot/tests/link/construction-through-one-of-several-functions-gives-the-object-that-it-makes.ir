@@ -1,0 +1,40 @@
+# two closures meet at what is constructed with, and neither has a class: nothing is stored on `this`, nothing on a prototype. The bodies return 7 and 9. The construction gives the object that it has made, which nobody has seen
+# const maker = globalThis.flag ? function () { return 7; } : function () { return 9; };  new maker();  maker();
+# the plain call beside it gives what the bodies give, and no object
+# RUN: link calls mechanisms=all
+# CHECK: several f0 v5 result=i32|object?UnseenCode 
+# CHECK: several f0 v6 result=i32 
+# RUN(OLDEST): link calls oldest-first mechanisms=all
+# OLDEST: several f0 v5 result=i32|object?UnseenCode 
+# RUN(SCATTERED): link calls scattered mechanisms=all
+# SCATTERED: several f0 v5 result=i32|object?UnseenCode 
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = Construct v4
+    v6 = Call v4
+    v7 = Add v6, v6
+    Return v5
+}
+function f1 name="seven" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f2 name="nine" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=9
+    Return v0
+}

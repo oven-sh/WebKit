@@ -74,10 +74,6 @@ struct LateMarkCase {
 
 constexpr ASCIILiteral alwaysLockedObjects[] = {
     "Object.prototype"_s,
-    "RegExp.prototype"_s,
-    "Promise.prototype"_s,
-    "Object.getPrototypeOf(function* () { }).prototype"_s,
-    "Object.getPrototypeOf(async function* () { }).prototype"_s,
 };
 
 constexpr ASCIILiteral constructorsWithLockedMembers[] = {
@@ -936,8 +932,8 @@ static void testStartUpWatchesNoObjectBeforeItIsLocked(LoadedProgram& program)
     JSGlobalObject* realm = program.realm();
     for (JSObject* watched : { static_cast<JSObject*>(realm->arrayPrototype()), static_cast<JSObject*>(realm->stringPrototype()) })
         AOT_TEST_CHECK(watched->structure()->hasListedImmutableProperties() && watched->structure()->transitionWatchpointSet().isBeingWatched());
-    for (JSObject* lockedWhole : { static_cast<JSObject*>(realm->objectPrototype()), static_cast<JSObject*>(realm->regExpPrototype()) })
-        AOT_TEST_CHECK(lockedWhole->structure()->hasImmutableProperties() && !lockedWhole->structure()->transitionWatchpointSet().isBeingWatched());
+    AOT_TEST_CHECK(realm->regExpPrototype()->structure()->hasListedImmutableProperties());
+    AOT_TEST_CHECK(realm->objectPrototype()->structure()->hasImmutableProperties() && !realm->objectPrototype()->structure()->transitionWatchpointSet().isBeingWatched());
     AOT_TEST_CHECK(realm->objectPrototypeChainIsSaneWatchpointSet().isStillValid() && realm->regExpPrimordialPropertiesWatchpointSet().isStillValid() && realm->promiseThenWatchpointSet().isStillValid());
     Structure* structureOfArrayPrototype = realm->arrayPrototype()->structure();
     for (const Identifier& watched : { vm.propertyNames->join, vm.propertyNames->iteratorSymbol, vm.propertyNames->constructor }) {

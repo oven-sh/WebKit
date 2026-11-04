@@ -89,7 +89,7 @@ static Effects effectsOfTypedReadByNameForLoopInvariants()
     return effects;
 }
 
-std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& operation, const TypesOfInputs& types)
+std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& operation, const TypesOfInputs& types, FunctionID* halfRunBehindLooks)
 {
     Opcode opcode = operation.opcode();
     bool isByKey = accessesByKeyForLoopInvariants.contains(opcode);
@@ -104,6 +104,12 @@ std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& 
     if (typedForm != TypedForm::Built && !isBuiltBehindLooks)
         return std::nullopt;
     Walker::FormAskedAhead form = walker.takeFormAskedAhead();
+    // `gauge.level`, an accessor above an object that is out of sight: buildAccessToAccessorBehindLooksForTypedAccess().
+    if (form.opcode == Opcode::CallDirect) {
+        if (halfRunBehindLooks)
+            *halfRunBehindLooks = form.function;
+        return std::nullopt;
+    }
 
     // At the level Expected the operation tests for itself, and does the closed operation where the test fails.
     if (isByKey)
@@ -313,6 +319,72 @@ static bool mayLeaveSomeLoopForLoopInvariants(const TypeArena& types, const Draf
     return true;
 }
 
+static BlockID nearestCommonDominator(const BodyIndex& index, BlockID first, BlockID second)
+{
+    if (!first)
+        return second;
+    while (!index.dominates(first, second))
+        first = index.immediateDominator(first);
+    return first;
+}
+
+Walker::HoistPoint Walker::hoistPointInFrontOf(uint32_t loopIndex) const
+{
+    const OpenLoop& loop = m_openLoops[loopIndex];
+    return { loop.frame, m_frames[loop.frame].index->loop(loop.loop).head, loop.blockInFront };
+}
+
+Walker::HoistPoint Walker::currentHoistPoint() const
+{
+    if (m_numberOfLoopsThatMayBeLeft < m_openLoops.size())
+        return hoistPointInFrontOf(m_numberOfLoopsThatMayBeLeft);
+    return { m_frames.size() - 1, m_frames.last().block, m_block };
+}
+
+// Hoisted code runs once per entry into the loop, and most loops run few iterations: off a conditional path it costs more than it saves.
+bool Walker::executesOnEveryIteration(uint32_t loopIndex, const HoistPoint& point) const
+{
+    if (point.block && m_code.at(point.block).frequency != BlockFrequency::Normal)
+        return false;
+    const OpenLoop& loop = m_openLoops[loopIndex];
+    auto blockInFrame = [&](size_t frameIndex) {
+        return frameIndex == point.frameIndex ? point.inputBlock : m_frames[frameIndex].block;
+    };
+    const BodyIndex& index = *m_frames[loop.frame].index;
+    if (!loop.backEdgeDominator) {
+        BlockID head = index.loop(loop.loop).head;
+        for (BlockID member : index.membersOf(loop.loop)) {
+            if (!index.isReachable(member))
+                continue;
+            for (BodyTarget target : index.terminator(member).targets()) {
+                if (target.block() == head)
+                    loop.backEdgeDominator = nearestCommonDominator(index, loop.backEdgeDominator, member);
+            }
+        }
+        if (!loop.backEdgeDominator)
+            loop.backEdgeDominator = head;
+    }
+    if (!index.dominates(blockInFrame(loop.frame), loop.backEdgeDominator))
+        return false;
+
+    for (size_t frameIndex = loop.frame + 1; frameIndex <= point.frameIndex; ++frameIndex) {
+        const Frame& frame = m_frames[frameIndex];
+        const BodyIndex& callee = *frame.index;
+        if (!frame.returnDominator) {
+            for (BlockID block : callee.blocksInDominatorOrder()) {
+                TerminatorKind kind = callee.terminator(block).kind();
+                if (kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall)
+                    frame.returnDominator = nearestCommonDominator(callee, frame.returnDominator, block);
+            }
+            if (!frame.returnDominator)
+                frame.returnDominator = entryBlock;
+        }
+        if (!callee.dominates(blockInFrame(frameIndex), frame.returnDominator))
+            return false;
+    }
+    return true;
+}
+
 // The outermost of the loops around the place where the draft is built that it may stand in front of. The loops from `m_numberOfLoopsThatMayBeLeft` on do not stand around that place.
 std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, const Effects& effects) const
 {
@@ -336,6 +408,7 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
     }
 
     LocationMasks reads = effects.reads.without(heapsWrittenOnceForLoopInvariants);
+    HoistPoint point = currentHoistPoint();
     std::optional<uint32_t> outermost;
     forEachOpenLoopAround(numberOfLoops, 0, [&](uint32_t index) {
         const OpenLoop& loop = m_openLoops[index];
@@ -349,7 +422,11 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
         });
         if (!operandsStandInFront)
             return IterationStatus::Done;
+        // One call through a resolved target saves more than the resolution costs.
+        if (draft.opcode != Opcode::ResolveCallTarget && !executesOnEveryIteration(index, point))
+            return IterationStatus::Done;
         outermost = index;
+        point = hoistPointInFrontOf(index);
         return IterationStatus::Continue;
     });
     return outermost;
@@ -484,6 +561,73 @@ ValueID Walker::findSameInFrontOfLoop(uint32_t indexOfLoop, const Draft& draft) 
             return loop.tableOfBuiltInFront[place];
     }
     return { };
+}
+
+// What hashOfRecordInFrontOfLoop() reads of a draft of one: it has no flag and no word of its own.
+struct ConversionSoughtInFrontOfLoop {
+    std::span<const uint32_t> payload() const { return { }; }
+    std::span<const Reference> operands() const { return { &operand, 1 }; }
+
+    Opcode opcode;
+    Representation representation;
+    uint8_t flags { 0 };
+    Reference operand;
+};
+
+// It has no effect, so the looks at the loops around have nothing to count, and of all that findLoopToBuildInFrontOf() asks there is left: what is known of the operand, and where it stands.
+Reference Walker::appendConversionAmongOpenLoops(Opcode opcode, Representation to, Reference operand, TypeID proven, Origin origin)
+{
+    static constexpr OpcodeSet conversionsThatMayLeaveLoops { Opcode::Box, Opcode::Unbox, Opcode::Compress };
+    static_assert([]() consteval {
+        bool mayLeave = true;
+        conversionsThatMayLeaveLoops.forEach([&](Opcode conversion) {
+            mayLeave &= conversionsOfForm.contains(conversion) && resultRuleOf(conversion) != ResultRule::None && resultRuleOf(conversion) != ResultRule::Allocation && interpretedOf(conversion) != Interpretation::Allocation
+                && boundToOf(conversion) == BoundTo::Nothing && !reliesOf(conversion).contains(Proof::SlotFilled) && !reliesOf(conversion).contains(Proof::InBounds);
+        });
+        return mayLeave;
+    }());
+    RELEASE_ASSERT(conversionsThatMayLeaveLoops.contains(opcode) && operand.isRecord());
+
+    BlockID block = m_block;
+    uint32_t numberOfLoopsAround = std::min<uint32_t>(m_openLoops.size(), m_numberOfLoopsThatMayBeLeft);
+    // What the state knows of the operand beyond its own type may have been learned in the loop.
+    if (numberOfLoopsAround && proven == ownTypeOf(operand)) {
+        HoistPoint point = currentHoistPoint();
+        forEachOpenLoopAround(numberOfLoopsAround, 0, [&](uint32_t index) {
+            const OpenLoop& loop = m_openLoops[index];
+            if (!loop.blockInFront || !standsInFrontOfLoop(index, operand) || !executesOnEveryIteration(index, point))
+                return IterationStatus::Done;
+            point = hoistPointInFrontOf(index);
+            block = loop.blockInFront;
+            numberOfLoopsAround = index;
+            return IterationStatus::Continue;
+        });
+    }
+    if (numberOfLoopsAround >= m_openLoops.size())
+        return Reference::value(m_code.appendConversion(block, opcode, operand.id(), to, proven, origin));
+    if (m_code.at(block).hasEnded())
+        return { };
+
+    const OpenLoop& loop = m_openLoops[numberOfLoopsAround];
+    auto isSame = [&](ValueID id) {
+        const Operation& record = m_code.at(id);
+        return record.opcode == opcode && record.representation == to && record.operand(0) == operand.id();
+    };
+    if (loop.tableOfBuiltInFront.isEmpty()) {
+        for (ValueID id : loop.builtInFront) {
+            if (isSame(id))
+                return Reference::value(id);
+        }
+    } else {
+        size_t mask = loop.tableOfBuiltInFront.size() - 1;
+        for (size_t place = hashOfRecordInFrontOfLoop(ConversionSoughtInFrontOfLoop { opcode, to, 0, operand }) & mask; loop.tableOfBuiltInFront[place]; place = (place + 1) & mask) {
+            if (isSame(loop.tableOfBuiltInFront[place]))
+                return Reference::value(loop.tableOfBuiltInFront[place]);
+        }
+    }
+    ValueID id = m_code.appendConversion(block, opcode, operand.id(), to, proven, origin);
+    noteBuiltInFrontOfLoop(numberOfLoopsAround, id);
+    return Reference::value(id);
 }
 
 void Walker::noteBuiltInFrontOfLoop(uint32_t indexOfLoop, ValueID built)

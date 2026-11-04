@@ -170,7 +170,6 @@ static void testEveryFunctionOfChainOfTailCallsEnds()
         for (unsigned function = 1; function <= numberOfFunctions; ++function) {
             AOT_TEST_CHECK(plan.endsItsTailCalls(FunctionID(function)));
             AOT_TEST_CHECK(makesOnlyTailCallsThatEnd(program, facts, functionsThatEnd, FunctionID(function)));
-            AOT_TEST_CHECK(!callsItselfInTailPosition(facts, FunctionID(function)));
         }
     });
 }

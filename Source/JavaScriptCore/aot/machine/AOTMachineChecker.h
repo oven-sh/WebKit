@@ -28,6 +28,9 @@ namespace JSC { namespace AOT { namespace Machine {
 // Not asked here, since it holds of what the scan leaves standing: the Extracts of a Patch stand right behind it, at the head of its first successor where it ends its block, with nothing between them, and a member has one. That successor has no other predecessor.
 // Allocator::allocatePatch() asks it, in every build: MalformedProcedure.
 bool validate(Procedure&);
+// Behind threadJumps() and mergeIdenticalBlocks(), ahead of Order: the same rules, of what the two passes leave. A block that they have passed by or merged away still stands in the procedure with its edges,
+// and an Upsilon that they have taken out of its block still names the block. Nothing orders or encodes either, so the rules are asked of the blocks that the entrypoints lead to and of the operations that those list.
+bool validateBehindBlockPasses(Procedure&);
 
 // Behind allocateRegisters(). AOTMachineAllocationChecker.cpp.
 // A symbolic run over the steps: each register and each spill holds the set of values that it is known to hold, and every read asks whether the value that the operation names is among them.

@@ -39,7 +39,6 @@ public:
     // Behind holdsValue(): an Extension holds the granule of the slot.
     Operand loadSlotThatHoldsValue(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     // For a slot that has a marker for absent: what lies there, markers among it, and absent where the slot has no storage. No branch stands in it for a slot in the cell.
-    Operand loadWord(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     // Both require an extension that holds the granule of the slot.
     void storeSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot* extensionWord, const Type& storedType);
     void storeSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot* extensionWord = nullptr);

@@ -57,7 +57,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr uint32_t operationsFromOneStart = 1 << 17;
 // A start is the body of a module that the program starts with, a function that it hands to code that nobody knows, a function of the program's own that calls RegExp with a text that is not written, or one that names such a function.
 // The first two kinds in all, and the last two in all, go through no more than this many times the operations that the bodies of the program hold,
-// and what a few starts that never end use up. A program that does little else than make patterns needs twice what it holds, a large command-line application a quarter.
+// and what a few starts that never end use up. A program that does little else than make patterns needs twice what it holds, a large application a quarter.
 static constexpr uint64_t operationsInAllForEachOfProgram = 4;
 // A text that is found costs this much, and nothing else: `for (let i = 0; ; i++) new RegExp("a" + i)` ends too.
 static constexpr uint64_t operationsForText = 1 << 8;

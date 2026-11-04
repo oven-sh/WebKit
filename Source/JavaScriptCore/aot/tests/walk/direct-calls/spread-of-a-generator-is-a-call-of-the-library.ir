@@ -4,22 +4,28 @@
 # function* count(n: number) { yield n; }
 # function all() { return [...count(3)]; }   function allOf(things: unknown) { return [...things]; }
 # RUN: walk f2 mechanisms=all-Inlining
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f2:Body
 # CHECK: [[generator]]: coroutine(f1) {{*}} = CallDirect {{*}}function=f1
 # CHECK: = IsUnmodifiedGenerator [[generator]]
 # CHECK: = CallDirect {{*}}[[generator]]{{*}}function=f4
 # RUN(CHANGED): walk f2 mechanisms=all-Inlining
+# REQUIRES(CHANGED): entries-of-bun
 # CHANGED: = AppendIterable
 # of which nothing is proven: the operation lists what it can in one piece
 # RUN(ANYTHING): walk f3 mechanisms=all-Inlining
+# REQUIRES(ANYTHING): entries-of-bun
 # ANYTHING-LABEL: code f3:Body
 # ANYTHING: = AppendIterable
 # RUN(NEVER): walk f3 mechanisms=all-Inlining
+# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: function=f4
 # NEVER-NOT: IsUnmodifiedGenerator
 # RUN(WITHHELD): walk f2 mechanisms=none
+# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-NOT: function=f4
 # RUN(LINK): link functions mechanisms=all
+# REQUIRES(LINK): entries-of-bun
 # LINK: function f4
 # LINK: referrers anybody
 

@@ -212,7 +212,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetMappedArgument, void, (Instance
 
 void throwNotAFunctionError(JSGlobalObject* globalObject, ThrowScope& scope, JSValue callee)
 {
-    throwException(globalObject, scope, createNotAFunctionError(globalObject, callee));
+    throwException(globalObject, scope, createNotAFunctionError(globalObject, callee, StringView()));
 }
 
 // How the callee is written at the place in a function that the operation on top returns to: CallEmitter::siteThatNamesCallee() has left it in the fault table.
@@ -318,7 +318,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTApply, EncodedJSValue, (Instance* instance,
     JSValue function = JSValue::decode(callee);
     auto callData = JSC::getCallData(function);
     if (callData.type == CallData::Type::None) {
-        throwException(globalObject, scope, createNotAFunctionError(globalObject, function));
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, function, StringView()));
         OPERATION_RETURN(scope, encodedJSValue());
     }
     MarkedArgumentBuffer arguments;

@@ -221,6 +221,15 @@ void Reader::readLayouts()
     readInChunks(loops, records.size(), layoutsPerChunk, [&](uint32_t index) {
         RecordChecker checker(*this);
         read(checker, records[index], static_cast<LayoutRecord&>(m_program.layouts[index]));
+        // A type that reads as anything guards nothing, and nothing rests on what is only expected of a field: what else the type names is the guess.
+        std::span<const Wire::Field> fields = checker.slice<Wire::Field>(records[index].fields);
+        for (size_t field = 0; field < fields.size(); ++field) {
+            DeclaredType& declared = m_program.layouts[index].fields[field].declared;
+            if (declared.isEstablished())
+                continue;
+            if (TypeID expected = m_types->typeExpectedBesideViews(fields[field].declared.type))
+                declared.expect(ExpectedType(expected));
+        }
     });
 }
 

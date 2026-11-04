@@ -145,6 +145,7 @@ void StringTable::initialize(const BuiltinTable& builtins, const ParallelLoops& 
     RELEASE_ASSERT(!m_builtins);
     m_builtins = &builtins;
     size_t numberOfStrings = strings.size();
+    m_numberOfStringsAsRead = numberOfStrings;
     size_t largestSizeWhenInitialized = numberOfStrings + 6 + builtins.nameCount();
     m_strings.reserveInitialCapacity(largestSizeWhenInitialized);
     m_nameClasses.reserveInitialCapacity(largestSizeWhenInitialized);
@@ -238,21 +239,23 @@ void StringTable::internCodeUnitsIn(const CodeUnitSet& codeUnits)
     }
 }
 
-void StringTable::internCodeUnitsOf(std::span<const uint8_t> bytes)
+void StringTable::internCodeUnitsOf(std::span<const uint8_t> bytes, size_t numberOfBytesLookedAt)
 {
     auto internIfNew = [&](char16_t unit) {
         if (!(m_internedCodeUnits[unit / 64] >> (unit % 64) & 1))
             internCodeUnit(unit);
     };
-    if (charactersAreAllASCII(byteCast<Latin1Character>(bytes))) {
+    // A text ends where a character ends, so what lies behind the front of a text is characters too.
+    std::span<const uint8_t> rest = bytes.subspan(numberOfBytesLookedAt);
+    if (charactersAreAllASCII(byteCast<Latin1Character>(rest))) {
         if (bytes.size() < 2)
             return;
-        for (uint8_t byte : bytes)
+        for (uint8_t byte : rest)
             internIfNew(byte);
         return;
     }
-    Vector<char16_t> units = decodeProgramString(bytes);
-    if (units.size() < 2)
+    Vector<char16_t> units = decodeProgramString(rest);
+    if (units.size() < 2 && !numberOfBytesLookedAt)
         return;
     for (char16_t unit : units)
         internIfNew(unit);
@@ -340,25 +343,67 @@ StringID StringTable::intern(StringView view)
     return intern(encodeProgramString(view).span());
 }
 
+std::span<const uint8_t> StringTable::keep(std::span<const uint8_t> bytes)
+{
+    m_ownStrings.append(Vector<uint8_t>(bytes));
+    return m_ownStrings.last().span();
+}
+
+StringID StringTable::internKept(std::span<const uint8_t> bytes, FrontsOfKeptTexts& fronts)
+{
+    RELEASE_ASSERT(m_builtins);
+    ASSERT(isCanonicalProgramString(bytes));
+    FrontOfKeptTexts& front = fronts.add(bytes.data(), FrontOfKeptTexts { }).iterator->value;
+    uint64_t hash = hashGoingOnFrom(front, bytes);
+    StringID id = find(m_shards[shardIndexOf(hash)], hash, bytes);
+    // Every code unit of a string of the table is a string of the table.
+    size_t numberOfBytesLookedAt = std::min(std::exchange(front.numberOfBytesLookedAt, std::max(front.numberOfBytesLookedAt, bytes.size())), bytes.size());
+    if (id)
+        return id;
+    id = append(bytes, hash);
+    internCodeUnitsOf(bytes, numberOfBytesLookedAt);
+    return id;
+}
+
 uint64_t StringTable::hashOf(std::span<const uint8_t> bytes)
 {
+    FrontOfKeptTexts nothing;
+    return hashGoingOnFrom(nothing, bytes);
+}
+
+uint64_t StringTable::hashOf(StringID id) const
+{
+    return id.index() < m_numberOfStringsAsRead ? hashOf(m_strings[id.index()]) : m_hashesOfInternedStrings[id.index() - m_numberOfStringsAsRead];
+}
+
+uint64_t StringTable::hashGoingOnFrom(FrontOfKeptTexts& front, std::span<const uint8_t> bytes)
+{
     // Eight bytes at a step: each step waits for the one in front of it, a text may be megabytes long, and one thread hashes it.
-    // The length goes in first, so a text that ends in zero bytes differs from a shorter one.
+    // The length goes in last, so a text that ends in zero bytes differs from a shorter one, and the whole words of a text are hashed as those of every text that begins with it.
     constexpr uint64_t multiplier = 0x9e3779b97f4a7c15;
     auto add = [](uint64_t hash, uint64_t word) {
         hash = (hash ^ word) * multiplier;
         return hash ^ hash >> 32;
     };
-    uint64_t hash = add(0, bytes.size());
+    size_t numberOfBytes = bytes.size();
+    size_t numberOfWords = numberOfBytes / sizeof(uint64_t);
+    if (front.numberOfWords > numberOfWords) {
+        front.hashOfWords = 0;
+        front.numberOfWords = 0;
+    }
+    uint64_t hash = front.hashOfWords;
+    bytes = bytes.subspan(front.numberOfWords * sizeof(uint64_t));
     for (; bytes.size() >= sizeof(uint64_t); bytes = bytes.subspan(sizeof(uint64_t))) {
         uint64_t word;
         memcpySpan(asMutableByteSpan(word), bytes.first(sizeof(uint64_t)));
         hash = add(hash, word);
     }
+    front.hashOfWords = hash;
+    front.numberOfWords = numberOfWords;
     uint64_t rest = 0;
     for (size_t index = 0; index < bytes.size(); ++index)
         rest |= static_cast<uint64_t>(bytes[index]) << (index * 8);
-    hash = add(hash, rest);
+    hash = add(add(hash, rest), numberOfBytes);
     hash ^= hash >> 29;
     hash *= 0xbf58476d1ce4e5b9;
     hash ^= hash >> 32;
@@ -398,7 +443,7 @@ void StringTable::reserve(Shard& shard, size_t count) const
     shard.count = 0;
     for (StringID id : oldSlots) {
         if (id)
-            insert(shard, hashOf(m_strings[id.index()]), id);
+            insert(shard, hashOf(id), id);
     }
 }
 
@@ -413,6 +458,7 @@ StringID StringTable::append(std::span<const uint8_t> bytes, uint64_t hash, Buil
     m_strings.constructAndAppend(bytes);
     m_nameClasses.append(classifyName(bytes));
     m_builtinNames.append(name);
+    m_hashesOfInternedStrings.append(hash);
     recordBuiltinName(id);
     Shard& shard = m_shards[shardIndexOf(hash)];
     reserve(shard, static_cast<size_t>(shard.count) + 1);

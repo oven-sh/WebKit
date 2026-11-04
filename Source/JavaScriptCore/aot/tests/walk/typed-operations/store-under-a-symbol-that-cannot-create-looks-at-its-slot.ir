@@ -13,14 +13,10 @@
 # f1 = make, f2 = serve
 # `make()` runs twice, so the class may be evaluated again, nobody answers for what stands above its objects, and no typed store may create a property.
 # The type that the class implements requires the symbol, so its slot is reserved in the cell, and a socket serves many requests: from the first store on the slot is filled.
-# A store into a filled slot asks nothing of what stands above: the slot is looked at, and behind the look the store is one instruction. An empty slot goes the closed way.
+# A store into a filled slot asks nothing of what stands above: the slot is looked at, and behind the look the store is one instruction. An empty slot goes the closed way. One store alone: one operation makes all the tests.
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
-# CHECK: ShapeTest {{*}}layouts=[L0]
-# CHECK: IsNotFrozen
-# CHECK: PropSet {{*}}key=symbol("request")
-# CHECK: IsSlotFilled {{*}}key=symbol("request"){{*}} receivers=[L0]
-# CHECK: PutSlot {{*}}key=symbol("request"){{*}} receivers=[L0]
+# CHECK: PutSlot {{*}}key=symbol("request"){{*}} receivers=[L0] level=Expected
 # CHECK-NOT: PutSlotOrAdd
 
 module m0 path="store-under-a-symbol-that-cannot-create-looks-at-its-slot.ts" displayPath="store-under-a-symbol-that-cannot-create-looks-at-its-slot.ts" body=f0 namespaceLayout=L(m0)

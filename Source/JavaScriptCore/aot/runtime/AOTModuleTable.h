@@ -62,6 +62,8 @@ public:
     std::span<const RequiredNameData> requiredNames(ModuleID module) const { return listOf(m_tables->requiredNames(), module, &ModuleData::firstRequiredName); }
     // The export statement that asks for the name. An import asks for any other one.
     const ExportStatementData* findExportStatement(const RequiredNameData&) const;
+    // Of an entry that shows a variable. None: the build knows of no module that a mock may stand in place of.
+    std::optional<ModuleID> moduleThatDeclares(const ModuleExportData&) const;
     // The table of exports has no entry for such a name.
     std::span<const AmbiguousExportData> ambiguousExports(ModuleID) const;
     bool isAmbiguousExport(ModuleID, StringView name) const;
@@ -132,6 +134,16 @@ inline const IndirectExportData& ModuleTable::indirectExport(const ModuleExportD
     std::span<const IndirectExportData> indirectExports = m_tables->indirectExports();
     RELEASE_ASSERT(moduleExport.indirectExport < indirectExports.size());
     return indirectExports[moduleExport.indirectExport];
+}
+
+inline std::optional<ModuleID> ModuleTable::moduleThatDeclares(const ModuleExportData& moduleExport) const
+{
+    std::span<const uint32_t> modules = m_tables->modulesThatDeclareExports();
+    if (modules.empty())
+        return std::nullopt;
+    size_t number = &moduleExport - m_tables->moduleExports().data();
+    RELEASE_ASSERT(number < modules.size());
+    return ModuleID(modules[number]);
 }
 
 inline const ExportStatementData* ModuleTable::findExportStatement(const RequiredNameData& requiredName) const

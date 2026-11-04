@@ -51,7 +51,6 @@ void enterHandler(Walker& walker, BlockID inputHandler)
     const BodyIndex& index = walker.currentBodyIndex();
     if (!walker.has(Mechanism::Handlers) || index.hasIrreducibleFlow() || index.isLoopHead(inputHandler))
         walker.state().clear();
-    walker.state().barriers().enterHead();
     enterHandlerWithWhatIsKnown(walker, inputHandler);
 }
 

@@ -40,6 +40,7 @@ public:
     void generateTryPutIndex(const ValueContext&);
     void generateTryCopyFilledElements(const ValueContext&);
     void generateTryPutElements(const ValueContext&);
+    void generateTryFillNewArray(const ValueContext&);
     void generateGrowNewArray(const ValueContext&);
     void generateTruncateNewArray(const ValueContext&);
 

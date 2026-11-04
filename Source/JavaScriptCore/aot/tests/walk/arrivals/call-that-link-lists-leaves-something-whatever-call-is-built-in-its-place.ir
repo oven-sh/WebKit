@@ -2,6 +2,7 @@
 # which makes the call of `return`. If the call that was built counted for the call that is listed, nothing would be left for the method there, and its parameter would be proven what the one call by hand passes: a number.
 # class Countdown { .. return(reason) { console.log(typeof reason); .. } }   for (const left of new Countdown(from)) { .. break; }   countdown.return(7)
 # RUN: walk f1 f2 f6 mechanisms=none+TypedOperations+DirectCalls+Arrivals
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = CallDirect {{*}}function=f9
 # CHECK-LABEL: code f2:Body

@@ -30,6 +30,8 @@ public:
     TellingFields(const ParallelLoops&, const Wire::Sections& checkedSections);
 
     bool tellApart(uint32_t layout, uint32_t otherLayout) const;
+    // tellApart(anything, otherLayout) is false.
+    bool tellsNothingApartFrom(uint32_t otherLayout) const { return fieldsOf(otherLayout).empty(); }
     // The names under which the layout itself declares nothing but literals.
     void forEachKeyOfOwnTellingField(uint32_t layout, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
     {
@@ -102,14 +104,9 @@ template<typename Listed>
 void destroyLists(const ParallelLoops&, Vector<Vector<Listed>>&);
 
 // AOTReaderTaggedLayouts.cpp. `members` are the families by layout of the wire, which gain the new layouts. The first new layout gets the number `firstLayout`.
-Vector<TaggedFamily> planTaggedFamilies(const ParallelLoops&, const Wire::Sections& checkedSections, const ExternalFunctionBodies*, Vector<Vector<LayoutID>>& members, const TellingFields&, uint32_t firstLayout);
+Vector<TaggedFamily> planTaggedFamilies(const ParallelLoops&, const Wire::Sections& checkedSections, const ExternalFunctionBodies*, ArenasOfWorkers&, Vector<LayoutSetID>& members, const TellingFields&, uint32_t firstLayout);
 
-// AOTWireFunctionFamilies.cpp. By function of the wire.
-struct FunctionFamily {
-    Vector<FunctionID> functions;
-    Vector<BuiltinID> builtins;
-};
-Vector<FunctionFamily> collectFunctionFamilies(const ParallelLoops&, const Wire::Sections& checkedSections, const BuiltinTable&);
+// AOTWireFunctionFamilies.cpp.
 bool isSignature(const Wire::Function&);
 
 } } } // namespace JSC::AOT::Typed

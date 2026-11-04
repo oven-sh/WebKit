@@ -359,6 +359,14 @@ void Modules::dropErrorsOfLoadsThatCameTo(const ScopedLambda<bool(ModuleID)>& is
         dropErrorOfLoadEndedByMock(module);
 }
 
+void Modules::dropErrorsOfLoadsEndedByMocks()
+{
+    BitVector kept = m_modulesWithLoadEndedByMock;
+    kept.merge(m_mockedModulesWithErrorKeptByLoader);
+    for (size_t module : kept)
+        dropErrorOfLoadEndedByMock(ModuleID(module));
+}
+
 // The loader has made an entry for what a statement asks for, and none yet for what an import() or a require() asks for.
 bool Modules::isFetchedForImportStatement(ModuleID module) const
 {
@@ -371,15 +379,12 @@ bool Modules::runMocksBelowModuleThatLoaderFetchesSlow(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     MockDoor door(this, module, "the loader fetches it"_s);
-    if (mocksWaitToBeLaidAgain()) [[unlikely]] {
-        layMocksAgainBelow(module);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
+    // A call that is made again may leave a mock that waits.
+    evaluateModulesOwedBelow(module);
+    RETURN_IF_EXCEPTION(scope, false);
     scope.release();
-    if (m_modulesWithMockToRun.isEmpty()) [[likely]] {
-        evaluateModulesOwedBelow(module);
+    if (m_modulesWithMockToRun.isEmpty()) [[likely]]
         return false;
-    }
     // The entry that a statement left when the factory failed is still there.
     bool isAskedForByImportCall = m_instance.vm->aotState().frameOfImportThatAsksLoader;
     if (isAskedForByImportCall)
@@ -392,14 +397,13 @@ bool Modules::mockFailedBehindImportStatement(ModuleID module)
     return m_modulesWithMockToRun.get(module.index()) && isFetchedForImportStatement(module);
 }
 
-// Ahead of what is owed below: a module that is mocked again stays owed.
-void Modules::layMocksAgainBelow(ModuleID root)
+// The calls that were made while the body of the module ran. The host knows which bodies ran at each.
+void Modules::layMocksOfBodyAgain(ModuleID module)
 {
-    if (!host().layMocksAgain)
+    if (!mocksWaitToBeLaidAgain() || !host().layMocksAgain)
         return;
-    BitVector reached = reachedByStatements(root, AtMock::Stops);
-    host().layMocksAgain(m_instance.globalObject, [&](ModuleID module) {
-        return reached.quickGet(module.index());
+    host().layMocksAgain(m_instance.globalObject, [&](ModuleID each) {
+        return each == module;
     });
 }
 
@@ -448,11 +452,7 @@ bool Modules::runMocksBelowSlow(ModuleID root, RootOfLoad rootOfLoad)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (mocksWaitToBeLaidAgain()) [[unlikely]] {
-        layMocksAgainBelow(root);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
-    if (!m_modulesOwedToImportersThatRan.isEmpty() || !m_modulesWithMockToLetGo.isEmpty() || !m_modulesThatLoaderLetGo.isEmpty()) [[unlikely]] {
+    if (mocksWaitToBeLaidAgain() || !m_modulesOwedToImportersThatRan.isEmpty() || !m_modulesWithMockToLetGo.isEmpty() || !m_modulesThatLoaderLetGo.isEmpty()) [[unlikely]] {
         evaluateModulesOwedBelow(root);
         RETURN_IF_EXCEPTION(scope, false);
     }
@@ -562,9 +562,27 @@ bool runBodyOfLinkedModuleAheadOfMock(JSGlobalObject* realm, ModuleID module)
     Modules* modules = modulesOf(realm);
     MockDoor door(modules, module, "the mock call"_s);
     // A mock without a factory is made of the original, and may come into its place long behind its call.
-    if (modules)
+    if (modules) {
+        modules->countMocksAnewBehindLoad(module);
         modules->noteCallOfMock(module);
+        // Also a mock that goes straight into the place of one that waited, or is laid over the module: it passes neither deferMock() nor didEndMock().
+        modules->dropErrorsOfLoadsEndedByMockOf(module);
+    }
     return modules && modules->runBodyOfLinkedModuleAheadOfMock(module);
+}
+
+void dropErrorsOfLoadsEndedByMocks(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->dropErrorsOfLoadsEndedByMocks();
+}
+
+void letMockWaitBehindLateFailure(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    MockDoor door(modules, module, "the factory failed behind an await"_s);
+    if (modules)
+        modules->letMockWaitBehindLateFailure(module);
 }
 
 bool importsByStatements(JSGlobalObject* realm, ModuleID importer, ModuleID imported)

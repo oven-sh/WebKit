@@ -1,0 +1,16 @@
+# built with --no-compile-function-source a message spells what failed from the value and the name: a read only in an error whose trace has a frame, a call in every error
+# the program of quoted-text.ir, with Error.stackTraceLimit = 0 and 1
+# OPTIONS: exclude=FunctionSource
+# RUN: run-in-shell Error.stackTraceLimit = 0; globalThis.report = message => print(message);
+# CHECK: undefined is not an object
+# CHECK-NEXT: task.run is not a function. (In 'task.run()', 'task.run' is undefined)
+# CHECK-NEXT: null is not an object
+# CHECK-NEXT: exited with 0
+# RUN(ZERO): run-in-shell Error.stackTraceLimit = 0; globalThis.report = message => print(message);
+# ZERO-NOT: evaluating
+# RUN(ONE): run-in-shell Error.stackTraceLimit = 1; globalThis.report = message => print(message);
+# ONE: undefined is not an object (evaluating 'undefined.title')
+# ONE-NEXT: task.run is not a function. (In 'task.run()', 'task.run' is undefined)
+# ONE-NEXT: null is not an object (evaluating 'null.run')
+# ONE-NEXT: exited with 0
+# PROGRAM-OF: quoted-text.ir

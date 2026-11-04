@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTChainDependents.h"
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
@@ -18,6 +19,7 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTSort.h"
 #include "AOTState.h"
@@ -1002,6 +1004,55 @@ void ClassTable::SetOfFieldRecords::add(uint32_t number)
     bits |= 1ull << number % PagedBitSet::bitsPerPage;
 }
 
+// ---- Guards that hang on the objects of a chain
+
+struct ClassTable::OwnerOfGuardsThatHangOnChains final : ChainDependentOwner {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(OwnerOfGuardsThatHangOnChains);
+
+    explicit OwnerOfGuardsThatHangOnChains(ClassTable& classes)
+        : classes(classes)
+    {
+    }
+
+    void dropChainDependent(VM&, uint32_t classIndex, UniquedStringImpl* uidOrNull) final { classes.endGuardThatHangsOnChain(classIndex, uidOrNull); }
+    bool hasChainDependent(VM&, uint32_t classIndex, UniquedStringImpl* uidOrNull) const final { return classes.guardThatHangsOnChainHolds(classIndex, uidOrNull); }
+
+    ClassTable& classes;
+};
+
+ChainDependentOwnerID ClassTable::ownerOfGuardsThatHangOnChains()
+{
+    if (!m_ownerOfGuardsThatHangOnChains) {
+        m_ownerOfGuardsThatHangOnChains = makeUnique<OwnerOfGuardsThatHangOnChains>(*this);
+        m_numberOfOwnerOfGuardsThatHangOnChains = m_state.chainDependents->addOwner(*m_ownerOfGuardsThatHangOnChains);
+    }
+    return m_numberOfOwnerOfGuardsThatHangOnChains;
+}
+
+void ClassTable::endGuardThatHangsOnChain(uint32_t classIndex, UniquedStringImpl* uidOrNull)
+{
+    const LayoutData* classLayout = classWithIndex(classIndex);
+    RELEASE_ASSERT(classLayout);
+    if (!uidOrNull) {
+        endClassGuard(m_state, *classLayout, ClassSide::Prototype);
+        return;
+    }
+    endClassGuardsOfName(m_state, *classLayout, ClassSide::Prototype, identifiersOf(m_state.instance).numberOf(uidOrNull));
+}
+
+bool ClassTable::guardThatHangsOnChainHolds(uint32_t classIndex, UniquedStringImpl* uidOrNull) const
+{
+    const LayoutData* classLayout = classWithIndex(classIndex);
+    if (!classLayout || guardHasEnded(*classLayout, ClassSide::Prototype))
+        return false;
+    std::optional<uint32_t> key = uidOrNull ? identifiersOf(m_state.instance).numberOf(uidOrNull) : std::nullopt;
+    if (!key)
+        return true;
+    return std::ranges::any_of(guardsOfNameInClassRecord(m_tables, *classLayout, ClassSide::Prototype, *key), [&](const NamedClassGuardData& guard) {
+        return !m_endedGuardsOfNames.contains(guard.numberOfBit());
+    });
+}
+
 void ClassTable::didChangeInstancePrototype(VM& vm, const LayoutData& instanceLayout, JSValue prototype)
 {
     if (!instanceLayout.isClass())
@@ -1011,6 +1062,9 @@ void ClassTable::didChangeInstancePrototype(VM& vm, const LayoutData& instanceLa
         return;
     JSObject* holder = registeredHolderOf(vm, m_state, layout, ClassSide::Prototype);
     if (holder && prototype == JSValue(holder))
+        return;
+    // Until its first object is linked the class of what Object.create() makes has no prototype. What is allocated till then says in its cell that it stands below another.
+    if (!holder && isClassOfCreatedObjects(layout))
         return;
     // An object of a class that nobody has defined: its guards have not begun, and hold for no object alone.
     if (!holder) {
@@ -1025,6 +1079,102 @@ void ClassTable::didChangeInstancePrototype(VM& vm, const LayoutData& instanceLa
         auto dependents = std::ranges::equal_range(m_tables.methodTableDependents(), guard.numberOfBit(), { }, &MethodTableDependentData::guardBit);
         if (!dependents.empty())
             repointMethodTableEntries(m_state, dependents, false);
+    }
+}
+
+// ---- Objects that a program lays between the objects of a class and its prototype object
+//
+// express, at every request: `Object.setPrototypeOf(req, app.request)`, and app.request stands below an object that stands below IncomingMessage.prototype.
+// Such a request still finds every member of its class, but for the names that the objects between have themselves. It does not get the bit that HasLayoutPrototype asks for.
+// Whoever passes by that bit asks a guard of the class as well, of a name or of the side (walk/AOTWalkTypedAccesses.cpp: whatChangesForbid). So, for all the objects of the class:
+// - no object between may have a name that is found above them: it would hide a member;
+// - the guards of every name that an object between has end here: a read under it finds something, and a store may meet a setter;
+// - the guard of the side hangs on each object between: whatever changes there, a name or what stands above it, ends it, and with it the guards of all names.
+bool ClassTable::takesObjectsLaidBelowPrototype(VM& vm, const LayoutData& instanceLayout, JSObject* firstAbove)
+{
+    if (!instanceLayout.isClass() || !m_state.chainDependents)
+        return false;
+    const LayoutData& layout = classOfInstances(instanceLayout);
+    if (isClassOfCreatedObjects(layout) || guardHasEnded(layout, ClassSide::Prototype))
+        return false;
+    JSObject* holder = registeredHolderOf(vm, m_state, layout, ClassSide::Prototype);
+    if (!holder)
+        return false;
+    JSGlobalObject* realm = m_state.instance.globalObject;
+    firstAbove->didBecomePrototype(vm);
+    ChainObjects between;
+    for (JSObject* object = firstAbove; object != holder; object = object->getPrototypeDirect().getObject()) {
+        // A plain object has what its Structure lists and nothing else, and once it stands above another it reports every change: didChangeChainObject().
+        // An object that is still being filled is a dictionary until somebody looks.
+        if (!object || object->type() != FinalObjectType || !flattenOnce(vm, object))
+            return false;
+        Structure* structure = object->structure();
+        if (structure->realm() != realm || structure->isDictionary() || structure->hasPolyProto() || !structure->mayBePrototype() || hasIndexedProperties(structure->indexingType()))
+            return false;
+        between.append(object);
+    }
+    // `Sub.prototype = Object.create(Base.prototype); Sub.prototype.render = ..`: an object between that hides a member speaks for its own kind of object alone. To end the guard of that name would take the member's typed forms
+    // from every object of the class: such an object gets the bit, as ever.
+    Vector<uint32_t, 16> namesBetween;
+    bool hidesMember = false;
+    for (JSObject* object : between) {
+        object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(entry.key());
+            if (!key)
+                return true;
+            namesBetween.append(*key);
+            ChainWalk above = walkChain({ realm, between.last()->structure(), nullptr, ChainWalkMode::MayAllocate, ChainWalkUse::UsedAtOnce }, entry.key());
+            hidesMember |= above.result != ChainWalkResult::Absent;
+            return !hidesMember;
+        });
+    }
+    if (hidesMember)
+        return false;
+    for (uint32_t key : namesBetween)
+        endClassGuardsOfName(m_state, layout, ClassSide::Prototype, key);
+    m_state.chainDependents->add(between.span(), ChainDependent { nullptr, layout.index, ownerOfGuardsThatHangOnChains() });
+    forgetWhatCreatedFieldsHide();
+    return true;
+}
+
+// ---- The class of what one Object.create() makes
+
+// No record names what stands above such an object, so nothing here goes by records. The guards that stores ask begin where a store under the name into an object below `parent` creates the object's own property,
+// and each hangs on every object of the chain that may change that. The guards that reads ask never begin. An object that is linked below another parent has the bit that HasLayoutPrototype asks for.
+void ClassTable::defineClassOfCreatedObjects(VM& vm, const LayoutData& classLayout, JSObject* parent)
+{
+    ASSERT(isClassOfCreatedObjects(classLayout) && !classPrototypeIfExists(classLayout));
+    registerClassPrototype(classLayout, parent);
+    // What was allocated so far stands below Object.prototype until it is linked, and says that it has another prototype than its class.
+    m_state.objects->structures.forgetStructuresOf(classLayout);
+    if (!classLayout.shape || guardHasEnded(classLayout, ClassSide::Prototype) || !m_state.chainDependents)
+        return;
+    std::span<const NamedClassGuardData> guards = guardsOfNamesInClassRecord(m_tables, classLayout, ClassSide::Prototype);
+    if (guards.empty())
+        return;
+    Structure* structure = m_state.objects->structures.objectStructure(vm, classLayout.shape);
+    JSGlobalObject* realm = m_state.instance.globalObject;
+    // The bit of a guard for several names stands under each of them.
+    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bitsThatDoNotBegin;
+    uint32_t nameAsked = 0;
+    bool passes = false;
+    for (size_t index = 0; index < guards.size(); ++index) {
+        const NamedClassGuardData& guard = guards[index];
+        if (!guard.answersStoresAlone()) {
+            bitsThatDoNotBegin.add(guard.numberOfBit());
+            continue;
+        }
+        if (!index || guard.name != nameAsked || !guards[index - 1].answersStoresAlone()) {
+            nameAsked = guard.name;
+            UniquedStringImpl* uid = identifiersOf(m_state.instance).identifier(guard.name).impl();
+            passes = storeCreatesOwnProperty(realm, structure, nullptr, uid, *m_state.chainDependents, ChainDependent { uid, classLayout.index, ownerOfGuardsThatHangOnChains() });
+        }
+        if (!passes)
+            bitsThatDoNotBegin.add(guard.numberOfBit());
+    }
+    for (const NamedClassGuardData& guard : guards) {
+        if (!bitsThatDoNotBegin.contains(guard.numberOfBit()) && !m_endedGuardsOfNames.contains(guard.numberOfBit()))
+            storeBitOfClassGuard(m_state, classLayout, ClassSide::Prototype, guard.numberOfBit(), true);
     }
 }
 

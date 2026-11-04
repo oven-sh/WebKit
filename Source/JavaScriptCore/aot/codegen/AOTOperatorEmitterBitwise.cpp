@@ -116,7 +116,7 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
         Boxed y = in<Boxed>(right);
         // Two int32 are worked on in place, behind one test for each operand that is no written integer. The stub takes the rest.
         bool mayBothBeInt32 = typeOf(left).primitives & Primitive::Integer && typeOf(right).primitives & Primitive::Integer;
-        if (!isUnsigned && mayBothBeInt32) {
+        if (!isUnsigned && mayBothBeInt32 && !standsInRareBlock(value)) {
             auto isWrittenInt32 = [&](ValueID id) {
                 return operationAt(definitionOf(id)).opcode == Opcode::Integer && typeOf(id).isInt32();
             };

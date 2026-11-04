@@ -95,7 +95,8 @@ TypeID typeOfValuesThatLookUpAsInstancesOf(TypeArena& types, BuiltinClassID buil
 }
 
 MembersUnderKey::MembersUnderKey(const Program& program, PropertyKeyID key)
-    : m_table(program.builtins())
+    : m_program(program)
+    , m_table(program.builtins())
     , m_memberName(builtinMemberNameOf(program, key))
     , m_name(program.builtinNameOf(key))
     , m_kind(program.at(key).kind)
@@ -103,14 +104,10 @@ MembersUnderKey::MembersUnderKey(const Program& program, PropertyKeyID key)
 {
     if (program.openedNames.isEmpty() || m_kind != PropertyKeyKind::Text) [[likely]]
         return;
-    // A test run opens hundreds of names, and this is asked for every access by name.
+    // A large test run opens names by the hundred thousand, and this is asked for every access by name.
     StringID text = program.at(key).text;
-    if (!program.isOpenedSomewhere(text)) [[likely]]
-        return;
-    for (const OpenedName& opened : program.openedNames) {
-        if (opened.name == text)
-            m_holdersOpenedForKey.append(opened.holder);
-    }
+    if (program.isOpenedSomewhere(text)) [[unlikely]]
+        m_textOpenedSomewhere = text;
 }
 
 BuiltinID MembersUnderKey::findOwnMember(BuiltinID holder) const
@@ -120,7 +117,7 @@ BuiltinID MembersUnderKey::findOwnMember(BuiltinID holder) const
 
 bool MembersUnderKey::isClosedKey(BuiltinID holder) const
 {
-    if (m_holdersOpenedForKey.contains(holder)) [[unlikely]]
+    if (m_textOpenedSomewhere && m_program.isOpened(holder, m_textOpenedSomewhere)) [[unlikely]]
         return false;
     if (m_table.at(holder).flags.contains(BuiltinFlag::IsLockedObject))
         return true;

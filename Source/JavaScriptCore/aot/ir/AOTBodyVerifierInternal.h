@@ -12,6 +12,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTDiagnostics.h"
 #include "AOTIR.h"
+#include "AOTResultRules.h"
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
@@ -200,10 +201,12 @@ private:
     void verifyFlow();
     void verifyBlockOrder();
     void verifyDominance();
+    // verifyDominance() and the loop of verifyOperations() at once: each value is read once. It finds a fault exactly where one of the two does.
+    void verifyUsesAndOperations();
     // Every path to `to` goes through the terminator of `from`, not only its head: a block that is reached through the handler of `from` sees none of the values of `from`.
     bool terminatorDominates(BlockID from, BlockID to);
-    // `mayHaveToNameDefinition`: no, where the caller knows that a parameter of a block will do.
-    void verifyUse(ValueID used, BodyUseKind, BlockID blockOfUse, ValueID user, uint32_t operandIndex, bool mayHaveToNameDefinition);
+    // `mayHaveToNameDefinition`: no, where the caller knows that a parameter of a block will do. It answers with the opcode of the definition.
+    Opcode verifyUse(ValueID used, BodyUseKind, BlockID blockOfUse, ValueID user, uint32_t operandIndex, bool mayHaveToNameDefinition);
     void verifyUseStepByStep(ValueID used, BodyUseKind, BlockID blockOfUse, ValueID user, uint32_t operandIndex);
     void verifyEdges();
     void verifyEdge(const BodyBlock& from, uint32_t targetIndex, BodyTarget);
@@ -218,9 +221,13 @@ private:
     // AOTBodyVerifierOperations.cpp
     void verifyOperations();
     void verifyOperation(const BodyBlock&, uint32_t indexInBlock, const BodyValue&);
+    // All of verifyOperation() behind the look at the fields and at the definitions of the operands.
+    void verifyOperationByOpcode(const BodyBlock&, uint32_t indexInBlock, const BodyValue&);
     void verifyTerminatorOperation(const BodyBlock&, const BodyTerminator&);
     void verifyOperandDefinitions(const BodyBlock&, const BodyValue&);
     void verifyOperandDefinitionsOneByOne(const BodyBlock&, const BodyValue&);
+    // Of a definition among definitionsThatFewOperandsTakeInVerifiedBodies. No: it gives one value like any other, as a direct call of a function with one result does.
+    bool isTakenByFewOperands(const BodyValue& definition) const;
     void verifyNumberOfVariadicOperands(const BodyBlock&, const BodyValue&);
     void verifyCatch(const BodyBlock&, uint32_t indexInBlock, const BodyValue&);
     void verifyCast(const BodyBlock&, const BodyValue&);
@@ -261,6 +268,8 @@ private:
     // By the words stage. Without such an edge there is no cycle.
     bool m_hasEdgeThatDoesNotLeadForward { false };
     bool m_hasHandlerBlock { false };
+    // verifyUsesAndOperations() has found no fault.
+    bool m_operationsAreVerified { false };
     // The first that the words stage met. InternalErrorKind::Unknown: none.
     InternalErrorKind m_kindOfOrderThatMisleadsBodyIndex { InternalErrorKind::Unknown };
     BlockID m_blockOfOrderThatMisleadsBodyIndex;
@@ -276,6 +285,10 @@ private:
 
 // AOTBodyVerifierOperations.cpp
 const OpcodeSet& opcodesThatTakeAnyValueInVerifiedBodies();
+
+// What they give is no value of JavaScript: only the operations of the iteration take it, and what holds values across a suspension.
+inline constexpr OpcodeSet opcodesThatOpenIterationsInVerifiedBodies { Opcode::IteratorOpen, Opcode::ForInOpen };
+inline constexpr OpcodeSet definitionsThatFewOperandsTakeInVerifiedBodies = opcodesThatMayHaveSeveralResults | opcodesThatOpenIterationsInVerifiedBodies;
 
 // Generated: AOTSchemaBodyVerifier.cpp. They take the fields of one entry, in declared order, and check each word by its kind.
 void verifyFieldWords(CheckedBodyWords&, Opcode);

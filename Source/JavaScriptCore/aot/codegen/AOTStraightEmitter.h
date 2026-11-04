@@ -289,6 +289,7 @@ private:
     void giveBackSlotsReadLastAt(uint32_t position);
     bool isReadByNextCodeAlone(const BodyValue&) const;
     bool waitsInRegister(ValueID value) const { return m_valueInRegister && rootOf(value) == m_valueInRegister; }
+    template<typename OperationOrTerminator> bool readsWhatWaitsInRegister(const OperationOrTerminator&) const;
     void storeWhatWaitsInRegister();
     void boxWhatWaitsInRegister();
     void noteCopyInRegister(ValueID);

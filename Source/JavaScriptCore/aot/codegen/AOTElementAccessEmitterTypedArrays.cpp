@@ -140,6 +140,7 @@ void ElementAccessEmitter::generateTypedArrayRange(const ValueContext& value)
 // Loaded under the heap of inner pointers, like every vector: the view outlives the last access that takes the result, however far from here it stands.
 void ElementAccessEmitter::generateGetTypedArrayVector(const ValueContext& value)
 {
+    build().statistics().count(StatisticID::VectorsOfViewsRead);
     define(value, loadField<Pointer>(in<CellPointer>(value->viewOperand()), m_heaps.JSArrayBufferView_vector));
 }
 
@@ -163,6 +164,7 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
 
     Type elementType = types().at(elementTypeOf(type));
     if (value->isInsideView()) {
+        build().statistics().count(StatisticID::AccessesInsideViews);
         Integer index = indexInsideLength(value->positionOperand());
         TypedArrayElements elements = typedArrayElementsInsideView(value, view);
         if (readsNumberOutOfBytes(value.value())) {
@@ -217,6 +219,7 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
     };
     // A store that takes the operation has no use for the test that has passed: the operation tests the position for itself.
     if (value->isInsideView() && storesInline) {
+        build().statistics().count(StatisticID::AccessesInsideViews);
         Integer index = indexInsideLength(value->positionOperand());
         TypedArrayElements elements = typedArrayElementsInsideView(value, view);
         storeTypedArrayElement(elements, index, type, elementToStore());

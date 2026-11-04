@@ -87,129 +87,89 @@ static BitVector findFunctionsNamedByWireTypes(const ParallelLoops& loops, const
     return result;
 }
 
-// Visits the function itself and every function type that it converts to, in any number of steps. Each is visited once, so the walk ends even if function types form a cycle.
-// Most walks visit a few, and a short list of those is searched sooner than a thread lays out a word for each function of the program.
-// `stamps` is empty until a walk outgrows the list. From then on it has such a word. No two walks over the same stamps start at the same function.
-static void forEachFunctionTypeAtOrAbove(const Wire::Sections& checkedSections, uint32_t start, Vector<uint32_t>& stamps, NOESCAPE const Invocable<void(uint32_t)> auto& visit)
+// By function of the wire: the closures and the built-ins that may pass for it: itself, and whatever converts to it in any number of steps. Null: nobody, or no type names the function, so nobody asks.
+// What passes for a function type passes for every function type that it converts to. So A FAMILY IS MADE OF THE FAMILIES OF ALL THAT CONVERTS TO IT, each behind all of those, by one union:
+// a walk upward from every function takes a step for each pair where function types convert to one another in a row, as those of the methods of one name do in a row of classes.
+static Vector<ObjectSetID> collectFunctionFamilies(const ParallelLoops& loops, const Wire::Sections& checkedSections, const BuiltinTable& builtins, TypeArena& arena)
 {
-    constexpr size_t mostVisitedInList = 16;
-    uint32_t stamp = start + 1;
-    Vector<uint32_t, mostVisitedInList> visited { start };
-    bool goesByStamps = false;
-    auto isVisitedForFirstTime = [&](uint32_t function) {
-        if (goesByStamps)
-            return std::exchange(stamps[function], stamp) != stamp;
-        if (visited.contains(function))
-            return false;
-        if (visited.size() < mostVisitedInList) {
-            visited.append(function);
-            return true;
-        }
-        if (stamps.isEmpty())
-            stamps.fill(0u, checkedSections.functions.size());
-        for (uint32_t earlier : visited)
-            stamps[earlier] = stamp;
-        stamps[function] = stamp;
-        goesByStamps = true;
-        return true;
-    };
-
-    Vector<uint32_t, 16> reached { start };
-    while (!reached.isEmpty()) {
-        uint32_t function = reached.takeLast();
-        visit(function);
-        for (uint32_t functionType : wordsOfFunctionList(checkedSections, checkedSections.functions[function].functionTypes)) {
-            if (isVisitedForFirstTime(functionType))
-                reached.append(functionType);
-        }
-    }
-}
-
-static void addBuiltinMembersToFunctionFamilies(const ParallelLoops& loops, const Wire::Sections& checkedSections, const BuiltinTable& builtins, const BitVector& isNamedByType, Vector<FunctionFamily>& families)
-{
-    std::span<const Wire::Function> functions = checkedSections.functions;
-    // Few have any, and the records of all are tens of megabytes.
-    Vector<uint32_t> functionsWithBuiltinMembers = findIndicesInParallel(loops, static_cast<unsigned>(functions.size()), [&](unsigned index) {
-        return !!functions[index].builtinMembers.count;
-    });
-    Vector<uint32_t> stamps;
-    Vector<uint32_t> familiesWithBuiltins;
-    Vector<BuiltinID, 8> canonicalMembers;
-    for (uint32_t index : functionsWithBuiltinMembers) {
-        canonicalMembers.shrink(0);
-        for (uint32_t member : wordsOfFunctionList(checkedSections, functions[index].builtinMembers))
-            canonicalMembers.append(builtins.canonicalID(BuiltinID(member)));
-        forEachFunctionTypeAtOrAbove(checkedSections, index, stamps, [&](uint32_t reached) {
-            if (!isNamedByType.quickGet(reached))
-                return;
-            Vector<BuiltinID>& members = families[reached].builtins;
-            if (members.isEmpty())
-                familiesWithBuiltins.append(reached);
-            members.append(canonicalMembers.span());
-        });
-    }
-
-    for (uint32_t family : familiesWithBuiltins) {
-        Vector<BuiltinID>& members = families[family].builtins;
-        AOT::sort(members);
-        removeRepeatedElements(members);
-    }
-}
-
-// Both lists of a family are in ascending order without repeats. The family of a function that no type names stays empty, because nobody asks for it.
-Vector<FunctionFamily> collectFunctionFamilies(const ParallelLoops& loops, const Wire::Sections& checkedSections, const BuiltinTable& builtins)
-{
-    constexpr uint32_t functionsPerTask = 512;
     std::span<const Wire::Function> functions = checkedSections.functions;
     uint32_t numberOfFunctions = static_cast<uint32_t>(functions.size());
-    unsigned numberOfTasks = (numberOfFunctions + functionsPerTask - 1) / functionsPerTask;
-    BitVector isNamedByType = findFunctionsNamedByWireTypes(loops, checkedSections);
-
-    Vector<Vector<uint32_t>> stampsOfWorkers(loops.width());
-    Vector<Vector<uint64_t>> membersByTask(numberOfTasks);
-    forEachIndexInParallel(loops, numberOfTasks, [&](unsigned task, unsigned worker) {
-        Vector<uint32_t>& stamps = stampsOfWorkers[worker];
-        Vector<uint64_t>& members = membersByTask[task];
-        for (uint32_t index = task * functionsPerTask, end = std::min(numberOfFunctions, index + functionsPerTask); index < end; ++index) {
-            if (isSignature(functions[index]))
-                continue;
-            if (!functions[index].functionTypes.count) {
-                if (isNamedByType.quickGet(index))
-                    members.append(pairOfWireIndexes(index, index));
-                continue;
-            }
-            forEachFunctionTypeAtOrAbove(checkedSections, index, stamps, [&](uint32_t reached) {
-                if (isNamedByType.quickGet(reached))
-                    members.append(pairOfWireIndexes(reached, index));
-            });
-        }
-    });
-
-    Vector<Vector<FunctionID>> functionsOfFamilies(numberOfFunctions);
-    listSecondsByFirst(loops, membersByTask.span(), functionsOfFamilies);
-
-    Vector<FunctionFamily> families(numberOfFunctions);
-    forEachRangeOfIndicesInParallel(loops, numberOfFunctions, [&](size_t first, size_t end) {
-        for (size_t index = first; index < end; ++index)
-            families[index].functions = WTF::move(functionsOfFamilies[index]);
-    });
-    addBuiltinMembersToFunctionFamilies(loops, checkedSections, builtins, isNamedByType, families);
-    return families;
-}
-
-static ObjectSetID internFunctionFamily(TypeArena& arena, const FunctionFamily& family, Vector<ObjectID>& members)
-{
-    if (family.functions.isEmpty() && family.builtins.isEmpty())
-        return { };
-
     const ObjectTable& objects = arena.objects();
-    members.shrink(0);
-    for (BuiltinID builtin : family.builtins)
-        members.append(objects.objectOf(builtin));
-    for (FunctionID function : family.functions)
-        members.append(objects.closureOf(function));
-    // Neither closures nor the objects of built-ins are numbered in the order of what they stand for.
-    return arena.objectSets().ofUnsorted(members.span());
+    ObjectSets& sets = arena.objectSets();
+
+    // By function type: what converts to it in one step. Only a signature is a function type, so only a signature has a family to wait for.
+    Vector<Vector<uint64_t>> sourcesOfTypes(1);
+    Vector<uint32_t> numberOfFamiliesLeft(FillWith { }, numberOfFunctions, 0u);
+    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+        for (uint32_t functionType : wordsOfFunctionList(checkedSections, functions[index].functionTypes)) {
+            sourcesOfTypes[0].append(pairOfWireIndexes(functionType, index));
+            numberOfFamiliesLeft[functionType] += isSignature(functions[index]);
+        }
+    }
+    Vector<Vector<uint32_t>> sources(numberOfFunctions);
+    listSecondsByFirst(loops, sourcesOfTypes.span(), sources);
+
+    Vector<ObjectSetID> families(numberOfFunctions);
+    Vector<ObjectSetID, 8> wholeFamilies;
+    Vector<ObjectID, 8> membersByThemselves;
+    auto makeFamilyOfSignature = [&](uint32_t index) {
+        wholeFamilies.shrink(0);
+        membersByThemselves.shrink(0);
+        for (uint32_t member : wordsOfFunctionList(checkedSections, functions[index].builtinMembers))
+            membersByThemselves.append(objects.objectOf(builtins.canonicalID(BuiltinID(member))));
+        for (uint32_t source : sources[index]) {
+            if (isSignature(functions[source]))
+                wholeFamilies.append(families[source]);
+            else
+                membersByThemselves.append(objects.closureOf(FunctionID(source)));
+        }
+        // Neither closures nor the objects of built-ins are numbered in the order of what they stand for.
+        wholeFamilies.append(sets.ofUnsorted(membersByThemselves.span()));
+        return sets.unionOf(wholeFamilies.span());
+    };
+
+    Vector<uint32_t> ready;
+    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+        if (isSignature(functions[index]) && !numberOfFamiliesLeft[index])
+            ready.append(index);
+    }
+    while (!ready.isEmpty()) {
+        uint32_t index = ready.takeLast();
+        families[index] = makeFamilyOfSignature(index);
+        for (uint32_t functionType : wordsOfFunctionList(checkedSections, functions[index].functionTypes)) {
+            if (!--numberOfFamiliesLeft[functionType])
+                ready.append(functionType);
+        }
+    }
+    // Function types may convert to one another in a ring. What stands in one, or above one, is made, and made again whenever somebody has joined what converts to it.
+    Vector<uint32_t> waiting;
+    BitVector isWaiting(numberOfFunctions);
+    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+        if (numberOfFamiliesLeft[index]) {
+            waiting.append(index);
+            isWaiting.quickSet(index);
+        }
+    }
+    for (size_t place = 0; place < waiting.size(); ++place) {
+        uint32_t index = waiting[place];
+        isWaiting.quickClear(index);
+        ObjectSetID family = makeFamilyOfSignature(index);
+        if (std::exchange(families[index], family) == family)
+            continue;
+        for (uint32_t functionType : wordsOfFunctionList(checkedSections, functions[index].functionTypes)) {
+            if (!isWaiting.quickSet(functionType))
+                waiting.append(functionType);
+        }
+    }
+
+    BitVector isNamedByType = findFunctionsNamedByWireTypes(loops, checkedSections);
+    for (uint32_t index = 0; index < numberOfFunctions; ++index) {
+        if (!isNamedByType.quickGet(index))
+            families[index] = { };
+        else if (!isSignature(functions[index]))
+            families[index] = ObjectSets::of(objects.closureOf(FunctionID(index)));
+    }
+    return families;
 }
 
 // An empty family gets the null id, which readPartsWithoutClasses() treats as any function.
@@ -226,25 +186,11 @@ void WireTypeReader::computeFunctionFamilies()
     }
     steps.didFinish("lists are valid"_s);
 
-    Vector<FunctionFamily> families = collectFunctionFamilies(m_build.parallelLoops(), m_sections, builtins);
-    steps.didFinish("collect families"_s);
-
     // A type that names a family holds this id, so a family of many functions is stored once however many types name it.
     // The id of a set follows arrival, here as where readTypes() unites these sets: it is only compared for equality.
-    constexpr size_t familiesPerTask = 256;
-    const ParallelLoops& loops = m_build.parallelLoops();
-    ArenasOfWorkers arenas(m_program.types, loops);
-    m_functionFamilies.grow(families.size());
-    forEachIndexInParallel(loops, static_cast<unsigned>((families.size() + familiesPerTask - 1) / familiesPerTask), [&](unsigned task, unsigned worker) {
-        TypeArena& arena = arenas.of(worker);
-        Vector<ObjectID> members;
-        for (size_t index = task * familiesPerTask, end = std::min(families.size(), index + familiesPerTask); index < end; ++index)
-            m_functionFamilies[index] = internFunctionFamily(arena, families[index], members);
-    });
-    steps.didFinish("intern the families"_s);
-
-    families = { };
-    steps.didFinish("free the families"_s);
+    TypeArena arena(m_program.types, ArenaKeeps::InProgram);
+    m_functionFamilies = collectFunctionFamilies(m_build.parallelLoops(), m_sections, builtins, arena);
+    steps.didFinish("collect families"_s);
 }
 
 } } } // namespace JSC::AOT::Typed

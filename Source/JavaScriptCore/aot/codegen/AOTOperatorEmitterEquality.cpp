@@ -239,6 +239,33 @@ public:
         return logicalAnd(otherIsNumber, equal(number, numberToDouble(other)));
     }
 
+    // `node.kind === 80` in front of a branch: each way leads to a target of the branch. No boolean is made, joined and asked again.
+    bool branchOnEqualityOfInt32AndValue(const ValueContext& value)
+    {
+        std::optional<MixedOperands> operands = value.isBranchCondition() ? mixedOperandsOf(value, &Type::isInt32) : std::nullopt;
+        if (!operands)
+            return false;
+        m_out.noteForm(Form::Open, StateOfKnowledge::Int32AndValue);
+        BranchTargets targets = value.branchTargets();
+        Word32 expected = in<Word32>(operands->typed);
+        Boxed other = in<Boxed>(operands->boxed);
+        LBasicBlock isInt32OfSomeValue = newBlock();
+        LBasicBlock isNotInt32 = newBlock();
+        branch(isInt32(other), { normalEdge(isInt32OfSomeValue), rareEdge(isNotInt32) });
+        m_out.appendTo(isInt32OfSomeValue);
+        branch(equal(unboxInt32(other), expected), targets);
+        m_out.appendTo(isNotInt32);
+        // Zero equals two doubles, 0 and -0. Every other int32 equals one.
+        if (expected.value()->hasInt32() && expected.value()->asInt32())
+            branch(equal(other, boxedConstant(JSValue(JSValue::EncodeAsDouble, static_cast<double>(expected.value()->asInt32())))), targets);
+        else {
+            Condition otherIsNumber = isNumber(other);
+            Number otherNumber = unboxDouble(other);
+            branch(logicalAnd(otherIsNumber, equal(otherNumber, toNumber(expected))), targets);
+        }
+        return true;
+    }
+
     Condition equalityOnInt32AndValue(const ValueContext& value)
     {
         std::optional<MixedOperands> operands = mixedOperandsOf(value, &Type::isInt32);
@@ -302,6 +329,21 @@ public:
     {
         Boxed x = in<Boxed>(value->leftOperand());
         Boxed y = in<Boxed>(value->rightOperand());
+        bool asksBothTagsInLine = value->expectsInt32s() && generator().code().at(value.block()).frequency != BlockFrequency::Rare;
+        if (asksBothTagsInLine && !bitsDecide(kindsComparedBy(value)) && !generator().takesOpenForm(value, StateOfKnowledge::Generic)) {
+            m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
+            defineTestByBranching(value, [&](BranchTargets targets) {
+                LBasicBlock areInt32s = newBlock();
+                LBasicBlock callsStub = newBlock();
+                m_out.branch(isInt32(Boxed(m_out.bitAnd(x.value(), y.value()))).value(), normalEdge(areInt32s), rareEdge(callsStub));
+                m_out.appendTo(areInt32s);
+                branch(equal(x, y), targets);
+                m_out.appendTo(callsStub);
+                LValue operands[] = { x.value(), y.value() };
+                emitter<RuntimeCallEmitter>().callStubAndBranch(value, strictEqualInFlags(), operands, { }, targets);
+            });
+            return;
+        }
         if (!bitsDecide(kindsComparedBy(value)) && !generator().takesOpenForm(value, StateOfKnowledge::Generic)) {
             if (value.isBranchCondition()) {
                 LValue operands[] = { x.value(), y.value() };
@@ -645,6 +687,8 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
         result = isStrict ? equality.equalityOnStringAndValue(value) : equality.looseEqualityOnBoxed(value);
         break;
     case OperatorForm::Int32AndValue:
+        if (isStrict && equality.branchOnEqualityOfInt32AndValue(value))
+            return;
         result = isStrict ? equality.equalityOnInt32AndValue(value) : equality.looseEqualityOnBoxed(value);
         break;
     case OperatorForm::Unselected:

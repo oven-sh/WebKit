@@ -291,12 +291,16 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = this;
+    // getPropertySlot() goes up by the prototypes that the Structures name, whoever overrides getPrototype(), and comes here at the first object that answers for its own properties itself.
+    // A compiled object stands for a plain one: behind it the search goes on as it came.
+    bool goesByStructures = type() == CompiledObjectType;
     while (true) {
         Structure* structure = object->structureID().decode();
         if (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[likely]] {
             if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
                 return true;
         } else {
+            goesByStructures &= object->type() == CompiledObjectType;
             bool hasSlot = structure->classInfoForCells()->methodTable.getOwnPropertySlot(object, globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);
             if (hasSlot)
@@ -309,7 +313,7 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
                 return false;
         }
         JSValue prototype;
-        if (!structure->typeInfo().overridesGetPrototype() || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) [[likely]]
+        if (!structure->typeInfo().overridesGetPrototype() || goesByStructures || slot.internalMethodType() == PropertySlot::InternalMethodType::VMInquiry) [[likely]]
             prototype = object->getPrototypeDirect();
         else {
             prototype = object->getPrototype(globalObject);

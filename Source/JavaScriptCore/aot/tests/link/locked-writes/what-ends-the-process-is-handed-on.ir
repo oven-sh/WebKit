@@ -2,6 +2,7 @@
 # [0].forEach(process.exit); Array.prototype.push = () => {};
 # DIAGNOSTIC: LockedBuiltinWriteMayRun 1
 # RUN: locks
+# REQUIRES: entries-of-bun
 
 module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
 entry module=m0

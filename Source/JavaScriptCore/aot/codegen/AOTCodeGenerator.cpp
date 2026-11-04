@@ -768,15 +768,17 @@ static constexpr int32_t turnsBetweenPolls = 1 << 20;
 static constexpr unsigned mostBlocksInTurnLaidOut = 4;
 static constexpr unsigned placesLookedAtBehindHead = 8;
 static constexpr int64_t largestStepOfCounter = 16;
-static constexpr unsigned mostOperationsInTurnLaidOut = 12;
+static constexpr unsigned mostOperationsInTurnLaidOut = 16;
 // None keeps anything by the number of its value but what it defines.
 static constexpr OpcodeSet operationsOfTurnsLaidOut {
     Opcode::Narrowed, Opcode::Box, Opcode::Unbox, Opcode::IntegerToNumber, Opcode::NumberToInteger, Opcode::WidenInteger, Opcode::NarrowInteger, Opcode::ToInt32,
     Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Mod, Opcode::Increment, Opcode::Decrement, Opcode::Negate,
     Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::BitNot, Opcode::LShift, Opcode::RShift, Opcode::URShift,
-    Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::StrictEq, Opcode::Eq,
+    Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::StrictEq, Opcode::Eq, Opcode::TypeTest,
     Opcode::GetStringCodeUnit, Opcode::GetTypedArrayElement, Opcode::GetArrayElement,
 };
+// One store into storage that is there: neither the storage nor its length is another behind it.
+static constexpr OpcodeSet storesOfTurnsLaidOut { Opcode::PutContiguousIndex, Opcode::PutDoubleIndex, Opcode::PutTypedArrayElement };
 
 std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_t positionOfHead) const
 {
@@ -847,8 +849,17 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         for (ValueID value : code().valuesOf(id)) {
             const Operation& operation = code().at(value);
             EffectTraits traits = operation.traits();
-            // A turn that leaves is taken again by the written loop: nobody may see that it was begun twice.
-            if (!operationsOfTurnsLaidOut.contains(operation.opcode) || traits.mayRunOtherCode() || traits.mayBeTerminated() || traits.mayWriteWhatIsSeen() || isNeverType(operation.type))
+            if (traits.mayRunOtherCode() || traits.mayBeTerminated() || isNeverType(operation.type))
+                return false;
+            // A turn that leaves is taken again by the written loop: nobody may see that it was begun twice. So behind a store no edge leaves the turn: it stands in the block that leads back to the head.
+            // What is stored is no cell: the store is all that there is, and no barrier remembers anything from one turn to the next or on into the written loop.
+            if (storesOfTurnsLaidOut.contains(operation.opcode)) {
+                const Type& stored = typeOf(operation.valueOperand());
+                if (!leadsBack(block) || stored.hasObjects() || stored.primitives & cellPrimitives)
+                    return false;
+                continue;
+            }
+            if (!operationsOfTurnsLaidOut.contains(operation.opcode) || traits.mayWriteWhatIsSeen())
                 return false;
         }
         const Terminator& terminator = block.terminator;
@@ -940,6 +951,14 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     if (loop.mostTurns < static_cast<int64_t>(turnsLaidOut))
         return std::nullopt;
     findSumsOfIntegers(loop, back);
+    for (BlockID block : loop.turn) {
+        ValueID test = testReadByBranchAlone(block, code().at(block).terminator);
+        if (!test)
+            continue;
+        const Operation& operation = code().at(test);
+        if (operation.opcode == Opcode::TypeTest && operation.testedType() == TypeTable::int32 && integerHandedOnBy(operation.valueOperand()) == loop.counter)
+            loop.testsOfCounterForInt32.append(test);
+    }
     return loop;
 }
 
@@ -1167,6 +1186,21 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             m_out.branch(isNarrow->value(), normalEdge(holds), unlikelyEdge(written));
             m_out.appendTo(holds);
         }
+        if (!loop.testsOfCounterForInt32.isEmpty()) {
+            auto continueIf = [&](LValue holds) {
+                LBasicBlock next = m_out.newBlock();
+                m_out.branch(holds, normalEdge(next), unlikelyEdge(written));
+                m_out.appendTo(next);
+            };
+            LValue least = m_out.constantOfType(bound->type(), std::numeric_limits<int32_t>::min());
+            LValue greatest = m_out.constantOfType(bound->type(), std::numeric_limits<int32_t>::max());
+            Range counters = typeOf(loop.counter).integers;
+            Range bounds = typeOf(loop.bound).integers;
+            if (countsUp ? bounds.maximum > std::numeric_limits<int32_t>::max() : bounds.minimum < std::numeric_limits<int32_t>::min())
+                continueIf(countsUp ? m_out.lessThanOrEqual(bound, greatest) : m_out.greaterThanOrEqual(bound, least));
+            if (countsUp ? counters.minimum < std::numeric_limits<int32_t>::min() : counters.maximum > std::numeric_limits<int32_t>::max())
+                continueIf(countsUp ? m_out.greaterThanOrEqual(counter, least) : m_out.lessThanOrEqual(counter, greatest));
+        }
         // A turn that leaves hands the written loop the sum as the entry brought it and what was added since. The first turn has added nothing yet, and -0 and nothing is -0, but -0 + 0 is 0.
         // Where no turn leaves, eight terms at the least have been added to whatever is handed on, and behind the first of them the language has 0 too.
         bool someTurnMayLeave = std::ranges::any_of(loop.turn, [&](BlockID id) {
@@ -1231,6 +1265,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         return m_out.add(firstCounter, m_out.constantOfType(firstCounter->type(), numberOfTurns * loop.step));
     };
     m_turnLaidOut = turn;
+    m_testsThatHoldInTurnsLaidOut = loop.testsOfCounterForInt32.span();
     for (unsigned turnLaidOut = 0; turnLaidOut < turnsLaidOut; ++turnLaidOut) {
         forgetTurn();
         Values valuesAheadOfTurn;
@@ -1280,6 +1315,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         m_valuesHoldingAnyNaN.quickClear(parameters[index].index());
     m_headOfTurnsLaidOut = BlockID();
     m_turnLaidOut = { };
+    m_testsThatHoldInTurnsLaidOut = { };
     m_blockLeavingTurnLaidOut = nullptr;
     m_nextBlockGoesOnHere = false;
     emitter<StringEmitter>().forgetStringsFoundNarrow();
@@ -1457,7 +1493,11 @@ void CodeGenerator::generateTerminator(BlockID id, const Block& block, bool gene
 
     m_operation = &context;
     declareAccessesOf(context);
-    dispatch(context);
+    // The entry of the turns laid out has asked.
+    if (generatesCondition && std::ranges::contains(m_testsThatHoldInTurnsLaidOut, terminator.conditionOperand())) [[unlikely]]
+        jumpTo(context, 0);
+    else
+        dispatch(context);
     m_operation = nullptr;
     if (m_checksAllocation) [[unlikely]]
         m_out.clearDeclaredAccesses();

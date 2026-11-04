@@ -4,6 +4,7 @@
 # The control: store-into-the-environment-brings-the-warning-printer.ir.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK: function f1 unreached
 # CHECK: function f2 unreached
 

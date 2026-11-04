@@ -2,10 +2,13 @@
 # require("node:module");
 # LIBRARY: own
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-NOT: function f1 unreached
 # RUN(NONE): link functions mechanisms=none
+# REQUIRES(NONE): entries-of-bun
 # NONE-NOT: function f1 unreached
 # RUN(UNITS): units-with-code f1:Body
+# REQUIRES(UNITS): entries-of-bun
 # UNITS: unit f1:Body {{*}} bytes
 
 module m0 path="main.js" displayPath="main.js" body=f0

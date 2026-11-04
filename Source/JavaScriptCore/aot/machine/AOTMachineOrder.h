@@ -106,6 +106,7 @@ public:
     // By Block::index(), for a loop that asks about many blocks. Order::splitLate() does not move them.
     const BlockPlace* places() const { return m_places.begin(); }
     std::span<const Loop> loops() const { return m_loops.span(); }
+    uint32_t numberOfLoopsRotated() const { return m_numberOfLoopsRotated; }
     std::span<const RareRegion> rareRegions() const { return m_rareRegions.span(); }
 
     Position headOf(const Block* block) const { return of(block).head; }
@@ -143,6 +144,12 @@ public:
     // A Branch ends `first`, which leaves by one edge and goes on to `second` by the other, and nothing else enters `second`, which a Branch ends too. Neither block has an Upsilon.
     // The Branch of `first` moves into a new block on the edge by which `second` leaves: there it leaves as it did, and else goes where `second` left for. A Jump to `second` ends `first`.
     static Block* askBehind(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond);
+    // `truncation` is a Trunc of the one Phi of `join`, is read, and stands in a block without a Phi that the join alone leads to. It becomes a Phi of that block, so whoever read it reads the Phi,
+    // and the join hands the Phi a Trunc of its own, which stands in front of what ends the join. The read of the Phi of the join by the one Trunc is the read by the other.
+    static void makePhiOfTruncationBehindJoin(Block* join, Operation* truncation);
+    // A Jump ends `from` and leads to a join, which leads to `target`. The Jump leads to the target instead and hands `phi`, a Phi of the target, `value`. Null and null: the target has no Phi.
+    // What `from` handed the Phis of the join is read once less.
+    static void passJoinBy(Block* from, Block* target, Operation* phi, Operation* value);
     // An unsplit edge leads from a block outside rare regions that a Branch or a Switch ends, with several successors, to a block with several predecessors and no Phi.
     // orderBlocks() puts no block on it: most such edges never get a move. Where the allocator has one for it, or a frame is set up or torn down on it, the allocator splits it.
     static bool isUnsplit(const Block* from, const BlockPlace& placeOfTarget)
@@ -185,6 +192,7 @@ private:
     // By Block::index().
     ArenaVector<BlockPlace> m_places;
     ArenaVector<Loop> m_loops;
+    uint32_t m_numberOfLoopsRotated { 0 };
     ArenaVector<RareRegion> m_rareRegions;
     unsigned m_numberOfBlocksOutsideRareRegions { 0 };
     Position m_end { 0 };

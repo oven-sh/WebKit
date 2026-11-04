@@ -223,14 +223,49 @@ static bool buildForwardedCall(Walker& walker, const BodyValue& call, const Draf
     if (list && !hasKind(types, walker.typeOf(list), OperandKind::Array)) {
         if (passOnOwnArgumentsByCount(walker, call, written, callee, row.operands.thisValue ? operandOfForwardedCall(written, *row.operands.thisValue) : Reference(), list))
             return true;
-        // Function.prototype.apply up to the call. It says of a value that is no list what apply says.
         Origin originBeforeCall = written.origin();
         originBeforeCall.isTailCall = false;
+        // What turns out to be an array goes on as it is: the stub of the call copies its elements onto the stack, once.
+        TypeID arrays = types.builtinClass(BuiltinClasses::Array);
+        BlockID behindList;
+        Reference listOfCall;
+        if (walker.has(Mechanism::Guesses) && walker.opensGuesses() && list.isValue() && types.overlap(walker.typeOf(list), arrays)) {
+            Draft typeTest(Opcode::TypeTest, originBeforeCall);
+            walker.chooseConservativeFields(typeTest);
+            typeTest.setValueOperand(list);
+            typeTest.setTestedType(arrays);
+            Reference isArray = walker.build(WTF::move(typeTest));
+            if (!isArray)
+                return true;
+            BlockID goesOnAsItIs = walker.addBlock();
+            BlockID isReadFirst = walker.addBlock();
+            behindList = walker.addBlock();
+            listOfCall = walker.addParameter(behindList, { }, Representation::Cell);
+            walker.branch(isArray, goesOnAsItIs, isReadFirst);
+
+            walker.continueIn(goesOnAsItIs);
+            Draft proof(Opcode::Narrowed, originBeforeCall);
+            walker.chooseConservativeFields(proof);
+            proof.setValueOperand(list);
+            proof.setTestOperand(isArray);
+            proof.setOperandIndex(OperandIndex::TypeTest::value);
+            proof.setIsOnTakenEdge(true);
+            if (Reference array = walker.build(WTF::move(proof)))
+                walker.jumpTo(behindList, singleElementSpan(array));
+            walker.continueIn(isReadFirst);
+        }
+        // Function.prototype.apply up to the call. It says of a value that is no list what apply says.
         Draft newList(Opcode::NewArgumentList, originBeforeCall);
         walker.chooseConservativeFields(newList);
         newList.setCalleeOperand(callee);
         newList.setArrayLikeOperand(list);
         list = walker.build(WTF::move(newList));
+        if (behindList) {
+            if (list)
+                walker.jumpTo(behindList, singleElementSpan(list));
+            walker.continueIn(behindList);
+            list = walker.isUnreachable() ? Reference() : listOfCall;
+        }
         if (!list)
             return true;
     }

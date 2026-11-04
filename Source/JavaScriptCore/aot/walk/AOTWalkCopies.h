@@ -17,10 +17,14 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // ---- The three doors.
-// AOTWalkCopies.cpp. A link of the chain, between buildFreshObject() and callBuiltin(). One test of the opcode against one OpcodeSet, then, each asking for its own mechanisms:
-// foldComparisonOfValueWithItself > foldLookupPastOwnNames > buildAccessThroughProxyInSight > assignSourcesFieldByField > buildCopyThatMakesObject. False: nothing was built.
-extern const OpcodeSet opcodesThatBuildCopyOrKeyOrderFormTakes;
+// AOTWalkCopies.cpp. Two links of the chain, between buildFreshObject() and callBuiltin(). Each part asks for its own mechanisms. False: nothing was built.
+// By the opcode: StrictEq > foldComparisonOfValueWithItself . CopyObject > buildCopyThatMakesObject . Call > buildAccessThroughProxyInSight (`Object.hasOwn(proxy, key)`), assignSourcesFieldByField . Construct builds nothing: it notes `new Proxy(..)` for the second link.
+inline constexpr OpcodeSet opcodesThatBuildCopyOrKeyOrderFormTakes { Opcode::StrictEq, Opcode::CopyObject, Opcode::Call, Opcode::Construct };
 AOT_LINK_OF_WALK(buildCopyOrKeyOrderForm, opcodesThatBuildCopyOrKeyOrderFormTakes)
+// Every access by name or by key is its operation, and next to none goes through a proxy: the chain asks Walker::makesProxyInUnit() in front of it, so that an access costs one test of a byte.
+inline constexpr OpcodeSet opcodesThatBuildAccessThroughProxyMadeInUnitTakes { Opcode::PropGet, Opcode::PropSet, Opcode::PropHas, Opcode::PropDelete, Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete };
+AOT_LINK_OF_WALK(buildAccessThroughProxyMadeInUnit, opcodesThatBuildAccessThroughProxyMadeInUnitTakes)
+// foldLookupPastOwnNames() (K11) HAS NO CALLER: of closures it goes by LinkedFunction::closuresStayAsMade, which nobody writes yet (the round over the summaries of key-orders-and-copies-1), and a read pays for the question.
 // AOTWalkCopiesOfObjects.cpp. For buildTypedAccess(), of a CopyDataProperties that buildCopyOfPropertiesForTypedAccess() has refused. False: nothing was built, and the copy stays as written.
 bool buildCopyOfProperties(Walker&, const BodyValue& copy);
 // AOTWalkCopies.cpp. A term of the row of openGuessAt(): callAccessorInSlot. True: both arms are built, have left what they had to leave, and have met. False: nothing was built.

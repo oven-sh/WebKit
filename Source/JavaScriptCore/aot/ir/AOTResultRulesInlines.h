@@ -600,7 +600,9 @@ TypeID ResultRules::declared(const Operation& operation, FunctionID function, ui
 
     // Whoever constructs gets the object where the constructor hands back none. The constructor of a class that takes no `this` makes the object itself, and what its body returns is what was constructed.
     bool bodyReturnsWhatIsConstructed = isClassConstructorOf(callee.kind) && !callee.has(FunctionFlags::HasThis) && returnsResultOfFunction(operation.role());
-    if ((isConstruction && !bodyReturnsWhatIsConstructed) || !unitHandsBackResultsInResultRules(callee, operation.role()))
+    // The body of a plain function, entered by whoever has made `this`, hands back what it returns, and he looks at it: walkConstructOfFunctionInWalkCalls().
+    bool bodyHandsBackWhatItReturns = callee.kind == FunctionKind::Plain && returnsResultOfFunction(operation.role());
+    if ((isConstruction && !bodyReturnsWhatIsConstructed && !bodyHandsBackWhatItReturns) || !unitHandsBackResultsInResultRules(callee, operation.role()))
         return provenOrUnknown({ }, seed);
     return typeOfResultHandedBackInResultRules(*this, function, resultIndex, seed);
 }
@@ -672,6 +674,9 @@ TypeID ResultRules::declaredContents(const Operation& operation, uint32_t operan
     bool givesUndefinedWhereNothingIsFound = stepsOfCollectionsInResultRules.contains(opcode) && context.level == TypeLevel::Proven;
     if (contents && givesUndefinedWhereNothingIsFound)
         contents = context.types.withPrimitives(contents, Primitive::Undefined);
+    // The record stands where the step has found an entry.
+    if (!contents)
+        contents = context.positions.contentsBeingTyped(context.level);
     return provenOrUnknown(contents, seed);
 }
 

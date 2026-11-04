@@ -25,6 +25,7 @@
 #include <optional>
 #include <wtf/Atomics.h>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/StringHasherInlines.h>
@@ -551,7 +552,36 @@ static void findInnerParts(const ParallelLoops& loops, TextsOfStrings strings, c
     });
 }
 
-static TextSharing shareText(const ParallelLoops& loops, std::span<const MeasuredTextOfString> measured, const BitVector& hasText, const BitVector& isName, StepTimes& times)
+// Texts that begin at one address (StringTable::internKept()): the longest holds the others, each of which ends as far in front of its end as it is shorter. Nobody looks for them again: they leave `hasText`.
+static Vector<uint32_t> shareFrontsOfKeptTexts(TextsOfStrings strings, size_t numberOfStringsAsRead, BitVector& hasText, const BitVector& isName, TextSharing& sharing)
+{
+    HashMap<const uint8_t*, uint32_t> longestAtAddresses;
+    auto forEachInternedText = [&](const auto& functor) {
+        for (size_t index = hasText.findBit(numberOfStringsAsRead, true); index < hasText.size(); index = hasText.findBit(index + 1, true)) {
+            if (!strings[static_cast<uint32_t>(index)].empty())
+                functor(static_cast<uint32_t>(index));
+        }
+    };
+    forEachInternedText([&](uint32_t index) {
+        uint32_t& longest = longestAtAddresses.add(strings[index].data(), index).iterator->value;
+        if (strings[index].size() > strings[longest].size())
+            longest = index;
+    });
+    Vector<uint32_t> fronts;
+    forEachInternedText([&](uint32_t index) {
+        uint32_t longest = longestAtAddresses.get(strings[index].data());
+        if (longest == index || (isName.quickGet(index) && !isName.quickGet(longest)))
+            return;
+        sharing.holders[index] = longest;
+        sharing.gaps[index] = safeCast<uint32_t>(strings[longest].size() - strings[index].size());
+        fronts.append(index);
+    });
+    for (uint32_t index : fronts)
+        hasText.quickClear(index);
+    return fronts;
+}
+
+static TextSharing shareText(const ParallelLoops& loops, std::span<const MeasuredTextOfString> measured, size_t numberOfStringsAsRead, const BitVector& hasText, const BitVector& isName, StepTimes& times)
 {
     TextsOfStrings strings { measured };
     TextSharing sharing;
@@ -569,6 +599,7 @@ static TextSharing shareText(const ParallelLoops& loops, std::span<const Measure
         }
         if (hasTextOfWidth.isEmpty())
             continue;
+        Vector<uint32_t> fronts = shareFrontsOfKeptTexts(strings, numberOfStringsAsRead, hasTextOfWidth, isName, sharing);
         shareTails(loops, strings, hasTextOfWidth, isName, holders);
         times.didFinish("share tails"_s);
         IndexOfTextHeads heads = buildHeadIndex(loops, strings, hasTextOfWidth, holders);
@@ -581,6 +612,12 @@ static TextSharing shareText(const ParallelLoops& loops, std::span<const Measure
             if (holders[holder] == holder)
                 continue;
             sharing.gaps[index] = sharing.gaps[holder];
+            holders[index] = holders[holder];
+        }
+        // A front ends that much further in front of the end of whatever holds the text that held it.
+        for (uint32_t index : fronts) {
+            uint32_t holder = holders[index];
+            sharing.gaps[index] += sharing.gaps[holder];
             holders[index] = holders[holder];
         }
     }
@@ -782,7 +819,7 @@ EncodedText encodeText(const TextInputs& inputs, BuildContext& context)
         measureTextOfChunk(programStrings, strings, chunkIndex);
     });
     times.didFinish("measure"_s);
-    strings.sharing = shareText(loops, strings.measured.span(), strings.isRetained, strings.isName, times);
+    strings.sharing = shareText(loops, strings.measured.span(), programStrings.numberOfStringsAsRead(), strings.isRetained, strings.isName, times);
     strings.firstPlacesOfHolders = Vector<uint32_t>(FillWith { }, numberOfStrings, 0);
     for (uint32_t place = static_cast<uint32_t>(strings.inOrderOfText.size()); place--;)
         strings.firstPlacesOfHolders[strings.sharing.holders[strings.inOrderOfText[place].index()]] = place;

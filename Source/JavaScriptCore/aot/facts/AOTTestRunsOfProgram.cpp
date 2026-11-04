@@ -252,6 +252,10 @@ void openNamesFoundByLink(Program& program, BuildContext& build, LinkTables& lin
 {
     if (!program.admitsReplacedBuiltins)
         return;
+    // What the flow has followed to one object. Of a name that only may have come to lie on one of many nothing is said: a large test run stores fifteen thousand names through such values.
+    Vector<NameAddedByTests> followed = linked.namesAddedByTests;
+    followed.appendVector(held.namesAddedByTests);
+    sortNamesInTestRunsOfProgram(followed);
     Vector<NameAddedByTests> opened = takeNamesFoundInTestRunsOfProgram(program, linked);
     Vector<NameAddedByTests> leftShut = takeNamesFoundInTestRunsOfProgram(program, held);
     leftShut.removeAllMatching([&](const NameAddedByTests& added) {
@@ -268,7 +272,7 @@ void openNamesFoundByLink(Program& program, BuildContext& build, LinkTables& lin
 
     Vector<UserDiagnostic> diagnostics;
     for (const NameAddedByTests& added : leftShut) {
-        if (!program.isOpenedSomewhere(added.name) || !program.isOpened(added.holder, added.name))
+        if (std::ranges::binary_search(followed, added) && (!program.isOpenedSomewhere(added.name) || !program.isOpened(added.holder, added.name)))
             diagnostics.append(UserDiagnostic { .kind = UserDiagnosticKind::NameAddedToBuiltinWasNotOpened, .text = added.name });
     }
     build.diagnostics().append(WTF::move(diagnostics));

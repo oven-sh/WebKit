@@ -140,6 +140,7 @@ public:
     bool takesFormOfLoops(const OperationContext&, StateOfKnowledge = StateOfKnowledge::Always) const;
     bool paysForCodeInLine(BlockID block) const { return isInLoop(block); }
     bool laterBarrierCovers(ValueID store) const { return code().marksOf(store).contains(SweepMark::LaterBarrierCovers); }
+    bool ownerIsYoung(ValueID store) const { return code().marksOf(store).contains(SweepMark::OwnerIsYoung); }
     bool laterFenceCovers(ValueID allocation) const { return code().marksOf(allocation).contains(SweepMark::LaterFenceCovers); }
     // NewClosure in ClosureForm::Deferred: its one user is a store that writes nothing, because the slot already names the function.
     bool isDeferredClosure(ValueID id) const { return isDeferredClosure(code().at(id)); }
@@ -350,6 +351,8 @@ private:
         // Made by FlattenString in front of the loop, and read by the code unit in a turn.
         Vector<ValueID, 2> flatStrings;
         Vector<SumOfIntegers, 2> sumsOfIntegers;
+        // `list[i] = i`: a turn asks whether its counter, which lies in 64 bits, is an int32, and a Branch alone reads the answer. Every counter lies between the one that comes in and the bound: they are asked, once.
+        Vector<ValueID, 2> testsOfCounterForInt32;
     };
     std::optional<CountedLoop> findCountedLoopAt(size_t positionInOrder) const;
     void layOutTurns(const CountedLoop&);
@@ -380,6 +383,8 @@ private:
     // By parameter of that head.
     Vector<Operand, 8> m_argumentsForNextTurn;
     std::span<const BlockID> m_turnLaidOut;
+    // CountedLoop::testsOfCounterForInt32, while the turns are laid out.
+    std::span<const ValueID> m_testsThatHoldInTurnsLaidOut;
     // Where an edge goes that leaves the turn being laid out: to the written loop, with what the turn began with. The written loop takes that turn again, which writes nothing, and leaves by the edge as it is written.
     WTF::Function<LBasicBlock()> m_blockLeavingTurnLaidOut;
     Vector<SumOfIntegers, 2> m_sumsOfIntegers;

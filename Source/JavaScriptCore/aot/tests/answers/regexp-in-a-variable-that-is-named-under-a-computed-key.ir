@@ -1,0 +1,131 @@
+# made of 6ca60da6cd9e99ef
+# a RegExp in a variable gets a name under a key that is computed, in a function that is handed the object
+# RUN(FORM): link variables
+# FORM: variable g0 
+# -- source: regexp-in-a-variable-that-is-named-under-a-computed-key.js
+# const marks = /b/g;
+# let calls = 0;
+# function lay(object, key, value) { object[key] = value; }
+# function keyOf(parts) { return parts[0] + parts[1]; }
+# lay(marks, keyOf(["ex", "ec"]), function () { calls++; return null; });
+# function strip(text) { return text.replace(marks, "x"); }
+# report(strip("abcb"));
+# report(calls);
+# report("end");
+# -- end of source
+# At the end the shell runs the same text itself: every answer is the same.
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { const marks = /b/g; let calls = 0; function lay(object, key, value) { object[key] = value; } function keyOf(parts) { return parts[0] + parts[1]; } lay(marks, keyOf(["ex", "ec"]), function () { calls++; return null; }); function strip(text) { return text.replace(marks, "x"); } report(strip("abcb")); report(calls); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 3 of 3 of 3
+# CHECK-NEXT: exited with 0
+
+module m0 path="regexp-in-a-variable-that-is-named-under-a-computed-key.js" displayPath="regexp-in-a-variable-that-is-named-under-a-computed-key.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+data d0 root=Array{contents=anything elements=[String{value="ex"}, String{value="ec"}]} module=m0
+variable g0 name="marks" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="calls" module=m0 declared={type=number|absent flags=[IsExpected]}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewRegExp pattern="b" regExpFlags=[Global] @14
+    PutModuleVariable v6 variable=g0 @6
+    v8 = Integer @32
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @32
+    PutModuleVariable v9 variable=g1 @24
+    v11 = Data data=d0 @164
+    v12 = Call v3, -, v11 calleeName="keyOf" @158
+    v13 = NewClosure function=f4 @179
+    v14 = Call v1, -, v6, v12, v13 calleeName="lay" @147
+    v15 = Builtin builtin=GlobalThis @277
+    v16 = PropGet v15 key="report" [isFreeName] @277
+    v17 = String string="abcb" @290
+    v18 = Call v5, -, v17 calleeName="strip" @284
+    v19 = Call v16, -, v18 calleeName="report" @277
+    v20 = Builtin builtin=GlobalThis @300
+    v21 = PropGet v20 key="report" [isFreeName] @300
+    v22 = GetModuleVariable variable=g1 @307
+    v23 = CheckInitialized v22 name="calls" @307
+    v24 = Call v21, -, v23 calleeName="report" @300
+    v25 = Builtin builtin=GlobalThis @315
+    v26 = PropGet v25 key="report" [isFreeName] @315
+    v27 = String string="end" @322
+    v28 = Call v26, -, v27 calleeName="report" @315
+    v29 = Undefined @315
+    Return v29 @315
+}
+function f1 name="lay" module=m0 position=35 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}, {type=undefined|null|function|f4 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: anything, v2: undefined|null|function|f4):
+    ElemSet v0, v1, v2 @70
+    v4 = Undefined @70
+    Return v4 @70
+}
+function f2 name="keyOf" module=m0 position=93 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    v1 = Integer @124
+    v2 = ElemGet v0, v1 @124
+    v3 = Integer integer=1 @135
+    v4 = ElemGet v0, v3 @135
+    v5 = Add v2, v4 @135
+    Return v5 @135
+}
+function f3 name="strip" module=m0 position=219 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = PropGet v0 key="replace" @249
+    v2 = GetModuleVariable variable=g0 @262
+    v3 = CheckInitialized v2 name="marks" @262
+    v4 = String string="x" @269
+    v5 = Call v1, v0, v3, v4 calleeKey="replace" calleeName="text.replace" @254
+    ReturnCall v5 @254
+}
+function f4 module=m0 position=179 thisType={type=anything} results=[{type=anything}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g1 @193
+    v1 = CheckInitialized v0 name="calls" @193
+    v2 = Increment v1 @193
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @193
+    v4 = GetModuleVariable variable=g1 @193
+    v5 = CheckInitialized v4 name="calls" @193
+    PutModuleVariable v3 variable=g1 @193
+    v7 = Null @209
+    Return v7 @209
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f7 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f7
+runtimefunction id=ArrayIteratorPrototypeNext function=f6 visibility=Private

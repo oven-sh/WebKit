@@ -2,6 +2,7 @@
 # function sum(list) { let total = 0; for (const n of list) total += n; return total; } sum([1, 2].map(x => x)); setTimeout(() => {}, 0); Array.prototype.push = () => {}; process.exit(0);
 # DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
 # RUN: locks
+# REQUIRES: entries-of-bun
 
 module m0 path="main.js" displayPath="main.js" body=f0 positions={lineStarts=[0]}
 entry module=m0

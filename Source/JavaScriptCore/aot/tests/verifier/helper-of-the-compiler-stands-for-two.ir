@@ -1,5 +1,6 @@
 # the walk calls a helper of the compiler in place of what a program has written, and goes by what it answers. One function cannot keep the word of two entries
 # RUN: verify
+# REQUIRES: entries-of-bun
 # DIAGNOSTIC: InvalidCreatorRecord 1
 
 module m0 path="main" displayPath="main"

@@ -256,17 +256,6 @@ JSValue takeStandInForGetterLeftOut(JSGlobalObject* realm, JSObject* getter)
     return standInThatThrows(realm, WTF::move(message), name, getter);
 }
 
-JSObject* standInForCompiledGetter(JSGlobalObject* realm, JSObject* getter, const String& name)
-{
-    {
-        Locker locker { membersLock };
-        membersByVM().ensure(&realm->vm(), [] {
-            return MembersLeftOut { };
-        });
-    }
-    return asObject(standInThatThrows(realm, name.isEmpty() ? functionNotCompiledMessage() : functionNotCompiledMessage(name), name, getter));
-}
-
 void explainErrorBehindMemberLeftOut(JSGlobalObject* realm, JSObject* error, JSValue base)
 {
     VM& vm = realm->vm();

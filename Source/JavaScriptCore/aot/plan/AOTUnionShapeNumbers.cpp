@@ -358,7 +358,13 @@ private:
             appendMembersWithShapes(written.layouts);
             noteMentionsOfLayoutsFrom(first, written.mentions, false);
         }
+        // A family without a shape lists nothing. In a row of classes that nobody constructs every class has such a family, of all below it.
+        BitVector familiesWithShapes = m_families.familiesWithSomeMemberThat([&](LayoutID member) {
+            return hasShape(member);
+        });
         for (uint32_t number = 0; number < m_families.size(); ++number) {
+            if (!familiesWithShapes.quickGet(number))
+                continue;
             uint32_t first = static_cast<uint32_t>(m_leavesOfSets.size());
             appendMembersWithShapes(m_families.layoutsOf(FamilyID(number)));
             noteMentionsOfLayoutsFrom(first, mentionsOfFamilies[number], true);

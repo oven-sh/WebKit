@@ -158,6 +158,8 @@ void OperatorEmitter::generateRelation(const ValueContext& value, Relation relat
             return;
         [[fallthrough]];
     case OperatorForm::Generic:
+        if (value->form() == OperatorForm::Generic && generateRelationOfValuesThatAreLikelyInt32s(value, relation))
+            return;
         result = relationOnValues(value, relation);
         break;
     case OperatorForm::Integers: {
@@ -317,6 +319,26 @@ bool OperatorEmitter::generateRelationOfBoxedNumberAndValue(const ValueContext& 
         return false;
 
     m_out.noteForm(Form::Open, StateOfKnowledge::NumberAndValue);
+    Boxed left = in<Boxed>(value->leftOperand());
+    Boxed right = in<Boxed>(value->rightOperand());
+    defineTestByBranching(value, [&](BranchTargets targets) {
+        LBasicBlock int32Case = newBlock();
+        LBasicBlock otherCase = newBlock();
+        m_out.branch(isInt32(Boxed(m_out.bitAnd(left.value(), right.value()))).value(), normalEdge(int32Case), rareEdge(otherCase));
+        m_out.appendTo(int32Case);
+        Word32 leftInt32 = low32(left);
+        branch(compare(relation, leftInt32, low32(right)), targets);
+        m_out.appendTo(otherCase);
+        branch(Condition(m_out.castToInt32(callStub(value, binaryOperation(traitsOfRelation(relation).stub, true), { left.value(), right.value() }).first)), targets);
+    });
+    return true;
+}
+
+bool OperatorEmitter::generateRelationOfValuesThatAreLikelyInt32s(const ValueContext& value, Relation relation)
+{
+    if (generator().code().at(value.block()).frequency == BlockFrequency::Rare)
+        return false;
+    m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
     Boxed left = in<Boxed>(value->leftOperand());
     Boxed right = in<Boxed>(value->rightOperand());
     defineTestByBranching(value, [&](BranchTargets targets) {

@@ -17,6 +17,7 @@
 #include "AOTOperatorForms.h"
 #include "AOTPlan.h"
 #include "AOTResultRules.h"
+#include "AOTTypeRelations.h"
 #include "AOTWalk.h"
 #include <array>
 #include <type_traits>
@@ -152,7 +153,6 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
 
     case Opcode::BigInt: case Opcode::Builtin: case Opcode::ModuleBuiltin: case Opcode::Unspecified: case Opcode::EmptyArgumentList: case Opcode::NewTemplateObject: case Opcode::Data:
     case Opcode::DirectEval: case Opcode::ScopeHasBinding: case Opcode::NewDictionary: case Opcode::FinishBirth: case Opcode::TryFinishBirth: case Opcode::AppendHole:
-    case Opcode::RememberOwner:
     case Opcode::BelongsToInstance: case Opcode::HasLayoutPrototype: case Opcode::IsNotFrozen: case Opcode::HasNoExtraProperties: case Opcode::IsSlotFilled: case Opcode::AreMembersUnchanged: case Opcode::BeginMemberGuards:
     case Opcode::HasBirthFieldsFilled: case Opcode::HasKeyOrder: case Opcode::HasNoFieldOutsideSlot:
     case Opcode::PropGet: case Opcode::PropSet: case Opcode::PropDefine: case Opcode::GetGlobalBinding: case Opcode::SetGlobalBinding:
@@ -163,7 +163,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::TypeOf: case Opcode::InstanceOf: case Opcode::HasInPrototypeChain: case Opcode::TryStrcat: case Opcode::ToPropertyKey:
     case Opcode::Call: case Opcode::ResolveCallTarget: case Opcode::CallResolved: case Opcode::Construct: case Opcode::GetConstructPrototype: case Opcode::CallList: case Opcode::ConstructList: case Opcode::NewArgumentList: case Opcode::CallForwardVarargs:
     case Opcode::CreateUnmappedArguments: case Opcode::CreateMappedArguments: case Opcode::GetMappedArgument: case Opcode::SetMappedArgument: case Opcode::GetArgument: case Opcode::GetRestLength: case Opcode::CreateRest:
-    case Opcode::CatchValue: case Opcode::CatchException: case Opcode::NewRuntimeError: case Opcode::NewFunctionThatThrows: case Opcode::NewSuppressedError: case Opcode::LoopHint:
+    case Opcode::CatchValue: case Opcode::CatchException: case Opcode::NewRuntimeError: case Opcode::NewSuppressedError: case Opcode::LoopHint:
     case Opcode::ResolveHeritage: case Opcode::NewClass: case Opcode::GetClassPrototype: case Opcode::DefineMethod: case Opcode::NewClassToken:
     case Opcode::SuperConstruct: case Opcode::SuperConstructList: case Opcode::ConstructSuperForwardVarargs: case Opcode::SuperGet: case Opcode::SuperSet:
     case Opcode::PrivateGet: case Opcode::PrivateSet: case Opcode::PrivateHas:
@@ -173,7 +173,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::HasJSType: case Opcode::FindsDeclaredMember: case Opcode::GetInternalField: case Opcode::PutInternalField: case Opcode::ThrowNewError:
     case Opcode::IsPristineArray: case Opcode::ArrayStorageKind: case Opcode::HasContiguousIndex: case Opcode::GetContiguousIndex: case Opcode::GetDoubleIndex: case Opcode::PutContiguousIndex: case Opcode::PutDoubleIndex:
     case Opcode::GetOwnContiguousIndex: case Opcode::GetOwnDoubleIndex: case Opcode::GetOwnInt32Index: case Opcode::PutOwnContiguousIndex: case Opcode::PutOwnDoubleIndex: case Opcode::PutOwnInt32Index:
-    case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements:
+    case Opcode::TryPutIndex: case Opcode::TryCopyFilledElements: case Opcode::TryPutElements: case Opcode::TryFillNewArray:
     case Opcode::NewContiguousArray: case Opcode::NewDoubleArray: case Opcode::NewArrayLike: case Opcode::NewArrayWithCapacity: case Opcode::GrowNewArray: case Opcode::TruncateNewArray: case Opcode::NewArrayOfElements: case Opcode::NewArrayOfMembers: case Opcode::AppendElements: case Opcode::AppendMembers: case Opcode::ReserveArrayCapacity: case Opcode::ConvertToDoubleStorage:
     case Opcode::GetTypedArrayLength: case Opcode::GetTypedArrayVector: case Opcode::HasFixedBytes: case Opcode::TypedArrayRange: case Opcode::RequireAttachedTypedArray: case Opcode::RequireLengthFitsList: case Opcode::GetStringCodeUnit: case Opcode::Substring: case Opcode::FlattenString: case Opcode::StringStartsWithLiteral: case Opcode::StringEndsWithLiteral:
     case Opcode::StringIndexOfLiteral: case Opcode::StringIndexOfCharacter: case Opcode::StringLastIndexOfLiteral:
@@ -946,6 +946,19 @@ private:
         return isDeferredClosure(operandIndex) ? Representation::Unchosen : representationStoredInSlot(m_context, key, m_subject.receivers());
     }
 
+    bool fitsSlotsOfReceivers(uint32_t operandIndex) const
+    {
+        const SlotPlan& slots = m_context.plan.slots();
+        Type stored = typeAt(operandIndex);
+        return m_context.types.at(m_subject.receivers()).allOf([&](LayoutID member) {
+            std::optional<FieldIndex> field = slots.findField(m_context.program, member, m_subject.key());
+            if (!field)
+                return false;
+            TypeID taken = slots.slot(member, *field).type;
+            return !taken || isSubset(m_context.types, stored, m_context.types.at(taken));
+        });
+    }
+
     Representation wantedByNewObject(uint32_t operandIndex) const
     {
         Representation stored = storedFormIn(m_context.plan.slot(m_subject.layout(), m_subject.fields()[*variadicIndexOf(operandIndex)]), operandIndex);
@@ -971,12 +984,10 @@ private:
         return opcode() == Opcode::AwaitCallBySavingFrame && operandIndex + m_subject.numberOfHeld().value_or(0) >= m_subject.numberOfOperands();
     }
 
-    // Any other unit returns a Results, also where it hands back the one field of an object in place of the object.
-    // A generic entry makes the object of the fields that its function hands back, and returns it boxed.
+    // Any other unit returns a Results.
     bool returnsOneValue(CodeUnit unit) const
     {
-        const CallingConventions& conventions = m_context.plan.conventions();
-        return conventions.numberOfResults(unit) == 1 && !conventions.splitResultOf(unit);
+        return m_context.plan.conventions().numberOfResults(unit) == 1;
     }
 
     // ---- The tables
@@ -993,6 +1004,11 @@ private:
                     return integerFormOf(typeAt(operandIndex));
                 if (operandIndex == OperandIndex::PutArrayElement::value)
                     return heldFormAt(operandIndex) == Representation::Int64 ? Representation::Unchosen : wantedByNewElement(operandIndex);
+            }
+            static_assert(OperandIndex::PutSlot::value == OperandIndex::PutSlotOrAdd::value);
+            if ((opcode == Opcode::PutSlot || opcode == Opcode::PutSlotOrAdd) && operandIndex == OperandIndex::PutSlot::value && heldFormAt(operandIndex) != Representation::JSValue && fitsSlotsOfReceivers(operandIndex)) {
+                Representation stored = storedFormForKey(m_subject.key(), operandIndex);
+                return stored == Representation::Unchosen ? Representation::JSValue : stored;
             }
             // `nodes[i]`, `i` a number without a fraction that is held raw: GuessedAccessEmitter::readElementOfProvenList() truncates it. Boxed it was asked whether it is an int32, and the read asked the box for its tag.
             bool isRawKeyOfProvenList = opcode == Opcode::GetArrayElement && operandIndex == OperandIndex::GetArrayElement::position && heldFormAt(operandIndex) == Representation::Double
@@ -1183,6 +1199,9 @@ private:
             if (returnsUnboxedNumber())
                 return Representation::Double;
             if (opcode == Opcode::CallBuiltin && !isCompiledInline(m_subject.builtinCallForm()))
+                return Representation::JSValue;
+            // What comes out of a table lies there as a boxed word. Whoever wants the number takes it out of the box; whoever hands the value on hands on the word.
+            if (opcode == Opcode::CallInline && (m_subject.inlineBuiltin() == InlineBuiltin::MapGet || m_subject.inlineBuiltin() == InlineBuiltin::WeakMapGet) && RepresentationSet { Representation::Int32, Representation::Double, Representation::OptionalDouble }.contains(byType()))
                 return Representation::JSValue;
             return withoutElementLookup(byType());
         case RepresentationRule::BoxedResult:

@@ -20,7 +20,6 @@ public:
     // Where nothing reads the value any more: clears the registers and the slot that hold it. The value has its code, and the code made here names it.
     void release(ValueID);
     void generateClearFrameCell(const ValueContext&);
-    void generateRememberOwner(const ValueContext&);
     void pollWhereNoFrameIsSetUp(const OperationContext&);
 
 private:

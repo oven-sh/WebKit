@@ -27,7 +27,6 @@ public:
 
     // GetSlot, GetSlotOrUndefined, GetDeferredClosureSlot, GetDeferredClosureSlotOrUndefined, or else PropGet.
     void generateSlotRead(const ValueContext&);
-    // PutSlot, PutSlotOrAdd, or else PropSet.
     void generateSlotStore(const ValueContext&);
     // GetArrayElement, GetTypedArrayElement, or else ElemGet.
     void generateElementRead(const ValueContext&);
@@ -46,6 +45,7 @@ private:
     Word32 indexOrElse(Boxed position, LBasicBlock failure);
     void readElementOfProvenList(const ValueContext&);
     void readNumberOfProvenList(const ValueContext&);
+    void storeInProvenListUnderAnyKey(const ValueContext&);
 };
 
 } } } // namespace JSC::AOT::Typed

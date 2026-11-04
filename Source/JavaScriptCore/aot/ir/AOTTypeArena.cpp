@@ -364,6 +364,7 @@ void TypeArena::reset()
     m_outgrownPropertyKeys.shrink(0);
 
     m_bytesOfTexts.shrink(0);
+    m_roomBehindTexts.clear();
     m_madeTexts.shrink(0);
     m_joinedTexts.clear();
     emptyTypeArenaIndex(m_textIndex);
@@ -1236,16 +1237,34 @@ StringID TypeArena::internJoinedTexts(StringID left, StringID right)
 }
 
 // From the left end to the right end, over the pieces of pieces that were never laid down themselves. No piece is gone into by a call: a chain is as deep as it is long.
+// A TEXT THAT ADDS TO ONE THAT IS LAID DOWN IS LAID DOWN BEHIND IT, AND THE TWO BEGIN AT ONE BYTE. For that a text leaves as much room behind itself as it takes, for the first text that adds to it.
+// So a row of texts that each add to the one before, each of them read, costs what its last text holds, whatever else is laid down between them.
 std::span<const uint8_t> TypeArena::bytesOfMadeText(uint32_t position) const
 {
     if (m_madeTexts[position].firstByte == MadeText::notLaidDown) {
-        makeRoomInTypeArena(m_bytesOfTexts, m_outgrownBytesOfTexts, m_madeTexts[position].numberOfBytes);
-        uint32_t firstByte = static_cast<uint32_t>(m_bytesOfTexts.size());
+        uint32_t numberOfBytes = m_madeTexts[position].numberOfBytes;
+        std::optional<uint32_t> firstByte;
+        uint32_t end = 0;
+        uint32_t endOfRoom = 0;
+        auto takeRoomBehindAllTexts = [&] {
+            size_t room = 2 * static_cast<size_t>(numberOfBytes);
+            makeRoomInTypeArena(m_bytesOfTexts, m_outgrownBytesOfTexts, room);
+            end = static_cast<uint32_t>(m_bytesOfTexts.size());
+            firstByte = end;
+            m_bytesOfTexts.grow(end + room);
+            endOfRoom = static_cast<uint32_t>(m_bytesOfTexts.size());
+        };
+        auto layDown = [&](std::span<const uint8_t> bytes) {
+            memcpySpan(m_bytesOfTexts.mutableSpan().subspan(end, bytes.size()), bytes);
+            end += static_cast<uint32_t>(bytes.size());
+        };
         Vector<StringID, 16> piecesLeft { m_madeTexts[position].right, m_madeTexts[position].left };
         while (!piecesLeft.isEmpty()) {
             StringID piece = piecesLeft.takeLast();
             if (!liesInThread(piece)) {
-                m_bytesOfTexts.append(program()->string(piece));
+                if (!firstByte)
+                    takeRoomBehindAllTexts();
+                layDown(program()->string(piece));
                 continue;
             }
             const MadeText& made = m_madeTexts[positionOf(piece)];
@@ -1254,11 +1273,23 @@ std::span<const uint8_t> TypeArena::bytesOfMadeText(uint32_t position) const
                 piecesLeft.append(made.left);
                 continue;
             }
-            // There is room, so the bytes stay where they are while they are copied.
-            m_bytesOfTexts.append(m_bytesOfTexts.subspan(made.firstByte, made.numberOfBytes));
+            if (!firstByte) {
+                auto room = m_roomBehindTexts.find(made.firstByte + made.numberOfBytes);
+                if (room != m_roomBehindTexts.end() && room->value >= numberOfBytes - made.numberOfBytes) {
+                    firstByte = made.firstByte;
+                    end = room->key;
+                    endOfRoom = end + room->value;
+                    m_roomBehindTexts.remove(room);
+                    continue;
+                }
+                takeRoomBehindAllTexts();
+            }
+            layDown(m_bytesOfTexts.subspan(made.firstByte, made.numberOfBytes));
         }
-        RELEASE_ASSERT(m_bytesOfTexts.size() - firstByte == m_madeTexts[position].numberOfBytes);
-        m_madeTexts[position].firstByte = firstByte;
+        RELEASE_ASSERT(end - *firstByte == numberOfBytes && end <= endOfRoom);
+        if (end < endOfRoom)
+            m_roomBehindTexts.add(end, endOfRoom - end);
+        m_madeTexts[position].firstByte = *firstByte;
     }
     return m_bytesOfTexts.subspan(m_madeTexts[position].firstByte, m_madeTexts[position].numberOfBytes);
 }

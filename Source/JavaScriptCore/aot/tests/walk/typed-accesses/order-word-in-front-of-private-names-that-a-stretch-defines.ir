@@ -3,7 +3,7 @@
 # If it asked for the word in front of `z`, which lists the brand, #x and #y, it would fail in every construction, and all five fields would be added by a stub.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:
-# CHECK: HasKeyOrder {{*}} layout=L0 traits
+# CHECK: HasKeyOrder {{*}} layout=L0 [hasNoFlags] traits
 # CHECK: PutSlotOrAdd {{*}} key=#"#"@L0 {{*}} orderWordAfter=
 # CHECK: PutSlotOrAdd {{*}} key=#"#x"@L0 {{*}} orderWordAfter=
 # CHECK: PutSlotOrAdd {{*}} key=#"#y"@L0 {{*}} orderWordAfter=

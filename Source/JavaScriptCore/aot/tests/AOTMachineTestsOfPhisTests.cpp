@@ -148,6 +148,123 @@ static void testValueOfTestWherePhiHolds()
     out.ret(wide);
 }
 
+// ---- T2: a word of 32 bits that is added to an upper half passes by the join that asks for the upper half
+
+enum class KindOfWordInBox : uint8_t {
+    IsAskedWhetherAtLeast,
+    IsAskedWhetherBelow,
+    ComesByTwoArms,
+    IsIndexWhereItPasses,
+    IsNotReadWhereItPasses,
+    IsReadWholeWhereItPasses,
+    IsReadBehindBothSides,
+    FailsWhereWhatPassesMayFailToo,
+    BoundHasLowerHalf,
+    IsExtendedWithItsSign,
+};
+
+// const held = c ? box(second) : third; return isBox(held) ? unbox(held) : held + 1;
+// What passes is handed back without its sign in 64 bits, or is the index of a byte: whatever lay above the word would be seen.
+template<KindOfWordInBox kind>
+static void testWordInBoxPassesByJoinThatAsksForBox()
+{
+    constexpr int64_t upperHalf = (int64_t { 0x5a5a } << 48) + (kind == KindOfWordInBox::BoundHasLowerHalf ? 1 : 0);
+    static constexpr std::array<uint8_t, 16> bytes { 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105 };
+    TestOfPhiTest test;
+    Output& out = test.out;
+    LBasicBlock boxes = out.newBlock();
+    LBasicBlock doesNotBox = out.newBlock();
+    LBasicBlock boxesNext = out.newBlock();
+    LBasicBlock brings = out.newBlock();
+    LBasicBlock join = out.newBlock();
+    LBasicBlock passes = out.newBlock();
+    LBasicBlock fails = out.newBlock();
+    LBasicBlock isNotSeven = out.newBlock();
+    LBasicBlock behind = out.newBlock();
+    LValue held = out.phiIn(join, Int64);
+    LValue answer = out.phiIn(behind, Int64);
+    LValue bound = out.constInt64(upperHalf);
+    auto box = [&](LValue word) {
+        return out.add(kind == KindOfWordInBox::IsExtendedWithItsSign ? out.signExt32To64(word) : out.zeroExtPtr(word), bound);
+    };
+    out.branch(out.equal(test.first, out.constInt64(1)), normalEdge(boxes), normalEdge(doesNotBox));
+    out.appendTo(boxes);
+    // The index is made by an operation that clears what lies above it, as a load of 32 bits does: only what comes through the join has anything there.
+    out.upsilon(box(kind == KindOfWordInBox::IsIndexWhereItPasses ? out.bitAnd(out.castToInt32(test.second), out.constInt32(15)) : out.castToInt32(test.second)), held);
+    out.jump(join);
+    out.appendTo(doesNotBox);
+    out.branch(out.equal(test.first, out.constInt64(2)), normalEdge(boxesNext), normalEdge(brings));
+    out.appendTo(boxesNext);
+    out.upsilon(kind == KindOfWordInBox::ComesByTwoArms ? box(out.add(out.castToInt32(test.second), 1)) : out.add(test.third, out.constInt64(0x100)), held);
+    out.jump(join);
+    out.appendTo(brings);
+    out.upsilon(test.third, held);
+    out.jump(join);
+
+    out.appendTo(join);
+    if (kind == KindOfWordInBox::IsAskedWhetherBelow)
+        out.branch(out.below(held, bound), normalEdge(fails), normalEdge(passes));
+    else
+        out.branch(out.aboveOrEqual(held, bound), normalEdge(passes), normalEdge(fails));
+    out.appendTo(passes);
+    LValue whereItPasses = kind == KindOfWordInBox::IsNotReadWhereItPasses ? out.constInt64(77) : out.zeroExtPtr(out.castToInt32(held));
+    if (kind == KindOfWordInBox::IsReadWholeWhereItPasses)
+        whereItPasses = out.add(whereItPasses, held);
+    if (kind == KindOfWordInBox::IsIndexWhereItPasses)
+        whereItPasses = out.zeroExtPtr(out.load8ZeroExt32(out.baseIndex(test.testProcedure.heaps().argumentBuffer, out.constIntPtr(reinterpret_cast<intptr_t>(bytes.data())), whereItPasses, ScaleOne)));
+    if (kind == KindOfWordInBox::FailsWhereWhatPassesMayFailToo) {
+        out.branch(out.equal(whereItPasses, out.constInt64(7)), normalEdge(fails), normalEdge(isNotSeven));
+        out.appendTo(isNotSeven);
+    }
+    out.upsilon(whereItPasses, answer);
+    out.jump(behind);
+    out.appendTo(fails);
+    out.upsilon(out.add(held, out.constInt64(1)), answer);
+    out.jump(behind);
+    out.appendTo(behind);
+    out.ret(kind == KindOfWordInBox::IsReadBehindBothSides ? out.add(answer, held) : answer);
+    const Order& order = test.compile();
+
+    bool isPassedBy = kind <= KindOfWordInBox::IsNotReadWhereItPasses;
+    unsigned armsThatPassBy = !isPassedBy ? 0 : kind == KindOfWordInBox::ComesByTwoArms ? 2 : 1;
+    AOT_TEST_OF_PHI_CHECK(test, boxes->successor(0).block() == (isPassedBy ? passes : join) && order.of(join).isReached());
+    AOT_TEST_OF_PHI_CHECK(test, boxesNext->successor(0).block() == (armsThatPassBy == 2 ? passes : join));
+    AOT_TEST_OF_PHI_CHECK(test, order.of(join).predecessors.size() == 3 - armsThatPassBy);
+    AOT_TEST_OF_PHI_CHECK(test, passes->phis().size() == (isPassedBy && kind != KindOfWordInBox::IsNotReadWhereItPasses ? 1u : 0u));
+
+    auto expected = [&](uint64_t word) -> int64_t {
+        uint64_t result = word + 1;
+        if (word >= static_cast<uint64_t>(upperHalf)) {
+            uint64_t lowerHalf = static_cast<uint32_t>(word);
+            if (kind != KindOfWordInBox::FailsWhereWhatPassesMayFailToo || lowerHalf != 7) {
+                result = kind == KindOfWordInBox::IsNotReadWhereItPasses ? 77 : kind == KindOfWordInBox::IsIndexWhereItPasses ? bytes[lowerHalf] : lowerHalf;
+                if (kind == KindOfWordInBox::IsReadWholeWhereItPasses)
+                    result += word;
+            }
+        }
+        if (kind == KindOfWordInBox::IsReadBehindBothSides)
+            result += word;
+        return static_cast<int64_t>(result);
+    };
+    auto boxOf = [&](int64_t word) {
+        uint64_t extended = kind == KindOfWordInBox::IsExtendedWithItsSign ? static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(word))) : static_cast<uint32_t>(word);
+        return extended + static_cast<uint64_t>(upperHalf);
+    };
+    // The register that brings the word has all ones or the bound itself above it.
+    for (int64_t word : { int64_t { 0 }, int64_t { 1 }, int64_t { 6 }, int64_t { 7 }, int64_t { -1 }, int64_t { -2 }, int64_t { std::numeric_limits<int32_t>::max() }, int64_t { std::numeric_limits<int32_t>::min() }, upperHalf + 5, (int64_t { 1 } << 32) + 7 }) {
+        AOT_TEST_OF_PHI_CHECK(test, test.run(1, word, 0) == expected(boxOf(kind == KindOfWordInBox::IsIndexWhereItPasses ? word & 15 : word)));
+        if (kind == KindOfWordInBox::ComesByTwoArms)
+            AOT_TEST_OF_PHI_CHECK(test, test.run(2, word, 0) == expected(boxOf(static_cast<int32_t>(static_cast<uint32_t>(word) + 1))));
+    }
+    for (int64_t brought : { int64_t { 0 }, int64_t { 7 }, int64_t { -1 }, upperHalf - 1, upperHalf, upperHalf + 1, upperHalf + 7, upperHalf + 0xffffffff, upperHalf + (int64_t { 1 } << 32), upperHalf + (int64_t { 3 } << 32) + 7, std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::min() }) {
+        if (kind == KindOfWordInBox::IsIndexWhereItPasses && static_cast<uint64_t>(brought) >= static_cast<uint64_t>(upperHalf) && static_cast<uint32_t>(brought) >= bytes.size())
+            continue;
+        AOT_TEST_OF_PHI_CHECK(test, test.run(0, 0, brought) == expected(static_cast<uint64_t>(brought)));
+        if (kind != KindOfWordInBox::ComesByTwoArms && kind != KindOfWordInBox::IsIndexWhereItPasses)
+            AOT_TEST_OF_PHI_CHECK(test, test.run(2, 0, brought) == expected(static_cast<uint64_t>(brought) + 0x100));
+    }
+}
+
 // ---- S1: what the encoder writes. The bytes of two procedures that differ in the one thing are held against each other.
 
 static size_t bytesOfStoresInTestOfPhiTest(Type type, int64_t lower, int64_t upper, ptrdiff_t offsetOfUpper, unsigned numberOfPairs)
@@ -204,6 +321,7 @@ static void testNeighboringStoresOfConstantsAreOneStore()
 std::span<const NativeTest> machineTestsOfPhisTests()
 {
     using Machine::KindOfTestOfPhi;
+    using Machine::KindOfWordInBox;
     static constexpr NativeTest tests[] = {
         { "machine-tests-of-phis/join-that-compares-its-phi-with-a-constant-is-passed-by"_s, Machine::testJoinThatComparesItsPhiIsPassedBy<KindOfTestOfPhi::ComparesWithConstant> },
         { "machine-tests-of-phis/join-that-tests-bits-of-a-sum-of-its-phi-is-passed-by"_s, Machine::testJoinThatComparesItsPhiIsPassedBy<KindOfTestOfPhi::TestsBitsOfSum> },
@@ -212,6 +330,16 @@ std::span<const NativeTest> machineTestsOfPhisTests()
         { "machine-tests-of-phis/join-whose-test-is-read-again-stays"_s, Machine::testJoinThatComparesItsPhiIsPassedBy<KindOfTestOfPhi::TestIsReadAgain> },
         { "machine-tests-of-phis/join-that-computes-what-is-read-behind-it-stays"_s, Machine::testJoinThatComparesItsPhiIsPassedBy<KindOfTestOfPhi::StandsBesideWhatIsReadBehindIt> },
         { "machine-tests-of-phis/value-of-a-test-where-the-phi-holds-a-constant"_s, Machine::testValueOfTestWherePhiHolds },
+        { "machine-tests-of-phis/word-in-a-box-passes-by-the-join-that-asks-whether-it-is-at-least-the-box"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsAskedWhetherAtLeast> },
+        { "machine-tests-of-phis/word-in-a-box-passes-by-the-join-that-asks-whether-it-is-below-the-box"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsAskedWhetherBelow> },
+        { "machine-tests-of-phis/words-in-boxes-of-two-arms-pass-by-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::ComesByTwoArms> },
+        { "machine-tests-of-phis/word-in-a-box-that-is-an-index-where-it-passes-passes-by-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsIndexWhereItPasses> },
+        { "machine-tests-of-phis/word-in-a-box-that-nothing-reads-where-it-passes-passes-by-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsNotReadWhereItPasses> },
+        { "machine-tests-of-phis/box-that-is-read-whole-where-it-passes-goes-through-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsReadWholeWhereItPasses> },
+        { "machine-tests-of-phis/box-that-is-read-behind-both-sides-goes-through-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsReadBehindBothSides> },
+        { "machine-tests-of-phis/box-that-is-read-where-what-passes-may-fail-too-goes-through-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::FailsWhereWhatPassesMayFailToo> },
+        { "machine-tests-of-phis/word-added-to-a-bound-with-a-lower-half-goes-through-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::BoundHasLowerHalf> },
+        { "machine-tests-of-phis/word-extended-with-its-sign-goes-through-the-join"_s, Machine::testWordInBoxPassesByJoinThatAsksForBox<KindOfWordInBox::IsExtendedWithItsSign> },
         { "machine-tests-of-phis/neighboring-stores-of-constants-are-one-store"_s, Machine::testNeighboringStoresOfConstantsAreOneStore },
     };
     return tests;

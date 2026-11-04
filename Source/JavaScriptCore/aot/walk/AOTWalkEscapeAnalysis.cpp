@@ -434,6 +434,21 @@ std::optional<Vector<Reference, 8>> elementsOfFreshList(Walker& walker, Referenc
     return elements;
 }
 
+std::optional<uint32_t> lengthOfListInSight(Walker& walker, Reference name)
+{
+    Reference list = rootOfListInEscapeAnalysis(walker, name);
+    Reference length = list ? walker.state().element(list, keyOfLengthOfFreshList(walker)) : Reference();
+    if (!length || !length.isConstant() || walker.code().at(length.id()).opcode != Opcode::Integer)
+        return std::nullopt;
+    return static_cast<uint32_t>(walker.code().at(length.id()).integer());
+}
+
+Reference elementOfListInSight(Walker& walker, Reference name, uint32_t position)
+{
+    Reference list = rootOfListInEscapeAnalysis(walker, name);
+    return list ? walker.state().element(list, positionInFreshList(walker, position)) : Reference();
+}
+
 bool isFreshListAsMade(Walker& walker, Reference name)
 {
     Reference list = freshObjectNamedBy(walker, name);

@@ -100,7 +100,9 @@ private:
     void endCoverageAtHeadOf(BlockID);
     void strikeCoveredOwner(ValueID);
     void strikeCoveredOwners();
-    void dropBarriersThatNoStoreWaitsFor();
+    // A store into a cell that is young. Called like those above, and it looks no further than the block.
+    void lookForBirthOfOwner(ValueID, const Operation&);
+    void forgetStoresThatAwaitBirth();
     // The fence of an allocation that the fence of a later allocation covers. Called like those above, on the same way through the blocks.
     bool beginLookingForCoveredFences();
     void beginFenceCoverageAtEndOf(BlockID);
@@ -213,9 +215,13 @@ private:
     // Where the sweep stands: the owners that a later barrier remembers, as a list and by value.
     Vector<ValueID> m_coveredOwners;
     SweepBits m_ownersCovered;
-    // Each RememberOwner that no later barrier covers, and the owner of each store that waits for a later barrier.
-    Vector<ValueID> m_barriersBehindStores;
-    Vector<ValueID> m_ownersOfCoveredStores;
+    // Where the sweep stands: the stores further down in the block into a cell that the block makes further up, with nothing in between that ends the youth of the cell. By value: the allocations that they wait for.
+    struct StoreThatAwaitsBirth {
+        ValueID store;
+        ValueID owner;
+    };
+    Vector<StoreThatAwaitsBirth, 8> m_storesThatAwaitBirth;
+    SweepBits m_birthsAwaited;
     // Every way on from where the sweep stands comes to a fence before a cell is handed on to where the collector finds it. By block: the same of its head. Clear for a block that has not been visited.
     bool m_laterFenceCovers { false };
     bool m_laterFenceCoversAtSomeHead { false };

@@ -1,0 +1,168 @@
+# `super.__proto__` in a static method looks the name up from the class above and comes to the engine's accessor, which answers for `this`: with `Top.make()` the class above Top, not the class above that. Nobody follows it: the construction is not listed, and nothing is proven of what it makes.
+# f1 = Low, f2 = Mid, f4 = make
+# -- source: super-proto-in-a-static-method-is-the-link-of-the-receiver.js
+# class Low { constructor() { this.kind = "low"; } }
+# class Mid extends Low { constructor() { super(); this.kind = "mid"; } }
+# class Top extends Mid {
+#   static make() { const Above = super.__proto__; return new Above().kind; }
+# }
+# Top.make();
+# -- end of source
+# records of e1f44e299aa6c083
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f2
+# LINK-NOT: unreached
+# LINK: function f4
+# LINK-NOT: result=
+# LINK: function f5
+# RUN(CALLS): link calls mechanisms=all
+# CALLS-NOT: call f4
+
+module m0 path="super-proto-in-a-static-method-is-the-link-of-the-receiver.js" displayPath="super-proto-in-a-static-method-is-the-link-of-the-receiver.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Low" module=m0 position=6 constructor=f1 fields=[{key="kind" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Mid" module=m0 position=57 base=L0 constructor=f2 fields=[{key="kind" declared={type=anything} flags=[IsRequired] originLayout=L0 originField=0}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L2 kind=Instance name="Top" module=m0 position=129 base=L1 constructor=f3 supertypes=[L1] flags=[HasHeritage]
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = NewClass v0 layout=L0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = FinishClass v1 layout=L0 @0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @0
+    v5 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @0
+    v6 = ResolveHeritage v5 @69
+    v7 = NewClosure function=f2 @51
+    v8 = NewClass v7, v5, v6 layout=L1 @51
+    PutModuleVariable v8 variable=g1 @51
+    v10 = FinishClass v8 layout=L1 @51
+    v11 = Convert v10 declared={type=f2 flags=[IsFromCompiler]} @51
+    v12 = Convert v10 declared={type=f2 flags=[IsFromCompiler]} @51
+    v13 = ResolveHeritage v12 @141
+    v14 = NewClosure function=f3 @123
+    v15 = NewClass v14, v12, v13 layout=L2 @123
+    PutModuleVariable v15 variable=g2 @123
+    v17 = NewClosure function=f4 @156
+    DefineMethod v15, v17 layout=L2 side=Static key="make" @156
+    v19 = FinishClass v15 layout=L2 @123
+    v20 = Convert v19 declared={type=f3 flags=[IsFromCompiler]} @123
+    v21 = Convert v19 declared={type=f3 flags=[IsFromCompiler]} @123
+    v22 = PropGet v21 key="make" @225
+    v23 = Call v22, v21 calleeKey="make" calleeName="Top.make" @229
+    v24 = Undefined @225
+    Return v24 @225
+}
+function f1 name="Low" module=m0 position=23 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @23
+    v2 = NewObject v1 layout=L0 @23
+    v3 = Convert v2 declared={type=L0} @23
+    v4 = String string="low" @40
+    PropSet v3, v4 key="kind" @28
+    v6 = Undefined @28
+    v7 = TypeTest v6 testedType=object @28
+    Branch v7 -> taken b1(| 0), notTaken b2(v3) @28
+  b1(v8):
+    Jump -> next b2(v8) @28
+  b2(v9):
+    Return v9 @28
+}
+function f2 name="Mid" module=m0 position=86 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything):
+    v2 = Absent @86
+    v3 = GetSuperBase v0 @91
+    v4 = SuperConstruct v3, v1 layout=L1 @91
+    v5 = Convert v4 declared={type=L1} @91
+    v6 = TypeTest v2 testedType=absent @91
+    Branch v6 -> taken b1(| 0), notTaken b11(| 0) @91
+  b1(v7):
+    v8 = TypeTest v5 testedType=absent @100
+    Branch v8 -> taken b2(| 0), notTaken b3(| 0) @100
+  b2(v9):
+    v10 = NewRuntimeError runtimeError=UninitializedThis @100
+    Throw v10 @100
+  b3(v11):
+    v12 = String string="mid" @112
+    PropSet v11, v12 key="kind" @100
+    v14 = Undefined @100
+    v15 = TypeTest v14 testedType=object @100
+    Branch v15 -> taken b4(| 0), notTaken b5(| 0) @100
+  b4(v16):
+    Jump -> next b9(v16) @100
+  b5(v17):
+    v18 = TypeTest v17 testedType=undefined @100
+    Branch v18 -> taken b6(| 0), notTaken b10(| 0) @100
+  b6(v19):
+    v20 = TypeTest v11 testedType=absent @100
+    Branch v20 -> taken b7(| 0), notTaken b8(| 0) @100
+  b7(v21):
+    v22 = NewRuntimeError runtimeError=UninitializedThis @100
+    Throw v22 @100
+  b8(v23):
+    Jump -> next b9(v23) @100
+  b9(v24):
+    Return v24 @100
+  b10(v25):
+    v26 = NewRuntimeError runtimeError=DerivedConstructorResult name="Mid" @100
+    Throw v26 @100
+  b11(v27):
+    v28 = NewRuntimeError runtimeError=ThisAlreadyBound @91
+    Throw v28 @91
+}
+function f3 name="Top" module=m0 position=129 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @129
+    v4 = SuperConstructList v3, v1, v2 layout=L2 @129
+    v5 = Convert v4 declared={type=L2} @129
+    Return v5 @129
+}
+function f4 name="make" module=m0 position=149 kind=Method flags=[HasThis, HasExplicitName] thisType={type=function flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function):
+    v1 = GetModuleVariable variable=g2 @179
+    v2 = GetSuperBase v1 @179
+    v3 = SuperGet v2, v0 key="__proto__" @179
+    v4 = Construct v3 calleeName="Above" @207
+    v5 = PropGet v4 key="kind" @213
+    Return v5 @203
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f8 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f9 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f9
+runtimefunction id=ArrayIteratorPrototypeNext function=f8 visibility=Private

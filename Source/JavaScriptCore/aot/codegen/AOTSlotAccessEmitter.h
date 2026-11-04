@@ -58,6 +58,7 @@ public:
     BlockEdge edgeToCreation(LBasicBlock creates, bool isExpectedToCreate);
 
     bool mayCreateListedField(const FieldAccess&) const;
+    bool tryPutSlotOrAddByStub(const ValueContext&, CellPointer, const FieldAccess&, Operand stored);
     // Of a slot out of line: its granule, and those of the fields out of line that the likeliest key order of every member lists behind the field.
     // `request.user = user; request.session = session;`: the store that makes the Extension makes room for them all.
     uint64_t granuleBitsWithFieldsBehind(const FieldAccess&) const;

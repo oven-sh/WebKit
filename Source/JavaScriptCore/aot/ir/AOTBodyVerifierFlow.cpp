@@ -612,12 +612,12 @@ void BodyVerifier::verifyFlow()
     if (looksAtGraph)
         m_scratch.graph.build(index());
 
-    // verifyDominance() and verifyLoopMarks() lean on the dominators and loops of the index, so they run after the comparison.
+    // verifyUsesAndOperations() and verifyLoopMarks() lean on the dominators and loops of the index, so they run after the comparison.
     using Step = void (BodyVerifier::*)();
     static constexpr Step steps[] = {
         &BodyVerifier::verifyBlockOrder,
         &BodyVerifier::verifyIndexAgainstPlainComputation,
-        &BodyVerifier::verifyDominance,
+        &BodyVerifier::verifyUsesAndOperations,
         &BodyVerifier::verifyLoopMarks,
         &BodyVerifier::verifyEntryParameters,
     };
@@ -747,6 +747,67 @@ void BodyVerifier::verifyDominance()
     }
 }
 
+// In the order of the stream, so what a check of an operation follows back through operands and proofs has been looked at: it ends as it does behind verifyDominance().
+// Which fault a body is refused for is for the steps to say, each behind the other as ever: where there is one, what was found here is dropped and they look.
+void BodyVerifier::verifyUsesAndOperations()
+{
+    for (uint32_t blockIndex = 0; blockIndex < index().numberOfBlocks() && !hasFailed(); ++blockIndex) {
+        BodyBlock block = index().block(BlockID(blockIndex));
+        BlockID id = block.id();
+        if (ValueID subject = block.subject())
+            verifyUse(subject, BodyUseKind::BlockSubject, id, { }, 0, true);
+        if (block.hasHandler()) {
+            uint32_t argumentIndex = 0;
+            for (ValueID argument : block.handler().arguments())
+                verifyUse(argument, BodyUseKind::HandlerArgument, id, { }, argumentIndex++, false);
+        }
+        uint32_t indexInBlock = 0;
+        for (BodyValue value : block.values()) {
+            bool takesAnyValue = m_scratch.opcodesThatTakeAnyValue.contains(value.opcode());
+            bool namesWhatFewOperandsTake = false;
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (definitionsThatFewOperandsTakeInVerifiedBodies.contains(verifyUse(operand, BodyUseKind::Operand, id, value.id(), operandIndex, !takesAnyValue)))
+                    namesWhatFewOperandsTake |= isTakenByFewOperands(index().value(operand));
+            });
+            if (!hasFailed())
+                verifyFieldRules(*this, block, value);
+            if (!hasFailed() && (!takesAnyValue || namesWhatFewOperandsTake))
+                verifyOperandDefinitionsOneByOne(block, value);
+            if (!hasFailed())
+                verifyOperationByOpcode(block, indexInBlock, value);
+            if (hasFailed())
+                break;
+            ++indexInBlock;
+        }
+        if (hasFailed())
+            break;
+        BodyTerminator terminator = block.terminator();
+        terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            verifyUse(operand, BodyUseKind::TerminatorOperand, id, { }, operandIndex, true);
+        });
+        for (BodyTarget target : terminator.targets()) {
+            uint32_t argumentIndex = 0;
+            for (ValueID argument : target.arguments())
+                verifyUse(argument, BodyUseKind::EdgeArgument, id, { }, argumentIndex++, false);
+        }
+        index().forEachEdgeResult(id, [&](const BodyEdgeResult& result) {
+            verifyUse(result.subject, BodyUseKind::EdgeProof, id, { }, result.operandIndex, false);
+        });
+        if (!hasFailed())
+            verifyTerminatorOperation(block, terminator);
+    }
+    m_operationsAreVerified = !hasFailed();
+    if (m_operationsAreVerified)
+        return;
+
+    m_errors.clear();
+    m_initialYield = { };
+    m_yields.clear();
+    m_methodDefinitions.clear();
+    m_moduleEvaluations.clear();
+    verifyDominance();
+}
+
 // A bit stands for a child in the dominator tree, and with it for everything below the child: the handler of the parent leads there and does not pass through the parent again.
 static BitVector findBlocksReachedFromHandlerOfDominator(const BodyIndex& index)
 {
@@ -823,9 +884,10 @@ bool BodyVerifier::terminatorDominates(BlockID from, BlockID to)
 static constexpr OpcodeSet opcodesWithoutResultInVerifiedBodies = opcodesWhere([](Opcode opcode) { return resultRuleOf(opcode) == ResultRule::None; });
 
 // Nothing in verifyUseStepByStep() finds fault with nearly every use.
-ALWAYS_INLINE void BodyVerifier::verifyUse(ValueID used, BodyUseKind kind, BlockID blockOfUse, ValueID user, uint32_t operandIndex, bool mayHaveToNameDefinition)
+ALWAYS_INLINE Opcode BodyVerifier::verifyUse(ValueID used, BodyUseKind kind, BlockID blockOfUse, ValueID user, uint32_t operandIndex, bool mayHaveToNameDefinition)
 {
     BodyValue definition = index().value(used);
+    Opcode opcode = definition.opcode();
     BlockID blockOfDefinition = m_scratch.blocksOfValues[used.index()];
     bool isAvailable = false;
     if (blockOfDefinition != blockOfUse)
@@ -834,9 +896,10 @@ ALWAYS_INLINE void BodyVerifier::verifyUse(ValueID used, BodyUseKind kind, Block
         isAvailable = used.index() < user.index();
     else
         isAvailable = definition.isParameter() || (kind != BodyUseKind::HandlerArgument && kind != BodyUseKind::BlockSubject);
-    if (isAvailable && !(definition.isParameter() && mayHaveToNameDefinition) && !opcodesWithoutResultInVerifiedBodies.contains(definition.opcode())) [[likely]]
-        return;
+    if (isAvailable && !(definition.isParameter() && mayHaveToNameDefinition) && !opcodesWithoutResultInVerifiedBodies.contains(opcode)) [[likely]]
+        return opcode;
     verifyUseStepByStep(used, kind, blockOfUse, user, operandIndex);
+    return opcode;
 }
 
 void BodyVerifier::verifyUseStepByStep(ValueID used, BodyUseKind kind, BlockID blockOfUse, ValueID user, uint32_t operandIndex)

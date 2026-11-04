@@ -4,9 +4,11 @@
 # A name that the text of the library alone spells finds no function whose call is an event: what the library does with what it names is the library's matter, and the run time refuses the text of whoever comes by an evaluator on that road.
 # OPTIONS: exclude=CodeOutsideImage
 # RUN: image
+# REQUIRES: entries-of-bun
 # CHECK: flags
 # CHECK-NOT: AdmitsUnknownJavaScript
 # RUN(CLOSED): image mechanisms=none
+# REQUIRES(CLOSED): entries-of-bun
 # CLOSED: flags
 # CLOSED-NOT: AdmitsUnknownJavaScript
 

@@ -4,8 +4,7 @@
 # function grow() { const o = { 1: 10, style: 7 }; o.width = 5; return o; }
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: = IsNotFrozen {{*}}[hasNoFieldOutsideSlot]
-# CHECK: PutSlotOrAdd {{*}}key="width"
+# CHECK: PutSlotOrAdd {{*}}key="width" {{*}}level=Expected
 # RUN(WORD): walk f1 mechanisms=all
 # WORD-NOT: orderWordAfter
 # RUN(SHELL): run-in-shell globalThis.sink = (grow, other) => { if (!grow) return; const o = grow(); print(Object.keys(o).join() + ":" + o[1] + ":" + o.style + ":" + o.width); };

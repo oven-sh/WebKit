@@ -68,7 +68,7 @@ static constexpr OpcodeSet holdersOfSweptEnvironmentsInFrames { Opcode::NewObjec
 
 // Whatever the value names is a cell that a NewObject of this code has made in the heap, in this run of the code, or that a callee has handed back among its results: none comes from a caller, a field or a handler.
 // `for (let i ..)` makes an environment in each turn, and the one of the turn before comes round the head as a parameter.
-static bool namesOnlyEnvironmentsMadeBySweptCode(const Code& code, const CallingConventions& conventions, std::span<const uint32_t> firstIncomingEdge, std::span<const EdgeID> incomingEdges, ValueID named)
+static bool namesOnlyEnvironmentsMadeBySweptCode(const Code& code, std::span<const uint32_t> firstIncomingEdge, std::span<const EdgeID> incomingEdges, ValueID named)
 {
     Vector<ValueID, 8> parametersSeen;
     Vector<ValueID, 8> worklist;
@@ -80,13 +80,6 @@ static bool namesOnlyEnvironmentsMadeBySweptCode(const Code& code, const Calling
         const Operation& operation = code.at(value);
         if (operation.opcode == Opcode::NewObject) {
             if (operation.storage() != AllocationStorage::Heap)
-                return false;
-            continue;
-        }
-        // A callee sets the byte of whatever it lists among its results and has not made for this call.
-        if (operation.opcode == Opcode::ResultAt) {
-            const Operation& call = code.at(operation.operand(OperandIndex::ResultAt::results));
-            if (call.opcode != Opcode::CallDirect || !conventions.handsBackPartsAtEveryReturn(call))
                 return false;
             continue;
         }
@@ -1004,7 +997,7 @@ void Sweep::markReleasesBehindLastUsesBySets()
             auto ofSameLayout = std::ranges::equal_range(m_environmentsHandedBack, layout, { }, &EnvironmentHandedBack::layout);
             releasesOperand = std::ranges::none_of(ofSameLayout, [&](const EnvironmentHandedBack& other) {
                 return isLive(other.value);
-            }) && namesOnlyEnvironmentsMadeBySweptCode(code, m_inputs->plan.conventions(), m_firstIncomingEdge.span(), m_incomingEdges.span(), hint.operand);
+            }) && namesOnlyEnvironmentsMadeBySweptCode(code, m_firstIncomingEdge.span(), m_incomingEdges.span(), hint.operand);
         }
         OptionSet<SweepMark> marks = code.marksOf(hint.operation);
         marks.set(SweepMark::ReleasesOperand, releasesOperand);

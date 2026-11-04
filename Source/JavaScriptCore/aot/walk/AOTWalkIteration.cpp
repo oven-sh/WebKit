@@ -296,6 +296,11 @@ struct WayOfIteration {
     bool stepsStandUnderOwnCleanup { false };
     // There is one step, and each close stands below it.
     bool closesStandBelowOnlyStep { false };
+    // There is one step, at the head of a loop that the open stands in front of. So whatever names the iteration behind the loop closes it.
+    bool onlyStepStandsAtHeadOfLoop { false };
+    // And the head ends in a branch on whether the step was the last, which then leaves the loop, and each close stands behind the edge that is taken where it was not.
+    // So no step follows the last one, and no close finds the iteration done.
+    bool isOpenAtEveryStepAndClose { false };
 };
 
 } // anonymous namespace
@@ -322,6 +327,7 @@ static WayOfIteration findWayOfIteration(const BodyIndex& index, ValueID open)
     uint32_t numberOfSteps = 0;
     Vector<BlockID, 4> blocksOfCloses;
     ValueID lastUser;
+    ValueID lastStep;
     for (const BodyMentionOfIteration& mention : index.mentionsOfIteration(open)) {
         if (std::exchange(lastUser, mention.user) == mention.user)
             continue;
@@ -347,12 +353,29 @@ static WayOfIteration findWayOfIteration(const BodyIndex& index, ValueID open)
             way.headOfLoopThatSteps = mention.block;
         }
         blockOfLastStep = mention.block;
+        lastStep = mention.user;
         ++numberOfSteps;
         way.stepsStandUnderOwnCleanup |= standsUnderCleanupOf(index, index.block(mention.block), open);
     }
     way.canBeFollowed = true;
     way.closesStandBelowOnlyStep = numberOfSteps == 1 && std::ranges::all_of(blocksOfCloses, [&](BlockID block) {
         return index.dominates(blockOfLastStep, block);
+    });
+    way.onlyStepStandsAtHeadOfLoop = numberOfSteps == 1 && way.headOfLoopThatSteps;
+    if (!way.onlyStepStandsAtHeadOfLoop || way.stepsStandUnderOwnCleanup)
+        return way;
+    BodyTerminator end = index.terminator(way.headOfLoopThatSteps);
+    ValueID condition = end.kind() == TerminatorKind::Branch ? end.operand(0) : ValueID();
+    if (!condition || index.isParameter(condition) || index.opcodeOf(condition) != Opcode::ResultAt)
+        return way;
+    auto asked = index.value(condition).as<Opcode::ResultAt>();
+    if (asked.resultsOperand() != lastStep || asked.index() != static_cast<uint32_t>(IteratorResumeResult::Done))
+        return way;
+    BlockID turn = end.notTaken().block();
+    if (index.isInLoop(end.taken().block(), loopThatSteps) || index.numberOfIncomingEdges(turn) != 1 || index.isEnteredByHandlerEdge(turn))
+        return way;
+    way.isOpenAtEveryStepAndClose = std::ranges::all_of(blocksOfCloses, [&](BlockID block) {
+        return index.dominates(turn, block);
     });
     return way;
 }
@@ -377,8 +400,17 @@ static bool onlyClosesAndThrowsOn(const BodyIndex& index, BodyBlock cleanup, Bod
         && terminator.kind() == TerminatorKind::Rethrow && terminator.operand(0) == caught.id();
 }
 
-// `const [a, b] = pair`: between the open and the close behind the last step nothing is written but the steps, in their order, the reads of what they give, and jumps from one block to the next.
-// So nothing runs in between: whoever takes all the steps and closes where the open stands does what is written in the order in which it is written. It reads what is written from the open to that close.
+// What may stand between two steps of a pattern: it writes nothing that is seen, reads nothing that other code may write, lets no other code run and throws by no rule of the language.
+// So nobody can tell whether it ran between two steps or behind the last of them. A named built-in may be made where it is first read, which the order of keys shows.
+static bool isUnseenBetweenStepsOfPattern(Opcode opcode)
+{
+    const Effects& bound = declaredBoundInTable(opcode);
+    return opcode != Opcode::Builtin && !operandsMayRunCode(opcode) && bound.alwaysCompletes() && !bound.mayThrowByRule() && !bound.writes.containsAny(orderedHeaps) && !bound.reads.containsAny(orderedHeaps);
+}
+
+// `const [a, b] = pair`, `const [a = 0, b = ""] = pair`: between the open and the close behind the last step nothing is written but the steps, in their order, the reads of what they give, what nobody can see between them,
+// jumps from one block to the next, and branches whose two sides hold only what nobody can see and meet again at once: the test for undefined in front of a default.
+// So nothing runs in between: whoever takes all the steps and closes where the open stands does what is written in an order that nobody can tell from the order in which it is written. It reads what is written from the open to that close.
 static bool stepsOfPatternStandInRow(const BodyIndex& index, const BodyValue& open)
 {
     auto written = open.as<Opcode::IteratorOpen>();
@@ -388,19 +420,38 @@ static bool stepsOfPatternStandInRow(const BodyIndex& index, const BodyValue& op
     BodyBlock blockOfOpen = index.block(index.blockOf(open.id()));
     uint32_t numberOfCleanups = 0;
     BlockID lastCleanup;
+    auto throwsWhereOpenThrows = [&](BodyBlock block) {
+        if (block.id() == blockOfOpen.id() || haveOneHandler(block, blockOfOpen))
+            return true;
+        if (!block.hasHandler() || !block.handler().arguments().empty())
+            return false;
+        BodyBlock cleanup = index.block(block.handler().block());
+        if (!onlyClosesAndThrowsOn(index, cleanup, blockOfOpen, open.id()))
+            return false;
+        numberOfCleanups += std::exchange(lastCleanup, cleanup.id()) != cleanup.id();
+        return true;
+    };
+    // The block that the side of a branch out of `from` leads on to. Null: it holds more than what nobody can see.
+    auto blockBehindSide = [&](BodyBlock from, BlockID side) -> BlockID {
+        if (index.numberOfIncomingEdges(side) != 1 || index.isEnteredByHandlerEdge(side) || index.isLoopHead(side) || side.index() <= from.id().index())
+            return { };
+        BodyBlock block = index.block(side);
+        if (!throwsWhereOpenThrows(block))
+            return { };
+        for (BodyValue operation : block.values()) {
+            if (operation.opcode() == Opcode::ResultAt || !isUnseenBetweenStepsOfPattern(operation.opcode()))
+                return { };
+        }
+        BodyTerminator terminator = block.terminator();
+        return terminator.kind() == TerminatorKind::Jump && terminator.next().block().index() > side.index() ? terminator.next().block() : BlockID();
+    };
 
     uint32_t stepsSeen = 0;
     ValueID lastStep;
     bool hasPassedOpen = false;
     for (BodyBlock block = blockOfOpen;;) {
-        if (block.id() != blockOfOpen.id() && !haveOneHandler(block, blockOfOpen)) {
-            if (!block.hasHandler() || !block.handler().arguments().empty())
-                return false;
-            BodyBlock cleanup = index.block(block.handler().block());
-            if (!onlyClosesAndThrowsOn(index, cleanup, blockOfOpen, open.id()))
-                return false;
-            numberOfCleanups += std::exchange(lastCleanup, cleanup.id()) != cleanup.id();
-        }
+        if (!throwsWhereOpenThrows(block))
+            return false;
         for (BodyValue operation : block.values()) {
             if (!hasPassedOpen) {
                 hasPassedOpen = operation.id() == open.id();
@@ -425,14 +476,24 @@ static bool stepsOfPatternStandInRow(const BodyIndex& index, const BodyValue& op
                 return operation.operand(0) == open.id() && operation.as<Opcode::IteratorClose>().completion() == IteratorCompletion::Normal && stepsSeen == numberOfSteps
                     && index.mentionsOfIteration(open.id()).size() == numberOfSteps + 1 + numberOfCleanups;
             default:
-                return false;
+                if (!isUnseenBetweenStepsOfPattern(operation.opcode()))
+                    return false;
+                break;
             }
         }
         BodyTerminator terminator = index.terminator(block.id());
-        if (terminator.kind() != TerminatorKind::Jump || !terminator.next().arguments().empty())
+        BlockID next;
+        uint32_t numberOfWaysIn = 1;
+        if (terminator.kind() == TerminatorKind::Jump && terminator.next().arguments().empty())
+            next = terminator.next().block();
+        else if (terminator.kind() == TerminatorKind::Branch) {
+            next = blockBehindSide(block, terminator.taken().block());
+            if (!next || blockBehindSide(block, terminator.notTaken().block()) != next)
+                return false;
+            numberOfWaysIn = 2;
+        } else
             return false;
-        BlockID next = terminator.next().block();
-        if (index.numberOfIncomingEdges(next) != 1 || index.isLoopHead(next) || next.index() <= block.id().index())
+        if (index.numberOfIncomingEdges(next) != numberOfWaysIn || index.isEnteredByHandlerEdge(next) || index.isLoopHead(next) || next.index() <= block.id().index())
             return false;
         block = index.block(next);
     }
@@ -588,6 +649,9 @@ public:
 
     Reference requireObjectCoercible(Reference iterable)
     {
+        // Neither undefined nor null is among what it may be: there is nothing to refuse.
+        if (iterable && iterable.isValue() && !m_walker.isUnreachable() && !(m_walker.types().at(m_walker.typeOf(iterable)).primitives & Primitive::UndefinedOrNull))
+            return iterable;
         Draft check = draft(Opcode::RequireObjectCoercible);
         check.setValueOperand(iterable);
         check.setNullishAccess(m_wording == WordingOfIteration::Spread ? NullishAccess::Spread : NullishAccess::Iterate);
@@ -703,9 +767,10 @@ public:
 
     // `iterable` may be a list that is as it was made, which only the run shows. Where it is none the protocol opens the iteration.
     // `keepsStateInMemory`: a step that throws comes to the close of the iteration, which has to find it done. The arm of the protocol makes a list of its three words, and the arm that reads by index makes nothing.
-    Walker::IterationByIndex openByIndexOrProtocol(Reference iterable, const ClassSteppedUnseen& stepped, bool keepsStateInMemory)
+    Walker::IterationByIndex openByIndexOrProtocol(Reference iterable, const ClassSteppedUnseen& stepped, bool keepsStateInMemory, bool isOpenAtEveryStepAndClose = false)
     {
         Walker::IterationByIndex iteration;
+        iteration.isOpenAtEveryStepAndClose = !keepsStateInMemory && isOpenAtEveryStepAndClose;
         iteration.builtinClass = stepped.builtinClass;
         iteration.contents = stepped.contents;
         iteration.kind = stepped.kind;
@@ -760,6 +825,9 @@ public:
         jumpTo(after, openedByProtocol.span());
         return iteration;
     }
+
+    // Of an instance that is surely as it was made. Null: of a list or a text.
+    Reference tableThatFirstStepBeginsIn(Reference instance, ContentsStepped contents) { return beginByIndex(instance, contents); }
 
     // stepsOfPatternStandInRow(): every step is taken here, and the iterator is closed. A step that throws leaves the iteration done, so there is nothing to keep for whoever catches it.
     // One operation of the run time opens, steps and closes, for every pattern of the program. It reads a list that nobody can see being iterated by index, in a loop in line: no test for a list stands in front of it.
@@ -875,6 +943,11 @@ public:
     {
         if (!iteration.mayGoByProtocol)
             return;
+        // What has caught a throw runs seldom. The function of the library does nothing for undefined, which the parameter holds where the open went by index: so no test and no arm stands in the handler.
+        if (completion == IteratorCompletion::Throw && iteration.isOpenAtEveryStepAndClose && findHelper(IterationHelper::CloseIteratorAfterThrow)) {
+            callReturnAndDropWhatItThrows(iteration.iterator);
+            return;
+        }
         BlockID byProtocol = addBlock(BlockFrequency::Unlikely);
         BlockID after = addBlock();
         goOnWhereParameterHoldsInstance(iteration, byProtocol);
@@ -885,12 +958,14 @@ public:
             takeStateInList(iteration.state);
             closeUnlessDone(completion);
         } else {
-            BlockID closing = addBlock();
-            BlockID finished = addBlock();
-            branch(operatorOnNumbers(Opcode::Less, iteration.position, integer(Walker::positionBehindEveryEnd)), closing, finished);
-            continueIn(finished);
-            jumpTo(after);
-            continueIn(closing);
+            if (!iteration.isOpenAtEveryStepAndClose) {
+                BlockID closing = addBlock();
+                BlockID finished = addBlock();
+                branch(operatorOnNumbers(Opcode::Less, iteration.position, integer(Walker::positionBehindEveryEnd)), closing, finished);
+                continueIn(finished);
+                jumpTo(after);
+                continueIn(closing);
+            }
             switch (completion) {
             case IteratorCompletion::Normal:
                 callReturn(iteration.iterator, ResultOfReturnInIteration::MustBeObject);
@@ -1161,6 +1236,8 @@ public:
     Reference undefinedValue() { return undefined(); }
     void expectNoGenerator() { m_mayStepGenerator = false; }
     void expectNoStepByProtocol() { m_protocolIsForTheOddOne = true; }
+    // Link's word: the instance, whose class is proven, has the names, the prototype and the storage of its making in every run. goOnWhereInstanceIsAsMade() asks nothing of it.
+    void takeInstanceForAsMade(Reference instance) { m_instanceAsMadeForGood = instance; }
     // `for (.. of map.values())`: what is tested is the receiver. Where a test fails the read of the method, the call and what is written of its type are walked as they stand, [begin, end) of the block, and what they give is opened.
     void openWhatCallGivesByProtocol(BlockID inputBlock, uint32_t begin, uint32_t end, ValueID given)
     {
@@ -1482,7 +1559,7 @@ private:
     {
         TypeID instances = typeOfInstancesStepped(m_walker, stepped.builtinClass, stepped.contents);
         Reference instance = m_walker.types().isSubset(m_walker.typeOf(iterable), instances) ? iterable : goOnWhereTypeTestPasses(iterable, instances, otherwise);
-        if (stepped.contents == ContentsStepped::Text)
+        if (stepped.contents == ContentsStepped::Text || (instance == iterable && iterable == m_instanceAsMadeForGood))
             return instance;
         bool isList = stepped.contents == ContentsStepped::List;
         Draft test = draft(Opcode::IsPristine);
@@ -1525,6 +1602,8 @@ private:
     {
         if (iteration.mayGoByProtocol || iteration.contents != ContentsStepped::List)
             return false;
+        if (iteration.isAsMadeForGood && indexesAreAbsentAboveLists(m_walker))
+            return true;
         return iteration.literal || (isFreshInIteration(m_walker, iteration.list) && isListAsMade(m_walker, iteration.list));
     }
 
@@ -1534,7 +1613,7 @@ private:
             return std::nullopt;
         if (iteration.literal)
             return lengthOfLiteralInIteration(m_walker.currentBodyIndex(), iteration.literal);
-        return lengthOfFreshList(m_walker, iteration.list);
+        return lengthOfListInSight(m_walker, iteration.list);
     }
 
     TypedArrayType typedArrayTypeOfView(Reference view) { return typedArrayTypeOf(BuiltinTypeContext { m_walker.program(), m_walker.types() }, m_walker.typeOf(view)); }
@@ -1582,7 +1661,7 @@ private:
         if (m_walker.isUnreachable())
             return { };
         if (std::optional<int64_t> known = integerIn(position)) {
-            Reference held = elementOfFreshList(m_walker, list, static_cast<uint32_t>(*known));
+            Reference held = elementOfListInSight(m_walker, list, static_cast<uint32_t>(*known));
             if (held && !(m_walker.types().at(m_walker.typeOf(held)).primitives & Primitive::Absent))
                 return held;
         }
@@ -1604,27 +1683,32 @@ private:
         return m_walker.build(WTF::move(read));
     }
 
-    Reference resultAt(Reference results, MapNextResult index)
+    Reference resultAt(Reference results, MapNextResult index, TypeID provenByLink = { })
     {
         Draft read = draft(Opcode::ResultAt);
         read.setResultsOperand(results);
         read.setIndex(static_cast<uint32_t>(index));
-        return build(WTF::move(read));
+        TypeID before = m_walker.exchangeContentsBeingTyped(provenByLink);
+        Reference built = build(WTF::move(read));
+        m_walker.exchangeContentsBeingTyped(before);
+        return built;
     }
 
     // As %MapIteratorPrototype%.next and %SetIteratorPrototype%.next step. Every way ends in `after`, with `done`, `value`, the position of the next step and the table that it counts in.
     void stepThroughTable(const Walker::IterationByIndex& iteration, Reference collection, BlockID after)
     {
         static_assert(static_cast<uint32_t>(MapNextResult::HasEntry) == static_cast<uint32_t>(SetNextResult::HasEntry) && static_cast<uint32_t>(MapNextResult::Entry) == static_cast<uint32_t>(SetNextResult::Entry) && static_cast<uint32_t>(MapNextResult::Key) == static_cast<uint32_t>(SetNextResult::Element));
-        Draft isClosed = draft(Opcode::IsCollectionIteratorClosedMark);
-        isClosed.setTableOperand(iteration.table);
-        BlockID finished = addBlock();
-        BlockID stepping = addBlock();
-        branch(build(WTF::move(isClosed)), finished, stepping);
-        continueIn(finished);
-        jumpTo(after, { boolean(true), undefined(), iteration.position, iteration.table });
-
-        continueIn(stepping);
+        // An iteration that has answered done stays done, and looks at nothing any more. Where no step follows the last one nobody has to ask.
+        if (!iteration.isOpenAtEveryStepAndClose) {
+            Draft isClosed = draft(Opcode::IsCollectionIteratorClosedMark);
+            isClosed.setTableOperand(iteration.table);
+            BlockID finished = addBlock();
+            BlockID stepping = addBlock();
+            branch(build(WTF::move(isClosed)), finished, stepping);
+            continueIn(finished);
+            jumpTo(after, { boolean(true), undefined(), iteration.position, iteration.table });
+            continueIn(stepping);
+        }
         bool isMap = iteration.contents == ContentsStepped::Map;
         Draft next = draft(isMap ? Opcode::MapNext : Opcode::SetNext);
         next.setOperand(0, collection);
@@ -1635,11 +1719,11 @@ private:
         BlockID ending = addBlock();
         branch(resultAt(found, MapNextResult::HasEntry), giving, ending);
         continueIn(ending);
-        jumpTo(after, { boolean(true), undefined(), iteration.position, build(draft(Opcode::CollectionIteratorClosedMark)) });
+        jumpTo(after, { boolean(true), undefined(), iteration.position, iteration.isOpenAtEveryStepAndClose ? undefined() : build(draft(Opcode::CollectionIteratorClosedMark)) });
 
         continueIn(giving);
-        Reference key = resultAt(found, MapNextResult::Key);
-        Reference value = isMap ? resultAt(found, MapNextResult::Value) : key;
+        Reference key = resultAt(found, MapNextResult::Key, isMap ? iteration.keysProven : iteration.valuesProven);
+        Reference value = isMap ? resultAt(found, MapNextResult::Value, iteration.valuesProven) : key;
         Reference given = iteration.kind == JSC::IterationKind::Keys ? key : value;
         if (iteration.kind == JSC::IterationKind::Entries) {
             Draft pair = draft(Opcode::NewArray);
@@ -1745,6 +1829,30 @@ private:
             m_listOfStateHoldsVerdictOnNext = iteration.stateHoldsVerdictOnNext;
             stepUnlessDone({ }, false, stepped);
             endStepByProtocol(iteration, after, stepped.results[0], stepped.results[1], iteration.position);
+            return;
+        }
+
+        // No step follows the last one, and no close asks: the position is that of the arm that reads by index alone.
+        if (iteration.isOpenAtEveryStepAndClose) {
+            Reference isLast = stepped.results[0];
+            Reference handedOut = stepped.results[1];
+            // The arm is there for the odd one: one call, and the mark of a closed iterator says whether the step was the last. Nothing meets in between.
+            if (FunctionID steps = m_protocolIsForTheOddOne ? findHelper(IterationHelper::StepIterator) : FunctionID()) {
+                handedOut = callHelper(steps, { iteration.iterator, iteration.next });
+                Draft isClosed = draft(Opcode::IsCollectionIteratorClosedMark);
+                isClosed.setTableOperand(handedOut);
+                isLast = build(WTF::move(isClosed));
+            } else
+                step(iteration.iterator, iteration.next, { }, false, stepped);
+            // Each way says whether it is the last in so many words: the branch behind the join goes by that, and the arm that reads by index pays nothing for this one.
+            BlockID last = addBlock();
+            BlockID further = addBlock();
+            branch(isLast, last, further);
+            continueIn(last);
+            endStepByProtocol(iteration, after, boolean(true), undefined(), integer(Walker::positionBehindEveryEnd));
+            continueIn(further);
+            // Nobody reads it. A constant holds no register round the arm that reads by index.
+            endStepByProtocol(iteration, after, boolean(false), handedOut, integer(0));
             return;
         }
 
@@ -2094,6 +2202,7 @@ private:
             method = goOnWhereTypeTestPasses(next, methods, byCall);
         }
         m_walker.noteGuessOpened();
+        m_walker.count(StatisticID::IteratorsSteppedWithoutCall);
         Reference handedOut = callHelper(steps, { iterator, method });
         Draft isClosed = draft(Opcode::IsCollectionIteratorClosedMark);
         isClosed.setTableOperand(handedOut);
@@ -2294,6 +2403,7 @@ private:
     bool m_mayStepGenerator { true };
     // A call for each step costs the loop that takes them. The open and the closes are taken once.
     bool m_protocolIsForTheOddOne { false };
+    Reference m_instanceAsMadeForGood;
     BlockID m_blockOfCallThatMakesIterator;
     uint32_t m_placeOfReadOfMethod { 0 };
     uint32_t m_placeBehindCallThatMakesIterator { 0 };
@@ -2459,7 +2569,9 @@ static bool openTypedIteration(Walker& walker, const BodyValue& open)
         }
     }
     std::optional<ClassSteppedUnseen> proven = iterable ? findClassSteppedUnseen(walker, walker.typeOf(iterable)) : std::nullopt;
-    bool isSurelyAsMade = proven && (proven->contents == ContentsStepped::Text || (proven->contents == ContentsStepped::List && isListAsMade(walker, iterable)));
+    // Link has followed all that arrives to be iterated over: it has the names, the prototype and the storage of its making in every run, whatever has run since.
+    bool isAsMadeForGood = proven && proven->contents != ContentsStepped::Text && classOfIterableThatStaysAsMadeByLink(walker, open, iterated) == proven->builtinClass;
+    bool isSurelyAsMade = proven && (proven->contents == ContentsStepped::Text || isAsMadeForGood || (proven->contents == ContentsStepped::List && isListAsMade(walker, iterable)));
     if (iterable && !isSurelyAsMade && stepsOfPatternStandInRow(index, open)) {
         Walker::IterationByIndex iteration = builder.takeStepsAtOpen(iterable, *open.as<Opcode::IteratorOpen>().elementCount());
         if (!walker.isUnreachable())
@@ -2479,11 +2591,15 @@ static bool openTypedIteration(Walker& walker, const BodyValue& open)
         iteration.list = iterable;
         iteration.builtinClass = proven->builtinClass;
         iteration.contents = proven->contents;
+        iteration.kind = proven->kind;
         iteration.position = builder.integer(0);
+        iteration.table = builder.tableThatFirstStepBeginsIn(iterable, proven->contents);
+        iteration.isAsMadeForGood = isAsMadeForGood;
+        iteration.isOpenAtEveryStepAndClose = way.isOpenAtEveryStepAndClose;
     } else {
         if (isExpectedToBeSteppedUnseen(walker, open.id()))
             builder.expectNoStepByProtocol();
-        iteration = builder.openByIndexOrProtocol(iterable, *tested, way.stepsStandUnderOwnCleanup || !way.closesStandBelowOnlyStep);
+        iteration = builder.openByIndexOrProtocol(iterable, *tested, way.stepsStandUnderOwnCleanup || !way.closesStandBelowOnlyStep, way.isOpenAtEveryStepAndClose);
         walker.noteGuessOpened();
     }
     iteration.inputHead = way.headOfLoopThatSteps;
@@ -2525,7 +2641,10 @@ bool openLoopOverIteratorThatEngineMakesOfItsOpcodes(Walker& walker, const BodyV
         return false;
 
     Reference receiver = walker.referenceOf(receiverID);
-    std::optional<ClassSteppedUnseen> tested = findClassToTestFor(walker, receiverID, receiver, !!way.headOfLoopThatSteps);
+    // Link has followed all that arrives at the receiver of the call: it has the names and the prototype of its making in every run, so nothing is asked of it.
+    std::optional<ClassSteppedUnseen> proven = findClassSteppedUnseen(walker, receiver);
+    bool isAsMadeForGood = proven && receiverStaysAsMadeByLink(walker, call);
+    std::optional<ClassSteppedUnseen> tested = isAsMadeForGood ? proven : findClassToTestFor(walker, receiverID, receiver, !!way.headOfLoopThatSteps);
     if (!tested || (tested->contents != ContentsStepped::Map && tested->contents != ContentsStepped::Set))
         return false;
     std::optional<JSC::IterationKind> kind = kindOfIterationThatNobodySees(walker, tested->builtinClass, false, name);
@@ -2536,10 +2655,26 @@ bool openLoopOverIteratorThatEngineMakesOfItsOpcodes(Walker& walker, const BodyV
     uint32_t place = read.id().index() - block.firstValue().index();
     BuilderOfIteration builder(walker, walker.originOf(open), IteratorKind::Sync, WordingOfIteration::Source);
     uint32_t placeOfOpen = openID.index() - block.firstValue().index();
-    builder.openWhatCallGivesByProtocol(block.id(), place, placeOfOpen, open.as<Opcode::IteratorOpen>().iterableOperand());
-    Walker::IterationByIndex iteration = builder.openByIndexOrProtocol(receiver, *tested, way.stepsStandUnderOwnCleanup || !way.closesStandBelowOnlyStep);
-    walker.noteGuessOpened();
+    Walker::IterationByIndex iteration;
+    if (isAsMadeForGood) {
+        iteration.list = receiver;
+        iteration.builtinClass = tested->builtinClass;
+        iteration.contents = tested->contents;
+        iteration.kind = tested->kind;
+        iteration.position = builder.integer(0);
+        iteration.table = builder.tableThatFirstStepBeginsIn(receiver, tested->contents);
+        iteration.isAsMadeForGood = true;
+        iteration.isOpenAtEveryStepAndClose = way.isOpenAtEveryStepAndClose;
+    } else {
+        builder.openWhatCallGivesByProtocol(block.id(), place, placeOfOpen, open.as<Opcode::IteratorOpen>().iterableOperand());
+        iteration = builder.openByIndexOrProtocol(receiver, *tested, way.stepsStandUnderOwnCleanup || !way.closesStandBelowOnlyStep, way.isOpenAtEveryStepAndClose);
+        walker.noteGuessOpened();
+    }
     iteration.inputHead = way.headOfLoopThatSteps;
+    if (const LinkedContentsAtOperation* contents = iteration.table ? walker.facts().linked().contentsAtOperation(walker.currentFunction(), callID) : nullptr) {
+        iteration.keysProven = contents->key;
+        iteration.valuesProven = contents->value;
+    }
     if (!walker.isUnreachable())
         walker.bind(openID, walker.addIterationByIndex(WTF::move(iteration)));
     // The block's own walk goes on behind the open.
@@ -2562,14 +2697,22 @@ static bool appendSpreadOfList(Walker& walker, const BodyValue& spread)
             return true;
         }
     }
-    bool isSurelyAsMade = isProvenListInIteration(walker, iterable) && isListAsMade(walker, iterable);
+    // Link has followed all that arrives to be spread. AppendElements reads a hole as undefined.
+    BuiltinClassID classAsMadeForGood = classOfIterableThatStaysAsMadeByLink(walker, spread, spread.as<Opcode::AppendSpread>().iterableOperand());
+    bool isListAsMadeForGood = classAsMadeForGood == BuiltinClasses::Array && indexesAreAbsentAboveLists(walker);
+    bool isSurelyAsMade = isProvenListInIteration(walker, iterable) && (isListAsMadeForGood || isListAsMade(walker, iterable));
     std::optional<ClassSteppedUnseen> tested = !array || isSurelyAsMade ? std::nullopt : findClassToTestFor(walker, spread.as<Opcode::AppendSpread>().iterableOperand(), iterable);
     if (!array || !iterable)
         return false;
+    // No test is put in, so nothing has to pay for one.
+    if (std::optional<ClassSteppedUnseen> proven = !tested && !isSurelyAsMade && classAsMadeForGood ? findClassSteppedUnseen(walker, iterable) : std::nullopt; proven && proven->builtinClass == classAsMadeForGood)
+        tested = proven;
     BuilderOfIteration builder(walker, walker.originOf(spread), IteratorKind::Sync, WordingOfIteration::Spread);
     if (isSurelyAsMade)
         builder.appendElementsOf(array, iterable);
     else if (tested && BuilderOfIteration::isListedByAppendMembers(*tested)) {
+        if (classAsMadeForGood == tested->builtinClass)
+            builder.takeInstanceForAsMade(iterable);
         if (!builder.appendRowToListMadeWithRoom(spread, array, iterable, *tested))
             builder.appendMembersOrAllOutOfLine(array, iterable, *tested);
         walker.noteGuessOpened();
@@ -2707,6 +2850,13 @@ bool buildTypedIterationOfItsOpcodes(Walker& walker, const BodyValue& value)
         return true;
     }
 
+    // `for (const [name, price] of prices)`: the receiver of the open is the Map itself.
+    if (Walker::IterationByIndex& stepped = walker.iterationByIndex(state); stepped.table && !stepped.keysProven && !stepped.valuesProven) {
+        if (const LinkedContentsAtOperation* contents = walker.facts().linked().contentsAtOperation(walker.currentFunction(), value.operand(0))) {
+            stepped.keysProven = contents->key;
+            stepped.valuesProven = contents->value;
+        }
+    }
     if (!isExpectedToStepGenerator(walker, value.operand(0)))
         builder.expectNoGenerator();
     if (isExpectedToBeSteppedUnseen(walker, value.operand(0)))

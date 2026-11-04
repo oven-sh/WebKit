@@ -1,0 +1,169 @@
+# `v.a = n; v.a + v.b; take(v as Box)`: nothing is declared, held or seen to arrive of `v`, and two classes have the names that are used off it. The cast behind the uses says which is meant: the test for that layout stands in front of the first use.
+# The same body without the cast, and with the plain argument `take(v)` of a value that is written `any` (the front end states nothing there), stays closed.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = ShapeTest {{*}} layouts=[L0]
+# CHECK: = GetSlot {{*}} key="b" receivers=[L0]
+# CHECK: = PutSlot {{*}} key="a" receivers=[L0]
+# RUN(PLAIN): walk f3 mechanisms=all
+# PLAIN-LABEL: code f3:Body
+# PLAIN-NOT: = ShapeTest
+# PLAIN: = PropSet {{*}} key="a"
+# PLAIN-NOT: = ShapeTest
+# -- source: a-cast-behind-the-uses-opens-the-guess-in-front-of-them-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# class Box { a = 1; b = 2; }
+# class Crate { a = 3; b = 4; c = 5; }
+# function take(box: Box): number { return box.b; }
+# function withCast(make: () => any, n: number): number { const v = make(); v.a = n; const sum = v.a + v.b; take(v as Box); return sum; }
+# function withPlainArgument(make: () => any, n: number): number { const v = make(); v.a = n; const sum = v.a + v.b; take(v); return sum; }
+# sink(withCast, withPlainArgument, new Box(), new Crate());
+# -- end of source
+# records of 84e9edc24ea4953e
+
+module m0 path="a-cast-behind-the-uses-opens-the-guess-in-front-of-them-from-source.ts" displayPath="a-cast-behind-the-uses-opens-the-guess-in-front-of-them-from-source.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+layout L0 kind=Instance name="Box" module=m0 position=57 constructor=f4 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L1 kind=Instance name="Crate" module=m0 position=85 constructor=f5 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}] ownFieldCount=3
+variable g0 name="take" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @51
+    v5 = NewClass v4 layout=L0 @51
+    PutModuleVariable v5 variable=g1 @51
+    v7 = FinishClass v5 layout=L0 @51
+    v8 = Convert v7 declared={type=f4 flags=[IsFromCompiler]} @51
+    v9 = Convert v7 declared={type=f4 flags=[IsFromCompiler]} @51
+    v10 = NewClosure function=f5 @79
+    v11 = NewClass v10 layout=L1 @79
+    PutModuleVariable v11 variable=g2 @79
+    v13 = FinishClass v11 layout=L1 @79
+    v14 = Convert v13 declared={type=f5 flags=[IsFromCompiler]} @79
+    v15 = Convert v13 declared={type=f5 flags=[IsFromCompiler]} @79
+    v16 = Builtin builtin=GlobalThis @440
+    v17 = PropGet v16 key="sink" [isFreeName] @440
+    v18 = Construct v9 calleeName="Box" @478
+    v19 = Convert v18 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @474
+    v20 = Construct v15 calleeName="Crate" @489
+    v21 = Convert v20 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @485
+    v22 = Call v17, -, v1, v3, v19, v21 calleeName="sink" @440
+    v23 = Undefined @440
+    Return v23 @440
+}
+function f1 name="take" module=m0 position=116 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="b" @157
+    v2 = Convert v1 declared={type=number} @157
+    Return v2 @157
+}
+function f2 name="withCast" module=m0 position=166 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: number):
+    v2 = Call v0 calleeName="make" @232
+    PropSet v2, v1 key="a" @240
+    v4 = PropGet v2 key="a" @261
+    v5 = PropGet v2 key="b" @267
+    v6 = Add v4, v5 @267
+    v7 = GetModuleVariable variable=g0 @272
+    v8 = Convert v2 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @277
+    v9 = Call v7, -, v8 calleeName="take" @272
+    v10 = Convert v6 declared={type=number} @295
+    Return v10 @295
+}
+function f3 name="withPlainArgument" module=m0 position=302 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: number):
+    v2 = Call v0 calleeName="make" @377
+    PropSet v2, v1 key="a" @385
+    v4 = PropGet v2 key="a" @406
+    v5 = PropGet v2 key="b" @412
+    v6 = Add v4, v5 @412
+    v7 = GetModuleVariable variable=g0 @417
+    v8 = Call v7, -, v2 calleeName="take" @417
+    v9 = Convert v6 declared={type=number} @433
+    Return v9 @433
+}
+function f4 name="Box" module=m0 position=57 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @57
+    v2 = NewObject v1 layout=L0 @57
+    v3 = Convert v2 declared={type=L0} @57
+    v4 = CallDirect v3 function=f6 @57
+    Return v3 @57
+}
+function f5 name="Crate" module=m0 position=85 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1 @85
+    v2 = NewObject v1 layout=L1 @85
+    v3 = Convert v2 declared={type=L1} @85
+    v4 = CallDirect v3 function=f7 @85
+    Return v3 @85
+}
+function f6 module=m0 position=57 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @57
+    v2 = Integer integer=1 @67
+    v3 = Convert v2 declared={type=number} @67
+    PropDefine v1, v3 key="a" @63
+    v5 = Integer integer=2 @74
+    v6 = Convert v5 declared={type=number} @74
+    PropDefine v1, v6 key="b" @70
+    v8 = Undefined @57
+    Return v8 @57
+}
+function f7 module=m0 position=85 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @85
+    v2 = Integer integer=3 @97
+    v3 = Convert v2 declared={type=number} @97
+    PropDefine v1, v3 key="a" @93
+    v5 = Integer integer=4 @104
+    v6 = Convert v5 declared={type=number} @104
+    PropDefine v1, v6 key="b" @100
+    v8 = Integer integer=5 @111
+    v9 = Convert v8 declared={type=number} @111
+    PropDefine v1, v9 key="c" @107
+    v11 = Undefined @85
+    Return v11 @85
+}
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f11 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f11
+runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private

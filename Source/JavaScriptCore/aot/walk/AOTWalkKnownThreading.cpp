@@ -5,7 +5,8 @@
 
 // Folding, TypedOperations, EscapeAnalysis: ways that are about to meet walk a few operations apart where one of them knows more than all of them together.
 // A small join is walked once for the ways that decide each target of its terminator. The head of a join, and what stands behind a copy with several returns, is walked once for each way
-// on which an operation has a form that it lacks behind the meeting. An arm walks the branch of its block. Every operation is walked as it is written: what is asked ahead says what pays, never what is right.
+// on which an operation has a form that it lacks behind the meeting. An arm walks the end of its block: a branch, a jump, the return of a copy. The ways of closed arms through a copy walk what is left of the caller's block for themselves.
+// Every operation is walked as it is written: what is asked ahead says what pays, never what is right.
 // At a suspension: what may suspend is walked once. At a throw: a block under a handler is walked once, and no handler reads what the ways call by different names.
 // Withheld: the ways meet where the body has them meet.
 
@@ -14,6 +15,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDs.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTFamilies.h"
@@ -23,6 +25,7 @@
 #include "AOTOpcodeSets.h"
 #include "AOTPlan.h"
 #include "AOTResultRules.h"
+#include "AOTSweep.h"
 #include "AOTTypeNarrowing.h"
 #include "AOTWalkKnown.h"
 #include <algorithm>
@@ -147,16 +150,26 @@ class KnownThreading {
     WTF_MAKE_NONCOPYABLE(KnownThreading);
 public:
     KnownThreading(Walker& walker, BlockID inputBlock)
+        : KnownThreading(walker, walker.m_frames.size() - 1, inputBlock)
+    {
+    }
+    KnownThreading(Walker& walker, size_t frameIndex, BlockID inputBlock)
         : m_walker(walker)
-        , m_frameIndex(walker.m_frames.size() - 1)
-        , m_index(*walker.m_frames.last().index)
+        , m_frameIndex(frameIndex)
+        , m_index(*walker.m_frames[frameIndex].index)
         , m_block(m_index.block(inputBlock))
     {
     }
 
+    using ReturnOfCopy = Walker::Frame::ReturnOfCopy;
+
     bool endArmWithBranch();
+    bool armsMayWalkEndOfBlockFrom(uint32_t begin);
     bool walkApartFromClosedWays();
-    bool wouldBeWalkedApartFor(Reference value);
+    bool walkForEachWayThatBringsObjectInSight();
+    bool armsWouldStayApartBehindEndOfBlock(uint32_t begin, uint32_t end, Reference value, const BitVector& placesThatTypedRunKnowsBetter);
+    bool isMentionedBehindBlock(ValueID);
+    bool letReturnsOfCopyWalkEndOfBlockApart(ValueID call, std::span<ReturnOfCopy* const> passing, std::span<ReturnOfCopy* const> closed);
 
 private:
     using Name = std::pair<ValueID, Reference>;
@@ -242,13 +255,38 @@ private:
     bool letTerminatorBeWalkedForEachWay(ValueID firstBuiltOnEachWay);
     bool mayBeWalkedApartFromClosedWays();
     bool terminatorMayBeWalkedByWaysApart();
-    template<typename Functor> bool looksAtValueFromInFront(const BodyValue& operation, const Functor& isLeanedOn);
-    template<typename Functor> bool looksAtValueFromInFrontHereOrBehindJumps(const Functor& isLeanedOn);
+    // Where the look ahead goes on: the operations of a block from `begin` on. In the body of a caller: behind `call`, whose copy the look has come out of by a return,
+    // and `given` is what that return hands back, where it is a value that comes from in front of what is asked about.
+    struct PlaceLookedAt {
+        size_t frameIndex { 0 };
+        BlockID block;
+        uint32_t begin { 0 };
+        ValueID call;
+        ValueID given;
+    };
+    struct LookAhead {
+        Vector<PlaceLookedAt, 16> places;
+        // So many of them the asker has asked about himself.
+        uint32_t numberOfPlacesAsked { 0 };
+        // The values of the body of the block asked about in front of it come from in front.
+        ValueID bound;
+        // A parameter of a block that is looked at, and what the edge looked along brings for it from in front.
+        Vector<std::pair<ValueID, ValueID>, 8> brought;
+    };
+    ValueID valueFromInFront(const LookAhead&, ValueID operand);
+    void lookBehindEdge(LookAhead&, const PlaceLookedAt& from, const BodyTerminator&, uint32_t targetIndex, BodyTarget);
+    void lookBehindReturnOfCopy(LookAhead&, const PlaceLookedAt& from, const BodyTerminator&);
+    // isLeanedOn(ValueID value, Reference nameInCaller): one of the two is set.
+    template<typename Functor> bool looksAhead(LookAhead&, const Functor& isLeanedOn);
+    bool endOfBlockMayBeWalkedForEachWayFrom(uint32_t begin);
     bool leansOnWhatWaysHaveProven(std::span<const uint32_t> passing, std::span<const uint32_t> closed);
+    bool takesApartParameter(ValueID parameter);
     // For arms that have walked the block up to `begin`. True: each of them may walk what is left of it and its terminator, and the block is marked so. False: nothing was done.
     bool letArmsWalkEndOfBlockFrom(uint32_t begin);
     void forgetValuesThatNobodyReadsAnyMore();
     void forgetValuesFrom(ValueID first);
+    // Of a value from in front of the block.
+    bool isReadBehindBlock(ValueID);
 
     uint32_t numberOfOperationsBuiltIn(uint32_t begin, uint32_t end);
 
@@ -477,6 +515,15 @@ void KnownThreading::forgetValuesFrom(ValueID first)
         frame().references[value] = Reference();
 }
 
+bool KnownThreading::isReadBehindBlock(ValueID value)
+{
+    for (BodyTarget target : m_block.terminator().targets()) {
+        if (m_walker.m_liveness.isLiveAtHead(value, target.block()))
+            return true;
+    }
+    return false;
+}
+
 // In front of the first of several walks of the terminator. What the block holds and a later block reads has another name on each way, so every edge from here on brings what stands for it: Frame::valuesBuiltTwice.
 // `firstBuiltOnEachWay`: what stands in front of it in the block was bound once, in front of the ways, and keeps its one name: where arms of a guess walk the end of their block, the parameters of the block.
 // False: some such value cannot travel so, and nothing was done.
@@ -494,6 +541,14 @@ bool KnownThreading::letTerminatorBeWalkedForEachWay(ValueID firstBuiltOnEachWay
         liveness.forEachLiveAtHead(target.block(), firstBuiltOnEachWay, m_block.endOfValues(), [&](ValueID value) {
             readBehind.append(value);
         });
+    }
+    // Ways that are still open bring names, and each walk joins those of its own ways. `for (; i < 2; i++) { if (..) break; .. } if (i < 2) return i;`, its turns written out:
+    // `i` is listed no more once one block takes all that leaves the loop: Walker::walkTurnsWrittenOut(). This may be that block.
+    if (uint32_t firstWay = m_walker.inputBlock(m_frameIndex, m_block.id()).firstOpenEdge; firstWay != Walker::noOpenEdge) {
+        for (auto [value, name] : m_walker.m_openEdges[firstWay].names) {
+            if (!frame().valuesBuiltTwice.contains(value) && isReadBehindBlock(value))
+                readBehind.append(value);
+        }
     }
     std::ranges::sort(readBehind);
     readBehind.shrink(std::ranges::unique(readBehind).begin() - readBehind.begin());
@@ -537,15 +592,24 @@ bool KnownThreading::letTerminatorBeWalkedForEachWay(ValueID firstBuiltOnEachWay
 
 bool KnownThreading::letArmsWalkEndOfBlockFrom(uint32_t begin)
 {
+    return endOfBlockMayBeWalkedForEachWayFrom(begin) && letTerminatorBeWalkedForEachWay(m_block.firstValue());
+}
+
+// It asks, and does nothing.
+bool KnownThreading::endOfBlockMayBeWalkedForEachWayFrom(uint32_t begin)
+{
     uint32_t numberOfOperations = m_block.numberOfValues();
     if (begin > numberOfOperations || numberOfOperations - begin > mostOperationsOfJoinWalkedForEachWay)
         return false;
-    if (!goesByOneOperand(m_block.terminator().kind()) || m_block.hasHandler() || m_index.hasIrreducibleFlow())
+    TerminatorKind end = m_block.terminator().kind();
+    bool returnsFromCopy = (end == TerminatorKind::Return || end == TerminatorKind::ReturnCall) && m_frameIndex && !frame().returnsInPlaceOfUnit;
+    bool mayBeTaken = goesByOneOperand(end) || end == TerminatorKind::Jump || returnsFromCopy;
+    if (!mayBeTaken || m_block.hasHandler() || m_index.hasIrreducibleFlow())
         return false;
     // No value is live for the sake of a hint, so a later block would let go of what the arm that came last has built.
     if (m_index.holdsParametersReadByReleaseHintsAlone() || m_index.opcodes().contains(Opcode::ReleaseHint))
         return false;
-    return operationsMayBeWalkedAgain(begin, numberOfOperations) && terminatorMayBeWalkedAgain(false) && letTerminatorBeWalkedForEachWay(m_block.firstValue());
+    return operationsMayBeWalkedAgain(begin, numberOfOperations) && terminatorMayBeWalkedAgain(false);
 }
 
 // ---- Operations that a way decides
@@ -627,6 +691,13 @@ void KnownThreading::walkBlockOnWays(std::span<const uint32_t> places, uint32_t 
     Walker& walker = m_walker;
     if (places.empty() || walker.m_hasFailed)
         return;
+    // A constant lies in no block, so nobody behind the walk would see that a name of another way is read.
+    for (auto [value, name] : walker.m_openEdges[places[0]].names) {
+        if (!frame().valuesBuiltTwice.contains(value) && isReadBehindBlock(value)) {
+            walker.fail("some of the ways into a block walk it for themselves, and no edge behind it brings on a name that they bring"_s);
+            return;
+        }
+    }
     Walker::InputBlock& record = walker.inputBlock(m_frameIndex, m_block.id());
     record = Walker::InputBlock { };
     record.firstNarrowerName = namesAtHead;
@@ -640,6 +711,11 @@ void KnownThreading::walkBlockOnWays(std::span<const uint32_t> places, uint32_t 
 // ---- What stands behind an operation that several ways have come through
 
 // ---- An arm that walks the terminator of its block
+
+bool KnownThreading::armsMayWalkEndOfBlockFrom(uint32_t begin)
+{
+    return frame().block == m_block.id() && frame().endOfStretch == m_block.numberOfValues() && letArmsWalkEndOfBlockFrom(begin);
+}
 
 bool KnownThreading::endArmWithBranch()
 {
@@ -671,8 +747,7 @@ bool KnownThreading::mayBeWalkedApartFromClosedWays()
     if (m_index.holdsParametersReadByReleaseHintsAlone() || m_index.opcodes().contains(Opcode::ReleaseHint))
         return false;
     TerminatorKind end = m_block.terminator().kind();
-    bool returns = end == TerminatorKind::Return || end == TerminatorKind::ReturnCall;
-    if (returns ? m_frameIndex && !frame().returnsInPlaceOfUnit : !goesByOneOperand(end) && end != TerminatorKind::Jump)
+    if (end != TerminatorKind::Return && end != TerminatorKind::ReturnCall && !goesByOneOperand(end) && end != TerminatorKind::Jump)
         return false;
     uint32_t numberOfOperations = m_block.numberOfValues();
     return numberOfOperationsBuiltIn(0, numberOfOperations) <= mostOperationsOfJoinWalkedForEachWay && operationsMayBeWalkedAgain(0, numberOfOperations);
@@ -694,85 +769,252 @@ bool KnownThreading::terminatorMayBeWalkedByWaysApart()
     return true;
 }
 
-template<typename Functor>
-bool KnownThreading::looksAtValueFromInFront(const BodyValue& operation, const Functor& isLeanedOn)
+// `(type as UnionType).objectFlags`: a cast that stands behind the bound hands on what comes from in front of it. Null: what the blocks looked at compute.
+ValueID KnownThreading::valueFromInFront(const LookAhead& look, ValueID operand)
 {
-    if (!operationsTypedByWayInKnownThreading.contains(operation.opcode()))
-        return false;
-    bool looks = false;
-    operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        // `(type as UnionType).objectFlags`: a cast that stands in the block hands on what comes from in front of it.
-        while (operand >= m_block.firstParameter() && !m_index.isParameter(operand) && inputOperationsThatHandOn.contains(m_index.opcodeOf(operand)))
-            operand = m_index.value(operand).operand(0);
-        if (looks || operand >= m_block.firstParameter() || operation.operandUses(operandIndex).containsOnly({ OperandUse::Retains, OperandUse::Returns }))
+    while (operand >= look.bound && !m_index.isParameter(operand) && inputOperationsThatHandOn.contains(m_index.opcodeOf(operand)))
+        operand = m_index.value(operand).operand(0);
+    if (operand < look.bound)
+        return operand;
+    for (auto [parameter, argument] : look.brought) {
+        if (parameter == operand)
+            return argument;
+    }
+    return { };
+}
+
+void KnownThreading::lookBehindEdge(LookAhead& look, const PlaceLookedAt& from, const BodyTerminator& terminator, uint32_t targetIndex, BodyTarget target)
+{
+    for (const PlaceLookedAt& place : look.places) {
+        if (place.frameIndex == from.frameIndex && place.block == target.block())
             return;
-        looks = isLeanedOn(operand);
-    });
-    return looks;
+    }
+    if (from.frameIndex == m_frameIndex) {
+        BodyBlock to = m_index.block(target.block());
+        uint32_t position = 0;
+        for (ValueID argument : target.arguments()) {
+            if (ValueID value = valueFromInFront(look, argument))
+                look.brought.append({ to.parameter(position), value });
+            ++position;
+        }
+        for (uint32_t proofIndex = 0; proofIndex < target.proofs().size(); ++proofIndex) {
+            std::optional<BodyEdgeResult> result = m_index.edgeResult(terminator, targetIndex, target, proofIndex);
+            if (ValueID value = result ? valueFromInFront(look, result->subject) : ValueID())
+                look.brought.append({ result->parameter, value });
+        }
+    }
+    look.places.append(PlaceLookedAt { from.frameIndex, target.block(), 0, from.call, from.given });
+}
+
+// The caller goes on behind the call with what the return hands back.
+void KnownThreading::lookBehindReturnOfCopy(LookAhead& look, const PlaceLookedAt& from, const BodyTerminator& terminator)
+{
+    if (!from.frameIndex)
+        return;
+    const Walker::Frame& copy = m_walker.m_frames[from.frameIndex];
+    const Walker::Frame& caller = m_walker.m_frames[from.frameIndex - 1];
+    if (copy.returnsInPlaceOfUnit || !copy.isCopiedByLinkOfChain)
+        return;
+    ValueID given;
+    if (ValueID returned = terminator.kind() == TerminatorKind::Return ? terminator.operand(0) : ValueID()) {
+        if (from.frameIndex == m_frameIndex)
+            given = valueFromInFront(look, returned);
+        else {
+            while (returned > from.call && !copy.index->isParameter(returned) && inputOperationsThatHandOn.contains(copy.index->opcodeOf(returned)))
+                returned = copy.index->value(returned).operand(0);
+            if (returned == from.call)
+                given = from.given;
+        }
+    }
+    uint32_t begin = copy.callCopied.index() - caller.index->block(caller.block).firstValue().index() + 1;
+    look.places.append(PlaceLookedAt { from.frameIndex - 1, caller.block, begin, copy.callCopied, given });
 }
 
 // A target of a Branch takes the proof of the edge and jumps on: `if (..) .. else if (type.flags & B) ..` reads in the block behind it.
-// So the blocks behind jumps, each entered by one edge as written and small enough to be walked apart itself, are looked at too: ways that are apart in the first are apart in the next.
+// So the blocks behind are looked at too, each small enough to be walked apart itself: ways that are apart in the first are apart in the next.
 template<typename Functor>
-bool KnownThreading::looksAtValueFromInFrontHereOrBehindJumps(const Functor& isLeanedOn)
+bool KnownThreading::looksAhead(LookAhead& look, const Functor& isLeanedOn)
 {
-    Vector<BlockID, 16> blocks { m_block.id() };
-    for (uint32_t number = 0; number < blocks.size() && number < mostBlocksLookedThroughInKnownThreading; ++number) {
-        KnownThreading here(m_walker, blocks[number]);
-        if (number && (m_index.numberOfIncomingEdges(blocks[number]) != 1 || !here.mayBeWalkedApartFromClosedWays() || !here.terminatorMayBeWalkedByWaysApart()))
-            continue;
-        for (uint32_t place = 0; place < here.m_block.numberOfValues(); ++place) {
-            if (looksAtValueFromInFront(m_index.value(ValueID(here.firstValue() + place)), isLeanedOn))
+    Walker& walker = m_walker;
+    for (uint32_t number = 0; number < look.places.size() && number < mostBlocksLookedThroughInKnownThreading; ++number) {
+        PlaceLookedAt place = look.places[number];
+        KnownThreading here(walker, place.frameIndex, place.block);
+        if (number >= look.numberOfPlacesAsked) {
+            if (place.begin) {
+                const Walker::Frame& frame = here.frame();
+                if (frame.endOfStretch != here.m_block.numberOfValues() || frame.numberOfStretchesBeingWalked != 1 || !here.endOfBlockMayBeWalkedForEachWayFrom(place.begin))
+                    continue;
+            } else if (here.m_index.numberOfIncomingEdges(place.block) != 1 || !here.mayBeWalkedApartFromClosedWays() || !here.terminatorMayBeWalkedByWaysApart())
+                continue;
+        }
+        for (uint32_t position = place.begin; position < here.m_block.numberOfValues(); ++position) {
+            BodyValue operation = here.m_index.value(ValueID(here.firstValue() + position));
+            if (!operationsTypedByWayInKnownThreading.contains(operation.opcode()))
+                continue;
+            bool looks = false;
+            operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (looks || operation.operandUses(operandIndex).containsOnly({ OperandUse::Retains, OperandUse::Returns }))
+                    return;
+                if (place.frameIndex == m_frameIndex) {
+                    if (ValueID value = valueFromInFront(look, operand))
+                        looks = isLeanedOn(value, Reference());
+                    return;
+                }
+                while (operand > place.call && !here.m_index.isParameter(operand) && inputOperationsThatHandOn.contains(here.m_index.opcodeOf(operand)))
+                    operand = here.m_index.value(operand).operand(0);
+                if (operand == place.call)
+                    looks = place.given && isLeanedOn(place.given, Reference());
+                else if (operand < place.call) {
+                    Reference name = here.frame().references[operand.index()];
+                    looks = name && isLeanedOn(ValueID(), name);
+                }
+            });
+            if (looks)
                 return true;
         }
         BodyTerminator end = here.m_block.terminator();
+        if ((end.kind() == TerminatorKind::Switch || end.kind() == TerminatorKind::SwitchString) && place.frameIndex == m_frameIndex) {
+            if (ValueID value = valueFromInFront(look, end.operand(0)); value && isLeanedOn(value, Reference()))
+                return true;
+        }
         if (end.kind() == TerminatorKind::Jump)
-            blocks.append(end.targets()[0].block());
+            lookBehindEdge(look, place, end, 0, end.targets()[0]);
+        else if (end.kind() == TerminatorKind::Return || end.kind() == TerminatorKind::ReturnCall)
+            lookBehindReturnOfCopy(look, place, end);
     }
     return false;
 }
 
-// Asked ahead, of a target of the terminator of the block being walked, where the arms of a guess at `value` are about to be built.
-bool KnownThreading::wouldBeWalkedApartFor(Reference value)
+// Of a value of the block: the terminator or another block mentions it, under whatever cast. One look at what the index keeps: a value with several mentions counts as mentioned behind.
+bool KnownThreading::isMentionedBehindBlock(ValueID value)
 {
-    if (m_index.numberOfIncomingEdges(m_block.id()) != 1 || m_walker.inputBlock(m_frameIndex, m_block.id()).isEntered)
-        return false;
-    if (!mayBeWalkedApartFromClosedWays() || !terminatorMayBeWalkedByWaysApart())
-        return false;
-    return looksAtValueFromInFrontHereOrBehindJumps([&](ValueID operand) {
-        return m_walker.referenceOf(operand) == value;
-    });
+    while (!m_index.isUnused(value)) {
+        std::optional<BodyUser> user = m_index.onlyUser(value);
+        if (!user || !user->value || !m_block.holds(user->value))
+            return true;
+        if (!inputOperationsThatHandOn.contains(m_index.opcodeOf(user->value)))
+            return false;
+        value = user->value;
+    }
+    return false;
 }
 
-// Some operation of the block looks at a value of which the passing ways together know more than some way of a closed arm does.
+// Asked ahead, of the block being walked, where the arms of a guess at `value` are about to be built around the operations from `begin` to `end`: would the arms stay apart behind the end of the block?
+// Somebody in sight looks at the value, or at what the typed run defines. A null `value`: the guess tests nothing of it.
+bool KnownThreading::armsWouldStayApartBehindEndOfBlock(uint32_t begin, uint32_t end, Reference value, const BitVector& placesThatTypedRunKnowsBetter)
+{
+    ValueID firstOfStretch(firstValue() + begin);
+    ValueID endOfStretch(firstValue() + end);
+    auto isLeanedOn = [&](ValueID own, Reference nameInCaller) {
+        if (!own)
+            return value && nameInCaller == value;
+        if (own >= firstOfStretch)
+            return own < endOfStretch && placesThatTypedRunKnowsBetter.get(own.index() - firstOfStretch.index());
+        return value && m_walker.referenceOf(own) == value;
+    };
+    PlaceLookedAt here { m_frameIndex, m_block.id(), end, { }, { } };
+    BodyTerminator terminator = m_block.terminator();
+    uint32_t targetIndex = 0;
+    for (BodyTarget target : terminator.targets()) {
+        uint32_t indexOfTarget = targetIndex++;
+        BlockID block = target.block();
+        // Behind a Branch: the other ways into a join are not walked yet, and nobody knows what they bring. Behind a Jump the arms would meet in front of it for nothing: in the join they meet as well.
+        if ((m_index.numberOfIncomingEdges(block) != 1 && terminator.kind() != TerminatorKind::Jump) || m_walker.inputBlock(m_frameIndex, block).isEntered)
+            continue;
+        KnownThreading to(m_walker, m_frameIndex, block);
+        if (!to.mayBeWalkedApartFromClosedWays() || !to.terminatorMayBeWalkedByWaysApart())
+            continue;
+        LookAhead look;
+        look.bound = m_block.endOfValues();
+        lookBehindEdge(look, here, terminator, indexOfTarget, target);
+        look.numberOfPlacesAsked = 1;
+        if (looksAhead(look, isLeanedOn))
+            return true;
+    }
+    if (terminator.kind() == TerminatorKind::Return || terminator.kind() == TerminatorKind::ReturnCall) {
+        LookAhead look;
+        look.bound = m_block.endOfValues();
+        lookBehindReturnOfCopy(look, here, terminator);
+        return looksAhead(look, isLeanedOn);
+    }
+    return false;
+}
+
+// Some operation in sight looks at a value of which the passing ways together know more than some way of a closed arm does.
 // What a way knows: the type of the name that it brings for the value, or of the name that a test has proven on it (WalkState::checkedNameOf()).
 bool KnownThreading::leansOnWhatWaysHaveProven(std::span<const uint32_t> passing, std::span<const uint32_t> closed)
 {
     Walker& walker = m_walker;
-    auto typeOnWay = [&](uint32_t place, ValueID value) {
+    auto typeOnWay = [&](uint32_t place, ValueID value, Reference name) {
         const Walker::OpenEdge& open = walker.m_openEdges[place];
-        Reference name = walker.referenceOf(value);
-        for (auto [builtTwice, nameOnWay] : open.names) {
-            if (builtTwice == value)
-                name = nameOnWay;
+        if (value && value >= m_block.firstParameter())
+            name = open.arguments[value.index() - m_block.firstParameter().index()];
+        else if (value) {
+            name = walker.referenceOf(value);
+            for (auto [builtTwice, nameOnWay] : open.names) {
+                if (builtTwice == value)
+                    name = nameOnWay;
+            }
         }
         while (Reference checked = name ? open.state.checkedNameOf(name) : Reference())
             name = checked;
         return walker.ownTypeOf(name);
     };
-    return looksAtValueFromInFrontHereOrBehindJumps([&](ValueID operand) {
+    LookAhead look;
+    look.bound = m_block.firstValue();
+    look.places.append(PlaceLookedAt { m_frameIndex, m_block.id(), 0, { }, { } });
+    look.numberOfPlacesAsked = 1;
+    return looksAhead(look, [&](ValueID operand, Reference nameInCaller) {
         TypeID proven;
         for (uint32_t place : passing) {
-            TypeID type = typeOnWay(place, operand);
+            TypeID type = typeOnWay(place, operand, nameInCaller);
             if (!type)
                 return false;
             proven = proven ? walker.joinTypes(proven, type) : type;
         }
         return std::ranges::any_of(closed, [&](uint32_t place) {
-            TypeID type = typeOnWay(place, operand);
+            TypeID type = typeOnWay(place, operand, nameInCaller);
             return type && !walker.types().isSubset(type, proven);
         });
     });
+}
+
+// For walkInline(), behind a copy that both kinds of ways have come out of: the frame of the copy is gone, and the block is the one that holds the call.
+// True: what is left of the block leans on what the passing returns together know and some closed one does not, each kind may walk it and the terminator for itself, and the block is marked so. False: nothing was done.
+bool KnownThreading::letReturnsOfCopyWalkEndOfBlockApart(ValueID call, std::span<ReturnOfCopy* const> passing, std::span<ReturnOfCopy* const> closed)
+{
+    Walker& walker = m_walker;
+    m_begin = call.index() - firstValue() + 1;
+    // ArgumentsMadeWhereTheyLeave binds the list anew for the call alone.
+    if (m_index.holdsAnyOf(opcodesThatMakeArguments))
+        return false;
+    if (frame().block != m_block.id() || frame().endOfStretch != m_block.numberOfValues() || frame().numberOfStretchesBeingWalked != 1 || walker.isWalkingBlockForEachWay(m_frameIndex) || !endOfBlockMayBeWalkedForEachWayFrom(m_begin))
+        return false;
+    auto typeOnWay = [&](const ReturnOfCopy& way, ValueID value, Reference name) {
+        if (value)
+            name = value == call ? way.value : walker.referenceOf(value);
+        while (Reference checked = name ? way.state.checkedNameOf(name) : Reference())
+            name = checked;
+        return walker.ownTypeOf(name);
+    };
+    LookAhead look;
+    look.bound = ValueID(firstValue() + m_begin);
+    look.places.append(PlaceLookedAt { m_frameIndex, m_block.id(), m_begin, { }, { } });
+    look.numberOfPlacesAsked = 1;
+    bool leans = looksAhead(look, [&](ValueID operand, Reference nameInCaller) {
+        TypeID proven;
+        for (const ReturnOfCopy* way : passing) {
+            TypeID type = typeOnWay(*way, operand, nameInCaller);
+            if (!type)
+                return false;
+            proven = proven ? walker.joinTypes(proven, type) : type;
+        }
+        return std::ranges::any_of(closed, [&](const ReturnOfCopy* way) {
+            TypeID type = typeOnWay(*way, operand, nameInCaller);
+            return type && !walker.types().isSubset(type, proven);
+        });
+    });
+    return leans && letTerminatorBeWalkedForEachWay(m_block.firstValue());
 }
 
 // `if (type.flags & A) .. else if (type.flags & B) ..`: the arms of a guess have each walked the branch of their block, and the block behind it asks for what the passing arm has proven.
@@ -801,6 +1043,9 @@ bool KnownThreading::walkApartFromClosedWays()
     if (!terminatorMayBeWalkedByWaysApart() || !letTerminatorBeWalkedForEachWay(m_block.firstParameter()))
         return false;
 
+    Vector<ValueID, 4> namedByWays;
+    for (auto [value, name] : walker.m_openEdges[firstWay].names)
+        namedByWays.append(value);
     uint32_t namesAtHead = walker.inputBlock(m_frameIndex, block).firstNarrowerName;
     {
         Walker::ClosedArm closedArm(walker);
@@ -814,6 +1059,106 @@ bool KnownThreading::walkApartFromClosedWays()
     frame().blocksWalkedForEachWay.shrink(0);
     walker.inputBlock(m_frameIndex, block).firstNarrowerName = namesAtHead;
     forgetValuesFrom(m_block.firstParameter());
+    for (ValueID value : namedByWays)
+        frame().references[value.index()] = Reference();
+    walker.m_block = { };
+    walker.m_state.clear();
+    return true;
+}
+
+// ---- The ways that bring an object of their own
+
+// An operation of the block reads the parameter by name or copies what it has: what the way that made the object knows without asking.
+bool KnownThreading::takesApartParameter(ValueID parameter)
+{
+    for (uint32_t place = 0; place < m_block.numberOfValues(); ++place) {
+        BodyValue operation = m_index.value(ValueID(firstValue() + place));
+        auto names = [&](ValueID operand) {
+            while (operand && operand != parameter && operand >= m_block.firstValue() && inputOperationsThatHandOn.contains(m_index.opcodeOf(operand)))
+                operand = m_index.value(operand).operand(0);
+            return operand == parameter;
+        };
+        switch (operation.opcode()) {
+        case Opcode::PropGet:
+            if (!operation.as<Opcode::PropGet>().isFreeName() && names(operation.as<Opcode::PropGet>().objectOperand()))
+                return true;
+            break;
+        case Opcode::CopyDataProperties:
+            if (names(operation.as<Opcode::CopyDataProperties>().sourceOperand()))
+                return true;
+            break;
+        case Opcode::Call: {
+            auto call = operation.as<Opcode::Call>();
+            ValueID callee = call.calleeOperand();
+            if (!callee || m_index.isParameter(callee) || m_index.opcodeOf(callee) != Opcode::Builtin || m_walker.program().builtins().canonicalID(m_index.value(callee).as<Opcode::Builtin>().builtin()) != Builtins::ObjectAssign)
+                break;
+            if (std::ranges::any_of(call.argumentsOperands(), names))
+                return true;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    return false;
+}
+
+// `Object.assign({}, defaults, wide ? { width: 100 } : { depth: 2 })`, `const r = ok ? { ok: true, value } : { ok: false }; if (r.ok) ..`: each way brings an object that it has made and that nothing else has.
+// The parameter in which they meet is a second name, so the object leaves there: it is made, and is asked for what the way knew. Where the block takes such a parameter apart each way walks the block for itself.
+// All the walks but the first together build no more than a join may be built again.
+bool KnownThreading::walkForEachWayThatBringsObjectInSight()
+{
+    Walker& walker = m_walker;
+    BlockID block = m_block.id();
+    Vector<uint32_t, 4> ways;
+    uint32_t firstWay = walker.inputBlock(m_frameIndex, block).firstOpenEdge;
+    for (uint32_t place = firstWay; place != Walker::noOpenEdge; place = walker.m_openEdges[place].next) {
+        const Walker::OpenEdge& open = walker.m_openEdges[place];
+        if (open.block || open.isLedByClosedArm || open.arguments.size() != m_block.numberOfParameters() || open.names.size() != walker.m_openEdges[firstWay].names.size())
+            return false;
+        ways.append(place);
+    }
+    if (ways.size() < 2 || walker.isWalkingBlockForEachWay(m_frameIndex))
+        return false;
+
+    auto bringsObjectInSight = [&](uint32_t place, uint32_t parameter) {
+        const Walker::OpenEdge& open = walker.m_openEdges[place];
+        Reference brought = open.arguments[parameter];
+        if (!brought.isValue())
+            return false;
+        ValueID cell = rootOfCellInSweptCode(walker.code(), brought.id());
+        return !walker.code().isConstant(cell) && open.state.isFresh(Reference::value(cell)) && open.state.orderWordOf(Reference::value(cell));
+    };
+    bool pays = false;
+    for (uint32_t parameter = 0; parameter < m_block.numberOfParameters() && !pays; ++parameter) {
+        bool everyWayBringsOne = std::ranges::all_of(ways, [&](uint32_t place) {
+            return bringsObjectInSight(place, parameter);
+        });
+        pays = everyWayBringsOne && takesApartParameter(m_block.parameter(parameter));
+    }
+    if (!pays || !mayBeWalkedApartFromClosedWays())
+        return false;
+    if (numberOfOperationsBuiltIn(0, m_block.numberOfValues()) * (ways.size() - 1) > mostOperationsOfJoinWalkedForEachWay)
+        return false;
+    if (!terminatorMayBeWalkedByWaysApart() || !letTerminatorBeWalkedForEachWay(m_block.firstParameter()))
+        return false;
+
+    // In the order in which they were led.
+    ways.reverse();
+    ++walker.m_numberOfJoinsWalkedForEachWay;
+    Vector<ValueID, 4> namedByWays;
+    for (auto [value, name] : walker.m_openEdges[firstWay].names)
+        namedByWays.append(value);
+    uint32_t namesAtHead = walker.inputBlock(m_frameIndex, block).firstNarrowerName;
+    for (uint32_t place : ways)
+        walkBlockOnWays(singleElementSpan(place), namesAtHead);
+
+    // Behind the block nothing of any walk is at hand but what the edges bring.
+    frame().blocksWalkedForEachWay.shrink(0);
+    walker.inputBlock(m_frameIndex, block).firstNarrowerName = namesAtHead;
+    forgetValuesFrom(m_block.firstParameter());
+    for (ValueID value : namedByWays)
+        frame().references[value.index()] = Reference();
     walker.m_block = { };
     walker.m_state.clear();
     return true;
@@ -835,21 +1180,46 @@ bool Walker::inlineCalleeAsLinkOfChainOfItsOpcodes(const BodyValue& call)
     return inlineCallee(*this, call);
 }
 
-bool Walker::armsTakeBranchForProofOf(BlockID inputBlock, uint32_t end, Reference value)
+bool Walker::armsTakeBranchForProofOf(BlockID inputBlock, uint32_t begin, uint32_t end, Reference value, const BitVector& placesThatTypedRunKnowsBetter)
 {
     const Frame& frame = m_frames.last();
     BodyBlock block = frame.index->block(inputBlock);
-    BodyTerminator terminator = block.terminator();
-    if (!value.isValue() || !goesByOneOperand(terminator.kind()) || frame.endOfStretch != block.numberOfValues() || block.numberOfValues() - end > mostOperationsOfJoinWalkedForEachWay)
+    TerminatorKind kind = block.terminator().kind();
+    bool returnsFromCopy = (kind == TerminatorKind::Return || kind == TerminatorKind::ReturnCall) && m_frames.size() > 1 && !frame.returnsInPlaceOfUnit;
+    bool mayBeTaken = goesByOneOperand(kind) || kind == TerminatorKind::Jump || returnsFromCopy;
+    if ((value && !value.isValue()) || !mayBeTaken || frame.endOfStretch != block.numberOfValues() || block.numberOfValues() - end > mostOperationsOfJoinWalkedForEachWay)
         return false;
     // A text in its builder goes over an edge only into a parameter that was made to hold a builder, and a name that two ways bring is joined in a plain one.
     if (hasTextsInStringBuilders())
         return false;
-    for (BodyTarget target : terminator.targets()) {
-        if (KnownThreading(*this, target.block()).wouldBeWalkedApartFor(value))
-            return true;
+    // Behind a jump and behind the return of a copy the ways meet others at once: there the arms stay apart for what the typed run gives, and the proof alone does not pay for a second walk.
+    if (!goesByOneOperand(kind))
+        value = { };
+    if (!value) {
+        KnownThreading threading(*this, inputBlock);
+        bool isMentionedBehind = false;
+        for (size_t place : placesThatTypedRunKnowsBetter)
+            isMentionedBehind = isMentionedBehind || threading.isMentionedBehindBlock(ValueID(static_cast<uint32_t>(block.firstValue().index() + begin + place)));
+        if (!isMentionedBehind)
+            return false;
     }
-    return false;
+    return KnownThreading(*this, inputBlock).armsWouldStayApartBehindEndOfBlock(begin, end, value, placesThatTypedRunKnowsBetter);
+}
+
+bool Walker::letReturnsOfCopyWalkEndOfBlockApart(ValueID call, std::span<Frame::ReturnOfCopy* const> passing, std::span<Frame::ReturnOfCopy* const> closed)
+{
+    if (m_hasFailed || !has(Mechanism::Guesses) || !m_opensGuesses || m_numberOfCopiesBuiltForSize || hasTextsInStringBuilders() || bodyKeepsValuesInWordsOfHeapInKnownThreading(*this))
+        return false;
+    return KnownThreading(*this, m_frames.last().block).letReturnsOfCopyWalkEndOfBlockApart(call, passing, closed);
+}
+
+// The walk stands behind the call, with what the returns of one kind have handed back bound to it.
+void Walker::walkEndOfBlockBehindReturnsOfCopy(ValueID call)
+{
+    Frame& frame = m_frames.last();
+    frame.walkedUpTo = call.index() - frame.index->block(frame.block).firstValue().index() + 1;
+    if (!isUnreachable() && !endArmWithBranchOf(frame.block))
+        fail("what is left of a block behind a copy is not walked by the ways that were to walk it apart"_s);
 }
 
 bool Walker::walkBlockApartFromClosedWays(BlockID inputBlock)
@@ -861,11 +1231,36 @@ bool Walker::walkBlockApartFromClosedWays(BlockID inputBlock)
     return KnownThreading(*this, inputBlock).walkApartFromClosedWays();
 }
 
+bool Walker::walkBlockForEachWayThatBringsObjectInSight(BlockID inputBlock)
+{
+    if (m_hasFailed || !has(Mechanism::EscapeAnalysis) || !has(Mechanism::TypedOperations) || !m_opensGuesses || m_numberOfCopiesBuiltForSize || hasTextsInStringBuilders())
+        return false;
+    if (m_openEdges[this->inputBlock(m_frames.size() - 1, inputBlock).firstOpenEdge].next == noOpenEdge || !currentBodyIndex().block(inputBlock).numberOfParameters())
+        return false;
+    return KnownThreading(*this, inputBlock).walkForEachWayThatBringsObjectInSight();
+}
+
 bool Walker::endArmWithBranchOf(BlockID inputBlock)
 {
     if (isUnreachable() || m_hasFailed || bodyKeepsValuesInWordsOfHeapInKnownThreading(*this))
         return false;
     return KnownThreading(*this, inputBlock).endArmWithBranch();
+}
+
+bool Walker::armsMayEndWithBranchBehind(const BodyValue& operation)
+{
+    const Frame& frame = m_frames.last();
+    BodyBlock block = frame.index->block(frame.block);
+    if (isUnreachable() || m_hasFailed || !block.holds(operation.id()) || bodyKeepsValuesInWordsOfHeapInKnownThreading(*this) || hasTextsInStringBuilders())
+        return false;
+    return KnownThreading(*this, frame.block).armsMayWalkEndOfBlockFrom(operation.id().index() - block.firstValue().index() + 1);
+}
+
+bool Walker::endArmWithBranchBehind(const BodyValue& operation)
+{
+    Frame& frame = m_frames.last();
+    frame.walkedUpTo = operation.id().index() - frame.index->block(frame.block).firstValue().index() + 1;
+    return endArmWithBranchOf(frame.block);
 }
 
 } } } // namespace JSC::AOT::Typed

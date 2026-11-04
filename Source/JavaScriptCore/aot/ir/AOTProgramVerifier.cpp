@@ -22,6 +22,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <wtf/Atomics.h>
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
 
@@ -196,9 +197,9 @@ public:
             (*this)(MemberID(positionOf(set)));
             return;
         case IDHome::Program:
-            m_program.types.at(set).forEach([&](MemberID member) {
-                (*this)(member);
-            });
+            // The members ascend, and each is asked whether its number is below a size: the last answers for all.
+            if (auto members = m_program.types.at(set); !members.isEmpty())
+                (*this)(members.last());
             return;
         case IDHome::SmallRange:
         case IDHome::Thread:
@@ -288,6 +289,60 @@ void checkIDsThatRecordWalkerSkips(RecordReferenceChecker&, const Record&)
 {
 }
 
+// A bit for each number below `count` that matches, 64 of them a word: IDSetView::anyWordOf().
+Vector<uint64_t> markNumbersByWord(size_t count, NOESCAPE const Invocable<bool(uint32_t)> auto& matches)
+{
+    Vector<uint64_t> words(FillWith { }, (count + 63) / 64, 0ull);
+    for (uint32_t number = 0; number < count; ++number) {
+        if (matches(number))
+            words[number / 64] |= 1ull << number % 64;
+    }
+    return words;
+}
+
+// What is asked of each member of each set of each type, answered once for all layouts and objects.
+// A thousand classes that extend one another are a thousand types of up to a thousand layouts, and as many of up to a thousand constructors: a step for each member of each is a step for each pair of classes.
+class AnswersForMembersOfVerifiedTypes {
+public:
+    explicit AnswersForMembersOfVerifiedTypes(const Program& program)
+        : environments(markNumbersByWord(program.layouts.size(), [&](uint32_t layout) {
+            return program.at(LayoutID(layout)).isEnvironment();
+        }))
+        , m_objects(program.types.objects())
+    {
+        m_traitsSharedBy64Objects.fill(notAsked, (m_objects.size() + 63) / 64);
+    }
+
+    // The traits of the 64 objects, where all have the same and neither a layout nor a class. Nothing: each of them is to be looked at.
+    // Found when a set first asks, on whichever thread: a program without a large set of objects asks for none.
+    std::optional<OptionSet<ObjectTrait>> traitsSharedBy64Objects(uint32_t word) const
+    {
+        uint16_t known = AtomicRef(m_traitsSharedBy64Objects[word]).load(std::memory_order_relaxed);
+        if (known == notAsked) {
+            OptionSet<ObjectTrait> traits = m_objects.at(ObjectID(word * 64)).traits;
+            bool areAlike = !traits.containsAny({ ObjectTrait::HasLayout, ObjectTrait::HasClass });
+            for (uint32_t object = word * 64 + 1, end = std::min(m_objects.size(), word * 64 + 64); areAlike && object < end; ++object)
+                areAlike = m_objects.at(ObjectID(object)).traits == traits;
+            known = areAlike ? traits.toRaw() : differ;
+            AtomicRef(m_traitsSharedBy64Objects[word]).store(known, std::memory_order_relaxed);
+        }
+        if (known == differ)
+            return std::nullopt;
+        return OptionSet<ObjectTrait>::fromRaw(known);
+    }
+
+    // By layout, 64 a word.
+    const Vector<uint64_t> environments;
+
+private:
+    // No object has either as its traits: it has one of the first three, and there are twelve.
+    static constexpr uint16_t notAsked = 0;
+    static constexpr uint16_t differ = UINT16_MAX;
+
+    const ObjectTable& m_objects;
+    mutable Vector<uint16_t> m_traitsSharedBy64Objects;
+};
+
 bool hasValidReferences(const Program& program, const Type& type, RecordReferenceChecker checker)
 {
     checker.checkSet<StringID>(type.stringLiterals);
@@ -362,7 +417,7 @@ bool hasCanonicalListsOfVerifiedType(const Program& program, const Type& type)
 }
 
 // Behind hasCanonicalListsOfVerifiedType(): the class parts ascend.
-bool derivedPartsCoverObjectsOfType(const Program& program, const Type& type)
+bool derivedPartsCoverObjectsOfType(const Program& program, const Type& type, const AnswersForMembersOfVerifiedTypes& answers)
 {
     SetView<LayoutID, LayoutSetID> layouts = program.at(type.layouts);
     std::span<const ClassPart> classes = classPartsOfVerifiedType(program, type.classes);
@@ -378,12 +433,24 @@ bool derivedPartsCoverObjectsOfType(const Program& program, const Type& type)
     }
 
     OptionSet<ObjectTrait> traits;
-    bool coversNamedObjects = program.types.at(type.objects).allOf([&](ObjectID object) {
+    auto isCovered = [&](ObjectID object) {
         const ObjectRecord& record = program.types.objects().at(object);
         traits.add(record.traits);
         if (record.has(ObjectTrait::HasLayout) && !layouts.contains(record.layout))
             return false;
         return !record.has(ObjectTrait::HasClass) || listsClass(record.builtinClass);
+    };
+    SetView<ObjectID, ObjectSetID> named = program.types.at(type.objects);
+    bool coversNamedObjects = named.isList() ? named.allOf(isCovered) : !named.untyped().anyWordOf([&](uint32_t word, uint64_t members) {
+        if (std::optional<OptionSet<ObjectTrait>> shared = answers.traitsSharedBy64Objects(word)) {
+            traits.add(*shared);
+            return false;
+        }
+        for (; members; members &= members - 1) {
+            if (!isCovered(ObjectID(word * 64 + static_cast<uint32_t>(std::countr_zero(members)))))
+                return true;
+        }
+        return false;
     });
     return coversNamedObjects && traits == type.traitsOfNamed;
 }
@@ -391,29 +458,36 @@ bool derivedPartsCoverObjectsOfType(const Program& program, const Type& type)
 // A built-in constant is a primitive value, and a type names built-in objects.
 static bool namesBuiltinConstantAmongObjects(const Program& program, TypeID id)
 {
-    return !program.types.at(program.at(id).objects).allOf([&](ObjectID object) {
-        const ObjectRecord& record = program.types.objects().at(object);
-        return record.kind != ObjectKind::Builtin || program.builtins().at(BuiltinID(record.payload)).kind != BuiltinKind::Constant;
-    });
+    const ObjectTable& objects = program.types.objects();
+    auto isBuiltinConstant = [&](ObjectID object) {
+        const ObjectRecord& record = objects.at(object);
+        return record.kind == ObjectKind::Builtin && program.builtins().at(BuiltinID(record.payload)).kind == BuiltinKind::Constant;
+    };
+    // The objects are numbered kind by kind, and behind them all stand the copies for instances: the closures of a large family are not gone through.
+    SetView<ObjectID, ObjectSetID> named = program.types.at(program.at(id).objects);
+    return named.anyOfWithin(objects.firstOf(ObjectKind::Builtin), objects.endOf(ObjectKind::Builtin), isBuiltinConstant)
+        || (objects.firstObjectOfInstances() < objects.size() && named.anyOfWithin(objects.firstObjectOfInstances(), objects.size(), isBuiltinConstant));
 }
 
-std::optional<InternalError> findTypeError(const Program& program, uint32_t position, RecordReferenceChecker checker)
+std::optional<InternalError> findTypeError(const Program& program, uint32_t position, RecordReferenceChecker checker, const AnswersForMembersOfVerifiedTypes& answers)
 {
     Type type = program.at(idAt<TypeID>(IDHome::Program, position));
     if (!hasValidReferences(program, type, checker))
         return InternalError { .kind = InternalErrorKind::IdOutOfRange, .count = position };
 
     LayoutID environmentAmongObjects;
-    program.at(type.layouts).forEach([&](LayoutID member) {
-        if (!environmentAmongObjects && program.at(member).isEnvironment())
-            environmentAmongObjects = member;
+    program.at(type.layouts).untyped().anyWordOf([&](uint32_t word, uint64_t members) {
+        uint64_t environments = members & answers.environments[word];
+        if (environments)
+            environmentAmongObjects = LayoutID(word * 64 + static_cast<uint32_t>(std::countr_zero(environments)));
+        return !!environments;
     });
     if (environmentAmongObjects)
         return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = environmentAmongObjects, .count = position };
     if (type.environment && !program.at(type.environment).isEnvironment())
         return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = type.environment, .count = position };
 
-    if (!hasCanonicalTypeParts(type) || !hasCanonicalListsOfVerifiedType(program, type) || !derivedPartsCoverObjectsOfType(program, type))
+    if (!hasCanonicalTypeParts(type) || !hasCanonicalListsOfVerifiedType(program, type) || !derivedPartsCoverObjectsOfType(program, type, answers))
         return InternalError { .kind = InternalErrorKind::InvalidType, .count = position };
     return std::nullopt;
 }
@@ -681,8 +755,9 @@ void ProgramVerifier::verifyIDs()
 void ProgramVerifier::verifyTypes()
 {
     RecordReferenceChecker checkerOfProgram(m_program);
+    AnswersForMembersOfVerifiedTypes answers(m_program);
     Vector<InternalError> errors = collectInParallel<InternalError>(m_build.parallelLoops(), m_program.types.numberOfTypes(), [&](unsigned position, Vector<InternalError>& found) {
-        if (auto error = findTypeError(m_program, position, checkerOfProgram))
+        if (auto error = findTypeError(m_program, position, checkerOfProgram, answers))
             found.append(WTF::move(*error));
     });
     for (InternalError& error : errors)

@@ -16,6 +16,7 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTIRProgram.h"
 #include "AOTWalkListReadsInLoops.h"
+#include "AOTWalkNumberGuesses.h"
 #include "AOTWalkCountersOfLoops.h"
 #include "AOTWalkNumberGuesses.h"
 #include "AOTWalkTextBuilders.h"
@@ -194,8 +195,64 @@ void Walker::noteHeadOfTurn(BlockID inputHead)
     way.isEntered = true;
     way.numberOfTurn = ++m_numberOfTypedCopiesEntered;
     m_state.noteHeadOfTurn(way.numberOfTurn);
+    if (way.looksCountOnTurnsThatBeginAgain)
+        testEnvironmentFieldsAtHeadOfTurn(inputHead);
 }
 
+void Walker::testEnvironmentFieldsAtHeadOfTurn(BlockID inputHead)
+{
+    Origin origin = m_origin;
+    origin.isTailCall = false;
+    for (const EnvironmentFieldTestedAtHeadOfTurn& field : findEnvironmentFieldsTestedAtHeadsOfTurns(*this, inputHead)) {
+        if (!mayBeginTurnAgainInClosedCopy() || m_hasFailed)
+            return;
+        Reference environment = referenceOf(field.environment);
+        if (!environment)
+            continue;
+        FieldReference place { field.layout, field.field };
+        Reference value = m_state.environmentField(environment, place);
+        if (!value) {
+            Draft read(Opcode::GetEnvironmentField, origin);
+            chooseConservativeFields(read);
+            read.setEnvironmentOperand(environment);
+            read.setLayout(field.layout);
+            read.setField(field.field);
+            value = build(WTF::move(read));
+        }
+        if (!value || !value.isValue())
+            continue;
+        if (m_types.isSubset(typeOf(value), field.tested)) {
+            noteEnvironmentField(environment, place, value);
+            continue;
+        }
+        // As proveExpectedTypeOrBeginTurnAgain(): a field that no turn writes is read in front of the loop by build(), and asked there, once.
+        Reference test;
+        {
+            InFrontOfTypedCopy inFront(*this, standsInFrontOfTypedCopy(value));
+            test = buildTestOfNumber(*this, value, field.tested, origin);
+        }
+        if (!test)
+            continue;
+        bool isAskedInFront = branchInFrontOfTypedCopy(test, true);
+        if (!isAskedInFront) {
+            BlockID passed = addBlock();
+            BlockID failed = addBlock(BlockFrequency::Rare);
+            branch(test, passed, failed);
+            continueIn(failed);
+            if (!isUnreachable())
+                beginTurnAgainInClosedCopy();
+            continueIn(passed);
+        }
+        noteGuessOpened();
+        Reference proven;
+        {
+            InFrontOfTypedCopy inFront(*this, isAskedInFront);
+            proven = buildProofOfNumber(*this, value, test, origin);
+        }
+        if (proven && proven.isValue() && !isUnreachable())
+            noteEnvironmentField(environment, place, proven);
+    }
+}
 void Walker::proveWhatLooksCountOnAt(const BodyValue& operation)
 {
     const WayIntoClosedCopy& way = m_waysIntoClosedCopies.last();
@@ -231,7 +288,7 @@ std::unique_ptr<LoopPreview> Walker::previewTypedCopy(BlockID inputHead, const L
             Reference built = referenceOf(input);
             return built ? typeOf(built) : TypeID();
         };
-        if (!guessesMayTypeOperationInCleanTurn(*this, currentBodyIndex().value(first), TypesOfInputs(typeInLooks)))
+        if (!guessesMayTypeOperationInCleanTurn(*this, currentBodyIndex().value(first), TypesOfInputs(typeInLooks)) && findEnvironmentFieldsTestedAtHeadsOfTurns(*this, inputHead).isEmpty())
             return nullptr;
     }
     Vector<TypeID, 8> entryTypes;
@@ -424,7 +481,8 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
     bool asksAtHead = !!findReadAskedAtHeadOfLoop(inputHead, testedInFront.span());
     bool hasTestInFront = !guesses.isEmpty() || !listsRead.lists.isEmpty() || !counters.isEmpty() || asksAtHead;
     bool otherCopyOpensItsGuesses = guesses.isEmpty() && counters.isEmpty() && !asksAtHead;
-    std::unique_ptr<LoopPreview> ofTypedCopy = previewTypedCopy(inputHead, preview, entering, listsRead.areLeftAsTheyAre ? listsRead.lists.span() : std::span<const ListTestedInFrontOfLoop>());
+    // The look is told of the lists whether or not a look has found them left as they are: it asks that by itself (LooksAtLoops::preview()), and claims nothing where a turn writes one.
+    std::unique_ptr<LoopPreview> ofTypedCopy = previewTypedCopy(inputHead, preview, entering, listsRead.lists.span());
     if (!hasTestInFront && !ofTypedCopy)
         return false;
     // `total += area(box)`: what a turn expects of a parameter of the head is asked of what enters, once. What comes round is typed by the turns.
@@ -463,14 +521,19 @@ bool Walker::buildLoopTwice(BlockID inputHead, const LoopPreview& preview, std::
                 return !declaredEffectsOfOperation(program(), Opcode::GetModuleVariable, definition).reads.overlaps(ofTurns.writes);
             if (definition.opcode() == Opcode::GetEnvironmentField)
                 return !declaredEffectsOfOperation(program(), Opcode::GetEnvironmentField, definition).reads.overlaps(ofTurns.writes) && self(self, definition.environmentOperand(), depth - 1);
-            if (definition.opcode() != Opcode::PropGet || definition.isFreeName() || declaredBoundOf(Opcode::GetSlot).reads.overlaps(ofTurns.writes))
+            if (definition.opcode() != Opcode::PropGet || definition.isFreeName())
+                return false;
+            // `for (source.position = 0; source.position < source.text.length; source.position++)`: the turns write under one name and read under another.
+            LocationMasks slot;
+            slot.add(program(), MemoryLocation::objectField(definition.key()));
+            if (slot.overlaps(ofTurns.writes))
                 return false;
             return self(self, definition.objectOperand(), depth - 1);
         };
         bool somethingLeavesTheTurns = ofTypedCopy->guessesCountedOn.containsIf([&](const GuessCountedOnByLooks& guess) {
             return isTheSameInEveryTurn(isTheSameInEveryTurn, guess.operand, 4);
         });
-        if (!somethingLeavesTheTurns)
+        if (!somethingLeavesTheTurns && findEnvironmentFieldsTestedAtHeadsOfTurns(*this, inputHead).isEmpty())
             return false;
     }
 

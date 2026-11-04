@@ -38,7 +38,7 @@ static_assert(static_cast<uint32_t>(JSMapIterator::Field::Entry) == static_cast<
 static constexpr OpcodeSet opcodesOfIterationReplacements { Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::AppendSpread };
 static constexpr OpcodeSet opcodesOfCoroutineReplacements { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::ReadScope };
 // Code::append() turns away every operation that states a type, so Upcast and NarrowByField go the way of Convert and Check, whatever range their rows have.
-static constexpr OpcodeSet opcodesOfAllReplacements = opcodesOfIterationReplacements | opcodesOfCoroutineReplacements | opcodesThatStateTypes | OpcodeSet { Opcode::HasJSType } | OpcodeSet {
+static constexpr OpcodeSet opcodesOfAllReplacements = opcodesOfIterationReplacements | opcodesOfCoroutineReplacements | opcodesThatStateTypes | OpcodeSet { Opcode::HasJSType, Opcode::ArraySpeciesCreate } | OpcodeSet {
     Opcode::CreateIteratorResult, Opcode::StepArrayIterator, Opcode::StepMapIterator, Opcode::StepSetIterator, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::Call, Opcode::DefineMethod, Opcode::DefineGetter, Opcode::DefineSetter, Opcode::PropGet, Opcode::PropSet
 } | callsByValue | constructionsByValue;
 
@@ -604,8 +604,14 @@ PropertyKeyID keyOfSymbolMadeOnce(Walker& walker, const BodyValue& value)
     PropertyKeyID key = keyOfSymbolThatCallMakes(walker.program(), walker.currentFunction(), value, scopedLambda<BodyValue(ValueID)>([&](ValueID id) {
         return body.value(id);
     }));
-    // Each turn of a loop makes a symbol of its own, and finds the same registered one.
-    return key && walker.isInLoop() && walker.program().at(key).kind != PropertyKeyKind::RegisteredSymbol ? PropertyKeyID() : key;
+    if (!key)
+        return { };
+    // Link has typed what the call answers by the scan's record of it. Whoever counted the loops again would count the edges that are written: `do { .. } while (false)`.
+    const Vector<SummaryCall>& calls = walker.facts().summaries().at(walker.currentFunction()).calls;
+    auto record = std::ranges::find_if(calls, [&](const SummaryCall& call) {
+        return call.site == value.id() && call.callee == SummaryCall::Callee::Builtin;
+    });
+    return record != calls.end() ? keyOfSymbolMadeOnceBy(walker.program(), *record) : PropertyKeyID();
 }
 
 static bool replaceCallThatMakesSymbolOnce(Walker& walker, const BodyValue& call)
@@ -935,6 +941,27 @@ static bool replaceTestOfCellTypeByTestOfClass(Walker& walker, const BodyValue& 
     return true;
 }
 
+// ---- ArraySpeciesCreate
+
+// In a copy of `filter` or `map` whose call reaches the row of lists alone: what the species of such a list makes is `new Array(length)`. It is built as that, so the result is a list that this code alone has.
+static bool replaceSpeciesOfListByNewList(Walker& walker, const BodyValue& created)
+{
+    auto operation = created.as<Opcode::ArraySpeciesCreate>();
+    Reference length = walker.referenceOf(operation.lengthOperand());
+    if (!walker.takeWordThatCopyMakesNewList(walker.referenceOf(operation.arrayOperand())) || !walker.has(Mechanism::BuiltinCalls) || !walker.has(Mechanism::TypedOperations))
+        return false;
+    if (!length || !walker.types().at(walker.typeOf(length)).isInteger())
+        return false;
+    Draft list(Opcode::NewArrayLike, walker.originOf(created));
+    walker.chooseConservativeFields(list);
+    list.setLengthOperand(length);
+    list.setArrayStorage(ArrayStorage::Other);
+    list.inputValueGiven = created.id();
+    walker.bind(created.id(), walker.build(WTF::move(list)));
+    walker.count(StatisticID::NewListsInPlaceOfSpecies);
+    return true;
+}
+
 // ---- The link of the chain
 
 constinit const OpcodeSet opcodesThatReplaceOperationTakes = opcodesOfAllReplacements;
@@ -948,6 +975,8 @@ bool replaceOperationOfItsOpcodes(Walker& walker, const BodyValue& value)
         return replaceAccessToGlobalName(walker, value);
     if (opcode == Opcode::HasJSType)
         return replaceTestOfCellTypeByTestOfClass(walker, value);
+    if (opcode == Opcode::ArraySpeciesCreate)
+        return replaceSpeciesOfListByNewList(walker, value);
 
     // Any other definition is copied.
     if (opcode == Opcode::DefineMethod)

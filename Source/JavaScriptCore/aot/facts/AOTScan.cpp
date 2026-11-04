@@ -85,6 +85,7 @@ enum class SinkKindInScan : uint8_t {
     SubjectOfInspection,
     GetterInSightOfChange,
     SetterInSightOfChange,
+    ValueInSightOfChange,
 };
 
 struct SinkInScan {
@@ -613,6 +614,14 @@ PropertyKeyID keyOfSymbolThatCallMakes(const Program& program, FunctionID functi
     return *key;
 }
 
+PropertyKeyID keyOfSymbolMadeOnceBy(const Program& program, const SummaryCall& call)
+{
+    if (call.callee != SummaryCall::Callee::Builtin || !call.key)
+        return { };
+    // Each turn of a loop makes a symbol of its own, and finds the same registered one.
+    return call.isInLoop && program.at(call.key).kind != PropertyKeyKind::RegisteredSymbol ? PropertyKeyID() : call.key;
+}
+
 // Modules::execute() keeps what the body has returned as the value of the module, and a request that comes while the body runs throws.
 bool requireAnswersWithResultOfBody(const Program& program, ModuleID referrer, ModuleID target)
 {
@@ -1024,6 +1033,8 @@ private:
     Vector<bool> m_isConvertedToPrimitive;
     // The same way: the first of the calls that the conversion has left.
     Vector<uint32_t> m_firstCallOfConversion;
+    // ThinSummary::furtherConversions, with the place in m_atoms for the call.
+    Vector<ThinSummary::FurtherConversion> m_furtherConversions;
     Vector<OperatorInScan> m_operators;
     // Ascending. Nothing but primitives arrives at them.
     Vector<uint32_t> m_joinsOfPrimitives;
@@ -1398,6 +1409,7 @@ void ScanOfBody::reset()
     m_nodesCaughtByBlocks.shrink(0);
     m_innermostLoopHeads.shrink(0);
     m_isConvertedToPrimitive.shrink(0);
+    m_furtherConversions.shrink(0);
     m_operators.shrink(0);
     m_joinsOfPrimitives.shrink(0);
     m_objectsBeingMade.shrink(0);
@@ -2594,8 +2606,11 @@ void ScanOfBody::readOperation(const BodyValue& value, uint32_t block)
     m_lists[index] = result;
     if (m_resultLeaves)
         escape(result);
-    for (ListInScan source : m_sourcesCopiedIntoResult)
+    for (ListInScan source : m_sourcesCopiedIntoResult) {
         addChange(SummaryChange::Kind::CopiesInto, value.id(), m_objectCopiedInto ? listOfNode(*m_objectCopiedInto) : result, { }, source);
+        // `{ ...source }`. `Object.assign({ }, source)` bears the flag.
+        m_summary.changes.last().definesWhatItCopies = opcode == Opcode::CopyObject && !value.as<Opcode::CopyObject>().assigns();
+    }
     // The copy of a compiled object that leaves names out is an object of its layout without them: tryCopyCompiledObjectWithout().
     if (opcode == Opcode::CopyObject) {
         for (PropertyKeyID key : value.as<Opcode::CopyObject>().excludedKeys())
@@ -2713,7 +2728,7 @@ void ScanOfBody::readAccess(const BodyValue& value, SummaryAccess::Kind kind, ui
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What stands above the home object: the read of its prototype link. Link answers that key on a class object and on a prototype object with the link itself, whatever member has the name.
+// What stands above the home object: the read of its prototype link. Link answers that key on a class object and on a prototype object with the link itself, unless a member has the name: then it cannot tell.
 uint32_t ScanOfBody::readSuperBase(const BodyValue& value)
 {
     auto read = value.as<Opcode::GetSuperBase>();
@@ -2897,6 +2912,8 @@ void ScanOfBody::readOperand(const BodyValue& value, ValueID operand, uint32_t o
         case OperandUse::AssignsFrom: {
             ValueID source = info.assignedFromOperand ? value.operand(*info.assignedFromOperand) : ValueID();
             addChange(SummaryChange::Kind::CopiesInto, value.id(), list, { }, source ? listOf(source) : listOfNode(0));
+            // The row says that the operation runs no code but what its protocols run on the source: so it defines. One that assigns runs the setter that it finds, and its row says unknownCode.
+            m_summary.changes.last().definesWhatItCopies = !declaredBoundInTable(value.opcode()).mayCallUnknownCode;
             break;
         }
         case OperandUse::DefinesName:
@@ -3004,7 +3021,7 @@ void ScanOfBody::readOwnValues(const BodyValue& value, uint32_t operandIndex, Li
         handToCodeThatRuns(list);
 }
 
-// The calls are the same wherever one value is converted, so they are left once, at the first such operation. Three calls stand at that site, so Link lists no callee for it.
+// The calls are the same wherever one value is converted, so they are left once, at the first such operation. Three calls stand at that site, so Link lists no callee for it. Of the others the summary keeps the sites.
 // They are made behind the body, when it is known where the value comes from: applyConversionToPrimitive().
 void ScanOfBody::convertToPrimitive(ValueID site, ListInScan list)
 {
@@ -3012,8 +3029,10 @@ void ScanOfBody::convertToPrimitive(ValueID site, ListInScan list)
         return;
     while (m_isConvertedToPrimitive.size() <= list.first)
         m_isConvertedToPrimitive.append(false);
-    if (std::exchange(m_isConvertedToPrimitive[list.first], true))
+    if (std::exchange(m_isConvertedToPrimitive[list.first], true)) {
+        m_furtherConversions.append({ site, list.first });
         return;
+    }
     addSink(SinkKindInScan::ConvertedToPrimitive, list, site.index());
 }
 
@@ -3512,10 +3531,14 @@ void ScanOfBody::noteLookUp(uint32_t root, PropertyKeyID key)
             object.keysLookedUp.append(key);
         return;
     }
-    // Above a literal lies nothing that the program wrote. An accessor of its own gets it as `this`.
+    // Above a literal lies nothing that the program wrote but what a test run lays on Object.prototype, under a new name or over a member. An accessor there gets it as `this`, like one of its own.
     const Layout& layout = m_program.at(layoutOfAllocation(definitionOf(root)));
     std::optional<uint32_t> field = layout.findField(key);
-    if ((field && layout.fields[*field].form.contains(FieldForm::IsAccessor)) || hasAccessorLaidUnder(root, key))
+    const PropertyKey& record = m_program.at(key);
+    bool isOpenedAbove = record.kind == PropertyKeyKind::Text && m_program.isOpenedSomewhere(record.text);
+    BuiltinID objectPrototype = m_program.builtins().canonicalID(Builtins::ObjectPrototype);
+    bool mayBeReplacedAbove = m_program.admitsReplacedBuiltins && findOwnMember(m_program, objectPrototype, key) && !isLockedLocation(m_program, objectPrototype, key);
+    if (isOpenedAbove || mayBeReplacedAbove || (field && layout.fields[*field].form.contains(FieldForm::IsAccessor)) || hasAccessorLaidUnder(root, key))
         noteLeaving(ValueID(root));
 }
 
@@ -3586,7 +3609,8 @@ void ScanOfBody::giveUp(uint32_t root)
     m_firstLeft[root] = 0;
 }
 
-// AOTWalkTypedAccesses.cpp goes by the same rule (BodyIndex::onlyIncomingEdge()): a parameter of a block that one edge enters, which is no edge to a handler, is another name of what the edge hands it.
+// A parameter of a block that one edge enters, which is no edge to a handler, is another name of what the edge hands it. An edge that the constants of the body rule out is not read and does not count.
+// AOTWalkTypedAccesses.cpp goes by what is decided here: ThinSummary::otherNamesOfObjectsBeingMade.
 void ScanOfBody::handToBlock(ValueID value, uint32_t from, uint32_t block, uint32_t position, KindOfEdgeInScan kind)
 {
     noteUseByBodyOfModule(value);
@@ -3618,6 +3642,7 @@ void ScanOfBody::takeObjectsHandedTo(const BodyBlock& block)
         if (hasParameter && m_numberOfEdgesInto[number] == 1) {
             m_roots[block.parameter(handed.position).index()] = handed.root;
             m_blocksThatTookObjects.append(BlockThatTookObjectInScan { number, handed.root });
+            m_summary.otherNamesOfObjectsBeingMade.append(OtherNameOfObjectBeingMade { block.parameter(handed.position), ValueID(handed.root) });
             continue;
         }
         ObjectBeingMadeInScan& object = objectBeingMade(handed.root);
@@ -3843,6 +3868,8 @@ void ScanOfBody::readDirectCall(const BodyValue& value, SummaryCall& call)
             && objectBeingMade(root).kind != ObjectBeingMadeKindInScan::OfOneLayout;
         addArgument(arguments[index], !goesOnWithConstruction);
         if (goesOnWithConstruction) {
+            // It has not left, and another body lays what it likes on it.
+            m_uses[root] |= isAccessedBesideNamedStores;
             ObjectBeingMadeInScan& object = objectBeingMade(root);
             if (!object.parts.contains(call.function))
                 object.parts.append(call.function);
@@ -4856,6 +4883,9 @@ void ScanOfBody::applySinks()
         case SinkKindInScan::SetterInSightOfChange:
             m_summary.changes[sink.target].setterInSight = oneNodeFor(sink.value);
             break;
+        case SinkKindInScan::ValueInSightOfChange:
+            m_summary.changes[sink.target].valueInSight = oneNodeFor(sink.value);
+            break;
         case SinkKindInScan::SubjectOfInspection:
             m_summary.inspections[sink.target].subject = oneNodeFor(sink.value);
             break;
@@ -4863,6 +4893,10 @@ void ScanOfBody::applySinks()
             applyConversionToPrimitive(sink);
             break;
         }
+    }
+    for (const ThinSummary::FurtherConversion& further : m_furtherConversions) {
+        if (uint32_t firstCall = m_firstCallOfConversion[further.firstCall]; firstCall != noConversion)
+            m_summary.furtherConversions.append({ further.site, firstCall });
     }
     for (const OperatorInScan& found : m_operators)
         applyOperator(found);
@@ -4919,19 +4953,37 @@ void ScanOfBody::followObjectsMadeToBePrototypes()
     }
 }
 
+// WHAT THIS BODY LAYS IS ALL THAT IS FOUND ON IT: a literal, or a dictionary. Nothing stands above it but Object.prototype, and nobody but this body has stored into it.
+// `this` of a class is made in the constructor too, with a prototype of its own: a member of the class answers where the object lacks the name, and the initializers of its fields have stored into it in a body of theirs.
+// One question for a descriptor and for a map of descriptors. The walk asks it in the same words: propertiesDefinedBehindAllocationInWrittenDescriptors().
+static bool holdsOnlyWhatItsBodyLaysInScan(const Program& program, const BodyValue& made)
+{
+    if (!made)
+        return false;
+    // A member that a descriptor leaves out is looked for above it. Object.prototype has none of the six names, and gets none but what a test run has opened.
+    for (BuiltinName name : { BuiltinNames::enumerable, BuiltinNames::configurable, BuiltinNames::value, BuiltinNames::writable, BuiltinNames::get, BuiltinNames::set }) {
+        if (StringID text = program.stringOf(name); text && program.isOpenedSomewhere(text))
+            return false;
+    }
+    if (made.opcode() == Opcode::NewDictionary)
+        return true;
+    return made.opcode() == Opcode::NewObject && !made.as<Opcode::NewObject>().prototypeOperand() && program.at(made.as<Opcode::NewObject>().layout()).kind == LayoutKind::Record;
+}
+
 // THE ENGINE's OWN BUILT-INS ARE SEEN CODE. ToPropertyDescriptor reads `enumerable`, `configurable`, `value`, `writable`, `get` and `set` off the descriptor and keeps nothing of the object itself.
 // A value lies under the name from then on, where anybody may read it, and a description of the property gives either half of an accessor out: so all three are handed to unseen code.
 // A half is run by whoever reads or stores under the name, with the object as `this`, at no call that is written: the record names both, and Link hands the object over where it goes by the proof.
 // Whatever else holds: the descriptor leaves like any other.
 void ScanOfBody::layDescriptorsInSight()
 {
-    static constexpr OpcodeSet makesDescriptor { Opcode::NewDictionary, Opcode::NewObject };
     PropertyKeyID get = m_program.keyOf(BuiltinNames::get);
     PropertyKeyID set = m_program.keyOf(BuiltinNames::set);
     PropertyKeyID valueKey = m_program.keyOf(BuiltinNames::value);
     struct Held {
         PropertyKeyID key;
         ListInScan list;
+        // The node of the field that the allocation fills with it. noSummaryNode: a store lays it.
+        uint32_t field { noSummaryNode };
     };
     Vector<Held, 6> held;
     for (const DefinitionByDescriptorInScan& definition : m_definitionsByDescriptors) {
@@ -4941,7 +4993,7 @@ void ScanOfBody::layDescriptorsInSight()
         BodyValue made = definitionOf(root);
         // A descriptor that was made in front of a loop has left in an earlier turn.
         uint32_t head = m_innermostLoopHeads.isEmpty() ? noLoop : m_innermostLoopHeads[m_blocks[definition.position]];
-        bool isInSight = made && makesDescriptor.contains(made.opcode()) && !(m_uses[root] & isAccessedBesideNamedStores) && (head == noLoop || head <= m_blocks[root]);
+        bool isInSight = holdsOnlyWhatItsBodyLaysInScan(m_program, made) && !(m_uses[root] & isAccessedBesideNamedStores) && (head == noLoop || head <= m_blocks[root]);
         held.shrink(0);
         if (isInSight && made.opcode() == Opcode::NewObject) {
             const Layout& layout = m_program.at(made.as<Opcode::NewObject>().layout());
@@ -4950,7 +5002,7 @@ void ScanOfBody::layDescriptorsInSight()
             for (size_t place = 0; place < fields.size() && isInSight; ++place) {
                 isInSight = fields[place] < layout.fields.size() && place < values.size() && values[place] && layout.fields[fields[place]].key && layout.fields[fields[place]].form.isEmpty();
                 if (isInSight)
-                    held.append({ layout.fields[fields[place]].key, listOf(values[place]) });
+                    held.append({ layout.fields[fields[place]].key, listOf(values[place]), fieldNode(made.as<Opcode::NewObject>().layout(), fields[place]) });
             }
         }
         if (isInSight) {
@@ -4958,7 +5010,8 @@ void ScanOfBody::layDescriptorsInSight()
                 const StoreInScan& store = m_stores[index];
                 if (store.site.index() >= definition.position)
                     continue;
-                isInSight = isInSight && !!store.key;
+                // A store on one arm of a branch has not run on the other. What stands in the block of the allocation, or in that of the definition, has run whenever the definition runs.
+                isInSight = isInSight && !!store.key && (store.block == m_blocks[root] || store.block == m_blocks[definition.position]);
                 held.append({ store.key, store.value });
             }
         }
@@ -5012,9 +5065,27 @@ void ScanOfBody::layDescriptorsInSight()
                 form.add(FieldForm::IsNotConfigurable);
             m_summary.accesses[definition.access].formCreated = form;
         }
+        // A DATA DESCRIPTOR THAT THE ALLOCATION FILLS AND THAT LEAVES AT THE CALL ALONE. Nobody but the call ever reads it, so what it holds under `value` lies nowhere but under the name that is defined:
+        // it goes with the definition, and not into the field of a layout that every such descriptor shares, where the methods of a class would meet.
+        // WRITABLE: a name that is read only refuses the assignment on every object below it, which no store does.
+        auto heldUnderValue = std::ranges::find(held, valueKey, &Held::key);
+        bool definitionBringsValue = definition.access != DefinitionByDescriptorInScan::noDefinitionUnderName && !isAccessor && std::ranges::count(held, valueKey, &Held::key) == 1 && isEnumerable && isConfigurable && isWritable && *isWritable
+            && heldUnderValue->field != noSummaryNode && m_firstLeft[root] == definition.position && m_lastLeft[root] == definition.position;
+        m_summary.changes[definition.change].laysValueInSight = definitionBringsValue;
         for (const Held& member : held) {
             if (member.key != get && member.key != set && member.key != valueKey)
                 continue;
+            if (definitionBringsValue) {
+                for (SinkInScan& sink : m_sinks) {
+                    if (sink.kind != SinkKindInScan::Edge || sink.target != member.field || sink.value.first != member.list.first || sink.value.count != member.list.count)
+                        continue;
+                    sink.value.count = 0;
+                    break;
+                }
+                addSink(SinkKindInScan::ValueOfAccess, member.list, definition.access);
+                addSink(SinkKindInScan::ValueInSightOfChange, member.list, definition.change);
+                continue;
+            }
             escape(member.list);
             if (member.key != valueKey)
                 addSink(member.key == get ? SinkKindInScan::GetterInSightOfChange : SinkKindInScan::SetterInSightOfChange, member.list, definition.change);
@@ -5025,7 +5096,6 @@ void ScanOfBody::layDescriptorsInSight()
 // In front of nameKeysOfDefinitionsByMaps(), which copies records.
 void ScanOfBody::nameGettersOfDescriptors()
 {
-    static constexpr OpcodeSet makesDescriptor { Opcode::NewDictionary, Opcode::NewObject };
     PropertyKeyID get = m_program.keyOf(BuiltinNames::get);
     for (const DefinitionByDescriptorInScan& definition : m_definitionsByDescriptors) {
         uint32_t root = definition.rootOfDescriptor;
@@ -5033,25 +5103,36 @@ void ScanOfBody::nameGettersOfDescriptors()
         if (definition.access != DefinitionByDescriptorInScan::noDefinitionUnderName)
             nameAccessorWrittenInDescriptor(definition.access, root, definition.position);
         BodyValue made = definitionOf(root);
-        if (!made || !makesDescriptor.contains(made.opcode()) || m_uses[root] & isAccessedBesideNamedStores)
+        if (!holdsOnlyWhatItsBodyLaysInScan(m_program, made) || m_uses[root] & isAccessedBesideNamedStores)
             continue;
         // A descriptor that was made in front of a loop has left in an earlier turn.
         uint32_t head = m_innermostLoopHeads.isEmpty() ? noLoop : m_innermostLoopHeads[m_blocks[definition.position]];
         if (head != noLoop && head > m_blocks[root])
             continue;
-        if (made.opcode() == Opcode::NewObject && !made.as<Opcode::NewObject>().fields().empty())
-            continue;
 
-        const StoreInScan* only = nullptr;
-        bool isStoredOnce = true;
+        // What the allocation lists is there like what is stored behind it.
+        std::optional<ListInScan> held;
+        bool isNamedOnce = true;
+        if (made.opcode() == Opcode::NewObject) {
+            const Layout& layout = m_program.at(made.as<Opcode::NewObject>().layout());
+            std::span<const uint32_t> fields = made.as<Opcode::NewObject>().fields();
+            std::span<const ValueID> values = made.variadicOperands();
+            for (size_t place = 0; place < fields.size(); ++place) {
+                if (fields[place] >= layout.fields.size() || layout.fields[fields[place]].key != get)
+                    continue;
+                isNamedOnce = !held && place < values.size() && values[place];
+                if (isNamedOnce)
+                    held = listOf(values[place]);
+            }
+        }
         for (const StoreInScan& store : m_stores) {
             if (store.root != root || store.key != get || store.site.index() >= definition.position)
                 continue;
-            isStoredOnce = !only;
-            only = &store;
+            isNamedOnce = isNamedOnce && !held;
+            held = store.value;
         }
-        if (only && isStoredOnce)
-            m_summary.changes[definition.change].getter = oneNodeFor(only->value);
+        if (held && isNamedOnce)
+            m_summary.changes[definition.change].getter = oneNodeFor(*held);
     }
 }
 
@@ -5076,9 +5157,8 @@ std::span<const uint32_t> ScanOfBody::storesInto(uint32_t root)
 // An expectation: whoever has got hold of the descriptor between its last store and the definition may have changed it.
 void ScanOfBody::nameAccessorWrittenInDescriptor(uint32_t access, uint32_t root, uint32_t position)
 {
-    static constexpr OpcodeSet makesDescriptor { Opcode::NewDictionary, Opcode::NewObject };
     BodyValue made = definitionOf(root);
-    if (!made || !makesDescriptor.contains(made.opcode()) || m_uses[root] & isAccessedBesideNamedStores)
+    if (!holdsOnlyWhatItsBodyLaysInScan(m_program, made) || m_uses[root] & isAccessedBesideNamedStores)
         return;
     uint32_t head = m_innermostLoopHeads.isEmpty() ? noLoop : m_innermostLoopHeads[m_blocks[position]];
     if (head != noLoop && head > m_blocks[root])
@@ -5130,11 +5210,10 @@ void ScanOfBody::nameAccessorWrittenInDescriptor(uint32_t access, uint32_t root,
 
 void ScanOfBody::nameKeysOfDefinitionsByMaps()
 {
-    static constexpr OpcodeSet makesMap { Opcode::NewDictionary, Opcode::NewObject };
     for (const DefinitionByMapInScan& definition : m_definitionsByMaps) {
         uint32_t root = definition.rootOfMap;
         BodyValue made = definitionOf(root);
-        if (!made || !makesMap.contains(made.opcode()) || m_uses[root] & isAccessedBesideNamedStores)
+        if (!holdsOnlyWhatItsBodyLaysInScan(m_program, made) || m_uses[root] & isAccessedBesideNamedStores)
             continue;
         // A map that was made in front of a loop has left in an earlier turn.
         uint32_t head = m_innermostLoopHeads.isEmpty() ? noLoop : m_innermostLoopHeads[m_blocks[definition.position]];

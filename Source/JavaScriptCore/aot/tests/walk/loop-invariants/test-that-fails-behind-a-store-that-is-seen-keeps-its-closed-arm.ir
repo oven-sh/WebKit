@@ -1,12 +1,10 @@
 # function sum(items: Item[]) { let total = 0; for (let i = 0; i < items.length; i++) { turns = i; total += items[i].price * items[i].count; } return total; }
-# The store into the variable of the module is seen by whoever reads it. A turn that has come past it does not start over: the store would be made twice. So the guesses behind it keep their closed arms, which rejoin.
+# The store into the variable of the module is seen by whoever reads it. A turn that has come past it does not start over: the store would be made twice. So the guesses behind it keep their closed sides, which rejoin: the turn makes the item, so each read is one operation that tests for itself.
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: isInLoop=true isLoopHead=true:
 # CHECK: PutModuleVariable
-# CHECK: = ShapeTest
-# CHECK: frequency=Rare isInLoop=true:
-# CHECK-NEXT: = PropGet {{*}}key="price"
+# CHECK: = GetSlot{{*}}key="price" {{*}}level=Expected
 # RUN(COUNT): compile TurnsThatBeginAgain mechanisms=all
 # COUNT: statistic TurnsThatBeginAgain 0
 # RUN(SHELL): run-in-shell globalThis.sink = (sum, item) => { const list = [item, item]; print(sum(list)); list[1] = { count: "2", price: 7 }; print(sum(list)); list[0] = { get price() { print("read"); return 1; }, count: 1 }; print(sum(list)); list[1] = item; print(sum(list)); };

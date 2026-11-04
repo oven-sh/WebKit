@@ -11,29 +11,51 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDs.h"
+#include "AOTIRProgram.h"
 #include "AOTOpcodeSets.h"
 #include "AOTTypeArena.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OpcodeSet operationsOfLinkInWalkCopies {
-    Opcode::StrictEq, Opcode::CopyObject, Opcode::Call,
-    Opcode::PropGet, Opcode::PropSet, Opcode::PropHas, Opcode::PropDelete,
-    Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete
-};
-
-extern const OpcodeSet opcodesThatBuildCopyOrKeyOrderFormTakes;
-constinit const OpcodeSet opcodesThatBuildCopyOrKeyOrderFormTakes = operationsOfLinkInWalkCopies;
+static void noteProxyMadeInWalkCopies(Walker& walker, const BodyValue& construction)
+{
+    if (walker.makesProxyInUnit())
+        return;
+    Reference callee = walker.referenceOf(construction.as<Opcode::Construct>().calleeOperand());
+    TypeID proven = callee ? walker.typeOf(callee) : TypeID();
+    if (!proven)
+        return;
+    Type type = walker.types().at(proven);
+    BuiltinID builtin = type.isObject() ? singleBuiltinOf(walker.types(), type) : BuiltinID();
+    if (builtin && walker.program().builtins().canonicalID(builtin) == Builtins::Proxy)
+        walker.noteProxyMadeInUnit();
+}
 
 bool buildCopyOrKeyOrderFormOfItsOpcodes(Walker& walker, const BodyValue& value)
 {
-    if (!operationsOfLinkInWalkCopies.contains(value.opcode()))
+    switch (value.opcode()) {
+    case Opcode::StrictEq:
+        return foldComparisonOfValueWithItself(walker, value);
+    case Opcode::CopyObject:
+        if (!buildCopyThatMakesObject(walker, value))
+            return false;
+        walker.count(StatisticID::OwnKeyWalksExpanded);
+        return true;
+    case Opcode::Call:
+        // `Object.hasOwn(proxy, key)`.
+        return (walker.makesProxyInUnit() && buildAccessThroughProxyInSight(walker, value)) || assignSourcesFieldByField(walker, value);
+    case Opcode::Construct:
+        noteProxyMadeInWalkCopies(walker, value);
         return false;
-    return foldComparisonOfValueWithItself(walker, value)
-        || foldLookupPastOwnNames(walker, value)
-        || buildAccessThroughProxyInSight(walker, value)
-        || assignSourcesFieldByField(walker, value)
-        || buildCopyThatMakesObject(walker, value);
+    default:
+        return false;
+    }
+}
+
+bool buildAccessThroughProxyMadeInUnitOfItsOpcodes(Walker& walker, const BodyValue& value)
+{
+    return buildAccessThroughProxyInSight(walker, value);
 }
 
 bool openGuessOfKeyOrdersOfItsOpcodes(Walker& walker, const BodyValue& value)

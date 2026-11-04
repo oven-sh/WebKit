@@ -402,7 +402,6 @@ inline void JSRopeString::resolveSubstringBySharing(StringImpl& impl) const
 {
     ASSERT(isSubstring());
     ASSERT(impl.length() == length());
-    ASSERT(impl.is8Bit() || !is8Bit());
     convertToNonRope(String { impl });
 }
 

@@ -7,6 +7,7 @@
 # console.log(digest("abcdefghij"), digestOrNothing("abcdefghij"));
 # -- end of source
 # RUN: walk f1 f2 mechanisms=all-Inlining
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: [[flat]]: opaque(FlatString) @Cell = FlattenString
 # CHECK-NEXT: Jump -> next
@@ -15,6 +16,7 @@
 # CHECK-LABEL: code f2:Body
 # CHECK-NOT: FlattenString
 # RUN(WITHHELD): walk f1 mechanisms=all-Inlining-LoopInvariants
+# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-NOT: FlattenString
 
 module m0 path="text-is-made-flat-in-front-of-the-loop-that-reads-its-characters.ts" displayPath="text-is-made-flat-in-front-of-the-loop-that-reads-its-characters.ts" body=f0 namespaceLayout=L(m0)

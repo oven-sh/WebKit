@@ -265,9 +265,9 @@ private:
 
 JS_EXPORT_PRIVATE std::span<const uint32_t> keyOf(const Mention&, std::span<const uint32_t> mentionWords);
 
-// Behind MentionList::moveTo(), while the arena of the unit's walk still holds its texts: fills CodeBody::bytesOfMadeTexts and endsOfMadeTexts, and names each made text among the mentions by its place there.
+// Behind MentionList::moveTo(), while the arena of the unit's walk still holds its texts: fills CodeBody::bytesOfMadeTexts, firstsOfMadeTexts and endsOfMadeTexts, and names each made text among the mentions by its place there.
 JS_EXPORT_PRIVATE void copyMadeTextsMentionedBy(CodeBody&, const Typed::TypeArena&);
-// The first step of Image that looks at mentions, on one thread while it adds to the strings of the program. A made text that the program spells too is that string. The others are added in the order of their bytes.
+// The first step of Image that looks at mentions, on one thread while it adds to the strings of the program. A made text that the program spells too is that string. The others are added in the order of their bytes, and share bytes as they do in their body.
 // Behind it no mention names a made text.
 void internTextsMadeByFunctions(Typed::Program&, LinkedFunctions&, BuildContext&);
 
@@ -285,7 +285,7 @@ bool canBePropertyRun(const Typed::Program&, std::span<const uint32_t> keys);
 // the closures that slots of an allocated layout defer, the closure that a variable is born as, the body of a module. They are no roots of the queue: unitsNamedOutsideCode() of plan/AOTPlan.h lists the rest.
 // A pure function of the mention, the program, Facts and the plan. The units that relocations of SymbolSpace::Function name are the driver's own to add.
 JS_EXPORT_PRIVATE void forEachUnitBehind(const Mention&, std::span<const uint32_t> mentionWords, const Typed::Program&, const Typed::Facts&, const Typed::Plan&, NOESCAPE const ScopedLambda<void(CodeUnit)>&);
-// ClosureWord: a closure of the function may exist, and its word names the entry. That alone enters nothing: UnitQueue::mentionClosureEntry().
+// ClosureWord: a closure of the function may exist, and its word names the entry.
 enum class MentionKind : uint8_t { Call, ClosureWord };
 JS_EXPORT_PRIVATE void forEachUnitBehind(const Mention&, std::span<const uint32_t> mentionWords, const Typed::Program&, const Typed::Facts&, const Typed::Plan&, NOESCAPE const ScopedLambda<void(CodeUnit, MentionKind)>&);
 

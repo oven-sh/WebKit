@@ -402,6 +402,13 @@ static Representation formOfParameterProvenToBe(const Program& program, TypeID p
     return form == Representation::Int32 || form == Representation::Double ? form : Representation::JSValue;
 }
 
+// What the guard has proven a number comes raw: the guard unboxes it once, and a caller that has it raw hands it over so.
+Representation CallingConventions::formBehindGuard(const Program& program, const FunctionConvention& convention, unsigned parameterIndex) const
+{
+    TypeID tested = m_parts.typesBehindGuards[convention.firstTypeBehindGuard + parameterIndex];
+    return tested ? formOfParameterProvenToBe(program, tested) : Representation::JSValue;
+}
+
 Representation CallingConventions::parameterRepresentationByRole(const Program& program, CodeUnit unit, unsigned parameterIndex) const
 {
     switch (unit.role) {
@@ -409,15 +416,12 @@ Representation CallingConventions::parameterRepresentationByRole(const Program& 
         if (parameterIndex == of(unit.function).numberOfEntryParameters)
             return formOfCoroutineDriver(program.at(unit.function));
         return formOfEntryParameterInConvention(m_parts, program, unit.function, parameterIndex);
-    // What the guard has proven a number comes raw: the guard unboxes it once, and a caller that has it raw hands it over so.
-    case CodeRole::Body: {
-        Representation form = formOfEntryParameterInConvention(m_parts, program, unit.function, parameterIndex);
-        TypeID tested = form == Representation::JSValue && !m_parts.formsOfEntryParameters.isEmpty() ? typeBehindGuard(unit.function, parameterIndex) : TypeID();
-        return tested ? formOfParameterProvenToBe(program, tested) : form;
-    }
+    // Once the forms are settled formOfEntryParameterAsListed() answers for these three, and nobody comes here.
+    case CodeRole::Body:
     case CodeRole::ModuleStart:
     case CodeRole::ParameterGuard:
-        return formOfEntryParameterInConvention(m_parts, program, unit.function, parameterIndex);
+        RELEASE_ASSERT(m_parts.formsOfEntryParameters.isEmpty());
+        return boxedFormOfEntryParameter(program, program.at(unit.function), parameterIndex);
     // It leans on nothing that is proven of a caller. The guard boxes what arrives raw.
     case CodeRole::SlowBody:
         return boxedFormOfEntryParameter(program, program.at(unit.function), parameterIndex);
@@ -459,13 +463,8 @@ ArgumentLocations CallingConventions::locationsOf(const Program& program, CodeUn
         };
         if (takesEntryParametersAsListed(unit.role) && !m_parts.formsOfEntryParameters.isEmpty()) {
             const FunctionConvention& ofFunction = of(unit.function);
-            std::span<const Representation> forms = m_parts.formsOfEntryParameters.subspan(ofFunction.firstEntryParameter, ofFunction.numberOfEntryParameters);
-            std::span<const TypeID> typesBehindGuard;
-            if (unit.role == CodeRole::Body && ofFunction.has(CodeRole::ParameterGuard))
-                typesBehindGuard = m_parts.typesBehindGuards.subspan(ofFunction.firstTypeBehindGuard, ofFunction.numberOfEntryParameters);
-            return locationsOfDirectConvention(forms.size(), [&](size_t index) {
-                TypeID tested = forms[index] == Representation::JSValue && !typesBehindGuard.empty() ? typesBehindGuard[index] : TypeID();
-                return tested ? formOfParameterProvenToBe(program, tested) : forms[index];
+            return locationsOfDirectConvention(ofFunction.numberOfEntryParameters, [&](size_t index) {
+                return formOfEntryParameterAsListed(program, ofFunction, unit.role, static_cast<unsigned>(index));
             }, numberOfResults(unit), formOfResult);
         }
         return locationsOfDirectConvention(numberOfParametersInConventionOf(*this, program, unit), [&](size_t index) {
@@ -635,8 +634,7 @@ void CallingConventions::fuseCallEntriesThatOnlyMove(const Program& program, con
     uint32_t numberOfFunctions = this->numberOfFunctions();
     Vector<uint8_t> isFused(FillWith { }, numberOfFunctions, static_cast<uint8_t>(0));
     forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
-        // UnitQueue may close the entry of such a function, and then its target may have no code.
-        isFused[index] = !indirectCallersAreAllListed(FunctionID(index)) && planCallEntryMoves(program, *this, FunctionID(index));
+        isFused[index] = !!planCallEntryMoves(program, *this, FunctionID(index));
     });
     m_functionsWithFusedCallEntry = BitVector(numberOfFunctions);
     for (uint32_t index = 0; index < numberOfFunctions; ++index) {
@@ -771,6 +769,11 @@ static Representation formOfResultProvenToBe(const Program& program, TypeID prov
     case Representation::Int64:
     case Representation::Double:
         return Representation::Double;
+    // `function total(e) { if (e.kind === "num") return e.value; .. return total(e.left) + total(e.right); }`: what Link reads off every member of a union holds undefined beside the number.
+    case Representation::OptionalInt64:
+        return Representation::OptionalInt64;
+    case Representation::OptionalDouble:
+        return Representation::OptionalDouble;
     default:
         return Representation::JSValue;
     }

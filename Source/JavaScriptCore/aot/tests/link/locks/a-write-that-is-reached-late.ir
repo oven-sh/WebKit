@@ -2,6 +2,7 @@
 # In whichever order the nodes are taken the end is the same: the order check of `link` runs over this program too
 # console.log(late); function late() { console.log = f; }      late is called by what console.log is taken to be no longer
 # RUN: locks open
+# REQUIRES: entries-of-bun
 # CHECK: locked Console constant link
 # CHECK: open ConsoleLog written-under-its-name
 

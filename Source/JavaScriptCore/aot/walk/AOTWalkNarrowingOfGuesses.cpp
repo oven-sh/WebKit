@@ -63,6 +63,28 @@ static void meetWithWhatWasSeenToArriveInNarrowingOfGuesses(Walker& walker, uint
         found = met;
 }
 
+// `function finishNode(node: Node, ..) { setTextRangePosEnd(node, ..); .. }`, the helper copied in: its parameter is written as any range of text, dozens of layouts that no test asks for.
+// What this copy is handed is the unit's own parameter, of which less is written: what both say.
+static void meetWithWhatUnitExpectsOfItsOwnParameterInNarrowingOfGuesses(Walker& walker, ValueID input, TypeID& found)
+{
+    if (!walker.depthOfCopies())
+        return;
+    std::optional<uint32_t> ofUnit = walker.entryParameterOfUnitBoundTo(walker.referenceOf(input));
+    if (!ofUnit)
+        return;
+    const LinkTables& link = walker.facts().linked();
+    FunctionID unit = walker.unit().function;
+    if (unit.index() >= link.functions.size())
+        return;
+    std::span<const LinkedParameter> parameters = link.parametersOf(unit);
+    if (*ofUnit >= parameters.size() || !parameters[*ofUnit].expected)
+        return;
+    TypeArena& types = walker.types();
+    TypeID met = types.intersectionOf(found, parameters[*ofUnit].expected);
+    if (!isNeverType(met) && types.at(met).hasObjects())
+        found = met;
+}
+
 // The rule of the row of a read over what Link holds of the places, with `receiver` in the place of the receiver.
 static TypeID typeHeldOfReadInNarrowingOfGuesses(Walker& walker, const BodyValue& read, TypeID receiver)
 {
@@ -310,6 +332,9 @@ void refineExpectationOfValue(Walker& walker, ValueID input, TypeID& found, bool
             found = types.unionOf(found, objects);
         return;
     }
+    // `(range as Mutable<T>).pos = pos`: what the cast writes is what is expected of the value behind it.
+    if (ValueID behindCasts = index.valueBehindCasts(input); index.isParameter(behindCasts) && index.blockOf(behindCasts) == entryBlock)
+        meetWithWhatUnitExpectsOfItsOwnParameterInNarrowingOfGuesses(walker, behindCasts, found);
     if (isDeclared) {
         if (definition.isParameter() && index.blockOf(input) == entryBlock)
             meetWithWhatWasSeenToArriveInNarrowingOfGuesses(walker, input.index(), found);

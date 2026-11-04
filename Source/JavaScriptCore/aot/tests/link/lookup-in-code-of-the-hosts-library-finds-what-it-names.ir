@@ -2,6 +2,7 @@
 # The control of lookup-in-the-code-behind-a-row-of-the-language-brings-nothing-in.ir: the same lookup in code of the host's library, of which no row says what it looks up: it finds Array.prototype.filter, and the code behind that comes in.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-NOT: function f1 unreached
 # CHECK-NOT: function f2 unreached
 

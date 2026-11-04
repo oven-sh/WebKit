@@ -176,7 +176,6 @@ runtime ThrowAtSite : void (const uint64_t* registers, const uint32_t* site, uin
 runtime ThrowStackOverflowError : void () ; reads(all) throws
 runtime NewRuntimeError : JSCell* (uint32_t errorKind) ; RuntimeAllocates
 runtime NewRuntimeErrorWithName : JSCell* (uint32_t errorKind, uint32_t name) ; RuntimeAllocates
-runtime NewFunctionThatThrows : JSCell* (EncodedJSValue getter, uint32_t name) ; RuntimeAllocates
 runtime NewSuppressedError : JSCell* (EncodedJSValue error, EncodedJSValue suppressed) ; RuntimeAllocates
 runtime ThrowRuntimeError : void (uint32_t errorKind) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 # In every build. Native code answered with a value outside the type that its row of the table of built-ins writes. It prints the built-in and never returns. `written`: WrittenNativeResult.

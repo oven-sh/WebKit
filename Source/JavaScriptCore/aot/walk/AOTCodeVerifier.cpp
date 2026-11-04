@@ -730,7 +730,7 @@ bool CodeVerifier::holdsNoneOfItsResults(const Operation& producer) const
         return false;
     const CallingConventions& conventions = m_plan->conventions();
     CodeUnit entered = conventions.unitEnteredBy(producer);
-    return conventions.exists(entered) && (conventions.numberOfResults(entered) != 1 || conventions.of(entered.function).hasSplitResult);
+    return conventions.exists(entered) && conventions.numberOfResults(entered) != 1;
 }
 
 EffectTraits CodeVerifier::boundOnTraitsOf(const Operation& operation)

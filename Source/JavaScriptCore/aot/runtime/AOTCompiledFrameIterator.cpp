@@ -331,7 +331,8 @@ bool CompiledFrame::isActivationOf(JSCell* cell) const
 
 std::optional<ModuleID> CompiledFrame::moduleWhoseBodyRuns() const
 {
-    if (FunctionDescription(function).codeType() != ModuleCode)
+    // To a stack trace the body of a CommonJS file is a function like any other.
+    if (FunctionDescription(function).codeType() != ModuleCode && !functionKindData(function).isCommonJSModule)
         return std::nullopt;
     auto position = findPosition(*this);
     return position && position->source ? std::optional(position->source) : std::nullopt;
@@ -352,16 +353,23 @@ void forEachModuleWhoseBodyRuns(VM& vm, CallFrame* callFrame, const ScopedLambda
 }
 
 // Frame by frame as CallFrame::callerSourceOrigin() goes: the library and native code ask on behalf of whoever called them.
-bool Modules::isInterpretedCodeAsking() const
+bool Modules::hasEnteredCodeOfProgramSinceAskingHost() const
 {
     VM& vm = *m_instance.vm;
     if (!vm.topCallFrame)
         return false;
     bool isInterpreted = false;
+    bool isCompiledCodeEnteredSince = false;
     StackVisitor::visit(vm.topCallFrame, vm, [&](auto& visitor) {
         if constexpr (std::remove_cvref_t<decltype(visitor)>::visitsCompiledFrames) {
-            if (visitor->isCompiledFrame())
-                return visitor->compiledFrame().visibility == TraceVisibility::Visible ? IterationStatus::Done : IterationStatus::Continue;
+            if (visitor->isCompiledFrame()) {
+                const CompiledFrame& frame = visitor->compiledFrame();
+                if (frame.visibility != TraceVisibility::Visible)
+                    return IterationStatus::Continue;
+                // The frame that turned to the host lies above the place where it did so. One below it the host has entered since.
+                isCompiledCodeEnteredSince = m_isAskingHost.wasMadeBeforeEntering(frame.callFrame);
+                return IterationStatus::Done;
+            }
         }
         switch (visitor->codeType()) {
         case StackVisitor::Frame::CodeType::Function:
@@ -379,7 +387,7 @@ bool Modules::isInterpretedCodeAsking() const
         }
         RELEASE_ASSERT_NOT_REACHED();
     });
-    return isInterpreted;
+    return isInterpreted || isCompiledCodeEnteredSince;
 }
 
 CompiledFrameIterator::CompiledFrameIterator(VM& vm, const Cursor& cursor, bool calleeWasEntered)

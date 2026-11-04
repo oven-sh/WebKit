@@ -89,6 +89,8 @@ public:
     virtual TypeID resultOfCallBeingTyped(TypeLevel, uint32_t resultIndex) const = 0;
     // Of the read under a computed key that is being typed: what Link has proven of the operation of the input that it stands for. Null: nothing.
     virtual TypeID resultOfReadBeingTyped(TypeLevel) const { return { }; }
+    // Of the record being typed, which reads one slot of a Map or a Set: what Link has proven of that slot at the operation of the input that the record stands for. Null: nothing.
+    virtual TypeID contentsBeingTyped(TypeLevel) const { return { }; }
     // Of a CallTable: all that the methods return which the selector may enter. Null: nothing is proven.
     virtual TypeID resultOfSelector(TypeLevel, uint32_t) const { return { }; }
 
@@ -194,6 +196,8 @@ TypeID naturalTypeFrom(TypeArena&, const NaturalType&);
 TypeID widestPrimitiveResultOf(Opcode);
 // The same of one result of an operation whose rule is `results(..)`, with as many results as the schema lists. The arena keeps the range that the rule writes.
 TypeID widestPrimitiveResultOf(TypeArena&, Opcode producer, uint32_t resultIndex);
+// Whose rules ask PositionTypes::contentsBeingTyped().
+inline constexpr OpcodeSet recordsTypedByWhatIsProvenOfContents { Opcode::ResultAt, Opcode::CallInline, Opcode::CallBuiltin };
 // Whose rules ask PositionTypes::resultOfReadBeingTyped().
 inline constexpr OpcodeSet readsTypedByWhatIsProvenOfInput { Opcode::ElemGet, Opcode::GetArrayElement, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex };
 

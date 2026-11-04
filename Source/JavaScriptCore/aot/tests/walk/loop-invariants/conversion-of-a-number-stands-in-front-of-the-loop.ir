@@ -4,6 +4,7 @@
 # console.log(scaled(1.5, 5));
 # The guard at the entry is withheld: with it the parameters are proven in the whole body, and the loop has nothing to test.
 # RUN: walk f1 mechanisms=all-ParameterGuards
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = TypeTest {{*}}testedType=number
 # CHECK: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=number

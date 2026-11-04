@@ -134,6 +134,8 @@ static bool engineHonorsTestingSwitch(Wire::TestingSwitch testingSwitch)
     case Wire::TestingSwitch::NativeCodeAnswersNullish:
     // Walker::checkProof().
     case Wire::TestingSwitch::CheckProofsAtRunTime:
+    case Wire::TestingSwitch::CheckProofsAtEntries:
+    case Wire::TestingSwitch::CheckProofsAtEntriesAndFields:
     // A false proof on purpose, for the red controls of that: tests/answers/false-proof-*.ir. Link takes it: CallInLinkCalls::callUnseen().
     case Wire::TestingSwitch::UnseenCodeAnswersUndefined:
     // CompileWorker::compileStraight().

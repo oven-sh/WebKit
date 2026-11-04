@@ -1,0 +1,65 @@
+# The same with a variable: `toString` is entered in the loop, in front of `const late = 5`, so the variable may be read while it holds nothing.
+# g0 = late
+# -- source: conversion-in-a-loop-reads-a-variable-in-its-dead-zone.js
+# const limit = JSON.parse("1");
+# const box = { toString() { return "box" + late; } };
+# let turns = 0;
+# let got = "";
+# for (;;) {
+#   if (turns === limit) break;
+#   turns++;
+#   got = "a" + box;
+# }
+# const late = 5;
+# got = got + box;
+# -- end of source
+# records of 14290a790975aa8b
+# RUN(LINK): link variables mechanisms=all
+# LINK: variable g0 proven=i32|absent
+
+module m0 path="conversion-in-a-loop-reads-a-variable-in-its-dead-zone.js" displayPath="conversion-in-a-loop-reads-a-variable-in-its-dead-zone.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=43 fields=[{key="toString" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+variable g0 name="late" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON @14
+    v1 = PropGet v0 key="parse" @14
+    v2 = Convert v1 declared={type=builtin(JSONParse) flags=[IsExpected]} @14
+    v3 = String string="1" @25
+    v4 = Call v2, v0, v3 calleeKey="parse" calleeName="JSON.parse" @19
+    v5 = NewClosure function=f1 @45
+    v6 = NewObject -, v5 layout=L0 fields=[0] @43
+    v7 = FinishObject v6 @43
+    v8 = Integer @96
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @96
+    v10 = String string="" @109
+    v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]} @109
+    Jump -> next b1(v9, v11) @113
+  b1(v12, v13):
+    LoopHint @113
+    v15 = StrictEq v12, v4 @140
+    Branch v15 -> taken b2(), notTaken b3() @140
+  b2():
+    v16 = Integer integer=5 @199
+    PutModuleVariable v16 variable=g0 @192
+    v18 = Add v13, v7 @214
+    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]} @202
+    v20 = Undefined @202
+    Return v20 @202
+  b3():
+    v21 = Increment v12 @156
+    v22 = Convert v21 declared={type=number flags=[IsExpected]} @156
+    v23 = String string="a" @173
+    v24 = Add v23, v7 @179
+    v25 = Convert v24 declared={type=undefined|null|string flags=[IsExpected]} @167
+    Jump -> next b1(v22, v25) @167
+}
+function f1 name="toString" module=m0 position=45 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="box" @65
+    v1 = GetModuleVariable variable=g0 @73
+    v2 = CheckInitialized v1 name="late" @73
+    v3 = Add v0, v2 @73
+    Return v3 @73
+}

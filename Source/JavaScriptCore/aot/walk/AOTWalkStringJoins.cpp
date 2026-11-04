@@ -220,6 +220,9 @@ bool buildTestAgainstJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& jo
         if (!walker.isUnreachable())
             results[0] = walker.referenceOf(test->call);
     }, answer);
+    // The join stood for its part while the call was walked, and so did what hands it on to the call. Behind the arms nothing stands for its text.
+    for (ValueID text = join.id(); text != test->call; text = index.onlyUsingValue(text))
+        walker.bind(text, Reference());
     if (isBuilt)
         walker.bind(test->call, answer[0]);
     return true;

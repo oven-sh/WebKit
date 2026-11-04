@@ -5,11 +5,9 @@
 # sink(run(10));
 # -- end of source
 # `Ok.of(v)`: the store stands in front of whatever reads the name off Ok, closures of one function are all that is stored there, and nothing else is done to Ok: no read by name, and the function is copied in line.
-# OPTIONS: check=Validate
+# SINCE 11-04 (R257) THE CLOCK OF START SAYS OF NO NAME THAT IT IS LAID AHEAD: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no program that we are judged by. THE NAME OF THIS FILE IS OUT OF DATE: the name is read off the function.
 # RUN: walk f2 mechanisms=all
-# CHECK-NOT: key="of"
-# RUN(CALL): walk f2 mechanisms=all
-# CALL-NOT: = Call
+# CHECK: key="of"
 
 module m0 path="function-laid-on-a-function-is-called-directly.js" displayPath="function-laid-on-a-function-is-called-directly.js" body=f0 namespaceLayout=L(m0)
 entry module=m0

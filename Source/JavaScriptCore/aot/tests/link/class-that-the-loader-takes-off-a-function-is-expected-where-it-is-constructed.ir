@@ -4,11 +4,14 @@
 # A read that the program itself writes finds what is laid on that one function under the name (LinkFlow::laidOnClosuresOf()), and nothing that is laid under the name on anything else: `holder.Point` in f4. So the constructors of the library's own classes do not meet.
 # f0 = main, f1 = the body of the module, f2 = Point, f3 = the function that the module returns, f4 = byHand, f5 = make
 # RUN(HELD): link held calls mechanisms=all
+# REQUIRES(HELD): entries-of-bun
 # HELD: call f4 {{*}} -> f2
 # HELD: call f5 {{*}} -> f2
 # RUN(PROVEN): link calls mechanisms=all
+# REQUIRES(PROVEN): entries-of-bun
 # PROVEN-NOT: {{*}} -> f2
 # RUN(FORM): walk f5 mechanisms=all
+# REQUIRES(FORM): entries-of-bun
 # FORM: TypeTest {{*}}testedType=f2
 
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true isHoisted=true}]

@@ -5,6 +5,7 @@
 # globalThis.held = [listed, kept];
 # console.log(listed({ a: 1 }), kept({ b: 2 }).length);
 # RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: [[list]]: Array {{*}} = CallBuiltin {{*}}overload=CompilerHelpersOwnEntriesFlat/0
 # CHECK: isLoopHead=true
@@ -12,12 +13,15 @@
 # CHECK: = GetArrayElement {{*}}level=Proven
 # CHECK: = GetArrayElement {{*}}level=Proven
 # RUN(NEVER): walk f1 mechanisms=all
+# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: overload=ObjectEntries
 # RUN(KEPT): walk f2 mechanisms=all
+# REQUIRES(KEPT): entries-of-bun
 # KEPT-LABEL: code f2:Body
 # KEPT-NOT: OwnEntriesFlat
 # KEPT: = CallInline {{*}}overload=ObjectEntries/0
 # RUN(WITHHELD): walk f1 mechanisms=all-EscapeAnalysis
+# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-LABEL: code f1:Body
 # WITHHELD-NOT: OwnEntriesFlat
 # WITHHELD: ObjectEntries

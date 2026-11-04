@@ -1,8 +1,10 @@
 # a name that is made when the program runs may be that of any file, and the message of a load that fails spells it: one reached load by name, and every module keeps its path
 # main.js: import "./a.js"; sink(name => require(name));
 # RUN: summary f2 mechanisms=all
+# REQUIRES: code-outside-image
 # CHECK: may-read-path-of-any-module
 # RUN(LINK): link layouts mechanisms=all
+# REQUIRES(LINK): code-outside-image
 # LINK-NOT: path-unread
 
 module m0 path="/app/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]

@@ -308,13 +308,29 @@ static ArrayStorage kindThatHoldsWhatIsWrittenInListReadsInLoops(Walker& walker,
     return arrayStorageHolding(types, elements);
 }
 
+// `total += area(kept[i])`: Link's effects describe the callee's closed form. The look reads the operations of an inlined copy instead: LooksAtLoops::withWhatCopyReturns().
+static bool lookReadsCopyOfCalleeInListReadsInLoops(Walker& walker, const BodyValue& call, FunctionID callee)
+{
+    if (walker.facts().bodies().at(callee).hasLoops())
+        return false;
+    Draft site(call.opcode());
+    site.flags = static_cast<uint8_t>(call.flags());
+    copyFields(call, site, [](ValueID operand) {
+        return Reference::value(operand);
+    });
+    return mayCopyCallee(walker, site, callee, PlaceOfCall { walker.currentFunction(), true, &walker.currentBodyIndex(), call.id() });
+}
+
 template<typename TypeInLook>
 static bool surelyEndsWhatIsShownOfListsInListReadsInLoops(Walker& walker, const BodyValue& operation, uint32_t firstValueOfLoop, const TypeInLook& typeInLook, bool countsOnTurnsThatBeginAgain)
 {
     TypeArena& types = walker.types();
     if (operation.opcode() == Opcode::Call) {
         const LinkTables& linked = walker.facts().linked();
-        if (FunctionID callee = linked.calleeAt(walker.currentFunction(), operation.id()))
+        FunctionID known = linked.calleeAt(walker.currentFunction(), operation.id());
+        if (known && countsOnTurnsThatBeginAgain && lookReadsCopyOfCalleeInListReadsInLoops(walker, operation, known))
+            return false;
+        if (FunctionID callee = known)
             return !leavesListsTestedInFrontOfLoopAsTheyAre(linked.function(callee).effectsOnReturn) || !leavesListsTestedInFrontOfLoopAsTheyAre(linked.function(callee).effectsOnThrow);
         // The row of a built-in may say less than that anything runs.
         TypeID callee = typeInLook(operation.as<Opcode::Call>().calleeOperand());

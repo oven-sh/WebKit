@@ -146,7 +146,7 @@ static std::optional<DirectCallInStraightForm> planStraightDirectCall(StraightEm
     const Program& program = emitter.program();
     const CallingConventions& conventions = emitter.conventions();
     CodeUnit callee = conventions.directEntryOf(value.function());
-    if (!program.at(callee.function).hasBody() || !conventions.exists(callee) || conventions.of(callee.function).hasSplitResult)
+    if (!program.at(callee.function).hasBody() || !conventions.exists(callee))
         return std::nullopt;
     // A block that the scan has passed over names what Link has not heard of.
     const LinkTables& linked = emitter.facts().linked();
@@ -172,7 +172,7 @@ static std::optional<DirectCallInStraightForm> planStraightDirectCall(StraightEm
     return call;
 }
 
-// The stack words and the numbers go through the result registers, which are argument registers too: so the GPRs come last.
+// The stack words and the numbers go through the result registers, which are argument registers too: so the GPRs come last, and what converts one of them writes no argument register but its own.
 static void bringArgumentsOfStraightDirectCall(StraightEmitter& emitter, const BodyValue& value, const ArgumentLocations& locations, StackWordsOfStraightCall stackWords)
 {
     constexpr GPRReg word = StraightEmitter::resultGPR;

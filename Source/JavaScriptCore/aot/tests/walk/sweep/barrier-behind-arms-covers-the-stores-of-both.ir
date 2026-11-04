@@ -1,11 +1,11 @@
-# if (c) node.left = l; else node.right = r;
-# v5 stores nothing. It runs the barrier on every way on from v3 and from v4 before anything can collect or exit sideways, so neither store needs one, and v5 keeps its own.
+# if (c) node.left = l; else node.right = r; node.last = l;
+# The barrier of v5 runs on every way on from v3 and from v4 before anything can collect or exit sideways, so neither store needs one, and v5 keeps its own.
 # RUN: sweep-code
 # CHECK: v3 @Void = SetMappedArgument
 # CHECK: LaterBarrierCovers
 # CHECK: v4 @Void = SetMappedArgument
 # CHECK: LaterBarrierCovers
-# CHECK: v5 @Void = RememberOwner
+# CHECK: v5 @Void = SetMappedArgument
 # CHECK-NOT: LaterBarrierCovers
 
 module m0 path="main.js" displayPath="main.js"
@@ -26,7 +26,7 @@ function f0 name="f" parameters=[{type=anything}, {type=anything}, {type=boolean
 #     v4 @Void = SetMappedArgument v0, v1 index=1 traits=[mayWriteWhatIsSeen, mayTouchMemory]
 #     Jump -> next b3()
 #   b3():
-#     v5 @Void = RememberOwner v0 traits=[mayTouchMemory]
+#     v5 @Void = SetMappedArgument v0, v1 index=2 traits=[mayWriteWhatIsSeen, mayTouchMemory]
 #     Return
 # }
 # -- end of code

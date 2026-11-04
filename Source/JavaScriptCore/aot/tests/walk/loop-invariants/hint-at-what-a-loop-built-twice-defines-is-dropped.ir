@@ -6,13 +6,16 @@
 # console.log(released(new Box(2), 5));
 # The guard at the entry is withheld: with it the parameters are proven in the whole body, and the loop has nothing to test.
 # RUN: walk f1 mechanisms=all-ParameterGuards
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: frequency=Rare isLoopHead=true
 # CHECK: isInLoop=true isLoopHead=true
 # RUN(HINT): walk f1 mechanisms=all-ParameterGuards
+# REQUIRES(HINT): entries-of-bun
 # HINT-NOT: ReleaseHint
 # The loop built once: the hint names the parameter of the head.
 # RUN(ONCE): walk f1 mechanisms=all-ParameterGuards-LoopInvariants
+# REQUIRES(ONCE): entries-of-bun
 # ONCE-LABEL: code f1:Body
 # ONCE: ([[text]]: {{*}}) isInLoop=true isLoopHead=true
 # ONCE: = ReleaseHint [[text]]

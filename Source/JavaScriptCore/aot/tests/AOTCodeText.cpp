@@ -87,6 +87,8 @@ static ASCIILiteral nameInCodeText(SweepMark mark)
         return "PollsForNothing"_s;
     case SweepMark::LaterFenceCovers:
         return "LaterFenceCovers"_s;
+    case SweepMark::OwnerIsYoung:
+        return "OwnerIsYoung"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

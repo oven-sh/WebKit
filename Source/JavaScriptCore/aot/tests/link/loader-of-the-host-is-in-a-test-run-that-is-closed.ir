@@ -5,6 +5,7 @@
 # LIBRARY: own
 # OPTIONS: admit=ReplacedBuiltins
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-NOT: function f1 unreached
 # CHECK-NOT: function f2 unreached
 # CHECK: function f3 unreached

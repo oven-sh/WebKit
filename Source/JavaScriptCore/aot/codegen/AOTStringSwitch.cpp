@@ -80,7 +80,7 @@ public:
     }
 
 private:
-    static constexpr unsigned maxLiteralsComparedOneByOne = 2;
+    static constexpr unsigned maxLiteralsComparedOneByOne = 1;
     static constexpr unsigned minStringsForWordDispatch = 3;
     static constexpr uint16_t otherCellPrimitives = cellPrimitives & ~Primitive::AnyString;
 
@@ -240,10 +240,10 @@ private:
         }
 
         CellPointer string = requireString(subject, type);
-        if (hasWideText || shouldDispatchOnWord(cases))
+        if (hasWideText)
             switchByLengthThenWord(string, narrowCases, cases);
         else
-            switchByLengthThenCalls(string, m_strings.lengthOf(string), cases);
+            switchByCharactersOfNarrowString(string, cases);
     }
 
     CellPointer requireString(Boxed subject, const Type& type)
@@ -256,20 +256,27 @@ private:
         return cell;
     }
 
+    // A rope and a 16-bit string go elsewhere.
+    CharacterView viewOfFlatNarrowStringOrElse(CellPointer string, BlockEdge otherwise)
+    {
+        Pointer impl = loadField<Pointer>(string, m_heaps.JSString_value);
+        m_strings.continueIf(hasNoBits(impl, JSString::isRopeInPointer), otherwise);
+        m_strings.continueIf(hasBits(loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags), StringImpl::flagIs8Bit()), otherwise);
+        Pointer characters = loadField<Pointer>(impl, m_heaps.StringImpl_data);
+        return { characters, loadField<Word32>(impl, m_heaps.StringImpl_length), boolean(true), string };
+    }
+
+    // For a rope, a 16-bit string and a text that is too long to be compared in place: nothing in line could answer.
     void compareByCall(CellPointer string, const SwitchCase& switchCase, BlockEdge next)
     {
-        m_strings.branchOnEqualsLiteral(m_terminator, ComparedOperand::String, string.value(), switchCase.string, { switchCase.target, next });
+        m_strings.branchOnEqualsLiteralByStub(m_terminator, ComparedOperand::String, string.value(), switchCase.string, { switchCase.target, next });
     }
 
     void switchByShortString(Boxed subject, const Type& type, const CaseGroup& cases)
     {
         LBasicBlock needsStub = newBlock();
         CellPointer string = requireString(subject, type);
-        Pointer impl = loadField<Pointer>(string, m_heaps.JSString_value);
-        m_strings.continueIf(hasNoBits(impl, JSString::isRopeInPointer), unlikelyEdge(needsStub));
-        m_strings.continueIf(hasBits(loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags), StringImpl::flagIs8Bit()), unlikelyEdge(needsStub));
-        Pointer characters = loadField<Pointer>(impl, m_heaps.StringImpl_data);
-        switchOverLengthGroups(string, { characters, loadField<Word32>(impl, m_heaps.StringImpl_length), boolean(true), string }, cases);
+        switchOverLengthGroups(string, viewOfFlatNarrowStringOrElse(string, unlikelyEdge(needsStub)), cases);
 
         // The stub resolves ropes and 16-bit strings without flattening them.
         m_out.appendTo(needsStub);
@@ -277,6 +284,29 @@ private:
         for (const SwitchCase* switchCase : cases)
             byWord.append(SwitchTarget { static_cast<int64_t>(shortStringWord(switchCase->text.span8())), switchCase->target });
         switchOn(Integer(callStub(m_terminator, shortStringOfValue(), { subject.value() }).first), byWord.span());
+    }
+
+    // As bun_core::comptime_string_map! compiles: a jump by the length, then words of the characters against words of the texts. What stands in front is what it takes to have the characters and the length of a string in hand.
+    void switchByCharactersOfNarrowString(CellPointer string, const CaseGroup& cases)
+    {
+        LBasicBlock needsCalls = newBlock();
+        switchOverLengthGroups(string, viewOfFlatNarrowStringOrElse(string, unlikelyEdge(needsCalls)), cases);
+
+        // The stubs answer for a rope and for a 16-bit string without flattening, and only for a text of its length: a rope that is made for the switch and dropped behind it is never copied.
+        m_out.appendTo(needsCalls);
+        enterFrameOnceForCallsBelow(string);
+        switchByLengthThenCalls(string, m_strings.lengthOf(string), cases);
+    }
+
+    // Each arm below calls, and by itself each would set a frame up and test the stack. No code stands here: it is where the framed part begins.
+    void enterFrameOnceForCallsBelow(CellPointer string)
+    {
+        Machine::PatchOperation* entersFrame = m_out.patchpoint(Machine::Void);
+        entersFrame->effects = Machine::Effects::none();
+        entersFrame->effects.writesLocalState = true;
+        entersFrame->effects.reads = Machine::HeapSet::top();
+        entersFrame->append(string.value(), Machine::ValueRep::ColdAny);
+        entersFrame->onlyKeepsChildrenAlive = true;
     }
 
     void switchByLengthThenCalls(CellPointer string, Word32 length, const CaseGroup& cases)
@@ -302,8 +332,10 @@ private:
         m_out.appendTo(wide);
         if (narrowCases.size() != allCases.size())
             switchOverLengthGroups(string, { view.characters, view.length, boolean(false), view.owner }, allCases);
-        else
+        else {
+            enterFrameOnceForCallsBelow(string);
             switchByLengthThenCalls(string, view.length, allCases);
+        }
     }
 
     void switchOverLengthGroups(CellPointer string, const CharacterView& viewOfKnownWidth, const CaseGroup& cases)
@@ -311,19 +343,6 @@ private:
         switchOverLength(viewOfKnownWidth.length, cases, [&](const CaseGroup& group) {
             emitLengthGroup(string, viewOfKnownWidth, group);
         });
-    }
-
-    static bool shouldDispatchOnWord(const CaseGroup& cases)
-    {
-        Vector<unsigned, 8> lengths = cases.map<Vector<unsigned, 8>>([](const SwitchCase* switchCase) {
-            return switchCase->text.length();
-        });
-        AOT::sort(lengths);
-        for (size_t first = 0; first + minStringsForWordDispatch <= lengths.size(); ++first) {
-            if (lengths[first] == lengths[first + minStringsForWordDispatch - 1])
-                return true;
-        }
-        return false;
     }
 
     Word32 loadWord(const CharacterView& viewOfKnownWidth, DistinguishingWord word)

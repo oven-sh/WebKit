@@ -1,0 +1,12 @@
+# the same literals with typed operations withheld: the copy and each definition behind it are built as written
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: CopyObjectAndDefine
+# CHECK: = CopyObject
+# CHECK: PropDefine {{*}}key="name"
+# CHECK: PropDefine {{*}}key="size"
+# RUN(BOTH): walk f2 mechanisms=none
+# BOTH-LABEL: code f2:Body
+# BOTH-NOT: CopyTwoObjects
+# BOTH: CopyDataProperties
+# PROGRAM-OF: copy-and-the-names-written-behind-it-are-one-operation.ir

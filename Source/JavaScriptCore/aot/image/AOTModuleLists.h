@@ -34,6 +34,9 @@ struct ModuleLists {
     Vector<ModuleDisplayPathData> displayPaths;
     Vector<ModuleRequestData> requests;
     Vector<ModuleExportData> exports;
+    // Beside `exports`, entry by entry: the module that declares the variable which the entry shows, and the module of the entry where it shows none.
+    // Empty unless AnswersAboutModules::mayMocksStandInPlaceOfModules: nobody asks.
+    Vector<uint32_t> modulesThatDeclareExports;
     Vector<IndirectExportData> indirectExports;
     Vector<SyntheticExportData> syntheticExports;
     Vector<RequiredNameData> requiredNames;

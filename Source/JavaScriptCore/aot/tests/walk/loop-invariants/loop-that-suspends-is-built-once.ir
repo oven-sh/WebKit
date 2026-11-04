@@ -4,11 +4,13 @@
 # (globalThis as any).kept = sum;
 # console.log(await sum(new Box(2), 5));
 # RUN: walk f1:CoroutineBody mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:CoroutineBody
 # CHECK-NOT: ShapeTest
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK: = ShapeTest {{*}}L0
 # RUN(ONCE): walk f1:CoroutineBody mechanisms=all
+# REQUIRES(ONCE): entries-of-bun
 # ONCE-NOT: frequency=Rare isLoopHead=true
 
 module m0 path="loop-that-suspends-is-built-once.ts" displayPath="loop-that-suspends-is-built-once.ts" flags=[HasTopLevelAwait, KeepsError] body=f0 namespaceLayout=L(m0)

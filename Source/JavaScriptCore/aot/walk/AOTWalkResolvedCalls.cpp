@@ -44,7 +44,7 @@ bool callThroughTargetResolvedOnceOfItsOpcodes(Walker& walker, const BodyValue& 
 
     // A test in the loop gives the callee a name of the loop. What is only known under such a name to be a value may be the mark of a dead zone in front of it.
     Reference callee = walker.referenceBoundTo(call.calleeOperand());
-    if (!callee || !callee.isValue())
+    if (!callee || !callee.isRecord())
         return false;
     TypeArena& types = walker.types();
     TypeID typeOfCallee = walker.code().at(callee.id()).type;

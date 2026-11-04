@@ -418,6 +418,9 @@ void Modules::didEndMock(ModuleID mocked)
 {
     if (!isMocked(mocked))
         return;
+    // A mock that has ended stands until a load comes to the module: setMockInPlace().
+    if (!mockInPlace(mocked))
+        bringBackErrorOfModuleThatRanBesideMock(mocked);
     m_importersAskedAboutOriginal.clear();
     BitVector others = m_mocks->modules;
     others.quickClear(mocked.index());
@@ -1213,12 +1216,20 @@ void Modules::exportWhatMockNamesAlone(ModuleID file, bool hasRun)
         if (data(module).holdsNamespaceInValue() && !m_modulesWithEarlierNamespaceInValue.get(module.index()))
             setValue(module, JSValue());
         loaded.namespaceObject.set(*this, nullptr);
-        hasRun = false;
+        LoadedModule* loadedFile = loadedIfExists(file);
+        hasRun = loadedFile && loadedFile->hadRunAheadOfMocksThatNameAlone;
     } else if (didCaptureExports(module) || namespaceIfCreated(module, ModulePhase::Evaluation))
         return;
     loaded.capturedExports.set(*this, createTableOfExports());
     loaded.exportsWhatMockNamesAlone = true;
     ensureLoaded(file).isYetToBeRequiredBehindMock = !hasRun;
+    ensureLoaded(file).hadRunAheadOfMocksThatNameAlone = hasRun;
+}
+
+bool Modules::wasRequiredUnderMockInPlace(ModuleID file) const
+{
+    LoadedModule* loaded = loadedIfExists(file);
+    return loaded && loaded->wasRequiredUnderMockInPlace;
 }
 
 void Modules::noteLoadBehindMock(ModuleID fileOrFace, bool isRequired)

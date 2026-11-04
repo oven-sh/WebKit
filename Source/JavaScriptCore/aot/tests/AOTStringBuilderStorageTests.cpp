@@ -9,6 +9,7 @@
 
 #include "AOTChildProcess.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTOperationCallScope.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
 #include "AOTStringBuilderStorage.h"
@@ -979,6 +980,102 @@ static void testRoomThatMayStayUnused(LoadedProgram& program)
     AOT_TEST_CHECK(tooLong.finish()->length() == lengthBefore + 1);
 }
 
+static String quotedForJSON(const String& text)
+{
+    StringBuilder quoted;
+    quoted.appendQuotedJSONString(text);
+    return quoted.toString();
+}
+
+// As compiled code calls it: maxStringBuilderReservation bytes of room are at the cursor, and behind the text again.
+static void appendJSONString(LoadedProgram& program, Builder& builder, const String& text)
+{
+    Latin1Character* cursor = builder->reserve(program.realm(), { .length = 0, .maxLengthOfRest = maxStringBuilderReservation });
+    AOT_TEST_CHECK(cursor);
+    auto appended = callOperationFromTest(program.vm(), operationAOTJSONAppendString, &program.instance(), builder.storage(), byteCast<uint8_t>(cursor), jsString(program.vm(), text));
+    AOT_TEST_CHECK(appended.value && !appended.exception);
+    builder->commit(byteCast<Latin1Character>(appended.value));
+    AOT_TEST_CHECK(builder.limit() - builder.position() >= maxStringBuilderReservation);
+}
+
+// A builder with the least buffer, whatever the texts before it took.
+static void forgetBuilders(LoadedProgram& program)
+{
+    program.instance().stringBuilder.freeStorage = nullptr;
+    program.instance().stringBuilder.capacityOfLastLargeBuffer = 0;
+}
+
+static String textWithEscapes(size_t length, size_t distance, char escaped)
+{
+    Vector<Latin1Character> characters(FillWith { }, length, static_cast<Latin1Character>('x'));
+    for (size_t index = 0; index < length; index += distance)
+        characters[index] = static_cast<Latin1Character>(escaped);
+    return String(characters.span());
+}
+
+static void testLongEscapedTextGetsNoRoomForItsLongestForm(LoadedProgram& program)
+{
+    constexpr size_t length = 1 * MB;
+    auto roomLeftBehind = [&](const String& text) {
+        forgetBuilders(program);
+        Builder builder(program);
+        builder.append("{\"text\":"_s);
+        appendJSONString(program, builder, text);
+        size_t left = builder.limit() - builder.position();
+        AOT_TEST_CHECK(builder.text() == makeString("{\"text\":"_s, quotedForJSON(text)));
+        builder->release(program.instance());
+        return left;
+    };
+    // All that the escapes of 4,096 characters can take, what compiled code is owed, and a word's rounding.
+    constexpr size_t roomMadeAhead = 5 * 4096 + maxStringBuilderReservation + sizeof(uint64_t);
+    AOT_TEST_CHECK(roomLeftBehind(repeated('x', length)) <= roomMadeAhead);
+    AOT_TEST_CHECK(roomLeftBehind(textWithEscapes(length, length, '\n')) <= roomMadeAhead);
+    AOT_TEST_CHECK(roomLeftBehind(makeString(repeated('x', length), '"')) <= roomMadeAhead);
+    AOT_TEST_CHECK(roomLeftBehind(textWithEscapes(length, 60, '\n')) <= roomMadeAhead);
+    // A buffer that has to grow doubles.
+    AOT_TEST_CHECK(roomLeftBehind(textWithEscapes(length, 1, '\\')) <= 2 * length + roomMadeAhead);
+    AOT_TEST_CHECK(roomLeftBehind(textWithEscapes(length, 1, '\x01')) <= 6 * length + roomMadeAhead);
+}
+
+static void testTextEscapedInPiecesReadsAsOneEscapedWhole(LoadedProgram& program)
+{
+    auto check = [&](const String& text, size_t roomInFront) {
+        forgetBuilders(program);
+        Builder builder(program);
+        builder.append("["_s);
+        AOT_TEST_CHECK(builder->reserve(program.realm(), { .length = 0, .maxLengthOfRest = roomInFront }));
+        appendJSONString(program, builder, text);
+        AOT_TEST_CHECK(builder.text() == makeString('[', quotedForJSON(text)));
+        builder->release(program.instance());
+    };
+    auto wideText = [](size_t length, std::span<const char16_t> pattern) {
+        Vector<char16_t> characters(length);
+        for (size_t index = 0; index < length; ++index)
+            characters[index] = pattern[index % pattern.size()];
+        return String(characters.span());
+    };
+
+    // The room is there for the text as it stands, and runs out on the way.
+    for (size_t length : { 1, 700, 5000, 43007, 43008, 70000, 300000 }) {
+        for (size_t distance : { 1, 7, 60, 4096 }) {
+            for (char escaped : { '\n', '\x1f' })
+                check(textWithEscapes(length, distance, escaped), length + 2 * maxStringBuilderReservation);
+        }
+    }
+
+    // In the first pattern 262,144 characters end between the halves of a pair.
+    static constexpr char16_t pairs[] = { 0xd83d, 0xde00, 0x3042 };
+    static constexpr char16_t halves[] = { 0xd83d, 'x', 0xde00, 0x3042, '\n' };
+    static constexpr char16_t leads[] = { 0xd83d };
+    static constexpr char16_t narrow[] = { 'a', 0xe9, '"', 'b', 0xff, '\t', 'c' };
+    for (size_t length : { 1, 2, 10, 11, 262143, 262144, 262145, 524288, 800000 }) {
+        check(wideText(length, pairs), 0);
+        check(wideText(length, halves), 0);
+        check(wideText(length, leads), 0);
+        check(wideText(length, narrow), 0);
+    }
+}
+
 static void testPoolDepth(LoadedProgram& program)
 {
     Instance& instance = program.instance();
@@ -1166,6 +1263,8 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/reserve-commit"_s, withInstance<testReserveCommit> },
         { "string-builder-storage/length-limit"_s, withInstance<testLengthLimit> },
         { "string-builder-storage/room-that-may-stay-unused"_s, withInstance<testRoomThatMayStayUnused> },
+        { "string-builder-storage/long-escaped-text-gets-no-room-for-its-longest-form"_s, withInstance<testLongEscapedTextGetsNoRoomForItsLongestForm> },
+        { "string-builder-storage/text-escaped-in-pieces-reads-as-one-escaped-whole"_s, withInstance<testTextEscapedInPiecesReadsAsOneEscapedWhole> },
         { "string-builder-storage/pool-depth"_s, withInstance<testPoolDepth> },
         { "string-builder-storage/pool-depth-above-a-builder-laid-into-the-empty-pool"_s, withInstance<testPoolDepthAboveBuilderLaidIntoEmptyPool> },
         { "string-builder-storage/pool-cleared-by-collection"_s, withInstance<testPoolClearedByCollection> },

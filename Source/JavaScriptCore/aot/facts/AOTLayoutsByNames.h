@@ -148,6 +148,24 @@ public:
         return only;
     }
 
+    // Of the layouts listed, which ascend: all those in use that have the name, ascending. It goes by the shorter list.
+    template<size_t inlineCapacity>
+    void appendHoldersAmong(PropertyKeyID name, std::span<const LayoutID> ascending, Vector<LayoutID, inlineCapacity>& found) const
+    {
+        std::span<const uint32_t> holders = holdersOf(name);
+        if (holders.size() < ascending.size()) {
+            for (uint32_t holder : holders) {
+                if (std::ranges::binary_search(ascending, holder, { }, [](LayoutID layout) { return layout.index(); }))
+                    found.append(LayoutID(holder));
+            }
+            return;
+        }
+        for (LayoutID layout : ascending) {
+            if (isInUse(layout) && has(layout.index(), name))
+                found.append(layout);
+        }
+    }
+
 private:
     std::span<const uint32_t> holdersOf(PropertyKeyID name) const
     {

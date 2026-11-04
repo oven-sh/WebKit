@@ -227,6 +227,10 @@ Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions& functions, size_t
     forEachIndexInParallel(context.parallelLoops(), functions.size(), [&](unsigned position) {
         encodeStream(streams[position], functions[position], numberOfFunctions);
     });
+    uint64_t numberOfInlineFrames = 0;
+    for (const CompiledCode& code : functions)
+        numberOfInlineFrames += inlineFrameCount(code.sites);
+    context.statistics().count(StatisticID::InlineFramesEmitted, numberOfInlineFrames);
     return streams;
 }
 

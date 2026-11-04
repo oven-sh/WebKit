@@ -1836,7 +1836,7 @@ bool Allocator::isReadOnSomeWayOn(const Operation* value, Position position)
     if (m_valueOfLastSearchForWays != value) {
         m_valueOfLastSearchForWays = value;
         if (m_lastSearchThatReachedBlock.isEmpty())
-            m_lastSearchThatReachedBlock.fill(m_arena, m_proc.numberOfBlocks(), 0);
+            m_lastSearchThatReachedBlock.fill(m_arena, m_order.mostBlocks(), 0);
         ++m_numberOfSearchesForWays;
         // A way into the block of the definition leads past the definition.
         ArenaVector<const Block*> reached;

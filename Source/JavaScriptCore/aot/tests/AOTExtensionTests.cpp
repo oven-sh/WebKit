@@ -14,11 +14,13 @@
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationCallScope.h"
+#include "AOTOperationScope.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTVector.h"
 #include "HeapCellInlines.h"
 #include "JSCInlines.h"
+#include "MarkedBlockCage.h"
 #include "ObjectConstructor.h"
 #include "PropertyNameArray.h"
 #include "StrongInlines.h"
@@ -956,6 +958,64 @@ static void checkTheBuilderLaysEachValueInItsOwnGranule(LoadedProgram& program)
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithWideReferences<body>;
 
+static NEVER_INLINE void layExtensionAsStubDoes(VM& vm, Object* owner, uint64_t granuleBits)
+{
+    Extension* extension = Extension::create(vm, granuleBits);
+    SlotData slot = *uncheckedDowncast<CompiledStructure>(owner->structure())->extensionSlot();
+    uint8_t* word = reinterpret_cast<uint8_t*>(owner) + slot.offset;
+    if (slot.representation() == SlotRepresentation::Cell)
+        *reinterpret_cast<Extension**>(word) = extension;
+    else
+        *reinterpret_cast<uint32_t*>(word) = MarkedBlockCage::encode(cageBaseOf(owner), reinterpret_cast<uint8_t*>(extension) - offsetOfEmptyExtensionInCage);
+}
+
+static bool nextExtensionComesFromOperation(VM& vm)
+{
+    LocalAllocator* allocator = vm.heap.cagedAuxiliarySpace<SubspaceAccess::OnMainThread>()->allocatorFor(extensionCellSizeFor(1), AllocatorForMode::EnsureAllocator).localAllocator();
+    return reinterpret_cast<FreeList*>(reinterpret_cast<uint8_t*>(allocator) + LocalAllocator::offsetOfFreeList())->allocationWillFail();
+}
+
+static void checkWhatAnAllocationHandsOnWhereTheHeapIsFullKeepsItsExtension(LoadedProgram& program)
+{
+    Fixture fixture(program);
+    VM& vm = fixture.vm();
+    MarkedBlockCage& cage = vm.heap.cage();
+    uint64_t granuleBits = granuleBitOf(fixture.fieldsOutOfLine()[0]->slot.offset);
+    auto findNoRoomAfterAllocating = [&](size_t bytes) {
+        vm.heap.didAllocate(bytes);
+        cage.didFindNoRoom(vm, MarkedBlockCage::ExhaustedHeap::Cells);
+    };
+    auto numberOfWholeCollections = [&] {
+        return vm.heap.objectSpace().markingVersion();
+    };
+    for (unsigned turn = 0; turn < 8; ++turn) {
+        findNoRoomAfterAllocating(vm.heap.objectSpace().capacity() / 64);
+        for (unsigned times = 0; times < 4; ++times)
+            findNoRoomAfterAllocating(1);
+        AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && cage.errorWaitsForPoll());
+        Extension::create(vm, granuleBits);
+        AOT_TEST_CHECK(!nextExtensionComesFromOperation(vm));
+
+        auto before = numberOfWholeCollections();
+        Strong<JSObject> owner(vm, asObject(newCellForCompiledCode(vm, fixture.create())));
+        auto behind = numberOfWholeCollections();
+        CellState handedOn = owner->cellState();
+        AOT_TEST_CHECK(behind != before && !vm.traps().needsOutOfMemoryError() && vm.heap.isMarked(owner.get()));
+        AOT_TEST_CHECK(nextExtensionComesFromOperation(vm));
+
+        vm.traps().setNeedsOutOfMemoryError(true);
+        AOT_TEST_CHECK(!cage.tryTakeBackOutOfMemoryErrorAtPoll(vm) && numberOfWholeCollections() == behind);
+        vm.traps().setNeedsOutOfMemoryError(false);
+
+        Object* object = uncheckedDowncast<Object>(owner.get());
+        layExtensionAsStubDoes(vm, object, granuleBits);
+        vm.heap.collectSync(CollectionScope::Eden);
+        AOT_TEST_CHECK(numberOfWholeCollections() == behind);
+        AOT_TEST_CHECK(vm.heap.isMarked(reinterpret_cast<HeapCell*>(object->extension())));
+        AOT_TEST_CHECK(handedOn == CellState::PossiblyGrey);
+    }
+}
+
 static constexpr ASCIILiteral noNarrowReferences = "plan/AOTSlotPlan.cpp: narrow references in slots: no field lies in a Cell32 or an OptionalCell32"_s;
 
 std::span<const NativeTest> extensionTests()
@@ -972,6 +1032,7 @@ std::span<const NativeTest> extensionTests()
         { "extension/the-first-extension-holds-what-the-makers-fill"_s, withProgram<checkTheFirstExtensionHoldsWhatTheMakersFill> },
         { "extension/whoever-asks-first-makes-the-same-extension"_s, withProgram<checkWhoeverAsksFirstMakesTheSameExtension> },
         { "extension/the-builder-lays-each-value-in-its-own-granule"_s, withProgram<checkTheBuilderLaysEachValueInItsOwnGranule> },
+        { "extension/what-an-allocation-hands-on-where-the-heap-is-full-keeps-its-extension"_s, withProgram<checkWhatAnAllocationHandsOnWhereTheHeapIsFullKeepsItsExtension> },
         { "extension/narrow-references/an-object-pays-for-the-fields-it-has"_s, runNativeTestWithNarrowReferences<checkAnObjectPaysForTheFieldsItHas> },
         { "extension/narrow-references/fields-are-added-in-every-order"_s, runNativeTestWithNarrowReferences<checkFieldsAreAddedInEveryOrder> },
         { "extension/narrow-references/a-granule-goes-in-place-only-behind-the-others"_s, runNativeTestWithNarrowReferences<checkAGranuleGoesInPlaceOnlyBehindTheOthers> },
@@ -984,6 +1045,7 @@ std::span<const NativeTest> extensionTests()
         { "extension/narrow-references/the-first-extension-holds-what-the-makers-fill"_s, runNativeTestWithNarrowReferences<checkTheFirstExtensionHoldsWhatTheMakersFill> },
         { "extension/narrow-references/whoever-asks-first-makes-the-same-extension"_s, runNativeTestWithNarrowReferences<checkWhoeverAsksFirstMakesTheSameExtension> },
         { "extension/narrow-references/the-builder-lays-each-value-in-its-own-granule"_s, runNativeTestWithNarrowReferences<checkTheBuilderLaysEachValueInItsOwnGranule> },
+        { "extension/narrow-references/what-an-allocation-hands-on-where-the-heap-is-full-keeps-its-extension"_s, runNativeTestWithNarrowReferences<checkWhatAnAllocationHandsOnWhereTheHeapIsFullKeepsItsExtension> },
     };
     return tests;
 }

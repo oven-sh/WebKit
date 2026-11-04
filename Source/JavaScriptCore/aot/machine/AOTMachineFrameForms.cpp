@@ -52,9 +52,6 @@ static std::optional<FormOfFrame> formOfFrameWithoutRecord(const Procedure& proc
 
     const uint64_t bytesOfSlots = proc.slots().bytesInAll();
     const uint64_t bytesOfOutgoingWords = proc.callArgAreaSizeInBytes();
-    const bool oneSlotLiesAtStackPointer = bytesOfSlots == bytesOfFrameFormWord && !bytesOfOutgoingWords && !(numberOfSaves % 2);
-    if (bytesOfSlots && !oneSlotLiesAtStackPointer)
-        return std::nullopt;
 
     // The first word lies at the place of the record, which no size counts.
     const uint64_t bytesInAll = numberOfSaves * bytesOfFrameFormWord + bytesOfSlots + bytesOfOutgoingWords;

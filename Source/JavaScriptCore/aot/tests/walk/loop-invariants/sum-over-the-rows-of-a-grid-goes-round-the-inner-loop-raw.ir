@@ -1,0 +1,111 @@
+# `for (r) { const row = grid[r]; for (c) s += row[c]; }`: `row` is guessed to be a list in front of the inner loop, and is a list read in it. The look that asks what the typed copy would do is told of such a list
+# whether or not a guess stands in front beside it: else the read counts as any code, the look is loud, nothing that the turns expect of `s` is asked of what enters, and `s` goes round boxed, with a test in every turn.
+# 34.9 instructions an element until the look at a typed copy was told of the lists read in the loop, 12.8 since.
+# f1 = rows
+# -- source: sum-over-the-rows-of-a-grid-goes-round-the-inner-loop-raw.ts
+# function rows(grid: number[][]): number { let s = 0; for (let r = 0; r < grid.length; r++) { const row = grid[r]; for (let c = 0; c < row.length; c++) s += row[c]; } return s; }
+# (globalThis as any).kept = rows;
+# console.log(rows([[1, 2], [3, 4.5]]));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage
+# CHECK: ([[s]]: number @Double, {{*}}) isInLoop=true isLoopHead=true
+# CHECK: = GetArrayElement {{*}}level=Proven
+# CHECK: = Add [[s]], {{*}}form=Numbers
+
+module m0 path="sum-over-the-rows-of-a-grid-goes-round-the-inner-loop-raw.ts" displayPath="sum-over-the-rows-of-a-grid-goes-round-the-inner-loop-raw.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/JSIteratorPrototype.ts" displayPath="/$bun/js/engine/JSIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m2)
+entry module=m0
+data d0 root=Array{contents=undefined|null|Array<number> elements=[Array{contents=number elements=[Number{value=1}, Number{value=2}]}, Array{contents=number elements=[Number{value=3}, Number{value=4.5}]}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @179
+    v3 = PropGet v2 key="globalThis" [isFreeName] @179
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @179
+    PropSet v4, v1 key="kept" @179
+    v6 = Builtin builtin=GlobalThis @211
+    v7 = PropGet v6 key="console" [isFreeName] @211
+    v8 = Convert v7 declared={type=builtin(Console) flags=[IsExpected]} @211
+    v9 = PropGet v8 key="log" @211
+    v10 = Convert v9 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @211
+    v11 = Data data=d0 @228
+    v12 = Call v1, -, v11 calleeName="rows" @223
+    v13 = Call v10, v8, v12 calleeKey="log" calleeName="console.log" @219
+    v14 = Undefined @211
+    Return v14 @211
+}
+function f1 name="rows" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<number>> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|Array<number>>):
+    v1 = Integer @50
+    v2 = Convert v1 declared={type=number} @50
+    v3 = Integer @66
+    v4 = Convert v3 declared={type=number} @66
+    Jump -> next b1(v2, v4) @62
+  b1(v5: number, v6: number):
+    LoopHint @62
+    v8 = PropGet v0 key="length" @73
+    v9 = Less v6, v8 @73
+    Branch v9 -> taken b2(), notTaken b6() @73
+  b2():
+    v10 = ElemGet v0, v6 @105
+    v11 = Integer @127
+    v12 = Convert v11 declared={type=number} @127
+    Jump -> next b3(v5, v12) @123
+  b3(v13: number, v14: number):
+    LoopHint @123
+    v16 = PropGet v10 key="length" @134
+    v17 = Less v14, v16 @134
+    Branch v17 -> taken b4(), notTaken b5() @134
+  b4():
+    v18 = ElemGet v10, v14 @156
+    v19 = Add v13, v18 @156
+    v20 = Convert v19 declared={type=number} @151
+    v21 = Increment v14 @146
+    v22 = Convert v21 declared={type=number} @146
+    Jump -> next b3(v20, v22) @146
+  b5():
+    v23 = Increment v6 @86
+    v24 = Convert v23 declared={type=number} @86
+    Jump -> next b1(v13, v24) @86
+  b6():
+    v25 = Convert v5 declared={type=number} @173
+    Return v25 @173
+}
+function f2 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f3 name="[Symbol.dispose]" module=m2 position=14610 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorPrototypeDispose thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = Undefined @14610
+    v2 = PropGet v0 key="return" @14680
+    v3 = TypeTest v2 testedType=undefined|null @14702
+    Branch v3 -> taken b2(), notTaken b1(| 0) @14702
+  b1(v4):
+    v5 = NarrowByTest v2, v4 @14702
+    v6 = Call v5, v0 @14744
+    Jump -> next b2() @14744
+  b2():
+    v7 = Undefined @14744
+    Return v7 @14744
+}
+runtimefunction id=JSIteratorPrototypeDispose function=f3
+runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private

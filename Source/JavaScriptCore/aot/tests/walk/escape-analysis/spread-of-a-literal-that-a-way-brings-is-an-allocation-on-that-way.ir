@@ -1,7 +1,6 @@
 # each way brings a literal that nothing else has, and the join spreads what arrives into a new object. Behind the meeting the literal is a cell that was made to be asked for its keys.
 # Walked for each way apart the copy takes what the state holds: the new object is made with the properties of that way, and nothing is left of the literals
 # function widen(c, a, b) { const more = c ? { a } : { a, b }; return { ...more }; }
-# TODO: known-state-and-effects-3b: J8 is off at its door, Walker::walkHeadOfJoinForEachWay(): it cost the application's build and bought nothing that its five turns or TypeScript 6 show
 # RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
 # CHECK-LABEL: code f1:Body
 # CHECK-COUNT-2: = NewObject {{*}}layout=L2

@@ -3,6 +3,7 @@
 # Every function that the host calls by its role is entered from outside, and every module of the library may be asked for by a name. No realm holds a function of the compiler: `createElement` stays out.
 # LIBRARY: own
 # RUN: link functions mechanisms=all
+# REQUIRES: entries-of-bun
 # CHECK-NOT: function f1 unreached
 # CHECK: function f2 unreached
 # CHECK-NOT: function f3 unreached

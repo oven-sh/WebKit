@@ -602,8 +602,10 @@ bool joinOfWhatIsInSight(Walker& walker, const BodyValue& call)
 bool buildCallOfBuiltinForTexts(Walker& walker, const BodyValue& call)
 {
 #if __has_include("AOTWalkJSONWrites.h")
-    if (writeJSONTextOfCall(walker, call) || handJSONTextToBuiltin(walker, call))
+    if (writeJSONTextOfCall(walker, call) || handJSONTextToBuiltin(walker, call)) {
+        walker.count(StatisticID::OwnKeyWalksExpanded);
         return true;
+    }
 #endif
     return joinOfWhatIsInSight(walker, call);
 }

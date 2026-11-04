@@ -53,7 +53,7 @@ void BuiltinTableOfBuild::lockEveryWholeObjectByNames()
     RELEASE_ASSERT(std::ranges::adjacent_find(m_closedKeys, { }, &BuiltinClosedKeys::holder) == m_closedKeys.end());
 }
 
-void BuiltinTableOfBuild::unlockForTestRun(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames)
+void BuiltinTableOfBuild::unlockForTestRun(std::span<const BuiltinID> members, std::span<const BuiltinID> membersThatStayLocked, std::span<const BuiltinID> holdersOfNewNames)
 {
     RELEASE_ASSERT(m_builtins.isEmpty());
     for (BuiltinID member : members) {
@@ -69,7 +69,8 @@ void BuiltinTableOfBuild::unlockForTestRun(std::span<const BuiltinID> members, s
     // `put(getPrototypeOf(Uint8Array).prototype, "values", f)`: no file spells the member. Whether it is written is asked of the flow, as it is of Date.now in every build. Until the end of this function m_table reads the table as it was.
     for (uint32_t index = 0; index < m_builtins.size(); ++index) {
         BuiltinID member(index);
-        if (!m_table.canBeReplacedInTestRuns(member) || std::ranges::binary_search(m_unlockedMembers, member))
+        // The front end has left out a lookup of a member that stays locked. Were the lock left to the program, a store that no file spells would replace the member for some of its readers alone, in silence. It is refused, aloud.
+        if (!m_table.canBeReplacedInTestRuns(member) || std::ranges::binary_search(m_unlockedMembers, member) || std::ranges::binary_search(membersThatStayLocked, member))
             continue;
         m_builtins[index].mutability = BuiltinMutability::ConstantUnlessWritten;
         m_membersWhoseLockIsLeftToProgram.append(member);
@@ -95,6 +96,8 @@ void Program::openNameForTestRun(BuiltinID canonicalHolder, StringID name)
 {
     openedNames.append(OpenedName { canonicalHolder, name });
     m_namesOpenedSomewhere.set(name.index());
+    m_holdersOfOpenedNames.set(canonicalHolder.index());
+    m_namesOpened.add(static_cast<uint64_t>(canonicalHolder.index()) << 32 | name.index());
 }
 
 } // namespace Typed

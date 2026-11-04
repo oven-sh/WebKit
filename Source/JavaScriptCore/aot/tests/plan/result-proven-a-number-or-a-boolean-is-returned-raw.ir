@@ -8,8 +8,8 @@
 # CHECK: unit f3:Body ({{*}}) -> (Boolean)
 # An integer past int32 is returned as the double that it is
 # CHECK: unit f4:Body ({{*}}) -> (Double)
-# Undefined on one path
-# CHECK: unit f5:Body ({{*}}) -> (JSValue)
+# Undefined on one path: raw too, in the form that holds a number or undefined
+# CHECK: unit f5:Body ({{*}}) -> (OptionalDouble)
 # What a coroutine returns goes into its promise
 # CHECK: unit f6:Body ({{*}}) -> (JSValue)
 # CHECK: unit f6:CoroutineBody ({{*}}) -> (JSValue)
@@ -28,10 +28,12 @@
 # BOXED-NOT: -> (Double)
 # BOXED-NOT: -> (Int32)
 # BOXED-NOT: -> (Boolean)
+# BOXED-NOT: -> (OptionalDouble)
 # RUN(CLOSED): plan units mechanisms=-DirectCalls
 # CLOSED-NOT: -> (Double)
 # CLOSED-NOT: -> (Int32)
 # CLOSED-NOT: -> (Boolean)
+# CLOSED-NOT: -> (OptionalDouble)
 
 variable g0 name="half" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="bits" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]

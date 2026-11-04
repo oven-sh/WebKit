@@ -239,6 +239,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTHashedSlotTableTests.cpp
     aot/tests/AOTHeapCageTests.cpp
     aot/tests/AOTHeapRememberedSlotTests.cpp
+    aot/tests/AOTICUDataOfTestProgram.cpp
     aot/tests/AOTIDSetTests.cpp
     aot/tests/AOTIDTests.cpp
     aot/tests/AOTIRLexer.cpp

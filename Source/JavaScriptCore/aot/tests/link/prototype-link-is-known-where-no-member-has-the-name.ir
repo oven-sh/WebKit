@@ -1,0 +1,135 @@
+# No member of the row is named `__proto__` and every name is written, so the read comes to the engine's accessor: it finds the prototype object of the instance, the prototype object above and the class above, and what hangs there is proven. So is what `super.hello` finds, which reads the link above its home object.
+# f1 = greetOf, f2 = makeOf, f3 = aboveOf, f5 = greet, f7 = hello, f8 = make, f10 = readAbove
+# -- source: prototype-link-is-known-where-no-member-has-the-name.js
+# class Alone { greet() { return 1; } }
+# class Low { hello() { return 2; } static make() { return 3; } }
+# class Top extends Low { readAbove() { return super.hello; } }
+# function greetOf(o) { return o.__proto__.greet; }
+# function makeOf(c) { return c.__proto__.make; }
+# function aboveOf(c) { return c.prototype.__proto__.hello; }
+# greetOf(new Alone()); makeOf(Top); aboveOf(Top); new Top().readAbove();
+# -- end of source
+# records of 5e8ae4fd1f592aca
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}} result=f5
+# LINK: function f2 {{*}} result=f8
+# LINK: function f3 {{*}} result=f7
+# LINK: function f10 {{*}} result=f7
+
+module m0 path="prototype-link-is-known-where-no-member-has-the-name.js" displayPath="prototype-link-is-known-where-no-member-has-the-name.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Alone" module=m0 position=6 constructor=f4
+layout L1 kind=Instance name="Low" module=m0 position=44 constructor=f6
+layout L2 kind=Instance name="Top" module=m0 position=108 base=L1 constructor=f9 supertypes=[L1] flags=[HasHeritage]
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = NewClass v6 layout=L0 @0
+    PutModuleVariable v7 variable=g0 @0
+    v9 = NewClosure function=f5 @14
+    DefineMethod v7, v9 layout=L0 key="greet" @14
+    v11 = FinishClass v7 layout=L0 @0
+    v12 = Convert v11 declared={type=f4 flags=[IsFromCompiler]} @0
+    v13 = Convert v11 declared={type=f4 flags=[IsFromCompiler]} @0
+    v14 = NewClosure function=f6 @38
+    v15 = NewClass v14 layout=L1 @38
+    PutModuleVariable v15 variable=g1 @38
+    v17 = NewClosure function=f7 @50
+    DefineMethod v15, v17 layout=L1 key="hello" @50
+    v19 = NewClosure function=f8 @79
+    DefineMethod v15, v19 layout=L1 side=Static index=1 key="make" @79
+    v21 = FinishClass v15 layout=L1 @38
+    v22 = Convert v21 declared={type=f6 flags=[IsFromCompiler]} @38
+    v23 = Convert v21 declared={type=f6 flags=[IsFromCompiler]} @38
+    v24 = ResolveHeritage v23 @120
+    v25 = NewClosure function=f9 @102
+    v26 = NewClass v25, v23, v24 layout=L2 @102
+    PutModuleVariable v26 variable=g2 @102
+    v28 = NewClosure function=f10 @126
+    DefineMethod v26, v28 layout=L2 key="readAbove" @126
+    v30 = FinishClass v26 layout=L2 @102
+    v31 = Convert v30 declared={type=f9 flags=[IsFromCompiler]} @102
+    v32 = Convert v30 declared={type=f9 flags=[IsFromCompiler]} @102
+    v33 = Construct v13 calleeName="Alone" @334
+    v34 = Call v1, -, v33 calleeName="greetOf" @322
+    v35 = Call v3, -, v32 calleeName="makeOf" @344
+    v36 = Call v5, -, v32 calleeName="aboveOf" @357
+    v37 = Construct v32 calleeName="Top" @375
+    v38 = PropGet v37 key="readAbove" @379
+    v39 = Call v38, v37 calleeKey="readAbove" calleeName="readAbove" @381
+    v40 = Undefined @371
+    Return v40 @371
+}
+function f1 name="greetOf" module=m0 position=164 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="__proto__" @193
+    v2 = PropGet v1 key="greet" @195
+    Return v2 @193
+}
+function f2 name="makeOf" module=m0 position=214 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="__proto__" @242
+    v2 = PropGet v1 key="make" @244
+    Return v2 @242
+}
+function f3 name="aboveOf" module=m0 position=262 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function|f9 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function|f9):
+    v1 = PropGet v0 key="prototype" @291
+    v2 = PropGet v1 key="__proto__" @293
+    v3 = PropGet v2 key="hello" @303
+    Return v3 @291
+}
+function f4 name="Alone" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @6
+    v2 = NewObject v1 layout=L0 @6
+    v3 = Convert v2 declared={type=L0} @6
+    Return v3 @6
+}
+function f5 name="greet" module=m0 position=14 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=1 @31
+    Return v0 @31
+}
+function f6 name="Low" module=m0 position=44 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1 @44
+    v2 = NewObject v1 layout=L1 @44
+    v3 = Convert v2 declared={type=L1} @44
+    Return v3 @44
+}
+function f7 name="hello" module=m0 position=50 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=2 @67
+    Return v0 @67
+}
+function f8 name="make" module=m0 position=72 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=3 @95
+    Return v0 @95
+}
+function f9 name="Top" module=m0 position=108 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @108
+    v4 = SuperConstructList v3, v1, v2 layout=L2 @108
+    v5 = Convert v4 declared={type=L2} @108
+    Return v5 @108
+}
+function f10 name="readAbove" module=m0 position=126 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = GetModuleVariable variable=g2 @147
+    v2 = GetSuperBase v1 homeKind=ClassPrototype @147
+    v3 = SuperGet v2, v0 key="hello" @147
+    Return v3 @147
+}
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f11]
