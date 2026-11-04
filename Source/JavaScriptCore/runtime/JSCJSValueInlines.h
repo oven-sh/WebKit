@@ -253,13 +253,17 @@ ALWAYS_INLINE JSValue JSValue::toNumeric(JSGlobalObject* globalObject, NOESCAPE 
     if (isString())
         RELEASE_AND_RETURN(scope, jsNumber(asString(*this)->toNumber(globalObject)));
 
-    if (isCell() && isDone()) [[unlikely]] {
-        scope.release();
-        return { };
+    JSValue primValue = *this;
+    if (isCell()) {
+        if (isDone()) [[unlikely]] {
+            scope.release();
+            return { };
+        }
+        if (isObject()) {
+            primValue = asObject(*this)->toPrimitive(globalObject, PreferNumber);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
     }
-
-    JSValue primValue = this->toPrimitive(globalObject, PreferNumber);
-    RETURN_IF_EXCEPTION(scope, { });
 
     if (primValue.isDouble() || primValue.isBigInt())
         return primValue;
@@ -303,13 +307,19 @@ ALWAYS_INLINE JSValue JSValue::toBigIntOrInt32(JSGlobalObject* globalObject, NOE
     if (isString())
         RELEASE_AND_RETURN(scope, jsNumber(JSC::toInt32(asString(*this)->toNumber(globalObject))));
 
-    if (isCell() && isDone()) [[unlikely]] {
+    if (!isCell())
+        RELEASE_AND_RETURN(scope, jsNumber(toInt32(globalObject)));
+
+    if (isDone()) [[unlikely]] {
         scope.release();
         return { };
     }
 
-    JSValue primValue = this->toPrimitive(globalObject, PreferNumber);
-    RETURN_IF_EXCEPTION(scope, { });
+    JSValue primValue = *this;
+    if (isObject()) {
+        primValue = asObject(*this)->toPrimitive(globalObject, PreferNumber);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
 
     if (primValue.isInt32() || primValue.isBigInt())
         return primValue;
