@@ -85,12 +85,24 @@ ALWAYS_INLINE void writeOutPendingOutput(JSGlobalObject* globalObject)
     if (runtime(globalObject).mayHavePendingOutput()) [[unlikely]]
         writeOutPendingOutputSlow(globalObject);
 }
+// See PyFinalization.cpp.
+#if ENABLE(C_LOOP)
 void wipeStackBelow(JSGlobalObject*, size_t = 128 * KB);
+#else
+extern "C" void SYSV_ABI llint_python_wipe_stack_below(JSGlobalObject*, size_t); // LowLevelInterpreter64.asm
+inline void wipeStackBelow(JSGlobalObject* globalObject, size_t size = 128 * KB) { llint_python_wipe_stack_below(globalObject, size); }
+#endif
 // Room for the frames from a native function down to where it sleeps.
 #if ASAN_ENABLED || ASSERT_ENABLED
 constexpr size_t stackBytesWipedForWaiting = 64 * KB;
 #else
 constexpr size_t stackBytesWipedForWaiting = 16 * KB;
+#endif
+// Room for the frames from makeCallsOwed() down to the finalizer or the handler of a signal that it calls.
+#if ASAN_ENABLED || ASSERT_ENABLED
+constexpr size_t stackBytesWipedForCallsOwed = 64 * KB;
+#else
+constexpr size_t stackBytesWipedForCallsOwed = 8 * KB;
 #endif
 // If all that callee(...) does is self = object.__new__(callee), then callee.__init__(self, ...), and that is a function written
 // in Python: the function, and a new `self`. Otherwise the empty value.

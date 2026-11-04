@@ -3988,6 +3988,62 @@ llintOp(op_py_generator_enter, OpPyGeneratorEnter, macro (size, get, dispatch)
     nextInstruction()
 end)
 
+# Zeroes the stack below the stack pointer. t2: how many bytes, a multiple of 64, not 0. Uses t3 and t5 too, and ft0 or t6.
+macro pyClearStackBelow()
+    # Nothing is written below the stack pointer: it moves down first.
+    move sp, t5
+    subp sp, t2, t3
+    move t3, sp
+    # From the top down, as stacks grow.
+    move t5, t2
+    if X86_64
+        movdz ft0
+    else
+        move 0, t6
+    end
+.clear:
+    subp 64, t2
+    if X86_64
+        storev ft0, 0[t2]
+        storev ft0, 16[t2]
+        storev ft0, 32[t2]
+        storev ft0, 48[t2]
+    elsif ARM64 or ARM64E
+        storepairq t6, t6, 0[t2]
+        storepairq t6, t6, 16[t2]
+        storepairq t6, t6, 32[t2]
+        storepairq t6, t6, 48[t2]
+    else
+        storep t6, 0[t2]
+        storep t6, 8[t2]
+        storep t6, 16[t2]
+        storep t6, 24[t2]
+        storep t6, 32[t2]
+        storep t6, 40[t2]
+        storep t6, 48[t2]
+        storep t6, 56[t2]
+    end
+    bpa t2, t3, .clear
+    move t5, sp
+end
+
+# void llint_python_wipe_stack_below(JSGlobalObject*, size_t): so many bytes, if the stack has room for them. Here and not in C++
+# because a function of C++ cannot wipe its own frame. See Python::wipeStackBelow().
+    global _llint_python_wipe_stack_below
+_llint_python_wipe_stack_below:
+    loadp JSGlobalObject::m_vm[a0], t7
+    loadp VMSoftStackLimitOffset[t7], t7
+    addp a1, t7
+    addp 16 * 1024, t7
+    move sp, t2
+    bpbeq t2, t7, .noRoom
+    move a1, t2
+    andp ~63, t2
+    btpz t2, .noRoom
+    pyClearStackBelow()
+.noRoom:
+    ret
+
 # Where the body of a generator is called to resume it: llint_function_for_call_prologue, op_enter and op_py_generator_enter in
 # one, for the common case. The variables are not given a value: what follows takes them all from the generator.
     global _llint_python_generator_resume

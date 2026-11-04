@@ -452,6 +452,8 @@ void noteCallsOwed(VM& vm)
         function(vm);
 }
 
+static void makeCallsOwedToProgram(VM&);
+
 void makeCallsOwed(VM& vm)
 {
     vm.traps().clearTrap(VMTraps::NeedPythonCalls);
@@ -467,6 +469,14 @@ void makeCallsOwed(VM& vm)
     // What other threads had to leave to the main one.
     if (vm.heap.hasPostponedEmbedderFinalizers() && vm.heap.mayRunEmbedderFinalizers()) [[unlikely]]
         vm.heap.runPostponedEmbedderFinalizers();
+    // The frames of C++ from here down to a finalizer or a handler stay while that runs, and it may ask for a collection.
+    wipeStackBelow(vm.heap.pythonRuntimes().first()->globalObject(), stackBytesWipedForCallsOwed);
+    RELEASE_AND_RETURN(scope, makeCallsOwedToProgram(vm));
+}
+
+static NEVER_INLINE void makeCallsOwedToProgram(VM& vm)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // What is called may start Python in another global object, and a collection may find one gone.
     Vector<Runtime*, 1> runtimes = vm.heap.pythonRuntimes();
     for (Runtime* runtime : runtimes) {
@@ -703,10 +713,11 @@ void Runtime::finalizeAllAtExit()
 // stack that looks like a reference for one, and the frames of C++ between the program's call and the collector lie where those
 // of its earlier calls were: what they do not write would still refer to what those dealt with. So that is wiped first, before
 // the first of those frames (NativeFlag::OnWipedStack).
-// What is wiped lies below the frame of this function. That frame and its caller's are not, and later frames come to lie there too:
-// so both are to be such that they have no slot that they do not write, in a build that is not optimized either, where every
-// variable and many a temporary has a slot, written or not, and a local of the last function of Python that returned may lie
-// just there. See callNativeFunctionOnWipedStack().
+// What is wiped lies below the stack pointer of whoever asks for it. The frame of that function is not wiped, and later frames come
+// to lie there too: so it is to be such that it has no slot that it does not write, in a build that is not optimized either, where
+// every variable and many a temporary has a slot, written or not, and a local of the last function of Python that returned may lie
+// just there. See callNativeFunctionOnWipedStack(). What wipes is not written in C++, so that it has no frame itself.
+#if ENABLE(C_LOOP)
 NEVER_INLINE void wipeStackBelow(JSGlobalObject* globalObject, size_t size)
 {
     char* top = static_cast<char*>(currentStackPointer());
@@ -717,6 +728,7 @@ NEVER_INLINE void wipeStackBelow(JSGlobalObject* globalObject, size_t size)
     for (size_t i = 0; i < size; i += sizeof(uintptr_t))
         *reinterpret_cast<volatile uintptr_t*>(wiped + i) = 0;
 }
+#endif
 
 bool Runtime::hasPendingFinalizers()
 {

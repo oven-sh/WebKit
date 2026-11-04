@@ -309,11 +309,13 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
   What is wiped lies below the frame of the function that asks for it, and the first thing to lie there again is where the locals of
   the Python function that returned last were. So that function (`callNativeFunctionOnWipedStack` and its like in
   `PyNative.cpp`) is reached by a tail call and has nothing in its frame but its two parameters: in a build that is not
-  optimized every variable and temporary of every branch has a slot, written or not. The rule: a frame that is made on wiped stack
+  optimized every variable and temporary of every branch has a slot, written or not. And what wipes is part of the LLInt
+  (`llint_python_wipe_stack_below`): a function of C++ cannot wipe its own frame. The rule: a frame that is made on wiped stack
   has nothing stale in it for as long as it lives, since what it calls lies below it; a frame that is made after something else
   has been called from the same place has whatever that left. So the stack is wiped before every call on the way to a
   collection that is to find things dead: before every round of `gc.collect()`, for the last round has gone through the very
-  objects that this one is to find gone, and at exit (`finalizeInterpreter`, `finalizeAllAtExit`).
+  objects that this one is to find gone, at exit (`finalizeInterpreter`, `finalizeAllAtExit`), and before finalizers and handlers
+  of signals are called at a safe point (`makeCallsOwed`), whose frames of C++ stay while those run.
 - **`gc.collect(0)` and `gc.collect(1)`** are collections of the young generation: of what has been allocated since the last
   collection, whoever made that. There are two generations here, and a program passes 0 or 1 to be quick. What is found
   dead is finalized, weak references to it are cleared and it is counted, as above; what has come through a collection is
