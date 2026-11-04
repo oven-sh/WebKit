@@ -64,9 +64,15 @@ struct Buffer {
     uint8_t* data { nullptr }; // The first item. See refreshBuffer().
     int64_t length { 0 }; // In bytes.
     int64_t itemSize { 1 };
-    bool isReadOnly { true };
-    String format; // In the syntax of the module struct. Null: "B".
+    // A Buffer is on the stack of a thread for as long as a system call takes, where the collector takes what looks like an address for
+    // one. A store narrower than a word, alone in its word, leaves the rest of what was there: with its last byte set to 0, what is
+    // left of the address of a cell is the address of a neighbour of the cell, which this thread may never have seen. So these
+    // make up a word, all of which is written. (The room inside the vectors is not: to write it takes 10 ns, for every Buffer.)
     unsigned dimensions { 1 };
+    bool isReadOnly { true };
+    bool keepsGIL { false }; // For getBuffer() and releaseBuffer(), if the memory is that of JS.
+    uint16_t unused { 0 };
+    String format; // In the syntax of the module struct. Null: "B".
     Vector<int64_t, 4> shape; // Empty if not asked for: one dimension, of length / itemSize items.
     Vector<int64_t, 4> strides; // Empty if not asked for: the items follow one another, the last dimension varying fastest.
 
@@ -81,8 +87,8 @@ struct Buffer {
     JSValue view; // A memoryview made for this buffer alone, which is released with it.
     // For getBuffer() and releaseBuffer(), if the memory is that of JS.
     ArrayBuffer* pinned { nullptr };
-    bool keepsGIL { false };
 };
+static_assert(OBJECT_OFFSETOF(Buffer, format) - OBJECT_OFFSETOF(Buffer, dimensions) == sizeof(uint64_t));
 
 // Whether the object exports its memory at all.
 bool hasBuffer(JSValue);
