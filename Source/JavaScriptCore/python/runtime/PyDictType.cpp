@@ -63,15 +63,14 @@ static void mergeMapping(JSGlobalObject* globalObject, PyDict* dict, JSValue oth
         if (dict->isEmpty())
             return dict->takeItemsOf(vm, otherDict);
         dict->reserve(vm, otherDict->size(), otherDict->hasOnlyStringKeys());
-        const void* storage = otherDict->storageIdentity();
-        unsigned end = otherDict->endPosition();
+        unsigned size = otherDict->size();
         JSValue key, value;
         int64_t hash;
         for (unsigned position = 0; otherDict->next(position, key, value, hash);) {
             if (!insert(key, value, hash))
                 return;
-            // The __eq__ of a key may have done anything.
-            if (otherDict->storageIdentity() != storage || otherDict->endPosition() != end) [[unlikely]] {
+            // The __eq__ of a key may have done anything. What is noticed is what CPython notices.
+            if (otherDict->size() != size) [[unlikely]] {
                 raiseRuntimeError(globalObject, scope, "dict mutated during update"_s);
                 return;
             }
@@ -383,8 +382,9 @@ static bool dictsAreEqual(JSGlobalObject* globalObject, PyDict* a, PyDict* b)
     if (a->size() != b->size())
         return false;
     JSValue key, value;
-    for (unsigned position = 0; a->next(position, key, value);) {
-        JSValue other = b->get(globalObject, key);
+    int64_t hash;
+    for (unsigned position = 0; a->next(position, key, value, hash);) {
+        JSValue other = b->get(globalObject, key, hash);
         RETURN_IF_EXCEPTION(scope, false);
         if (!other)
             return false;
@@ -853,6 +853,9 @@ static PySet* setFrom(JSGlobalObject* globalObject, JSValue iterable)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     PySet* result = PySet::create(globalObject);
+    // The keys of a dict as set(d) takes them: with room for all from the start, and with the hashes that the dict has kept.
+    if (PyDictView* view = asSetLikeView(iterable); view && view->kind() == PyDictView::Kind::Keys && view->dict()->type() == runtime(globalObject).dictType())
+        iterable = view->dict();
     setUpdate(globalObject, result, iterable);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result;
