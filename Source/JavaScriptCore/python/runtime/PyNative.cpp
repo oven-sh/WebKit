@@ -390,6 +390,7 @@ static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionWithFrame);
 static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionOnWipedStack);
 static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionThatMayWait);
 static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionAgainOnWipedStack);
+static JSC_DECLARE_HOST_FUNCTION(callNativeFunctionAgainAfterCollecting);
 
 // All of them have this one function, which they are known by. How the arguments get to the C++ function depends on its
 // signature and on what kind of function it is, neither of which changes: so that was decided when the object was made.
@@ -399,7 +400,7 @@ JSC_DEFINE_HOST_FUNCTION(callNativeFunction, (JSGlobalObject* globalObject, Call
 }
 
 // The frames of the call come to lie where the frame of the function that has the stack wiped is, which is not wiped itself. So these
-// three have nothing in theirs but the two parameters: no variable, no temporary, and no way through them that leaves a slot
+// four have nothing in theirs but the two parameters: no variable, no temporary, and no way through them that leaves a slot
 // unwritten. See wipeStackBelow().
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionOnWipedStack, static NEVER_INLINE, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -411,6 +412,20 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionAgainOnWipedStack, st
 {
     wipeStackBelow(globalObject, stackBytesWipedForWaiting);
     [[clang::musttail]] return callNativeFunctionWithFrame(globalObject, callFrame);
+}
+
+static NEVER_INLINE bool collectBeforeCallBeginsAgain(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    return runtime(globalObject).threads().collectBeforeCallBeginsAgain(globalObject, callFrame);
+}
+
+// The collection, and the finalizers, leave things on the stack too.
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionAgainAfterCollecting, static NEVER_INLINE, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    wipeStackBelow(globalObject);
+    if (!collectBeforeCallBeginsAgain(globalObject, callFrame))
+        return encodedJSValue();
+    [[clang::musttail]] return callNativeFunctionAgainOnWipedStack(globalObject, callFrame);
 }
 
 static NEVER_INLINE bool canBeginCallAgain(JSGlobalObject* globalObject, CallFrame* callFrame)
@@ -439,8 +454,16 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(callNativeFunctionWithFrame, static NEV
     VM& vm = getVM(globalObject);
     JSValue result = hasMarker ? callWithKeywordMarker(globalObject, callFrame) : function->invoke(globalObject, args);
     // The frame of this function is gone when that one runs.
-    if (!result && (function->def().flags & MayWait) && runtime(globalObject).threads().takeRequestToCallAgain(globalObject)) [[unlikely]]
-        [[clang::musttail]] return callNativeFunctionAgainOnWipedStack(globalObject, callFrame);
+    if (!result && (function->def().flags & MayWait)) [[unlikely]] {
+        switch (runtime(globalObject).threads().takeRequestToCallAgain(callFrame)) {
+        case Threads::CallAgain::No:
+            break;
+        case Threads::CallAgain::OnWipedStack:
+            [[clang::musttail]] return callNativeFunctionAgainOnWipedStack(globalObject, callFrame);
+        case Threads::CallAgain::AfterCollecting:
+            [[clang::musttail]] return callNativeFunctionAgainAfterCollecting(globalObject, callFrame);
+        }
+    }
     // CPython looks for signals after every call. Code counts on it: os.kill(os.getpid(), n), and the handler has run.
     // (Only signals. A finalizer between next(counter) and queue.put() in queue.put(next(counter)) is more than code is used to.)
     if (vm.traps().needHandling(VMTraps::NeedPythonCalls) && result && !checkSignals(globalObject)) [[unlikely]]

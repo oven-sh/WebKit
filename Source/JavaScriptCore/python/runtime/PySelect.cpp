@@ -136,20 +136,22 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // See Threads::willCallFunctionThatMayWait().
-    if (Threads& threads = runtime(globalObject).threads(); request.timeout && threads.mayBeginCallAgain()) {
-        int result = waitWithoutBlocking(request);
-        if (result > 0 || (result < 0 && errno != EINTR))
-            return result;
-        if (failed(scope, !threads.beginsCallAgain(globalObject)))
-            return waitRaised;
-    }
-
     int64_t deadline = 0;
     if (request.timeout > 0 && __builtin_add_overflow(monotonicNanoseconds(), request.timeout, &deadline))
         deadline = std::numeric_limits<int64_t>::max();
     WaitFunction function = waitsInHost(globalObject) ? s_hostWaitFunction : blockingWait;
-    IdleWait idle(globalObject);
+    IdleWait idle(globalObject, deadline, request.isWaitOfCall);
+    if (idle.continuesWait()) {
+        request.deadlineTakenUp = deadline;
+        if (request.timeout > 0)
+            request.timeout = std::max<int64_t>(deadline - monotonicNanoseconds(), 0);
+    } else if (request.timeout && idle.mayBeginCallAgain()) {
+        int result = waitWithoutBlocking(request);
+        if (result > 0 || (result < 0 && errno != EINTR))
+            return result;
+        if (failed(scope, idle.willBlock()))
+            return waitRaised;
+    }
     while (true) {
         // A long wait is made piece by piece.
         int64_t timeout = request.timeout;
@@ -217,6 +219,7 @@ bool waitUntilReady(JSGlobalObject* globalObject, int fd)
     struct pollfd descriptor { fd, POLLIN, 0 };
     WaitRequest request { WaitRequest::Kind::Poll };
     request.timeout = -1;
+    request.isWaitOfCall = true;
     request.descriptors = &descriptor;
     request.descriptorCount = 1;
     RELEASE_AND_RETURN(scope, waitForEvents(globalObject, request) != waitRaised);
@@ -547,6 +550,7 @@ static JSValue pollPoll(JSGlobalObject* globalObject, JSValue self, JSValue time
 
     WaitRequest request { WaitRequest::Kind::Poll };
     request.timeout = std::max<int64_t>(timeout, -1);
+    request.isWaitOfCall = true;
     request.descriptors = descriptors.mutableSpan().data();
     request.descriptorCount = descriptors.size();
     object->number = 1;
@@ -714,6 +718,7 @@ static JSValue epollPoll(JSGlobalObject* globalObject, JSValue self, JSValue tim
 
     WaitRequest request { WaitRequest::Kind::Epoll };
     request.timeout = std::max<int64_t>(timeout, -1);
+    request.isWaitOfCall = true;
     request.queue = static_cast<int>(object->number);
     request.epollEvents = events.mutableSpan().data();
     request.maxEvents = maxEvents;

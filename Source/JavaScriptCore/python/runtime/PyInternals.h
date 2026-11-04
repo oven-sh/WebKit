@@ -86,7 +86,7 @@ ALWAYS_INLINE void writeOutPendingOutput(JSGlobalObject* globalObject)
         writeOutPendingOutputSlow(globalObject);
 }
 void wipeStackBelow(JSGlobalObject*, size_t = 128 * KB);
-// Room for the frames from a native function down to where Threads::waitUntil() sleeps or collects.
+// Room for the frames from a native function down to where it sleeps.
 #if ASAN_ENABLED || ASSERT_ENABLED
 constexpr size_t stackBytesWipedForWaiting = 64 * KB;
 #else

@@ -213,8 +213,10 @@ enum NativeFlag : uint8_t {
     DescriptorGet = 1 << 1,
     // See wipeStackBelow().
     OnWipedStack = 1 << 2,
-    // It may wait for other threads, in Threads::waitUntil(), which then has it begun again on a wiped stack: see there. It does
-    // nothing that shows before it waits.
+    // It may wait, for other threads or for the kernel, and its wait may have it begun again, any number of times and at any time while
+    // it waits: see Threads::willCallFunctionThatMayWait(). It waits in one place (IdleWait: `isWaitOfCall`), does nothing
+    // that shows before, keeps no time of its own (the wait gives it back the deadline), and does not mind that finalizers and
+    // other threads run between giving up and beginning again.
     MayWait = 1 << 3,
     // When it returns, nothing that outlives the call refers to its arguments (self is one), what it returns or raises included, and
     // it has shown them to no code of the program: as far as they are of the built-in types that PyTemporaries.cpp is about.

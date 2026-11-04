@@ -370,8 +370,15 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (failed(scope, audit(globalObject, "time.sleep"_s, seconds)))
-        return { };
+    int64_t deadline = 0;
+    IdleWait idle(globalObject, deadline, true);
+    // A hook hears of a sleep once, when it begins.
+    if (!idle.continuesWait()) {
+        if (failed(scope, audit(globalObject, "time.sleep"_s, seconds)))
+            return { };
+        if (isAudited(globalObject))
+            idle.mustNotBeginCallAgain();
+    }
     int64_t timeout;
     if (failed(scope, timeGetNanoseconds(globalObject, seconds, true, timeout)))
         return { };
@@ -380,15 +387,18 @@ static JSValue timeSleep(JSGlobalObject* globalObject, JSValue seconds)
     int64_t now;
     if (failed(scope, timeReadClock(globalObject, CLOCK_MONOTONIC, now)))
         return { };
-    int64_t deadline;
-    if (__builtin_add_overflow(now, timeout, &deadline))
-        deadline = std::numeric_limits<int64_t>::max();
-    // (A hook is not to hear of the same sleep twice.)
-    if (timeout > IdleWait::firstInterval && !isAudited(globalObject) && failed(scope, !runtime(globalObject).threads().beginsCallAgain(globalObject)))
-        return { };
-
+    if (idle.continuesWait()) {
+        timeout = deadline - now;
+        if (timeout <= 0)
+            return none();
+    } else {
+        if (__builtin_add_overflow(now, timeout, &deadline))
+            deadline = std::numeric_limits<int64_t>::max();
+        idle.setDeadline(deadline);
+        if (timeout > IdleWait::firstInterval && failed(scope, idle.willBlock()))
+            return { };
+    }
     // A signal does not cut the sleep short, unless its handler raises. A long sleep is made piece by piece.
-    IdleWait idle(globalObject);
     while (true) {
         int error;
         int64_t piece = idle.nextPiece(timeout);

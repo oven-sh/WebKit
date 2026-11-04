@@ -161,7 +161,7 @@ static JSValue lockAcquire(JSGlobalObject* globalObject, JSValue self, JSValue b
     if (failed(scope, lockAcquireArguments(globalObject, blockingValue, timeoutValue, timeout)))
         return { };
     auto* lock = PyRecord::from(self);
-    bool isFree = threadsOf(globalObject).waitUntil(globalObject, lock, timeout, "the lock is held"_s, "acquire lock at interpreter finalization"_s, [&] { return !lock->number; });
+    bool isFree = threadsOf(globalObject).waitUntil(globalObject, lock, timeout, "the lock is held"_s, "acquire lock at interpreter finalization"_s, [&] { return !lock->number; }, true);
     RETURN_IF_EXCEPTION(scope, { });
     if (isFree)
         lock->number = 1;
@@ -245,7 +245,7 @@ static JSValue rlockAcquire(JSGlobalObject* globalObject, JSValue self, JSValue 
         ++lock->number;
         return jsBoolean(true);
     }
-    bool isFree = threadsOf(globalObject).waitUntil(globalObject, lock, timeout, "the lock is held"_s, "acquire lock at interpreter finalization"_s, [&] { return !lock->number; });
+    bool isFree = threadsOf(globalObject).waitUntil(globalObject, lock, timeout, "the lock is held"_s, "acquire lock at interpreter finalization"_s, [&] { return !lock->number; }, true);
     RETURN_IF_EXCEPTION(scope, { });
     if (isFree) {
         lock->number = 1;
@@ -543,7 +543,7 @@ static JSValue threadHandleJoin(JSGlobalObject* globalObject, JSValue self, cons
     // Whatever the timeout.
     if (handle->number != ThreadDone && threadsOf(globalObject).isFinalized())
         return raise(globalObject, scope, runtime(globalObject).PythonFinalizationError(), "cannot join thread at interpreter shutdown"_s);
-    threadsOf(globalObject).waitUntil(globalObject, handle, timeout, "the thread to join is not done"_s, "join thread at interpreter shutdown"_s, [&] { return handle->number == ThreadDone; });
+    threadsOf(globalObject).waitUntil(globalObject, handle, timeout, "the thread to join is not done"_s, "join thread at interpreter shutdown"_s, [&] { return handle->number == ThreadDone; }, true);
     RETURN_IF_EXCEPTION(scope, { });
     return jsUndefined();
 }

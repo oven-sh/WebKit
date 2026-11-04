@@ -753,9 +753,13 @@ static bool socketCall(JSGlobalObject* globalObject, PyRecord* socket, bool isWr
                     descriptor.events |= POLLERR;
                 WaitRequest request { WaitRequest::Kind::Poll };
                 request.timeout = interval;
+                request.isWaitOfCall = true;
                 request.descriptors = &descriptor;
                 request.descriptorCount = 1;
                 ready = waitForEvents(globalObject, request);
+                // The time began to run when the call was first begun.
+                if (hasTimeout && request.deadlineTakenUp)
+                    deadline = request.deadlineTakenUp;
             }
             if (failed(scope, ready != waitRaised)) {
                 if (options.error)

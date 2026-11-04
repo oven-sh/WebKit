@@ -351,12 +351,33 @@ so the aim is that everything Python *guarantees* holds, and that what it merely
     `waitUntilReadable` waits in `poll` only for the kinds of descriptor of which the two are known to be the same
     (`readWaitsAsPollDoes`), and asks only after `poll` has said that there is nothing: a read that finds data costs one
     more system call, no more.
-  - *The stack.* A native function that finds that it has to wait is begun again on a wiped stack, for the same reason as
-    `gc.collect()` (`NativeFlag::MayWait`, `Threads::willCallFunctionThatMayWait`). That takes a function that waits once, before
-    it has done anything, and arguments that can be looked at twice without running code. With other arguments
-    (`select.select`: lists) the stack is wiped before the call. A function that may have consumed something when it comes to
-    wait (`readall`, the buffered readers) is neither: there the collection happens, but what the frames above hold by
-    chance stays.
+  - *The stack.* The collection is not made from inside the function that waits. The frames of C++ between the code in Python and the
+    collector are full of words that look like references: what earlier calls left where they lie now, and what they have
+    written themselves (a `bool` stored over the last byte of a slot that held the address of a cell leaves the address of a
+    neighbour of the cell, which is what was made just before or after it: the very object that the program has dropped). To wipe
+    the stack before the call takes care of the first kind only. So a native function whose wait has come to the point where it is
+    to collect gives up (`NativeFlag::MayWait`, `IdleWait`): how far the wait has come is noted, something is thrown that
+    nobody but the caller of the function sees, its frames go, the stack below is wiped, the collection is made and the
+    finalizers run from there (`callNativeFunctionAgainAfterCollecting`), and the function is called again. Its wait takes up the
+    deadline and the interval of the one that gave up, so a timeout does not start anew. Nobody hears of a second call: the
+    events of a call are its caller's, and `time.sleep` tells the audit hooks when it begins, not when it goes on.
+    The collections of other threads look at the stack of a thread that waits too. So a wait that is about to block gives up once in
+    the same way, without a collection (`IdleWait::willBlock`): for as long as it lasts its frames lie on wiped stack.
+    - *Whose wait it is.* Code in C++ calls functions written in C++ without a frame, so the frame on top of the stack does not tell the
+      wait of the function from that of something it calls, or of what runs while it waits: a lock of the interpreter
+      (`ThreadLock`), the finalizer of a socket, a callback of the host's loop. Were one of those to give up, its caller would take what
+      is thrown for a failure. So the function says which wait is its own (`isWaitOfCall`), that wait takes the note that
+      the call may begin again out of the thread's state and keeps it for itself, and while the collection runs there is none.
+    - *What it takes.* A function that has done nothing that must not be done twice when it waits, that waits in one place and keeps no
+      time of its own (a socket call that waits again after a false alarm goes by the deadline that the wait gives back), and
+      arguments that can be looked at again without running code: none of them is a cell, but for the object whose method it is
+      (`Threads::willCallFunctionThatMayWait`). `time.sleep` while there are audit hooks says so itself
+      (`mustNotBeginCallAgain`). With other arguments (`select.select`: lists; `time.sleep(x)` with an `x` that has `__float__`) the
+      stack is wiped before the call and the collection is made from inside, which is second best. A function that may have
+      consumed something when it comes to wait (`readall`, the buffered readers) has not even that: the collection happens, but
+      what the frames above hold by chance stays. So does what the frames of another thread hold that sits in such a function.
+    - What runs between giving up and beginning again (finalizers, and other threads while those wait) finds the function not begun: a
+      `poll` object is not in use, a lock that a finalizer takes for this thread and keeps is this thread's.
   - Not covered: `recv` and the like on a blocking socket in a thread other than the main one, writes, `connect`, `flock`,
     `wait()` for any child, `sigwait`.
 - **What only a temporary holds is finalized at once**, where that can be known without the collector (`PyTemporaries.cpp`, which has the

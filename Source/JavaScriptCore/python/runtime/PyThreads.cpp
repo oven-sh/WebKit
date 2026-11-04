@@ -556,20 +556,22 @@ int Threads::start(size_t stackSize, Function<void()>&& body, uint64_t& ident)
 // A program written for reference counts may wait for what only a finalizer brings about: it has dropped a response without closing
 // it, say, and waits for a server, in another thread, that waits for the end of the connection. A thread that has waited
 // for some time has nothing better to do than to find out.
-void Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
+bool Threads::shouldCollectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
 {
-    Runtime& rt = runtime(globalObject);
-    if (rt.isRunningPendingCalls())
-        return;
+    if (runtime(globalObject).isRunningPendingCalls())
+        return false;
     // Such a collection stops every thread, and any number of threads may be idle while one works: all of them together spend
     // at most a twentieth of the time on it. If nothing has been allocated since the last time, there is little to find, but
     // the count moves in steps, and to drop something takes no allocation at all: then a fiftieth.
-    int64_t start = monotonicNanoseconds();
     int64_t earliest = m_timeForIdleCollectionWithoutCause;
     if (m_vm.heap.totalBytesAllocated() != m_bytesAllocatedAtIdleCollection)
         earliest -= 30 * m_durationOfLastIdleCollection;
-    if (!isLastResort && start < earliest)
-        return;
+    return isLastResort || monotonicNanoseconds() >= earliest;
+}
+
+void Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
+{
+    int64_t start = monotonicNanoseconds();
     // What reference counts would have freed would have been finalized by now. Cyclic garbage would not: CPython's collector does not
     // run in a thread that waits, which may well hold a lock that a finalizer wants.
     collectAndFinalize(globalObject, nullptr, CollectionScope::Full, !isLastResort);
@@ -579,55 +581,145 @@ void Threads::collectWhileIdle(JSGlobalObject* globalObject, bool isLastResort)
     m_timeForIdleCollectionWithoutCause = end + 50 * (end - start);
 }
 
+static bool isOfFunctionThatMayWait(CallFrame* call)
+{
+    JSCell* callee = call->jsCallee();
+    return PyNativeFunction::is(callee) && (uncheckedDowncast<PyNativeFunction>(callee)->def().flags & MayWait);
+}
+
 NEVER_INLINE bool Threads::willCallFunctionThatMayWait(CallFrame* callFrame)
 {
-    // The first may be the object whose method it is.
-    for (unsigned i = 1; i < callFrame->argumentCount(); ++i) {
+    // The first argument of a method that is not bound is the object whose method it is, which is only looked at.
+    for (unsigned i = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee())->isDescriptor(); i < callFrame->argumentCount(); ++i) {
         if (callFrame->uncheckedArgument(i).isCell())
             callFrame = nullptr;
         if (!callFrame)
             break;
     }
-    current().callThatMayBeginAgain = callFrame;
+    ThreadState& thread = current();
+    thread.callThatMayBeginAgain = callFrame;
+    // Left by a call that was begun again and then had no need to wait. The frame of this call may be where that one's was.
+    thread.waitBegunAgain.call = nullptr;
+    thread.waitBegunAgain.isRequested = false;
     return callFrame;
 }
 
-NEVER_INLINE bool Threads::takeRequestToCallAgain(JSGlobalObject*)
+NEVER_INLINE Threads::CallAgain Threads::takeRequestToCallAgain(CallFrame* callFrame)
 {
-    if (!std::exchange(current().wantsCallToBeginAgain, false))
-        return false;
+    ThreadState& thread = current();
+    auto& begun = thread.waitBegunAgain;
+    if (!std::exchange(begun.isRequested, false)) [[likely]]
+        return CallAgain::No;
+    ASSERT(begun.call == callFrame);
+    if (begun.call != callFrame) [[unlikely]] {
+        begun.call = nullptr;
+        return CallAgain::No;
+    }
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
+    ASSERT(scope.exception() && scope.exception()->value().isNull());
     scope.clearException();
-    return true;
+    thread.callThatMayBeginAgain = callFrame;
+    return begun.collects ? CallAgain::AfterCollecting : CallAgain::OnWipedStack;
 }
 
-bool Threads::beginsCallAgain(JSGlobalObject* globalObject)
+NEVER_INLINE bool Threads::collectBeforeCallBeginsAgain(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
-    VM& vm = m_vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // What is noted may be left from a call that did not have to wait, and the frame of the next call is where that one's was.
-    auto isOfFunctionThatMayWait = [](CallFrame* call) {
-        JSCell* callee = call->jsCallee();
-        return PyNativeFunction::is(callee) && (uncheckedDowncast<PyNativeFunction>(callee)->def().flags & MayWait);
-    };
-    CallFrame* call = std::exchange(current().callThatMayBeginAgain, nullptr);
-    if (!call || call != vm.topCallFrame || !isOfFunctionThatMayWait(call))
+    // The caller has no scope: see there. What a finalizer or the handler of a signal raises stays, for the caller of the function.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
+    ThreadState& thread = current();
+    ASSERT(thread.waitBegunAgain.call == callFrame && thread.waitBegunAgain.collects);
+    // Whatever waits meanwhile is not the call that is to begin again, though the frame on top is still that call's.
+    auto begun = thread.waitBegunAgain;
+    thread.waitBegunAgain.call = nullptr;
+    thread.callThatMayBeginAgain = nullptr;
+    collectWhileIdle(globalObject, begun.isLastResort);
+    if (scope.exception()) [[unlikely]]
         return false;
-    current().wantsCallToBeginAgain = true;
-    throwException(globalObject, scope, Exception::create(vm, jsNull(), Exception::StackCaptureAction::DoNotCaptureStack));
+    thread.waitBegunAgain = begun;
+    thread.callThatMayBeginAgain = callFrame;
     return true;
 }
 
-IdleWait::IdleWait(JSGlobalObject* globalObject)
+IdleWait::IdleWait(JSGlobalObject* globalObject, int64_t& deadline, bool isWaitOfCall)
     : m_globalObject(globalObject)
-    , m_timeToCollect(monotonicNanoseconds() + firstInterval)
 {
+    if (isWaitOfCall) {
+        ThreadState& thread = runtime(globalObject).threads().current();
+        // What is noted may be left by a call that had no need to wait in the end, and the frame of any later call may be where that
+        // one's was. If that is a call of a function that may wait, willCallFunctionThatMayWait() has seen to it.
+        CallFrame* call = std::exchange(thread.callThatMayBeginAgain, nullptr);
+        auto& begun = thread.waitBegunAgain;
+        if (call && call == getVM(globalObject).topCallFrame && isOfFunctionThatMayWait(call)) {
+            m_call = call;
+            if (begun.call == call) {
+                deadline = begun.deadline;
+                m_interval = begun.idleInterval;
+                m_continuesWait = true;
+                m_hasCollectedAsLastResort = begun.collects && begun.isLastResort;
+            }
+        }
+        begun.call = nullptr;
+    }
+    m_deadline = deadline;
+    m_timeToCollect = monotonicNanoseconds() + m_interval;
+}
+
+bool IdleWait::beginsCallAgain(bool collects, bool isLastResort)
+{
+    if (!m_call)
+        return false;
+    VM& vm = getVM(m_globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(m_call == vm.topCallFrame);
+    runtime(m_globalObject).threads().current().waitBegunAgain = { m_call, m_deadline, m_interval, true, collects, isLastResort };
+    throwException(m_globalObject, scope, Exception::create(vm, jsNull(), Exception::StackCaptureAction::DoNotCaptureStack));
+    return true;
+}
+
+bool IdleWait::willBlock()
+{
+    return !beginsCallAgain(false, false);
+}
+
+bool IdleWait::collect(bool isLastResort)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
+    Threads& threads = runtime(m_globalObject).threads();
+    if (!threads.shouldCollectWhileIdle(m_globalObject, isLastResort))
+        return true;
+    if (failed(scope, !beginsCallAgain(true, isLastResort)))
+        return false;
+    threads.collectWhileIdle(m_globalObject, isLastResort);
+    return !scope.exception();
+}
+
+bool IdleWait::collectAsLastResort()
+{
+    return std::exchange(m_hasCollectedAsLastResort, true) || collect(true);
 }
 
 int64_t IdleWait::nextPiece(int64_t remaining) const
 {
     int64_t piece = std::max<int64_t>(m_timeToCollect - monotonicNanoseconds(), 0);
     return remaining < 0 ? piece : std::min(piece, remaining);
+}
+
+bool IdleWait::collectIfDue(int64_t remaining)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
+    if (monotonicNanoseconds() < m_timeToCollect)
+        return true;
+    // A wait that is nearly over is not made longer by a collection.
+    if (remaining >= 0 && remaining < 2 * runtime(m_globalObject).threads().m_durationOfLastIdleCollection) {
+        m_timeToCollect = std::numeric_limits<int64_t>::max();
+        return true;
+    }
+    // Less and less often: nothing happens while this waits, unless other threads run, and they collect as they allocate.
+    m_interval *= 4;
+    if (failed(scope, collect(false)))
+        return false;
+    m_timeToCollect = monotonicNanoseconds() + m_interval;
+    return true;
 }
 
 bool IdleWait::didWait(int64_t remaining)
@@ -639,27 +731,14 @@ bool IdleWait::didWait(int64_t remaining)
         return false;
     if (monotonicNanoseconds() < m_timeToCollect)
         return true;
-    Threads& threads = runtime(m_globalObject).threads();
-    if (threads.throwIfStopping()) [[unlikely]] {
+    if (runtime(m_globalObject).threads().throwIfStopping()) [[unlikely]] {
         scope.release();
         return false;
     }
-    if (monotonicNanoseconds() < m_timeToCollect)
-        return true;
-    // A wait that is nearly over is not made longer by a collection.
-    if (remaining >= 0 && remaining < 2 * threads.m_durationOfLastIdleCollection) {
-        m_timeToCollect = std::numeric_limits<int64_t>::max();
-        return true;
-    }
-    threads.collectWhileIdle(m_globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    // Less and less often: nothing happens while this waits, unless other threads run, and they collect as they allocate.
-    m_interval *= 4;
-    m_timeToCollect = monotonicNanoseconds() + m_interval;
-    return true;
+    RELEASE_AND_RETURN(scope, collectIfDue(remaining));
 }
 
-bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64_t timeout, ASCIILiteral whatIsWaitedFor, ASCIILiteral whatCannotBeDone, const ScopedLambda<bool()>& isOver)
+bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64_t timeout, ASCIILiteral whatIsWaitedFor, ASCIILiteral whatCannotBeDone, const ScopedLambda<bool()>& isOver, bool isWaitOfCall)
 {
     VM& vm = m_vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -671,10 +750,6 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
         return true;
     if (!timeout)
         return false;
-    bool beginsAgain = beginsCallAgain(globalObject);
-    EXCEPTION_ASSERT(!!scope.exception() == beginsAgain);
-    if (beginsAgain)
-        return false;
     if (isFinalized()) {
         // The other threads never run again.
         raise(globalObject, scope, runtime(globalObject).PythonFinalizationError(), makeString("cannot "_s, whatCannotBeDone));
@@ -684,28 +759,32 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
     int64_t deadline = -1;
     if (timeout > 0 && __builtin_add_overflow(monotonicNanoseconds(), timeout, &deadline))
         deadline = std::numeric_limits<int64_t>::max();
-
-    int64_t timeToIdleCollection = 50000000;
-    int64_t idleCollectionTime = monotonicNanoseconds() + timeToIdleCollection;
+    IdleWait idle(globalObject, deadline, isWaitOfCall);
+    if (idle.continuesWait()) {
+        if (deadline >= 0 && monotonicNanoseconds() >= deadline)
+            return false;
+    } else if (failed(scope, idle.willBlock()))
+        return false;
 
     ThreadState& thread = current();
     while (true) {
         if (timeout < 0 && !m_runningCount && !signalMayBeHandled(globalObject)) {
             // Unless it is a finalizer that brings about what is waited for, which in CPython would have run by now.
-            collectWhileIdle(globalObject, true);
-            RETURN_IF_EXCEPTION(scope, false);
+            if (failed(scope, idle.collectAsLastResort()))
+                return false;
             if (isOver())
                 return true;
             // CPython would hang until it is interrupted from the keyboard.
             raiseRuntimeError(globalObject, scope, "deadlock: "_s, whatIsWaitedFor, ", and there is no other thread"_s);
             return false;
         }
+        idle.canBeEnded();
 
         m_waiters.add(address, Deque<ThreadState*>()).iterator->value.append(&thread);
         thread.isQueued = true;
         {
             AllowThreads allow(globalObject);
-            thread.sleeper.sleep(deadline >= 0 ? std::min(deadline, idleCollectionTime) : idleCollectionTime);
+            thread.sleeper.sleep(deadline >= 0 ? std::min(deadline, idle.timeToCollect()) : idle.timeToCollect());
         }
         if (thread.isQueued) {
             thread.isQueued = false;
@@ -745,18 +824,12 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
         int64_t now = monotonicNanoseconds();
         if (deadline >= 0 && now >= deadline)
             return false;
-        if (now >= idleCollectionTime) {
-            collectWhileIdle(globalObject);
-            if (scope.exception()) [[unlikely]] {
-                wakeOne(address);
-                return false;
-            }
-            if (isOver())
-                return true;
-            // Less and less often: the other threads collect as they allocate.
-            timeToIdleCollection *= 4;
-            idleCollectionTime = monotonicNanoseconds() + timeToIdleCollection;
+        if (failed(scope, idle.collectIfDue(deadline >= 0 ? deadline - now : -1))) {
+            wakeOne(address);
+            return false;
         }
+        if (isOver())
+            return true;
     }
 }
 

@@ -87,7 +87,7 @@ static JSValue simpleQueueGet(JSGlobalObject* globalObject, JSValue self, JSValu
                 return raiseValueError(globalObject, scope, "'timeout' must be a non-negative number"_s);
         }
     }
-    bool hasItem = runtime(globalObject).threads().waitUntil(globalObject, queue, timeout, "the queue is empty"_s, "wait for an item at interpreter finalization"_s, [&] { return !!simpleQueueSize(queue); });
+    bool hasItem = runtime(globalObject).threads().waitUntil(globalObject, queue, timeout, "the queue is empty"_s, "wait for an item at interpreter finalization"_s, [&] { return !!simpleQueueSize(queue); }, true);
     RETURN_IF_EXCEPTION(scope, { });
     if (!hasItem)
         return raiseWithArgs(globalObject, scope, queueEmptyType(globalObject), { });

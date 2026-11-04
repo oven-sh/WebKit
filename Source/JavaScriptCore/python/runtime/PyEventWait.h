@@ -62,6 +62,11 @@ struct WaitRequest {
     Kind kind;
     // In nanoseconds. Negative: for ever. 0: only look.
     int64_t timeout { -1 };
+    // See IdleWait. For the host this is nothing.
+    bool isWaitOfCall { false };
+    // If the call has been begun again in the middle of this wait: when the wait is to end, on the monotonic clock, which is not `timeout`
+    // from now. 0: it has not, or there is no end. For a caller that may wait again for what is left of the time.
+    int64_t deadlineTakenUp { 0 };
 
     // Poll: as for poll(). `revents` is filled in.
     struct pollfd* descriptors { nullptr };

@@ -72,9 +72,17 @@ public:
     struct SavedStates* saved { nullptr };
     // Whether it is in a queue of Threads::waitUntil().
     bool isQueued { false };
-    // See Threads::willCallFunctionThatMayWait().
+    // See Threads::willCallFunctionThatMayWait(). The wait of that call takes it (IdleWait), so whatever else waits finds nothing.
     CallFrame* callThatMayBeginAgain { nullptr };
-    bool wantsCallToBeginAgain { false };
+    // What the wait of a call that is begun again has come to. No call: there is none.
+    struct {
+        CallFrame* call { nullptr };
+        int64_t deadline { 0 };
+        int64_t idleInterval { 0 };
+        bool isRequested { false }; // Thrown, and not yet caught by whoever called the function.
+        bool collects { false };
+        bool isLastResort { false };
+    } waitBegunAgain;
 
 private:
     ThreadState();
@@ -172,20 +180,26 @@ public:
     // Whoever brings about what is waited for calls wakeOne() or wakeAll() with the same address.
     // The texts are for the exceptions raised where nobody could: "deadlock: <the lock is held>, and there is no other thread",
     // and, once the interpreter is over, "cannot <acquire lock at interpreter finalization>".
-    bool waitUntil(JSGlobalObject*, const void* address, int64_t timeout, ASCIILiteral whatIsWaitedFor, ASCIILiteral whatCannotBeDone, const ScopedLambda<bool()>& isOver);
+    // `isWaitOfCall`: see IdleWait.
+    bool waitUntil(JSGlobalObject*, const void* address, int64_t timeout, ASCIILiteral whatIsWaitedFor, ASCIILiteral whatCannotBeDone, const ScopedLambda<bool()>& isOver, bool isWaitOfCall = false);
     // A thread that waits collects after a while (collectWhileIdle()), to find what the program has dropped and what it may be
-    // waiting for the finalizer of. The frames of C++ between the code in Python that waits and the collector lie where the frames
-    // of earlier calls were, and what they do not write still refers to what those dealt with: the very objects that were
-    // dropped last. So a native function that finds that it has to wait gives up (waitUntil() throws something that nobody but
-    // its caller sees), its frames go, the stack below is wiped, and it is called again: NativeFlag::MayWait. Only if its
-    // arguments are such that looking at them a second time runs no code of the program. False: they are not, and the
-    // stack is to be wiped before the call, whether it will wait or not.
+    // waiting for the finalizer of. The collector takes every word of the stack that looks like a reference for one, and the frames
+    // of C++ between the code in Python that waits and the collector are full of such words: what earlier calls left where they
+    // lie now and they have not written over, and what they have written themselves (a slot that held the address of a cell,
+    // with a bool stored over its last byte, is the address of a neighbour of the cell). So the collection is not made from
+    // there. A native function whose wait has come to the point (NativeFlag::MayWait) gives up: IdleWait notes how far the wait
+    // has come and throws something that nobody but the caller of the function sees, its frames go, the stack below is wiped,
+    // collectBeforeCallBeginsAgain() collects, and the function is called again. Its wait goes on where it was.
+    // The collections of other threads look at the stack of this one too. So a wait that is about to block gives up once in the same
+    // way, without a collection: for as long as it lasts its frames lie on wiped stack.
+    // That takes arguments such that looking at them again runs no code of the program. False: they are not. Then the stack is wiped
+    // before the call, whether it will wait or not, and the collection is made from inside it, which is second best.
     bool willCallFunctionThatMayWait(CallFrame*);
-    bool takeRequestToCallAgain(JSGlobalObject*);
-    // For such a function, when it finds that it has to wait and has done nothing yet that must not be done twice.
-    // True: that has been thrown, and it is to return at once.
-    bool beginsCallAgain(JSGlobalObject*);
-    bool mayBeginCallAgain() { return !!current().callThatMayBeginAgain; }
+    // For whoever called the function, which has returned with an exception. If it is that one, it is gone.
+    enum class CallAgain : uint8_t { No, OnWipedStack, AfterCollecting };
+    CallAgain takeRequestToCallAgain(CallFrame*);
+    // False: there is an exception, and the call does not begin again.
+    bool collectBeforeCallBeginsAgain(JSGlobalObject*, CallFrame*);
     void wakeOne(const void* address);
     void wakeAll(const void* address);
 
@@ -237,7 +251,8 @@ private:
 
     void release(ThreadState&, JSLock::ParkedThread&, SavedStates&);
     void acquire(ThreadState&, JSLock::ParkedThread&, SavedStates&);
-    void collectWhileIdle(JSGlobalObject*, bool isLastResort = false);
+    bool shouldCollectWhileIdle(JSGlobalObject*, bool isLastResort);
+    void collectWhileIdle(JSGlobalObject*, bool isLastResort);
     void takeGIL(ThreadState&);
     void dropGIL(ThreadState&, bool isYielding);
     JS_EXPORT_PRIVATE bool throwIfStoppingSlow();
@@ -311,23 +326,53 @@ private:
     alignas(Luggage) std::byte m_luggage[sizeof(Luggage)];
 };
 
-// A thread that waits collects (Threads::collectWhileIdle()), also if it is the kernel that it waits for. So a system call that may
-// take long is made piece by piece: sleep, wait until a descriptor is ready. With the GIL.
+// A thread that waits collects (Threads::collectWhileIdle()), whether it waits for another thread (Threads::waitUntil()) or for the
+// kernel. So a system call that may take long is made piece by piece: sleep, wait until a descriptor is ready. With the GIL.
 class IdleWait {
 public:
     static constexpr int64_t firstInterval = 50000000;
 
-    explicit IdleWait(JSGlobalObject*);
+    // `deadline` is the caller's own, and means to this class what it means to the caller. If the call has been begun again in the
+    // middle of this wait, it is set to what it was.
+    // `isWaitOfCall`: this is the wait of the native function that is being called, the one place where it waits, and it has done
+    // nothing yet that must not be done twice. Only such a wait has the call begun again
+    // (Threads::willCallFunctionThatMayWait()). Not what the function calls on its way, not the locks of the interpreter, not
+    // what runs while it waits: handlers of signals, finalizers, the loop of the host. None of these has a frame that would tell
+    // it from the function, if it is written in C++.
+    IdleWait(JSGlobalObject*, int64_t& deadline, bool isWaitOfCall);
+    bool continuesWait() const { return m_continuesWait; }
+    // For a caller that knows its deadline only after it has made this.
+    void setDeadline(int64_t deadline) { m_deadline = deadline; }
+
+    bool mayBeginCallAgain() const { return m_call; }
+    // For a function that has found a reason why this call must not begin again after all.
+    void mustNotBeginCallAgain() { m_call = nullptr; }
+    // The wait is about to block, for the first time. False: there is an exception (the call begins again).
+    bool willBlock();
+
+    int64_t timeToCollect() const { return m_timeToCollect; }
     // For how many nanoseconds to wait next, at most, if so many are left to wait (negative: there is no end).
     int64_t nextPiece(int64_t remaining) const;
     // That is over, what was waited for has not come, and so many nanoseconds are left to wait (negative: there is no end).
-    // False: there is an exception.
+    // False, here and below: there is an exception.
     bool didWait(int64_t remaining);
+    // The same without a look at signals.
+    bool collectIfDue(int64_t remaining);
+    // Nothing can end the wait but a finalizer. Once for each time that this is so: a call that has been begun again for it does not ask again.
+    bool collectAsLastResort();
+    void canBeEnded() { m_hasCollectedAsLastResort = false; }
 
 private:
+    bool collect(bool isLastResort);
+    bool beginsCallAgain(bool collects, bool isLastResort);
+
     JSGlobalObject* m_globalObject;
+    CallFrame* m_call { nullptr };
+    int64_t m_deadline;
     int64_t m_interval { firstInterval };
     int64_t m_timeToCollect;
+    bool m_continuesWait { false };
+    bool m_hasCollectedAsLastResort { false };
 };
 
 // Threads::stopAll() sends it to the threads that Python started, which therefore cannot block it.
