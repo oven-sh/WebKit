@@ -208,7 +208,11 @@ static NEVER_INLINE bool bindNativeArgumentsSlow(JSGlobalObject* globalObject, c
     bool isSlotWrapper = def.kind == NativeKind::SlotWrapper && !isConstructor;
     String name = isConstructor ? function->ownerType()->name() : String(def.name);
 
-    if (!signature.takesKeywords) {
+    if ((def.flags & ParsedByName) && !signature.parameterCount) {
+        raiseTypeError(globalObject, scope, name, "() takes no arguments"_s);
+        return false;
+    }
+    if (!signature.takesKeywords && !(def.flags & ParsedByName)) {
         if (keywordCount) {
             if (isConstructor)
                 raiseTypeError(globalObject, scope, name, "() takes no keyword arguments"_s);

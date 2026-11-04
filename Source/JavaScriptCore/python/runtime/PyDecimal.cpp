@@ -590,7 +590,9 @@ JSValue decimalFromObjectExactly(JSGlobalObject* globalObject, State& state, PyT
             return decimal;
         Number number;
         decimal->lend(number);
-        return makeDecimal(globalObject, state, type, number);
+        JSValue copy = makeDecimal(globalObject, state, type, number);
+        ensureStillAliveHere(decimal);
+        return copy;
     }
     if (JSString* string = tryStrValue(value))
         return decimalFromStr(globalObject, state, type, string, context, true);

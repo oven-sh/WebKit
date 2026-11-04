@@ -262,6 +262,28 @@ static void powerOfLargeInteger(Number& result, Number& base, Number& exponent, 
     result.setSign(sign);
 }
 
+// Whether one of the powers of the base on the way to base**exponent (or any greater exponent) is sure to be longer than a number can be. Each of
+// them has about twice the digits of the one before, so it would be hours until a product finds out.
+static bool powerIsSureToBeTooLong(const Number& base, uint64_t exponent, const Context& context)
+{
+    double mostDigits = static_cast<double>(mostLimbs()) * digitsPerLimb;
+    if (static_cast<double>(context.precision) <= mostDigits)
+        return false;
+    // base**k has at least k * growth digits, as long as nothing is rounded.
+    Limb first = base.top() / powersOfTen[digitCount(base.top()) - 1];
+    double growth = static_cast<double>(base.digits - 1) + std::log10(static_cast<double>(first)) * 0.999;
+    if (growth <= 0)
+        return false;
+    // Up to which k it does not overflow, and has no digits below the least exponent.
+    double reached = static_cast<double>(exponent);
+    if (base.adjustedExponent() >= 0)
+        reached = std::min(reached, static_cast<double>(context.emax) / (static_cast<double>(base.adjustedExponent()) + 1));
+    if (base.exponent < 0)
+        reached = std::min(reached, static_cast<double>(context.etiny()) / static_cast<double>(base.exponent));
+    // Of the exponents on the way, each is twice the one before or one more than that, so one of them is between k and 2 * k + 1, for any k.
+    return 2.5 * (mostDigits / growth) + 2 < reached;
+}
+
 static void powerWithIntegerExponent(Number& result, const Number& base, const Number& exponent, uint8_t sign, const Context& context, uint32_t& status)
 {
     Context working = context;
@@ -283,7 +305,9 @@ static void powerWithIntegerExponent(Number& result, const Number& base, const N
     else {
         uint32_t ownStatus = 0;
         uint64_t count = magnitudeToUInt64(exponent, ownStatus);
-        if (ownStatus & InvalidOperation) {
+        if (powerIsSureToBeTooLong(workingBase, ownStatus & InvalidOperation ? std::numeric_limits<uint64_t>::max() : count, working))
+            result.setError(OutOfMemory, status);
+        else if (ownStatus & InvalidOperation) {
             Number workingExponent;
             if (!workingExponent.copy(exponent, status))
                 result.setSpecial(0, Number::QuietNaN);
@@ -576,6 +600,12 @@ static void logarithmApproximation(Number& result, const Number& a, const Contex
         }
     }
     if (!underflows) {
+        // The result has that many digits. The steps begin with few, and it would be hours until one of them finds out.
+        if (limbsForDigits(target) > mostLimbs()) {
+            result.setError(OutOfMemory, status);
+            status |= Inexact | Rounded;
+            return;
+        }
         int64_t list[64];
         for (int i = schedulePrecisions(list, target, initialPrecision); i >= 0; --i) {
             improveLogarithm(z, v, list[i], status);
@@ -676,6 +706,8 @@ void commonLogarithm(Number& result, const Number& a, const Context& context, ui
         wider.precision = precision + 3;
         Number constant;
         logarithmApproximation(approximation, a, wider, status);
+        if (approximation.isSpecial())
+            break;
         ln10(constant, wider.precision, status);
         divideCore(approximation, approximation, constant, wider, status, true);
         int64_t unitExponent = approximation.exponent + approximation.digits - precision;

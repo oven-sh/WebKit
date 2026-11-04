@@ -290,6 +290,20 @@ private:
 // Null: there is no such room.
 Limb* allocateLimbs(int64_t count);
 void freeLimbs(Limb*);
+// For more than this allocateLimbs() does not even ask.
+int64_t mostLimbs();
+
+// While one of these lives, mostLimbs() is no more than it says, on this thread. For where a longer number would be of no use.
+class LimbLimit {
+public:
+    explicit LimbLimit(int64_t limbs);
+    ~LimbLimit();
+    LimbLimit(const LimbLimit&) = delete;
+    LimbLimit& operator=(const LimbLimit&) = delete;
+
+private:
+    int64_t m_previous;
+};
 
 static inline int64_t limbsForDigits(int64_t digits) { return (digits + digitsPerLimb - 1) / digitsPerLimb; }
 
@@ -396,6 +410,9 @@ enum TextFlag : unsigned {
 // A buffer of characters that is freed with it. What is short needs no memory but its own.
 class Text {
 public:
+    // A str has no more characters.
+    static constexpr size_t maxCapacity = 0x7fffffff;
+
     Text() = default;
     Text(const Text&) = delete;
     Text& operator=(const Text&) = delete;

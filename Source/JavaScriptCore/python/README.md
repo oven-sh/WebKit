@@ -620,6 +620,40 @@ runs; on a thread that holds the VM's lock it just runs; on any other thread (on
 for a result. An exception in a callback goes to `sys.unraisablehook`. The entry point of a callback is free again once the collector has found that
 nothing refers to the callback; a call that comes after that is refused too.
 
+## decimal
+
+`_decimal` is `runtime/PyDecimal*.cpp`, and `Lib/decimal.py` takes it in place of `Lib/_pydecimal.py`, as in CPython. It is written from the
+General Decimal Arithmetic Specification and from what CPython's module and the library under it (libmpdec) do: they are the reference for
+every result, flag, limit and message, and nothing of theirs is in it.
+
+**The arithmetic** (`PyDecimalNumber.h`, `PyDecimalLimbs.h`, `PyDecimalNumber.cpp`, `PyDecimalFunctions.cpp`, `PyDecimalText.cpp`,
+`PyDecimalTransform.cpp`) knows nothing of the engine or of Python: numbers and a context in, a number and conditions out. With
+`-DPY_DECIMAL_STANDALONE` it compiles by itself, which is how it was compared with the C module, operation by operation, before there were
+objects. A `Number` is a sign, an exponent and a coefficient in limbs of 10^19, eight of them in the object itself, which lives on the stack.
+What the operations give is determined: `exp`, `ln` and `log10` are correctly rounded (the C module always asks its library for that), so how
+they are computed does not show; a power is the same sequence of rounded steps as there, because the steps do show.
+Products are schoolbook, Karatsuba from 28 limbs, and from about 190 limbs number theoretic transforms modulo three primes; quotients are
+Knuth's algorithm D, and Burnikel and Ziegler's recursion on top of the products; a square root is Newton's iteration on integers, begun from the
+root of the leading half. No operation can be interrupted, as in CPython.
+
+**The objects** (`PyDecimal.h`). A `Decimal` is one cell with the limbs behind it, 64 bytes for up to 38 digits, and never changes. An operand is
+read where it is (`PyDecimal::lend()`), an int is converted on the stack, the result is computed on the stack and copied into a cell of
+its size: one allocation for an operation. A `Context` is a cell with the limits, the traps and the flags; `context.traps` and `context.flags` are mappings
+that read and write it, and keep it alive.
+
+**The current context** is the value of a `ContextVar`, as in CPython, so threads, tasks and `contextvars.Context.run()` each have theirs. Finding it
+costs a load and a comparison: `Runtime::contextVariablesVersion()` changes whenever a context variable may have another value than before (one
+was set, a context was entered or left, another thread took over), and the module remembers which context it found at which version.
+
+**Memory.** An operation that needs more than the machine has gives `MemoryError`, not a dead process: what is asked for in one piece is compared
+with the size of the memory first. Division and square root then try again with the precision that the operands call for, as in libmpdec.
+A logarithm or a power whose result is sure to be longer than that says so at once: they are computed in steps, each with about twice the digits of
+the one before, and it would be hours until a step found out (in CPython it is). A text is no longer than a str can be, and while a number
+is formatted no number is longer than that text (`LimbLimit`).
+
+`test/js/bun/python/differential/mod_decimal/engine.py` makes random operations of eight kinds, one line of output each (the result and the flags, or
+the exception and its message); `tools/compare.py` there runs it under two interpreters, as many cases as one likes. What still differs is in DEFERRED.md.
+
 ## Tracing
 
 `sys.monitoring` (PEP 669) is the mechanism; `sys.settrace` and `sys.setprofile` are two of its tools (numbers 7 and 6, with callbacks in

@@ -267,11 +267,13 @@ static JSValue signalDictCompare(JSGlobalObject* globalObject, JSValue self, JSV
         if (!PyDict::is(other))
             return rt.notImplemented();
         uint32_t own = *conditions;
-        if (conditionsOfDict(globalObject, state, other, otherConditions) == DictOfSignals::Invalid) {
+        DictOfSignals kind = conditionsOfDict(globalObject, state, other, otherConditions);
+        if (failed(scope, kind == DictOfSignals::Valid)) {
+            if (kind == DictOfSignals::Raised)
+                return { };
             takePendingException(globalObject);
             return rt.notImplemented();
         }
-        RETURN_IF_EXCEPTION(scope, { });
         return jsBoolean((own == otherConditions) == (op == CompareOperator::Eq));
     }
     return jsBoolean((*conditions == otherConditions) == (op == CompareOperator::Eq));
@@ -756,9 +758,9 @@ static JSValue contextFusedMultiplyAdd(JSGlobalObject* globalObject, JSValue sel
     return applyFusedMultiplyAdd(globalObject, stateOf(globalObject), PyDecimalContext::from(self), x, y, z);
 }
 
-#define PY_CONTEXT_UNARY(name, operation) PY_METHOD(name, contextUnary<operation>, "($self, x, /)")
-#define PY_CONTEXT_BINARY(name, operation) PY_METHOD(name, contextBinary<operation>, "($self, x, y, /)")
-#define PY_CONTEXT_PREDICATE(name, predicate) PY_METHOD(name, contextPredicate<predicate>, "($self, x, /)")
+#define PY_CONTEXT_UNARY(name, operation) PY_METHOD_WITH_FLAGS(name, contextUnary<operation>, "($self, x, /)", ParsedByName)
+#define PY_CONTEXT_BINARY(name, operation) PY_METHOD_WITH_FLAGS(name, contextBinary<operation>, "($self, x, y, /)", ParsedByName)
+#define PY_CONTEXT_PREDICATE(name, predicate) PY_METHOD_WITH_FLAGS(name, contextPredicate<predicate>, "($self, x, /)", ParsedByName)
 
 static constexpr NativeDef contextMethods[] = {
     PY_NEW(contextNew, "($type, *args, **kwargs)"),
@@ -800,13 +802,13 @@ static constexpr NativeDef contextMethods[] = {
     PY_CONTEXT_BINARY("subtract", subtract),
 
     PY_METHOD("power", contextPower, "($self, /, a, b, modulo=None)"),
-    PY_METHOD("fma", contextFusedMultiplyAdd, "($self, x, y, z, /)"),
+    PY_METHOD_WITH_FLAGS("fma", contextFusedMultiplyAdd, "($self, x, y, z, /)", ParsedByName),
 
     PY_METHOD("Etiny", contextEtiny, "($self, /)"),
     PY_METHOD("Etop", contextEtop, "($self, /)"),
-    PY_METHOD("radix", contextRadix, "($self, /)"),
+    PY_METHOD_WITH_FLAGS("radix", contextRadix, "($self, /)", ParsedByName),
 
-    PY_METHOD("is_canonical", contextIsCanonical, "($self, x, /)"),
+    PY_METHOD_WITH_FLAGS("is_canonical", contextIsCanonical, "($self, x, /)", ParsedByName),
     PY_CONTEXT_PREDICATE("is_finite", isFinite),
     PY_CONTEXT_PREDICATE("is_infinite", isInfinite),
     PY_CONTEXT_PREDICATE("is_nan", isNaN),
@@ -818,15 +820,15 @@ static constexpr NativeDef contextMethods[] = {
     PY_CONTEXT_PREDICATE("is_zero", isZero),
 
     PY_CONTEXT_UNARY("_apply", applyContext),
-    PY_METHOD("canonical", contextCanonical, "($self, x, /)"),
+    PY_METHOD_WITH_FLAGS("canonical", contextCanonical, "($self, x, /)", ParsedByName),
     PY_CONTEXT_UNARY("copy_abs", copyAbsoluteInContext),
-    PY_METHOD("copy_decimal", contextCopyDecimal, "($self, x, /)"),
+    PY_METHOD_WITH_FLAGS("copy_decimal", contextCopyDecimal, "($self, x, /)", ParsedByName),
     PY_CONTEXT_UNARY("copy_negate", copyNegatedInContext),
     PY_CONTEXT_UNARY("logb", logB),
     PY_CONTEXT_UNARY("logical_invert", logicalInvert),
-    PY_METHOD("number_class", contextNumberClass, "($self, x, /)"),
-    PY_METHOD("to_sci_string", contextToString<TextScientific>, "($self, x, /)"),
-    PY_METHOD("to_eng_string", contextToString<TextEngineering>, "($self, x, /)"),
+    PY_METHOD_WITH_FLAGS("number_class", contextNumberClass, "($self, x, /)", ParsedByName),
+    PY_METHOD_WITH_FLAGS("to_sci_string", contextToString<TextScientific>, "($self, x, /)", ParsedByName),
+    PY_METHOD_WITH_FLAGS("to_eng_string", contextToString<TextEngineering>, "($self, x, /)", ParsedByName),
 
     PY_CONTEXT_BINARY("compare_total", compareTotalInContext),
     PY_CONTEXT_BINARY("compare_total_mag", compareTotalMagnitudeInContext),
@@ -835,19 +837,19 @@ static constexpr NativeDef contextMethods[] = {
     PY_CONTEXT_BINARY("logical_or", logicalOr),
     PY_CONTEXT_BINARY("logical_xor", logicalXor),
     PY_CONTEXT_BINARY("rotate", rotate),
-    PY_METHOD("same_quantum", contextSameQuantum, "($self, x, y, /)"),
+    PY_METHOD_WITH_FLAGS("same_quantum", contextSameQuantum, "($self, x, y, /)", ParsedByName),
     PY_CONTEXT_BINARY("scaleb", scaleB),
     PY_CONTEXT_BINARY("shift", shift),
 
     PY_METHOD("clear_flags", contextClearFlags, "($self, /)"),
     PY_METHOD("clear_traps", contextClearTraps, "($self, /)"),
 
-    PY_METHOD("__copy__", contextCopy, "($self, /)"),
-    PY_METHOD("__reduce__", contextReduce, "($self, /)"),
-    PY_METHOD("copy", contextCopy, "($self, /)"),
+    PY_METHOD_WITH_FLAGS("__copy__", contextCopy, "($self, /)", ParsedByName),
+    PY_METHOD_WITH_FLAGS("__reduce__", contextReduce, "($self, /)", ParsedByName),
+    PY_METHOD_WITH_FLAGS("copy", contextCopy, "($self, /)", ParsedByName),
 
     PY_METHOD("create_decimal", contextCreateDecimal, "($self, num='0', /)"),
-    PY_METHOD("create_decimal_from_float", contextCreateDecimalFromFloat, "($self, f, /)"),
+    PY_METHOD_WITH_FLAGS("create_decimal_from_float", contextCreateDecimalFromFloat, "($self, f, /)", ParsedByName),
 };
 
 static constexpr NativeGetSet contextGetSets[] = {

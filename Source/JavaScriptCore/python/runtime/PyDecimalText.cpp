@@ -45,9 +45,9 @@ bool Text::allocateSlow(size_t capacity)
 {
     char* memory = m_inline;
     if (capacity > sizeof(m_inline)) {
-#ifdef PY_DECIMAL_STANDALONE
-        if (capacity > std::numeric_limits<size_t>::max() / 4)
+        if (capacity > maxCapacity)
             return false;
+#ifdef PY_DECIMAL_STANDALONE
         memory = static_cast<char*>(std::malloc(capacity));
         if (!memory)
             return false;
@@ -666,6 +666,7 @@ bool format(Text& text, const Number& number, const FormatSpec& givenSpec, const
     else if (spec.sign == '+')
         flags |= TextPlus;
 
+    LimbLimit noLongerThanTheText(limbsForDigits(Text::maxCapacity));
     Number scaled;
     const Number* shown = &number;
     int64_t pointPlace = 1;

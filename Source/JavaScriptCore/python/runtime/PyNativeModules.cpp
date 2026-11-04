@@ -108,7 +108,7 @@ static constexpr NativeModuleDef nativeModuleTable[] = {
     { "_csv"_s, initializeCsvModule },
     { "_ctypes"_s, initializeCtypesModule },
     { "_datetime"_s, initializeDateTimeModule },
-    { "_decimal_wip"_s, initializeDecimalModule },
+    { "_decimal"_s, initializeDecimalModule },
     { "_functools"_s, initializeFunctoolsModule },
     { "_heapq"_s, initializeHeapqModule },
     { "_imp"_s, initializeImpModule },

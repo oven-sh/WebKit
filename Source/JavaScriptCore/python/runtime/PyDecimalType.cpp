@@ -254,6 +254,8 @@ static NEVER_INLINE JSValue decimalCompareSlow(JSGlobalObject* globalObject, JSV
     }
     uint32_t status = 0;
     int order = compareQuietly(*left, b, status);
+    ensureStillAliveHere(self);
+    ensureStillAliveHere(other);
     if (order == unordered) {
         // A signaling NaN signals, and so does any NaN where an order is asked for.
         if ((left->isSignalingNaN() || b.isSignalingNaN() || !isEquality) && failed(scope, !addStatus(globalObject, state, context, status)))
@@ -582,6 +584,7 @@ static JSValue decimalAsTuple(JSGlobalObject* globalObject, JSValue self)
                 limb /= 10;
             }
         }
+        ensureStillAliveHere(self);
     }
     RELEASE_AND_RETURN(scope, call(globalObject, state.decimalTupleType.get(), jsNumber(number.isNegative() ? 1 : 0), digits, exponent));
 }
@@ -642,9 +645,9 @@ static JSValue formatWithPythonDecimal(JSGlobalObject* globalObject, State& stat
     JSValue decimal = call(globalObject, state.pythonDecimal.get(), text);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue result = callMethod(globalObject, decimal, rt.name(Special::Format), spec, context);
-    if (!result && clearPendingExceptionIfMatches(globalObject, rt.ValueError()))
+    if (failed(scope, result) && clearPendingExceptionIfMatches(globalObject, rt.ValueError()))
         return raiseValueError(globalObject, scope, "invalid format string"_s);
-    RELEASE_AND_RETURN(scope, result);
+    return result;
 }
 
 using Bytes = Vector<uint8_t, 32>;
@@ -755,16 +758,11 @@ static JSValue decimalFormat(JSGlobalObject* globalObject, JSValue self, JSValue
     } else if (failed(scope, encodeCharacterOfLocale(globalObject, spec.point, point)) || failed(scope, encodeCharacterOfLocale(globalObject, spec.separator, separator)))
         return { };
 
-    // What is longer than a str can be is not worth beginning. What is beyond the limits of the format is for format() to refuse.
-    int64_t positions = std::max(spec.minWidth, spec.precision);
-    if (number.isFinite() && (spec.type == 'f' || spec.type == 'F' || spec.type == '%'))
-        positions = std::max(positions, number.exponent < 0 ? -number.exponent : number.exponent + number.digits);
-    if (positions >= String::MaxLength && spec.minWidth <= maxPrecision && spec.precision <= maxPrecision)
-        return raiseMemoryError(globalObject, scope, String());
-
     Text text;
     uint32_t status = 0;
-    if (!format(text, number, spec, context->context, status)) {
+    bool isFormatted = format(text, number, spec, context->context, status);
+    ensureStillAliveHere(self);
+    if (!isFormatted) {
         if (status & OutOfMemory)
             return raiseMemoryError(globalObject, scope, String());
         return raiseValueError(globalObject, scope, "format specification exceeds internal limits of _decimal"_s);
@@ -937,7 +935,9 @@ static JSValue decimalCopyWithSign(JSGlobalObject* globalObject, JSValue self)
         result.setSign(0);
     else
         result.negate();
-    return makeDecimal(globalObject, stateOf(globalObject), result);
+    JSValue copy = makeDecimal(globalObject, stateOf(globalObject), result);
+    ensureStillAliveHere(self);
+    return copy;
 }
 
 static JSValue decimalReduce(JSGlobalObject* globalObject, JSValue self)
@@ -1029,10 +1029,10 @@ static constexpr NativeDef decimalMethods[] = {
     PY_METHOD("adjusted", decimalAdjusted, "($self, /)"),
     PY_METHOD("canonical", decimalItself, "($self, /)"),
     PY_METHOD("conjugate", decimalItself, "($self, /)"),
-    PY_METHOD("radix", decimalRadix, "($self, /)"),
+    PY_METHOD_WITH_FLAGS("radix", decimalRadix, "($self, /)", ParsedByName),
 
-    PY_METHOD("copy_abs", decimalCopyWithSign<true>, "($self, /)"),
-    PY_METHOD("copy_negate", decimalCopyWithSign<false>, "($self, /)"),
+    PY_METHOD_WITH_FLAGS("copy_abs", decimalCopyWithSign<true>, "($self, /)", ParsedByName),
+    PY_METHOD_WITH_FLAGS("copy_negate", decimalCopyWithSign<false>, "($self, /)", ParsedByName),
 
     PY_DECIMAL_UNARY("logb", logB),
     PY_DECIMAL_UNARY("logical_invert", logicalInvert),
@@ -1051,19 +1051,19 @@ static constexpr NativeDef decimalMethods[] = {
     PY_DECIMAL_BINARY("scaleb", scaleB),
     PY_DECIMAL_BINARY("shift", shift),
 
-    PY_CLASSMETHOD("from_float", decimalFromFloatMethod, "($type, f, /)"),
-    PY_CLASSMETHOD("from_number", decimalFromNumber, "($type, number, /)"),
-    PY_METHOD("as_tuple", decimalAsTuple, "($self, /)"),
-    PY_METHOD("as_integer_ratio", decimalAsIntegerRatio, "($self, /)"),
+    PY_CLASSMETHOD_WITH_FLAGS("from_float", decimalFromFloatMethod, "($type, f, /)", ParsedByName),
+    PY_CLASSMETHOD_WITH_FLAGS("from_number", decimalFromNumber, "($type, number, /)", ParsedByName),
+    PY_METHOD_WITH_FLAGS("as_tuple", decimalAsTuple, "($self, /)", ParsedByName),
+    PY_METHOD_WITH_FLAGS("as_integer_ratio", decimalAsIntegerRatio, "($self, /)", ParsedByName),
 
     PY_METHOD("__copy__", decimalItself, "($self, /)"),
     PY_METHOD("__deepcopy__", decimalDeepCopy, "($self, memo, /)"),
-    PY_METHOD("__format__", decimalFormat, "($self, format_spec, override=<unrepresentable>, /)"),
+    PY_METHOD_WITH_FLAGS("__format__", decimalFormat, "($self, format_spec, override=<unrepresentable>, /)", ParsedByName),
     PY_METHOD("__reduce__", decimalReduce, "($self, /)"),
-    PY_METHOD("__round__", decimalRound, "($self, ndigits=<unrepresentable>, /)"),
-    PY_METHOD("__ceil__", decimalToIntMethod<Rounding::Ceiling>, "($self, /)"),
-    PY_METHOD("__floor__", decimalToIntMethod<Rounding::Floor>, "($self, /)"),
-    PY_METHOD("__trunc__", decimalToIntMethod<Rounding::Down>, "($self, /)"),
+    PY_METHOD_WITH_FLAGS("__round__", decimalRound, "($self, ndigits=<unrepresentable>, /)", ParsedByName),
+    PY_METHOD_WITH_FLAGS("__ceil__", decimalToIntMethod<Rounding::Ceiling>, "($self, /)", ParsedByName),
+    PY_METHOD_WITH_FLAGS("__floor__", decimalToIntMethod<Rounding::Floor>, "($self, /)", ParsedByName),
+    PY_METHOD_WITH_FLAGS("__trunc__", decimalToIntMethod<Rounding::Down>, "($self, /)", ParsedByName),
     PY_METHOD("__complex__", decimalComplex, "($self, /)"),
     PY_METHOD("__sizeof__", decimalSizeOf, "($self, /)"),
 };

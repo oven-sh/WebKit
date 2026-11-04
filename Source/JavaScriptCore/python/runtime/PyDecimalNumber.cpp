@@ -11,6 +11,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <limits>
+#ifdef PY_DECIMAL_STANDALONE
+#include <unistd.h>
+#endif
 
 #ifdef PY_DECIMAL_STANDALONE
 #define WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -48,16 +51,37 @@ bool Context::forIEEE(int64_t bits, Context& context)
 
 // ---- Memory ----
 
+static thread_local int64_t limbLimit = std::numeric_limits<int64_t>::max();
+
+LimbLimit::LimbLimit(int64_t limbs)
+    : m_previous(limbLimit)
+{
+    limbLimit = std::min(limbLimit, limbs);
+}
+
+LimbLimit::~LimbLimit()
+{
+    limbLimit = m_previous;
+}
+
+int64_t mostLimbs()
+{
+    // The allocator would hand out addresses for more than the machine has, and the process would end on filling them.
+#ifdef PY_DECIMAL_STANDALONE
+    size_t memory = static_cast<size_t>(sysconf(_SC_PHYS_PAGES)) * static_cast<size_t>(sysconf(_SC_PAGESIZE));
+#else
+    size_t memory = WTF::ramSize();
+#endif
+    return std::min(static_cast<int64_t>(memory / sizeof(Limb)), limbLimit);
+}
+
 Limb* allocateLimbs(int64_t count)
 {
-    if (count <= 0 || static_cast<uint64_t>(count) > std::numeric_limits<size_t>::max() / (2 * sizeof(Limb)))
+    if (count <= 0 || count > mostLimbs())
         return nullptr;
 #ifdef PY_DECIMAL_STANDALONE
     return static_cast<Limb*>(std::malloc(static_cast<size_t>(count) * sizeof(Limb)));
 #else
-    // The allocator would hand out addresses for more than the machine has, and the process would end on filling them.
-    if (static_cast<size_t>(count) * sizeof(Limb) > WTF::ramSize())
-        return nullptr;
     void* memory = nullptr;
     if (!tryFastMalloc(static_cast<size_t>(count) * sizeof(Limb)).getValue(memory))
         return nullptr;

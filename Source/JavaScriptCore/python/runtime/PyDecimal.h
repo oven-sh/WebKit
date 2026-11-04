@@ -40,7 +40,8 @@ public:
 
     const Limb* limbs() const { return storageBehind<const Limb>(this); }
     int64_t digits() const { return m_length ? digitCount(limbs()[m_length - 1]) + (static_cast<int64_t>(m_length) - 1) * digitsPerLimb : 0; }
-    // The number, for as long as the cell is alive: it reads the limbs where they are.
+    // The number, for as long as the cell is alive: it reads the limbs where they are, and a pointer to them keeps no cell alive. So whoever
+    // allocates cells or calls out before it has read them for the last time says ensureStillAliveHere() after that.
     void lend(Number& number) const { number.borrow(m_flags, m_exponent, digits(), m_length, limbs()); }
 
     uint8_t flags() const { return m_flags; }

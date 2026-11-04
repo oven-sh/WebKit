@@ -224,6 +224,9 @@ enum NativeFlag : uint8_t {
     ClosesGeneratorArgument = 1 << 5,
     // A __getitem__ that takes indices, among other things: the type has no __iter__ and is iterated over by index.
     ItemOfSequence = 1 << 6,
+    // None of its parameters can be given by name, and still CPython parses its arguments as it does those of functions that take
+    // keywords (Argument Clinic does that for a method that is told its defining class), which shows in what it says of wrong ones.
+    ParsedByName = 1 << 7,
 };
 
 class NativeDef {
@@ -334,6 +337,7 @@ private:
 #define PY_SLOT(name, function, signature) NativeDef(NativeKind::SlotWrapper, name ""_s, function, signature ""_s)
 #define PY_SEQUENCE_SLOT(name, function, signature) NativeDef(NativeKind::SlotWrapper, name ""_s, function, signature ""_s, SequenceOperation)
 #define PY_CLASSMETHOD(name, function, signature) NativeDef(NativeKind::ClassMethod, name ""_s, function, signature ""_s)
+#define PY_CLASSMETHOD_WITH_FLAGS(name, function, signature, flags) NativeDef(NativeKind::ClassMethod, name ""_s, function, signature ""_s, flags)
 #define PY_STATICMETHOD(name, function, signature) NativeDef(NativeKind::StaticMethod, name ""_s, function, signature ""_s)
 #define PY_NEW(function, signature) NativeDef(NativeKind::New, "__new__"_s, function, signature ""_s)
 
