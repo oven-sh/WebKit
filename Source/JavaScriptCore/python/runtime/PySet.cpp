@@ -231,10 +231,11 @@ restart:
                     return false;
                 bool equal = richCompareBool(globalObject, candidate, key, CompareOperator::Eq);
                 RETURN_IF_EXCEPTION(scope, false);
-                if (m_storage.get() != storage || entry->key.get() != candidate)
-                    goto restart;
+                // (Believed whatever __eq__ has done to the set meanwhile, as in CPython.)
                 if (equal)
                     return false;
+                if (m_storage.get() != storage || entry->key.get() != candidate)
+                    goto restart;
             } else if (isDeleted(*entry))
                 freeSlot = entry;
             ++entry;
@@ -245,12 +246,16 @@ restart:
         i = (i * 5 + 1 + perturb) & mask;
     }
 
-    ++m_used;
     if (freeSlot) {
+        // An __eq__ that was asked since may have put something there.
+        if (!isDeleted(*freeSlot))
+            goto restart;
+        ++m_used;
         freeSlot->key.set(vm, storage, key);
         freeSlot->hash = hash;
         return true;
     }
+    ++m_used;
     ++m_fill;
     entry->key.set(vm, storage, key);
     entry->hash = hash;
