@@ -54,7 +54,7 @@ DEFINE_VISIT_CHILDREN(PyInt);
 
 // Of a digit or two. Like any small cell, it is there or the process is out of memory.
 template<typename Integer>
-static NEVER_INLINE JSValue makeBigInt(JSGlobalObject* globalObject, Integer value)
+static ALWAYS_INLINE JSValue makeBigIntFrom(JSGlobalObject* globalObject, Integer value)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     JSBigInt* result = JSBigInt::createFrom(globalObject, value);
@@ -62,19 +62,8 @@ static NEVER_INLINE JSValue makeBigInt(JSGlobalObject* globalObject, Integer val
     return result;
 }
 
-JSValue makeInt(JSGlobalObject* globalObject, int64_t value)
-{
-    if (fitsSmallInt(value)) [[likely]]
-        return smallInt(value);
-    return makeBigInt(globalObject, value);
-}
-
-JSValue makeInt(JSGlobalObject* globalObject, uint64_t value)
-{
-    if (value <= static_cast<uint64_t>(maxSmallInt64)) [[likely]]
-        return smallInt(static_cast<int64_t>(value));
-    return makeBigInt(globalObject, value);
-}
+JSValue makeBigInt(JSGlobalObject* globalObject, int64_t value) { return makeBigIntFrom(globalObject, value); }
+JSValue makeBigInt(JSGlobalObject* globalObject, uint64_t value) { return makeBigIntFrom(globalObject, value); }
 
 JSValue normalizeInt(JSValue value)
 {

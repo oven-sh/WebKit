@@ -278,7 +278,7 @@ PyType* jsIteratorObjectType(Runtime&);
 PyType* jsTypedArrayType(Runtime&);
 PyType* jsGeneratorType(Runtime&);
 
-PyType* Runtime::typeOf(JSValue value) const
+PyType* Runtime::typeOfSlow(JSValue value) const
 {
     if (value.isCell()) {
         JSCell* cell = value.asCell();

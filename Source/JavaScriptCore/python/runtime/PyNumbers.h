@@ -41,7 +41,9 @@ ALWAYS_INLINE bool fitsSmallInt(int64_t value) { return value >= -maxSmallInt64 
 ALWAYS_INLINE JSValue smallInt(int64_t value)
 {
     ASSERT(fitsSmallInt(value));
-    return jsNumber(static_cast<double>(value));
+    if (static_cast<int32_t>(value) == value) [[likely]]
+        return jsNumber(static_cast<int32_t>(value));
+    return jsDoubleNumber(static_cast<double>(value));
 }
 
 // An instance of a class derived from int. (bool is not one of these: True and False are the JS booleans.)
@@ -106,8 +108,20 @@ ALWAYS_INLINE JSValue intValue(JSValue value)
     return value;
 }
 
-JSValue makeInt(JSGlobalObject*, int64_t);
-JSValue makeInt(JSGlobalObject*, uint64_t);
+JSValue makeBigInt(JSGlobalObject*, int64_t);
+JSValue makeBigInt(JSGlobalObject*, uint64_t);
+ALWAYS_INLINE JSValue makeInt(JSGlobalObject* globalObject, int64_t value)
+{
+    if (fitsSmallInt(value)) [[likely]]
+        return smallInt(value);
+    return makeBigInt(globalObject, value);
+}
+ALWAYS_INLINE JSValue makeInt(JSGlobalObject* globalObject, uint64_t value)
+{
+    if (value <= static_cast<uint64_t>(maxSmallInt64)) [[likely]]
+        return smallInt(static_cast<int64_t>(value));
+    return makeBigInt(globalObject, value);
+}
 inline JSValue makeInt(JSGlobalObject*, int32_t value) { return jsNumber(value); }
 inline JSValue makeInt(JSGlobalObject*, uint32_t value) { return jsNumber(value); }
 // A number if it is small enough.

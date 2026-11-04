@@ -346,7 +346,22 @@ public:
     const Names names { *this };
 
     // The type of any value a Python program can hold.
-    PyType* typeOf(JSValue) const;
+    PyType* typeOf(JSValue value) const
+    {
+        if (value.isCell()) {
+            JSCell* cell = value.asCell();
+            JSType type = cell->type();
+            if (isPyObjectType(type)) [[likely]]
+                return uncheckedDowncast<PyObject>(cell)->type();
+            if (type == StringType)
+                return strType();
+            if (type == ArrayType)
+                return listType();
+        } else if (value.isInt32())
+            return intType();
+        return typeOfSlow(value);
+    }
+    PyType* typeOfSlow(JSValue) const;
 
     JSValue notImplemented() const { return m_notImplemented.get(); }
     JSValue ellipsis() const { return m_ellipsis.get(); }
