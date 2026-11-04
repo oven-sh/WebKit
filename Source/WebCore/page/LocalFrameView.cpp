@@ -3304,6 +3304,10 @@ bool LocalFrameView::scrollToAnchorFragment(StringView fragmentIdentifier)
             // If the fragment addressed no SVG view and anchorElement is null, no other scrolling will be possible.
             if (!anchorElement)
                 return false;
+            // An SVG document in a subframe applies :target and its SVG view but scrolls neither itself nor its embedder,
+            // unlike HTML subdocuments, which scroll their parents. The specs are silent: https://github.com/w3c/svgwg/issues/1219
+            if (!m_frame->isMainFrame())
+                return true;
         }
     } else if (!anchorElement && !(fragmentIdentifier.isEmpty() || equalLettersIgnoringASCIICase(fragmentIdentifier, "top"_s))) {
         // Implement the rule that "" and "top" both mean top of page as in other browsers.
@@ -4095,7 +4099,7 @@ bool LocalFrameView::requestScrollToPosition(const ScrollPosition& position, con
 #if ENABLE(ASYNC_SCROLLING)
     if (CheckedPtr tiledBacking = this->tiledBacking(); tiledBacking && options.animated == ScrollIsAnimated::No) {
 #if PLATFORM(IOS_FAMILY)
-        auto contentSize = exposedContentRect().size();
+        auto contentSize = exposedContentRect().raw().size();
 #else
         auto contentSize = visibleContentRect().size();
 #endif
@@ -7199,6 +7203,16 @@ FloatSize LocalFrameView::sizeForCSSLargeViewportUnits() const
     return calculateSizeForCSSViewportUnitsOverride(m_largeViewportSizeOverride);
 }
 
+static bool hasDelegatedPageScale(const LocalFrameView& view)
+{
+    Ref frame = view.frame();
+    if (!frame->isMainFrame())
+        return false;
+
+    RefPtr page = frame->page();
+    return page && page->delegatesScaling();
+}
+
 FloatSize LocalFrameView::calculateSizeForCSSViewportUnitsOverride(std::optional<OverrideViewportSize> override) const
 {
     OverrideViewportSize viewportSize;
@@ -7223,7 +7237,7 @@ FloatSize LocalFrameView::calculateSizeForCSSViewportUnitsOverride(std::optional
 
     // Viewport units must not shrink as the page is zoomed, and visibleContentRectIncludingScrollbars() is
     // the zoomed rect when scaling is delegated. The two are the same otherwise.
-    auto visibleContentSizeIncludingScrollbars = visibleContentScaleFactor() == 1
+    auto visibleContentSizeIncludingScrollbars = !hasDelegatedPageScale(*this)
         ? visibleContentRectIncludingScrollbars().size()
         : sizeForUnobscuredContent(VisibleContentRectIncludesScrollbars::Yes);
     viewportSize.width = viewportSize.width.value_or(visibleContentSizeIncludingScrollbars.width());
@@ -7241,7 +7255,7 @@ FloatSize LocalFrameView::sizeForCSSDynamicViewportUnits() const
 
     if (m_frame->settings().visualViewportEnabled()) {
         // As in calculateSizeForCSSViewportUnitsOverride(), the unobscured rect is zoomed and viewport units are not.
-        if (visibleContentScaleFactor() != 1)
+        if (hasDelegatedPageScale(*this))
             return sizeForUnobscuredContent(VisibleContentRectIncludesScrollbars::Yes);
         return unobscuredContentRectIncludingScrollbars().size();
     }

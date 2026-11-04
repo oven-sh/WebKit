@@ -324,8 +324,7 @@ bool LocalDOMWindow::dispatchAllPendingBeforeUnloadEvents()
 
 unsigned LocalDOMWindow::pendingUnloadEventListeners() const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return windowsWithUnloadEventListeners().count(const_cast<LocalDOMWindow*>(this));
+    return windowsWithUnloadEventListeners().count(const_cast<LocalDOMWindow*>(this));
 }
 
 void LocalDOMWindow::dispatchAllPendingUnloadEvents()
@@ -673,8 +672,7 @@ CustomElementRegistry& LocalDOMWindow::ensureCustomElementRegistry()
         for (Ref shadowRoot : document()->inDocumentShadowRoots()) {
             if (shadowRoot->mode() == ShadowRootMode::UserAgent || shadowRoot->hasScopedCustomElementRegistry())
                 continue;
-            // FIXME: Remove suppression once rdar://189998365 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST const_cast<ShadowRoot&>(shadowRoot.get()).setCustomElementRegistry(*m_customElementRegistry);
+            const_cast<ShadowRoot&>(shadowRoot.get()).setCustomElementRegistry(*m_customElementRegistry);
         }
         protect(document())->setCustomElementRegistry(*m_customElementRegistry);
     }
@@ -2979,6 +2977,8 @@ ExceptionOr<RefPtr<Frame>> LocalDOMWindow::createWindow(const String& urlString,
         resourceRequest.setIsAppInitiated(openerDocumentLoader->lastNavigationWasAppInitiated());
     FrameLoadRequest frameLoadRequest { *activeDocument, protect(activeDocument->securityOrigin()), WTF::move(resourceRequest), frameName, initiatedByMainFrame };
     frameLoadRequest.setShouldOpenExternalURLsPolicy(activeDocument->shouldOpenExternalURLsPolicyToPropagate());
+    RegistrableDomain openedByScriptDomain { protect(openerFrame.document())->currentSourceURL(ScriptExecutionContext::CallStackPosition::TopMost) };
+    frameLoadRequest.setOpenedByScriptDomain(RegistrableDomain { openedByScriptDomain });
 
     // https://html.spec.whatwg.org/#the-rules-for-choosing-a-browsing-context-given-a-browsing-context-name (Step 8.2)
     if (protect(openerFrame.document())->shouldForceNoOpenerBasedOnCOOP()) {
@@ -3015,7 +3015,7 @@ ExceptionOr<RefPtr<Frame>> LocalDOMWindow::createWindow(const String& urlString,
         if (RefPtr page = newFrame->page()) {
             page->setOpenedByDOM();
             if (openerDocument)
-                page->setOpenedByScriptDomain(RegistrableDomain { openerDocument->currentSourceURL(ScriptExecutionContext::CallStackPosition::TopMost) });
+                page->setOpenedByScriptDomain(WTF::move(openedByScriptDomain));
         }
     }
 

@@ -193,6 +193,7 @@
 #include "PageInspectorController.h"
 #include "PageOverlay.h"
 #include "PathUtilities.h"
+#include "PhoneNumberPossessionCoordinator.h"
 #include "PictureInPictureSupport.h"
 #include "PlatformKeyboardEvent.h"
 #include "PlatformMediaEngineConfigurationFactory.h"
@@ -259,6 +260,7 @@
 #include "StorageNamespaceProvider.h"
 #include "StreamTransferUtilities.h"
 #include "StringCallback.h"
+#include "StyleBackgroundLayers.h"
 #include "StyleDocumentScope.h"
 #include "StyleExtractor.h"
 #include "StyleGridPosition.h"
@@ -784,6 +786,9 @@ void Internals::resetToConsistentState(Page& page)
 
 #if PLATFORM(IOS) || PLATFORM(VISION)
     WebCore::setContentSizeCategory(kCTFontContentSizeCategoryL);
+#endif
+#if HAVE(TEXT_SCALE_FACTOR)
+    WebCore::setTextScaleFactor(std::nullopt);
 #endif
 
 #if PLATFORM(COCOA)
@@ -1368,6 +1373,25 @@ unsigned Internals::imageCachedSubimageCreateCount(HTMLImageElement& element)
     UNUSED_PARAM(element);
 #endif
     return 0;
+}
+
+static RefPtr<Style::GradientImage> backgroundGradientImage(Element& element)
+{
+    CheckedPtr renderer = element.renderer();
+    if (!renderer)
+        return nullptr;
+
+    for (auto& layer : renderer->style().backgroundLayers().usedValues()) {
+        if (RefPtr gradientImage = dynamicDowncast<Style::GradientImage>(layer.image().tryStyleImage()))
+            return gradientImage;
+    }
+    return nullptr;
+}
+
+auto Internals::backgroundGradientCache(Element& element) -> Vector<BackgroundGradientCacheEntry>
+{
+    RefPtr gradientImage = backgroundGradientImage(element);
+    return gradientImage ? gradientImage->cachedGradientsForTesting() : Vector<BackgroundGradientCacheEntry> { };
 }
 
 unsigned Internals::remoteImagesCountForTesting() const
@@ -2578,7 +2602,7 @@ ExceptionOr<Ref<DOMRect>> Internals::exposedContentRect()
     document->updateLayout(LayoutOptions::IgnorePendingStylesheets);
 
     Ref frameView = *document->view();
-    return DOMRect::create(frameView->exposedContentRect());
+    return DOMRect::create(frameView->exposedContentRect().raw());
 }
 
 ExceptionOr<void> Internals::setViewIsTransparent(bool transparent)
@@ -8218,6 +8242,19 @@ void Internals::setMockWebAuthenticationConfiguration(const MockWebAuthenticatio
 }
 #endif
 
+#if ENABLE(PHONE_NUMBER_POSSESSION)
+void Internals::setMockPhoneNumberPossessionConfiguration(const MockPhoneNumberPossessionConfiguration& configuration)
+{
+    RefPtr document = contextDocument();
+    if (!document)
+        return;
+    RefPtr page = document->page();
+    if (!page)
+        return;
+    page->phoneNumberPossessionCoordinator().setMockConfigurationForTesting(configuration);
+}
+#endif
+
 void Internals::setMaxCanvasArea(unsigned size)
 {
     CanvasBase::setMaxCanvasAreaForTesting(size);
@@ -8537,6 +8574,16 @@ void Internals::setContentSizeCategory(Internals::ContentSizeCategory category)
 #endif
 }
 
+void Internals::setTextScaleFactor(float textScaleFactor)
+{
+#if HAVE(TEXT_SCALE_FACTOR)
+    WebCore::setTextScaleFactor(textScaleFactor);
+    Page::updateStyleForAllPagesAfterGlobalChangeInEnvironment();
+#else
+    UNUSED_PARAM(textScaleFactor);
+#endif
+}
+
 #if ENABLE(TELEPHONE_NUMBER_DETECTION)
 unsigned Internals::telephoneNumberRangesChangedCount() const
 {
@@ -8758,8 +8805,7 @@ String Internals::dumpStyleResolvers()
 
     for (Ref shadowRoot : document->inDocumentShadowRoots()) {
         auto name = shadowRoot->mode() == ShadowRootMode::UserAgent ? "shadow root resolver (user agent)"_s : "shadow root resolver (author)"_s;
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST dumpResolver(name, protect(protect(const_cast<ShadowRoot&>(shadowRoot.get()).styleScope())->resolver()));
+        dumpResolver(name, protect(protect(const_cast<ShadowRoot&>(shadowRoot.get()).styleScope())->resolver()));
     }
 
     return result.toString();
@@ -8994,6 +9040,19 @@ Vector<String> Internals::pdfContextMenuItemTitlesForTesting(Element& element, i
         return { };
 
     return pluginViewBase->pdfContextMenuItemTitlesForTesting({ x, y });
+}
+
+Ref<DOMRect> Internals::pdfBoundsOnScreenForTesting(Element& element) const
+{
+    RefPtr pluginElement = dynamicDowncast<HTMLPlugInElement>(element);
+    if (!pluginElement)
+        return DOMRect::create();
+
+    RefPtr pluginViewBase = pluginElement->pluginWidget();
+    if (!pluginViewBase)
+        return DOMRect::create();
+
+    return DOMRect::create(pluginViewBase->pdfBoundsOnScreenForTesting());
 }
 
 Vector<Internals::PDFAnnotationRect> Internals::pdfAnnotationRectsForTesting(Element& element) const

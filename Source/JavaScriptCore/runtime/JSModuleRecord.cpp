@@ -267,7 +267,6 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
             Resolution resolution = resolveImport(globalObject, localName);
             RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
 #if ENABLE(AOT)
-            // A compiled module has no environment, and its exports are read by name (abstractAccess() in JSScope.cpp).
             if (vm.hasCompiledCode() && resolution.type == Resolution::Type::Resolved && resolution.moduleRecord->inherits<AOT::ModuleRecord>())
                 return IterationStatus::Continue;
 #endif

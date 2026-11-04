@@ -337,7 +337,7 @@ public:
 
     Ref<WebProcessProxy> processForSite(WebsiteDataStore&, WebProcessProxy::IsolatedProcessType, const std::optional<WebCore::Site>&, const std::optional<WebCore::Site>& mainFrameSite, WebProcessProxy::LockdownMode, EnhancedSecurity, const API::PageConfiguration&, WebCore::ProcessSwapDisposition, ProcessCrossOriginIsolation, const std::optional<WebCore::SecurityOriginData>& coopOrigin = std::nullopt, WebProcessProxy* reusableProvisionalProcess = nullptr, const std::optional<WebCore::SecurityOriginData>& cachedCOOPProcessOrigin = std::nullopt); // Will return an existing one if limit is met or due to caching.
 
-    void prewarmProcess();
+    void prewarmProcess(WebsiteDataStore* = nullptr);
 
     bool LEGACY_NODELETE shouldTerminate(WebProcessProxy&);
 
@@ -390,6 +390,12 @@ public:
 
     GPUProcessProxy& ensureGPUProcess();
     GPUProcessProxy* gpuProcess() const { return m_gpuProcess.get(); }
+#endif
+
+#if ENABLE(GPU_PROCESS) && PLATFORM(COCOA)
+    PrintProcessUseCounter::Token ensurePrintProcess(WebProcessProxy::LockdownMode);
+    void whenPrintProcessReady(WebProcessProxy::LockdownMode, CompletionHandler<void(WebProcessProxy*)>&&);
+    void setPrintProcessIdleTimeoutForTesting(Seconds timeout) { m_printProcessIdleTimeout = timeout; }
 #endif
 
 #if ENABLE(MODEL_PROCESS)
@@ -490,7 +496,7 @@ public:
 
     void processForNavigation(WebPageProxy&, WebFrameProxy&, const API::Navigation&, const URL& sourceURL, BrowsingContextGroup&, WebProcessProxy::IsolatedProcessType, const WebCore::Site& mainFrameSite, ProcessSwapRequestedByClient, WebProcessProxy::LockdownMode, EnhancedSecurity, LoadedWebArchive, const FrameInfoData&, Ref<WebsiteDataStore>&&, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&&);
 
-    void didReachGoodTimeToPrewarm();
+    void didReachGoodTimeToPrewarm(WebsiteDataStore*);
 
     void didCollectPrewarmInformation(const WebCore::RegistrableDomain&, const WebCore::PrewarmInformation&);
 
@@ -658,6 +664,7 @@ private:
     Ref<WebProcessProxy> createNewWebProcess(WebsiteDataStore*, WebProcessProxy::LockdownMode, EnhancedSecurity, WebProcessProxy::EnableWebAssemblyDebugger = WebProcessProxy::EnableWebAssemblyDebugger::No, WebProcessProxy::IsPrewarmed = WebProcessProxy::IsPrewarmed::No, ProcessCrossOriginIsolation = ProcessCrossOriginIsolation::None, JSCOptionsForWebProcess = { });
 
     RefPtr<WebProcessProxy> tryTakePrewarmedProcess(WebsiteDataStore&, WebProcessProxy::LockdownMode, EnhancedSecurity, const API::PageConfiguration&, ProcessCrossOriginIsolation);
+    void shutDownPrewarmedProcessesForWebsiteDataStore(WebsiteDataStore&);
 
     void initializeNewWebProcess(WebProcessProxy&, WebsiteDataStore*, WebProcessProxy::IsPrewarmed = WebProcessProxy::IsPrewarmed::No, WebProcessProxy::EnableWebAssemblyDebugger = WebProcessProxy::EnableWebAssemblyDebugger::No, JSCOptionsForWebProcess = { });
 
@@ -734,6 +741,7 @@ private:
 
 #if PLATFORM(MAC)
     static void colorPreferencesDidChangeCallback(CFNotificationCenterRef, void* observer, CFStringRef name, const void* postingObject, CFDictionaryRef userInfo);
+    static void preferredContentSizeCategoryDidChangeCallback(CFNotificationCenterRef, void* observer, CFStringRef name, const void* postingObject, CFDictionaryRef userInfo);
 #endif
 
 #if HAVE(POWERLOG_TASK_MODE_QUERY) && ENABLE(GPU_PROCESS)
@@ -811,6 +819,25 @@ private:
 #if ENABLE(GPU_PROCESS)
     RefPtr<GPUProcessProxy> m_gpuProcess;
 #endif
+#if ENABLE(GPU_PROCESS) && PLATFORM(COCOA)
+    struct PrintProcessState {
+        PrintProcessState(WebProcessPool&, WebProcessProxy::LockdownMode);
+
+        RefPtr<WebProcessProxy> process;
+        RefPtr<WebsiteDataStore> dataStore;
+        RefPtr<ProcessThrottlerActivity> activity;
+        WebProcessProxy::ShutdownPreventingScopeCounter::Token shutdownPreventingScope;
+        bool isReady { false };
+        Vector<CompletionHandler<void(WebProcessProxy*)>> readyCallbacks;
+        RunLoop::Timer idleTimer;
+        PrintProcessUseCounter useCounter;
+    };
+
+    PrintProcessState& printProcessState(WebProcessProxy::LockdownMode lockdownMode) { return lockdownMode == WebProcessProxy::LockdownMode::Enabled ? m_lockdownPrintProcessState : m_printProcessState; }
+    void shutDownPrintProcess(WebProcessProxy::LockdownMode);
+    void printProcessDidDisconnect(WebProcessProxy&);
+    void printProcessUseCountDidChange(WebProcessProxy::LockdownMode);
+#endif
 #if ENABLE(MODEL_PROCESS)
     RefPtr<ModelProcessProxy> m_modelProcess;
     WeakHashSet<WebProcessProxy> m_processesWithModelPlayers;
@@ -886,6 +913,9 @@ private:
     std::unique_ptr<WebCore::PowerSourceNotifier> m_powerSourceNotifier;
     const RetainPtr<NSObject> m_activationObserver;
     const RetainPtr<NSObject> m_accessibilityEnabledObserver;
+#if PLATFORM(IOS) || PLATFORM(VISION)
+    const RetainPtr<NSObject> m_contentSizeCategoryObserver;
+#endif
     const RetainPtr<NSObject> m_applicationLaunchObserver;
     const RetainPtr<NSObject> m_finishedMobileAssetFontDownloadObserver;
 
@@ -910,6 +940,12 @@ private:
 #if ENABLE(GPU_PROCESS)
     RunLoop::Timer m_resetGPUProcessCrashCountTimer;
     unsigned m_recentGPUProcessCrashCount { 0 };
+#endif
+
+#if ENABLE(GPU_PROCESS) && PLATFORM(COCOA)
+    Seconds m_printProcessIdleTimeout { 1_min };
+    PrintProcessState m_printProcessState;
+    PrintProcessState m_lockdownPrintProcessState;
 #endif
 
 #if ENABLE(MODEL_PROCESS)

@@ -26,6 +26,8 @@ import OSLog
 import WebKit
 import simd
 
+typealias NodeIdentifier = UInt64
+
 #if ENABLE_GPU_PROCESS_MODEL && canImport(RealityCoreDeformation, _version: 23.0.2) && canImport(ShaderGraph, _version: 159.0.3) && arch(arm64)
 import USDKit
 import DirectResource
@@ -607,6 +609,10 @@ extension WKBridgeReceiver {
     @nonobjc
     fileprivate var modelTransform: simd_float4x4 = matrix_identity_float4x4
     @nonobjc
+    fileprivate var nodeTransforms: [NodeIdentifier: simd_float4x4] = [:]
+    @nonobjc
+    fileprivate var meshNodes: [WKBridgeTypedResourceId: NodeIdentifier] = [:]
+    @nonobjc
     fileprivate var rotationAngle: Float = 0
 
     @nonobjc
@@ -643,6 +649,13 @@ extension WKBridgeReceiver {
 
     @nonobjc
     fileprivate let fallbackTexture: LowLevelTextureResource
+
+    @nonobjc
+    fileprivate let defaultDiffuseTexture: LowLevelTextureResource
+    @nonobjc
+    fileprivate let defaultSpecularTexture: LowLevelTextureResource
+    @nonobjc
+    fileprivate let emptyEnvironmentTexture: LowLevelTextureResource?
 
     struct DeferredMeshUpdate {
         enum UpdateType {
@@ -721,6 +734,14 @@ extension WKBridgeReceiver {
                 diffuseTexture, specularTexture,
             ]
         )
+        self.defaultDiffuseTexture = diffuseTexture
+        self.defaultSpecularTexture = specularTexture
+        self.emptyEnvironmentTexture = makeEmptyEnvironmentTextureResource(
+            renderContext,
+            commandQueue: configuration.commandQueue,
+            device: configuration.device,
+            memoryOwner: configuration.appRenderer.memoryOwner
+        )
 
         self.fallbackTexture = makeFallBackTextureResource(
             renderContext,
@@ -738,14 +759,15 @@ extension WKBridgeReceiver {
 
     @objc(renderWithTexture:commandBuffer:)
     func render(with texture: any MTLTexture, commandBuffer: any MTLCommandBuffer) {
-        // Apply the latest model transform to every mesh instance, composed with
-        // each instance's original USD-space transform.
+        // Apply the latest model transform and the mesh's node transform to every
+        // mesh instance, composed with each instance's original USD-space transform.
         for (identifier, meshes) in meshToMeshInstances {
             // FIXME: https://bugs.webkit.org/show_bug.cgi?id=305857
             // swift-format-ignore: NeverForceUnwrap
             let originalTransforms = meshTransforms[identifier]!
+            let nodeTransform = meshNodes[identifier].flatMap { nodeTransforms[$0] } ?? matrix_identity_float4x4
             for (index, meshInstance) in meshes.enumerated() {
-                meshInstance.transform = modelTransform * originalTransforms[index]
+                meshInstance.transform = modelTransform * nodeTransform * originalTransforms[index]
             }
         }
 
@@ -910,6 +932,7 @@ extension WKBridgeReceiver {
                     }
                 }
                 meshResources.removeValue(forKey: meshId)
+                meshNodes.removeValue(forKey: meshId)
                 meshResourceToMaterials.removeValue(forKey: meshId)
                 meshResourceToDeformationContext.removeValue(forKey: meshId)
             }
@@ -930,13 +953,14 @@ extension WKBridgeReceiver {
         return true
     }
 
-    @objc(updateMesh:)
-    func updateMesh(_ updates: [WKBridgeUpdateMesh]) {
+    @objc(updateMesh:forNode:)
+    func updateMesh(_ updates: [WKBridgeUpdateMesh], forNode node: NodeIdentifier) {
         do {
             var deferredMeshUpdates: [DeferredMeshUpdate] = []
 
             for meshData in updates {
                 let identifier = meshData.identifier
+                meshNodes[identifier] = node
 
                 let meshResource: LowLevelMeshResource
                 if meshData.updateType == .initial || meshData.descriptor != nil {
@@ -1092,6 +1116,16 @@ extension WKBridgeReceiver {
         modelTransform = transform
     }
 
+    @objc(setTransform:forNode:)
+    func setTransform(_ transform: simd_float4x4, forNode node: NodeIdentifier) {
+        nodeTransforms[node] = transform
+    }
+
+    @objc(removeNode:)
+    func removeNode(_ node: NodeIdentifier) {
+        nodeTransforms.removeValue(forKey: node)
+    }
+
     func setFOV(_ fovY: Float) {
         appRenderer.setFOV(fovY)
     }
@@ -1164,6 +1198,29 @@ extension WKBridgeReceiver {
             commandBuffer.commit()
         } catch {
             fatalError(error.localizedDescription)
+        }
+    }
+
+    func setDefaultEnvironmentMap() {
+        do {
+            try lightingArguments.setTexture(defaultDiffuseTexture, at: 0)
+            try lightingArguments.setTexture(defaultSpecularTexture, at: 1)
+        } catch {
+            logError("Could not restore the default environment map: \(error.localizedDescription)")
+        }
+    }
+
+    func removeEnvironmentMap() {
+        guard let emptyEnvironmentTexture else {
+            logError("Could not remove the environment map, no empty environment texture")
+            return
+        }
+
+        do {
+            try lightingArguments.setTexture(emptyEnvironmentTexture, at: 0)
+            try lightingArguments.setTexture(emptyEnvironmentTexture, at: 1)
+        } catch {
+            logError("Could not remove the environment map: \(error.localizedDescription)")
         }
     }
 }
@@ -2345,10 +2402,6 @@ final class USDModelLoader {
         endTime - startTime
     }
 
-    func treatZAsUpAxis() -> Bool {
-        stage?.upAxis == USDToken("Z")
-    }
-
     func currentTime() -> Double {
         time - startTime
     }
@@ -2706,10 +2759,6 @@ extension WKBridgeModelLoader {
         return loader.duration()
     }
 
-    func treatZAsUpAxis() -> Bool {
-        loader?.treatZAsUpAxis() ?? false
-    }
-
     func currentTime() -> Double {
         guard let loader else {
             return 0.0
@@ -2811,6 +2860,52 @@ private func makeFallBackTextureResource(
     return fallbackTexture
 }
 
+private func makeEmptyEnvironmentTextureResource(
+    _ renderContext: any LowLevelRenderContext,
+    commandQueue: any MTLCommandQueue,
+    device: any MTLDevice,
+    memoryOwner: task_id_token_t
+) -> LowLevelTextureResource? {
+    let cubeDescriptor = MTLTextureDescriptor.textureCubeDescriptor(
+        pixelFormat: .r8Unorm,
+        size: 1,
+        mipmapped: false
+    )
+    guard
+        let emptyTexture = try? renderContext.makeTextureResource(
+            descriptor: LowLevelTextureResource.Descriptor.from(cubeDescriptor)
+        ),
+        let commandBuffer = commandQueue.makeCommandBuffer(),
+        let blitEncoder = commandBuffer.makeBlitCommandEncoder()
+    else {
+        logError("could not create the empty environment texture")
+        return nil
+    }
+
+    let blackPixel: [UInt8] = [0]
+    let stagingBuffer = device.makeBuffer(fromSpan: blackPixel.span, length: blackPixel.count, memoryOwner: memoryOwner)
+
+    let emptyMTLTexture = emptyTexture.replace(commandBuffer: commandBuffer, memoryOwner: memoryOwner)
+    for slice in 0..<6 {
+        blitEncoder.copy(
+            from: stagingBuffer,
+            sourceOffset: 0,
+            sourceBytesPerRow: blackPixel.count,
+            sourceBytesPerImage: blackPixel.count,
+            sourceSize: MTLSize(width: 1, height: 1, depth: 1),
+            to: emptyMTLTexture,
+            destinationSlice: slice,
+            destinationLevel: 0,
+            destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+        )
+    }
+    blitEncoder.endEncoding()
+
+    commandBuffer.commit()
+
+    return emptyTexture
+}
+
 #else
 @objc
 @implementation
@@ -2859,8 +2954,12 @@ extension WKBridgeReceiver {
     func updateMaterial(_ data: [WKBridgeUpdateMaterial]) {
     }
 
-    @objc(updateMesh:)
-    func updateMesh(_ data: [WKBridgeUpdateMesh]) {
+    @objc(updateMesh:forNode:)
+    func updateMesh(_ data: [WKBridgeUpdateMesh], forNode node: NodeIdentifier) {
+    }
+
+    @objc(removeNode:)
+    func removeNode(_ node: NodeIdentifier) {
     }
 
     @objc
@@ -2876,6 +2975,10 @@ extension WKBridgeReceiver {
     func setTransform(_ transform: simd_float4x4) {
     }
 
+    @objc(setTransform:forNode:)
+    func setTransform(_ transform: simd_float4x4, forNode node: NodeIdentifier) {
+    }
+
     func setFOV(_ fovY: Float) {
     }
 
@@ -2883,6 +2986,12 @@ extension WKBridgeReceiver {
     }
 
     func setEnvironmentMap(_ imageAsset: WKBridgeUpdateTexture) {
+    }
+
+    func setDefaultEnvironmentMap() {
+    }
+
+    func removeEnvironmentMap() {
     }
 }
 
@@ -2927,10 +3036,6 @@ extension WKBridgeModelLoader {
 
     func duration() -> Double {
         0.0
-    }
-
-    func treatZAsUpAxis() -> Bool {
-        false
     }
 
     func currentTime() -> Double {

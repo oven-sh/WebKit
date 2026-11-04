@@ -1048,7 +1048,6 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
         }
 
 #if ENABLE(AOT)
-        // The names of a mock of a compiled module make nothing ambiguous either. What was found so holds while the mock stands.
         if (vm.hasCompiledCode() && isSettledByMock(vm, someRecordHasLiveExports, currentTop(), resolution)) [[unlikely]] {
             wasSettledByMock = true;
             return true;
@@ -1242,7 +1241,6 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
         frames[0] = firstLiveRecordViaStarExport;
 #endif
 #if ENABLE(AOT)
-    // What a compiled module's record finds while a mock stands is not kept: the record that answers by a mock is let go of with it, and nothing else holds that one.
     if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(root.moduleRecord); compiled && frames[0].type == Resolution::Type::Resolved) {
         if (compiled->someMockStandsInPlace() || frames[0].moduleRecord->hasLiveExports() || wasSettledByMock)
             return frames[0];
@@ -1291,7 +1289,6 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
 
 #if ENABLE(AOT)
     if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
-        // The record of a compiled module outlives a test file, and a mock does not: while one stands every name is looked for anew. See the end of resolveExportImpl().
         if (!compiled->someMockStandsInPlace()) {
             if (std::optional<Resolution> cachedResolution = tryGetCachedResolution(exportName.impl()))
                 return *cachedResolution;

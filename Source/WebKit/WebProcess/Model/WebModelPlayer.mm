@@ -281,6 +281,14 @@ bool WebModelPlayer::ensureModelBacking(WebCore::LayoutSize size)
         return false;
     m_currentModel->setViewportSize(cssSize.width().toFloat(), cssSize.height().toFloat());
 
+#if ENABLE(SPATIAL_PORTAL)
+    if (m_portalTransform)
+        protect(m_currentModel)->setPortalTransform(*m_portalTransform);
+#endif
+
+    m_environmentMapPushedToCurrentModel = false;
+    pushEnvironmentMapToModel();
+
     return true;
 }
 
@@ -413,7 +421,8 @@ void WebModelPlayer::loadHostedModel(WebCore::NodeIdentifier nodeID, WebCore::Mo
     setLoaderCallbacks(nodeID, hosted.loader.get());
 
 #if ENABLE(SPATIAL_PORTAL)
-    pushPortalStateToModel();
+    if (hosted.childTransform)
+        protect(m_currentModel)->setPortalChildTransform(nodeID, static_cast<simd_float4x4>(*hosted.childTransform));
 #endif
 
     hosted.retainedData = modelSource.data()->createNSData();
@@ -916,8 +925,8 @@ void WebModelPlayer::notifyClientDidFinishLoading()
 
     notifyEntityTransformUpdated();
 
-    if (auto environmentMap = m_environmentMap)
-        setEnvironmentMap(WTF::move(*environmentMap), URL { });
+    if (!m_environmentMapPushedToCurrentModel)
+        pushEnvironmentMapToModel();
 }
 
 bool WebModelPlayer::supportsTransform(WebCore::TransformationMatrix transformationMatrix)
@@ -1027,8 +1036,17 @@ void WebModelPlayer::setCurrentTime(WebCore::NodeIdentifier nodeID, Seconds curr
     completion();
 }
 
-std::optional<WebCore::TransformationMatrix> WebModelPlayer::entityTransform(WebCore::NodeIdentifier) const
+std::optional<WebCore::TransformationMatrix> WebModelPlayer::entityTransform(WebCore::NodeIdentifier nodeID) const
 {
+#if ENABLE(SPATIAL_PORTAL)
+    if (isSpatialPortal()) {
+        CheckedPtr hosted = hostedModel(nodeID);
+        return hosted ? hosted->childTransform : std::nullopt;
+    }
+#else
+    UNUSED_PARAM(nodeID);
+#endif
+
 #if PLATFORM(COCOA)
     if (RefPtr model = m_currentModel) {
         if (auto transform = model->entityTransform())
@@ -1088,15 +1106,6 @@ void WebModelPlayer::setPortalAction(WebCore::PortalActionKind kind)
     }
 }
 
-void WebModelPlayer::pushPortalStateToModel()
-{
-    RefPtr model = m_currentModel;
-    if (!model || !m_portalTransform)
-        return;
-
-    model->setPortalTransform(*m_portalTransform);
-}
-
 void WebModelPlayer::notifyPortalTransformUpdated()
 {
     RefPtr model = m_currentModel;
@@ -1109,11 +1118,20 @@ void WebModelPlayer::notifyPortalTransformUpdated()
 }
 #endif
 
-void WebModelPlayer::setEntityTransform(WebCore::NodeIdentifier, WebCore::TransformationMatrix transform)
+void WebModelPlayer::setEntityTransform(WebCore::NodeIdentifier nodeID, WebCore::TransformationMatrix transform)
 {
 #if ENABLE(SPATIAL_PORTAL)
-    if (isSpatialPortal())
+    if (isSpatialPortal()) {
+        ensureHostedModel(nodeID).childTransform = transform;
+
+        if (RefPtr model = m_currentModel) {
+            model->setPortalChildTransform(nodeID, static_cast<simd_float4x4>(transform));
+            startUpdateLoopIfNeeded();
+        }
         return;
+    }
+#else
+    UNUSED_PARAM(nodeID);
 #endif
 
     if (RefPtr model = m_currentModel) {
@@ -1123,8 +1141,86 @@ void WebModelPlayer::setEntityTransform(WebCore::NodeIdentifier, WebCore::Transf
     }
 }
 
-void WebModelPlayer::setEnvironmentMap(Ref<WebCore::SharedBuffer>&& data, const URL&)
+void WebModelPlayer::setEnvironmentMap(Ref<WebCore::SharedBuffer>&& data, const URL& sourceURL)
 {
+    m_environmentMapKind = WebCore::EnvironmentMapKind::Custom;
+    m_environmentMapURL = sourceURL;
+    m_environmentMap = WTF::move(data);
+    m_environmentMapPushedToCurrentModel = false;
+    pushEnvironmentMapToModel();
+}
+
+#if ENABLE(SPATIAL_PORTAL)
+void WebModelPlayer::disableEnvironmentMap()
+{
+    if (m_environmentMapKind == WebCore::EnvironmentMapKind::None)
+        return;
+
+    m_environmentMapKind = WebCore::EnvironmentMapKind::None;
+    m_environmentMapURL = { };
+    m_environmentMap = std::nullopt;
+    m_environmentMapPushedToCurrentModel = false;
+    pushEnvironmentMapToModel();
+}
+
+void WebModelPlayer::enableSystemEnvironmentMap()
+{
+    if (m_environmentMapKind == WebCore::EnvironmentMapKind::Default)
+        return;
+
+    m_environmentMapKind = WebCore::EnvironmentMapKind::Default;
+    m_environmentMapURL = { };
+    m_environmentMap = std::nullopt;
+    m_environmentMapPushedToCurrentModel = false;
+    pushEnvironmentMapToModel();
+}
+#endif
+
+String WebModelPlayer::environmentMapForTesting() const
+{
+    switch (m_environmentMapKind) {
+    case WebCore::EnvironmentMapKind::None:
+        return "none"_s;
+    case WebCore::EnvironmentMapKind::Default:
+        return "auto"_s;
+    case WebCore::EnvironmentMapKind::Custom:
+        return m_environmentMapURL.string();
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void WebModelPlayer::pushEnvironmentMapToModel()
+{
+    RefPtr currentModel = m_currentModel;
+    if (!currentModel)
+        return;
+
+#if ENABLE(SPATIAL_PORTAL)
+    switch (m_environmentMapKind) {
+    case WebCore::EnvironmentMapKind::None:
+        currentModel->removeEnvironmentMap();
+        m_environmentMapPushedToCurrentModel = true;
+        startUpdateLoopIfNeeded();
+        return;
+
+    case WebCore::EnvironmentMapKind::Default:
+        currentModel->setDefaultEnvironmentMap();
+        m_environmentMapPushedToCurrentModel = true;
+        startUpdateLoopIfNeeded();
+        return;
+
+    case WebCore::EnvironmentMapKind::Custom:
+        break;
+    }
+#else
+    if (m_environmentMapKind != WebCore::EnvironmentMapKind::Custom)
+        return;
+#endif
+
+    auto data = m_environmentMap;
+    if (!data)
+        return;
+
     RetainPtr<WKBridgeModelLoader> loader;
     for (auto& hosted : m_hostedModels.values()) {
         if (hosted->didFinishLoading && hosted->loader) {
@@ -1133,18 +1229,15 @@ void WebModelPlayer::setEnvironmentMap(Ref<WebCore::SharedBuffer>&& data, const 
         }
     }
 
-    RefPtr currentModel = m_currentModel;
-    if (!currentModel || !loader) {
-        m_environmentMap = WTF::move(data);
+    if (!loader)
         return;
-    }
 
     bool success = false;
-    if (auto environmentMap = [loader loadEnvironmentMap:data->createNSData().get()]) {
+    if (auto environmentMap = [loader loadEnvironmentMap:(*data)->createNSData().get()]) {
         currentModel->setEnvironmentMap(convert(environmentMap));
-        m_environmentMap = std::nullopt;
         success = true;
     }
+    m_environmentMapPushedToCurrentModel = true;
     startUpdateLoopIfNeeded();
 
     if (RefPtr client = m_client)
@@ -1170,7 +1263,7 @@ void WebModelPlayer::releaseModelResources()
         hosted->textureIDs.clear();
     }
     m_displayBuffers.clear();
-    m_environmentMap = std::nullopt;
+    m_environmentMapPushedToCurrentModel = false;
     m_isUpdateLoopRunning = false;
     m_isUpdateScheduled = false;
     m_isUpdating = false;
@@ -1245,9 +1338,6 @@ std::pair<WebCore::FloatPoint3D, WebCore::FloatPoint3D> WebModelPlayer::bounding
         return { };
 
     auto [simdCenter, simdExtents] = *bounds;
-    CheckedPtr hosted = hostedModel(nodeID);
-    if (hosted && [hosted->loader treatZAsUpAxis])
-        return { WebCore::FloatPoint3D(simdCenter.x, -simdCenter.z, simdCenter.y), WebCore::FloatPoint3D(simdExtents.x, simdExtents.z, simdExtents.y) };
     return { WebCore::FloatPoint3D(simdCenter.x, simdCenter.y, simdCenter.z), WebCore::FloatPoint3D(simdExtents.x, simdExtents.y, simdExtents.z) };
 }
 

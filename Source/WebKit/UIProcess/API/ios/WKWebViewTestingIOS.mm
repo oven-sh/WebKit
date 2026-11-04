@@ -370,7 +370,8 @@ static void dumpUIView(TextStream& ts, UIView *view, bool traverse)
     if (ObjectIdentifier<WebCore::ProcessIdentifierType>::isValidIdentifier(processID) && ObjectIdentifier<WebCore::ScrollingNodeIDType>::isValidIdentifier(rawScrollingNodeID))
         scrollingNodeID = WebCore::ScrollingNodeID(ObjectIdentifier<WebCore::ScrollingNodeIDType>(rawScrollingNodeID), ObjectIdentifier<WebCore::ProcessIdentifierType>(processID));
 
-    if (protect(_page->scrollingCoordinatorProxy())->rootScrollingNodeID() == scrollingNodeID) {
+    RefPtr scrollingCoordinatorProxy = _page->scrollingCoordinatorProxy();
+    if (scrollingCoordinatorProxy && scrollingCoordinatorProxy->rootScrollingNodeID() == scrollingNodeID) {
         TextStream ts(TextStream::LineMode::MultipleLine);
         {
             TextStream::GroupScope scope(ts);
@@ -449,6 +450,16 @@ static void dumpUIView(TextStream& ts, UIView *view, bool traverse)
 {
     // The editor state's selection rects are already in main-frame coordinates.
     completionHandler(_page->selectionBoundingRectInRootViewCoordinates());
+}
+
+- (void)_linkIndicatorBoundingRectAtPointForTesting:(CGPoint)point completionHandler:(void (^)(CGRect))completionHandler
+{
+    WebKit::InteractionInformationRequest request { WebCore::roundedIntPoint(point) };
+    request.includeLinkIndicator = true;
+    [_contentView doAfterPositionInformationUpdate:[completionHandler = makeBlockPtr(completionHandler)](WebKit::InteractionInformationAtPosition information) {
+        RefPtr textIndicator = information.textIndicator;
+        completionHandler(textIndicator ? textIndicator->textBoundingRectInRootViewCoordinates() : WebCore::FloatRect { });
+    } forRequest:request];
 }
 
 - (CGRect)_rectToRevealWhenZoomingToFocusedElementForTesting

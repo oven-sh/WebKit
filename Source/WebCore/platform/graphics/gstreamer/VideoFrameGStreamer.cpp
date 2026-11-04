@@ -24,13 +24,13 @@
 
 #if ENABLE(VIDEO) && USE(GSTREAMER)
 
-#include "BitmapImage.h"
 #include "GLContext.h"
 #include "GStreamerCommon.h"
 #include "GStreamerVideoFrameConverter.h"
 #include "GraphicsContext.h"
 #include "ImageGStreamer.h"
 #include "ImageOrientation.h"
+#include "NativeImage.h"
 #include "PixelBuffer.h"
 #include "PlatformDisplay.h"
 #include "VideoFrameContentHint.h"

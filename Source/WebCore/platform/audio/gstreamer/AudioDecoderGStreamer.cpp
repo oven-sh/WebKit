@@ -167,6 +167,22 @@ GStreamerInternalAudioDecoder::GStreamerInternalAudioDecoder(const String& codec
     } else if (codecName == "opus"_s) {
         int channelMappingFamily = config.numberOfChannels <= 2 ? 0 : 1;
         m_inputCaps = adoptGRef(gst_caps_new_simple("audio/x-opus", "channel-mapping-family", G_TYPE_INT, channelMappingFamily, nullptr));
+        if (config.numberOfChannels > 2) {
+            GValue channelMapping = G_VALUE_INIT;
+            gst_value_array_init(&channelMapping, config.numberOfChannels);
+            for (unsigned i = 0; i < config.numberOfChannels; i++) {
+                GValue val = G_VALUE_INIT;
+                g_value_init(&val, G_TYPE_INT);
+                // TODO: We should use proper channel ordering, see also: https://bugs.webkit.org/show_bug.cgi?id=328606
+                g_value_set_int(&val, static_cast<int>(i));
+                gst_value_array_append_and_take_value(&channelMapping, &val);
+            }
+            // opusparse expects stream-count and coupled-count in caps. These are not specified in
+            // the decoder config, so use some fixed values.
+            gst_caps_set_simple(m_inputCaps.get(), "channels", G_TYPE_INT, config.numberOfChannels, "stream-count", G_TYPE_INT, config.numberOfChannels, "coupled-count", G_TYPE_INT, 1, nullptr);
+            gst_structure_set_value(gst_caps_get_structure(m_inputCaps.get(), 0), "channel-mapping", &channelMapping);
+            g_value_unset(&channelMapping);
+        }
         m_header = wrapSpanData(config.description);
         if (m_header)
             parser = "opusparse"_s;
@@ -181,7 +197,7 @@ GStreamerInternalAudioDecoder::GStreamerInternalAudioDecoder(const String& codec
             return;
         }
         parser = "flacparse"_s;
-        m_inputCaps = adoptGRef(gst_caps_new_empty_simple("audio/x-flac"));
+        m_inputCaps = adoptGRef(gst_caps_new_simple("audio/x-flac", "channels", G_TYPE_INT, config.numberOfChannels, nullptr));
     } else if (codecName == "vorbis"_s) {
         m_header = wrapSpanData(config.description);
         if (!m_header) {
@@ -240,11 +256,19 @@ GStreamerInternalAudioDecoder::GStreamerInternalAudioDecoder(const String& codec
         }
 
         gst_bin_add(GST_BIN_CAST(harnessedElement.get()), parserElement);
-        gst_element_link(parserElement, element.get());
+        if (!gst_element_link(parserElement, element.get())) {
+            GST_WARNING_OBJECT(element.get(), "Unable to link parser to decoder");
+            m_inputCaps.clear();
+            return;
+        }
         head = parserElement;
     }
 
-    gst_element_link_many(head.get(), audioconvert, outputCapsFilter, nullptr);
+    if (!gst_element_link_many(element.get(), audioconvert, outputCapsFilter, nullptr)) {
+        GST_WARNING_OBJECT(element.get(), "Unable to link %" GST_PTR_FORMAT " to audioconvert", head.get());
+        m_inputCaps.clear();
+        return;
+    }
 
     GRefPtr pad = adoptGRef(gst_element_get_static_pad(head.get(), "sink"));
     gst_element_add_pad(harnessedElement.get(), gst_ghost_pad_new("sink", pad.get()));

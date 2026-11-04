@@ -577,7 +577,7 @@ void RenderText::styleDidChange(Style::Difference diff, const Style::ComputedSty
     if (needsLayoutBoxStyleUpdate)
         LayoutIntegration::LineLayout::updateStyle(*this);
 
-    if (CheckedPtr cache = protect(document())->existingAXObjectCache())
+    if (CheckedPtr cache = document().existingAXObjectCache())
         cache->onStyleChange(*this, diff, oldStyle, newStyle);
 
     setHorizontalWritingMode(newStyle.writingMode().isHorizontal());
@@ -1229,8 +1229,7 @@ static inline bool LEGACY_NODELETE isSpaceAccordingToStyle(char16_t c, const Sty
 float RenderText::minLogicalWidth() const
 {
     if (hasInvalidContentLogicalWidths() || !m_minWidth) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderText*>(this)->computeMinMaxIntrinsicLogicalWidths(0, !hasInvalidContentLogicalWidths());
+        const_cast<RenderText*>(this)->computeMinMaxIntrinsicLogicalWidths(0, !hasInvalidContentLogicalWidths());
     }
 
     return *m_minWidth;
@@ -1239,8 +1238,7 @@ float RenderText::minLogicalWidth() const
 float RenderText::maxLogicalWidth() const
 {
     if (hasInvalidContentLogicalWidths() || !m_maxWidth) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderText*>(this)->computeMinMaxIntrinsicLogicalWidths(0, !hasInvalidContentLogicalWidths());
+        const_cast<RenderText*>(this)->computeMinMaxIntrinsicLogicalWidths(0, !hasInvalidContentLogicalWidths());
     }
 
     return *m_maxWidth;
@@ -1937,7 +1935,7 @@ void RenderText::setTextInternal(const String& text, bool force)
 
     updateRenderedText(text);
 
-    if (AXObjectCache* cache = protect(document())->existingAXObjectCache())
+    if (AXObjectCache* cache = document().existingAXObjectCache())
         cache->deferTextChangedIfNeeded(protect(textNode()));
 }
 
@@ -2020,8 +2018,7 @@ float RenderText::width(unsigned from, unsigned length, const FontCascade& fontC
             if (fallbackFonts) {
                 ASSERT(glyphOverflow);
                 if (hasInvalidContentLogicalWidths() || !m_knownToHaveNoOverflowAndNoFallbackFonts) {
-                    // FIXME: Remove suppression once rdar://189998365 is fixed.
-                    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderText*>(this)->computeMinMaxIntrinsicLogicalWidths(0, *fallbackFonts, *glyphOverflow);
+                    const_cast<RenderText*>(this)->computeMinMaxIntrinsicLogicalWidths(0, *fallbackFonts, *glyphOverflow);
                     if (fallbackFonts->isEmptyIgnoringNullReferences() && !glyphOverflow->left && !glyphOverflow->right && !glyphOverflow->top && !glyphOverflow->bottom)
                         m_knownToHaveNoOverflowAndNoFallbackFonts = true;
                 }

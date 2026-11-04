@@ -30,7 +30,6 @@
 #include "BitmapImage.h"
 #include "BitmapInfo.h"
 #include "HWndDC.h"
-#include "Image.h"
 #include "ImageAdapter.h"
 #include "IntPoint.h"
 #include <wtf/win/GDIObject.h>
@@ -65,7 +64,7 @@ static Ref<SharedCursor> createSharedCursor(NativeImage& image, const IntPoint& 
     auto workingDC = adoptGDIObject(::CreateCompatibleDC(dc));
     auto hCursor = adoptGDIObject(::CreateDIBSection(dc, &cursorImage, DIB_RGB_COLORS, nullptr, 0, 0));
 
-    BitmapImage::create(Ref { image })->adapter().getHBITMAP(hCursor.get());
+    BitmapImage::create(Ref { image })->adapter().getHBITMAP(hCursor.get(), ConcreteObjectSize::fixed(cursorSize));
     HBITMAP hOldBitmap = (HBITMAP)SelectObject(workingDC.get(), hCursor.get());
     SetBkMode(workingDC.get(), TRANSPARENT);
     SelectObject(workingDC.get(), hOldBitmap);

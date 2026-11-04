@@ -643,7 +643,6 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
     // 9. If result is an abrupt completion, then
     if (Exception* exception = scope.exception()) {
 #if ENABLE(AOT)
-        // What comes ahead of the evaluation of a compiled module has thrown: the factory of a mock. Nothing has begun, so nothing has failed: the next import asks again.
         if (vm.hasCompiledCode() && stack.isEmpty() && module->status() == Status::Linked && module->inherits<AOT::ModuleRecord>()) [[unlikely]] {
             module->clearTopLevelCapability();
             capability->rejectWithCaughtException(vm, scope);

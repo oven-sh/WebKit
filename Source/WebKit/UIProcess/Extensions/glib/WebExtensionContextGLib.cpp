@@ -27,6 +27,7 @@
 #include "WebKitWebExtensionContextPrivate.h"
 #include "WebKitWebExtensionPrivate.h"
 #include "WebKitWebViewPrivate.h"
+#include <WebCore/NotImplemented.h>
 #include <glib.h>
 #include <wtf/glib/Application.h>
 
@@ -39,6 +40,8 @@ static constexpr auto backgroundContentEventListenersKey = "BackgroundContentEve
 static constexpr auto backgroundContentEventListenersVersionKey = "BackgroundContentEventListenersVersion"_s;
 static constexpr auto lastSeenBaseURLStateKey = "LastSeenBaseURL"_s;
 static constexpr auto lastSeenDisplayNameStateKey = "LastSeenDisplayName"_s;
+
+static constexpr auto storageAccessLevelsKey = "StorageAccessLevels"_s;
 
 // Update this value when any changes are made to the WebExtensionEventListenerType enum.
 static constexpr auto currentBackgroundContentListenerStateVersion = 5;
@@ -564,6 +567,106 @@ bool WebExtensionContext::isNotRunningInTestRunner()
 #else
     return WTF::applicationID() != "org.webkit.app-TestWebKitGTK"_s;
 #endif
+}
+
+void WebExtensionContext::saveStorageAccessLevelsToStorage()
+{
+    for (auto [dataType, accessLevel] : m_storageAccessLevels)
+        g_key_file_set_string(m_state.get(), storageAccessLevelsKey, toAPIString(dataType).utf8().legacyCStringPointer(), toAPIString(accessLevel).utf8().legacyCStringPointer());
+    writeStateToStorage();
+}
+
+void WebExtensionContext::loadDeclarativeNetRequestRules(CompletionHandler<void(bool)>&& completionHandler)
+{
+    notImplemented();
+    completionHandler(false);
+}
+
+std::expected<bool, RefPtr<API::Error>> WebExtensionContext::load(WebExtensionController&, String)
+{
+    notImplemented();
+    return makeUnexpected(createError(Error::Unknown));
+}
+
+std::expected<bool, RefPtr<API::Error>> WebExtensionContext::unload()
+{
+    notImplemented();
+    return makeUnexpected(createError(Error::Unknown));
+}
+
+void WebExtensionContext::permissionsDidChange(PermissionNotification, const PermissionsSet&)
+{
+    notImplemented();
+}
+
+void WebExtensionContext::permissionsDidChange(PermissionNotification, const MatchPatternSet&)
+{
+    notImplemented();
+}
+
+void WebExtensionContext::removePage(WebPageProxy&)
+{
+    notImplemented();
+}
+
+void WebExtensionContext::didStartProvisionalLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime)
+{
+    notImplemented();
+}
+
+void WebExtensionContext::didCommitLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime)
+{
+    notImplemented();
+}
+
+void WebExtensionContext::didFinishLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime)
+{
+    notImplemented();
+}
+
+void WebExtensionContext::didFailLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime)
+{
+    notImplemented();
+}
+
+std::optional<WebCore::PageIdentifier> WebExtensionContext::backgroundPageIdentifier(WebProcessProxy&) const
+{
+    notImplemented();
+    return std::nullopt;
+}
+
+Vector<WebExtensionContext::PageIdentifierTuple> WebExtensionContext::popupPageIdentifiers(WebProcessProxy&) const
+{
+    notImplemented();
+    return { };
+}
+
+Vector<WebExtensionContext::PageIdentifierTuple> WebExtensionContext::tabPageIdentifiers(WebProcessProxy&) const
+{
+    notImplemented();
+    return { };
+}
+
+void WebExtensionContext::cookiesDidChange(API::HTTPCookieStore&)
+{
+    notImplemented();
+}
+
+bool WebExtensionContext::isBackgroundPage(WebPageProxyIdentifier) const
+{
+    notImplemented();
+    return false;
+}
+
+String WebExtensionContext::declarativeNetRequestContentRuleListFilePath()
+{
+    notImplemented();
+    return { };
+}
+
+void WebExtensionContext::incrementActionCountForTab(WebExtensionTab&, ssize_t)
+{
+    notImplemented();
 }
 
 } // namespace WebKit

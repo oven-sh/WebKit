@@ -31,7 +31,7 @@
 #import "EndowmentStateTracker.h"
 #import "GPUProcessProxy.h"
 #import "LogStream.h"
-#import "MediaPermissionUtilities.h"
+#import "MediaPermissionPromptCustomization.h"
 #import "MediaSessionCoordinatorProxyPrivate.h"
 #import "NetworkProcessProxy.h"
 #import "PendingSnapshotDrawing.h"
@@ -138,6 +138,15 @@
     return _prompt->title().createNSString().autorelease();
 #else
     return @"";
+#endif
+}
+
+- (NSString *)informativeText
+{
+#if ENABLE(MEDIA_STREAM)
+    return nsStringNilIfNull(_prompt->informativeText()).autorelease();
+#else
+    return nil;
 #endif
 }
 
@@ -432,7 +441,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
 - (NSString *)_scrollingTreeAsText
 {
-    CheckedPtr coordinator = _page->scrollingCoordinatorProxy();
+    RefPtr coordinator = _page->scrollingCoordinatorProxy();
     if (!coordinator)
         return @"";
 
@@ -441,7 +450,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
 - (NSString *)_scrollingTreeIncludingNodeIDsAsText
 {
-    CheckedPtr coordinator = _page->scrollingCoordinatorProxy();
+    RefPtr coordinator = _page->scrollingCoordinatorProxy();
     if (!coordinator)
         return @"";
 
@@ -450,7 +459,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
 - (double)_rubberbandHyperbolicCoefficientForTesting
 {
-    if (CheckedPtr coordinator = _page->scrollingCoordinatorProxy())
+    if (RefPtr coordinator = _page->scrollingCoordinatorProxy())
         return coordinator->rubberbandHyperbolicCoefficientForTesting();
 
     return 0;
@@ -985,6 +994,19 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     return result->autorelease();
 }
 
+- (void)_printProcessIdentifierForTesting:(void(^)(pid_t))completionHandler
+{
+    auto lockdownMode = protect(_page->legacyMainFrameProcess())->lockdownMode();
+    protect(_page->configuration().processPool())->whenPrintProcessReady(lockdownMode, [completionHandler = makeBlockPtr(completionHandler)](WebKit::WebProcessProxy* process) {
+        completionHandler(process ? process->processID() : 0);
+    });
+}
+
+- (void)_setPrintProcessIdleTimeoutForTesting:(NSTimeInterval)timeout
+{
+    protect(_page->configuration().processPool())->setPrintProcessIdleTimeoutForTesting(Seconds { timeout });
+}
+
 - (void)_endPrintingForTesting:(void(^)(void))completionHandler
 {
     _page->endPrinting([completionHandler = makeBlockPtr(completionHandler)] {
@@ -1003,6 +1025,18 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     gpuProcess->webProcessConnectionCountForTesting([completionHandler = makeBlockPtr(completionHandler)](uint64_t count) {
         completionHandler(count);
     });
+}
+
+- (void)_runDisplayListDataTestsInGPUProcessForTesting:(void(^)(NSArray<NSString *> *))completionHandler
+{
+#if ENABLE(GPU_PROCESS)
+    Ref gpuProcess = WebKit::GPUProcessProxy::getOrCreate();
+    gpuProcess->runDisplayListDataTestsForTesting([completionHandler = makeBlockPtr(completionHandler)](Vector<String>&& failures) {
+        completionHandler(createNSArray(failures).get());
+    });
+#else
+    completionHandler(@[ @"The GPU process is not enabled" ]);
+#endif
 }
 
 - (void)_setConnectedToHardwareConsoleForTesting:(BOOL)connected
@@ -1584,7 +1618,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
             if (RefPtr nodeStack = drawingAreaProxy->animationStackForNodeWithIDForTesting(platformLayerID))
                 return nodeStack->toJSONForTesting()->toJSONString();
         }
-        if (CheckedPtr scrollingCoordinator = _page->scrollingCoordinatorProxy())
+        if (RefPtr scrollingCoordinator = _page->scrollingCoordinatorProxy())
             return scrollingCoordinator->animationStackJSONForNodeWithIDForTesting(platformLayerID);
         return emptyString();
     }();
@@ -1598,7 +1632,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
             || !ObjectIdentifier<WebCore::ScrollingNodeIDType>::isValidIdentifier(scrollingNodeID))
             return { };
 
-        CheckedPtr scrollingCoordinator = _page->scrollingCoordinatorProxy();
+        RefPtr scrollingCoordinator = _page->scrollingCoordinatorProxy();
         if (!scrollingCoordinator)
             return { };
 
@@ -1623,7 +1657,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
         if (!ObjectIdentifier<WebCore::ProcessIdentifierType>::isValidIdentifier(processID))
             return { };
 
-        CheckedPtr scrollingCoordinator = _page->scrollingCoordinatorProxy();
+        RefPtr scrollingCoordinator = _page->scrollingCoordinatorProxy();
         if (!scrollingCoordinator)
             return { };
 
