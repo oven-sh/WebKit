@@ -90,7 +90,7 @@ def main():
         try:
             modules[name] = importlib.import_module(name)
         except ImportError:
-            pass
+            print("make_docstrings.py: this CPython has no %s: its docstrings are left out" % name, file=sys.stderr)
     for name, module in modules.items():
         add("module " + name, module.__doc__)
         for attribute, value in vars(module).items():

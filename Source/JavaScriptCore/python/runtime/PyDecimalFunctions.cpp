@@ -385,6 +385,9 @@ static void exponentialApproximation(Number& result, const Number& a, const Cont
         index.set(0, static_cast<Limb>(j), 0);
         divide(term, reduced, index, working, workingStatus);
         fusedMultiplyAdd(sum, sum, term, one, working, workingStatus);
+        // Out of memory, and it stays a NaN. There may be billions of terms to go.
+        if (sum.isSpecial())
+            break;
     }
     powerOfUInt64(result, sum, powersOfTen[t], 0, working, status);
     status |= workingStatus & errorConditions;
