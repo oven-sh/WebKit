@@ -1281,7 +1281,9 @@ bool isTrue(JSGlobalObject* globalObject, JSValue value)
     }
 
     PyType* type = rt.typeOf(value);
+    bool hasBool = false;
     if (JSValue method = type->lookup(Special::Bool)) {
+        hasBool = true;
         if (isNone(method)) {
             raiseTypeError(globalObject, scope, '\'', type->nameInMessages(), "' cannot be interpreted as a boolean"_s);
             return false;
@@ -1296,7 +1298,8 @@ bool isTrue(JSGlobalObject* globalObject, JSValue value)
             return result.asBoolean();
     }
     if (JSValue method = type->lookup(Special::Len)) {
-        if (!isMethodDescriptor(method)) [[unlikely]] {
+        if (hasBool) [[unlikely]] {
+            // The class has a __bool__ that says it is not there. Only then may __len__ say the same, and return what is no length.
             JSValue result = callSpecialIfThere(globalObject, method, value);
             RETURN_IF_EXCEPTION(scope, false);
             if (!method)
