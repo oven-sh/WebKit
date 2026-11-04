@@ -51,7 +51,7 @@ namespace JSC {
         ALWAYS_INLINE const Identifier& makeIdentifier(VM&, std::span<const T> characters);
         ALWAYS_INLINE const Identifier& makeEmptyIdentifier(VM&);
         ALWAYS_INLINE const Identifier& makeLatin1Identifier(VM&, std::span<const char16_t> characters);
-        ALWAYS_INLINE const Identifier& makeIdentifier(VM&, SymbolImpl*);
+        ALWAYS_INLINE const Identifier& makeIdentifier(VM&, SymbolImpl&);
 
         const Identifier* makeBigIntDecimalIdentifier(VM&, const Identifier&, uint8_t radix);
         const Identifier& makeNumericIdentifier(VM&, double number);
@@ -99,10 +99,9 @@ namespace JSC {
         return m_identifiers.last();
     }
 
-    ALWAYS_INLINE const Identifier& IdentifierArena::makeIdentifier(VM&, SymbolImpl* symbol)
+    ALWAYS_INLINE const Identifier& IdentifierArena::makeIdentifier(VM&, SymbolImpl& symbol)
     {
-        ASSERT(symbol);
-        m_identifiers.append(Identifier::fromUid(*symbol));
+        m_identifiers.append(Identifier::fromUid(symbol));
         return m_identifiers.last();
     }
 

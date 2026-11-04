@@ -2223,7 +2223,7 @@ void BytecodeOptimizerAccess::runIfAppropriate(BytecodeGenerator& generator)
         return;
     if (!codeBlock->m_typeProfilerInfoMap.isEmpty() || !codeBlock->m_opProfileControlFlowBytecodeOffsets.isEmpty())
         return;
-    if (!generator.m_writer.size() || generator.m_expressionTooDeep)
+    if (!generator.m_writer.size() || generator.m_generationFailure != BytecodeGenerator::GenerationFailure::None)
         return;
     // Generated monsters (deeply nested patterns etc.) are not worth quadratic-ish dataflow; leave them alone.
     if (codeBlock->numCalleeLocals() > 4096 || generator.m_writer.size() > 16 * 1024 * 1024)
