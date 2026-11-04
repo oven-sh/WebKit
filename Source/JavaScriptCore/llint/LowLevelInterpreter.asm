@@ -2370,7 +2370,6 @@ end
 slowPathOp(py_load_name)
 slowPathOp(py_prepare_construct)
 slowPathOp(py_store_name)
-slowPathOp(py_get_iter)
 
 macro slowPathJumpOp(opcodeName)
     llintOp(op_%opcodeName%, unused, macro (unused, unused, unused)

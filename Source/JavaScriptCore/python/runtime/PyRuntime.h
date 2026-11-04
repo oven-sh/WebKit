@@ -747,6 +747,11 @@ public:
     // For op_py_get_iter, which the frame is at: the generator is its own iterator.
     ALWAYS_INLINE bool isNewGenerator(JSValue value, CallFrame* callFrame) const { return value.isCell() && value.asCell() == std::bit_cast<JSCell*>(m_newGenerator) && m_callerOfNewGenerator == callFrame; }
     void claimIteratorOfLoop(unsigned offsetOfGetIter);
+    // (The interpreter does both by itself.)
+    static constexpr ptrdiff_t offsetOfNewGenerator() { return OBJECT_OFFSETOF(Runtime, m_newGenerator); }
+    static constexpr ptrdiff_t offsetOfCallerOfNewGenerator() { return OBJECT_OFFSETOF(Runtime, m_callerOfNewGenerator); }
+    static constexpr ptrdiff_t offsetOfUseOfNewGenerator() { return OBJECT_OFFSETOF(Runtime, m_useOfNewGenerator); }
+    static constexpr ptrdiff_t offsetOfOwnershipEpoch() { return OBJECT_OFFSETOF(Runtime, m_ownershipEpoch); }
     // See GeneratorArgumentScope. Null: it is not known to be out of the program's reach.
     ALWAYS_INLINE bool hasNewGenerator() const { return m_newGenerator; }
     PyGenerator* claimGeneratorArgument(JSValue argument, PyGenerator**& whereToLeaveIt);

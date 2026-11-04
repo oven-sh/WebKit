@@ -4225,6 +4225,30 @@ macro pyResumeGenerator(size, opcodeStruct, loadValueAndMode, slow)
     loadPC()
 end
 
+# A generator is its own iterator. One that comes straight from the call belongs to the loop: Runtime::claimIteratorOfLoop().
+llintOpWithReturn(op_py_get_iter, OpPyGetIter, macro (size, get, dispatch, return)
+    get(m_iterable, t1)
+    loadConstantOrVariable(size, t1, t0)
+    btqnz t0, notCellMask, .slow
+    bbneq JSCell::m_type[t0], PyGeneratorType, .slow
+    bbneq (constexpr (Python::PyGenerator::offsetOfKind()))[t0], constexpr Python::PyGenerator::Kind::Generator, .slow
+    loadPythonRuntime(t1)
+    bpneq t0, (constexpr (Python::Runtime::offsetOfNewGenerator()))[t1], .done
+    bpneq cfr, (constexpr (Python::Runtime::offsetOfCallerOfNewGenerator()))[t1], .done
+    storep 0, (constexpr (Python::Runtime::offsetOfNewGenerator()))[t1]
+    loadi (constexpr (Python::Runtime::offsetOfUseOfNewGenerator()))[t1], t2
+    bineq t2, PC, .done
+    loadi (constexpr (Python::Runtime::offsetOfOwnershipEpoch()))[t1], t2
+    storei t2, (constexpr (Python::PyGenerator::offsetOfLoopOwnership()))[t0]
+.done:
+    return(t0)
+
+.slow:
+    callSlowPath(_slow_path_py_get_iter)
+    dispatch()
+end)
+
+
 # The iterators of range (while the numbers are int32s), list and tuple, and generators.
 llintOpWithJump(op_py_for_iter, OpPyForIter, macro (size, get, jump, dispatch)
     macro storeItem(value)

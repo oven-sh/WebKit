@@ -120,6 +120,7 @@ public:
     static constexpr ptrdiff_t offsetOfResumedBy() { return OBJECT_OFFSETOF(PyGenerator, m_resumedBy); }
     static constexpr ptrdiff_t offsetOfFrameObject() { return OBJECT_OFFSETOF(PyGenerator, m_frameObject); }
     static constexpr ptrdiff_t offsetOfKind() { return OBJECT_OFFSETOF(PyGenerator, m_kind); }
+    static constexpr ptrdiff_t offsetOfLoopOwnership() { return OBJECT_OFFSETOF(PyGenerator, loopOwnership); }
     static constexpr ptrdiff_t offsetOfHandledException() { return OBJECT_OFFSETOF(PyGenerator, m_handledException); }
     static constexpr ptrdiff_t offsetOfFinalization() { return OBJECT_OFFSETOF(PyGenerator, m_finalization); }
 
