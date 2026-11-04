@@ -381,23 +381,32 @@ static JSValue loopOfFuture(JSGlobalObject* globalObject, PyRecord* state, JSVal
     RELEASE_AND_RETURN(scope, getAttr(globalObject, future, nameIn(state, StateNameLoop)));
 }
 
-// No loop of asyncio's is running, and yet the code may be running in an event loop: the host's, which runs the code of JS. For
-// what JS calls, however indirectly, the loop by which the host's event loop module runs coroutines for JS is the running one:
-// asyncio.gather(), create_task() and Future() are as good there as in a coroutine. (Not to asyncio.run(), which asks
-// _get_running_loop(): it may run a loop of its own, as it may in a program that is all Python.) Empty: there is none.
+// No loop of asyncio's is running, and yet the code may be running in an event loop: the host's, which runs the code of JS and calls
+// what was given to its timers, promises and servers. For all that runs there, the loop by which the host's event loop module
+// runs coroutines for JS is the running one: asyncio.gather(), create_task() and Future() are as good there as in a coroutine.
+// Everything on the main thread runs there, but for what a program in Python does itself (Runtime::eventLoopPositions), and
+// of that, what it has called code of JS for: to JS there is always a loop.
+// (asyncio.run() asks _get_running_loop(), not this: it may run a loop of its own, as it may in a program that is all Python.)
+// Empty: there is none.
 static JSValue loopOfHost(JSGlobalObject* globalObject)
 {
-    VM& vm = getVM(globalObject);
-    bool isCalledFromJS = false;
-    EntryFrame* entryFrame = vm.topEntryFrame;
-    for (CallFrame* callFrame = vm.topCallFrame; callFrame && !isCalledFromJS; callFrame = callFrame->callerFrame(entryFrame)) {
-        if (callFrame->isNativeCalleeFrame())
-            continue;
-        CodeBlock* codeBlock = callFrame->codeBlock();
-        isCalledFromJS = codeBlock && !codeBlock->unlinkedCodeBlock()->isPython();
-    }
-    if (!isCalledFromJS)
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    if (!rt.threads().isMainThread())
         return { };
+    if (!rt.eventLoopPositions.isEmpty() && !rt.eventLoopPositions.last().isInLoop) {
+        void* start = rt.eventLoopPositions.last().stackPosition;
+        bool isCalledFromJS = false;
+        EntryFrame* entryFrame = vm.topEntryFrame;
+        for (CallFrame* callFrame = vm.topCallFrame; callFrame && static_cast<void*>(callFrame) < start && !isCalledFromJS; callFrame = callFrame->callerFrame(entryFrame)) {
+            if (callFrame->isNativeCalleeFrame())
+                continue;
+            CodeBlock* codeBlock = callFrame->codeBlock();
+            isCalledFromJS = codeBlock && !codeBlock->unlinkedCodeBlock()->isPython();
+        }
+        if (!isCalledFromJS)
+            return { };
+    }
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue loop = eventLoopFunction(globalObject, "loop"_s);
     RETURN_IF_EXCEPTION(scope, { });

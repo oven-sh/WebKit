@@ -20,6 +20,7 @@
 
 #if !OS(WINDOWS)
 #include <pthread.h>
+#include <signal.h>
 #include <unistd.h>
 #endif
 #if OS(LINUX)
@@ -187,17 +188,18 @@ void Threads::enable()
 
 // ---- The GIL ----
 
-void Threads::sleepForEver()
-{
-    while (true)
-        WTF::sleep(Seconds::infinity());
-}
-
 void Threads::takeGIL(ThreadState& thread)
 {
     m_gilLock.lock();
+    if (!thread.isMain && m_isFinalized.load() && !m_isStopping.load()) [[unlikely]] {
+        // Somebody may be waiting for this thread to take it, and somebody else for it to be free.
+        m_switchCondition.notifyAll();
+        m_gilCondition.notifyOne();
+        while (!m_isStopping.load())
+            m_stopCondition.wait(m_gilLock);
+    }
     ++m_waitingForGIL;
-    while (m_gilIsHeld && (thread.isMain || !m_isFinalized.load())) {
+    while (m_gilIsHeld) {
         uint64_t switchNumber = m_switchNumber;
         bool wasNotified = m_gilCondition.waitFor(m_gilLock, Seconds::fromNanoseconds(static_cast<double>(switchInterval())));
         // Whoever has it has had it all this time.
@@ -206,15 +208,13 @@ void Threads::takeGIL(ThreadState& thread)
             m_dropIsRequested.store(true);
             noteCallsOwed(m_vm);
         }
+        if (!thread.isMain && m_isFinalized.load() && !m_isStopping.load()) [[unlikely]] {
+            --m_waitingForGIL;
+            m_gilLock.unlock();
+            return takeGIL(thread);
+        }
     }
     --m_waitingForGIL;
-    if (!thread.isMain && m_isFinalized.load()) [[unlikely]] {
-        // Somebody may be waiting for this thread to take it, and somebody else for it to be free.
-        m_switchCondition.notifyAll();
-        m_gilCondition.notifyOne();
-        m_gilLock.unlock();
-        sleepForEver();
-    }
     m_gilIsHeld = true;
     if (m_lastHolder != &thread) {
         m_lastHolder = &thread;
@@ -348,6 +348,92 @@ void Threads::didFinalize()
     m_gilCondition.notifyAll();
 }
 
+#if !OS(WINDOWS)
+// What gets a thread out of a system call. To ignore it is the default, so that one which arrives where nobody expects it does no harm,
+// and it may arrive for no reason anyway.
+static constexpr int signalThatInterrupts = SIGURG;
+
+int signalThatInterruptsThreads() { return signalThatInterrupts; }
+
+static void makeSignalInterrupt()
+{
+    struct sigaction current;
+    if (sigaction(signalThatInterrupts, nullptr, &current))
+        return;
+    // Any handler will do, the program's own too. A signal that is ignored interrupts nothing.
+    if ((current.sa_flags & SA_SIGINFO) || (current.sa_handler != SIG_DFL && current.sa_handler != SIG_IGN))
+        return;
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = [](int) { };
+    sigemptyset(&action.sa_mask);
+    sigaction(signalThatInterrupts, &action, nullptr);
+}
+#endif
+
+void Threads::stopAll()
+{
+    ASSERT(isMainThread());
+    m_isFinalized.store(true);
+    if (!m_runningCount)
+        return;
+#if !OS(WINDOWS)
+    bool hadTerminationRequest = m_vm.hasTerminationRequest();
+    m_vm.ensureTerminationException();
+    makeSignalInterrupt();
+    {
+        Locker locker { m_gilLock };
+        m_isStopping.store(true);
+        m_stopCondition.notifyAll();
+    }
+    ThreadState& thread = current();
+    int64_t pause = 1000000;
+    while (m_runningCount) {
+        // Again and again: a thread that was about to make a system call when the signal came is in it now.
+        for (auto& other : m_threads) {
+            if (other->isMain)
+                continue;
+            other->sleeper.wake();
+            // It takes itself out of the list, with the GIL, before it ends.
+            pthread_kill(reinterpret_cast<pthread_t>(reinterpret_cast<void*>(static_cast<uintptr_t>(other->ident))), signalThatInterrupts);
+        }
+        JSLock::ParkedThread parked;
+        SavedStates saved;
+        release(thread, parked, saved);
+        dropGIL(thread, false);
+        thread.sleeper.sleep(monotonicNanoseconds() + pause);
+        takeGIL(thread);
+        acquire(thread, parked, saved);
+        pause = std::min<int64_t>(2 * pause, 50000000);
+    }
+    if (hadTerminationRequest)
+        m_vm.setHasTerminationRequest();
+    else
+        m_vm.clearHasTerminationRequest();
+#endif
+}
+
+bool Threads::throwIfStoppingSlow()
+{
+    if (current().isMain)
+        return false;
+    // Native code may drop what is thrown here, as it drops other exceptions. The next safe point throws it again.
+    m_vm.traps().fireTrap(VMTraps::NeedPythonCalls);
+    if (m_vm.hasPendingTerminationException())
+        return true;
+    if (m_vm.traps().isDeferringTermination())
+        return false;
+    m_vm.setHasTerminationRequest();
+    m_vm.throwTerminationException();
+    return true;
+}
+
+void stopThreads(VM& vm)
+{
+    if (!vm.heap.pythonRuntimes().isEmpty())
+        vm.heap.pythonRuntimes().first()->threads().stopAll();
+}
+
 bool callWithoutGIL(VM& vm, void (*function)(void*), void* argument)
 {
     if (vm.heap.pythonRuntimes().isEmpty())
@@ -379,6 +465,13 @@ void* Threads::threadEntry(void* argument)
 void Threads::runThread(ThreadState& thread, Function<void()>&& body)
 {
     t_currentThread = &thread;
+#if !OS(WINDOWS)
+    // Whoever started this thread may have it blocked.
+    sigset_t interrupting;
+    sigemptyset(&interrupting);
+    sigaddset(&interrupting, signalThatInterrupts);
+    pthread_sigmask(SIG_UNBLOCK, &interrupting, nullptr);
+#endif
     takeGIL(thread);
     {
         // The thread that gave up the GIL left the VM and the runtimes as they are when nothing runs.
@@ -399,6 +492,8 @@ void Threads::runThread(ThreadState& thread, Function<void()>&& body)
         });
         if (m_vm.heap.hasPostponedEmbedderFinalizers() && !m_didTellMainThreadOfFinalizers) [[unlikely]]
             tellMainThreadOfFinalizers();
+        if (m_isStopping.load()) [[unlikely]]
+            wakeMainThread();
     }
     t_currentThread = nullptr;
     dropGIL(thread, false);
@@ -540,6 +635,12 @@ bool IdleWait::didWait(int64_t remaining)
     if (monotonicNanoseconds() < m_timeToCollect)
         return true;
     Threads& threads = runtime(m_globalObject).threads();
+    if (threads.throwIfStopping()) [[unlikely]] {
+        scope.release();
+        return false;
+    }
+    if (monotonicNanoseconds() < m_timeToCollect)
+        return true;
     // A wait that is nearly over is not made longer by a collection.
     if (remaining >= 0 && remaining < 2 * threads.m_durationOfLastIdleCollection) {
         m_timeToCollect = std::numeric_limits<int64_t>::max();
@@ -557,6 +658,10 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
 {
     VM& vm = m_vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (throwIfStopping()) [[unlikely]] {
+        scope.release();
+        return false;
+    }
     if (isOver())
         return true;
     if (!timeout)
@@ -626,6 +731,9 @@ bool Threads::waitUntil(JSGlobalObject* globalObject, const void* address, int64
                 wakeOne(address);
                 return false;
             }
+        } else if (throwIfStopping()) [[unlikely]] {
+            scope.release();
+            return false;
         }
         if (isOver())
             return true;

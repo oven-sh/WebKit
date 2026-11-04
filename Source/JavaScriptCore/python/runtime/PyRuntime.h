@@ -687,8 +687,40 @@ public:
 
     // The frame in which an exception is being raised again: it is in the traceback already.
     CallFrame* reraisingFrame { nullptr };
+    // The same for a call of a function of JS: a `finally`, or what the compiler makes that works like one, has caught this there.
+    // Only ever compared.
+    struct {
+        CallFrame* callFrame { nullptr };
+        CodeBlock* codeBlock { nullptr };
+        EncodedJSValue thrown { };
+    } caughtToBeThrownAgainInJS;
     // finalizeInterpreter() has run, or is running.
     bool isFinalized { false };
+    bool isRunningExitHandlers { false };
+
+    // Whether what runs on the main thread runs in the host's event loop, which asyncio asks (loopOfHost() in PyAsyncio.cpp). It does,
+    // but for what a program in Python does itself, from its first statement to its last, or to its first `await` at the top level:
+    // there, as in CPython, no loop is running unless the program runs one. What the host's loop calls while such a program waits
+    // (PyEventWait.h) is in the loop again. Innermost last: where on the stack that began, and which of the two it is.
+    struct EventLoopPosition {
+        void* stackPosition;
+        bool isInLoop;
+    };
+    Vector<EventLoopPosition, 4> eventLoopPositions;
+    class EventLoopPositionScope {
+        WTF_MAKE_NONCOPYABLE(EventLoopPositionScope);
+        WTF_FORBID_HEAP_ALLOCATION;
+    public:
+        EventLoopPositionScope(Runtime& rt, bool isInLoop)
+            : m_runtime(rt)
+        {
+            rt.eventLoopPositions.append({ this, isInLoop });
+        }
+        ~EventLoopPositionScope() { m_runtime.eventLoopPositions.removeLast(); }
+
+    private:
+        Runtime& m_runtime;
+    };
 
     // ---- Settings ----
 

@@ -161,7 +161,13 @@ int waitForEvents(JSGlobalObject* globalObject, WaitRequest& request)
             }
         }
         request.timeout = piece;
-        int result = function(globalObject, request);
+        int result;
+        if (function == blockingWait)
+            result = blockingWait(globalObject, request);
+        else {
+            Runtime::EventLoopPositionScope position(runtime(globalObject), true);
+            result = function(globalObject, request);
+        }
         request.timeout = timeout;
         if (!result && piece != timeout) {
             if (request.kind == WaitRequest::Kind::Select) {

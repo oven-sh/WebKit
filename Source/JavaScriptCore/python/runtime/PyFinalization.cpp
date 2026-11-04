@@ -458,8 +458,11 @@ void makeCallsOwed(VM& vm)
     if (vm.heap.pythonRuntimes().isEmpty())
         return;
     // Another thread has waited long enough for its turn.
-    if (Threads& threads = vm.heap.pythonRuntimes().first()->threads(); threads.dropIsRequested()) [[unlikely]]
+    Threads& threads = vm.heap.pythonRuntimes().first()->threads();
+    if (threads.dropIsRequested()) [[unlikely]]
         threads.yield();
+    if (threads.throwIfStopping()) [[unlikely]]
+        return;
     // What other threads had to leave to the main one.
     if (vm.heap.hasPostponedEmbedderFinalizers() && vm.heap.mayRunEmbedderFinalizers()) [[unlikely]]
         vm.heap.runPostponedEmbedderFinalizers();
@@ -606,7 +609,7 @@ void Runtime::finalizeAllAtExit()
     // Otherwise, first what is garbage already, as it would have been all along with reference counts.
     wipeStackBelow(m_globalObject);
     collect();
-    if (isDone())
+    if (isDone() || m_vm.hasPendingTerminationException())
         return;
     // Then the modules go, as they do when CPython exits, and with them what only they hold: the globals of the program.
     // The collector finds that, and puts it in order. (CPython also sets the globals to None, one after the other, to get at
@@ -617,6 +620,8 @@ void Runtime::finalizeAllAtExit()
     modules()->clear(m_vm);
     wipeStackBelow(m_globalObject);
     collect();
+    if (m_vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     // Then what something else holds on to: JS, a frame that is still on the stack. In the order it was made.
     {
         Locker locker { m_finalizationLock };

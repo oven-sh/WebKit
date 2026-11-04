@@ -1176,7 +1176,8 @@ void flushAllOpenFiles(JSGlobalObject* globalObject)
     for (unsigned i = 0; i < listLength(streams); ++i) {
         // One that the program closed or detached says so.
         callMethod(globalObject, listGet(streams, i), rt.names.flush());
-        scope.clearException();
+        if (!scope.tryClearException()) [[unlikely]]
+            return;
     }
 }
 

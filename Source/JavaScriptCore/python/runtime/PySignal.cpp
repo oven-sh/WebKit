@@ -232,6 +232,8 @@ static void signalRemoveReserved(sigset_t& set)
 #else
     sigdelset(&set, g_wtfConfig.sigThreadSuspendResume);
 #endif
+    if (Threads::isOnStartedThread())
+        sigdelset(&set, signalThatInterruptsThreads());
 }
 
 // A list with an item for each signal: what signal.getsignal() returns.
@@ -327,6 +329,9 @@ static NEVER_INLINE bool signalRunHandlers(JSGlobalObject* globalObject)
 
 bool checkSignals(JSGlobalObject* globalObject)
 {
+    // What interrupted the thread may have been the end of the VM.
+    if (runtime(globalObject).threads().throwIfStopping()) [[unlikely]]
+        return false;
     if (!s_signalState.isTripped.load(std::memory_order_relaxed)) [[likely]]
         return true;
     if (!signalIsOnHandlingThread(globalObject))

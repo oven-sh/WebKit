@@ -145,9 +145,19 @@ public:
     int64_t switchInterval() const { return m_switchInterval.load(std::memory_order_relaxed); } // In nanoseconds.
     void setSwitchInterval(int64_t nanoseconds) { m_switchInterval.store(nanoseconds, std::memory_order_relaxed); }
 
-    // The interpreter is over. A thread other than the main one that asks for the GIL from now on sleeps for ever.
+    // The interpreter is over. A thread other than the main one that asks for the GIL from now on sleeps: for ever, if the process
+    // ends with the interpreter.
     void didFinalize();
     bool isFinalized() const { return m_isFinalized.load(std::memory_order_relaxed); }
+
+    // The VM is about to go, and the process goes on: a worker of the host ends. A thread that sleeps, or sits in a system call, has
+    // frames that refer to the VM and may have given the kernel memory that dies with it. So the threads end first. Each is woken
+    // wherever it waits, gets the GIL as ever, and at its next safe point (throwIfStopping()) meets what ends the code of a worker that
+    // is terminated: an exception that nothing catches, so no `finally` and no `__exit__` runs, while the frames of C++ unwind as
+    // they do for any exception. For the main thread, with the GIL. When this returns there is no other thread.
+    void stopAll();
+    // For a thread that holds the GIL, where it may throw. True: it is to end, and that has been thrown.
+    ALWAYS_INLINE bool throwIfStopping() { return m_isStopping.load(std::memory_order_relaxed) && throwIfStoppingSlow(); }
 
     // ---- Waiting for other threads ----
 
@@ -224,7 +234,7 @@ private:
     void collectWhileIdle(JSGlobalObject*, bool isLastResort = false);
     void takeGIL(ThreadState&);
     void dropGIL(ThreadState&, bool isYielding);
-    [[noreturn]] void sleepForEver();
+    JS_EXPORT_PRIVATE bool throwIfStoppingSlow();
     void didTakeGIL(ThreadState&);
     void tellMainThreadOfFinalizers();
     void wakeMainThread();
@@ -245,12 +255,14 @@ private:
     Lock m_gilLock;
     Condition m_gilCondition; // It is free.
     Condition m_switchCondition; // It has changed hands.
+    Condition m_stopCondition; // stopAll() has begun.
     bool m_gilIsHeld WTF_GUARDED_BY_LOCK(m_gilLock) { false };
     ThreadState* m_lastHolder WTF_GUARDED_BY_LOCK(m_gilLock) { nullptr };
     uint64_t m_switchNumber WTF_GUARDED_BY_LOCK(m_gilLock) { 0 };
     unsigned m_waitingForGIL WTF_GUARDED_BY_LOCK(m_gilLock) { 0 };
     std::atomic<bool> m_dropIsRequested { false };
     std::atomic<bool> m_isFinalized { false };
+    std::atomic<bool> m_isStopping { false };
     std::atomic<int64_t> m_switchInterval { 5000000 };
 };
 
@@ -309,6 +321,9 @@ private:
     int64_t m_interval { firstInterval };
     int64_t m_timeToCollect;
 };
+
+// Threads::stopAll() sends it to the threads that Python started, which therefore cannot block it.
+int signalThatInterruptsThreads();
 
 // False, with a RuntimeError: this is not the main thread, and what is about to happen would run code of JS, or of the host.
 bool ensureMainThreadForJS(JSGlobalObject*);

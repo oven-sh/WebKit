@@ -423,14 +423,29 @@ static std::optional<int> exitStatusOf(JSGlobalObject* globalObject, JSValue exc
     return 1;
 }
 
+static int handleUncaughtException(JSGlobalObject*, JSValue exception);
+
 int handleUncaughtException(JSGlobalObject* globalObject)
+{
+    JSValue exception = takePendingException(globalObject);
+    if (!exception)
+        return 0;
+    return handleUncaughtException(globalObject, exception);
+}
+
+bool reportUncaughtException(JSGlobalObject* globalObject, JSValue exception)
+{
+    if (!PyException::is(exception) || runtime(globalObject).isFinalized)
+        return false;
+    handleUncaughtException(globalObject, exception);
+    return true;
+}
+
+static int handleUncaughtException(JSGlobalObject* globalObject, JSValue exception)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue exception = takePendingException(globalObject);
-    if (!exception)
-        return 0;
     if (auto status = exitStatusOf(globalObject, exception))
         return *status;
 
@@ -539,6 +554,8 @@ static bool flushStandardStreamsAtExit(JSGlobalObject* globalObject, bool report
             continue;
         JSValue closed = getAttr(globalObject, file, internString(vm, "closed"_s));
         bool isClosed = closed && isTrue(globalObject, closed);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return succeeded;
         if (scope.exception()) {
             scope.clearException();
             isClosed = false;
@@ -548,6 +565,8 @@ static bool flushStandardStreamsAtExit(JSGlobalObject* globalObject, bool report
         callMethod(globalObject, file, rt.names.flush());
         if (!scope.exception())
             continue;
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return succeeded;
         succeeded = false;
         if (reports && name == rt.names.stdout_())
             reportUnraisable(globalObject, "Exception ignored while flushing sys.stdout"_s, { });
@@ -556,10 +575,18 @@ static bool flushStandardStreamsAtExit(JSGlobalObject* globalObject, bool report
     return succeeded;
 }
 
+static NEVER_INLINE void runExitHandlersOnWipedStack(JSGlobalObject*);
 static NEVER_INLINE bool finalizeInterpreterOnWipedStack(JSGlobalObject*);
 
 // The collections at exit are to find dead what only the frames of the program held, and those lay where the frames of what follows
-// lie now. See wipeStackBelow() for why this has a frame with nothing in it that it does not write.
+// lie now. See wipeStackBelow() for why these two have a frame with nothing in it that it does not write.
+void runExitHandlers(JSGlobalObject* globalObject)
+{
+    size_t size = 128 * KB;
+    wipeStackBelow(globalObject, size);
+    runExitHandlersOnWipedStack(globalObject);
+}
+
 bool finalizeInterpreter(JSGlobalObject* globalObject)
 {
     size_t size = 128 * KB;
@@ -567,39 +594,82 @@ bool finalizeInterpreter(JSGlobalObject* globalObject)
     return finalizeInterpreterOnWipedStack(globalObject);
 }
 
-static NEVER_INLINE bool finalizeInterpreterOnWipedStack(JSGlobalObject* globalObject)
+static NEVER_INLINE void runExitHandlersOnWipedStack(JSGlobalObject* globalObject)
 {
     if (!globalObject->pythonRuntime())
-        return true;
+        return;
     Runtime& rt = runtime(globalObject);
-    if (std::exchange(rt.isFinalized, true))
-        return true;
     VM& vm = rt.vm();
+    // One of them may end the process itself.
+    if (rt.isFinalized || rt.isRunningExitHandlers || vm.hasPendingTerminationException())
+        return;
+    SetForScope isRunning(rt.isRunningExitHandlers, true);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // No loop will run what they schedule.
+    Runtime::EventLoopPositionScope position(rt, false);
     // A callback may start a thread, and a thread register a callback.
     do {
         if (JSValue threading = rt.modules()->get(internString(vm, "threading"_s)); threading && !isNone(threading)) {
             callMethod(globalObject, threading, internString(vm, "_shutdown"_s));
         } else
             waitForThreadsAtExit(globalObject);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
         if (scope.exception()) [[unlikely]] {
             stopWaitingForThreadsAtExit(globalObject);
             reportUnraisable(globalObject, "Exception ignored on threading shutdown"_s, { });
         }
         wipeStackBelow(globalObject);
         rt.finalizeWhatReferenceCountsWouldHaveFreed();
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
         runAtexitCallbacks(globalObject);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
         scope.assertNoException();
     } while (hasThreadsOrAtexitCallbacks(globalObject));
+}
+
+static NEVER_INLINE bool finalizeInterpreterOnWipedStack(JSGlobalObject* globalObject)
+{
+    if (!globalObject->pythonRuntime())
+        return true;
+    Runtime& rt = runtime(globalObject);
+    if (rt.isFinalized)
+        return true;
+    VM& vm = rt.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    runExitHandlersOnWipedStack(globalObject);
+    rt.isFinalized = true;
+    // All of this is code of the program, which the host may end at any point of it, as it ends any other: a worker is terminated
+    // while it exits. Then none of what is left runs, and what ended it goes on to whoever called this.
+    auto isTerminated = [&] {
+        if (!vm.hasPendingTerminationException()) [[likely]]
+            return false;
+        rt.threads().didFinalize();
+        finalizeSignals(globalObject);
+        return true;
+    };
+    if (isTerminated())
+        return true;
+    Runtime::EventLoopPositionScope position(rt, false);
     // The threads that are left are daemons. They have run their last.
     rt.threads().didFinalize();
     // Before the finalizers, which may close what the standard streams write to, and after them, as they may print.
     bool flushed = flushStandardStreamsAtExit(globalObject, true);
+    if (isTerminated())
+        return true;
     flushAllOpenFiles(globalObject);
+    if (isTerminated())
+        return true;
     finalizeSignals(globalObject);
     wipeStackBelow(globalObject);
     rt.finalizeAllAtExit();
+    if (isTerminated())
+        return true;
     flushed &= flushStandardStreamsAtExit(globalObject, flushed);
+    if (isTerminated())
+        return true;
     flushAllOpenFiles(globalObject);
     return flushed;
 }
@@ -847,8 +917,10 @@ std::optional<int> runMainModule(JSGlobalObject* globalObject, const String& giv
 
     std::optional<int> status;
     installSignalHandlers(globalObject);
-    if (!scope.exception())
+    if (!scope.exception()) {
+        Runtime::EventLoopPositionScope position(rt, false);
         runFileInMain(globalObject, path, source, unfinished);
+    }
     if (unfinished && *unfinished)
         return std::nullopt;
     if (scope.exception())

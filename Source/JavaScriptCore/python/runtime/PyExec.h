@@ -52,6 +52,11 @@ JS_EXPORT_PRIVATE void setEventLoopModule(ASCIILiteral name);
 // False: there are no other threads, and the function has not been called.
 JS_EXPORT_PRIVATE bool callWithoutGIL(VM&, void (*function)(void*), void* argument);
 
+// A host that destroys a VM while the process goes on (a worker ends) calls this first, on the thread of the VM, when no code of the
+// program is to run any more: with or without finalizeInterpreter() before it. It ends the threads that Python started in the VM and
+// returns when they are gone. They run no more code in Python. One that is in the middle of something in C++ finishes that first.
+JS_EXPORT_PRIVATE void stopThreads(VM&);
+
 // Finalizers, callbacks of weak references and signal handlers are queued by the collector and by signal handlers, and called
 // at the next safe point in Python code (makeCallsOwed() in PyHooks.h). A host that may be asleep in its event loop, or busy
 // with other things than Python code, is told here that there are some, and calls makeCallsOwed() when it can run any code.
@@ -83,6 +88,9 @@ JS_EXPORT_PRIVATE bool isStandardLibraryModuleName(StringView);
 // Returns the exit status it calls for: that of a SystemExit, which is not reported, or 1; or, negative, the number of the
 // signal the process is to die of: a KeyboardInterrupt nothing caught ends it as the SIGINT would have that it stands for.
 JS_EXPORT_PRIVATE int handleUncaughtException(JSGlobalObject*);
+// The same for an exception of Python's that is not propagating any more: one that a host has found nobody to catch, in a callback
+// that its event loop called or in a promise. False: the interpreter has ended, and there is no hook to tell.
+JS_EXPORT_PRIVATE bool reportUncaughtException(JSGlobalObject*, JSValue exception);
 // For a host that is about to write to standard output or standard error for code that is not Python (console.log): what Python
 // code has printed so far, and is still in buffers, is written first. If vm.heap.pythonRuntimes() is empty there is no need.
 JS_EXPORT_PRIVATE void flushStandardStreams(VM&);
@@ -94,9 +102,15 @@ JS_EXPORT_PRIVATE bool endsProgram(JSGlobalObject*, JSValue exception);
 // For a status that is negative, once all that is to happen at exit has happened: dies of the signal. Otherwise returns.
 JS_EXPORT_PRIVATE void dieIfStatusIsSignal(int status);
 
+// The first part of finalizeInterpreter(): threading._shutdown(), which waits for the threads that are no daemons, and the atexit
+// handlers. For a host that has handlers of its own for the exit of the program, which may be functions of Python's: it calls
+// this, then those, then finalizeInterpreter(), which does this again for what those have left.
+JS_EXPORT_PRIVATE void runExitHandlers(JSGlobalObject*);
+
 // What happens when the interpreter exits: threading._shutdown(), the atexit handlers, the finalizers of what is left, flushing.
 // Does nothing if the interpreter never started, or the second time. False: sys.stdout or sys.stderr could not be flushed (a
 // full disk, a pipe nobody reads), and the exit status of the process is to be statusIfNotFlushed whatever it would have been.
+// Throws nothing but the host's termination, after which nothing of the above runs any more.
 JS_EXPORT_PRIVATE bool finalizeInterpreter(JSGlobalObject*);
 static constexpr int statusIfNotFlushed = 120;
 

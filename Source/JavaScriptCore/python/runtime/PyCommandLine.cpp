@@ -1459,6 +1459,7 @@ static void inspectIfAsked(JSGlobalObject* globalObject, std::optional<int>& sta
     if (!configuration.inspect || !stdinIsInteractive() || !runsCode())
         return;
     setInspect(globalObject, 0);
+    Runtime::EventLoopPositionScope position(runtime(globalObject), false);
     if (auto exitStatus = runInteractiveHook(globalObject)) {
         status = exitStatus;
         return;
@@ -1553,6 +1554,7 @@ std::optional<int> runCommandLine(JSGlobalObject* globalObject, JSValue* unfinis
 
     makeCallsOwed(vm);
     if (!scope.exception()) {
+        Runtime::EventLoopPositionScope position(rt, false);
         if (!configuration.runCommand.isNull())
             runCommand(globalObject, configuration.runCommand, unfinished);
         else if (!configuration.runModule.isNull())
