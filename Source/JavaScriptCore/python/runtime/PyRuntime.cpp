@@ -602,7 +602,7 @@ void Runtime::takeUpCatchesOfResumedGeneratorsOfJS(CallFrame* catching, unsigned
                 // Then so are those in it.
                 if (isOver)
                     break;
-                m_catchesInJS.append(CatchInJS { frame.callFrame, frame.code, start, end, frame.catches->get(i + 3), frame.slotOwner, frame.generator, frame.catches->get(i + 2).asUInt32() });
+                m_catchesInJS.append(CatchInJS { frame.callFrame, frame.code, 0, start, end, frame.catches->get(i + 3), frame.slotOwner, frame.generator, frame.catches->get(i + 2).asUInt32() });
             }
         }
     }
@@ -661,8 +661,21 @@ void Runtime::putCatchesInJSInSlots()
 void Runtime::didCatchInJS(CallFrame* callFrame, CodeBlock* codeBlock, BytecodeIndex index, JSValue thrown)
 {
     UnlinkedCodeBlock* code = codeBlock->unlinkedCodeBlock();
-    if (code->isPython())
-        return;
+    ASSERT(!code->isPython());
+    // The only one there is, once more: a `try` in a loop, or in a function that is called again and again. What follows would drop it,
+    // the clause having been left if it is entered again, and note the same about another value.
+    if (m_catchesInJS.size() == 1 && !m_catchesOfSuspendedGeneratorsOfJS) {
+        CatchInJS& entry = m_catchesInJS[0];
+        if (entry.callFrame == callFrame && entry.code == code && entry.catchOffset == index.offset() && entry.state == CatchInJS::Noted && !entry.yieldPoints) {
+            {
+                Locker locker { m_catchesInJSLock };
+                entry.thrown = thrown;
+                entry.slotOwner = m_runningGenerator;
+            }
+            m_vm.writeBarrier(m_globalObject);
+            return;
+        }
+    }
     for (auto& mark : code->pythonMarks()) {
         if (mark.offset != index.offset() || mark.kind() != PythonMark::CatchOfJS)
             continue;
@@ -670,7 +683,7 @@ void Runtime::didCatchInJS(CallFrame* callFrame, CodeBlock* codeBlock, BytecodeI
         dropCatchesInJSThatAreOver(callFrame, start);
         {
             Locker locker { m_catchesInJSLock };
-            m_catchesInJS.append(CatchInJS { callFrame, code, start, static_cast<unsigned>(mark.bits), thrown, m_runningGenerator, mark.value() ? asyncGeneratorOfJSOfFrame(callFrame, code) : nullptr, mark.value() });
+            m_catchesInJS.append(CatchInJS { callFrame, code, mark.offset, start, static_cast<unsigned>(mark.bits), thrown, m_runningGenerator, mark.value() ? asyncGeneratorOfJSOfFrame(callFrame, code) : nullptr, mark.value() });
         }
         m_vm.writeBarrier(m_globalObject);
         return;

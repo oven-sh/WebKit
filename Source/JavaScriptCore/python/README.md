@@ -297,7 +297,8 @@ found out at the first frame of an unwind and goes with the unwind from frame to
 `raise` without an exception, the `__context__` of what is raised meanwhile, and of an exception of Python's that JS makes and throws there (`willThrowInJS`). Of what is no
 exception of Python's it is the `JSError` that an `except` would have got. Nothing in the code of a clause says where it ends, and none of it is changed. The
 bytecode generator notes where each clause begins and ends (`PythonMark::CatchOfJS`, at its `op_catch`). The function of C++ that every `op_catch` calls for the exception, in
-all tiers, notes the frame, the clause and the value if the realm has a Python (`didCatchInJS`), and that is all a catch costs. Whoever next asks what is being
+all tiers, notes the frame, the clause and the value if the realm has a Python (`didCatchInJS`), and that is all a catch costs. (The same catch once more, in a loop or in a function that is called again and
+again, with no other noted: only the value is noted anew.) Whoever next asks what is being
 handled, or is about to change it, looks at the stack first (`Runtime::putCatchesInJSInSlots`): a catch whose frame is gone, or has gone on to code outside the clause, is over. What is
 left is put where an `except` at that place would have put it, so handlers of Python's above and below, and generators, find what they expect, and it is taken out again when
 it is over. A `finally` of JS is no handler. A call in tail position takes the frame away while the clause, as written, goes on: `catch { return f() }` in strict code

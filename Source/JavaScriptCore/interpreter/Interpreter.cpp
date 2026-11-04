@@ -1401,8 +1401,12 @@ public:
     NEVER_INLINE bool findHandlerAndTellPython(Visitor& visitor, bool reachesMachineFrame) const
     {
         CallFrame* frameBefore = std::exchange(m_frameToldOfLast, m_callFrame);
-        JSGlobalObject* globalObject = m_codeBlock->globalObject();
         bool isPython = m_codeBlock->unlinkedCodeBlock()->isPython();
+        if (m_thrownValueHasNoTraceback && !isPython) {
+            m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
+            return m_handler.m_valid;
+        }
+        JSGlobalObject* globalObject = m_codeBlock->globalObject();
         if (!m_isTermination) {
             BytecodeIndex index = visitor->bytecodeIndex();
             if (isPython) {
@@ -1444,7 +1448,7 @@ public:
     {
         bool reachesMachineFrame = true;
 #if ENABLE(DFG_JIT)
-        if (m_tellsPython && visitor->isInlinedDFGFrame()) [[unlikely]]
+        if (m_tellsPython && !m_thrownValueHasNoTraceback && visitor->isInlinedDFGFrame()) [[unlikely]]
             reachesMachineFrame = addTracebackEntriesForInlinedCalls(visitor);
 #endif
         visitor.unwindToMachineCodeBlockFrame();

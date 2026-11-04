@@ -909,6 +909,7 @@ private:
         enum State : uint8_t { Noted, BeingPutInSlot, InSlot };
         CallFrame* callFrame; // Only ever compared.
         UnlinkedCodeBlock* code;
+        unsigned catchOffset; // Of the op_catch.
         unsigned start;
         unsigned end;
         JSValue thrown; // InSlot: the exception that was made of it.
