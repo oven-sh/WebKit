@@ -603,7 +603,7 @@ static bool isDataDescriptor(JSValue descriptor)
 // another class.
 static bool mayBecomeAnotherKindOfDescriptor(Runtime& rt, JSValue descriptor, PyType* type)
 {
-    if (!descriptor)
+    if (!descriptor || !descriptor.isCell() || descriptor.asCell()->type() == JSFunctionType || PyNativeFunction::is(descriptor.asCell()))
         return false;
     PyType* descriptorType = rt.typeOf(descriptor);
     // (A module may be given another class, whatever its class is.)
