@@ -392,14 +392,27 @@ public:
         for (unsigned i = width; i--;)
             put("0123456789abcdef"[(number >> (i * 4)) & 15]);
     }
-    // As faultAppendEscaped().
-    void putEscaped(StringView text)
+    // As faultAppendEscaped(). The characters are read where they are: a StringView of a String allocates where assertions are on.
+    void putEscaped(const String& text)
     {
+        StringImpl* impl = text.impl();
+        if (!impl)
+            return;
+        unsigned length = impl->length();
         unsigned count = 0;
-        for (char32_t character : text.codePoints()) {
+        for (unsigned i = 0; i < length;) {
             if (count++ == faultMaxStringLength) {
                 put("..."_s);
                 return;
+            }
+            char32_t character;
+            if (impl->is8Bit())
+                character = impl->span8()[i++];
+            else {
+                auto characters = impl->span16();
+                character = characters[i++];
+                if (U16_IS_LEAD(character) && i < length && U16_IS_TRAIL(characters[i]))
+                    character = U16_GET_SUPPLEMENTARY(character, characters[i++]);
             }
             if (character >= ' ' && character <= 126)
                 put(static_cast<char>(character));
