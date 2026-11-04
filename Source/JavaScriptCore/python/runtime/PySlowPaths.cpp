@@ -35,6 +35,14 @@ using namespace Python;
 
 // What the op_py_* instructions do. The interpreter does the commonest cases of some of them itself (LowLevelInterpreter64.asm).
 
+// CallFrame::setCurrentVPC(), which is a call and asks the unlinked code where the instructions begin. The code block has that at hand,
+// for the interpreter.
+static ALWAYS_INLINE void setCurrentInstruction(CallFrame* callFrame, CodeBlock* codeBlock, const JSInstruction* pc)
+{
+    callFrame->setCallSiteIndex(CallSiteIndex(BytecodeIndex(static_cast<uint32_t>(std::bit_cast<const uint8_t*>(pc) - static_cast<const uint8_t*>(codeBlock->instructionsRawPointer())))));
+    ASSERT(callFrame->currentVPC() == pc);
+}
+
 #define BEGIN() \
     CodeBlock* codeBlock = callFrame->codeBlock(); \
     JSGlobalObject* globalObject = codeBlock->globalObject(); \
@@ -43,7 +51,7 @@ using namespace Python;
     auto throwScope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_PARAM(throwScope); \
     UNUSED_PARAM(globalObject); \
-    callFrame->setCurrentVPC(pc)
+    setCurrentInstruction(callFrame, codeBlock, pc)
 
 #define GET(operand) (callFrame->uncheckedR(operand))
 #define GET_C(operand) (callFrame->r(operand))
