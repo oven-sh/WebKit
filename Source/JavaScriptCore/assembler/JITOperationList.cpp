@@ -212,6 +212,7 @@ static std::span<const JITOperationAnnotation> llintOperations()
             FOR_EACH_WASM_BUILTIN(WASM_BUILTIN_RECORD)
 
             LLINT_OP(op_catch)
+            LLINT_OP(op_py_catch)
             LLINT_OP(llint_generic_return_point)
 
             FOR_EACH_LLINT_OPCODE_WITH_RETURN(LLINT_RETURN_LOCATION)

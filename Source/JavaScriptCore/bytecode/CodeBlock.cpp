@@ -482,7 +482,8 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 HandlerInfo& handler = m_rareData->m_exceptionHandlers[i];
 #if ENABLE(CODE_GENERATION)
                 auto& instruction = *instructions().at(unlinkedHandler.target).ptr();
-                handler.initialize(unlinkedHandler, CodeLocationLabel<ExceptionHandlerPtrTag>(LLInt::handleCatch(instruction.width()).code()));
+                auto routine = unlinkedCodeBlock->isPython() ? LLInt::handlePyCatch(instruction.width()) : LLInt::handleCatch(instruction.width());
+                handler.initialize(unlinkedHandler, CodeLocationLabel<ExceptionHandlerPtrTag>(routine.code()));
 #else
                 handler.initialize(unlinkedHandler);
 #endif

@@ -646,6 +646,9 @@ bool liveLocalsOfFrame(CallFrame*, CodeBlock*, bool isCalling, FastBitVector& li
 // Where the frames end that the instructions of a frame of Python make below its registers (PyBytecode.h).
 Register* endOfFrameMadeByInstruction(CallFrame*, CodeBlock*);
 std::span<const BlockPiece> blockPiecesOf(CodeBlock*, bool onlyIfALoopOwnsItsIterator = false);
+// The op_py_catch of a handler is at the end of the code, out of the way, and jumps to where the compiler began the handler: that is
+// the place which is in a loop or in a `try`, or not.
+unsigned whereHandlerBegins(CodeBlock*, unsigned offsetOfCatch);
 // For a built-in function that goes through what it is given, may stop before the end, and keeps nothing: any(g()), next(g()). If the
 // generator was made for this call and only the temporary register refers to it, it is closed when the function is done or
 // has raised, as when its reference count falls to zero. The function is NativeFlag::ClosesGeneratorArgument, and has one of these

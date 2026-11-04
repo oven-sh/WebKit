@@ -332,6 +332,38 @@ MacroAssemblerCodeRef<ExceptionHandlerPtrTag> handleCatchThunk(OpcodeSize size)
     return { };
 }
 
+MacroAssemblerCodeRef<ExceptionHandlerPtrTag> handlePyCatchThunk(OpcodeSize size)
+{
+    switch (size) {
+    case OpcodeSize::Narrow: {
+        static LazyNeverDestroyed<MacroAssemblerCodeRef<ExceptionHandlerPtrTag>> codeRef;
+        static std::once_flag onceKey;
+        std::call_once(onceKey, [&] {
+            codeRef.construct(generateThunkWithJumpTo<ExceptionHandlerPtrTag>(LLInt::getCodeFunctionPtr<OperationPtrTag>(op_py_catch), "op_py_catch"));
+        });
+        return codeRef;
+    }
+    case OpcodeSize::Wide16: {
+        static LazyNeverDestroyed<MacroAssemblerCodeRef<ExceptionHandlerPtrTag>> codeRef;
+        static std::once_flag onceKey;
+        std::call_once(onceKey, [&] {
+            codeRef.construct(generateThunkWithJumpTo<ExceptionHandlerPtrTag>(LLInt::getWide16CodeFunctionPtr<OperationPtrTag>(op_py_catch), "op_py_catch16"));
+        });
+        return codeRef;
+    }
+    case OpcodeSize::Wide32: {
+        static LazyNeverDestroyed<MacroAssemblerCodeRef<ExceptionHandlerPtrTag>> codeRef;
+        static std::once_flag onceKey;
+        std::call_once(onceKey, [&] {
+            codeRef.construct(generateThunkWithJumpTo<ExceptionHandlerPtrTag>(LLInt::getWide32CodeFunctionPtr<OperationPtrTag>(op_py_catch), "op_py_catch32"));
+        });
+        return codeRef;
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return { };
+}
+
 MacroAssemblerCodeRef<JSEntryPtrTag> genericReturnPointThunk(OpcodeSize size)
 {
     switch (size) {

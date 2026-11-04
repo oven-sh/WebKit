@@ -803,6 +803,29 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_iter)
     RETURN(getIter(globalObject, iterable));
 }
 
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_catch)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyCatch>();
+    JSValue exception = throwScope.exception()->value();
+    // What ends the thread goes on.
+    if (!throwScope.tryClearException()) [[unlikely]]
+        CHECK_EXCEPTION();
+    GET(bytecode.m_exception) = exception;
+    if (!bytecode.m_becomesHandled)
+        END_IMPL();
+    if (!PyException::is(exception)) [[unlikely]] {
+        // What goes wrong with this goes wrong in the handler, which the blocks around it cover.
+        GET(bytecode.m_previous) = JSValue();
+        setCurrentVPC(callFrame, codeBlock, codeBlock->instructions().at(whereHandlerBegins(codeBlock, codeBlock->bytecodeOffset(pc))).ptr());
+        exception = exceptionFromThrownValue(globalObject, exception);
+        CHECK_EXCEPTION();
+        GET(bytecode.m_exception) = exception;
+    }
+    GET(bytecode.m_previous) = runtime(globalObject).setHandledExceptionInTopSlot(exception);
+    END_IMPL();
+}
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_for_iter)
 {
     BEGIN();

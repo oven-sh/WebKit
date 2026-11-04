@@ -4725,7 +4725,7 @@ llintOpWithReturn(op_to_property_key_or_number, OpToPropertyKeyOrNumber, macro (
 end)
 
 
-commonOp(llint_op_catch, macro () end, macro (size)
+macro restoreStateForCatch()
     # This is where we end up from the JIT's throw trampoline (because the
     # machine code return address will be set to _llint_op_catch), and from
     # the interpreter's throw trampoline (see _llint_throw_trampoline).
@@ -4742,6 +4742,10 @@ commonOp(llint_op_catch, macro () end, macro (size)
     loadp CodeBlock::m_instructionsRawPointer[PB], PB
     loadp VM::targetInterpreterPCForThrow[t3], PC
     subp PB, PC
+end
+
+commonOp(llint_op_catch, macro () end, macro (size)
+    restoreStateForCatch()
 
     callSlowPath(_llint_slow_path_retrieve_and_clear_exception_if_catchable)
     bpneq r1, 0, .isCatchableException
@@ -4761,6 +4765,13 @@ commonOp(llint_op_catch, macro () end, macro (size)
     callSlowPath(_llint_slow_path_profile_catch)
 
     dispatchOp(size, op_catch)
+end)
+
+# Nothing is profiled: there is no other tier for it.
+commonOp(llint_op_py_catch, macro () end, macro (size)
+    restoreStateForCatch()
+    callSlowPath(_slow_path_py_catch)
+    dispatchOp(size, op_py_catch)
 end)
 
 endSectionPart()

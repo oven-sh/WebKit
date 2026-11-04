@@ -437,6 +437,14 @@ void Runtime::releaseIteratorOfLoop(JSValue iterator)
         finalizeGeneratorNow(m_globalObject, generator);
 }
 
+unsigned whereHandlerBegins(CodeBlock* codeBlock, unsigned offsetOfCatch)
+{
+    auto catchInstruction = codeBlock->instructions().at(offsetOfCatch);
+    ASSERT(catchInstruction->opcodeID() == op_py_catch);
+    auto jump = catchInstruction.next();
+    return jump.offset() + jumpTargetForInstruction<OpJmp>(codeBlock, jump);
+}
+
 void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset, bool isCaught)
 {
     if (callFrame->isZombieFrame() || !codeInfoOf(callFrame).hasLoopThatOwnsItsIterator) [[likely]]
@@ -458,13 +466,7 @@ void Runtime::releaseIteratorsOfLoopsLeft(CallFrame* callFrame, unsigned offset,
         auto* handler = codeBlock->handlerForBytecodeIndex(BytecodeIndex(offset));
         if (!handler)
             return;
-        // The op_catch is at the end of the code, out of the way, and jumps to where the compiler began the handler: that is the place
-        // which is in a loop or not.
-        auto catchInstruction = codeBlock->instructions().at(handler->target);
-        auto jump = codeBlock->instructions().at(handler->target + catchInstruction->size());
-        if (catchInstruction->opcodeID() != op_catch || jump->opcodeID() != op_jmp)
-            return;
-        landing = jump.offset() + jumpTargetForInstruction<OpJmp>(codeBlock, jump);
+        landing = whereHandlerBegins(codeBlock, handler->target);
     }
 
     for (size_t i = loops.size(); i--;) {

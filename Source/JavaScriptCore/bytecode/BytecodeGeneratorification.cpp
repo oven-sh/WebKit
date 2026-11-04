@@ -320,8 +320,8 @@ private:
             if (firstLocal == std::numeric_limits<unsigned>::max())
                 continue;
             auto target = instructions.at(handler.target);
-            auto bytecode = target->as<OpCatch>();
-            resetLiveRegisters(target.next().offset(), false, firstLocal, { bytecode.m_exception, bytecode.m_thrownValue });
+            auto bytecode = target->as<OpPyCatch>();
+            resetLiveRegisters(target.next().offset(), false, firstLocal, { bytecode.m_exception, bytecode.m_previous });
         }
     }
 

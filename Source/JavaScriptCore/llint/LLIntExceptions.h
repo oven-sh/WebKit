@@ -57,5 +57,6 @@ MacroAssemblerCodeRef<ExceptionHandlerPtrTag> callToThrow(VM&);
 
 MacroAssemblerCodeRef<ExceptionHandlerPtrTag> handleUncaughtException(VM&);
 MacroAssemblerCodeRef<ExceptionHandlerPtrTag> handleCatch(OpcodeSize);
+MacroAssemblerCodeRef<ExceptionHandlerPtrTag> handlePyCatch(OpcodeSize); // op_py_catch
 
 } } // namespace JSC::LLInt

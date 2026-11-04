@@ -499,8 +499,8 @@ void CodeMonitor::findPoints(bool everyInstruction)
                 lines.append({ item.exitLine, offset });
             }
             item.lineCount = lines.size() - item.firstLine;
-            // BytecodeGenerator::emitOutOfLineCatchHandler()
-            if (item.opcode == op_jmp && !items.isEmpty() && items.last().opcode == op_catch)
+            // BytecodeGenerator::emitOutOfLinePyCatchHandler()
+            if (item.opcode == op_jmp && !items.isEmpty() && items.last().opcode == op_py_catch)
                 item.isHiddenJump = true;
             indexOfOffset.add(item.offset, items.size());
             items.append(WTF::move(item));
@@ -539,7 +539,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
         };
         visit(0);
         for (unsigned i = 0; i < items.size(); ++i) {
-            if (items[i].opcode == op_catch)
+            if (items[i].opcode == op_py_catch)
                 visit(i);
         }
         while (!toVisit.isEmpty()) {
@@ -593,7 +593,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
         }
     }
     for (unsigned i = 0; i + 1 < items.size(); ++i) {
-        if (items[i].opcode != op_catch)
+        if (items[i].opcode != op_py_catch)
             continue;
         unsigned next = i + 1;
         if (items[next].isHiddenJump) {
@@ -763,7 +763,7 @@ void CodeMonitor::findPoints(bool everyInstruction)
         }
 
         // While the registers are being put back nothing is told of.
-        if (!isBeingResumed && !item.isResumedAt && item.opcode != op_catch) {
+        if (!isBeingResumed && !item.isResumedAt && item.opcode != op_py_catch) {
             point.firstLineStart = m_lineStarts.size();
             if (item.entryLine >= 0 && item.sharedLineStart == noLineStart && isReachedFromOtherLine(item)) {
                 m_lineStarts.append({ item.entryLine, lines[item.firstLine].offset, 0, item.isNewsUnlessToldOtherwise });

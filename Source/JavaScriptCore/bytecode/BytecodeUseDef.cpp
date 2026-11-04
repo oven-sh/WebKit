@@ -95,6 +95,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_enter:
     case op_argument_count:
     case op_catch:
+    case op_py_catch:
     case op_profile_control_flow:
     case op_create_direct_arguments:
     case op_create_cloned_arguments:
@@ -777,6 +778,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     DEFS(OpPyGetIter, dst)
     DEFS(OpPyForIter, dst)
     DEFS(OpPySend, dst, iterator)
+    DEFS(OpPyCatch, exception, previous)
 
     case op_py_generator_registers: {
         auto bytecode = instruction->as<OpPyGeneratorRegisters>();

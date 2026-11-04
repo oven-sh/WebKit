@@ -108,6 +108,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> arityFixupThunk();
 MacroAssemblerCodeRef<ExceptionHandlerPtrTag> callToThrowThunk();
 MacroAssemblerCodeRef<ExceptionHandlerPtrTag> handleUncaughtExceptionThunk();
 MacroAssemblerCodeRef<ExceptionHandlerPtrTag> handleCatchThunk(OpcodeSize);
+MacroAssemblerCodeRef<ExceptionHandlerPtrTag> handlePyCatchThunk(OpcodeSize);
 
 #if ENABLE(JIT_CAGE)
 MacroAssemblerCodeRef<NativeToJITGatePtrTag> jitCagePtrThunk();

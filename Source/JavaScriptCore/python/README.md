@@ -266,6 +266,9 @@ passes (`addTracebackEntry`), which is how tracebacks are built. A frame that ha
 (`PythonMark::Start`) is not in the traceback: arguments that do not fit, the first iterable of a generator expression.
 An entry holds the code block and the place in the bytecode, like a `StackFrame` of JS; `tb_lineno` and `tb_lasti` are found when something asks (`PyTraceback::findPlace()`). So for
 `f_lineno` and `f_lasti` of a frame object whose call has ended (`PyFrame::callIsEnding()`).
+A handler begins with `op_py_catch`, which is to Python what `op_catch` is to JS: it stands at the end of the code, as that does, and jumps to the handler. It takes what was thrown, makes it the exception
+being handled and keeps what that was before, in one call of C++, and profiles nothing, there being no other tier. Which of the two routines the unwinder goes to is settled when the code is linked
+(`HandlerInfo::initialize()`), so a `catch` of JS runs what it always ran.
 An exception that goes on past a `finally`, a `with` or `except` clauses that do not match is thrown twice on the way: into the handler, and out of it by one instruction that also puts back
 what was being handled before (`RuntimeFunction::ReraiseOutOfHandler`). It stands outside the range of the handler's own clean-up, which is there for what the clauses themselves raise.
 CPython raises it inside that range, catches it, and raises it a third time: tools are told of those two steps all the same (`Monitoring::exceptionLeavesHandler()`).

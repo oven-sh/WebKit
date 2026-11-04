@@ -93,4 +93,22 @@ MacroAssemblerCodeRef<ExceptionHandlerPtrTag> handleCatch(OpcodeSize size)
     return {};
 }
 
+MacroAssemblerCodeRef<ExceptionHandlerPtrTag> handlePyCatch(OpcodeSize size)
+{
+#if ENABLE(JIT)
+    if (Options::useJIT())
+        return handlePyCatchThunk(size);
+#endif
+    switch (size) {
+    case OpcodeSize::Narrow:
+        return LLInt::getCodeRef<ExceptionHandlerPtrTag>(op_py_catch);
+    case OpcodeSize::Wide16:
+        return LLInt::getWide16CodeRef<ExceptionHandlerPtrTag>(op_py_catch);
+    case OpcodeSize::Wide32:
+        return LLInt::getWide32CodeRef<ExceptionHandlerPtrTag>(op_py_catch);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return {};
+}
+
 } } // namespace JSC::LLInt

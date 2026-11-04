@@ -1241,23 +1241,21 @@ void Unit::endTry(Try& tryRange)
     g.popTry(tryRange.data, end.get());
 }
 
-Unit::Reg Unit::beginHandler(Try& tryRange)
+Unit::Reg Unit::beginHandler(Try& tryRange, Reg* previous)
 {
     g.settlePythonLineMark();
     g.emitLabel(tryRange.handler.get());
     noLine();
     Reg thrown = newTemporary();
-    g.emitOutOfLineCatchHandler(thrown.get(), nullptr, tryRange.data);
+    if (previous)
+        *previous = newTemporary();
+    g.emitOutOfLinePyCatchHandler(thrown.get(), previous ? previous->get() : nullptr, tryRange.data);
     return thrown;
 }
 
 Unit::Reg Unit::beginExceptionHandler(Try& tryRange, Reg& previous)
 {
-    Reg exception = beginHandler(tryRange);
-    callRuntime(exception.get(), RuntimeFunction::CatchException, { exception.get() });
-    previous = newTemporary();
-    callRuntime(previous.get(), RuntimeFunction::SetHandledException, { exception.get() });
-    return exception;
+    return beginHandler(tryRange, &previous);
 }
 
 void Unit::restoreHandledException(RegisterID* previous)

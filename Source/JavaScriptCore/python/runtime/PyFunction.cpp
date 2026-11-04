@@ -2118,8 +2118,8 @@ static JSValue codeGetCode(JSGlobalObject* globalObject, JSValue self)
     OpcodeID previous = op_nop;
     for (const auto& instruction : codeBlock->instructions()) {
         unsigned first = instruction.offset();
-        // BytecodeGenerator::emitOutOfLineCatchHandler()
-        bool isPartOfCatch = std::exchange(previous, instruction->opcodeID()) == op_catch;
+        // BytecodeGenerator::emitOutOfLinePyCatchHandler()
+        bool isPartOfCatch = std::exchange(previous, instruction->opcodeID()) == op_py_catch;
         if (first < start || isPartOfCatch || !canBeReached.get(first))
             continue;
         // Lines of which no instruction came have the units before it.

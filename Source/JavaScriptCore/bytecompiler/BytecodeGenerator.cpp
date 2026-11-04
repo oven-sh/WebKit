@@ -311,7 +311,11 @@ ParserError BytecodeGenerator::generate(unsigned& size)
         Ref<Label> realCatchTarget = newLabel();
         TryData* tryData = handler.tryData;
 
-        OpCatch::emit(this, handler.exceptionRegister, handler.thrownValueRegister);
+        if (handler.isPython) {
+            bool becomesHandled = handler.exceptionRegister.isValid();
+            OpPyCatch::emit(this, handler.thrownValueRegister, becomesHandled ? handler.exceptionRegister : handler.thrownValueRegister, becomesHandled);
+        } else
+            OpCatch::emit(this, handler.exceptionRegister, handler.thrownValueRegister);
         realCatchTarget->setLocation(*this, m_lastInstruction.offset());
         if (tryData->catchClauseEnd) {
             unsigned start = tryData->target->location();
@@ -5064,6 +5068,11 @@ void BytecodeGenerator::emitOutOfLineCatchHandler(RegisterID* thrownValueRegiste
 {
     RegisterID* unused = newTemporary();
     emitOutOfLineExceptionHandler(unused, thrownValueRegister, completionTypeRegister, data);
+}
+
+void BytecodeGenerator::emitOutOfLinePyCatchHandler(RegisterID* exception, RegisterID* previousIfItBecomesHandled, TryData* data)
+{
+    m_exceptionHandlersToEmit.append({ data, previousIfItBecomesHandled ? previousIfItBecomesHandled : VirtualRegister(), exception, VirtualRegister(), true });
 }
 
 void BytecodeGenerator::emitOutOfLineFinallyHandler(RegisterID* exceptionRegister, RegisterID* completionTypeRegister, TryData* data)

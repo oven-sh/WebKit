@@ -402,7 +402,7 @@ private:
     Try beginTry(HandlerType = HandlerType::Catch);
     void endTry(Try&);
     // Starts the handler. Returns what was thrown.
-    Reg beginHandler(Try&);
+    Reg beginHandler(Try&, Reg* previous = nullptr);
     // What follows the code of an `async for` that `whole` covers: an exception leaves the loop.
     void asyncForHandler(Try& whole, RegisterID* iterator);
     // The same, as a Python exception that is now the one being handled. `previous`: the one that was.
