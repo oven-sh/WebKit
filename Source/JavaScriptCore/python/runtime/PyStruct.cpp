@@ -937,7 +937,7 @@ static JSValue structGetFormat(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue format = PyRecord::from(self)->get(StructFormatString))
         return format;
-    return raiseAttributeError(globalObject, scope, self, internString(vm, "format"_s), makeString('\'', typeName(globalObject, self), "' object has no attribute 'format'"_s));
+    return raise(globalObject, scope, runtime(globalObject).AttributeError(), makeString('\'', typeName(globalObject, self), "' object has no attribute 'format'"_s));
 }
 
 static JSValue structGetSize(JSGlobalObject* globalObject, JSValue self) { return makeInt(globalObject, PyRecord::from(self)->number); }

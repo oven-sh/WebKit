@@ -727,7 +727,8 @@ JSValue typeGetAttr(JSGlobalObject* globalObject, PyType* type, JSString* name, 
     }
     if (suppress)
         return { };
-    return raiseAttributeError(globalObject, scope, type, name, makeString("type object '"_s, type->nameInMessages(), "' has no attribute '"_s, stringOf(name), '\''));
+    // Which attribute of which object it was is for whoever asked to say: getAttr().
+    return raise(globalObject, scope, rt.AttributeError(), makeString("type object '"_s, type->nameInMessages(), "' has no attribute '"_s, stringOf(name), '\''));
 }
 
 JSValue typeGetAttribute(JSGlobalObject* globalObject, JSValue self, JSValue name)

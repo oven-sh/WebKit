@@ -2021,7 +2021,7 @@ static JSValue picklerGetDispatchTable(JSGlobalObject* globalObject, JSValue sel
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue table = PyRecord::from(self)->get(PicklerDispatchTable))
         return table;
-    return raiseAttributeError(globalObject, scope, self, internString(vm, "dispatch_table"_s), makeString('\'', typeName(globalObject, self), "' object has no attribute 'dispatch_table'"_s));
+    return raise(globalObject, scope, runtime(globalObject).AttributeError(), makeString('\'', typeName(globalObject, self), "' object has no attribute 'dispatch_table'"_s));
 }
 
 static void picklerSetDispatchTable(JSGlobalObject* globalObject, JSValue self, JSValue value)

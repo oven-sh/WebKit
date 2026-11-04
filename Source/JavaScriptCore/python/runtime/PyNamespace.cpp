@@ -109,7 +109,7 @@ static JSValue sentinelGetModule(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue module = sentinelRecord(self)->get(SentinelModule))
         return module;
-    return raiseAttributeError(globalObject, scope, self, runtime(globalObject).names.dModule(), "'sentinel' object has no attribute '__module__'"_s);
+    return raise(globalObject, scope, runtime(globalObject).AttributeError(), "'sentinel' object has no attribute '__module__'"_s);
 }
 
 static void sentinelSetModule(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -118,7 +118,7 @@ static void sentinelSetModule(JSGlobalObject* globalObject, JSValue self, JSValu
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRecord* sentinel = sentinelRecord(self);
     if (!value && !sentinel->get(SentinelModule)) {
-        raiseAttributeError(globalObject, scope, self, runtime(globalObject).names.dModule(), "'sentinel' object has no attribute '__module__'"_s);
+        raise(globalObject, scope, runtime(globalObject).AttributeError(), "__module__"_s);
         return;
     }
     sentinel->set(vm, SentinelModule, value);

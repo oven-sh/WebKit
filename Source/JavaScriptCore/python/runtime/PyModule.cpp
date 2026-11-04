@@ -247,6 +247,7 @@ bool diagnoseModule(JSGlobalObject* globalObject, JSValue spec, JSValue moduleNa
     return true;
 }
 
+// Which attribute of which object it was is for whoever asked to say: getAttr().
 static JSValue raiseModuleHasNoAttribute(JSGlobalObject* globalObject, PyModule* module, JSString* name)
 {
     Runtime& rt = runtime(globalObject);
@@ -256,13 +257,13 @@ static JSValue raiseModuleHasNoAttribute(JSGlobalObject* globalObject, PyModule*
     String attribute = stringOf(name);
     JSValue moduleNameValue = dict->get(rt.names.dName());
     if (!moduleNameValue || !isStr(moduleNameValue))
-        return raiseAttributeError(globalObject, scope, module, name, makeString("module has no attribute '"_s, attribute, '\''));
+        return raise(globalObject, scope, rt.AttributeError(), makeString("module has no attribute '"_s, attribute, '\''));
     String moduleName = strValue(moduleNameValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     String plain = makeString("module '"_s, moduleName, "' has no attribute '"_s, attribute, '\'');
     JSValue spec = dict->get(rt.names.dSpec());
     if (!spec)
-        return raiseAttributeError(globalObject, scope, module, name, plain);
+        return raise(globalObject, scope, rt.AttributeError(), plain);
 
     ModuleDiagnosis diagnosis;
     if (failed(scope, diagnoseModule(globalObject, spec, moduleNameValue, diagnosis)))
@@ -273,7 +274,7 @@ static JSValue raiseModuleHasNoAttribute(JSGlobalObject* globalObject, PyModule*
         RETURN_IF_EXCEPTION(scope, { });
     }
     if (diagnosis.hidesStandardLibrary)
-        return raiseAttributeError(globalObject, scope, module, name, makeString(plain, " (consider renaming '"_s, origin, "' since it has the same name as the standard library module named '"_s, moduleName, "' and prevents importing that standard library module)"_s));
+        return raise(globalObject, scope, rt.AttributeError(), makeString(plain, " (consider renaming '"_s, origin, "' since it has the same name as the standard library module named '"_s, moduleName, "' and prevents importing that standard library module)"_s));
 
     JSValue isInitializingValue = getAttrIfPresent(globalObject, spec, internString(vm, "_initializing"_s));
     RETURN_IF_EXCEPTION(scope, { });
@@ -281,8 +282,8 @@ static JSValue raiseModuleHasNoAttribute(JSGlobalObject* globalObject, PyModule*
     RETURN_IF_EXCEPTION(scope, { });
     if (isInitializing) {
         if (diagnosis.mayHideAnother)
-            return raiseAttributeError(globalObject, scope, module, name, makeString(plain, " (consider renaming '"_s, origin, "' if it has the same name as a library you intended to import)"_s));
-        return raiseAttributeError(globalObject, scope, module, name, makeString("partially initialized module '"_s, moduleName, '\'', origin.isNull() ? ""_s : " from '"_s, origin, origin.isNull() ? ""_s : "'"_s, " has no attribute '"_s, attribute, "' (most likely due to a circular import)"_s));
+            return raise(globalObject, scope, rt.AttributeError(), makeString(plain, " (consider renaming '"_s, origin, "' if it has the same name as a library you intended to import)"_s));
+        return raise(globalObject, scope, rt.AttributeError(), makeString("partially initialized module '"_s, moduleName, '\'', origin.isNull() ? ""_s : " from '"_s, origin, origin.isNull() ? ""_s : "'"_s, " has no attribute '"_s, attribute, "' (most likely due to a circular import)"_s));
     }
     JSValue submodules = getAttrIfPresent(globalObject, spec, internString(vm, "_uninitialized_submodules"_s));
     RETURN_IF_EXCEPTION(scope, { });
@@ -290,9 +291,9 @@ static JSValue raiseModuleHasNoAttribute(JSGlobalObject* globalObject, PyModule*
         bool isSubmodule = contains(globalObject, submodules, name);
         RETURN_IF_EXCEPTION(scope, { });
         if (isSubmodule)
-            return raiseAttributeError(globalObject, scope, module, name, makeString("cannot access submodule '"_s, attribute, "' of module '"_s, moduleName, "' (most likely due to a circular import)"_s));
+            return raise(globalObject, scope, rt.AttributeError(), makeString("cannot access submodule '"_s, attribute, "' of module '"_s, moduleName, "' (most likely due to a circular import)"_s));
     }
-    return raiseAttributeError(globalObject, scope, module, name, plain);
+    return raise(globalObject, scope, rt.AttributeError(), plain);
 }
 
 JSValue moduleGetAttr(JSGlobalObject* globalObject, PyModule* module, JSString* name, bool suppress)

@@ -174,8 +174,9 @@ JSValue memberDescriptorGet(JSGlobalObject* globalObject, PyMemberDescriptor* de
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = asObject(object)->getDirect(vm, PropertyName(&descriptor->key()->uid()));
+    // Which attribute of which object it was is for whoever asked to say: getAttr(). For super().name that is the super object.
     if (!value)
-        return raiseAttributeError(globalObject, scope, object, descriptor->name(), makeString('\'', typeNameForMessage(globalObject, typeOf(globalObject, object)), "' object has no attribute '"_s, stringOf(descriptor->name()), '\''));
+        return raise(globalObject, scope, runtime(globalObject).AttributeError(), makeString('\'', typeNameForMessage(globalObject, typeOf(globalObject, object)), "' object has no attribute '"_s, stringOf(descriptor->name()), '\''));
     return value;
 }
 
@@ -366,7 +367,7 @@ void genericSetAttr(JSGlobalObject* globalObject, JSValue object, JSString* name
                     if (def.isMember)
                         raise(globalObject, scope, rt.AttributeError(), "readonly attribute"_s);
                     else
-                        raiseAttributeError(globalObject, scope, object, name, makeString("attribute '"_s, def.name, "' of '"_s, uncheckedDowncast<PyGetSetDescriptor>(cell)->owner()->nameInMessages(), "' objects is not writable"_s));
+                        raise(globalObject, scope, rt.AttributeError(), makeString("attribute '"_s, def.name, "' of '"_s, uncheckedDowncast<PyGetSetDescriptor>(cell)->owner()->nameInMessages(), "' objects is not writable"_s));
                     return;
                 }
                 RELEASE_AND_RETURN(scope, def.setter(globalObject, object, value));
