@@ -107,12 +107,20 @@ bool allocateMemory(JSGlobalObject* globalObject, PyCData* data, int64_t size)
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PyByteStorage* storage = PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), static_cast<size_t>(size));
+    // In CPython a small instance has its memory in itself: 16 bytes, zeroed, whatever it needs of them. Programs have come to rely on what
+    // follows being zero: a c_wchar or a full (c_char * 3) passed where C expects a string that ends. The cell is a multiple of 16
+    // bytes anyway, and what is left over would otherwise hold what some dead object left there.
+    static constexpr int64_t granule = 16;
+    PyByteStorage* storage = nullptr;
+    if (size <= std::numeric_limits<int64_t>::max() - granule) {
+        size_t capacity = std::max<size_t>(roundUpToMultipleOf<granule>(static_cast<size_t>(size)), granule);
+        storage = PyByteStorage::tryCreate(vm, rt.structure<PyByteStorage>(), capacity);
+    }
     if (!storage) {
         raiseMemoryError(globalObject, scope, String());
         return false;
     }
-    memset(storage->data(), 0, static_cast<size_t>(size));
+    memset(storage->data(), 0, storage->capacity());
     data->setStorage(vm, storage, 0);
     data->size = size;
     data->ownsMemory = true;

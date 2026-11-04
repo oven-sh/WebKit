@@ -522,6 +522,7 @@ void store(uint8_t* destination, Accessor accessor, const Packed& value, int64_t
     case Code::CharArray:
     case Code::WCharArray:
         memcpy(destination, value.text.data(), value.text.size());
+        ensureStillAliveHere(value.holder);
         return;
     default: {
         auto [partSize, count] = partsOf(accessor.code);

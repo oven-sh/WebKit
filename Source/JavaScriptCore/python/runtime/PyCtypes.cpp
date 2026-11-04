@@ -430,9 +430,8 @@ static JSValue moduleResize(JSGlobalObject* globalObject, JSValue object, JSValu
     // Whatever was made from parts of the instance, or points into it, goes on using the memory it had.
     auto* oldStorage = uncheckedDowncast<PyByteStorage>(data->owner());
     int64_t oldSize = data->size;
+    // All of it was zero to begin with, and only the program has written to it since.
     if (size <= static_cast<int64_t>(oldStorage->capacity())) {
-        if (size > oldSize)
-            memset(oldStorage->data() + oldSize, 0, static_cast<size_t>(size - oldSize));
         data->size = size;
         return none();
     }
@@ -521,20 +520,24 @@ static JSValue moduleObjectFromPointer(JSGlobalObject* globalObject, JSValue val
 }
 
 // There are no reference counts. What a count above what the program can see means is that the object stays alive.
-static JSValue moduleIncRef(JSGlobalObject* globalObject, JSValue, JSValue object)
+bool holdObject(JSGlobalObject* globalObject, JSValue object)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!object.isCell())
-        return object;
+        return true;
     PyDict* held = stateOf(globalObject).heldObjects.get();
     JSValue key = makeInt(globalObject, bitsOfObject(object));
     JSValue entry = held->get(globalObject, key);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, false);
     int64_t count = entry ? smallIntValue(PyTuple::from(entry)->at(1)) : 0;
     held->set(globalObject, key, PyTuple::create(globalObject, { object, makeInt(globalObject, count + 1) }));
-    RETURN_IF_EXCEPTION(scope, { });
-    return object;
+    return !scope.exception();
+}
+
+static JSValue moduleIncRef(JSGlobalObject* globalObject, JSValue, JSValue object)
+{
+    return holdObject(globalObject, object) ? object : JSValue();
 }
 
 static JSValue moduleDecRef(JSGlobalObject* globalObject, JSValue, JSValue object)

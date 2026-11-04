@@ -97,7 +97,7 @@ struct Packed {
     alignas(16) uint8_t bytes[32];
     JSValue keep; // What the bytes point into, which has to live while they are in use. None: nothing.
     std::span<const uint8_t> text; // CharArray and WCharArray: what to copy.
-    JSCell* holder { nullptr }; // Whose memory `text` is. (A Packed is on the stack, which keeps it alive.)
+    JSCell* holder { nullptr }; // Whose memory `text` is: store() keeps it alive until it has copied.
 };
 
 // Which bits of the integer, for a bit field.
@@ -526,6 +526,9 @@ uintptr_t addressOfCast();
 
 // ctypes.get_errno(): a copy of errno for each thread, exchanged with the real one around calls that ask for it.
 int& privateErrno();
+
+// Keeps the object alive until it has been let go as many times: Py_INCREF() and Py_DECREF(). False: an exception.
+bool holdObject(JSGlobalObject*, JSValue);
 
 // A value that is stored as a PyObject*. 0 is NULL.
 uint64_t bitsOfObject(JSValue);

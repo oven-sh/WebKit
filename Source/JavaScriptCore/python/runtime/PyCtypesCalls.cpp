@@ -663,9 +663,11 @@ void runCallback(PyCThunk* thunk, void** arguments, void* resultMemory)
         return;
     }
     store(static_cast<uint8_t*>(resultMemory), info->accessor, packed, info->size);
-    // What the result points into is dropped on return, and nothing can be done about it.
+    // C now has a pointer into it, for nobody knows how long: it is never let go. That is what CPython does, and warns of.
     if (info->accessor.code != Code::Object && !isNone(packed.keep)) {
-        warn(globalObject, runtime(globalObject).RuntimeWarning(), "memory leak in callback function."_s);
+        holdObject(globalObject, packed.keep);
+        if (!scope.exception())
+            warn(globalObject, runtime(globalObject).RuntimeWarning(), "memory leak in callback function."_s);
         if (scope.exception()) [[unlikely]] {
             scope.release();
             reportCallbackError(globalObject, "converting result of"_s, callable);
