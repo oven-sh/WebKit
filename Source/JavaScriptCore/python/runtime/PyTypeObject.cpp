@@ -1232,6 +1232,9 @@ static JSValue typeNew(JSGlobalObject* globalObject, JSValue cls, const CallArgs
         if (PyDict* globals = currentGlobals(globalObject)) {
             if (JSValue module = globals->get(rt.names.dName()))
                 dict->set(vm, rt.names.dModule(), module);
+        } else {
+            // No code of Python's is running: it is JS that makes the class, as with `class extends`.
+            dict->set(vm, rt.names.dModule(), internString(vm, "js"_s));
         }
     }
     if (JSValue qualname = dict->get(rt.names.dQualname())) {
