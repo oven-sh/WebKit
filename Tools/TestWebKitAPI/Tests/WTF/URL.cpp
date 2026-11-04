@@ -708,4 +708,31 @@ TEST_F(WTF_URL, ProtocolIsSecure)
     EXPECT_FALSE(aboutURL.protocolIsSecure());
 }
 
+#if !USE(CF)
+// The non-CF fileSystemPath() has no other way to say that the path did not decode.
+TEST_F(WTF_URL, FileSystemPathIsEmptyWhenThePathIsNotUTF8)
+{
+    EXPECT_FALSE(!!createURL("http://example.com/a.txt"_s).fileSystemPath());
+
+#if OS(WINDOWS)
+    EXPECT_EQ(String::fromUTF8(u8"C:\\a b\\caf\u00E9.txt"_span), createURL("file:///C:/a%20b/caf%C3%A9.txt"_s).fileSystemPath().unsafeValue());
+    EXPECT_EQ(String("\\\\server\\share\\a.txt"_s), createURL("file://server/share/a.txt"_s).fileSystemPath().unsafeValue());
+    // A "%" that does not start an escape stays as it is.
+    EXPECT_EQ(String("C:\\50%.txt"_s), createURL("file:///C:/50%.txt"_s).fileSystemPath().unsafeValue());
+    EXPECT_EQ(String("C:\\50%zz.txt"_s), createURL("file:///C:/50%zz.txt"_s).fileSystemPath().unsafeValue());
+#else
+    EXPECT_EQ(String::fromUTF8(u8"/a b/caf\u00E9.txt"_span), createURL("file:///a%20b/caf%C3%A9.txt"_s).fileSystemPath().unsafeValue());
+    // A "%" that does not start an escape stays as it is.
+    EXPECT_EQ(String("/50%.txt"_s), createURL("file:///50%.txt"_s).fileSystemPath().unsafeValue());
+    EXPECT_EQ(String("/50%zz.txt"_s), createURL("file:///50%zz.txt"_s).fileSystemPath().unsafeValue());
+#endif
+
+    // Escapes that decode to bytes that are not UTF-8: a lead byte with no continuation byte
+    // ("%de" then "p"), a Latin-1 byte, a lone continuation byte, an overlong form, a surrogate,
+    // and a code point above U+10FFFF.
+    for (auto undecodable : { "file:///C:/50%deposit.db"_s, "file:///C:/caf%E9.txt"_s, "file:///C:/%80"_s, "file:///C:/%C0%AF"_s, "file:///C:/%ED%A0%80"_s, "file:///C:/%F4%90%80%80"_s, "file://server/share/%E9"_s })
+        EXPECT_FALSE(!!createURL(undecodable).fileSystemPath()) << undecodable.characters();
+}
+#endif
+
 } // namespace TestWebKitAPI
