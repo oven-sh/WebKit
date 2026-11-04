@@ -523,7 +523,7 @@ static bool warningsDoWarn(JSGlobalObject* globalObject, JSValue message, JSValu
         module = makeStr(vm, "<string>"_s);
 
     WarningsLocker locker(globalObject);
-    if (!locker)
+    if (failed(scope, !!locker))
         return false;
     RELEASE_AND_RETURN(scope, warningsWarnExplicit(globalObject, category, message, filename, lineno, module, registry, { }, source));
 }
@@ -545,7 +545,7 @@ bool warnExplicit(JSGlobalObject* globalObject, PyType* category, const String& 
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     WarningsLocker locker(globalObject);
-    if (!locker)
+    if (failed(scope, !!locker))
         return false;
     RELEASE_AND_RETURN(scope, warningsWarnExplicit(globalObject, category, makeStr(vm, message), makeStr(vm, filename), lineno, module && !isNone(module) ? module : JSValue(), { }, { }, { }));
 }
@@ -652,7 +652,7 @@ static JSValue warningsWarnExplicitFunction(JSGlobalObject* globalObject, JSValu
         RETURN_IF_EXCEPTION(scope, { });
     }
     WarningsLocker locker(globalObject);
-    if (!locker)
+    if (failed(scope, !!locker))
         return { };
     warningsWarnExplicit(globalObject, category, message, filename, lineno, module, registry, sourceLine, source);
     RETURN_IF_EXCEPTION(scope, { });
