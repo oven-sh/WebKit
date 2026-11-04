@@ -1031,9 +1031,22 @@ private:
 
     bool encodeSequence(JSValue sequence, unsigned level)
     {
+        Runtime& rt = runtime(m_globalObject);
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        JSArray* list = tryAsList(sequence);
-        PyTuple* tuple = list ? nullptr : PyTuple::from(sequence);
+        // What a class derived from list or tuple holds is what iterating over it gives.
+        JSValue items = sequence;
+        if (PyType* type = rt.typeOf(sequence); type != rt.listType() && type != rt.tupleType()) {
+            JSValue iterator = getIter(m_globalObject, sequence);
+            if (scope.exception()) {
+                if (clearPendingExceptionIfMatches(m_globalObject, rt.TypeError()))
+                    raiseTypeError(m_globalObject, scope, "encoder_listencode_list needs a sequence"_s);
+                return false;
+            }
+            items = listFromIterable(m_globalObject, iterator);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        JSArray* list = tryAsList(items);
+        PyTuple* tuple = list ? nullptr : PyTuple::from(items);
         auto length = [&] { return list ? listLength(list) : tuple->length(); };
         if (!length()) {
             m_out.append("[]"_s);
