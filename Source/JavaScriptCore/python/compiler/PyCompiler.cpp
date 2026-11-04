@@ -291,6 +291,7 @@ UnlinkedFunctionExecutable* Compiler::compileCode(Unit* parent, const CodeSpec& 
     info->docstring = spec.docstring;
     info->takesNamespace = !scope->isFunctionLike();
     info->sourceIsShown = m_options.sourceIsShown;
+    info->isLambda = spec.kind == UnitKind::Lambda;
 
     if (scope->isFunctionLike()) {
         info->flags.add({ CodeFlag::NewLocals, CodeFlag::Optimized });

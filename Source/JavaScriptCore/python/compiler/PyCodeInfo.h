@@ -102,6 +102,11 @@ public:
     // Its name is no file's ("<string>"), and a traceback shows the lines all the same, from the text it was compiled from: what follows -c.
     bool sourceIsShown { false };
 
+    // It is the code of a lambda. CPython's compiler puts the body of a generator in a handler that makes a RuntimeError of a StopIteration
+    // (PEP 479; until 3.11 the interpreter did that itself). It does so for functions and generator expressions, and not for a lambda, so
+    // since 3.12 `(lambda: (yield))()` lets a StopIteration out as it is.
+    bool isLambda { false };
+
     // A generator function only binds its arguments. The body is another function, this index among those of the code block.
     static constexpr unsigned generatorBodyIndex = 0;
 

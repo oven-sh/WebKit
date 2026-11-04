@@ -212,8 +212,9 @@ function is called in this way once it has been called in the ordinary way, whic
 - _To resume a generator is to call its body_, and the body keeps the books. `op_py_generator_enter`, its first instruction,
   notes that the generator is running and goes on where it stopped: the state of a suspended generator is the offset of the
   instruction to go on with. `op_py_generator_suspend` and `op_py_generator_return` note that it no longer runs, and return to
-  the caller. If an exception leaves the body, the unwinder does that (`generatorBodyIsUnwinding`). The caller tells a yield from
-  a return by the state.
+  the caller. If an exception leaves the body, the unwinder does that (`generatorBodyIsUnwinding`), and makes a `RuntimeError` of a
+  `StopIteration` (PEP 479), but not for the generator of a lambda: CPython's compiler has left that out since 3.12, so a
+  `StopIteration` that `f()` raises in `(lambda: (yield f()))()` leaves the generator as it is, and is the end for `list()`. The caller tells a yield from a return by the state.
 - So anybody can resume one: `PyGenerator::resume()` in C++, and two instructions, which make the frame and call the body without
   leaving the interpreter: `op_py_for_iter`, and `op_py_send`, which is a step of `yield from` or `await`. Both enter at
   `llint_python_generator_resume`: the prologue, `op_enter` and `op_py_generator_enter` in one.

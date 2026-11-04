@@ -3959,6 +3959,7 @@ public:
         m_takesNamespace = info.takesNamespace;
         m_hasLoopThatOwnsItsIterator = info.hasLoopThatOwnsItsIterator;
         m_sourceIsShown = info.sourceIsShown;
+        m_isLambda = info.isLambda;
         m_namespaceRegister = info.namespaceRegister.offset();
         m_parameterNames.encode(encoder, info.parameterNames);
         m_variables.encode(encoder, info.variables);
@@ -3983,6 +3984,7 @@ public:
         info->takesNamespace = m_takesNamespace;
         info->hasLoopThatOwnsItsIterator = m_hasLoopThatOwnsItsIterator;
         info->sourceIsShown = m_sourceIsShown;
+        info->isLambda = m_isLambda;
         info->namespaceRegister = VirtualRegister(m_namespaceRegister);
         m_parameterNames.decode(decoder, info->parameterNames);
         m_variables.decode(decoder, info->variables);
@@ -4005,6 +4007,7 @@ private:
     uint32_t m_takesNamespace;
     uint32_t m_hasLoopThatOwnsItsIterator;
     uint32_t m_sourceIsShown;
+    uint32_t m_isLambda;
     int32_t m_namespaceRegister;
     CachedVector<CachedIdentifier> m_parameterNames;
     CachedVector<CachedPythonVariable> m_variables;
@@ -5569,7 +5572,8 @@ protected:
     // 16: op_wide16, op_wide32 and op_py_instrumented are the last ids (opcode numbering).
     // 17: op_to_number says what it was written as.
     // 18: op_page2 and the opcodes behind it (opcode numbering).
-    static constexpr uint32_t cachedTypesFormatRevision = 18;
+    // 19: Python::CodeInfo::isLambda.
+    static constexpr uint32_t cachedTypesFormatRevision = 19;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)

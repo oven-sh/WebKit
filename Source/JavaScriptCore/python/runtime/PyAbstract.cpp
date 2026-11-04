@@ -2033,7 +2033,14 @@ JSValue iterNext(JSGlobalObject* globalObject, JSValue iterator)
             if (generator->kind() == PyGenerator::Kind::Generator) {
                 JSValue result;
                 if (generator->state() >= 0) [[likely]] {
-                    RELEASE_AND_RETURN(scope, generator->resume(globalObject, jsUndefined(), JSGenerator::ResumeMode::NormalMode, result) == PyGenerator::Outcome::Yielded ? result : JSValue());
+                    PyGenerator::Outcome outcome = generator->resume(globalObject, jsUndefined(), JSGenerator::ResumeMode::NormalMode, result);
+                    EXCEPTION_ASSERT(!!scope.exception() == (outcome == PyGenerator::Outcome::Threw));
+                    if (outcome == PyGenerator::Outcome::Yielded) [[likely]]
+                        return result;
+                    // The generator of a lambda lets a StopIteration out (CodeInfo::isLambda), which ends the iteration like any other.
+                    if (outcome == PyGenerator::Outcome::Threw)
+                        clearPendingExceptionIfMatches(globalObject, rt.StopIteration());
+                    return { };
                 }
                 RELEASE_AND_RETURN(scope, generatorSend(globalObject, generator, jsUndefined(), result));
             }

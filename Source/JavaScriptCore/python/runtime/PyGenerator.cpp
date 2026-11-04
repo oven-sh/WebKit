@@ -191,7 +191,8 @@ void PyGenerator::bodyIsUnwinding(JSGlobalObject* globalObject, bool isTerminati
     complete();
     if (isTermination)
         return;
-    replaceStopIteration(globalObject, m_kind);
+    if (!body()->codeInfo().isLambda)
+        replaceStopIteration(globalObject, m_kind);
     EXCEPTION_ASSERT(scope.exception());
     unwrapPendingException(globalObject);
     EXCEPTION_ASSERT_UNUSED(scope, scope.exception());
