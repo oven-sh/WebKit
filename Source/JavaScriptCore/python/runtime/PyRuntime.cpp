@@ -19,6 +19,7 @@
 #include "PyFunction.h"
 #include "PyGenerator.h"
 #include "PyInternals.h"
+#include "PyJSClass.h"
 #include "PyIterators.h"
 #include "PyJSView.h"
 #include "PyList.h"
@@ -303,6 +304,8 @@ PyType* Runtime::typeOf(JSValue value) const
             }
         }
         case JSPromiseType:
+            if (PyType* derived = typeByPrototype(asObject(cell))) [[unlikely]]
+                return derived;
             return jsPromiseType();
         case SymbolType:
             return jsSymbolType(const_cast<Runtime&>(*this));
@@ -321,7 +324,12 @@ PyType* Runtime::typeOf(JSValue value) const
                 return uncheckedDowncast<PyListObject>(cell)->type();
             return listType();
         default:
-            return cell->isObject() && asObject(cell)->isCallable() ? jsFunctionType() : jsObjectType();
+            if (!cell->isObject())
+                return jsObjectType();
+            // An instance of a class of Python's that derives from a class of JS.
+            if (PyType* derived = typeByPrototype(asObject(cell))) [[unlikely]]
+                return derived;
+            return asObject(cell)->isCallable() ? jsFunctionType() : jsObjectType();
         }
     }
     if (value.isInt32())

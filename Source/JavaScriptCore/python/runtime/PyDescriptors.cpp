@@ -11,6 +11,7 @@
 #include "PyErrors.h"
 #include "PyFunction.h"
 #include "PyInternals.h"
+#include "PyJSClass.h"
 #include "PyList.h"
 #include "PyNumbers.h"
 #include "PyStr.h"
@@ -686,7 +687,15 @@ static JSValue superGetAttribute(JSGlobalObject* globalObject, JSValue self, JSV
         while (i + 1 < count && mro->at(i).asCell() != object->thisClass.get())
             ++i;
         for (++i; i < count; ++i) {
-            JSValue found = PyType::from(mro->at(i))->dict()->get(name);
+            PyType* next = PyType::from(mro->at(i));
+            // What a class of JS has is in its prototype.
+            if (JSObject* prototype = prototypeOfClassOfJS(next); prototype && object->object.get() != JSValue(startType)) [[unlikely]] {
+                JSValue inherited = attributeFromPrototypeOfJS(globalObject, prototype, object->object.get(), name);
+                RETURN_IF_EXCEPTION(scope, { });
+                if (inherited)
+                    return inherited;
+            }
+            JSValue found = next->dict()->get(name);
             if (!found)
                 continue;
             JSValue instance = object->object.get();

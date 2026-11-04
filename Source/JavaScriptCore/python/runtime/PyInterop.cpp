@@ -76,7 +76,8 @@ static JSValue bindIfFunction(JSGlobalObject* globalObject, JSObject* object, JS
     // A class is not a method of what holds it: js.Promise is Promise itself.
     if (auto* jsFunction = dynamicDowncast<JSFunction>(function); jsFunction && !jsFunction->isHostFunction() && jsFunction->jsExecutable()->isClassConstructorFunction())
         return value;
-    if (function->inherits<InternalFunction>() || isPrototypeOfConstructor(globalObject, object))
+    // Nor is what a module exports a method of its namespace.
+    if (function->inherits<InternalFunction>() || object->type() == ModuleNamespaceObjectType || isPrototypeOfConstructor(globalObject, object))
         return value;
     // object -> function -> bound function, all of it weak: a bound function lasts as long as both.
     auto mapIn = [&](JSValue found, auto&& remember) {
@@ -150,6 +151,24 @@ static JSValue jsObjectGetAttribute(JSGlobalObject* globalObject, JSValue self, 
         return self;
     // What every Python object has: __class__, __dir__, and so on.
     RELEASE_AND_RETURN(scope, genericGetAttr(globalObject, self, name));
+}
+
+JSValue attributeFromPrototypeOfJS(JSGlobalObject* globalObject, JSObject* prototype, JSValue object, JSString* name)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Identifier key = propertyKeyFor(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+    bool found = prototype->getPropertySlot(globalObject, key, slot);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!found)
+        return { };
+    JSValue value = slot.getValue(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, bindIfFunction(globalObject, asObject(object), value));
 }
 
 static JSValue jsObjectSetAttr(JSGlobalObject* globalObject, JSValue self, JSValue nameValue, JSValue value)
@@ -617,6 +636,9 @@ static JSValue jsObjectRepr(JSGlobalObject* globalObject, JSValue self)
         return { };
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // An instance of a class written in Python.
+    if (typeOf(globalObject, self)->isHeapType())
+        RELEASE_AND_RETURN(scope, objectRepr(globalObject, self));
     String className = JSObject::calculatedClassName(asObject(self));
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, makeStr(vm, makeString("<JavaScript "_s, className.isEmpty() ? "object"_str : className, " at "_s, addressForRepr(globalObject, self), '>')));
@@ -854,6 +876,43 @@ static JSValue jsFunctionInstanceCheck(JSGlobalObject* globalObject, JSValue sel
     return jsBoolean(result);
 }
 
+// class Derived(function): see PyJSClass.h.
+static JSValue jsFunctionMroEntries(JSGlobalObject* globalObject, JSValue self, JSValue)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    PyType* type = typeForClassOfJS(globalObject, asObject(self));
+    return type ? JSValue(PyTuple::create(globalObject, { type })) : JSValue();
+}
+
+// issubclass(cls, function): whether the instances of the class inherit from function.prototype.
+static JSValue jsFunctionSubclassCheck(JSGlobalObject* globalObject, JSValue self, JSValue cls)
+{
+    if (!ensureMainThreadForJS(globalObject))
+        return { };
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* function = asObject(self);
+    while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
+        function = bound->targetFunction();
+    JSValue wanted = function->get(globalObject, vm.propertyNames->prototype);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue prototype;
+    if (PyType* type = PyType::tryFrom(cls))
+        prototype = prototypeForJS(globalObject, type);
+    else if (cls.isObject()) {
+        prototype = asObject(cls)->get(globalObject, vm.propertyNames->prototype);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    while (prototype && prototype.isObject()) {
+        if (prototype == wanted)
+            return jsBoolean(true);
+        prototype = asObject(prototype)->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return jsBoolean(false);
+}
+
 static constexpr NativeDef jsObjectMethods[] = {
     PY_SLOT("__getattribute__", jsObjectGetAttribute, "($self, name, /)"),
     PY_SLOT("__setattr__", jsObjectSetAttr, "($self, name, value, /)"),
@@ -1062,6 +1121,8 @@ static constexpr NativeDef jsFunctionMethods[] = {
     PY_METHOD("__deepcopy__", jsFunctionDeepCopy, "($self, memo, /)"),
     PY_METHOD("new", jsFunctionNew, "($self, *args, **kwargs)"),
     PY_METHOD("__instancecheck__", jsFunctionInstanceCheck, "($self, instance, /)"),
+    PY_METHOD("__subclasscheck__", jsFunctionSubclassCheck, "($self, subclass, /)"),
+    PY_METHOD("__mro_entries__", jsFunctionMroEntries, "($self, bases, /)"),
 };
 
 // ---- The iterators and generators of JS are iterators and generators ----
@@ -1271,9 +1332,9 @@ void initializeJSModule(JSGlobalObject* globalObject, PyModule* module)
 void initializeInteropTypes(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
-    rt.jsObjectType()->initializeBuiltin(globalObject, { "JSObject"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref }, jsObjectMethods, { }, { } }, rt.typeType(), rt.objectType());
+    rt.jsObjectType()->initializeBuiltin(globalObject, { "JSObject"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Base, TypeFlag::OwnLayout }, jsObjectMethods, { }, { } }, rt.typeType(), rt.objectType());
     rt.jsFunctionType()->initializeBuiltin(globalObject, { "JSFunction"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref }, jsFunctionMethods, jsFunctionGetSets, { } }, rt.typeType(), rt.jsObjectType());
-    rt.jsPromiseType()->initializeBuiltin(globalObject, { "JSPromise"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref }, jsPromiseMethods, { }, { } }, rt.typeType(), rt.jsObjectType());
+    rt.jsPromiseType()->initializeBuiltin(globalObject, { "JSPromise"_s, { TypeFlag::DisallowInstantiation, TypeFlag::HasWeakref, TypeFlag::Base, TypeFlag::OwnLayout }, jsPromiseMethods, { }, { } }, rt.typeType(), rt.jsObjectType());
 }
 
 } // namespace Python

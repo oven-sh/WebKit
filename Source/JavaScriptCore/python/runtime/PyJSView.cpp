@@ -206,7 +206,7 @@ static bool jsViewAdaptorProperty(JSGlobalObject* globalObject, JSObject* object
     if (!isPyObject(object)) {
         if (propertyName == names.prototype) {
             auto* pyType = PyType::tryFrom(object);
-            return pyType && jsViewFound(object, slot, PyPrototypeView::of(globalObject, pyType), hidden);
+            return pyType && jsViewFound(object, slot, prototypeForJS(globalObject, pyType), hidden);
         }
         // A PyFunction has the name of any function of JS.
         if (propertyName != names.name || object->type() != InternalFunctionType)

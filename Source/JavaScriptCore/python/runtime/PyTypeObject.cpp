@@ -709,6 +709,12 @@ JSValue typeGetAttr(JSGlobalObject* globalObject, PyType* type, JSString* name, 
         RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, metaAttribute, type, metatype));
     if (metaAttribute)
         return metaAttribute;
+    if (type->isSubtypeOf(rt.jsObjectType())) [[unlikely]] {
+        JSValue inherited = staticMemberOfClassOfJS(globalObject, type, name);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (inherited)
+            return inherited;
+    }
     if (suppress)
         return { };
     return raiseAttributeError(globalObject, scope, type, name, makeString("type object '"_s, type->nameInMessages(), "' has no attribute '"_s, stringOf(name), '\''));

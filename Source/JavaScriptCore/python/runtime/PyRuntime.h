@@ -397,6 +397,9 @@ public:
         GCGarbage, // gc.garbage and gc.callbacks, lists. The program has them too.
         GCCallbacks,
         BoundMethodsOfJS, // A JSWeakMap: see bindIfFunction() in PyInterop.cpp.
+        TypesOfJSClasses, // A JSWeakMap: see typeForClassOfJS() in PyJSClass.cpp.
+        ArgumentsOfJSConstructors, // A JSWeakMap: see classOfJSNew() there.
+        NamespacesOfFilesOfJS, // dict: see namespaceOfFileOfJS() in PyFrame.cpp.
         Count
     };
     JSValue slot(Slot which) const { return m_slots[static_cast<unsigned>(which)].get(); }

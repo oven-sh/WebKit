@@ -486,6 +486,8 @@ JSValue constructForeignFunction(JSGlobalObject*, JSValue function, const CallAr
 // A function written in JS that is found in a class is a method of the instances, as one written in Python is. The instance is its
 // `this`; an arrow function, which has none, is to JS what a lambda is to Python and takes it first. Not a method: a class, a bound
 // function, a function written in C++ (as in Python).
+// prototype[name], read for the object, which inherits from it: a function is bound to the object. Empty: there is none, or an exception.
+JSValue attributeFromPrototypeOfJS(JSGlobalObject*, JSObject* prototype, JSValue object, JSString* name);
 enum class ForeignMethodKind : uint8_t { NotAMethod, TakesThis, TakesFirstArgument };
 ForeignMethodKind foreignMethodKind(JSCell*);
 // What to call a bound method of such a function is.

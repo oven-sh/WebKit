@@ -112,6 +112,30 @@ private:
     WriteBarrier<PyType> m_type;
 };
 
+// The other way round: `class Derived(Base)` in Python, where Base is a class of JS.
+//
+//     class Lines(stream.Readable):
+//         def _read(self, size): self.push(...)
+//
+// Base stands among the bases for a class of Python's that is made for it (JSFunction.__mro_entries__, typeForClassOfJS()), which derives
+// from the one of the class that Base extends, and in the end from JSObject. An instance is an object of JS, made by Base itself
+// (`Reflect.construct(Base, arguments, Derived)`: that is Base.__new__), so it is all that an instance of Base is to JS: a Map, an
+// EventTarget, with Base's fields and private names. Its prototype is Derived.prototype, behind which comes Base.prototype. By
+// that Python knows its class (Runtime::typeOf()), and JS finds what Derived defines: Base's own code calls this._read().
+// As with every class that has a __new__, it is __new__ that gets the arguments for Base. Base.__init__ does nothing, but objects to
+// arguments other than those.
+
+// The class of Python's that stands for the class of JS. Null: an exception; it is not something to derive from.
+PyType* typeForClassOfJS(JSGlobalObject*, JSObject* constructor);
+// Base.prototype, if the type is one of those. Null: it is not.
+JSObject* prototypeOfClassOfJS(PyType*);
+// What Base has itself (its static members), read for a class derived from it, which is `this` in them. Empty: nothing, or an exception.
+JSValue staticMemberOfClassOfJS(JSGlobalObject*, PyType*, JSString* name);
+// Type.prototype: that, or the PyPrototypeView.
+JSObject* prototypeForJS(JSGlobalObject*, PyType*);
+// The class of Python's that the object of JS is an instance of, going by its prototype. Null: none.
+PyType* typeByPrototype(JSObject*);
+
 // A property of an instance whose key is a symbol, if a class of its that is written in JS has it. False: none has, or an exception.
 bool symbolPropertyOfClasses(JSGlobalObject*, PyType*, PropertyName, PropertySlot&);
 
