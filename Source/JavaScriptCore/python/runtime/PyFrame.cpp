@@ -797,6 +797,80 @@ PyFrame* currentFrame(JSGlobalObject* globalObject, unsigned depth)
     return callFrame ? PyFrame::of(globalObject, callFrame) : nullptr;
 }
 
+// ---- Calls of functions of JS ----
+
+static bool isShownCodeOfJS(CodeBlock* codeBlock)
+{
+    return !codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && codeBlock->ownerExecutable()->implementationVisibility() == ImplementationVisibility::Public;
+}
+
+void forEachCallOfEitherLanguage(VM& vm, const ScopedLambda<IterationStatus(const CallOfEitherLanguage&)>& function)
+{
+    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) -> IterationStatus {
+        CodeBlock* codeBlock = visitor->isNativeCalleeFrame() ? nullptr : visitor->codeBlock();
+        if (!codeBlock)
+            return IterationStatus::Continue;
+        if (isPythonCodeBlock(codeBlock))
+            return isPythonFrame(visitor->callFrame()) ? function(CallOfEitherLanguage { visitor->callFrame(), codeBlock, visitor->bytecodeIndex() }) : IterationStatus::Continue;
+        return isShownCodeOfJS(codeBlock) ? function(CallOfEitherLanguage { nullptr, codeBlock, visitor->bytecodeIndex() }) : IterationStatus::Continue;
+    });
+}
+
+PositionInJS positionInJS(VM& vm, CodeBlock* codeBlock, BytecodeIndex index)
+{
+    PositionInJS position;
+    LineColumn lineColumn = codeBlock->lineColumnForBytecodeIndex(index);
+    if (std::optional<int> line = codeBlock->ownerExecutable()->overrideLineNumber(vm))
+        lineColumn.line = *line;
+    SourceProvider* provider = codeBlock->source().provider();
+    position.filename = provider->sourceURL();
+#if USE(BUN_JSC_ADDITIONS)
+    // What runs may have been made from what the programmer wrote.
+    if (auto& map = vm.computeLineColumnWithSourcemap()) {
+        String original;
+        map(vm, provider, lineColumn, original);
+        if (!original.isEmpty())
+            position.filename = WTF::move(original);
+    }
+#endif
+    position.line = lineColumn.line;
+    switch (codeBlock->codeType()) {
+    case FunctionCode:
+        position.function = uncheckedDowncast<FunctionExecutable>(codeBlock->ownerExecutable())->ecmaNameWithoutGC();
+        if (position.function.isEmpty())
+            position.function = "<anonymous>"_s;
+        break;
+    case EvalCode:
+        position.function = "<eval>"_s;
+        break;
+    case GlobalCode:
+    case ModuleCode:
+        position.function = "<module>"_s;
+        break;
+    }
+    return position;
+}
+
+PyDict* namespaceOfFileOfJS(JSGlobalObject* globalObject, const String& filename)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    PyDict* namespaces = PyDict::tryFrom(rt.slot(Runtime::Slot::NamespacesOfFilesOfJS));
+    if (!namespaces) {
+        namespaces = PyDict::create(globalObject);
+        rt.setSlot(Runtime::Slot::NamespacesOfFilesOfJS, namespaces);
+    }
+    JSString* name = makeStr(vm, filename);
+    if (JSValue existing = namespaces->get(name))
+        return PyDict::from(existing);
+    PyDict* result = PyDict::create(globalObject);
+    // As warnings.warn_explicit() names a module of which it knows the file only.
+    result->set(vm, rt.names.dName(), name);
+    result->set(vm, internString(vm, "__file__"_s), name);
+    namespaces->set(vm, name, result);
+    return result;
+}
+
 PyFrame* topFrameOf(JSGlobalObject* globalObject, JSLock::ParkedThread& parked)
 {
     EntryFrame* entryFrame = parked.topEntryFrame();
@@ -1319,7 +1393,42 @@ PyTraceback::PyTraceback(VM& vm, Structure* structure, PyType* type)
 {
 }
 
-PyTraceback* PyTraceback::create(JSGlobalObject* globalObject, JSValue next, PyFrame* frame, int lineNumber, unsigned lastI)
+PyTraceback* PyTraceback::createForJS(JSGlobalObject* globalObject, JSValue next, CodeBlock* codeBlock, BytecodeIndex index)
+{
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto* traceback = new (NotNull, allocateCell<PyTraceback>(vm)) PyTraceback(vm, rt.structure<PyTraceback>(), rt.tracebackType());
+    traceback->finishCreation(vm);
+    traceback->m_next.set(vm, traceback, next);
+    traceback->m_codeBlockOfJS.set(vm, traceback, codeBlock);
+    traceback->m_indexOfJS = index;
+    traceback->m_lastI = -1;
+    traceback->m_isOfJS = true;
+    return traceback;
+}
+
+// The frame is one of code of Python's that does nothing, and says that it is from that file and has that name.
+void PyTraceback::makeFrameOfJS()
+{
+    CodeBlock* codeBlock = m_codeBlockOfJS.get();
+    JSGlobalObject* globalObject = codeBlock->globalObject();
+    VM& vm = getVM(globalObject);
+    // An exception may be on its way.
+    SuspendExceptionScope suspended(vm);
+    PositionInJS position = positionInJS(vm, codeBlock, m_indexOfJS);
+    PyCode* code = PyCode::tryFrom(compileSource(globalObject, { }, position.filename, "exec"_s, 0, -1));
+    RELEASE_ASSERT(code);
+    CodeInfo& info = code->codeInfo();
+    info.name = Identifier::fromString(vm, position.function);
+    info.qualname = position.function;
+    PyFrame* frame = PyFrame::createSuspended(globalObject, PyFunction::create(globalObject, code->executable(), namespaceOfFileOfJS(globalObject, position.filename)), 0);
+    frame->setLineNumber(position.line);
+    m_lineNumber = position.line;
+    m_frame.set(vm, this, frame);
+    m_codeBlockOfJS.clear();
+}
+
+PyTraceback* PyTraceback::create(JSGlobalObject* globalObject, JSValue next, PyFrame* frame, int lineNumber, int lastI)
 {
     Runtime& rt = runtime(globalObject);
     VM& vm = rt.vm();
@@ -1339,11 +1448,60 @@ void PyTraceback::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_next);
     visitor.append(thisObject->m_frame);
+    visitor.append(thisObject->m_codeBlockOfJS);
 }
 
 DEFINE_VISIT_CHILDREN(PyTraceback);
 
 bool addTracebackEntryToThrownObject(JSGlobalObject*, JSValue thrown, const ScopedLambda<JSValue(JSValue next)>& makeEntry);
+
+// An error of JS comes up to code of Python's for the first time. Nobody has kept track of where it has been, but it knows the calls
+// that were in progress when it was made. Those within the call that Python made are the traceback so far, if that call is among them:
+// else the error was made at some other time than now.
+static JSValue tracebackOfErrorOfJS(JSGlobalObject* globalObject, JSValue thrown, CodeBlock* reached)
+{
+    auto* error = dynamicDowncast<ErrorInstance>(thrown);
+    Vector<StackFrame>* stackTrace = error ? error->stackTrace() : nullptr;
+    if (!stackTrace)
+        return { };
+    size_t count = 0;
+    while (count < stackTrace->size() && !(stackTrace->at(count).codeBlock() && isPythonCodeBlock(stackTrace->at(count).codeBlock())))
+        ++count;
+    if (count == stackTrace->size() || stackTrace->at(count).codeBlock() != reached)
+        return { };
+    JSValue traceback;
+    for (size_t i = 0; i < count; ++i) {
+        CodeBlock* codeBlock = stackTrace->at(i).codeBlock();
+        if (codeBlock && isShownCodeOfJS(codeBlock))
+            traceback = PyTraceback::createForJS(globalObject, traceback, codeBlock, stackTrace->at(i).bytecodeIndex());
+    }
+    return traceback;
+}
+
+void addTracebackEntryForJS(JSGlobalObject* globalObject, JSValue thrown, CallFrame* callFrame, CodeBlock* codeBlock, BytecodeIndex index, bool throwsAgain)
+{
+    if (!isShownCodeOfJS(codeBlock))
+        return;
+    Runtime& rt = runtime(globalObject);
+    VM& vm = rt.vm();
+    auto& caught = rt.caughtToBeThrownAgainInJS;
+    bool isThrownAgain = caught.callFrame == callFrame && caught.codeBlock == codeBlock && caught.thrown == JSValue::encode(thrown);
+    caught = { };
+    if (throwsAgain)
+        caught = { callFrame, codeBlock, JSValue::encode(thrown) };
+    if (isThrownAgain)
+        return;
+    DeferGC deferGC(vm);
+    if (auto* exception = exceptionOfThrownValueIfKnown(globalObject, thrown)) {
+        exception->setTraceback(vm, PyTraceback::createForJS(globalObject, exception->traceback(), codeBlock, index));
+        return;
+    }
+    // What JS throws has a traceback only once it has been through code of Python's.
+    auto makeEntry = [&](JSValue next) -> JSValue {
+        return next ? PyTraceback::createForJS(globalObject, next, codeBlock, index) : nullptr;
+    };
+    addTracebackEntryToThrownObject(globalObject, thrown, makeEntry);
+}
 
 JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, CallFrame* callFrame, BytecodeIndex index)
 {
@@ -1364,8 +1522,12 @@ JSValue addTracebackEntry(JSGlobalObject* globalObject, JSValue exceptionValue, 
         // What JS threw has a JSError once Python has caught it: making one runs code. Until then the object keeps the traceback.
         if (auto* exception = exceptionOfThrownValueIfKnown(globalObject, exceptionValue))
             exception->setTraceback(vm, makeEntry(exception->traceback()));
-        else
-            addTracebackEntryToThrownObject(globalObject, exceptionValue, makeEntry);
+        else {
+            auto makeEntries = [&](JSValue next) -> JSValue {
+                return makeEntry(next ? next : tracebackOfErrorOfJS(globalObject, exceptionValue, codeBlock));
+            };
+            addTracebackEntryToThrownObject(globalObject, exceptionValue, makeEntries);
+        }
     }
     return exceptionIsRaised(globalObject, exceptionValue, callFrame, index, isRaisedAgain);
 }
@@ -1631,6 +1793,23 @@ private:
         return decodeUTF8Lenient(bytes.span()).trim([](char16_t c) { return c == ' ' || c == '\t' || c == '\f' || c == '\r'; });
     }
 
+    // What runs is not what the programmer wrote, which is in the file.
+    String sourceLineOfJS(const String& filename, int lineNumber)
+    {
+        auto& contents = m_filesOfJS.ensure(filename, [&] {
+            return readFile(filename).value_or(Vector<uint8_t> { });
+        }).iterator->value;
+        std::span<const uint8_t> rest = contents.span();
+        for (int line = 1; line < lineNumber; ++line) {
+            size_t end = WTF::find(rest, '\n');
+            if (end == notFound)
+                return { };
+            rest = rest.subspan(end + 1);
+        }
+        size_t end = WTF::find(rest, '\n');
+        return decodeUTF8Lenient(end == notFound ? rest : rest.first(end)).trim([](char16_t c) { return c == ' ' || c == '\t' || c == '\f' || c == '\r'; });
+    }
+
     void printTraceback(JSValue traceback, bool withHeader)
     {
         if (withHeader)
@@ -1658,7 +1837,7 @@ private:
                 continue;
             CodeInfo& info = function->codeInfo();
             m_out.append("  File \""_s, info.filename, "\", line "_s, entry->lineNumber(), ", in "_s, info.name.string(), '\n');
-            String line = sourceLine(function, entry->lineNumber());
+            String line = entry->isOfJS() ? sourceLineOfJS(info.filename, entry->lineNumber()) : sourceLine(function, entry->lineNumber());
             if (!line.isEmpty())
                 m_out.append("    "_s, line, '\n');
         }
@@ -2070,6 +2249,7 @@ private:
     StrBuilder m_result;
     StrBuilder m_out; // What has not been indented yet.
     Vector<JSCell*, 8> m_seen;
+    HashMap<String, Vector<uint8_t>> m_filesOfJS;
     unsigned m_groupDepth { 0 };
     bool m_needsClose { false };
 };

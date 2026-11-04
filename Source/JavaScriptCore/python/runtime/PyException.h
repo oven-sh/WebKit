@@ -155,21 +155,39 @@ public:
     PY_DECLARE_CELL(PyTraceback, PyObject, PyObjectType);
     DECLARE_VISIT_CHILDREN;
 
-    static PyTraceback* create(JSGlobalObject*, JSValue next, PyFrame*, int lineNumber, unsigned lastI);
+    static PyTraceback* create(JSGlobalObject*, JSValue next, PyFrame*, int lineNumber, int lastI);
+    // For a call of a function of JS. What Python sees of that, a frame and a line, is made when something asks for it: finding the
+    // line takes the source map of the file.
+    static PyTraceback* createForJS(JSGlobalObject*, JSValue next, CodeBlock*, BytecodeIndex);
 
     JSValue next() const { return m_next.get(); } // Empty: the last.
     void setNext(VM& vm, JSValue value) { m_next.set(vm, this, value); }
-    PyFrame* frame() const { return m_frame.get(); }
-    int lineNumber() const { return m_lineNumber; }
-    unsigned lastI() const { return m_lastI; } // tb_lasti: see shownOffset().
+    bool isOfJS() const { return m_isOfJS; }
+    PyFrame* frame()
+    {
+        if (!m_frame) [[unlikely]]
+            makeFrameOfJS();
+        return m_frame.get();
+    }
+    int lineNumber()
+    {
+        if (!m_frame) [[unlikely]]
+            makeFrameOfJS();
+        return m_lineNumber;
+    }
+    int lastI() const { return m_lastI; } // tb_lasti: see shownOffset(). -1: no instruction of Python's.
 
 private:
     PyTraceback(VM&, Structure*, PyType*);
+    void makeFrameOfJS();
 
     WriteBarrier<Unknown> m_next;
     WriteBarrier<PyFrame> m_frame;
+    WriteBarrier<CodeBlock> m_codeBlockOfJS; // Until there is a frame.
+    BytecodeIndex m_indexOfJS;
     int m_lineNumber { 0 };
-    unsigned m_lastI { 0 };
+    int m_lastI { 0 };
+    bool m_isOfJS { false };
 };
 
 // type(*args), for a built-in exception type, without running any Python code.

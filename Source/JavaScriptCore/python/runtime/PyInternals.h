@@ -347,6 +347,23 @@ bool nanosecondsFromSeconds(JSGlobalObject*, JSValue seconds, TimeRounding, int6
 PyFrame* currentFrame(JSGlobalObject*, unsigned depth = 0);
 // The frame object of the call, if anything has asked for it.
 PyFrame* frameObjectIfAny(CallFrame*);
+// The calls in progress of functions of either language, from the latest. Not those that a stack trace of JS leaves out: of functions
+// written in C++, and of the functions of JS that the engine and the host are made of.
+struct CallOfEitherLanguage {
+    CallFrame* python { nullptr }; // Null: it is of JS,
+    CodeBlock* codeBlock { nullptr }; // of this code,
+    BytecodeIndex index; // which has got here.
+};
+void forEachCallOfEitherLanguage(VM&, const ScopedLambda<IterationStatus(const CallOfEitherLanguage&)>&);
+// Where that is in the file that the programmer wrote.
+struct PositionInJS {
+    String filename;
+    String function; // As co_name would have it: "<module>" for the top level.
+    int line { 0 };
+};
+PositionInJS positionInJS(VM&, CodeBlock*, BytecodeIndex);
+// What stands in for the globals of the code of a file of JS: f_globals of its frames, and where its __warningregistry__ is.
+PyDict* namespaceOfFileOfJS(JSGlobalObject*, const String& filename);
 // The code as it is run: that of the body, for a generator function. Null: an exception.
 CodeBlock* codeBlockOf(JSGlobalObject*, PyCode*);
 // In PyMonitoring.cpp.

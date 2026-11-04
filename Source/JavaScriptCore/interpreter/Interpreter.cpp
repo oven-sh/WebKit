@@ -1357,9 +1357,42 @@ public:
     std::optional<AOT::CompiledFrameIterator::Exit> takeExitFromCompiledCode() const { return std::exchange(m_exitFromCompiledCode, std::nullopt); }
 #endif
 
+    static bool throwsAgain(HandlerInfo* handler) { return handler && handler->type() != HandlerType::Catch; }
+
+    // Tracebacks of Python's have the calls of functions of JS too. These are the ones that an optimizing compiler has made part of
+    // the caller. False: the exception gets no further than one of them, or the caller has made way for them with a tail call.
+    template<typename Visitor>
+    bool addTracebackEntriesForInlinedCalls(Visitor& visitor) const
+    {
+#if ENABLE(DFG_JIT)
+        if (m_isTermination || !visitor->callFrame() || !visitor->isInlinedDFGFrame())
+            return true;
+        JSGlobalObject* globalObject = visitor->codeBlock()->globalObject();
+        if (!globalObject->pythonRuntime())
+            return true;
+        BytecodeIndex index = visitor->bytecodeIndex();
+        for (InlineCallFrame* inlineCallFrame = visitor->inlineCallFrame(); inlineCallFrame;) {
+            CodeBlock* codeBlock = inlineCallFrame->baselineCodeBlock.get();
+            HandlerInfo* handler = codeBlock->handlerForBytecodeIndex(index);
+            Python::addTracebackEntryForJS(globalObject, m_thrownValue, visitor->callFrame(), codeBlock, index, throwsAgain(handler));
+            if (handler)
+                return false;
+            CodeOrigin* caller = inlineCallFrame->getCallerSkippingTailCalls();
+            if (!caller)
+                return false;
+            index = caller->bytecodeIndex();
+            inlineCallFrame = caller->inlineCallFrame();
+        }
+#else
+        UNUSED_PARAM(visitor);
+#endif
+        return true;
+    }
+
     template<typename Visitor>
     IterationStatus operator()(Visitor& visitor) const
     {
+        bool reachesMachineFrame = addTracebackEntriesForInlinedCalls(visitor);
         visitor.unwindToMachineCodeBlockFrame();
         m_callFrame = visitor->callFrame();
 #if ENABLE(AOT)
@@ -1376,7 +1409,10 @@ public:
                 bool isPython = m_codeBlock->unlinkedCodeBlock()->isPython();
                 if (isPython) [[unlikely]]
                     m_thrownValue = Python::addTracebackEntry(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, visitor->bytecodeIndex());
-                m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
+                HandlerInfo* handler = findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler);
+                m_handler = { handler, m_codeBlock };
+                if (!isPython && reachesMachineFrame && m_codeBlock->globalObject()->pythonRuntime()) [[unlikely]]
+                    Python::addTracebackEntryForJS(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, m_codeBlock, visitor->bytecodeIndex(), throwsAgain(handler));
                 if (isPython) [[unlikely]]
                     m_thrownValue = Python::exceptionStaysOrLeaves(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, visitor->bytecodeIndex(), m_handler.m_valid);
                 if (m_handler.m_valid)

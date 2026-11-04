@@ -35,6 +35,9 @@ void throwUnboundLocal(JSGlobalObject*, CodeBlock*, VirtualRegister);
 // is being thrown now.
 JSValue addTracebackEntry(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex);
 JSValue exceptionStaysOrLeaves(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex, bool isCaught);
+// The same for a call of a function of JS, where there is a Python to tell. (The frame may be that of a caller which the call has
+// been made part of.) `throwsAgain`: what catches it there is no `catch` of the program's. It runs no code.
+void addTracebackEntryForJS(JSGlobalObject*, JSValue thrown, CallFrame*, CodeBlock*, BytecodeIndex, bool throwsAgain);
 // An op_catch in code of JS has taken what was thrown, where there is a Python to tell. If it is that of a `catch` of the program's,
 // this is the exception being handled until the clause is left, as in an `except`. It runs no code.
 void didCatchInJS(JSGlobalObject*, CallFrame*, CodeBlock*, BytecodeIndex, JSValue thrown);

@@ -22,6 +22,7 @@
 #include "PyThreads.h"
 #include "PyTuple.h"
 #include "PyType.h"
+#include "PyVirtualFiles.h"
 #include "TopExceptionScope.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -444,9 +445,16 @@ static bool warningsWarnExplicit(JSGlobalObject* globalObject, JSValue category,
     RELEASE_AND_RETURN(scope, warningsCallShow(globalObject, category, text, message, filename, lineno, sourceLine, source, module));
 }
 
+// The machinery of import, and that of the host: what it has written in Python to let programs in JS use Python.
 static bool warningsIsInternalFile(const String& filename)
 {
-    return filename.contains("importlib"_s) && filename.contains("_bootstrap"_s);
+    if (filename.contains("importlib"_s) && filename.contains("_bootstrap"_s))
+        return true;
+    constexpr auto prefix = "<frozen "_s;
+    auto* fileSystem = virtualFileSystem();
+    if (!fileSystem || fileSystem->hostLibrary.isNull() || !filename.startsWith(prefix) || !filename.endsWith('>'))
+        return false;
+    return kindOfFile(makeString(fileSystem->hostLibrary, '/', StringView(filename).substring(prefix.length(), filename.length() - prefix.length() - 1), ".py"_s)) == VirtualFileKind::File;
 }
 
 static bool warningsIsFileToSkip(JSGlobalObject* globalObject, const String& filename, PyTuple* prefixes)
@@ -470,24 +478,39 @@ static bool warningsDoWarn(JSGlobalObject* globalObject, JSValue message, JSValu
         }
     }
 
-    auto filenameOf = [](PyFrame* frame) -> const String& { return frame->function()->codeInfo().filename; };
-    unsigned depth = 0;
-    PyFrame* frame = currentFrame(globalObject);
-    if (stackLevel <= 0 || (frame && warningsIsInternalFile(filenameOf(frame)))) {
-        while (--stackLevel > 0 && frame)
-            frame = currentFrame(globalObject, ++depth);
-    } else {
-        // The machinery of import does not count.
-        while (--stackLevel > 0 && frame) {
-            do {
-                frame = currentFrame(globalObject, ++depth);
-            } while (frame && (warningsIsInternalFile(filenameOf(frame)) || warningsIsFileToSkip(globalObject, filenameOf(frame), skipFilePrefixes)));
-        }
-    }
+    // A call of a function of JS is a level like any other.
+    std::optional<CallOfEitherLanguage> found;
+    bool isFirst = true;
+    bool countsAll = stackLevel <= 0;
+    forEachCallOfEitherLanguage(vm, [&](const CallOfEitherLanguage& call) {
+        auto filename = [&] {
+            return call.python ? PyFunction::from(call.python->jsCallee())->codeInfo().filename : positionInJS(vm, call.codeBlock, call.index).filename;
+        };
+        bool isInternal = call.python && warningsIsInternalFile(filename());
+        if (std::exchange(isFirst, false))
+            countsAll |= isInternal;
+        else if (!countsAll && (isInternal || (skipFilePrefixes && warningsIsFileToSkip(globalObject, filename(), skipFilePrefixes))))
+            return IterationStatus::Continue;
+        if (--stackLevel > 0)
+            return IterationStatus::Continue;
+        found = call;
+        return IterationStatus::Done;
+    });
 
-    PyDict* globals = frame ? frame->function()->globals() : rt.sysDict();
-    JSValue filename = makeStr(vm, frame ? filenameOf(frame) : String("<sys>"_s));
-    int lineno = frame ? frame->lineNumber() : 0;
+    PyDict* globals = rt.sysDict();
+    JSValue filename = makeStr(vm, "<sys>"_s);
+    int lineno = 0;
+    if (found && found->python) {
+        PyFrame* frame = PyFrame::of(globalObject, found->python);
+        globals = frame->function()->globals();
+        filename = makeStr(vm, frame->function()->codeInfo().filename);
+        lineno = frame->lineNumber();
+    } else if (found) {
+        PositionInJS position = positionInJS(vm, found->codeBlock, found->index);
+        globals = namespaceOfFileOfJS(globalObject, position.filename);
+        filename = makeStr(vm, position.filename);
+        lineno = position.line;
+    }
 
     JSString* registryName = internString(vm, "__warningregistry__"_s);
     JSValue registry = globals->get(registryName);

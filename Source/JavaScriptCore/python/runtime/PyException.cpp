@@ -134,7 +134,8 @@ bool addTracebackEntryToThrownObject(JSGlobalObject* globalObject, JSValue throw
     PyType* thrownType = rt.typeOf(thrown);
     if (thrownType != rt.jsObjectType() && thrownType != rt.jsFunctionType())
         return false;
-    setHiddenField(globalObject, thrown, jsErrorTracebackHiddenField, makeEntry(hiddenField(globalObject, thrown, jsErrorTracebackHiddenField)));
+    if (JSValue entry = makeEntry(hiddenField(globalObject, thrown, jsErrorTracebackHiddenField)))
+        setHiddenField(globalObject, thrown, jsErrorTracebackHiddenField, entry);
     return true;
 }
 

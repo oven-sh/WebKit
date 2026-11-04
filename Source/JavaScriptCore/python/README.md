@@ -148,6 +148,18 @@ business. What it goes by comes from here: `co_positions()` (columns in bytes of
 `_missing_stdlib_info`. If it cannot be imported or fails, `formatException` prints the traceback natively, without carets. That is also what the JS view of an
 exception shows, and what is used before there is a `sys.stderr`.
 
+**Calls of functions of JS are in the traceback.** Where there is a Python, the unwinder also tells of each call of a function of JS that an
+exception of Python's leaves or is caught in (`addTracebackEntryForJS`): those that a stack trace of JS would show, the ones that an optimizing compiler
+has made part of their callers too. The entry (`PyTraceback::createForJS`) holds the code block and the place in it. What Python sees is made when something
+asks: `tb_lineno` and the file are those of what the programmer wrote (the host's source map, `VM::computeLineColumnWithSourcemap`), `tb_lasti` is -1, and
+`tb_frame` is a frame of code that does nothing, whose `co_filename` and `co_name` are the file and the function (`<module>`, `<anonymous>`, `<eval>`), without
+locals; its `f_globals` is a dict that the runtime keeps for the file (`namespaceOfFileOfJS`). So `traceback`, `logging` and `linecache` show `File "x.ts", line 3, in f` and the
+line itself. A `finally`, and what the compiler makes that works like one (`for`-`of`, `using`), catches and throws again: that is one entry, as in Python; `catch (e) { throw e }` is two, as with
+`raise e`. A function that ends in a tail call (`return f()` in strict code) has no frame any more, in a traceback as in a stack trace.
+An error of JS has no traceback until it comes up to code of Python's. Then the calls between that code and where the error was made are taken from the
+error's own stack (`tracebackOfErrorOfJS`), if the call that Python made is in it: so a `JSError` says where in JS it comes from, also as the `__cause__` or `__context__` of
+another exception. From there on the unwinder keeps track as above.
+
 **What a `catch` of JS has caught is being handled**, as in an `except`, until the clause is left: `sys.exception()`, `traceback.format_exc()`, `logging.exception()`, a
 `raise` without an exception, the `__context__` of what is raised meanwhile, and of an exception of Python's that JS makes and throws there (`willThrowInJS`). Of what is no
 exception of Python's it is the `JSError` that an `except` would have got. Nothing in the code of a clause says where it ends, and none of it is changed. The
@@ -157,6 +169,14 @@ handled, or is about to change it, looks at the stack first (`Runtime::putCatche
 left is put where an `except` at that place would have put it, so handlers of Python's above and below, and generators, find what they expect, and it is taken out again when
 it is over. A `finally` of JS is no handler. Two things take the frame away while the clause, as written, goes on: an `await` (what follows
 runs in another frame), and a call in tail position, `catch { return f() }` in strict code without a `finally`: by the rules of JS the function has made way for `f`. Nothing is being handled there.
+
+**What nobody catches.** An exception of Python's that comes up to the host with nothing left to catch it (a timer, a microtask, a promise nobody handles, the top level of
+a module of JS) is given to `sys.excepthook` (`reportUncaughtException` in `PyExec.h`), whichever language the program is in, and so is printed as Python prints it. In Bun, `process.on("uncaughtException")` comes first, and the test
+runner shows the exception among its own lines (`stack`). An `Error` of JS whose `cause` is an exception of Python's is printed as JS prints it, followed by the traceback of the cause.
+
+**Warnings** count calls of functions of JS among the levels of the stack (`forEachCallOfEitherLanguage`): `warn()` called by JS, or with a `stacklevel` that leads to JS, is about that file
+and line, `skip_file_prefixes` goes for such files, the module is named after the file (as `warn_explicit()` does without a name), and `__warningregistry__` is in the dict the runtime keeps for
+the file. What the host has written in Python to serve JS (its frozen modules: `with()` of `bun:python`) does not count, as importlib does not.
 
 ## Syntax errors
 
@@ -389,6 +409,9 @@ that time, but for the `__dunder__` names, as for a `.py` file. What JS catches 
 for: `ERR_MODULE_NOT_FOUND`, or `MODULE_NOT_FOUND` from `require()`. Such a specifier resolves to itself. It is never looked for
 among files or packages and never installed. `module.isBuiltin("python:x")` says whether `x` is in the standard library
 (`isStandardLibraryModuleName`). The bundler leaves it in place, and refuses it for a target other than Bun.
+
+A file is Python if its name ends in `.py` or the import says so: `import rules from "./rules.txt" with { type: "python" }`. Python's own import would not look at such a file, so it is a
+module under a name of its own (`rules_<hash of the path>`), one module however often it is imported.
 
 ## Codecs
 
@@ -682,6 +705,9 @@ while any thread has a function. The side tables are only changed with the GIL, 
   operand may be of that type. `==` on two objects is a comparison of pointers behind a check that neither is of that type
   (`DFGFixupPhase.cpp`): `NotPyObjectUse`, or, where a site has seen plain objects only, or arrays, or functions, the check for that
   kind in place of the check for an object. A site that has seen a Python object calls the slow path instead.
+- **What writes properties behind the object's back.** Code of the host that would store a property straight into an object has to ask first whether the properties are Python's
+  (`propertiesArePythons()` in `PyHooks.h`: an object, a class, `Class.prototype`, a function, a list) and go through `defineOwnProperty` then, which is `setattr()` or `[]=`. `spyOn()` of `bun:test` does: the spy
+  is where Python looks too, `mockRestore()` puts back what was there, and what cannot be stored (an attribute of a tuple) is the error that Python raises.
 
 ## Python sees JavaScript objects
 

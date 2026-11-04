@@ -440,12 +440,12 @@ static void removeImportlibFrames(JSGlobalObject* globalObject)
     for (JSValue value = exception->traceback(); value;) {
         auto* traceback = PyTraceback::from(value);
         JSValue next = traceback->next();
-        CodeInfo& info = traceback->frame()->function()->codeInfo();
-        bool isNowInImportlib = info.filename == "<frozen importlib._bootstrap>"_s || info.filename == "<frozen importlib._bootstrap_external>"_s;
+        CodeInfo* info = traceback->isOfJS() ? nullptr : &traceback->frame()->function()->codeInfo();
+        bool isNowInImportlib = info && (info->filename == "<frozen importlib._bootstrap>"_s || info->filename == "<frozen importlib._bootstrap_external>"_s);
         if (isNowInImportlib && !isInImportlib)
             outer = previous;
         isInImportlib = isNowInImportlib;
-        if (isInImportlib && (alwaysTrims || info.name.string() == "_call_with_frames_removed"_s)) {
+        if (isInImportlib && (alwaysTrims || info->name.string() == "_call_with_frames_removed"_s)) {
             setLink(outer, next);
             previous = outer;
         } else
