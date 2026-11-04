@@ -62,6 +62,7 @@ struct SyntaxErrorInfo {
         MemoryError,
         RecursionError,
         SystemError,
+        UnicodeEncodeError, // The message is a string that UTF-8 has no way to write.
         HostException, // Pending in the host.
     };
 

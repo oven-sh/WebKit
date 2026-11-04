@@ -203,6 +203,8 @@ JSValue raiseSyntaxErrorInfo(JSGlobalObject* globalObject, const SyntaxErrorInfo
         return raiseRecursionError(globalObject, scope, info.message);
     case Type::SystemError:
         return raiseSystemError(globalObject, scope, info.message);
+    case Type::UnicodeEncodeError:
+        RELEASE_AND_RETURN(scope, codecEncodeUTF8(globalObject, makeStr(vm, info.message), "strict"_s));
     }
 
     JSValue message = makeStr(vm, info.message);

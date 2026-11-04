@@ -837,6 +837,9 @@ String dumpSyntaxError(const SyntaxErrorInfo& error)
     case SyntaxErrorInfo::Type::SystemError:
         type = "SystemError"_s;
         break;
+    case SyntaxErrorInfo::Type::UnicodeEncodeError:
+        type = "UnicodeEncodeError"_s;
+        break;
     case SyntaxErrorInfo::Type::HostException:
         type = "HostException"_s;
         break;

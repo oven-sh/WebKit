@@ -10,6 +10,7 @@
 #include "PyCodeNode.h"
 #include "PyCompilerUnit.h"
 #include "PyRuntime.h"
+#include "PyStr.h"
 #include "PyTuple.h"
 #include "PyType.h"
 #include "UnlinkedFunctionCodeBlock.h"
@@ -2435,7 +2436,13 @@ String Unit::docstringOf(Seq<Stmt*> body)
     auto* constant = body[0]->as<ExprStmt>()->value->tryAs<Constant>();
     if (!constant || !constant->value.isString())
         return { };
-    return cleanDocstring(String(constant->value.string));
+    String docstring(constant->value.string);
+    // CPython goes through UTF-8 to clean it.
+    if (!docstring.is8Bit() && !tryEncodeUTF8(docstring)) [[unlikely]] {
+        c.failWithoutLocation(SyntaxErrorInfo::Type::UnicodeEncodeError, docstring);
+        return { };
+    }
+    return cleanDocstring(docstring);
 }
 
 void Unit::collectDeferredAnnotations(Seq<Stmt*> body, bool isConditional)
