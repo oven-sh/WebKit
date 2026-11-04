@@ -54,6 +54,10 @@ struct AttributeCache {
     static constexpr int32_t valueOfClass = -7;
     static constexpr int32_t staticMethodOfClass = -8;
     static constexpr int32_t classMethodOfClass = -9; // The first argument is the object.
+    // Whether `payload` is a value. The versions vouch for it: while they hold, the class has it. The collector does not go by
+    // that, since a dict can be written to behind the back of its class (gc.get_referents(C.__dict__)): what is remembered about
+    // a value that is gone is forgotten, as it is for a Structure. See CodeBlock::reconcileLLIntInlineCachesAtGCEnd().
+    static constexpr bool payloadIsValue(int32_t offset, uint32_t jsType) { return jsType || (offset < 0 && offset != moduleEntry && offset != tupleItem); }
 
     uint64_t payload { 0 };
     // The object is alike if it has this Structure and

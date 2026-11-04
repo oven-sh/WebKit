@@ -245,7 +245,9 @@ static constexpr TypeDef faultStateTypeDef { "faulthandler._state"_s, { TypeFlag
 static void faultKeepFile(JSGlobalObject* globalObject, const String& purpose, JSValue file)
 {
     Runtime& rt = runtime(globalObject);
-    rt.typeFor(faultStateTypeDef)->dict()->set(rt.vm(), internString(rt.vm(), purpose), file ? file : jsUndefined());
+    PyType* type = rt.typeFor(faultStateTypeDef);
+    type->dict()->set(rt.vm(), internString(rt.vm(), purpose), file ? file : jsUndefined());
+    type->didChange(rt.vm());
 }
 
 // The descriptor of the file, which is sys.stderr if none is given. `file` is left empty if it is a number. -1: an exception.

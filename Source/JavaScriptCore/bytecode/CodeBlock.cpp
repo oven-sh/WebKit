@@ -81,6 +81,7 @@
 #include "ProfilerDatabase.h"
 #include "ProgramCodeBlock.h"
 #include "PropertyInlineCache.h"
+#include "PyAbstract.h"
 #include "PyHooks.h"
 #include "ReduceWhitespace.h"
 #include "SlotVisitorInlines.h"
@@ -1973,9 +1974,19 @@ NEVER_INLINE void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
         });
 
         auto clearPythonAttributeCacheIfNeeded = [&] (auto& metadata) {
-            if (!metadata.m_structureID || vm.heap.isMarked(metadata.m_structureID.decode()))
+            if (!metadata.m_structureID && !metadata.m_jsType)
+                return;
+            bool isLive = !metadata.m_structureID || vm.heap.isMarked(metadata.m_structureID.decode());
+            if (isLive && Python::AttributeCache::payloadIsValue(metadata.m_offset, metadata.m_jsType)) {
+                JSValue payload = JSValue::decode(metadata.m_payload);
+                isLive = !payload || !payload.isCell() || vm.heap.isMarked(payload.asCell());
+            }
+            if (isLive)
                 return;
             metadata.m_structureID = StructureID();
+            metadata.m_jsType = 0;
+            metadata.m_offset = 0;
+            metadata.m_payload = 0;
         };
         m_metadata->forEach<OpPyGetAttr>(clearPythonAttributeCacheIfNeeded);
         m_metadata->forEach<OpPyGetMethod>(clearPythonAttributeCacheIfNeeded);

@@ -39,8 +39,10 @@ PyType* orderedDictType(JSGlobalObject* globalObject)
 {
     Runtime& rt = runtime(globalObject);
     PyType* type = rt.typeFor(orderedDictTypeDef, rt.dictType());
-    if (!type->dict()->get(rt.name(Special::Hash))) [[unlikely]]
+    if (!type->dict()->get(rt.name(Special::Hash))) [[unlikely]] {
         type->dict()->set(rt.vm(), rt.name(Special::Hash), jsUndefined());
+        type->didChange(rt.vm());
+    }
     return type;
 }
 
