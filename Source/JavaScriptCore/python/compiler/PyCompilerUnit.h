@@ -211,6 +211,8 @@ private:
     void noLine();
     // It is of this line, but nobody is told that the line begins.
     void silentLine(const Range&);
+    // All that gets here is on this line, and what is laid out in front is of it too.
+    void isStillOnLine(const Range&);
     // A jump that is there because of how the code is laid out here. In CPython there is none, or one that nobody is told of:
     // what handles exceptions is out of the way, at the end of the code.
     static Range rangeOfAttributeName(AST::Attribute*);

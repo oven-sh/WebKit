@@ -613,7 +613,11 @@ void CodeMonitor::findPointsWithoutTellingTheCollector(bool everyInstruction)
         Item& item = items[i];
         if (item.isJumpedTo || item.offset <= start || (item.entryLine < 0 && !item.firstLineFollowsSilentLine))
             continue;
-        int lineBefore = lineAt(items[i - 1].offset);
+        // (Not what cannot be reached: CPython's compiler drops that.)
+        unsigned before = i - 1;
+        while (before && !isReachable.get(before))
+            --before;
+        int lineBefore = lineAt(items[before].offset);
         if (item.entryLine >= 0 && lineBefore == item.entryLine) {
             item.linesBefore.clear();
             item.linesBefore.append(item.entryLine);

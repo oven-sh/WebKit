@@ -444,6 +444,15 @@ void Unit::silentLine(const Range& range)
     g.addPythonMark(PythonMark::Line, lineMarkValue(range.lineno, false, true));
 }
 
+void Unit::isStillOnLine(const Range& range)
+{
+    if (m_sameLineDepth)
+        return;
+    m_markedLine = range.lineno;
+    m_markedPosition = g.instructions().size();
+    m_place = range;
+}
+
 void Unit::noLine()
 {
     m_markedLine = -1;

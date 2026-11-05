@@ -2424,7 +2424,8 @@ RegisterID* Unit::comprehension(Expr* node, ComprehensionKind kind, Seq<Comprehe
             line(range);
             reraise(thrown.get());
             g.emitLabel(end.get());
-            silentLine(range);
+            // No mark: it would also be for what jumps to a label that comes next (`a or [...]`), from a line of its own.
+            isStillOnLine(range);
         }
         return dst ? g.move(dst, result.get()) : result.get();
     }
