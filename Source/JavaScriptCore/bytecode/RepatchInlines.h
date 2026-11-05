@@ -33,6 +33,7 @@
 #include "FrameTracers.h"
 #include "FunctionCodeBlock.h"
 #include "JSObjectInlines.h"
+#include "LLIntData.h"
 #include "LLIntEntrypoint.h"
 #include "ProxyObject.h"
 #include "PyHooks.h"
@@ -127,11 +128,32 @@ inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSVal
 
     calleeFrame->setCodeBlock(nullptr);
 
+    // A method, an object with a __call__: the function behind it is entered like any other, not from C++.
+    if (callLinkInfo->isInPythonCode()) {
+        JSFunction* function = Python::beginCallWithSelf(callLinkInfo->globalObjectForSlowPath(owner), callee);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (function) {
+            DeferTraps deferTraps(vm); // We can't jettison if we're going to call this CodeBlock.
+            auto* executable = uncheckedDowncast<FunctionExecutable>(function->executable());
+            executable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), CodeSpecializationKind::CodeForCall, *calleeFrame->addressOfCodeBlock());
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            // The trampolines go by ExecutableBase::m_jitCodeForCallWithArityCheck, which this fills.
+            executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
+            calleeFrame->setCallee(function);
+            // From now on the trampoline for virtual calls comes to the function by itself.
+            if (!callLinkInfo->isSharedByUnlinkedCallSites() && callLinkInfo->mode() != CallLinkInfo::Mode::Virtual)
+                callLinkInfo->setVirtualCall(vm);
+            return LLInt::getCodePtr<JSEntryPtrTag>(llint_python_call_with_self_trampoline).taggedPtr();
+        }
+    }
+
     if (callLinkInfo->specializationKind() == CodeSpecializationKind::CodeForCall) {
         auto callData = JSC::getCallDataInline(callee);
         ASSERT(callData.type != CallData::Type::JS);
-        if (callData.type == CallData::Type::None && callLinkInfo->isInPythonCode()) [[unlikely]]
+        if (callData.type == CallData::Type::None && callLinkInfo->isInPythonCode()) [[unlikely]] {
             callData = Python::callDataUnknownToJS(callee);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
 
         if (callData.type == CallData::Type::Native) {
             NativeCallFrameTracer tracer(vm, calleeFrame);

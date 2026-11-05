@@ -652,6 +652,7 @@ const PyTupleType = constexpr PyTupleType
 const PyKwNamesType = constexpr PyKwNamesType
 const PyFloatType = constexpr PyFloatType
 const PyGeneratorType = constexpr PyGeneratorType
+const PyMethodType = constexpr PyMethodType
 const DerivedArrayType = constexpr DerivedArrayType
 const ProxyObjectType = constexpr ProxyObjectType
 const HeapBigIntType = constexpr HeapBigIntType
@@ -2907,6 +2908,51 @@ op(llint_virtual_tail_call_trampoline, macro ()
     linkFor(_llint_virtual_call)
 end)
 
+# Where a call of a function enters it, and its CodeBlock. The function has been called from compiled code before, or there is no entry yet.
+macro loadEntryOfFunction(function, entry, codeBlock, hasNoEntry)
+    loadp JSFunction::m_executableOrRareData[function], entry
+    btpz entry, (constexpr JSFunction::rareDataTag), .isExecutable
+    loadp (FunctionRareData::m_executable - (constexpr JSFunction::rareDataTag))[entry], entry
+.isExecutable:
+    loadp FunctionExecutable::m_codeBlockForCall[entry], codeBlock
+    loadp ExecutableBase::m_jitCodeForCallWithArityCheck[entry], entry
+    btpz entry, hasNoEntry
+end
+
+# The function in t3, which is written in Python, is called with what is in t4 in front of the arguments. The frame moves down by two slots, as it
+# does for a call with too few arguments, and the arguments by one: then it is as a call of the function would have made it. (The two slots may
+# lie below what the caller has made sure of: in the reserved zone of the stack, until the function looks for itself.)
+macro enterPythonFunctionWithSelf(hasNoEntry)
+    loadEntryOfFunction(t3, t5, t6, hasNoEntry)
+    if X86_64
+        pop t1
+    end
+    loadi ArgumentCountIncludingThis + LowWordOffset - CallerFrameAndPCSize[sp], t0
+    loadq ThisArgumentOffset - CallerFrameAndPCSize[sp], t2
+    subp 2 * SlotSize, sp
+    storep t6, CodeBlock - CallerFrameAndPCSize[sp]
+    storeq t3, Callee - CallerFrameAndPCSize[sp]
+    addi 1, t0, t7
+    storeq t7, ArgumentCountIncludingThis - CallerFrameAndPCSize[sp]
+    storeq t2, ThisArgumentOffset - CallerFrameAndPCSize[sp]
+    storeq t4, FirstArgumentOffset - CallerFrameAndPCSize[sp]
+    leap FirstArgumentOffset + SlotSize - CallerFrameAndPCSize[sp], t6
+.moveArgument:
+    subi 1, t0
+    btiz t0, .argumentsAreMoved
+    loadq SlotSize[t6], t7
+    storeq t7, [t6]
+    addp SlotSize, t6
+    jmp .moveArgument
+.argumentsAreMoved:
+    # One slot is left over, where the last of them was.
+    storeq ValueUndefined, [t6]
+    if X86_64
+        push t1
+    end
+    jmp t5, JSEntryPtrTag
+end
+
 # t0 is callee
 # t2 is CallLinkInfo*
 # For the call sites of Python code. What is not Python's is left to the slow path, which adapts the frame: Python::prepareForeignCall().
@@ -2917,25 +2963,54 @@ op(llint_python_virtual_call_trampoline, macro ()
     loadp JSGlobalObject::m_pythonRuntime[t5], t5
     loadi JSCell::m_structureID[t0], t4
     bineq t4, Python::Runtime::functionStructureID[t5], .notFunction
-    loadp JSFunction::m_executableOrRareData[t0], t5
-    btpz t5, (constexpr JSFunction::rareDataTag), .isExecutable
-    loadp (FunctionRareData::m_executable - (constexpr JSFunction::rareDataTag))[t5], t5
-.isExecutable:
-    loadp ExecutableBase::m_jitCodeForCallWithArityCheck[t5], t4
-    btpz t4, .slowCase
-    move t4, t1
-    loadp FunctionExecutable::m_codeBlockForCall[t5], t5
+    loadEntryOfFunction(t0, t4, t5, .slowCase)
     storep t5, CodeBlock - PrologueStackPointerDelta[sp]
-    jmp t1, JSEntryPtrTag
+    jmp t4, JSEntryPtrTag
+
 .notFunction:
-    bbneq JSCell::m_type[t0], InternalFunctionType, .slowCase
+    loadb JSCell::m_type[t0], t4
+    bieq t4, PyMethodType, .isMethod
+    bieq t4, PyInstanceType, .isInstance
+    bineq t4, InternalFunctionType, .slowCase
     loadp InternalFunction::m_functionForCall[t0], t4
     bpeq t4, Python::Runtime::hostFunctionOfNativeFunctions[t5], .isPythons
     bpneq t4, Python::Runtime::hostFunctionOfTypes[t5], .slowCase
 .isPythons:
     jmp _llint_internal_function_call_trampoline
+
+.isMethod:
+    loadq (constexpr (Python::PyMethod::offsetOfFunction()))[t0], t3
+    btqnz t3, NotCellMask, .slowCase
+    loadi JSCell::m_structureID[t3], t4
+    bineq t4, Python::Runtime::functionStructureID[t5], .slowCase
+    loadq (constexpr (Python::PyMethod::offsetOfSelf()))[t0], t4
+    jmp .enterWithSelf
+
+.isInstance:
+    loadp (constexpr (Python::PyObject::offsetOfType()))[t0], t3
+    bbneq (constexpr (Python::PyType::offsetOfSpecialStates())) + (constexpr Python::Special::Call)[t3], constexpr Python::PyType::specialIsFunction, .slowCase
+    loadq (constexpr (Python::PyType::offsetOfSpecials())) + (constexpr Python::Special::Call) * 8[t3], t3
+    move t0, t4
+
+.enterWithSelf:
+    enterPythonFunctionWithSelf(.slowCase)
+
 .slowCase:
     linkFor(_llint_virtual_call)
+end)
+
+# What the slow paths of a call in Python code go on with for a method, or an object with a __call__, behind which they have found a function
+# written in Python (handleHostCall(), Python::beginCallWithSelf()). That is the callee in the frame by now, and has its entry.
+op(llint_python_call_with_self_trampoline, macro ()
+    loadq Callee - PrologueStackPointerDelta[sp], t3
+    loadp CodeBlock[cfr], t5
+    loadp CodeBlock::m_globalObject[t5], t5
+    loadp JSGlobalObject::m_pythonRuntime[t5], t5
+    loadq Python::Runtime::selfOfCall[t5], t4
+    storeq 0, Python::Runtime::selfOfCall[t5]
+    enterPythonFunctionWithSelf(.hasNoEntry)
+.hasNoEntry:
+    break
 end)
 
 # t0 is callee

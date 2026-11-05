@@ -920,6 +920,7 @@ public:
         EncodedJSValue left { };
         EncodedJSValue right { };
     } methodToCall;
+    EncodedJSValue selfOfCall { }; // What beginCallWithSelf() leaves to llint_python_call_with_self_trampoline, which takes it at once.
     PyType* lazyImportType { nullptr }; // Of the placeholders of `lazy import`. Null: there has been none. typeFor() keeps it alive.
     static constexpr ptrdiff_t offsetOfType(TypeID id) { return OBJECT_OFFSETOF(Runtime, m_types) + static_cast<unsigned>(id) * sizeof(WriteBarrier<PyType>); }
 

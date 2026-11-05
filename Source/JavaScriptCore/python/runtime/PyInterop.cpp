@@ -1143,6 +1143,30 @@ bool isForeignCallee(JSValue callee)
     }
 }
 
+JSFunction* beginCallWithSelf(JSGlobalObject* globalObject, JSValue callee)
+{
+    if (!callee.isCell())
+        return nullptr;
+    PyFunction* function;
+    JSValue self;
+    switch (callee.asCell()->type()) {
+    case PyMethodType:
+        function = PyFunction::tryFrom(uncheckedDowncast<PyMethod>(callee.asCell())->function());
+        self = uncheckedDowncast<PyMethod>(callee.asCell())->self();
+        break;
+    case PyInstanceType:
+        // (To look may run code of the program. Whatever that does, this is what was found.)
+        function = PyFunction::tryFrom(uncheckedDowncast<PyObject>(callee.asCell())->type()->lookup(Special::Call));
+        self = callee;
+        break;
+    default:
+        return nullptr;
+    }
+    if (function)
+        runtime(globalObject).selfOfCall = JSValue::encode(self);
+    return function;
+}
+
 CallData callDataUnknownToJS(JSValue callee)
 {
     CallData callData;

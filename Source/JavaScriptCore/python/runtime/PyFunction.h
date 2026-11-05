@@ -45,6 +45,8 @@ public:
 
     JSValue function() const { return m_function.get(); }
     JSValue self() const { return m_self.get(); }
+    static constexpr ptrdiff_t offsetOfFunction() { return OBJECT_OFFSETOF(PyMethod, m_function); }
+    static constexpr ptrdiff_t offsetOfSelf() { return OBJECT_OFFSETOF(PyMethod, m_self); }
 
 private:
     PyMethod(VM&, Structure*, PyType*);

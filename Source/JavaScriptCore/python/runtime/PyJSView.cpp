@@ -1005,7 +1005,7 @@ bool isBeingCalledByPython(JSGlobalObject* globalObject, CallFrame* callFrame)
         return false;
     if (callFrame->callerFrameOrEntryFrame() == getVM(globalObject).topEntryFrame)
         return true;
-    // The register still has what the instruction called: nothing has run since that could have collected.
+    // The register still has what the instruction called: what an instruction reads is alive while it is under way (liveLocalsOfFrame()).
     CallFrame* caller = callFrame->callerFrame();
     const JSInstruction* instruction = caller->codeBlock()->instructions().at(caller->bytecodeIndex()).ptr();
     VirtualRegister callee;
@@ -1019,7 +1019,9 @@ bool isBeingCalledByPython(JSGlobalObject* globalObject, CallFrame* callFrame)
     default:
         return true;
     }
-    return caller->r(callee).jsValue() == JSValue(callFrame->jsCallee());
+    // It is this callee, or a method or an object with a __call__, in whose place the interpreter has entered this callee. Otherwise a
+    // function of JS was called, and has left its frame to this one (a tail call).
+    return !isForeignCallee(caller->r(callee).jsValue());
 }
 
 JSValue resultForCaller(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue result)

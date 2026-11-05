@@ -394,7 +394,14 @@ become a trailing object, whole floats become numbers.
 A call site is linked to the function that its second call calls. One that is then given something else goes virtual, as in JS, but with a trampoline
 of its own (`llint_python_virtual_call_trampoline`), since the VM's would enter a function of JS with the frame as it is. It keeps nothing about the
 callees: functions that one `def` or `lambda` makes over and over are all alike to it. It enters functions written in Python (those that have the
-Structure they were made with), and functions and types written in C++, and leaves everything else to the slow path.
+Structure they were made with), and functions and types written in C++, and leaves the rest to the slow path: what is foreign, and what C++ has
+to call. A bound method of a function written in Python, and an instance of a class whose `__call__` is one (`PyType::m_specials` says so), it
+turns into a call of that function: the frame moves down by two slots, as the arity check moves it for a call with too few arguments, the
+arguments by one, and `self` goes in front. So there is no frame of C++ between caller and callee, and nothing holds the arguments but the
+callee (`self` excepted: the method stays in the caller's register while the call lasts). The slow paths, which make the first calls of a site, and the first call of a function that has no code yet, do the same
+(`handleHostCall()`): they find the function (`Python::beginCallWithSelf()`), give it its code, and leave the frame to
+`llint_python_call_with_self_trampoline`. The callee in the frame is then the function, not what the instruction called
+(`isBeingCalledByPython()`).
 `f(*a, **k)` is `op_call_varargs` with an array that `callArguments()` makes, in CPython's order: `k` is read, then `a` is gone through.
 The names that come out of `k` are its keys as they are, not atoms: a program can make any number of them, and an atom is looked
 up in a table that all strs of the process share. So whoever takes keywords compares texts where the pointers differ.

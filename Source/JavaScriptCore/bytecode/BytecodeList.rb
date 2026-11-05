@@ -1873,6 +1873,7 @@ op :llint_virtual_call_trampoline, extras: { asm_section: :trampoline }
 op :llint_virtual_construct_trampoline, extras: { asm_section: :trampoline }
 op :llint_virtual_tail_call_trampoline, extras: { asm_section: :trampoline }
 op :llint_python_virtual_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_python_call_with_self_trampoline, extras: { asm_section: :trampoline }
 op :llint_polymorphic_normal_call_trampoline, extras: { asm_section: :trampoline }
 op :llint_polymorphic_closure_call_trampoline, extras: { asm_section: :trampoline }
 op :checkpoint_osr_exit_from_inlined_call_trampoline

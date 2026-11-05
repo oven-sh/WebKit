@@ -18,6 +18,7 @@ namespace JSC {
 class CallFrame;
 class CodeBlock;
 class JSCell;
+class JSFunction;
 class JSGlobalObject;
 class VM;
 
@@ -120,6 +121,10 @@ JS_EXPORT_PRIVATE bool prepareForeignCall(JSGlobalObject*, CallFrame* calleeFram
 // Python code is calling what JS says cannot be called. An instance of a class derived from list is an array to JS, whatever methods the
 // class has: to be a function as well would make it one for typeof, JSON.stringify() and console.log().
 JS_EXPORT_PRIVATE CallData callDataUnknownToJS(JSValue callee);
+// Python code of that realm is calling a method, or an object with a __call__. If a function written in Python is behind it, that is entered in
+// its place: the function, and what goes in front of the arguments is left in Runtime::selfOfCall for llint_python_call_with_self_trampoline.
+// Null: there is no such function, and C++ makes the call.
+JS_EXPORT_PRIVATE JSFunction* beginCallWithSelf(JSGlobalObject*, JSValue callee);
 
 // `class constructor extends superclass`, when the methods are in place and before anything sees the class. If the superclass is a
 // class of Python's, so is this: the class. Otherwise the constructor. See PyJSClass.h.
