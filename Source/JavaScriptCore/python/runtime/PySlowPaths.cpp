@@ -1082,19 +1082,18 @@ static JSValue buildString(JSGlobalObject* globalObject, const RuntimeArguments&
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!args.size())
-        return jsEmptyString(vm);
-    // In a tree that a program has made, the parts of an f-string may be anything.
+    // As a template literal of JS is put together: jsStringFromRegisterArray().
+    JSRopeString::RopeBuilder<RecordOverflow> builder(vm);
     for (unsigned i = 0; i < args.size(); ++i) {
+        // In a tree that a program has made, the parts of an f-string may be anything.
         if (!isStr(args[i])) [[unlikely]]
             return raiseTypeError(globalObject, scope, "sequence item "_s, i, ": expected str instance, "_s, typeName(globalObject, args[i]), " found"_s);
+        if (!builder.append(strValue(args[i]))) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return { };
+        }
     }
-    JSString* result = strValue(args[0]);
-    for (unsigned i = 1; i < args.size(); ++i) {
-        result = jsString(globalObject, result, strValue(args[i]));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    return result;
+    return builder.release();
 }
 
 static JSValue convertValue(JSGlobalObject* globalObject, JSValue value, JSValue conversion)
